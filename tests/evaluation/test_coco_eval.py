@@ -373,11 +373,15 @@ class TestSynchronizeBetweenProcesses:
         # all_gather returns rank-0 list + rank-1 list (no overlap)
         rank1_ids = [2]
         rank1_results = [{"image_id": 2, "category_id": 1, "keypoints": [], "score": 0.8}]
+        call_count = [0]
 
-        with patch(
-            "rfdetr.evaluation.coco_eval.all_gather",
-            side_effect=lambda x: [x, rank1_ids if isinstance(x, list) and x == [1] else rank1_results],
-        ):
+        def _all_gather(x: list) -> list:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return [x, rank1_ids]
+            return [x, rank1_results]
+
+        with patch("rfdetr.evaluation.coco_eval.all_gather", side_effect=_all_gather):
             ev.synchronize_between_processes()
 
         assert sorted(ev.img_ids) == [1, 2]

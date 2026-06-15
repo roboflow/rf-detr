@@ -42,7 +42,11 @@ def _make_predictions(image_id: int = 1, num_dets: int = 1, num_keypoints: int =
 
 
 def _make_evaluator_mock(stats: list[float]) -> MagicMock:
-    """Return a CocoEvaluator mock that returns the given stats array."""
+    """Return a CocoEvaluator mock that returns the given stats array.
+
+    Stats list must have exactly 10 elements matching _summarizeKps() output shape.
+    """
+    assert len(stats) == 10, f"_make_evaluator_mock: expected 10 stats, got {len(stats)}"
     evaluator = MagicMock(name="evaluator")
     evaluator.coco_eval = {"keypoints": MagicMock(stats=np.array(stats, dtype=np.float32))}
     return evaluator
@@ -209,7 +213,7 @@ class TestCompute:
 
     def test_returns_correct_stat_keys(self) -> None:
         """Compute() returns dict with map, map_50, map_75, mar keys."""
-        evaluator = _make_evaluator_mock([0.5, 0.7, 0.4, -1.0, -1.0, 0.6])
+        evaluator = _make_evaluator_mock([0.5, 0.7, 0.4, -1.0, -1.0, 0.6, -1.0, -1.0, -1.0, -1.0])
         metric = MetricKeypointOKS(_make_coco_gt())
         with patch("rfdetr.evaluation.keypoint_oks.CocoEvaluator", return_value=evaluator):
             result = metric.compute()
@@ -217,7 +221,7 @@ class TestCompute:
 
     def test_maps_stats_indices_to_dict_keys(self) -> None:
         """Compute() maps stats[0,1,2,5] to map, map_50, map_75, mar."""
-        evaluator = _make_evaluator_mock([0.42, 0.72, 0.31, -1.0, -1.0, 0.55])
+        evaluator = _make_evaluator_mock([0.42, 0.72, 0.31, -1.0, -1.0, 0.55, -1.0, -1.0, -1.0, -1.0])
         metric = MetricKeypointOKS(_make_coco_gt())
         with patch("rfdetr.evaluation.keypoint_oks.CocoEvaluator", return_value=evaluator):
             result = metric.compute()
@@ -226,20 +230,23 @@ class TestCompute:
         assert result["map_75"] == pytest.approx(0.31)
         assert result["mar"] == pytest.approx(0.55)
 
-    def test_returns_minus_one_for_short_stats(self) -> None:
-        """Compute() returns -1.0 for any stat index beyond the stats array length."""
-        evaluator = _make_evaluator_mock([0.3])
+    def test_raises_on_wrong_stats_shape(self) -> None:
+        """Compute() raises AssertionError when stats array is not shape (10,).
+
+        _summarizeKps() always returns (10,); a shape mismatch signals a pycocotools contract violation (e.g. wrong
+        faster_coco_eval version) and must not silently produce incorrect metric values via index-out-of-bounds sentinel
+        fallback.
+        """
+        evaluator = MagicMock(name="evaluator")
+        evaluator.coco_eval = {"keypoints": MagicMock(stats=np.array([0.3], dtype=np.float32))}
         metric = MetricKeypointOKS(_make_coco_gt())
         with patch("rfdetr.evaluation.keypoint_oks.CocoEvaluator", return_value=evaluator):
-            result = metric.compute()
-        assert result["map"] == pytest.approx(0.3)
-        assert result["map_50"] == pytest.approx(-1.0)
-        assert result["map_75"] == pytest.approx(-1.0)
-        assert result["mar"] == pytest.approx(-1.0)
+            with pytest.raises(AssertionError, match="Expected coco keypoint stats shape"):
+                metric.compute()
 
     def test_calls_synchronize_and_accumulate(self) -> None:
         """Compute() calls synchronize_between_processes() and accumulate() on the evaluator."""
-        evaluator = _make_evaluator_mock([0.5, 0.7, 0.4, -1.0, -1.0, 0.6])
+        evaluator = _make_evaluator_mock([0.5, 0.7, 0.4, -1.0, -1.0, 0.6, -1.0, -1.0, -1.0, -1.0])
         metric = MetricKeypointOKS(_make_coco_gt())
         with patch("rfdetr.evaluation.keypoint_oks.CocoEvaluator", return_value=evaluator):
             metric.compute()
@@ -249,7 +256,7 @@ class TestCompute:
     def test_constructs_evaluator_with_metric_params(self) -> None:
         """Compute() passes max_dets and keypoint_oks_sigmas to CocoEvaluator."""
         coco_gt = _make_coco_gt()
-        evaluator = _make_evaluator_mock([0.5, 0.7, 0.4, -1.0, -1.0, 0.6])
+        evaluator = _make_evaluator_mock([0.5, 0.7, 0.4, -1.0, -1.0, 0.6, -1.0, -1.0, -1.0, -1.0])
         metric = MetricKeypointOKS(coco_gt, keypoint_oks_sigmas=[0.05, 0.1], max_dets=100)
         with patch("rfdetr.evaluation.keypoint_oks.CocoEvaluator", return_value=evaluator) as cls:
             metric.compute()
@@ -263,7 +270,7 @@ class TestCompute:
 
     def test_replays_each_batch_as_separate_evaluator_update(self) -> None:
         """Compute() calls evaluator.update() once per accumulated batch."""
-        evaluator = _make_evaluator_mock([0.5, 0.7, 0.4, -1.0, -1.0, 0.6])
+        evaluator = _make_evaluator_mock([0.5, 0.7, 0.4, -1.0, -1.0, 0.6, -1.0, -1.0, -1.0, -1.0])
         metric = MetricKeypointOKS(_make_coco_gt())
         metric.update(_make_predictions(image_id=1))
         metric.update(_make_predictions(image_id=2))
@@ -273,7 +280,7 @@ class TestCompute:
 
     def test_forwards_correct_image_id_to_evaluator(self) -> None:
         """Compute() passes predictions with the correct image_id to the evaluator."""
-        evaluator = _make_evaluator_mock([0.5, 0.7, 0.4, -1.0, -1.0, 0.6])
+        evaluator = _make_evaluator_mock([0.5, 0.7, 0.4, -1.0, -1.0, 0.6, -1.0, -1.0, -1.0, -1.0])
         metric = MetricKeypointOKS(_make_coco_gt())
         metric.update(_make_predictions(image_id=7))
         with patch("rfdetr.evaluation.keypoint_oks.CocoEvaluator", return_value=evaluator):
@@ -283,7 +290,7 @@ class TestCompute:
 
     def test_skips_evaluator_update_when_no_predictions(self) -> None:
         """Compute() does not call evaluator.update() when no batches accumulated."""
-        evaluator = _make_evaluator_mock([0.5, 0.7, 0.4, -1.0, -1.0, 0.6])
+        evaluator = _make_evaluator_mock([0.5, 0.7, 0.4, -1.0, -1.0, 0.6, -1.0, -1.0, -1.0, -1.0])
         metric = MetricKeypointOKS(_make_coco_gt())
         with patch("rfdetr.evaluation.keypoint_oks.CocoEvaluator", return_value=evaluator):
             metric.compute()
@@ -294,7 +301,7 @@ class TestCompute:
 
         Proves the shared coco_gt reference is not mutated between calls.
         """
-        evaluator = _make_evaluator_mock([0.42, 0.72, 0.31, -1.0, -1.0, 0.55])
+        evaluator = _make_evaluator_mock([0.42, 0.72, 0.31, -1.0, -1.0, 0.55, -1.0, -1.0, -1.0, -1.0])
         metric = MetricKeypointOKS(_make_coco_gt())
         metric.update(_make_predictions(image_id=1))
         with patch("rfdetr.evaluation.keypoint_oks.CocoEvaluator", return_value=evaluator):
@@ -312,7 +319,7 @@ class TestCompute:
     )
     def test_compute_accepts_arbitrary_keypoint_counts(self, sigmas: list[float] | None) -> None:
         """Compute() passes any keypoint_oks_sigmas length to CocoEvaluator without restriction."""
-        evaluator = _make_evaluator_mock([0.5, 0.7, 0.4, -1.0, -1.0, 0.6])
+        evaluator = _make_evaluator_mock([0.5, 0.7, 0.4, -1.0, -1.0, 0.6, -1.0, -1.0, -1.0, -1.0])
         metric = MetricKeypointOKS(_make_coco_gt(), keypoint_oks_sigmas=sigmas)
         with patch("rfdetr.evaluation.keypoint_oks.CocoEvaluator", return_value=evaluator) as cls:
             metric.compute()
@@ -330,9 +337,10 @@ class TestOKSValues:
     Each test uses a single annotation and a single prediction so that
     expected mAP can be derived by hand:
 
-      OKS = exp(-d² / (2 * s² * σ²))
+      OKS = exp(-d² / (8 * σ² * s²))
 
     where d = Euclidean pixel distance, s = sqrt(GT area), σ = OKS sigma.
+    The 8× factor comes from pycocotools: vars = (2σ)², e = d² / (vars * s² * 2).
 
     All tests use 1 keypoint, GT at (50, 50), area = 2500.0 (s = 50.0),
     and sigma = 0.05 (default for custom keypoint counts via

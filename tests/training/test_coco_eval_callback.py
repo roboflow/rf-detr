@@ -445,7 +445,7 @@ class TestKeypointCocoEvalRouting:
         cb.setup(trainer, module, stage="fit")
 
         evaluator = MagicMock(name="keypoint_coco_eval")
-        cb._get_or_create_keypoint_coco_evaluator = MagicMock(return_value=evaluator)  # type: ignore[method-assign]
+        cb._get_or_create_keypoint_oks_metric = MagicMock(return_value=evaluator)  # type: ignore[method-assign]
         outputs = {
             "results": [
                 {
@@ -458,7 +458,7 @@ class TestKeypointCocoEvalRouting:
             "targets": [{"image_id": torch.tensor([12])}],
         }
 
-        cb._update_keypoint_coco_eval(trainer, outputs, split="val")
+        cb._update_keypoint_oks_metric(trainer, outputs, split="val")
 
         evaluator.update.assert_called_once()
         predictions = evaluator.update.call_args.args[0]
@@ -537,7 +537,7 @@ class TestKeypointCocoEvalRouting:
         keypoint_metric.compute.assert_called_once()
 
     def test_keypoint_oks_metric_created_with_correct_args(self) -> None:
-        """_get_or_create_keypoint_coco_evaluator must construct MetricKeypointOKS with coco_gt and sigmas."""
+        """_get_or_create_keypoint_oks_metric must construct MetricKeypointOKS with coco_api and sigmas."""
         cb = COCOEvalCallback(max_dets=500, keypoint_oks_sigmas=[0.05])
         dataset = MagicMock(name="dataset")
         datamodule = MagicMock()
@@ -551,7 +551,7 @@ class TestKeypointCocoEvalRouting:
             patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", return_value=coco_api),
             patch("rfdetr.training.callbacks.coco_eval.MetricKeypointOKS") as oks_metric_cls,
         ):
-            result = cb._get_or_create_keypoint_coco_evaluator(trainer, split="val")
+            result = cb._get_or_create_keypoint_oks_metric(trainer, split="val")
 
         assert result is oks_metric_cls.return_value
         oks_metric_cls.assert_called_once_with(coco_api, keypoint_oks_sigmas=[0.05], max_dets=500)
@@ -580,7 +580,7 @@ class TestKeypointCocoEvalRouting:
             patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", side_effect=_get_coco_api),
             patch("rfdetr.training.callbacks.coco_eval.MetricKeypointOKS") as oks_metric_cls,
         ):
-            cb._get_or_create_keypoint_coco_evaluator(trainer, split="train")
+            cb._get_or_create_keypoint_oks_metric(trainer, split="train")
 
         assert oks_metric_cls.call_args.args[0] is train_coco_api
 
@@ -608,7 +608,7 @@ class TestKeypointCocoEvalRouting:
             patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", side_effect=_get_coco_api),
             patch("rfdetr.training.callbacks.coco_eval.MetricKeypointOKS") as oks_metric_cls,
         ):
-            cb._get_or_create_keypoint_coco_evaluator(trainer, split="val_ema")
+            cb._get_or_create_keypoint_oks_metric(trainer, split="val_ema")
 
         assert oks_metric_cls.call_args.args[0] is val_coco_api
 
@@ -627,7 +627,7 @@ class TestKeypointCocoEvalRouting:
             patch("rfdetr.training.callbacks.coco_eval.MetricKeypointOKS") as oks_metric_cls,
             patch("rfdetr.training.callbacks.coco_eval.logger.warning") as warning,
         ):
-            result = cb._get_or_create_keypoint_coco_evaluator(trainer, split="train")
+            result = cb._get_or_create_keypoint_oks_metric(trainer, split="train")
 
         assert result is oks_metric_cls.return_value
         oks_metric_cls.assert_called_once()
