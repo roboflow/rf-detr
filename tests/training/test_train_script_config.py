@@ -6,7 +6,6 @@
 """Tests for the dedicated parquet training script config."""
 
 import pytest
-
 from rfdetr.train import RFDETRParquetTrainingConfig
 
 

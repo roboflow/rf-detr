@@ -38,23 +38,23 @@ Use `_reference/RTDETRv2/src/rtdetrv2/tools/train_from_datsetrecord_with_bbox.py
 Key ideas to port and simplify for RF-DETR:
 
 - `resolve_dataset_root(...)`
-  - accepts either a local dataset directory or an HF dataset repo id;
-  - uses `huggingface_hub.snapshot_download(repo_type="dataset")` for repo ids;
-  - returns a local root containing parquet files.
+    - accepts either a local dataset directory or an HF dataset repo id;
+    - uses `huggingface_hub.snapshot_download(repo_type="dataset")` for repo ids;
+    - returns a local root containing parquet files.
 - `detect_layout(...)`
-  - supports Hugging Face-style flat layout: `<root>/data/train-*.parquet`;
-  - supports split-subdirectory layout: `<root>/train/*.parquet`.
+    - supports Hugging Face-style flat layout: `<root>/data/train-*.parquet`;
+    - supports split-subdirectory layout: `<root>/train/*.parquet`.
 - `resolve_parquet_paths(...)`
-  - for RF-DETR, only needs to return the train parquet directory and optional `train` split prefix.
+    - for RF-DETR, only needs to return the train parquet directory and optional `train` split prefix.
 - `DatasetRecordWithBBoxParquetDataset`
-  - indexes parquet files from metadata only;
-  - caches only the current parquet file table;
-  - validates rows as `DatasetRecordWithBBox`;
-  - expands each document row into page-level samples via `get_page_images_with_bboxes()`;
+    - indexes parquet files from metadata only;
+    - caches only the current parquet file table;
+    - validates rows as `DatasetRecordWithBBox`;
+    - expands each document row into page-level samples via `get_page_images_with_bboxes()`;
 - retries invalid rows or rows with no usable pages according to code defaults;
-  - returns a list of page samples per row.
+    - returns a list of page samples per row.
 - `FlattenPageBatchCollateFunction`
-  - flattens row samples into a normal image batch.
+    - flattens row samples into a normal image batch.
 
 RF-DETR's implementation should adapt these concepts to RF-DETR's target format and existing collate function.
 
@@ -197,8 +197,7 @@ Add `src/rfdetr/datasets/parquet_bbox.py`.
 Core class:
 
 ```python
-class DatasetRecordWithBBoxParquetDataset(torch.utils.data.Dataset):
-    ...
+class DatasetRecordWithBBoxParquetDataset(torch.utils.data.Dataset): ...
 ```
 
 Responsibilities:
@@ -207,8 +206,8 @@ Responsibilities:
 2. Use `pyarrow.parquet.ParquetFile(...).metadata.num_rows` to index file offsets without loading all data.
 3. Resolve global row index to `(file_idx, local_idx)`.
 4. Cache the current parquet table only:
-   - when the sampler moves to a different file, read that file;
-   - keep only one file in memory per worker.
+    - when the sampler moves to a different file, read that file;
+    - keep only one file in memory per worker.
 5. Convert row dictionaries into page-level samples.
 6. Apply RF-DETR image/target transforms per page sample.
 7. Return `list[tuple[Image.Image | Tensor, dict]]` from `__getitem__`.
@@ -234,10 +233,10 @@ Fallback path:
 - read `row["GroundTruthPageImages"]` as a list of PIL-compatible page images;
 - read `row["GroundTruthBboxOnPageImages"]` as a dict or JSON string;
 - for each page index:
-  - accept page keys as either `int` or `str`;
-  - convert the image to RGB PIL;
-  - get the page bbox list;
-  - build target tensors.
+    - accept page keys as either `int` or `str`;
+    - convert the image to RGB PIL;
+    - get the page bbox list;
+    - build target tensors.
 
 Pages without bboxes should be dropped for training. If a row produces no usable page samples, retry within the same
 parquet file or fail with a clear error after the configured retry limit in code.
@@ -248,13 +247,13 @@ For each page sample, build:
 
 ```python
 target = {
-    "boxes": torch.float32[N, 4],   # xyxy pixel coordinates
-    "labels": torch.int64[N],       # contiguous RF-DETR label ids
+    "boxes": torch.float32[N, 4],  # xyxy pixel coordinates
+    "labels": torch.int64[N],  # contiguous RF-DETR label ids
     "image_id": torch.int64[1],
     "area": torch.float32[N],
     "iscrowd": torch.int64[N],
-    "orig_size": torch.int64[2],    # [height, width]
-    "size": torch.int64[2],         # [height, width]
+    "orig_size": torch.int64[2],  # [height, width]
+    "size": torch.int64[2],  # [height, width]
 }
 ```
 
@@ -271,7 +270,7 @@ Labels:
 - RF-DETR loss expects contiguous label ids;
 - the recommended config is therefore to use contiguous keys starting at `0`;
 - if non-contiguous category ids are supplied, build a deterministic `category_id -> label_id` mapping in sorted
-  category-id order and set `class_names` from that same order.
+    category-id order and set `class_names` from that same order.
 
 Image IDs:
 
@@ -398,30 +397,34 @@ Invalid boxes should be skipped after clipping, not crash training.
 Add focused tests:
 
 1. `tests/training/test_train_script_config.py`
-   - YAML writes default parquet config;
-   - YAML reads repo-backed config;
-   - YAML reads local directory config;
-   - config maps to `dataset_file="parquet_bbox"`;
-   - missing both `dataset_dir` and `dataset_repo_id` fails validation;
-   - empty `label_mapping` fails validation;
-   - label mapping is converted into `model.num_classes` and `train.class_names`.
+
+    - YAML writes default parquet config;
+    - YAML reads repo-backed config;
+    - YAML reads local directory config;
+    - config maps to `dataset_file="parquet_bbox"`;
+    - missing both `dataset_dir` and `dataset_repo_id` fails validation;
+    - empty `label_mapping` fails validation;
+    - label mapping is converted into `model.num_classes` and `train.class_names`.
 
 2. `tests/datasets/test_parquet_bbox.py`
-   - writes a tiny parquet file with two document rows;
-   - verifies parquet metadata indexing does not load all rows during initialization;
-   - loads one row and expands multiple page samples;
-   - converts `bbox` and `ltrb` to xyxy tensors;
-   - drops invalid boxes;
-   - supports string and integer page keys;
-   - verifies `FlattenPageSamplesCollate` delegates to RF-DETR base collate.
+
+    - writes a tiny parquet file with two document rows;
+    - verifies parquet metadata indexing does not load all rows during initialization;
+    - loads one row and expands multiple page samples;
+    - converts `bbox` and `ltrb` to xyxy tensors;
+    - drops invalid boxes;
+    - supports string and integer page keys;
+    - verifies `FlattenPageSamplesCollate` delegates to RF-DETR base collate.
 
 3. `tests/datasets/test_parquet_bbox_labels.py`
-   - maps explicit category ids to contiguous RF-DETR labels;
-   - rejects bbox category ids absent from `label_mapping`;
-   - verifies stable class-name order by category id.
+
+    - maps explicit category ids to contiguous RF-DETR labels;
+    - rejects bbox category ids absent from `label_mapping`;
+    - verifies stable class-name order by category id.
 
 4. Existing data module tests
-   - add a narrow test that `RFDETRDataModule` wraps collate and uses shard sampler for `dataset_file="parquet_bbox"`.
+
+    - add a narrow test that `RFDETRDataModule` wraps collate and uses shard sampler for `dataset_file="parquet_bbox"`.
 
 Verification commands:
 
@@ -449,7 +452,7 @@ pre-commit run --all-files
 ## Open Questions
 
 1. How should the training path bypass RF-DETR's current COCO validation callback cleanly? Dedicated evals are out of
-   scope, so the implementation should avoid constructing validation/evaluation metadata.
+    scope, so the implementation should avoid constructing validation/evaluation metadata.
 2. Should training drop pages without boxes? Proposed: yes by default, matching the RT-DETR reference.
 3. Should the row parser require `docling-eval`? Proposed: no; use it opportunistically and keep a direct parser
-   fallback.
+    fallback.
