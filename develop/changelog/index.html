@@ -2296,6 +2296,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Fixed <code>import rfdetr</code> failing on NumPy 2.x when a transitive dependency references the removed <code>np.complex_</code> alias (<a href="https://github.com/roboflow/rf-detr/pull/1064">#1064</a>)</li>
+<li>Fixed spurious "Keypoint class-logit boost has N classes but detection head has M" warning on custom (non-Roboflow) keypoint datasets: <code>_align_num_classes_from_dataset</code> now zero-pads <code>num_keypoints_per_class</code> when auto-adjusting <code>num_classes</code> beyond the schema length (<a href="https://github.com/roboflow/rf-detr/pull/1113">#1113</a>)</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <p>-</p>
