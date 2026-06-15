@@ -1230,6 +1230,8 @@ class RFDETR:
             logger.debug("Could not auto-detect num_classes from dataset '%s': %s", dataset_dir, exc)
             return
 
+        # Hoist so both branches below can reference the schema without re-fetching.
+        keypoint_schema: list[int] = []
         if self.model_config.use_grouppose_keypoints:
             # Older configs may omit the schema; absence means no schema-based class-count expansion.
             keypoint_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
@@ -1266,13 +1268,11 @@ class RFDETR:
             # Without this, _aggregate_keypoint_class_logits emits a one-time mismatch
             # warning per model instance and the config state is inconsistent with the
             # detection head width.
-            if self.model_config.use_grouppose_keypoints:
-                current_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
-                if current_schema and len(current_schema) < dataset_num_classes:
-                    padded_schema = current_schema + [0] * (dataset_num_classes - len(current_schema))
-                    self.model_config.num_keypoints_per_class = padded_schema
-                    if model_args is not None:
-                        model_args.num_keypoints_per_class = padded_schema
+            if keypoint_schema and len(keypoint_schema) < dataset_num_classes:
+                padded_schema = keypoint_schema + [0] * (dataset_num_classes - len(keypoint_schema))
+                self.model_config.num_keypoints_per_class = padded_schema
+                if model_args is not None:
+                    model_args.num_keypoints_per_class = padded_schema
         else:
             logger.warning(
                 "Dataset '%s' has %d classes but model was initialized with num_classes=%d. "
@@ -1284,6 +1284,14 @@ class RFDETR:
                 model_num_classes,
                 dataset_num_classes,
             )
+            # Also pad schema when the user-configured num_classes exceeds the schema length,
+            # to prevent the _aggregate_keypoint_class_logits mismatch warning in this path too.
+            if keypoint_schema and len(keypoint_schema) < model_num_classes:
+                padded_schema = keypoint_schema + [0] * (model_num_classes - len(keypoint_schema))
+                self.model_config.num_keypoints_per_class = padded_schema
+                model_args = getattr(self.model, "args", None)
+                if model_args is not None:
+                    model_args.num_keypoints_per_class = padded_schema
 
     @staticmethod
     def _roboflow_keypoint_annotation_path(dataset_dir: str) -> Path | None:
