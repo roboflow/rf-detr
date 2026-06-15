@@ -40,7 +40,7 @@ model.train(
 )
 ```
 
-To disable optional training augmentation: `aug_config={}`. Omitting it uses the torchvision-native default horizontal flip at 50%.
+To disable all optional training augmentation including the torchvision default horizontal flip: `aug_config={}`.
 
 ## Built-in Presets
 

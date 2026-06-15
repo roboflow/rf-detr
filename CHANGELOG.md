@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Default dataset augmentations now use torchvision-native transforms; non-empty custom `aug_config` dictionaries use the optional Albumentations integration via `pip install 'rfdetr[augmentation]'`. The `[train]` extra no longer installs Albumentations or Kornia; GPU-side augmentation remains available through `pip install 'rfdetr[kornia]'`.
+- Default dataset augmentations now use torchvision-native transforms; non-empty custom `aug_config` dictionaries use the optional Albumentations integration via `pip install 'rfdetr[augmentation]'`. The `[train]` extra no longer installs Albumentations or Kornia; GPU-side augmentation remains available through `pip install 'rfdetr[kornia]'`. ([#1112](https://github.com/roboflow/rf-detr/pull/1112))
 
 ### Deprecated
 
