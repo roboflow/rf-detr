@@ -518,8 +518,8 @@ class TestDetectDevice:
     def test_returns_accelerator_when_runtime_available(self, mock_torch: MagicMock) -> None:
         """Returns the accelerator when it passes the runtime availability check."""
 
-        def fake_current_accelerator(check_available: bool = False) -> "torch.device":
-            return torch.device("cuda")
+        def fake_current_accelerator(check_available: bool = False) -> "torch.device | None":
+            return torch.device("cuda") if check_available else None
 
         mock_torch.accelerator.current_accelerator = fake_current_accelerator
         assert _detect_device() == "cuda"
@@ -545,6 +545,25 @@ class TestDetectDevice:
         mock_torch.accelerator.current_accelerator = legacy_current_accelerator
         mock_torch.accelerator.is_available.return_value = True
         assert _detect_device() == "cuda"
+
+    @patch("rfdetr.config.torch")
+    def test_legacy_signature_runtime_error_on_fallback_returns_cpu(self, mock_torch: MagicMock) -> None:
+        """Outer RuntimeError handler catches error from legacy fallback call.
+
+        Control-flow: ``current_accelerator(check_available=True)`` raises ``TypeError`` (inner except),
+        then ``current_accelerator()`` raises ``RuntimeError`` (outer except catches) → ``"cpu"``.
+        """
+        call_count = 0
+
+        def raises_on_fallback(**kwargs: object) -> "torch.device":
+            nonlocal call_count
+            call_count += 1
+            if "check_available" in kwargs:
+                raise TypeError("unexpected keyword argument 'check_available'")
+            raise RuntimeError("NVML error on legacy fallback")
+
+        mock_torch.accelerator.current_accelerator = raises_on_fallback
+        assert _detect_device() == "cpu"
 
 
 class TestPretrainWeightsCompatibilityWarning:

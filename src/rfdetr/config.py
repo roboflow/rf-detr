@@ -35,7 +35,7 @@ def _detect_device() -> str:
     accelerator, so the default CUDA wheel on a machine without an NVIDIA driver yields ``"cuda"`` and every model build
     crashes with "Found no NVIDIA driver".  The runtime check is NVML-backed and still avoids creating a CUDA context.
     Builds whose ``current_accelerator`` predates the ``check_available`` kwarg get the same runtime verification via
-    :func:`torch.accelerator.is_available`.
+    ``torch.accelerator.is_available``.
     """
     accelerator = getattr(torch, "accelerator", None)
     current_accelerator = getattr(accelerator, "current_accelerator", None)
