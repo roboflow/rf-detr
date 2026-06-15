@@ -613,6 +613,39 @@ class TestFromCheckpointNumClassesProvenance:
         )
         assert any("Using the model's configured value" in record.message for record in caplog.records)
 
+    def test_explicit_default_num_classes_via_from_checkpoint_integrated(
+        self,
+        two_class_checkpoint: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """from_checkpoint(path, num_classes=<default>) pins head via the integrated code path.
+
+        Unlike test_explicit_default_num_classes_pins_head which simulates the explicit-default scenario via post-
+        construction assignment, this test calls from_checkpoint directly with num_classes=default_nc.  A regression in
+        how from_checkpoint passes num_classes into the constructor would be caught here but not by the proxy-based
+        test.
+        """
+        default_nc = RFDETRSmall._model_config_class.model_fields["num_classes"].default
+        model = RFDETR.from_checkpoint(two_class_checkpoint, num_classes=default_nc)
+
+        assert model.model_config.num_classes == default_nc
+        assert "num_classes" in model.model_config.model_fields_set, (
+            "from_checkpoint with explicit num_classes must keep it in model_fields_set; "
+            "only checkpoint-derived num_classes should be cleared."
+        )
+
+        monkeypatch.setattr(RFDETR, "_detect_num_classes_for_training", staticmethod(lambda *a, **k: 5))
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            model._align_num_classes_from_dataset("<five-class-dataset>")
+
+        assert model.model_config.num_classes == default_nc, (
+            "Head must remain pinned at default_nc after alignment; "
+            "from_checkpoint-supplied num_classes must not be silently overridden."
+        )
+        assert any("Using the model's configured value" in record.message for record in caplog.records)
+
     def test_equal_class_count_does_not_rebuild_head(
         self, two_class_checkpoint: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

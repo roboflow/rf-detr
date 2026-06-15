@@ -1869,6 +1869,7 @@ class TestRFDETRTrainNumClassesAutoDetect:
         self,
         caplog,
         mock_self,
+        monkeypatch,
         patch_lit,
     ):
         """An explicitly-passed num_classes is preserved even when it equals the default.
@@ -1887,28 +1888,23 @@ class TestRFDETRTrainNumClassesAutoDetect:
 
         p_mod, p_dm, p_bt, *_ = patch_lit
         load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES)
+        monkeypatch.setattr(detr_logger, "propagate", True)
         with p_mod, p_dm, p_bt, load_classes_patch:
-            previous_propagate = detr_logger.propagate
-            detr_logger.propagate = True
-            try:
-                with caplog.at_level("WARNING", logger="rf-detr"):
-                    RFDETR.train(mock_self)
-            finally:
-                detr_logger.propagate = previous_propagate
+            with caplog.at_level("WARNING", logger="rf-detr"):
+                RFDETR.train(mock_self)
 
         assert mock_self.model_config.num_classes == default_nc
-        assert any(
-            record.levelname == "WARNING"
-            and f"Dataset '{dataset_dir}' has 4 classes" in record.message
-            and f"num_classes={default_nc}" in record.message
-            for record in caplog.records
+        expected_fragment = (
+            f"Dataset '{dataset_dir}' has 4 classes but model was initialized with num_classes={default_nc}"
         )
+        assert any(record.levelname == "WARNING" and expected_fragment in record.message for record in caplog.records)
 
     def test_preserves_explicit_non_default_num_classes_when_dataset_differs(
         self,
         tmp_path,
         caplog,
         mock_self,
+        monkeypatch,
         patch_lit,
     ):
         """When user explicitly set a non-default num_classes, it is preserved.
@@ -1922,22 +1918,14 @@ class TestRFDETRTrainNumClassesAutoDetect:
 
         p_mod, p_dm, p_bt, *_ = patch_lit
         load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES)
+        monkeypatch.setattr(detr_logger, "propagate", True)
         with p_mod, p_dm, p_bt, load_classes_patch:
-            previous_propagate = detr_logger.propagate
-            detr_logger.propagate = True
-            try:
-                with caplog.at_level("WARNING", logger="rf-detr"):
-                    RFDETR.train(mock_self)
-            finally:
-                detr_logger.propagate = previous_propagate
+            with caplog.at_level("WARNING", logger="rf-detr"):
+                RFDETR.train(mock_self)
 
         assert mock_self.model_config.num_classes == 10
-        assert any(
-            record.levelname == "WARNING"
-            and f"Dataset '{dataset_dir}' has 4 classes" in record.message
-            and "num_classes=10" in record.message
-            for record in caplog.records
-        )
+        expected_fragment = f"Dataset '{dataset_dir}' has 4 classes but model was initialized with num_classes=10"
+        assert any(record.levelname == "WARNING" and expected_fragment in record.message for record in caplog.records)
 
     def test_auto_adjust_syncs_model_args_num_classes(self, mock_self, patch_lit):
         """When auto-adjusting, keep ModelContext args.num_classes in sync."""
