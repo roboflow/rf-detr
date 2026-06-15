@@ -84,7 +84,6 @@ def _plot_columns_on_axes(ax: Any, df: Any, metric_columns: list[str]) -> None:
         ax.plot(
             df["epoch"],
             df[column],
-            marker="o",
             linewidth=1.7,
             linestyle=_line_style_for_split(split),
             color=metric_colors[metric_name],
