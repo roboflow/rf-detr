@@ -11,7 +11,7 @@ authors = [
     {name = "Roboflow, Inc", email = "develop@roboflow.com"}
 ]
 license = {text = "Apache License 2.0"}
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -44,6 +44,8 @@ dependencies = [
     "pydantic>=2.0,<3",               # ModelConfig / TrainConfig validation
     "supervision==0.29.0rc0",       # inference output (Detections, Masks)
     "pyDeprecate>=0.9,<0.10",             # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
+    "docling-eval>=1.4.1",
+    "docling>=2.102.1",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +54,7 @@ lora = [
 ]
 train = [
     "peft",                            # LoRA backbone fine-tuning (available during training)
+    "jsonargparse[signatures]>=4.27.7",  # Required by pytorch_lightning CLI
     "pytorch_lightning>=2.6,<3,!=2.6.2,!=2.6.3",  # Keep exclusions; see issue #1016 / related advisory for why 2.6.2 and 2.6.3 are blocked
     "torchmetrics[detection]>=1.2",
     "faster-coco-eval>=1.7.2",
