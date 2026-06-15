@@ -26,10 +26,9 @@ Transformers v5 API changes vs v4
     the config is accessed via ``self.config`` internally.
 
 Helper functions copied locally:
-    ``get_aligned_output_features_output_indices`` and
-    ``find_pruneable_heads_and_indices`` were removed from the transformers v5 public API.  Private copies
-    (``_get_aligned_output_features_output_indices`` and ``_find_pruneable_heads_and_indices``)
-    are kept in this module.
+    ``get_aligned_output_features_output_indices`` and ``find_pruneable_heads_and_indices`` were removed
+    from the transformers v5 public API.  Private copies (``_get_aligned_output_features_output_indices``
+    and ``_find_pruneable_heads_and_indices``) are kept in this module.
 """
 
 import collections.abc
@@ -1058,10 +1057,11 @@ DINOV2_WITH_REGISTERS_INPUTS_DOCSTRING = r"""
         return_dict (`bool`, *optional*):
             Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
 """
+
+
 @add_start_docstrings(
     """Dinov2WithRegisters Model transformer with an image classification head on top (a linear layer on top of the
-    final hidden state of the [CLS] token) e.g. for ImageNet."""
-                                                                ,
+    final hidden state of the [CLS] token) e.g. for ImageNet.""",
     DINOV2_WITH_REGISTERS_START_DOCSTRING,
 )
 class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegistersPreTrainedModel):
@@ -1175,9 +1175,10 @@ class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegist
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+
 @add_start_docstrings(
-    """Dinov2WithRegisters backbone, to be used with frameworks like DETR and MaskFormer."""
-                                                                                            ,
+    """Dinov2WithRegisters backbone, to be used with frameworks like DETR and MaskFormer.""",
     DINOV2_WITH_REGISTERS_START_DOCSTRING,
 )
 class WindowedDinov2WithRegistersBackbone(WindowedDinov2WithRegistersPreTrainedModel, BackboneMixin):
