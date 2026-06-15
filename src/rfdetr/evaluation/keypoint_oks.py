@@ -7,12 +7,45 @@
 
 from typing import Any
 
+import torch
+
 from rfdetr.evaluation.coco_eval import CocoEvaluator
 
-# Default maximum detections per image for keypoint evaluation.
-# Shared between MetricKeypointOKS and COCOEvalCallback so the value has one source of truth.
-# Note: for keypoint iou_type the underlying COCO evaluator overrides maxDets to [20]
-# regardless of this value.
+
+def _sanitize_preds(predictions: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    """Return a copy of *predictions* with all tensors detached and moved to CPU.
+
+    Prevents callers from inadvertently retaining CUDA memory or autograd graphs
+    between :meth:`MetricKeypointOKS.update` calls.  Non-tensor values are kept as-is.
+
+    Args:
+        predictions: Per-image prediction dict mapping ``image_id`` to a dict of
+            tensor-valued fields (``boxes``, ``scores``, ``labels``, ``keypoints``).
+
+    Returns:
+        New dict with the same structure; every :class:`torch.Tensor` value is
+        replaced by its ``.detach().cpu()`` copy.
+
+    Examples:
+        >>> import torch
+        >>> preds = {1: {"scores": torch.tensor([0.9], device="cpu"), "label": 2}}
+        >>> sanitized = _sanitize_preds(preds)
+        >>> sanitized[1]["label"]
+        2
+    """
+    return {
+        image_id: {
+            key: value.detach().cpu() if isinstance(value, torch.Tensor) else value for key, value in preds.items()
+        }
+        for image_id, preds in predictions.items()
+    }
+
+
+# Default ``max_dets`` per image used by :class:`COCOEvalCallback` and
+# :class:`MetricKeypointOKS`.  Governs bounding-box and segmentation evaluation
+# where max_dets has an effect; for keypoint evaluation the underlying COCO
+# evaluator unconditionally overrides maxDets to ``[20]`` regardless of this value
+# — this constant has no effect on keypoint AP/AR.
 DEFAULT_KEYPOINT_MAX_DETS = 500
 
 # Keys returned by :meth:`MetricKeypointOKS.compute`.
@@ -86,8 +119,9 @@ class MetricKeypointOKS:
         # Using a list preserves all predictions when the same image_id appears in
         # multiple batches (e.g. DDP DistributedSampler padding), matching the
         # original CocoEvaluator.update()-per-batch append semantics.
-        # Note: raw per-batch tensors are buffered here until compute(); for large
-        # validation sets this accumulates ~400 MB of resident memory per rank.
+        # Note: tensors are sanitized (detached + CPU) in update() before buffering,
+        # so no CUDA graphs or autograd history are retained; for large validation
+        # sets this still accumulates ~400 MB of resident CPU memory per rank.
         # Future optimisation: convert to compact COCO result dicts in update() and
         # replay those in compute() instead.
         self._batches: list[dict[int, dict[str, Any]]] = []
@@ -145,7 +179,7 @@ class MetricKeypointOKS:
             >>> metric.has_updates
             True
         """
-        self._batches.append(predictions)
+        self._batches.append(_sanitize_preds(predictions))
 
     def compute(self) -> dict[str, float]:
         """Run OKS keypoint evaluation and return metric dict.
