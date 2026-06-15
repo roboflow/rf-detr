@@ -415,12 +415,46 @@ class CocoEvaluator:
             self.coco_results[iou_type].extend(results)
 
     def synchronize_between_processes(self) -> None:
-        """Merge image IDs and COCO result records across distributed processes."""
+        """Merge image IDs and COCO result records across distributed processes.
+
+        Each image ID is assigned to exactly one rank (first rank that reports it), so
+        predictions for images that appear on multiple ranks due to
+        ``DistributedSampler(drop_last=False)`` padding are included only once.  Without
+        this deduplication, padded images produce duplicate DT entries that compete for
+        the per-image ``maxDets`` cap and bias mAP upward in early epochs then downward
+        as genuine new detections are displaced — the "peak-then-decrease" pattern.
+
+        Contract:
+            This method assumes that when the same ``image_id`` appears on multiple ranks
+            its predictions are *identical* (DDP-padding duplicates).  It is **not** safe
+            for evaluation strategies where independent predictions for the same image are
+            produced on different ranks, because only the first rank's predictions are kept
+            and the rest are silently discarded.
+
+        Single-process path:
+            When ``all_gather`` is called in a non-distributed context it returns a
+            single-element list ``[x]``, so ``rank_idx`` is always 0 and every result
+            passes the ownership check unchanged — the dedup loop is a no-op and all
+            results are preserved.  This makes the method safe for single-GPU and ONNX/TRT
+            benchmark use via :mod:`rfdetr.export.benchmark`.
+        """
         gathered_img_ids = all_gather(self.img_ids)
-        self.img_ids = sorted({image_id for rank_img_ids in gathered_img_ids for image_id in rank_img_ids})
+        # First rank to report an image_id owns it; all other ranks' predictions for
+        # that image_id are dropped (they are identical copies from DDP padding).
+        img_id_to_rank: dict[int, int] = {}
+        for rank_idx, rank_img_ids in enumerate(gathered_img_ids):
+            for img_id in rank_img_ids:
+                if img_id not in img_id_to_rank:
+                    img_id_to_rank[img_id] = rank_idx
+        self.img_ids = sorted(img_id_to_rank.keys())
         for iou_type in self.iou_types:
             gathered_results = all_gather(self.coco_results[iou_type])
-            self.coco_results[iou_type] = [result for rank_results in gathered_results for result in rank_results]
+            deduped: list[dict[str, Any]] = []
+            for rank_idx, rank_results in enumerate(gathered_results):
+                for result in rank_results:
+                    if img_id_to_rank.get(result["image_id"]) == rank_idx:
+                        deduped.append(result)
+            self.coco_results[iou_type] = deduped
 
     def accumulate(self) -> None:
         """Accumulate per-image evaluation results into mean metrics."""
