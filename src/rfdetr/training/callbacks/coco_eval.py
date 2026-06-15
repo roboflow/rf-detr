@@ -19,7 +19,14 @@ from torchmetrics.detection import MeanAveragePrecision
 
 from rfdetr.datasets import get_coco_api_from_dataset
 from rfdetr.evaluation.f1_sweep import sweep_confidence_thresholds
-from rfdetr.evaluation.keypoint_oks import MetricKeypointOKS
+from rfdetr.evaluation.keypoint_oks import (
+    DEFAULT_KEYPOINT_MAX_DETS,
+    METRIC_KEY_MAP,
+    METRIC_KEY_MAP_50,
+    METRIC_KEY_MAP_75,
+    METRIC_KEY_MAR,
+    MetricKeypointOKS,
+)
 from rfdetr.evaluation.matching import (
     build_matching_data,
     distributed_merge_matching_data,
@@ -71,7 +78,7 @@ class COCOEvalCallback(Callback):
 
     Args:
         max_dets: Maximum detections per image passed to
-            ``MeanAveragePrecision``. Defaults to 500.
+            ``MeanAveragePrecision``. Defaults to :data:`~rfdetr.evaluation.keypoint_oks.DEFAULT_KEYPOINT_MAX_DETS`.
         segmentation: When ``True``, evaluate both bbox and segm IoU using
             ``backend="faster_coco_eval"``. Defaults to ``False``.
         eval_interval: Run validation metrics every N epochs. Test metrics are
@@ -81,7 +88,7 @@ class COCOEvalCallback(Callback):
 
     def __init__(
         self,
-        max_dets: int = 500,
+        max_dets: int = DEFAULT_KEYPOINT_MAX_DETS,
         segmentation: bool = False,
         eval_interval: int = 1,
         log_per_class_metrics: bool = True,
@@ -265,7 +272,7 @@ class COCOEvalCallback(Callback):
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
         merge_matching_data(self._f1_train_local, batch_matching)
-        self._update_keypoint_coco_eval(trainer, outputs, split="train")
+        self._update_keypoint_oks_metric(trainer, outputs, split="train")
 
     def on_train_epoch_end(self, trainer: Any, pl_module: Any) -> None:
         """Compute optional train-split mAP at the end of the training epoch.
@@ -321,7 +328,7 @@ class COCOEvalCallback(Callback):
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
         merge_matching_data(self._f1_local, batch_matching)
-        self._update_keypoint_coco_eval(trainer, outputs, split="val")
+        self._update_keypoint_oks_metric(trainer, outputs, split="val")
 
         # Run EMA model separately on the same batch so that base and EMA metrics
         # are computed from independent forward passes rather than being aliases.
@@ -342,7 +349,7 @@ class COCOEvalCallback(Callback):
                 ema_results = pl_module.postprocess(ema_outputs, orig_sizes)
             ema_preds = self._convert_preds(ema_results)
             self.map_metric_ema.update(ema_preds, targets)
-            self._update_keypoint_coco_eval(
+            self._update_keypoint_oks_metric(
                 trainer,
                 {"results": ema_results, "targets": outputs["targets"]},
                 split="val_ema",
@@ -400,7 +407,7 @@ class COCOEvalCallback(Callback):
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
         merge_matching_data(self._f1_local, batch_matching)
-        self._update_keypoint_coco_eval(trainer, outputs, split="test")
+        self._update_keypoint_oks_metric(trainer, outputs, split="test")
 
     def on_test_epoch_end(self, trainer: Any, pl_module: Any) -> None:
         """Compute and log mAP and F1 under ``test/`` prefix at end of test epoch.
@@ -757,7 +764,7 @@ class COCOEvalCallback(Callback):
             return bool(update_count.detach().cpu().item() > 0)
         return True
 
-    def _get_or_create_keypoint_coco_evaluator(self, trainer: Any, split: str) -> MetricKeypointOKS | None:
+    def _get_or_create_keypoint_oks_metric(self, trainer: Any, split: str) -> MetricKeypointOKS | None:
         """Return the :class:`~rfdetr.evaluation.keypoint_oks.MetricKeypointOKS` for *split*, creating it if needed.
 
         The metric is created lazily on first access per split and reused across epochs (state is reset
@@ -810,7 +817,7 @@ class COCOEvalCallback(Callback):
         if metric is not None:
             metric.reset()
 
-    def _update_keypoint_coco_eval(self, trainer: Any, outputs: dict[str, Any], split: str) -> None:
+    def _update_keypoint_oks_metric(self, trainer: Any, outputs: dict[str, Any], split: str) -> None:
         """Accumulate batch predictions into the keypoint OKS metric.
 
         Args:
@@ -821,7 +828,7 @@ class COCOEvalCallback(Callback):
         if not self._keypoint_mode:
             return
 
-        metric = self._get_or_create_keypoint_coco_evaluator(trainer, split)
+        metric = self._get_or_create_keypoint_oks_metric(trainer, split)
         if metric is None:
             return
 
@@ -866,26 +873,38 @@ class COCOEvalCallback(Callback):
             metric_prefix: Optional string prepended to each metric name (e.g. ``"ema_"``).
         """
         metric = self._keypoint_oks_metrics.get(split)
-        if not self._keypoint_mode or metric is None or not metric.has_updates:
+        if not self._keypoint_mode or metric is None:
+            return
+        # Cross-rank vote before entering compute(): metric.compute() calls
+        # synchronize_between_processes() which issues an all_gather collective. If any
+        # rank short-circuits here without joining that collective the process group
+        # deadlocks. Use the same all_reduce(MIN) pattern as _should_compute_ema.
+        has_updates_vote = 1 if metric.has_updates else 0
+        if is_dist_avail_and_initialized():
+            flag = torch.tensor([has_updates_vote], device=getattr(pl_module, "device", "cpu"))
+            dist.all_reduce(flag, op=dist.ReduceOp.MIN)
+            has_updates_vote = int(flag.item())
+        if not has_updates_vote:
             return
 
         log_split = split if log_split is None else log_split
-        stats = metric.compute()
-        keypoint_metrics = {
-            "keypoint_map_50_95": ("map", True),
-            "keypoint_map_50": ("map_50", True),
-            "keypoint_map_75": ("map_75", False),
-            "keypoint_mAR": ("mar", False),
-        }
-        for metric_name, (stat_key, prog_bar) in keypoint_metrics.items():
-            value = stats.get(stat_key, -1.0)
-            if value < 0:
-                continue
-            log_key = f"{log_split}/{metric_prefix}{metric_name}"
-            pl_module.log(log_key, value, prog_bar=prog_bar, logger=True, on_step=False, on_epoch=True)
-            trainer.callback_metrics[log_key] = torch.tensor(value)
-
-        metric.reset()
+        try:
+            stats = metric.compute()
+            keypoint_metrics = {
+                "keypoint_map_50_95": (METRIC_KEY_MAP, True),
+                "keypoint_map_50": (METRIC_KEY_MAP_50, True),
+                "keypoint_map_75": (METRIC_KEY_MAP_75, False),
+                "keypoint_mAR": (METRIC_KEY_MAR, False),
+            }
+            for metric_name, (stat_key, prog_bar) in keypoint_metrics.items():
+                value = stats.get(stat_key, -1.0)
+                if value < 0:
+                    continue
+                log_key = f"{log_split}/{metric_prefix}{metric_name}"
+                pl_module.log(log_key, value, prog_bar=prog_bar, logger=True, on_step=False, on_epoch=True)
+                trainer.callback_metrics[log_key] = torch.tensor(value)
+        finally:
+            metric.reset()
 
     def _build_per_class_rows(
         self,

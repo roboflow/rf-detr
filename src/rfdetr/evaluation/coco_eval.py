@@ -423,6 +423,20 @@ class CocoEvaluator:
         this deduplication, padded images produce duplicate DT entries that compete for
         the per-image ``maxDets`` cap and bias mAP upward in early epochs then downward
         as genuine new detections are displaced — the "peak-then-decrease" pattern.
+
+        Contract:
+            This method assumes that when the same ``image_id`` appears on multiple ranks
+            its predictions are *identical* (DDP-padding duplicates).  It is **not** safe
+            for evaluation strategies where independent predictions for the same image are
+            produced on different ranks, because only the first rank's predictions are kept
+            and the rest are silently discarded.
+
+        Single-process path:
+            When ``all_gather`` is called in a non-distributed context it returns a
+            single-element list ``[x]``, so ``rank_idx`` is always 0 and every result
+            passes the ownership check unchanged — the dedup loop is a no-op and all
+            results are preserved.  This makes the method safe for single-GPU and ONNX/TRT
+            benchmark use via :mod:`rfdetr.export.benchmark`.
         """
         gathered_img_ids = all_gather(self.img_ids)
         # First rank to report an image_id owns it; all other ranks' predictions for

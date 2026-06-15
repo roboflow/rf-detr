@@ -9,6 +9,25 @@ from typing import Any
 
 from rfdetr.evaluation.coco_eval import CocoEvaluator
 
+# Default maximum detections per image for keypoint evaluation.
+# Shared between MetricKeypointOKS and COCOEvalCallback so the value has one source of truth.
+# Note: for keypoint iou_type the underlying COCO evaluator overrides maxDets to [20]
+# regardless of this value.
+DEFAULT_KEYPOINT_MAX_DETS = 500
+
+# Keys returned by :meth:`MetricKeypointOKS.compute`.
+# Defined as module-level constants so callers can reference them symbolically rather
+# than depending on bare string literals — guards against silent misses from future renames.
+METRIC_KEY_MAP = "map"
+METRIC_KEY_MAP_50 = "map_50"
+METRIC_KEY_MAP_75 = "map_75"
+METRIC_KEY_MAR = "mar"
+
+# Expected shape of pycocotools _summarizeKps() output.  The keypoint stats array is
+# always (10,): AP@50:95 (idx 0), AP@50 (1), AP@75 (2), AP-medium (3), AP-large (4),
+# AR@50:95 (5), AR@50 (6), AR@75 (7), AR-medium (8), AR-large (9).
+_KPS_STATS_SHAPE = (10,)
+
 
 class MetricKeypointOKS:
     """OKS keypoint mAP metric backed by CocoEvaluator.
@@ -28,15 +47,23 @@ class MetricKeypointOKS:
     When TorchMetrics ships production-quality arbitrary-keypoint support (tracked
     in upstream PR #3348), the internals of :meth:`compute` can delegate to
     ``MeanAveragePrecision(iou_type="keypoints", keypoint_format="xyv")`` without
-    any change to callers.
+    any change to callers.  Note: when migrating, ``"mar"`` will need remapping to
+    ``"mar_<max_dets>"`` as TorchMetrics uses a suffixed key name.
 
     Args:
-        coco_gt: COCO ground-truth object (any type accepted by
-            :class:`~rfdetr.evaluation.coco_eval.CocoEvaluator`).
+        coco_gt: Ground-truth COCO object.  Accepted types: :class:`faster_coco_eval.COCO`
+            or any object with a ``.dataset`` dict and optional ``.label2cat`` mapping
+            (the duck-typed surface required by :class:`~rfdetr.evaluation.coco_eval.CocoEvaluator`).
         keypoint_oks_sigmas: Per-keypoint OKS sigmas. When ``None``, falls back to
             COCO person sigmas for 17-keypoint datasets or a uniform 0.05 sigma for
             other counts.
-        max_dets: Maximum detections per image. Defaults to 500.
+        max_dets: Maximum detections per image passed to the underlying
+            :class:`~rfdetr.evaluation.coco_eval.CocoEvaluator`.  Defaults to 500.
+
+            Note:
+                For keypoint evaluation the underlying COCO evaluator overrides
+                ``maxDets`` to ``[20]`` regardless of this value — this parameter
+                is forwarded but has no effect on keypoint evaluation.
 
     Examples:
         >>> from unittest.mock import MagicMock
@@ -50,7 +77,7 @@ class MetricKeypointOKS:
         self,
         coco_gt: Any,
         keypoint_oks_sigmas: list[float] | None = None,
-        max_dets: int = 500,
+        max_dets: int = DEFAULT_KEYPOINT_MAX_DETS,
     ) -> None:
         self._coco_gt = coco_gt
         self._keypoint_oks_sigmas = keypoint_oks_sigmas
@@ -59,6 +86,10 @@ class MetricKeypointOKS:
         # Using a list preserves all predictions when the same image_id appears in
         # multiple batches (e.g. DDP DistributedSampler padding), matching the
         # original CocoEvaluator.update()-per-batch append semantics.
+        # Note: raw per-batch tensors are buffered here until compute(); for large
+        # validation sets this accumulates ~400 MB of resident memory per rank.
+        # Future optimisation: convert to compact COCO result dicts in update() and
+        # replay those in compute() instead.
         self._batches: list[dict[int, dict[str, Any]]] = []
 
     @property
@@ -127,17 +158,22 @@ class MetricKeypointOKS:
         and accumulates COCO keypoint statistics.
 
         Returns:
-            Dict with float values for keys ``"map"`` (mAP@50:95), ``"map_50"``
-            (AP@50), ``"map_75"`` (AP@75), and ``"mar"`` (AR@50:95).  Any
-            unavailable statistic is reported as ``-1.0``.
+            Dict with float values for keys :data:`METRIC_KEY_MAP` (mAP@50:95),
+            :data:`METRIC_KEY_MAP_50` (AP@50), :data:`METRIC_KEY_MAP_75` (AP@75),
+            and :data:`METRIC_KEY_MAR` (AR@50:95).  A value of ``-1.0`` indicates
+            the statistic was not available (e.g. no predictions matched any ground-truth
+            annotation).  Callers should filter ``value < 0`` before logging.
 
         Examples:
             >>> from unittest.mock import MagicMock, patch
             >>> import numpy as np
             >>> metric = MetricKeypointOKS(MagicMock(), max_dets=500)
             >>> fake_eval = MagicMock()
-            >>> fake_eval.coco_eval = {"keypoints": MagicMock(stats=np.array([0.5, 0.7, 0.4, -1, -1, 0.6]))}
+            >>> fake_eval.coco_eval = {
+            ...     "keypoints": MagicMock(stats=np.array([0.5, 0.7, 0.4, -1, -1, 0.6, -1, -1, -1, -1]))
+            ... }
             >>> with patch("rfdetr.evaluation.keypoint_oks.CocoEvaluator", return_value=fake_eval):
+            ...     metric.update({1: {}})
             ...     result = metric.compute()
             >>> result["map"]
             0.5
@@ -156,9 +192,13 @@ class MetricKeypointOKS:
         evaluator.synchronize_between_processes()
         evaluator.accumulate()
         stats = evaluator.coco_eval["keypoints"].stats
+        assert stats.shape == _KPS_STATS_SHAPE, (
+            f"Expected coco keypoint stats shape {_KPS_STATS_SHAPE}, got {stats.shape}; "
+            "pycocotools _summarizeKps() contract violated — check faster_coco_eval version"
+        )
         return {
-            "map": float(stats[0]) if len(stats) > 0 else -1.0,
-            "map_50": float(stats[1]) if len(stats) > 1 else -1.0,
-            "map_75": float(stats[2]) if len(stats) > 2 else -1.0,
-            "mar": float(stats[5]) if len(stats) > 5 else -1.0,
+            METRIC_KEY_MAP: float(stats[0]),
+            METRIC_KEY_MAP_50: float(stats[1]),
+            METRIC_KEY_MAP_75: float(stats[2]),
+            METRIC_KEY_MAR: float(stats[5]),
         }
