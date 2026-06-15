@@ -41,6 +41,8 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+_COCO_MAX_SIZE = 1333
+
 
 def is_valid_coco_dataset(dataset_dir: str) -> bool:
     return (Path(dataset_dir) / "train" / "_annotations.coco.json").exists()
@@ -483,7 +485,7 @@ def _build_train_resize_config(
             }
         }
     else:
-        cap = max_size or 1333
+        cap = max_size or _COCO_MAX_SIZE
         # SmallestMaxSize accepts a list and picks randomly — no OneOf needed
         size_param: Any = scales[0] if len(scales) == 1 else scales
         option_a = {
@@ -536,7 +538,7 @@ def _build_train_resize_transforms(
         )
         return RandomSelect(resize_a, resize_b)
 
-    cap = max_size or 1333
+    cap = max_size or _COCO_MAX_SIZE
     resize_a = RandomResize(scales, max_size=cap)
     resize_b = Compose(
         [
@@ -578,7 +580,7 @@ def _build_albumentations_pipeline(
 
     if image_set == "train":
         resize_wrappers = AlbumentationsWrapper.from_config(
-            _build_train_resize_config(scales, square=square, max_size=None if square else 1333)
+            _build_train_resize_config(scales, square=square, max_size=None if square else _COCO_MAX_SIZE)
         )
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:
@@ -599,7 +601,7 @@ def _build_albumentations_pipeline(
     resize_wrappers = AlbumentationsWrapper.from_config(
         [
             {"SmallestMaxSize": {"max_size": resolution}},
-            {"LongestMaxSize": {"max_size": 1333}},
+            {"LongestMaxSize": {"max_size": _COCO_MAX_SIZE}},
         ]
     )
     return Compose([*resize_wrappers, to_image, to_float, normalize])
@@ -634,7 +636,22 @@ def _build_torchvision_pipeline(
     normalize = Normalize()
 
     if image_set == "train":
-        pipeline: list[Any] = [_build_train_resize_transforms(scales, square=square, max_size=None if square else 1333)]
+        import warnings
+
+        if aug_config is None:
+            warnings.warn(
+                "RF-DETR v1.8 changed the default training augmentation backend from "
+                "Albumentations (cv2 INTER_LINEAR, no antialias) to torchvision "
+                "(BILINEAR + antialias=True). Pixel values will differ slightly from "
+                "previous versions; mAP may drift on existing benchmarks. "
+                "To restore the previous behaviour, install rfdetr[augmentation] and "
+                "pass aug_config=AUG_CONFIG from rfdetr.datasets.aug_configs.",
+                UserWarning,
+                stacklevel=4,
+            )
+        pipeline: list[Any] = [
+            _build_train_resize_transforms(scales, square=square, max_size=None if square else _COCO_MAX_SIZE)
+        ]
         if aug_config is None and not gpu_postprocess:
             pipeline.append(RandomHorizontalFlip(p=0.5, keypoint_flip_pairs=keypoint_flip_pairs))
         pipeline += [to_image, to_float]
@@ -644,7 +661,52 @@ def _build_torchvision_pipeline(
 
     if square or image_set == "val_speed":
         return Compose([Resize((resolution, resolution)), to_image, to_float, normalize])
-    return Compose([RandomResize([resolution], max_size=1333), to_image, to_float, normalize])
+    return Compose([RandomResize([resolution], max_size=_COCO_MAX_SIZE), to_image, to_float, normalize])
+
+
+def _route_transforms(
+    image_set: str,
+    resolution: int,
+    scales: List[int],
+    *,
+    square: bool,
+    aug_config: Optional[Dict[str, Dict[str, Any]]],
+    gpu_postprocess: bool,
+    keypoint_flip_pairs: Optional[List[int]],
+) -> Compose:
+    """Route transform construction to Albumentations or torchvision backend.
+
+    Args:
+        image_set: Dataset split name.
+        resolution: Target resolution in pixels.
+        scales: Candidate resize scales.
+        square: Whether to use square resize.
+        aug_config: Augmentation config; ``None`` or ``{}`` routes to torchvision.
+        gpu_postprocess: Whether GPU augmentation will run later.
+        keypoint_flip_pairs: Keypoint left/right swap pairs.
+
+    Returns:
+        Composed transform pipeline.
+    """
+    if image_set == "train" and aug_config not in (None, {}) and not gpu_postprocess:
+        return _build_albumentations_pipeline(
+            image_set,
+            resolution,
+            scales,
+            square=square,
+            aug_config=aug_config,
+            gpu_postprocess=gpu_postprocess,
+            keypoint_flip_pairs=keypoint_flip_pairs,
+        )
+    return _build_torchvision_pipeline(
+        image_set,
+        resolution,
+        scales,
+        square=square,
+        aug_config=aug_config,
+        gpu_postprocess=gpu_postprocess,
+        keypoint_flip_pairs=keypoint_flip_pairs,
+    )
 
 
 def make_coco_transforms(
@@ -689,9 +751,20 @@ def make_coco_transforms(
             ensure all candidate resolutions are compatible with the backbone.
         num_windows: Number of attention windows; used by
             :func:`compute_multi_scale_scales` to derive candidate resolutions.
-        aug_config: ``None`` for default torchvision augmentation, ``{}`` to disable augmentation, or a non-empty
-            Albumentations augmentation config dict passed to
-            :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`.
+        aug_config: Controls the training augmentation backend.  Three states are
+            recognised:
+
+            * ``None`` (default) — use the torchvision-native default augmentation
+              (``RandomHorizontalFlip(p=0.5)``).  See the ``UserWarning`` emitted
+              at runtime for details of the v1.7→v1.8 behaviour change.
+            * ``{}`` (empty dict) — disable all optional training augmentation
+              including the default horizontal flip.
+            * non-empty dict — pass to the optional Albumentations backend;
+              requires ``rfdetr[augmentation]`` to be installed.
+
+            Note:
+                ``aug_config`` has no effect on ``"val"``, ``"test"``, or ``"val_speed"``
+                splits — augmentation is never applied outside of training.
         gpu_postprocess: When ``True``, skip CPU augmentation and
             ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
             normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
@@ -720,18 +793,7 @@ def make_coco_transforms(
     if image_set not in ("train", "val", "test", "val_speed"):
         raise ValueError(f"unknown {image_set}")
 
-    if image_set == "train" and aug_config not in (None, {}) and not gpu_postprocess:
-        return _build_albumentations_pipeline(
-            image_set,
-            resolution,
-            scales,
-            square=False,
-            aug_config=aug_config,
-            gpu_postprocess=gpu_postprocess,
-            keypoint_flip_pairs=keypoint_flip_pairs,
-        )
-
-    return _build_torchvision_pipeline(
+    return _route_transforms(
         image_set,
         resolution,
         scales,
@@ -782,6 +844,10 @@ def make_coco_transforms_square_div_64(
             derive the list of candidate square resolutions.
         aug_config: ``None`` for default torchvision augmentation, ``{}`` to disable augmentation, or a non-empty
             Albumentations augmentation config dictionary.
+
+            Note:
+                ``aug_config`` has no effect on ``"val"``, ``"test"``, or ``"val_speed"``
+                splits — augmentation is never applied outside of training.
         gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
             ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
             normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
@@ -800,18 +866,7 @@ def make_coco_transforms_square_div_64(
     if image_set not in ("train", "val", "test", "val_speed"):
         raise ValueError(f"unknown {image_set}")
 
-    if image_set == "train" and aug_config not in (None, {}) and not gpu_postprocess:
-        return _build_albumentations_pipeline(
-            image_set,
-            resolution,
-            scales,
-            square=True,
-            aug_config=aug_config,
-            gpu_postprocess=gpu_postprocess,
-            keypoint_flip_pairs=keypoint_flip_pairs,
-        )
-
-    return _build_torchvision_pipeline(
+    return _route_transforms(
         image_set,
         resolution,
         scales,
