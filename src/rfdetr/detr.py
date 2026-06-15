@@ -307,7 +307,8 @@ class RFDETR:
                 used when present; otherwise the constructor default applies.  In either case the
                 field is not recorded as a user-set override, so :meth:`train` can still adapt the
                 detection head to the training dataset's class count.  Pass an explicit
-                ``num_classes=N`` to pin it and prevent head adaptation.
+                ``num_classes=N`` to pin the head and prevent adaptation, even when ``N`` equals
+                the class default (e.g. ``num_classes=90`` on a COCO-pretrained checkpoint).
 
         Returns:
             An instance of the appropriate :class:`RFDETR` subclass loaded from the checkpoint.
@@ -1239,7 +1240,7 @@ class RFDETR:
         # (or assigned afterwards); an explicit value is honored regardless of whether it equals
         # the class default, so an intentional num_classes is never silently overridden by the
         # dataset count.  A checkpoint-derived num_classes is cleared from model_fields_set by
-        # ``from_checkpoint`` (see issue #1092), so it correctly counts as "not set" here.
+        # ``from_checkpoint`` (see PR #1106 / issue #1092), so it correctly counts as "not set" here.
         user_overrode = "num_classes" in getattr(self.model_config, "model_fields_set", set())
 
         if not user_overrode:
