@@ -412,6 +412,10 @@ def build_trainer(
         "log_every_n_steps": 50,
         "deterministic": False,
     }
+    if tc.limit_val_batches is not None:
+        trainer_config["limit_val_batches"] = tc.limit_val_batches
+    if tc.num_sanity_val_steps is not None:
+        trainer_config["num_sanity_val_steps"] = tc.num_sanity_val_steps
     trainer_config.update(trainer_kwargs)
     trainer_config["strategy"] = strategy
     return Trainer(**trainer_config)

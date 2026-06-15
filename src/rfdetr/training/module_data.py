@@ -164,6 +164,10 @@ class RFDETRDataModule(LightningDataModule):
         self._collate_fn = make_collate_fn(
             block_size=block_size,
         )
+        if train_config.dataset_file == "parquet_bbox":
+            from rfdetr.datasets.parquet_bbox import FlattenPageSamplesCollate
+
+            self._collate_fn = FlattenPageSamplesCollate(self._collate_fn)
 
         self._dataset_train: Optional[torch.utils.data.Dataset] = None
         self._dataset_val: Optional[torch.utils.data.Dataset] = None
@@ -234,7 +238,7 @@ class RFDETRDataModule(LightningDataModule):
                 )
             if self._dataset_train is None:
                 self._dataset_train = build_dataset("train", ns, resolution)
-            if self._dataset_val is None:
+            if self.train_config.dataset_file != "parquet_bbox" and self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
             # Build Kornia GPU augmentation pipeline (once).
             # Use _kornia_setup_done (not _kornia_pipeline is None) so that fallback
@@ -269,6 +273,23 @@ class RFDETRDataModule(LightningDataModule):
         batch_size = self.train_config.batch_size
         effective_batch_size = batch_size * self.train_config.grad_accum_steps
         num_workers = self._num_workers
+
+        if self.train_config.dataset_file == "parquet_bbox":
+            from rfdetr.datasets.parquet_bbox import DatasetRecordWithBBoxParquetDataset, ShardSequentialSampler
+
+            if not isinstance(dataset, DatasetRecordWithBBoxParquetDataset):
+                raise TypeError("Expected DatasetRecordWithBBoxParquetDataset for dataset_file='parquet_bbox'.")
+            sampler = ShardSequentialSampler(dataset.file_offsets, dataset.file_num_rows, shuffle=True)
+            return DataLoader(
+                dataset,
+                batch_size=batch_size,
+                sampler=sampler,
+                collate_fn=self._collate_fn,
+                num_workers=num_workers,
+                pin_memory=self._pin_memory,
+                persistent_workers=self._persistent_workers,
+                prefetch_factor=self._prefetch_factor,
+            )
 
         if len(dataset) < effective_batch_size * _MIN_TRAIN_BATCHES:
             logger.info(
@@ -644,6 +665,9 @@ class RFDETRDataModule(LightningDataModule):
         for dataset in (self._dataset_train, self._dataset_val):
             if dataset is None:
                 continue
+            class_names = getattr(dataset, "class_names", None)
+            if class_names:
+                return list(class_names)
             coco = getattr(dataset, "coco", None)
             if coco is not None and hasattr(coco, "cats"):
                 label2cat = getattr(dataset, "label2cat", None)

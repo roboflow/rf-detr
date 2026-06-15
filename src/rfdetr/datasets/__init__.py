@@ -22,6 +22,7 @@ from torch.utils.data import Dataset, Subset
 
 from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
 from rfdetr.datasets.o365 import build_o365
+from rfdetr.datasets.parquet_bbox import DatasetRecordWithBBoxParquetDataset, build_parquet_bbox
 from rfdetr.datasets.yolo import YoloDetection, build_roboflow_from_yolo
 
 
@@ -33,6 +34,8 @@ def get_coco_api_from_dataset(dataset: Dataset[Any]) -> Optional[Any]:
         return dataset.coco
     if isinstance(dataset, YoloDetection):
         return dataset.coco
+    if isinstance(dataset, DatasetRecordWithBBoxParquetDataset):
+        return None
     return None
 
 
@@ -104,4 +107,6 @@ def build_dataset(image_set: str, args: Any, resolution: int) -> Dataset[Any]:
                 "Use dataset_file='roboflow' or 'coco' with COCO keypoint annotations."
             )
         return build_roboflow_from_yolo(image_set, args, resolution)
+    if args.dataset_file == "parquet_bbox":
+        return build_parquet_bbox(image_set, args, resolution)
     raise ValueError(f"dataset {args.dataset_file} not supported")

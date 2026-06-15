@@ -660,9 +660,12 @@ class TrainConfig(BaseConfig):
     keypoint_visible_loss_coef: float = 0
     keypoint_nll_loss_coef: float = 0
     keypoint_oks_sigmas: List[float] | None = None
-    dataset_file: Literal["coco", "o365", "roboflow", "yolo"] = "roboflow"
+    dataset_file: Literal["coco", "o365", "roboflow", "yolo", "parquet_bbox"] = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: str | None
+    dataset_repo_id: str | None = None
+    parquet_max_objects: int | None = 400
+    parquet_label_mapping: Dict[int, str] | None = None
     output_dir: str = "output"
     multi_scale: bool = True
     expanded_scales: bool = True
@@ -762,6 +765,8 @@ class TrainConfig(BaseConfig):
     compute_train_metrics: bool = False
     compute_val_loss: bool = True
     compute_test_loss: bool = True
+    limit_val_batches: int | float | None = None
+    num_sanity_val_steps: int | None = None
     pin_memory: Optional[bool] = None
     persistent_workers: Optional[bool] = None
     prefetch_factor: Optional[int] = None
@@ -811,6 +816,54 @@ class TrainConfig(BaseConfig):
         if v is not None and v < 1:
             raise ValueError("prefetch_factor must be >= 1 when provided.")
         return v
+
+    @field_validator("parquet_max_objects", mode="after")
+    @classmethod
+    def validate_parquet_max_objects(cls, v: Optional[int]) -> Optional[int]:
+        """Validate parquet_max_objects is None or >= 1."""
+        if v is not None and v < 1:
+            raise ValueError("parquet_max_objects must be >= 1 when provided.")
+        return v
+
+    @field_validator("limit_val_batches", mode="after")
+    @classmethod
+    def validate_limit_val_batches(cls, v: int | float | None) -> int | float | None:
+        """Validate optional Lightning limit_val_batches values."""
+        if v is None:
+            return v
+        if isinstance(v, bool):
+            raise ValueError("limit_val_batches must be an int, float, or None.")
+        if isinstance(v, int):
+            if v < 0:
+                raise ValueError("limit_val_batches must be >= 0.")
+            return v
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("float limit_val_batches must be in [0.0, 1.0].")
+        return v
+
+    @field_validator("num_sanity_val_steps", mode="after")
+    @classmethod
+    def validate_num_sanity_val_steps(cls, v: Optional[int]) -> Optional[int]:
+        """Validate optional Lightning num_sanity_val_steps values."""
+        if v is not None and v < 0:
+            raise ValueError("num_sanity_val_steps must be >= 0.")
+        return v
+
+    @model_validator(mode="after")
+    def validate_parquet_bbox_config(self) -> "TrainConfig":
+        """Validate parquet-bbox training-specific fields."""
+        if self.dataset_file != "parquet_bbox":
+            return self
+        if not self.dataset_dir:
+            raise ValueError("dataset_dir is required when dataset_file='parquet_bbox'.")
+        if not self.parquet_label_mapping:
+            raise ValueError("parquet_label_mapping is required when dataset_file='parquet_bbox'.")
+        for category_id, name in self.parquet_label_mapping.items():
+            if not isinstance(category_id, int):
+                raise ValueError("parquet_label_mapping keys must be integer category ids.")
+            if not isinstance(name, str) or not name:
+                raise ValueError("parquet_label_mapping values must be non-empty strings.")
+        return self
 
     @field_validator("dataset_dir", "output_dir", mode="after")
     @classmethod
