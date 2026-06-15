@@ -394,6 +394,7 @@ def build_trainer(
     # --- Promoted config fields (T4-2 added these to TrainConfig) ---
     clip_max_norm: float = tc.clip_max_norm
     sync_bn: bool = tc.sync_bn
+    use_manual_optimization = bool(model_config.use_grouppose_keypoints)
 
     trainer_config: dict[str, Any] = {
         "max_epochs": tc.epochs,
@@ -403,7 +404,10 @@ def build_trainer(
         "strategy": strategy,
         "precision": _resolve_precision(),
         "accumulate_grad_batches": tc.grad_accum_steps,
-        "gradient_clip_val": clip_max_norm,
+        # Keypoint RFDETRModelModule uses manual optimization so it can normalize losses by
+        # the full accumulated box count. Lightning forbids Trainer-owned gradient clipping
+        # in manual optimization; the module applies tc.clip_max_norm for that path.
+        "gradient_clip_val": None if use_manual_optimization else clip_max_norm,
         "sync_batchnorm": sync_bn,
         "callbacks": callbacks,
         "logger": loggers if loggers else False,

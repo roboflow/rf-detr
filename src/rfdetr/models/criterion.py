@@ -134,6 +134,8 @@ class SetCriterion(nn.Module):
     2) we supervise each pair of matched ground-truth / prediction (supervise class and box).
     """
 
+    supports_loss_normalizer_override = True
+
     def __init__(
         self,
         num_classes,
@@ -172,6 +174,43 @@ class SetCriterion(nn.Module):
         self.ia_bce_loss = ia_bce_loss
         self.mask_point_sample_ratio = mask_point_sample_ratio
         self.num_keypoints_per_class = num_keypoints_per_class or []
+
+    @staticmethod
+    def _output_device(outputs: dict) -> torch.device:
+        """Return the device used by tensor outputs.
+
+        Args:
+            outputs: Model output dictionary.
+
+        Returns:
+            Device of the first tensor value in ``outputs``.
+
+        Raises:
+            ValueError: If no tensor output is present.
+        """
+        for value in outputs.values():
+            if torch.is_tensor(value):
+                return value.device
+        raise ValueError("SetCriterion requires at least one tensor output to infer the loss device.")
+
+    def num_boxes_for_targets(self, outputs: dict, targets: list) -> torch.Tensor:
+        """Compute the distributed target-box denominator for a target batch.
+
+        Args:
+            outputs: Model output dictionary used to infer device placement.
+            targets: Target dictionaries for the current batch.
+
+        Returns:
+            Scalar tensor with the box-count normalizer used by criterion losses.
+        """
+        group_detr = self.group_detr if self.training else 1
+        num_boxes = sum(len(t["labels"]) for t in targets)
+        if not self.sum_group_losses:
+            num_boxes = num_boxes * group_detr
+        num_boxes_tensor = torch.as_tensor(num_boxes, dtype=torch.float, device=self._output_device(outputs))
+        if is_dist_avail_and_initialized():
+            torch.distributed.all_reduce(num_boxes_tensor)
+        return torch.clamp(num_boxes_tensor / get_world_size(), min=1.0)
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (Binary focal loss) targets dicts must contain the key "labels" containing a tensor of
@@ -508,13 +547,14 @@ class SetCriterion(nn.Module):
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
 
-    def forward(self, outputs, targets):
+    def forward(self, outputs, targets, num_boxes: torch.Tensor | float | None = None):
         """This performs the loss computation.
 
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
+             num_boxes: Optional explicit box-count denominator. Supplying ``1.0`` returns loss numerators.
         """
         group_detr = self.group_detr if self.training else 1
         outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
@@ -522,14 +562,12 @@ class SetCriterion(nn.Module):
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets, group_detr=group_detr)
 
-        # Compute the average number of target boxes across all nodes, for normalization purposes
-        num_boxes = sum(len(t["labels"]) for t in targets)
-        if not self.sum_group_losses:
-            num_boxes = num_boxes * group_detr
-        num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device)
-        if is_dist_avail_and_initialized():
-            torch.distributed.all_reduce(num_boxes)
-        num_boxes = torch.clamp(num_boxes / get_world_size(), min=1).item()
+        if num_boxes is None:
+            num_boxes = self.num_boxes_for_targets(outputs, targets)
+        elif not torch.is_tensor(num_boxes):
+            num_boxes = torch.as_tensor(num_boxes, dtype=torch.float, device=self._output_device(outputs))
+        else:
+            num_boxes = num_boxes.to(device=self._output_device(outputs), dtype=torch.float)
 
         # Compute all the requested losses
         losses = {}

@@ -574,10 +574,18 @@ class TestBuildTrainerLoggers:
 class TestBuildTrainerKwargs:
     """build_trainer() must pass the correct kwargs to Trainer."""
 
-    def test_gradient_clip_val_default(self, tmp_path):
-        """gradient_clip_val defaults to 0.1 when clip_max_norm is not yet in TrainConfig."""
+    def test_gradient_clip_val_default_for_automatic_optimization(self, tmp_path):
+        """Non-keypoint models keep Trainer-owned gradient clipping."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
         assert trainer.gradient_clip_val == pytest.approx(0.1)
+
+    def test_gradient_clip_val_disabled_for_keypoint_manual_optimization(self, tmp_path):
+        """Keypoint models disable Trainer-owned clipping because RFDETRModelModule clips manually."""
+        trainer = build_trainer(
+            _tc(tmp_path, use_ema=False),
+            _mc(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+        )
+        assert trainer.gradient_clip_val is None
 
     def test_accumulate_grad_batches(self, tmp_path):
         """accumulate_grad_batches maps from grad_accum_steps."""

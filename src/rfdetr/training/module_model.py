@@ -51,6 +51,8 @@ class RFDETRModelModule(LightningModule):
         super().__init__()
         self.model_config = model_config
         self.train_config = train_config
+        self.automatic_optimization = not model_config.use_grouppose_keypoints
+        self._accumulated_box_normalizer: torch.Tensor | None = None
         # Allow partial state-dict loading when resuming from a .pth checkpoint
         # (which contains only model weights, not criterion/postprocess state).
         self.strict_loading = False
@@ -145,10 +147,9 @@ class RFDETRModelModule(LightningModule):
     def training_step(self, batch: Tuple, batch_idx: int) -> torch.Tensor | dict[str, Any]:
         """Compute loss for one training step and log metrics.
 
-        PTL handles gradient accumulation (``accumulate_grad_batches``), AMP (``precision``), and gradient clipping
-        (``gradient_clip_val``) — no manual ``GradScaler`` or loss scaling here.  The loss is divided by
-        ``trainer.accumulate_grad_batches`` so that the accumulated gradient magnitude matches the legacy engine (which
-        scales each sub-batch by ``1/grad_accum_steps`` before calling ``backward()``).
+        PTL handles AMP (``precision``) without a manual ``GradScaler``. Non-keypoint models use Lightning automatic
+        optimization. Keypoint models use manual optimization so box-count loss normalization is based on the full
+        accumulated effective batch rather than each microbatch independently.
 
         Args:
             batch: Tuple of (NestedTensor samples, list of target dicts).
@@ -162,16 +163,14 @@ class RFDETRModelModule(LightningModule):
         samples, targets = batch
         batch_size = len(targets)
         outputs = self.model(samples, targets)
-        loss_dict = self.criterion(outputs, targets)
+        if self.automatic_optimization:
+            loss_dict = self.criterion(outputs, targets)
+            loss_for_backward = None
+        else:
+            loss_dict, raw_loss, normalizer = self._compute_train_losses(outputs, targets)
+            loss_for_backward = self._scale_loss_for_accumulation(raw_loss, normalizer)
         weight_dict = self.criterion.weight_dict
         loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
-        # Normalise by grad-accum steps so the accumulated gradient matches the
-        # legacy engine, which scales each sub-batch by 1/grad_accum_steps before
-        # backward().  PTL accumulates full-scale gradients by default; dividing
-        # here keeps the effective LR identical to the non-PTL training path.
-        # We return the scaled loss to PTL but log the unscaled value so that
-        # train/loss and val/loss are on the same scale.
-        loss_scaled = loss / self.trainer.accumulate_grad_batches
         train_log_sync_dist = bool(self.train_config.train_log_sync_dist)
         train_log_on_step = bool(self.train_config.train_log_on_step)
         self.log_dict(
@@ -205,12 +204,147 @@ class RFDETRModelModule(LightningModule):
             self.log("train/lr", base_lr, prog_bar=False, on_step=True, on_epoch=False)
             self.log("train/lr_min", min_lr, prog_bar=False, on_step=True, on_epoch=False)
             self.log("train/lr_max", max_lr, prog_bar=False, on_step=True, on_epoch=False)
+        if loss_for_backward is not None:
+            self.manual_backward(loss_for_backward)
+            if self._should_step_optimizer(batch_idx):
+                self._step_optimizer(optimizer)
         if self.train_config.compute_train_metrics:
             with torch.no_grad():
                 orig_sizes = torch.stack([t["orig_size"] for t in targets])
                 results = self.postprocess(outputs, orig_sizes)
-            return {"loss": loss_scaled, "results": self._detach_results(results), "targets": targets}
-        return loss_scaled
+            return {
+                "loss": loss if self.automatic_optimization else loss.detach(),
+                "results": self._detach_results(results),
+                "targets": targets,
+            }
+        return loss if self.automatic_optimization else loss.detach()
+
+    def _criterion_supports_loss_normalizer_override(self) -> bool:
+        """Return whether the criterion can emit loss numerators.
+
+        Returns:
+            ``True`` when the criterion supports the ``num_boxes`` override needed for exact box-normalized gradient
+            accumulation.
+        """
+        return bool(getattr(type(self.criterion), "supports_loss_normalizer_override", False))
+
+    def _compute_train_losses(
+        self,
+        outputs: dict[str, torch.Tensor],
+        targets: list[dict[str, torch.Tensor]],
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor | None]:
+        """Compute normalized losses for logging and raw weighted loss for backward.
+
+        Args:
+            outputs: Model output dictionary.
+            targets: Target dictionaries for the current batch.
+
+        Returns:
+            A tuple of normalized loss dictionary, unnormalized weighted loss numerator, and optional box normalizer.
+        """
+        weight_dict = self.criterion.weight_dict
+        if self._criterion_supports_loss_normalizer_override():
+            normalizer = self.criterion.num_boxes_for_targets(outputs, targets)
+            numerator_loss_dict = self.criterion(outputs, targets, num_boxes=torch.ones_like(normalizer))
+            loss_dict = {
+                key: value / normalizer if key in weight_dict else value for key, value in numerator_loss_dict.items()
+            }
+            raw_loss = sum(numerator_loss_dict[k] * weight_dict[k] for k in numerator_loss_dict if k in weight_dict)
+            return loss_dict, raw_loss, normalizer
+
+        loss_dict = self.criterion(outputs, targets)
+        loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
+        accum_steps = max(1, int(getattr(self.trainer, "accumulate_grad_batches", 1)))
+        return loss_dict, loss / accum_steps, None
+
+    def _scale_loss_for_accumulation(
+        self,
+        raw_loss: torch.Tensor,
+        normalizer: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Scale the current numerator loss by the accumulated box denominator.
+
+        Args:
+            raw_loss: Current microbatch weighted loss numerator.
+            normalizer: Current microbatch box denominator, or ``None`` for criteria without numerator support.
+
+        Returns:
+            Loss scalar to pass to ``manual_backward``.
+        """
+        if normalizer is None:
+            return raw_loss
+
+        normalizer = normalizer.detach()
+        previous_normalizer = self._accumulated_box_normalizer
+        accumulated_normalizer = normalizer if previous_normalizer is None else previous_normalizer + normalizer
+        if previous_normalizer is not None:
+            self._rescale_accumulated_gradients(previous_normalizer / accumulated_normalizer)
+        self._accumulated_box_normalizer = accumulated_normalizer.detach()
+        return raw_loss / accumulated_normalizer
+
+    def _rescale_accumulated_gradients(self, scale: torch.Tensor) -> None:
+        """Rescale gradients already accumulated in the current optimizer window.
+
+        Args:
+            scale: Multiplicative factor that converts previous gradients from the old denominator to the new one.
+        """
+        for parameter in self.parameters():
+            if parameter.grad is not None:
+                parameter.grad.mul_(scale.to(device=parameter.grad.device, dtype=parameter.grad.dtype))
+
+    def _should_step_optimizer(self, batch_idx: int) -> bool:
+        """Return whether the current batch closes an optimizer accumulation window.
+
+        Args:
+            batch_idx: Batch index within the epoch.
+
+        Returns:
+            ``True`` when the optimizer should step after this batch.
+        """
+        accum_steps = max(1, int(getattr(self.trainer, "accumulate_grad_batches", 1)))
+        if (batch_idx + 1) % accum_steps == 0:
+            return True
+        num_training_batches = getattr(self.trainer, "num_training_batches", None)
+        return isinstance(num_training_batches, int) and batch_idx + 1 >= num_training_batches
+
+    def _step_optimizer(self, optimizer: torch.optim.Optimizer) -> None:
+        """Clip gradients, step optimizer and scheduler, then reset accumulation state.
+
+        Args:
+            optimizer: Optimizer returned by Lightning.
+        """
+        trainer_gradient_clip_val = getattr(self.trainer, "gradient_clip_val", None)
+        if trainer_gradient_clip_val is None:
+            gradient_clip_val = self.train_config.clip_max_norm
+        elif isinstance(trainer_gradient_clip_val, (int, float)):
+            gradient_clip_val = trainer_gradient_clip_val
+        else:
+            gradient_clip_val = None
+        gradient_clip_algorithm = getattr(self.trainer, "gradient_clip_algorithm", None)
+        if not isinstance(gradient_clip_algorithm, str):
+            gradient_clip_algorithm = None
+        if gradient_clip_val is not None and gradient_clip_val > 0:
+            self.clip_gradients(
+                optimizer,
+                gradient_clip_val=gradient_clip_val,
+                gradient_clip_algorithm=gradient_clip_algorithm,
+            )
+        optimizer.step()
+        optimizer.zero_grad()
+        self._step_lr_scheduler()
+        self._accumulated_box_normalizer = None
+
+    def _step_lr_scheduler(self) -> None:
+        """Step Lightning's scheduler object when one is configured."""
+        try:
+            scheduler = self.lr_schedulers()
+        except (AttributeError, RuntimeError):
+            return
+        if scheduler is None:
+            return
+        schedulers = scheduler if isinstance(scheduler, list) else [scheduler]
+        for scheduler_item in schedulers:
+            scheduler_item.step()
 
     @staticmethod
     def _detach_results(results: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:

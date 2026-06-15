@@ -149,6 +149,36 @@ def _make_batch(batch_size=2, channels=3, h=16, w=16):
     return samples, targets
 
 
+class _ScalarLossModel(nn.Module):
+    """Tiny model exposing one scalar parameter for gradient-scaling tests."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.value = nn.Parameter(torch.zeros(()))
+
+    def forward(self, samples, targets=None):
+        return {"loss_scale": self.value}
+
+
+class _BoxNormalizedCriterion:
+    """Criterion with controllable per-target loss numerators and box counts."""
+
+    supports_loss_normalizer_override = True
+    weight_dict = {"loss_ce": 1.0}
+
+    def num_boxes_for_targets(self, outputs, targets):
+        return torch.as_tensor(
+            sum(int(target["labels"].numel()) for target in targets),
+            dtype=torch.float32,
+            device=outputs["loss_scale"].device,
+        ).clamp(min=1.0)
+
+    def __call__(self, outputs, targets, num_boxes=None):
+        denominator = self.num_boxes_for_targets(outputs, targets) if num_boxes is None else num_boxes
+        numerator = outputs["loss_scale"] * sum(target["loss_numerator"] for target in targets)
+        return {"loss_ce": numerator / denominator}
+
+
 # ---------------------------------------------------------------------------
 # Fixtures — inject common test infrastructure; prefer these over private
 # helpers in test methods.  Class-level _setup_* helpers still use the private
@@ -175,6 +205,20 @@ def make_batch():
 class TestInit:
     """Tests for RFDETRModelModule.__init__ — covers attribute assignment and delegation to build_model() /
     build_criterion_and_postprocessors() when pretrain_weights is None."""
+
+    def test_non_keypoint_models_use_automatic_optimization(self, build_module):
+        """Detection and segmentation models should keep Lightning automatic optimization."""
+        module, _, _, _ = build_module(model_config=_base_model_config(use_grouppose_keypoints=False))
+
+        assert module.automatic_optimization is True
+
+    def test_keypoint_models_use_manual_optimization(self, build_module):
+        """Keypoint models need manual optimization for box-normalized accumulation."""
+        module, _, _, _ = build_module(
+            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17])
+        )
+
+        assert module.automatic_optimization is False
 
     def test_model_is_set(self, build_module):
         """__init__ must assign the built model to module.model."""
@@ -645,8 +689,8 @@ class TestTrainingStep:
     """Tests for training_step() — covers weighted loss aggregation, per-loss logging under the train/ prefix, prog_bar
     visibility, scalar tensor output, and that losses absent from weight_dict are excluded from the total."""
 
-    def _run_step(self, tmp_path, loss_dict=None, weight_dict=None, accumulate_grad_batches=1):
-        module, fake_model, fake_criterion, _ = _build_module(tmp_path=tmp_path)
+    def _run_step(self, tmp_path, loss_dict=None, weight_dict=None, accumulate_grad_batches=1, model_config=None):
+        module, fake_model, fake_criterion, _ = _build_module(model_config=model_config, tmp_path=tmp_path)
         samples, targets = _make_batch()
         fake_model.return_value = {}
         fake_criterion.return_value = loss_dict or {"loss_ce": torch.tensor(1.0)}
@@ -657,8 +701,13 @@ class TestTrainingStep:
         real_param = nn.Parameter(torch.randn(4))
         real_optimizer = torch.optim.SGD([real_param], lr=1e-3)
         module.optimizers = MagicMock(return_value=real_optimizer)
+        module.manual_backward = MagicMock()
+        module.lr_schedulers = MagicMock(return_value=None)
         trainer = MagicMock()
         trainer.accumulate_grad_batches = accumulate_grad_batches
+        trainer.num_training_batches = 1
+        trainer.gradient_clip_val = 0.0
+        trainer.gradient_clip_algorithm = "norm"
         module._trainer = trainer
         type(module).trainer = property(lambda self: self._trainer)
         return module, samples, targets, fake_model, fake_criterion
@@ -673,15 +722,82 @@ class TestTrainingStep:
 
         assert loss.item() == pytest.approx(1.0 + 10.0 + 6.0)
 
-    def test_loss_normalised_by_accum_steps(self, tmp_path):
-        """Loss must be divided by accumulate_grad_batches to match legacy engine scaling."""
+    def test_fallback_loss_backward_normalised_by_accum_steps(self, tmp_path):
+        """Fallback criteria without raw numerators still receive accumulation-step scaling."""
         loss_dict = {"loss_ce": torch.tensor(4.0)}
         weight_dict = {"loss_ce": 1.0}
-        module, samples, targets, _, _ = self._run_step(tmp_path, loss_dict, weight_dict, accumulate_grad_batches=4)
+        module, samples, targets, _, _ = self._run_step(
+            tmp_path,
+            loss_dict,
+            weight_dict,
+            accumulate_grad_batches=4,
+            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+        )
 
         loss = module.training_step((samples, targets), batch_idx=0)
 
-        assert loss.item() == pytest.approx(1.0)  # 4.0 / 4
+        assert loss.item() == pytest.approx(4.0)
+        backward_loss = module.manual_backward.call_args.args[0]
+        assert backward_loss.item() == pytest.approx(1.0)
+
+    def test_box_normalized_accumulation_matches_large_effective_batch(self, tmp_path):
+        """Accumulated gradients should match a large batch normalized by total boxes."""
+        keypoint_config = _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17])
+        large_module, _, _, _ = _build_module(model_config=keypoint_config, tmp_path=tmp_path)
+        large_model = _ScalarLossModel()
+        large_optimizer = torch.optim.SGD(large_model.parameters(), lr=1.0)
+        large_module.model = large_model
+        large_module.criterion = _BoxNormalizedCriterion()
+        large_module.postprocess = MagicMock()
+        large_module.log = MagicMock()
+        large_module.log_dict = MagicMock()
+        large_module.optimizers = MagicMock(return_value=large_optimizer)
+        large_module.manual_backward = lambda loss: loss.backward()
+        large_module.lr_schedulers = MagicMock(return_value=None)
+        large_trainer = MagicMock()
+        large_trainer.accumulate_grad_batches = 1
+        large_trainer.num_training_batches = 1
+        large_trainer.gradient_clip_val = 0.0
+        large_trainer.gradient_clip_algorithm = "norm"
+        large_module._trainer = large_trainer
+        type(large_module).trainer = property(lambda self: self._trainer)
+
+        accum_module, _, _, _ = _build_module(model_config=keypoint_config, tmp_path=tmp_path)
+        accum_model = _ScalarLossModel()
+        accum_optimizer = torch.optim.SGD(accum_model.parameters(), lr=1.0)
+        accum_module.model = accum_model
+        accum_module.criterion = _BoxNormalizedCriterion()
+        accum_module.postprocess = MagicMock()
+        accum_module.log = MagicMock()
+        accum_module.log_dict = MagicMock()
+        accum_module.optimizers = MagicMock(return_value=accum_optimizer)
+        accum_module.manual_backward = lambda loss: loss.backward()
+        accum_module.lr_schedulers = MagicMock(return_value=None)
+        accum_trainer = MagicMock()
+        accum_trainer.accumulate_grad_batches = 2
+        accum_trainer.num_training_batches = 2
+        accum_trainer.gradient_clip_val = 0.0
+        accum_trainer.gradient_clip_algorithm = "norm"
+        accum_module._trainer = accum_trainer
+
+        samples, _ = _make_batch(batch_size=2)
+        first_target = {
+            "labels": torch.ones(2, dtype=torch.int64),
+            "loss_numerator": torch.tensor(10.0),
+            "orig_size": torch.tensor([16, 16]),
+        }
+        second_target = {
+            "labels": torch.ones(6, dtype=torch.int64),
+            "loss_numerator": torch.tensor(6.0),
+            "orig_size": torch.tensor([16, 16]),
+        }
+
+        large_module.training_step((samples, [first_target, second_target]), batch_idx=0)
+        accum_module.training_step((samples, [first_target]), batch_idx=0)
+        accum_module.training_step((samples, [second_target]), batch_idx=1)
+
+        torch.testing.assert_close(accum_model.value, large_model.value)
+        assert large_model.value.item() == pytest.approx(-2.0)
 
     def test_logs_live_train_loss_to_progress_bar(self, tmp_path):
         """Aggregate training loss must be logged every step as a progress-only metric."""
