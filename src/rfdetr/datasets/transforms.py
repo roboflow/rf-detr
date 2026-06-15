@@ -187,8 +187,8 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> alb.BasicTransfo
     """
     if alb is None:
         raise ImportError(
-            "Albumentations is required to build RF-DETR dataset transforms. "
-            "Install the project dependencies with `uv sync --all-groups` or install albumentations."
+            "Custom Albumentations augmentations require the optional augmentation extra. "
+            "Install with: pip install 'rfdetr[augmentation]'"
         )
 
     if name in ALBUMENTATIONS_CONTAINERS:
@@ -916,8 +916,8 @@ class AlbumentationsWrapper:
 
         if alb is None:
             raise ImportError(
-                "Albumentations is required to build RF-DETR dataset transforms. "
-                "Install the project dependencies with `uv sync --all-groups` or install albumentations."
+                "Custom Albumentations augmentations require the optional augmentation extra. "
+                "Install with: pip install 'rfdetr[augmentation]'"
             )
 
         transforms = []

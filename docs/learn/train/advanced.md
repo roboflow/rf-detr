@@ -244,7 +244,13 @@ For fine-grained control over strategy, sync batch norm, precision, and other di
 
 ## Custom Augmentations
 
-RF-DETR supports advanced data augmentations using the [Albumentations](https://albumentations.ai/) library, providing access to over 70 different image transformations optimized for object detection.
+RF-DETR uses torchvision-native default augmentations during training. Advanced custom augmentation configs use the optional [Albumentations](https://albumentations.ai/) integration, which provides access to over 70 different image transformations optimized for object detection.
+
+Install the optional augmentation extra before using custom `aug_config` dictionaries or the built-in presets:
+
+```bash
+pip install "rfdetr[train,augmentation]"
+```
 
 → **[Complete Augmentation Guide](augmentations.md)** - Configuration examples, best practices, troubleshooting, and advanced topics.
 
@@ -341,10 +347,9 @@ RF-DETR applies built-in augmentations during training:
 
 - Random resizing
 - Random cropping
-- Color jittering
 - Horizontal flipping
 
-These are automatically configured and don't require manual setup.
+These defaults are implemented with torchvision and don't require manual setup. Color jitter and other advanced transforms are available through the optional Albumentations presets and custom `aug_config` dictionaries.
 
 ---
 

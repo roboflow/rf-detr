@@ -358,9 +358,10 @@ class TestGpuPostprocessFlag:
     """gpu_postprocess flag controls whether aug + normalize appear in CPU pipeline."""
 
     def test_gpu_postprocess_true_omits_aug_and_normalize_from_train(self):
-        """gpu_postprocess=True: train pipeline has no Normalize; fewer AlbumentationsWrappers (no aug_wrappers)."""
+        """gpu_postprocess=True: train pipeline has no CPU augmentation or Normalize."""
         from rfdetr.datasets.coco import make_coco_transforms
-        from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
+        from rfdetr.datasets.torchvision_transforms import RandomHorizontalFlip
+        from rfdetr.datasets.transforms import Normalize
 
         pipeline_gpu = make_coco_transforms("train", 560, gpu_postprocess=True)
         pipeline_cpu = make_coco_transforms("train", 560, gpu_postprocess=False)
@@ -371,11 +372,8 @@ class TestGpuPostprocessFlag:
         normalize_gpu = [s for s in steps_gpu if isinstance(s, Normalize)]
         assert len(normalize_gpu) == 0, "gpu_postprocess=True must omit Normalize from train pipeline"
 
-        # Resize wrappers (AlbumentationsWrapper) remain; aug wrappers are removed.
-        # Default AUG_CONFIG adds 1 aug wrapper, so gpu version must have fewer wrappers.
-        n_alb_gpu = sum(isinstance(s, AlbumentationsWrapper) for s in steps_gpu)
-        n_alb_cpu = sum(isinstance(s, AlbumentationsWrapper) for s in steps_cpu)
-        assert n_alb_gpu < n_alb_cpu, "gpu_postprocess=True must remove aug AlbumentationsWrappers from train pipeline"
+        assert not any(isinstance(s, RandomHorizontalFlip) for s in steps_gpu)
+        assert any(isinstance(s, RandomHorizontalFlip) for s in steps_cpu)
 
     def test_gpu_postprocess_false_includes_aug_and_normalize_from_train(self):
         """gpu_postprocess=False (default): train pipeline includes Normalize."""

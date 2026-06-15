@@ -7,7 +7,6 @@
 
 from unittest import mock
 
-import albumentations as alb
 import numpy as np
 import pytest
 import torch
@@ -16,10 +15,13 @@ from torch.utils.data import DataLoader
 from torchvision.transforms.v2 import Compose
 
 from rfdetr.datasets._develop import _SimpleDataset
-from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE, AUG_CONFIG
+from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
+from rfdetr.datasets.torchvision_transforms import RandomHorizontalFlip
 from rfdetr.datasets.transforms import AlbumentationsWrapper, _build_albu_transform
 from rfdetr.utilities import collate_fn
+
+alb = pytest.importorskip("albumentations")
 
 
 class _FakeRandomSizedCropV2:
@@ -1495,16 +1497,11 @@ class TestMakeCocoTransformsAugConfig:
         ],
     )
     def test_default_none_uses_aug_config(self, make_transforms):
-        """Omitting aug_config uses the module-level AUG_CONFIG default (HorizontalFlip)."""
+        """Omitting aug_config uses the torchvision-native default HorizontalFlip."""
         pipeline = make_transforms("train", 640)
-        # Train pipeline: [resize_wrapper, *aug_wrappers, normalize]
-        # First AlbumentationsWrapper is the resize OneOf; remaining are from aug_config.
-        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
-        aug_wrappers = wrappers[1:]
 
-        expected_names = list(AUG_CONFIG.keys())
-        actual_names = [w.transform.transforms[0].__class__.__name__ for w in aug_wrappers]
-        assert actual_names == expected_names
+        assert any(isinstance(t, RandomHorizontalFlip) for t in pipeline.transforms)
+        assert not any(isinstance(t, AlbumentationsWrapper) for t in pipeline.transforms)
 
     @pytest.mark.parametrize(
         "make_transforms",
@@ -1514,12 +1511,11 @@ class TestMakeCocoTransformsAugConfig:
         ],
     )
     def test_empty_dict_disables_augmentations(self, make_transforms):
-        """aug_config={} means no aug wrappers beyond the resize wrapper."""
+        """aug_config={} disables the default torchvision HorizontalFlip."""
         pipeline = make_transforms("train", 640, aug_config={})
-        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
-        aug_wrappers = wrappers[1:]  # skip resize wrapper
 
-        assert aug_wrappers == []
+        assert not any(isinstance(t, RandomHorizontalFlip) for t in pipeline.transforms)
+        assert not any(isinstance(t, AlbumentationsWrapper) for t in pipeline.transforms)
 
     @pytest.mark.parametrize(
         "make_transforms",
@@ -1529,7 +1525,7 @@ class TestMakeCocoTransformsAugConfig:
         ],
     )
     def test_custom_dict_is_used(self, make_transforms):
-        """aug_config with a custom dict wires up exactly those transforms."""
+        """A custom non-empty aug_config uses the optional Albumentations path."""
         custom = {"HorizontalFlip": {"p": 1.0}}
         pipeline = make_transforms("train", 640, aug_config=custom)
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
@@ -1541,14 +1537,12 @@ class TestMakeCocoTransformsAugConfig:
     @pytest.mark.parametrize(
         "make_transforms,expected_resize_wrappers",
         [
-            # make_coco_transforms val: SmallestMaxSize + LongestMaxSize = 2 wrappers
-            pytest.param(make_coco_transforms, 2, id="make_coco_transforms"),
-            # make_coco_transforms_square_div_64 val: Resize = 1 wrapper
-            pytest.param(make_coco_transforms_square_div_64, 1, id="make_coco_transforms_square_div_64"),
+            pytest.param(make_coco_transforms, 0, id="make_coco_transforms"),
+            pytest.param(make_coco_transforms_square_div_64, 0, id="make_coco_transforms_square_div_64"),
         ],
     )
     def test_aug_config_not_applied_on_val(self, make_transforms, expected_resize_wrappers):
-        """aug_config is ignored for val splits — only resize wrappers are present."""
+        """aug_config is ignored for val splits and defaults to torchvision resize."""
         pipeline = make_transforms("val", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
 
@@ -1562,23 +1556,21 @@ class TestMakeCocoTransformsAugConfig:
         ],
     )
     def test_aug_config_not_applied_on_val_speed(self, make_transforms):
-        """aug_config is ignored for val_speed splits — only the resize wrapper is present."""
+        """aug_config is ignored for val_speed splits and defaults to torchvision resize."""
         pipeline = make_transforms("val_speed", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
 
-        assert len(wrappers) == 1
+        assert len(wrappers) == 0
 
     @pytest.mark.parametrize(
         "make_transforms,expected_resize_wrappers",
         [
-            # make_coco_transforms test: SmallestMaxSize + LongestMaxSize = 2 wrappers
-            pytest.param(make_coco_transforms, 2, id="make_coco_transforms"),
-            # make_coco_transforms_square_div_64 test: Resize = 1 wrapper
-            pytest.param(make_coco_transforms_square_div_64, 1, id="make_coco_transforms_square_div_64"),
+            pytest.param(make_coco_transforms, 0, id="make_coco_transforms"),
+            pytest.param(make_coco_transforms_square_div_64, 0, id="make_coco_transforms_square_div_64"),
         ],
     )
     def test_aug_config_not_applied_on_test(self, make_transforms, expected_resize_wrappers):
-        """aug_config is ignored for test splits — only resize wrappers are present."""
+        """aug_config is ignored for test splits and defaults to torchvision resize."""
         pipeline = make_transforms("test", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
         assert len(wrappers) == expected_resize_wrappers

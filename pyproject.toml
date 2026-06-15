@@ -57,9 +57,11 @@ train = [
     "faster-coco-eval>=1.7.2",
     "pycocotools",
     "scipy",
-    "albumentations>=1.4.24,<3.0.0",
     "roboflow",
     "rf100vl",
+]
+augmentation = [
+    "albumentations>=1.4.24,<3.0.0",  # optional custom CPU augmentations
 ]
 onnx = [
     "onnx>=1.16.0,<2.0",

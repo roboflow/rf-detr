@@ -1,14 +1,22 @@
 ---
-description: Configure RF-DETR data augmentations with Albumentations. Built-in presets for aerial, industrial, and small datasets plus custom transforms.
+description: Configure RF-DETR data augmentations. Defaults use torchvision; custom presets use optional Albumentations.
 ---
 
 # Augmentations
 
-RF-DETR supports custom data augmentations via [Albumentations](https://albumentations.ai/), with automatic bounding box and mask handling for geometric transforms. Albumentations 1.4.24+ and 2.x are supported.
+RF-DETR uses torchvision-native default augmentations for training, validation, prediction, and export preprocessing. Omitting `aug_config` uses the default training augmentation stack: resize/crop scale jitter plus horizontal flip at 50%. Passing `aug_config={}` disables the horizontal flip while keeping required resizing and normalization.
+
+RF-DETR also supports advanced custom data augmentations via optional [Albumentations](https://albumentations.ai/), with automatic bounding box and mask handling for geometric transforms. Albumentations 1.4.24+ and 2.x are supported.
 
 ## Quick Start
 
-Pass `aug_config` to your training call. Import one of the built-in presets:
+Install the optional augmentation extra before using custom `aug_config` dictionaries or built-in Albumentations presets:
+
+```bash
+pip install "rfdetr[train,augmentation]"
+```
+
+Then pass `aug_config` to your training call. Import one of the built-in presets:
 
 ```python
 from rfdetr import RFDETRSmall
@@ -32,7 +40,7 @@ model.train(
 )
 ```
 
-To disable augmentations: `aug_config={}`. Omitting it uses the default (horizontal flip at 50%).
+To disable optional training augmentation: `aug_config={}`. Omitting it uses the torchvision-native default horizontal flip at 50%.
 
 ## Built-in Presets
 
@@ -43,7 +51,7 @@ To disable augmentations: `aug_config={}`. Omitting it uses the default (horizon
 | `AUG_AERIAL`       | Satellite / overhead imagery      |
 | `AUG_INDUSTRIAL`   | Manufacturing / inspection data   |
 
-All presets are plain dicts — inspect or extend them before passing:
+All presets are Albumentations config dicts and require `rfdetr[augmentation]`. They are plain dicts, so you can inspect or extend them before passing:
 
 ```python
 from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
@@ -105,7 +113,10 @@ RF-DETR automatically handles bounding boxes for **geometric transforms** (flips
 
     Be careful with aggressive rotations and crops on datasets where object orientation matters (e.g., text detection, oriented objects).
 
-- **CPU-bound:** Augmentations run on CPU during data loading — more transforms means slower loading
+- **Default path:** Uses torchvision-native transforms and does not require Albumentations.
+- **Custom CPU path:** Non-empty `aug_config` dictionaries use Albumentations and require `rfdetr[augmentation]`.
+- **GPU path:** `augmentation_backend="gpu"` uses Kornia and requires `rfdetr[kornia]`.
+- **CPU-bound custom configs:** More transforms means slower data loading
 - **Use `num_workers`:** Parallelize augmentation across data loader workers
 - **Monitor training mAP vs validation mAP:** With strong augmentations it's normal for training mAP to be lower — validation uses original images while training uses augmented (harder) ones
 

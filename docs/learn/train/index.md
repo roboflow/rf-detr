@@ -154,7 +154,7 @@ RF-DETR provides many configuration options to customize your training run. See 
 - [Resume training](advanced.md#resume-training) from a checkpoint
 - [Early stopping](advanced.md#early-stopping) to prevent overfitting
 - [Multi-GPU training](advanced.md#multi-gpu-training) with PyTorch Lightning DDP
-- [Custom augmentations with Albumentations](augmentations.md) - Dedicated guide
+- [Default and custom augmentations](augmentations.md) - Torchvision defaults plus optional Albumentations configs
 - [Memory optimization](advanced.md#memory-optimization) with gradient checkpointing
 
 → **[Learn more about advanced training](advanced.md)**
