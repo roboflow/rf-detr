@@ -329,6 +329,138 @@ def test_coco_evaluator_handles_empty_keypoint_predictions(tmp_path: Path) -> No
     assert stats.shape == (10,)
 
 
+class TestSynchronizeBetweenProcesses:
+    """synchronize_between_processes() deduplicates DT when DDP padding repeats image_ids."""
+
+    def _make_evaluator(self, tmp_path: Path) -> CocoEvaluator:
+        """Return a single-annotation evaluator with label2cat identity mapping."""
+        annotation_path = tmp_path / "kp.json"
+        _write_person_keypoint_coco(annotation_path)
+        coco_gt = COCO(str(annotation_path))
+        coco_gt.label2cat = {0: 1}
+        return CocoEvaluator(coco_gt, ["keypoints"])
+
+    def _pred(self, image_id: int, score: float = 0.99) -> dict:
+        """Single detection prediction dict for image_id."""
+        kp = np.zeros((1, 17, 3), dtype=np.float32)
+        return {
+            image_id: {
+                "boxes": torch.tensor([[10.0, 20.0, 60.0, 80.0]]),
+                "scores": torch.tensor([score]),
+                "labels": torch.tensor([0], dtype=torch.long),
+                "keypoints": torch.as_tensor(kp),
+            }
+        }
+
+    def test_single_gpu_no_dedup_needed(self, tmp_path: Path) -> None:
+        """Single-GPU path (world_size=1): all_gather returns one-element list; all results preserved."""
+        ev = self._make_evaluator(tmp_path)
+        ev.update(self._pred(1))
+
+        with patch("rfdetr.evaluation.coco_eval.all_gather", side_effect=lambda x: [x]):
+            ev.synchronize_between_processes()
+
+        assert ev.img_ids == [1]
+        assert len(ev.coco_results["keypoints"]) == 1
+
+    def test_no_overlap_across_ranks_all_results_kept(self, tmp_path: Path) -> None:
+        """When image_ids are disjoint across ranks, all predictions are preserved."""
+        ev = self._make_evaluator(tmp_path)
+        # Simulate rank 0 has already called update() with image_id=1
+        ev.img_ids = [1]
+        ev.coco_results["keypoints"] = [{"image_id": 1, "category_id": 1, "keypoints": [], "score": 0.9}]
+
+        # all_gather returns rank-0 list + rank-1 list (no overlap)
+        rank1_ids = [2]
+        rank1_results = [{"image_id": 2, "category_id": 1, "keypoints": [], "score": 0.8}]
+        call_count = [0]
+
+        def _all_gather(x: list) -> list:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return [x, rank1_ids]
+            return [x, rank1_results]
+
+        with patch("rfdetr.evaluation.coco_eval.all_gather", side_effect=_all_gather):
+            ev.synchronize_between_processes()
+
+        assert sorted(ev.img_ids) == [1, 2]
+        image_ids_in_results = [r["image_id"] for r in ev.coco_results["keypoints"]]
+        assert sorted(image_ids_in_results) == [1, 2]
+
+    def test_ddp_padding_duplicate_image_id_deduped(self, tmp_path: Path) -> None:
+        """DDP DistributedSampler padding: same image_id on two ranks → only rank-0 results kept."""
+        ev = self._make_evaluator(tmp_path)
+        # image_id=1 on BOTH ranks (padding), image_id=2 only on rank-1
+        rank0_ids = [1]
+        rank1_ids = [1, 2]
+        rank0_results = [{"image_id": 1, "category_id": 1, "keypoints": [0.9], "score": 0.9}]
+        rank1_results = [
+            {"image_id": 1, "category_id": 1, "keypoints": [0.9], "score": 0.9},  # duplicate
+            {"image_id": 2, "category_id": 1, "keypoints": [0.5], "score": 0.8},
+        ]
+        call_count = [0]
+
+        def _all_gather(x: list) -> list:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return [rank0_ids, rank1_ids]
+            return [rank0_results, rank1_results]
+
+        with patch("rfdetr.evaluation.coco_eval.all_gather", side_effect=_all_gather):
+            ev.synchronize_between_processes()
+
+        assert sorted(ev.img_ids) == [1, 2]
+        image_ids_in_results = [r["image_id"] for r in ev.coco_results["keypoints"]]
+        # image_id=1 from rank-0 only (not duplicated), image_id=2 from rank-1
+        assert image_ids_in_results.count(1) == 1, "image_id=1 must appear exactly once (no DDP duplicate)"
+        assert image_ids_in_results.count(2) == 1
+
+    def test_ddp_padding_rank0_predictions_chosen_over_rank1(self, tmp_path: Path) -> None:
+        """When image_id appears on rank-0 and rank-1, rank-0's prediction is kept (first-wins)."""
+        ev = self._make_evaluator(tmp_path)
+        rank0_ids = [1]
+        rank1_ids = [1]
+        rank0_results = [{"image_id": 1, "category_id": 1, "keypoints": [], "score": 0.9}]
+        rank1_results = [{"image_id": 1, "category_id": 1, "keypoints": [], "score": 0.5}]
+        call_count = [0]
+
+        def _all_gather(x: list) -> list:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return [rank0_ids, rank1_ids]
+            return [rank0_results, rank1_results]
+
+        with patch("rfdetr.evaluation.coco_eval.all_gather", side_effect=_all_gather):
+            ev.synchronize_between_processes()
+
+        assert len(ev.coco_results["keypoints"]) == 1
+        assert ev.coco_results["keypoints"][0]["score"] == pytest.approx(0.9), "rank-0 prediction must win"
+
+    def test_multiple_detections_same_image_all_kept(self, tmp_path: Path) -> None:
+        """Multiple DT per image (multi-instance) on the owning rank are all preserved."""
+        ev = self._make_evaluator(tmp_path)
+        # rank-0 has 3 detections for image_id=1 (3 distinct instances)
+        rank0_ids = [1]
+        rank0_results = [
+            {"image_id": 1, "category_id": 1, "keypoints": [], "score": 0.9},
+            {"image_id": 1, "category_id": 1, "keypoints": [], "score": 0.8},
+            {"image_id": 1, "category_id": 1, "keypoints": [], "score": 0.7},
+        ]
+        call_count = [0]
+
+        def _all_gather(x: list) -> list:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return [rank0_ids]
+            return [rank0_results]
+
+        with patch("rfdetr.evaluation.coco_eval.all_gather", side_effect=_all_gather):
+            ev.synchronize_between_processes()
+
+        assert len(ev.coco_results["keypoints"]) == 3, "all 3 per-image detections must be kept"
+
+
 def test_coco_evaluator_skips_unmapped_labels_when_label2cat_is_present(tmp_path: Path) -> None:
     """A non-identity label2cat map should not fall back to raw category IDs for unmapped labels."""
     annotation_path = tmp_path / "person_keypoints_val2017.json"

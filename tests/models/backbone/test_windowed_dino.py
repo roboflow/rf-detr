@@ -163,9 +163,8 @@ def test_window_partition_correct_window_content():
 
 
 def test_buggy_reshape_raises_for_nonsquare():
-    """
-    Directly demonstrates what the pre-fix code did: using num_h_patches_per_window in the width position of the reshape
-    causes a RuntimeError when the element count is not divisible by the (wrong) shape.
+    """Directly demonstrates what the pre-fix code did: using num_h_patches_per_window in the width position of the
+    reshape causes a RuntimeError when the element count is not divisible by the (wrong) shape.
 
     With hidden_size=1 and hp=4, wp=6, num_windows=2 the total elements are 24 but the buggy target dims (2,2,2,2,-1)
     require a non-integer last dimension, so PyTorch raises RuntimeError.

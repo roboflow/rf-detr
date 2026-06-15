@@ -873,7 +873,6 @@ class TestRandomSizedCropCompat:
     @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV2)
     def test_adapts_height_width_for_v2_api(self):
         """RandomSizedCrop config with height/width is adapted to the Albumentations 2.x size API."""
-
         transform = _build_albu_transform(
             "RandomSizedCrop",
             {"min_max_height": [384, 600], "height": 640, "width": 640},
@@ -886,7 +885,6 @@ class TestRandomSizedCropCompat:
     @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV1)
     def test_adapts_size_for_v1_api(self):
         """RandomSizedCrop config with size is adapted to the Albumentations 1.x height/width API."""
-
         transform = _build_albu_transform(
             "RandomSizedCrop",
             {"min_max_height": [384, 600], "size": (640, 640)},
@@ -904,7 +902,6 @@ class TestRandomSizedCropCompat:
         This documents the intentional silent-skip behavior: from_config wraps _build_albu_transform in a broad except
         clause so bad configs produce a warning rather than an exception.
         """
-
         config = {
             "HorizontalFlip": {"p": 0.5},
             "RandomSizedCrop": {"min_max_height": [100, 200], "height": 256},
@@ -1587,9 +1584,9 @@ class TestMakeCocoTransformsAugConfig:
 class TestMakeCocoTransformsOutputSize:
     """Regression tests for #979: transforms must resize high-resolution images to the target resolution.
 
-    These tests verify that ``make_coco_transforms`` and ``make_coco_transforms_square_div_64``
-    actually produce output images at the requested ``resolution``, not at the original image size.
-    Existing tests only check pipeline *structure*; these check actual output *dimensions*.
+    These tests verify that ``make_coco_transforms`` and ``make_coco_transforms_square_div_64`` actually produce output
+    images at the requested ``resolution``, not at the original image size. Existing tests only check pipeline
+    *structure*; these check actual output *dimensions*.
     """
 
     # 1920x1080 (landscape) — larger than any typical training resolution.

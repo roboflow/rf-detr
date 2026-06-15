@@ -181,6 +181,33 @@ class TestLoadPretrainWeightsReinitScenarios:
         assert calls == [call(3), call(6)], f"Expected reinit to [3, 6] (load then expand), got {calls}"
         assert mc.num_classes == 5, "Dataset-aligned num_classes must not be clobbered by the checkpoint."
 
+    def test_explicit_default_num_classes_treated_as_explicit(self, monkeypatch, tmp_path):
+        """num_classes set explicitly to the class default is honored like any explicit value.
+
+        Scenario: config constructed with ``num_classes`` equal to the ModelConfig default (so it is
+        recorded in ``model_fields_set``), loading a smaller checkpoint.  The configured value must be
+        preserved — the head aligns to the checkpoint for loading, then expands back to the configured
+        size — it must NOT auto-align down to the checkpoint's class count.  Guards against
+        re-introducing the ``num_classes != default`` clause, which made an explicit default behave
+        like "unset" and so silently adopted the checkpoint's class count.
+        """
+        from rfdetr.models.weights import load_pretrain_weights
+
+        default_nc = RFDETRBaseConfig.model_fields["num_classes"].default
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=default_nc)
+        assert "num_classes" in mc.model_fields_set
+        checkpoint = _make_checkpoint(num_classes=3)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        calls = nn_model.reinitialize_detection_head.call_args_list
+        assert calls == [call(3), call(default_nc + 1)], (
+            f"Expected reinit to [3, {default_nc + 1}] (load at checkpoint, expand back to configured), got {calls}"
+        )
+        assert mc.num_classes == default_nc, "Explicit default num_classes must be preserved, not auto-aligned."
+
     def test_characterization_no_mismatch_no_reinit(self, monkeypatch, tmp_path):
         """Checkpoint class count matches config → no reinit.
 
@@ -419,10 +446,10 @@ class TestLoadPretrainWeightsPTLCkptFormat:
         assert result == ["from_args"], f"args must take precedence over hyper_parameters, got {result!r}"
 
     def test_ptl_ckpt_non_model_keys_in_state_dict_are_excluded(self, monkeypatch):
-        """Non-model. keys in state_dict (optimizer, lr_scheduler) must not appear in checkpoint['model'].
+        """Non-model keys in state_dict (optimizer, lr_scheduler) must not appear in checkpoint['model'].
 
-        Real PTL checkpoints contain keys like 'optimizer.param_groups' and 'lr_scheduler.last_epoch' alongside the
-        'model.*' weights.  The loader must exclude these non-model keys so they do not pollute the state dict passed to
+        Real PTL checkpoints contain keys like 'optimizer.param_groups' and 'lr_scheduler.last_epoch' alongside
+        'model.*' weights. The loader must exclude these non-model keys so they do not pollute the state dict passed to
         load_state_dict and do not cause KeyError or unexpected parameter names.
         """
         from rfdetr.models.weights import load_pretrain_weights
@@ -748,7 +775,10 @@ class TestLoadPretrainWeightsPerGroupQuerySlice:
         return {"model": state, "args": {"num_queries": num_queries, "group_detr": group_detr}}
 
     def test_decreasing_num_queries_preserves_per_group_structure(self, monkeypatch, tmp_path):
-        """Real flow: checkpoint(nq=4, g=3) → model(nq=2, g=3). Group structure must be preserved."""
+        """Real flow: checkpoint(nq=4, g=3) → model(nq=2, g=3).
+
+        Group structure must be preserved.
+        """
         from rfdetr.models.weights import load_pretrain_weights
 
         mc = RFDETRBaseConfig(
@@ -1000,7 +1030,6 @@ class TestPartialLoadDetector:
 
     def test_unexpected_backbone_missing_keys_warn(self, captured):
         """Missing backbone keys (e.g. register_tokens) must trigger the warning."""
-
         result = SimpleNamespace(
             missing_keys=[
                 "backbone.0.encoder.encoder.embeddings.register_tokens",
@@ -1015,7 +1044,6 @@ class TestPartialLoadDetector:
 
     def test_unexpected_keys_warn(self, captured):
         """Unexpected checkpoint keys (model has no slot for them) must trigger the warning."""
-
         result = SimpleNamespace(
             missing_keys=[],
             unexpected_keys=["backbone.0.encoder.legacy_module.weight"],
@@ -1026,7 +1054,6 @@ class TestPartialLoadDetector:
 
     def test_handles_non_iterable_input_gracefully(self, captured):
         """A MagicMock-style result (used in many existing tests) must not raise."""
-
         _warn_on_partial_load(MagicMock(), "/fake/weights.pth")
         # The crucial assertion is "did not raise"; whether captured is empty
         # depends on MagicMock truthiness — both outcomes are acceptable.

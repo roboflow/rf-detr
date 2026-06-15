@@ -307,7 +307,8 @@ class RFDETR:
                 used when present; otherwise the constructor default applies.  In either case the
                 field is not recorded as a user-set override, so :meth:`train` can still adapt the
                 detection head to the training dataset's class count.  Pass an explicit
-                ``num_classes=N`` to pin it and prevent head adaptation.
+                ``num_classes=N`` to pin the head and prevent adaptation, even when ``N`` equals
+                the class default (e.g. ``num_classes=90`` on a COCO-pretrained checkpoint).
 
         Returns:
             An instance of the appropriate :class:`RFDETR` subclass loaded from the checkpoint.
@@ -1181,8 +1182,8 @@ class RFDETR:
 
         For COCO-style datasets this counts all categories by ``id`` from ``train/_annotations.coco.json`` (matching the
         remapping based on ``coco.cats`` used by the training datamodule). In keypoint mode it instead counts the
-        inferred RF-DETR keypoint label slots, where slot ``0`` may be reserved for classes without keypoints. For
-        YOLO-style datasets it falls back to ``_load_classes``.
+        inferred RF-DETR keypoint label slots, where slot ``0`` may be reserved for classes without keypoints. For YOLO-
+        style datasets it falls back to ``_load_classes``.
         """
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
@@ -1202,13 +1203,20 @@ class RFDETR:
         Must be called before ``RFDETRModelModule`` is constructed so that weight loading inside the module uses the
         correct (dataset-derived) class count.
 
-        When the user did **not** explicitly override ``num_classes`` (or passed the class-config default),
-        ``model_config.num_classes`` and ``self.model.args.num_classes`` are updated to match the dataset.  When the
-        user *did* set a non-default value that differs from the dataset, the configured value is preserved and a
-        warning is emitted.
+        When the user did **not** explicitly set ``num_classes`` (it is left unset, e.g. inferred from a
+        checkpoint), ``model_config.num_classes`` and ``self.model.args.num_classes`` are updated to match the dataset.
+        When the user *did* set ``num_classes`` explicitly — to any value, including the class default — and it differs
+        from the dataset, the configured value is preserved and a warning is emitted.
 
         Failures from ``_detect_num_classes_for_training`` are caught and logged at DEBUG level so that training is
         never blocked by detection errors.
+
+        When ``model_config.use_grouppose_keypoints`` is True and
+        ``model_config.num_keypoints_per_class`` is shorter than the adjusted
+        ``num_classes``, the schema is zero-padded in-place so that
+        ``len(num_keypoints_per_class) == num_classes``.  Both ``model_config``
+        and ``model.args`` (if present) are updated.  Appended classes receive
+        zero keypoints and contribute no class-logit boost.
 
         Args:
             dataset_dir: Path to the training dataset root directory.
@@ -1223,6 +1231,8 @@ class RFDETR:
             logger.debug("Could not auto-detect num_classes from dataset '%s': %s", dataset_dir, exc)
             return
 
+        # Hoist so both branches below can reference the schema without re-fetching.
+        keypoint_schema: list[int] = []
         if self.model_config.use_grouppose_keypoints:
             # Older configs may omit the schema; absence means no schema-based class-count expansion.
             keypoint_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
@@ -1234,13 +1244,13 @@ class RFDETR:
         if dataset_num_classes == model_num_classes:
             return
 
-        # Determine whether the user explicitly overrode num_classes to a non-default value.
-        # "num_classes" in model_fields_set is True when the field was explicitly set at
-        # construction time; comparing against the class default filters out cases where the
-        # user passed the default value explicitly (treat those like "not set").
-        user_set = "num_classes" in getattr(self.model_config, "model_fields_set", set())
-        default_nc = type(self.model_config).model_fields["num_classes"].default
-        user_overrode = user_set and model_num_classes != default_nc
+        # Determine whether the user explicitly set num_classes.  "num_classes" in
+        # model_fields_set is True only when the field was explicitly provided at construction
+        # (or assigned afterwards); an explicit value is honored regardless of whether it equals
+        # the class default, so an intentional num_classes is never silently overridden by the
+        # dataset count.  A checkpoint-derived num_classes is cleared from model_fields_set by
+        # ``from_checkpoint`` (see PR #1106 / issue #1092), so it correctly counts as "not set" here.
+        user_overrode = "num_classes" in getattr(self.model_config, "model_fields_set", set())
 
         if not user_overrode:
             logger.debug(
@@ -1255,6 +1265,15 @@ class RFDETR:
             model_args = getattr(self.model, "args", None)
             if model_args is not None:
                 model_args.num_classes = dataset_num_classes
+            # Pad keypoint schema with zeros so len(num_keypoints_per_class) == num_classes.
+            # Without this, _aggregate_keypoint_class_logits emits a one-time mismatch
+            # warning per model instance and the config state is inconsistent with the
+            # detection head width.
+            if keypoint_schema and len(keypoint_schema) < dataset_num_classes:
+                padded_schema = keypoint_schema + [0] * (dataset_num_classes - len(keypoint_schema))
+                self.model_config.num_keypoints_per_class = padded_schema
+                if model_args is not None:
+                    model_args.num_keypoints_per_class = padded_schema
         else:
             logger.warning(
                 "Dataset '%s' has %d classes but model was initialized with num_classes=%d. "
@@ -1266,6 +1285,14 @@ class RFDETR:
                 model_num_classes,
                 dataset_num_classes,
             )
+            # Also pad schema when the user-configured num_classes exceeds the schema length,
+            # to prevent the _aggregate_keypoint_class_logits mismatch warning in this path too.
+            if keypoint_schema and len(keypoint_schema) < model_num_classes:
+                padded_schema = keypoint_schema + [0] * (model_num_classes - len(keypoint_schema))
+                self.model_config.num_keypoints_per_class = padded_schema
+                model_args = getattr(self.model, "args", None)
+                if model_args is not None:
+                    model_args.num_keypoints_per_class = padded_schema
 
     @staticmethod
     def _roboflow_keypoint_annotation_path(dataset_dir: str) -> Path | None:
@@ -1284,7 +1311,6 @@ class RFDETR:
             >>> RFDETR._roboflow_keypoint_annotation_path("/missing") is None
             True
         """
-
         if not is_valid_coco_dataset(dataset_dir):
             return None
         annotation_path = Path(dataset_dir) / "train" / "_annotations.coco.json"
