@@ -412,18 +412,24 @@ class LWDETR(nn.Module):
         class_boost = class_contrib.sum(dim=-1)
 
         detection_num_classes = self.class_embed.out_features
+        foreground_num_classes = detection_num_classes - 1
         if class_boost.shape[-1] < detection_num_classes:
-            if not self._kp_zero_pad_warned:
-                logger.warning(
-                    "Keypoint class-logit boost has %d classes but detection head has %d; "
-                    "zero-padding boost for classes %d..%d. Detection classes with no keypoint schema "
-                    "will receive zero boost. This warning is emitted once per model instance.",
-                    class_boost.shape[-1],
-                    detection_num_classes,
-                    class_boost.shape[-1],
-                    detection_num_classes - 1,
-                )
-                self._kp_zero_pad_warned = True
+            if class_boost.shape[-1] < foreground_num_classes:
+                # Only warn when the schema doesn't cover all foreground detection classes.
+                # The background slot (index detection_num_classes-1) always receives zero boost,
+                # so a schema that covers exactly num_classes foreground classes is correct and
+                # does not warrant a warning.
+                if not self._kp_zero_pad_warned:
+                    logger.warning(
+                        "Keypoint class-logit boost has %d classes but detection head has %d foreground classes; "
+                        "zero-padding boost for classes %d..%d. Detection classes with no keypoint schema "
+                        "will receive zero boost. This warning is emitted once per model instance.",
+                        class_boost.shape[-1],
+                        foreground_num_classes,
+                        class_boost.shape[-1],
+                        foreground_num_classes - 1,
+                    )
+                    self._kp_zero_pad_warned = True
             class_boost = torch.cat(
                 [
                     class_boost,
