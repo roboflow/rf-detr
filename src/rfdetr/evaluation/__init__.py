@@ -7,18 +7,12 @@
 
 from rfdetr.evaluation.keypoint_oks import (
     DEFAULT_KEYPOINT_MAX_DETS,
-    METRIC_KEY_MAP,
-    METRIC_KEY_MAP_50,
-    METRIC_KEY_MAP_75,
-    METRIC_KEY_MAR,
     MetricKeypointOKS,
+    OKSKey,
 )
 
 __all__ = [
     "DEFAULT_KEYPOINT_MAX_DETS",
-    "METRIC_KEY_MAP",
-    "METRIC_KEY_MAP_50",
-    "METRIC_KEY_MAP_75",
-    "METRIC_KEY_MAR",
+    "OKSKey",
     "MetricKeypointOKS",
 ]

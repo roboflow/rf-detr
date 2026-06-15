@@ -21,11 +21,8 @@ from rfdetr.datasets import get_coco_api_from_dataset
 from rfdetr.evaluation.f1_sweep import sweep_confidence_thresholds
 from rfdetr.evaluation.keypoint_oks import (
     DEFAULT_KEYPOINT_MAX_DETS,
-    METRIC_KEY_MAP,
-    METRIC_KEY_MAP_50,
-    METRIC_KEY_MAP_75,
-    METRIC_KEY_MAR,
     MetricKeypointOKS,
+    OKSKey,
 )
 from rfdetr.evaluation.matching import (
     build_matching_data,
@@ -891,10 +888,10 @@ class COCOEvalCallback(Callback):
         try:
             stats = metric.compute()
             keypoint_metrics = {
-                "keypoint_map_50_95": (METRIC_KEY_MAP, True),
-                "keypoint_map_50": (METRIC_KEY_MAP_50, True),
-                "keypoint_map_75": (METRIC_KEY_MAP_75, False),
-                "keypoint_mAR": (METRIC_KEY_MAR, False),
+                "keypoint_map_50_95": (OKSKey.MAP, True),
+                "keypoint_map_50": (OKSKey.MAP_50, True),
+                "keypoint_map_75": (OKSKey.MAP_75, False),
+                "keypoint_mAR": (OKSKey.MAR, False),
             }
             for metric_name, (stat_key, prog_bar) in keypoint_metrics.items():
                 value = stats.get(stat_key, -1.0)

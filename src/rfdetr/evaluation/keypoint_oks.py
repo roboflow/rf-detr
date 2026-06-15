@@ -5,11 +5,32 @@
 # ------------------------------------------------------------------------
 """OKS keypoint mAP metric backed by :class:`~rfdetr.evaluation.coco_eval.CocoEvaluator`."""
 
+from enum import Enum
 from typing import Any
 
 import torch
 
 from rfdetr.evaluation.coco_eval import CocoEvaluator
+
+
+class OKSKey(str, Enum):
+    """Keys returned by :meth:`MetricKeypointOKS.compute`.
+
+    Subclasses :class:`str` so enum members compare equal to their string values
+    and can be used interchangeably as dict keys — ``stats[OKSKey.MAP]`` and
+    ``stats["map"]`` both work.
+
+    Examples:
+        >>> OKSKey.MAP == "map"
+        True
+        >>> OKSKey.MAP_50.value
+        'map_50'
+    """
+
+    MAP = "map"
+    MAP_50 = "map_50"
+    MAP_75 = "map_75"
+    MAR = "mar"
 
 
 def _sanitize_preds(predictions: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
@@ -47,14 +68,6 @@ def _sanitize_preds(predictions: dict[int, dict[str, Any]]) -> dict[int, dict[st
 # evaluator unconditionally overrides maxDets to ``[20]`` regardless of this value
 # — this constant has no effect on keypoint AP/AR.
 DEFAULT_KEYPOINT_MAX_DETS = 500
-
-# Keys returned by :meth:`MetricKeypointOKS.compute`.
-# Defined as module-level constants so callers can reference them symbolically rather
-# than depending on bare string literals — guards against silent misses from future renames.
-METRIC_KEY_MAP = "map"
-METRIC_KEY_MAP_50 = "map_50"
-METRIC_KEY_MAP_75 = "map_75"
-METRIC_KEY_MAR = "mar"
 
 # Expected shape of pycocotools _summarizeKps() output.  The keypoint stats array is
 # always (10,): AP@50:95 (idx 0), AP@50 (1), AP@75 (2), AP-medium (3), AP-large (4),
@@ -231,8 +244,8 @@ class MetricKeypointOKS:
             "pycocotools _summarizeKps() contract violated — check faster_coco_eval version"
         )
         return {
-            METRIC_KEY_MAP: float(stats[0]),
-            METRIC_KEY_MAP_50: float(stats[1]),
-            METRIC_KEY_MAP_75: float(stats[2]),
-            METRIC_KEY_MAR: float(stats[5]),
+            OKSKey.MAP: float(stats[0]),
+            OKSKey.MAP_50: float(stats[1]),
+            OKSKey.MAP_75: float(stats[2]),
+            OKSKey.MAR: float(stats[5]),
         }
