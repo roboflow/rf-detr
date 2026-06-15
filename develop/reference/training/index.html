@@ -6778,11 +6778,11 @@ are logged.</p>
             <td>
               <div class="doc-md-description">
                 <p>Maximum detections per image passed to
-<code>MeanAveragePrecision</code>. Defaults to 500.</p>
+<code>MeanAveragePrecision</code>. Defaults to :data:<code>~rfdetr.evaluation.keypoint_oks.DEFAULT_KEYPOINT_MAX_DETS</code>.</p>
               </div>
             </td>
             <td>
-                  <code>500</code>
+                  <code><span title="rfdetr.evaluation.keypoint_oks.DEFAULT_KEYPOINT_MAX_DETS">DEFAULT_KEYPOINT_MAX_DETS</span></code>
             </td>
           </tr>
           <tr class="doc-section-item">
@@ -6861,7 +6861,7 @@ always computed when <code>trainer.test()</code> is called.</p>
 
 
 <h3 id="rfdetr.training.callbacks.coco_eval.COCOEvalCallback.__init__" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">max_dets</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span> <span class="n">segmentation</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">eval_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">log_per_class_metrics</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">keypoint_oks_sigmas</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">in_notebook</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">max_dets</span><span class="o">=</span><span class="n">DEFAULT_KEYPOINT_MAX_DETS</span><span class="p">,</span> <span class="n">segmentation</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">eval_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">log_per_class_metrics</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">keypoint_oks_sigmas</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">in_notebook</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
 
 <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback.__init__" class="headerlink" title="Permanent link">&para;</a></h3>
 
