@@ -574,23 +574,18 @@ class TestBuildTrainerLoggers:
 class TestBuildTrainerKwargs:
     """build_trainer() must pass the correct kwargs to Trainer."""
 
-    def test_gradient_clip_val_default_for_automatic_optimization(self, tmp_path):
-        """Non-keypoint models keep Trainer-owned gradient clipping."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
-        assert trainer.gradient_clip_val == pytest.approx(0.1)
-
-    def test_gradient_clip_val_disabled_for_keypoint_manual_optimization(self, tmp_path):
-        """Keypoint models disable Trainer-owned clipping because RFDETRModelModule clips manually."""
+    def test_gradient_clip_val_disabled_for_manual_optimization(self, tmp_path):
+        """Trainer-owned clipping is disabled because RFDETRModelModule clips manually."""
         trainer = build_trainer(
             _tc(tmp_path, use_ema=False),
-            _mc(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+            _mc(),
         )
         assert trainer.gradient_clip_val is None
 
-    def test_accumulate_grad_batches(self, tmp_path):
-        """accumulate_grad_batches maps from grad_accum_steps."""
+    def test_accumulate_grad_batches_disabled_for_manual_optimization(self, tmp_path):
+        """Trainer-owned accumulation is disabled because RFDETRModelModule accumulates manually."""
         trainer = build_trainer(_tc(tmp_path, grad_accum_steps=8, use_ema=False), _mc())
-        assert trainer.accumulate_grad_batches == 8
+        assert trainer.accumulate_grad_batches == 1
 
     def test_max_epochs(self, tmp_path):
         """max_epochs maps from config.epochs."""
@@ -625,6 +620,27 @@ class TestBuildTrainerKwargs:
                 precision="32-true",
             )
         assert captured["precision"] == "32-true"
+
+    def test_trainer_kwargs_cannot_override_manual_optimization_ownership(self, tmp_path):
+        """Lightning accumulation and clipping remain disabled even when passed as trainer kwargs."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(
+                _tc(tmp_path, use_ema=False),
+                _mc(),
+                accumulate_grad_batches=8,
+                gradient_clip_val=0.25,
+            )
+
+        assert captured["accumulate_grad_batches"] == 1
+        assert captured["gradient_clip_val"] is None
 
 
 class TestBuildTrainerSeed:

@@ -323,12 +323,12 @@ class TestBuildTrainerUsesRealFields:
         defaults.update(kwargs)
         return RFDETRBaseConfig(**defaults)
 
-    def test_clip_max_norm_forwarded_to_trainer(self, tmp_path):
-        """gradient_clip_val on the Trainer matches TrainConfig.clip_max_norm."""
+    def test_clip_max_norm_owned_by_model_module(self, tmp_path):
+        """Trainer-owned clipping is disabled because RFDETRModelModule clips manually."""
         from rfdetr.training import build_trainer
 
         trainer = build_trainer(self._tc(tmp_path, clip_max_norm=0.25), self._mc())
-        assert trainer.gradient_clip_val == pytest.approx(0.25)
+        assert trainer.gradient_clip_val is None
 
     def test_seed_not_applied_in_build_trainer_factory(self, tmp_path):
         """Seeding is deferred to RFDETRModule.on_fit_start, not build_trainer()."""

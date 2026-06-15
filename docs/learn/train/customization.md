@@ -53,17 +53,17 @@ module = RFDETRModelModule(model_config, train_config)
 
 ### Lifecycle hooks
 
-| Hook                       | Behaviour                                                                                       |
-| -------------------------- | ----------------------------------------------------------------------------------------------- |
-| `on_fit_start`             | Seeds RNGs when `train_config.seed` is set.                                                     |
-| `on_train_batch_start`     | Applies multi-scale random resize when `train_config.multi_scale=True`.                         |
-| `transfer_batch_to_device` | Moves `NestedTensor` batches to the target device.                                              |
-| `training_step`            | Computes loss, divides by `accumulate_grad_batches`, and logs `train/loss` and per-term losses. |
-| `validation_step`          | Runs forward pass and postprocessing; returns `{results, targets}` for `COCOEvalCallback`.      |
-| `test_step`                | Same as `validation_step`, logs under `test/`.                                                  |
-| `predict_step`             | Runs inference-only forward pass and returns postprocessed detections.                          |
-| `configure_optimizers`     | Builds AdamW with layer-wise LR decay and a LambdaLR scheduler (cosine or step).                |
-| `on_load_checkpoint`       | Auto-converts legacy `.pth` checkpoints to PTL format.                                          |
+| Hook                       | Behaviour                                                                                                        |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `on_fit_start`             | Seeds RNGs when `train_config.seed` is set.                                                                      |
+| `on_train_batch_start`     | Applies multi-scale random resize when `train_config.multi_scale=True`.                                          |
+| `transfer_batch_to_device` | Moves `NestedTensor` batches to the target device.                                                               |
+| `training_step`            | Computes box-normalized loss, performs manual gradient accumulation, and logs `train/loss` plus per-term losses. |
+| `validation_step`          | Runs forward pass and postprocessing; returns `{results, targets}` for `COCOEvalCallback`.                       |
+| `test_step`                | Same as `validation_step`, logs under `test/`.                                                                   |
+| `predict_step`             | Runs inference-only forward pass and returns postprocessed detections.                                           |
+| `configure_optimizers`     | Builds AdamW with layer-wise LR decay and a LambdaLR scheduler (cosine or step).                                 |
+| `on_load_checkpoint`       | Auto-converts legacy `.pth` checkpoints to PTL format.                                                           |
 
 ### Accessing the underlying model
 
@@ -117,8 +117,8 @@ trainer = build_trainer(train_config, model_config)
 | Concern               | Source                                                                                                                                                     |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Max epochs            | `train_config.epochs`                                                                                                                                      |
-| Gradient accumulation | `train_config.grad_accum_steps`                                                                                                                            |
-| Gradient clipping     | `train_config.clip_max_norm` (default `0.1`)                                                                                                               |
+| Gradient accumulation | `train_config.grad_accum_steps`; owned by `RFDETRModelModule` manual optimization                                                                          |
+| Gradient clipping     | `train_config.clip_max_norm` (default `0.1`); owned by `RFDETRModelModule` manual optimization                                                             |
 | Mixed precision       | Resolved from `model_config.amp` and device capability (`bf16-mixed` on Ampere+, `16-mixed` otherwise)                                                     |
 | Accelerator           | `train_config.accelerator` (default `"auto"`)                                                                                                              |
 | Strategy              | Pass `strategy=` as a `**trainer_kwarg` to `build_trainer`. `TrainConfig` has no `strategy` field — setting it on `TrainConfig` will raise a `ValueError`. |
@@ -129,14 +129,13 @@ trainer = build_trainer(train_config, model_config)
 
 ### Overriding PTL Trainer kwargs
 
-Pass any keyword argument accepted by `pytorch_lightning.Trainer` via `**trainer_kwargs`. These override the built configuration:
+Pass keyword arguments accepted by `pytorch_lightning.Trainer` via `**trainer_kwargs`. Most keys override the built configuration. RF-DETR keeps `accumulate_grad_batches=1` and `gradient_clip_val=None` internally because `RFDETRModelModule` owns accumulation and clipping under manual optimization:
 
 ```python
 trainer = build_trainer(
     train_config,
     model_config,
     fast_dev_run=2,  # run 2 batches per epoch for a smoke test
-    accumulate_grad_batches=8,  # override TrainConfig.grad_accum_steps
     log_every_n_steps=10,
 )
 ```

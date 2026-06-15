@@ -134,8 +134,6 @@ class SetCriterion(nn.Module):
     2) we supervise each pair of matched ground-truth / prediction (supervise class and box).
     """
 
-    supports_loss_normalizer_override = True
-
     def __init__(
         self,
         num_classes,

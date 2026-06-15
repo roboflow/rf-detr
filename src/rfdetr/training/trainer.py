@@ -127,7 +127,7 @@ def build_trainer(
     """Assemble a PTL ``Trainer`` with the full RF-DETR callback and logger stack.
 
     Resolves training precision from ``model_config.amp`` and device capability, guards EMA against sharded strategies,
-    wires conditional loggers, and applies promoted training knobs (gradient clipping, sync_batchnorm, strategy).
+    wires conditional loggers, and applies promoted training knobs (sync_batchnorm, strategy).
 
     Args:
         train_config: Training hyperparameter configuration.
@@ -138,14 +138,14 @@ def build_trainer(
             Defaults to ``None`` which reads from ``train_config.accelerator`` (itself defaulting to ``"auto"``). Pass
             ``"cpu"`` to override auto-detection (e.g. when the caller explicitly requests CPU training via
             ``device="cpu"``).
-        **trainer_kwargs: Extra keyword arguments forwarded verbatim to
-            ``pytorch_lightning.Trainer``.  Use this to pass PTL-native flags that are not exposed through
-            ``TrainConfig``, for example::
+        **trainer_kwargs: Extra keyword arguments forwarded to ``pytorch_lightning.Trainer``. Use this to pass
+            PTL-native flags that are not exposed through ``TrainConfig``, for example::
 
                 build_trainer(tc, mc, fast_dev_run=2)
 
-            Any key present in both ``trainer_kwargs`` and the built config dict will be overridden by the value in
-            ``trainer_kwargs``.
+            Most keys present in both ``trainer_kwargs`` and the built config dict are overridden by the value in
+            ``trainer_kwargs``. RF-DETR keeps ``accumulate_grad_batches=1`` and ``gradient_clip_val=None`` because
+            ``RFDETRModelModule`` owns both operations under manual optimization.
 
     Returns:
         A configured ``pytorch_lightning.Trainer`` instance.
@@ -392,9 +392,7 @@ def build_trainer(
         raise NotImplementedError("ClearML logging is not yet supported. Remove clearml=True from TrainConfig.")
 
     # --- Promoted config fields (T4-2 added these to TrainConfig) ---
-    clip_max_norm: float = tc.clip_max_norm
     sync_bn: bool = tc.sync_bn
-    use_manual_optimization = bool(model_config.use_grouppose_keypoints)
 
     trainer_config: dict[str, Any] = {
         "max_epochs": tc.epochs,
@@ -403,11 +401,13 @@ def build_trainer(
         "num_nodes": tc.num_nodes,
         "strategy": strategy,
         "precision": _resolve_precision(),
-        "accumulate_grad_batches": tc.grad_accum_steps,
-        # Keypoint RFDETRModelModule uses manual optimization so it can normalize losses by
-        # the full accumulated box count. Lightning forbids Trainer-owned gradient clipping
-        # in manual optimization; the module applies tc.clip_max_norm for that path.
-        "gradient_clip_val": None if use_manual_optimization else clip_max_norm,
+        # RFDETRModelModule owns accumulation so denominator scaling is based on
+        # total boxes across the effective batch, independent of Lightning internals.
+        "accumulate_grad_batches": 1,
+        # RFDETRModelModule uses manual optimization so it can normalize losses by
+        # the full accumulated box count. Lightning forbids Trainer-owned gradient
+        # clipping in manual optimization; the module applies tc.clip_max_norm.
+        "gradient_clip_val": None,
         "sync_batchnorm": sync_bn,
         "callbacks": callbacks,
         "logger": loggers if loggers else False,
@@ -418,4 +418,6 @@ def build_trainer(
     }
     trainer_config.update(trainer_kwargs)
     trainer_config["strategy"] = strategy
+    trainer_config["accumulate_grad_batches"] = 1
+    trainer_config["gradient_clip_val"] = None
     return Trainer(**trainer_config)

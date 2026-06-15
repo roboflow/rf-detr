@@ -72,6 +72,7 @@ def _fake_criterion():
     """Return a MagicMock criterion with a realistic weight_dict."""
     criterion = MagicMock()
     criterion.weight_dict = {"loss_ce": 1.0, "loss_bbox": 5.0, "loss_giou": 2.0}
+    criterion.num_boxes_for_targets.return_value = torch.tensor(1.0)
     return criterion
 
 
@@ -163,7 +164,6 @@ class _ScalarLossModel(nn.Module):
 class _BoxNormalizedCriterion:
     """Criterion with controllable per-target loss numerators and box counts."""
 
-    supports_loss_normalizer_override = True
     weight_dict = {"loss_ce": 1.0}
 
     def num_boxes_for_targets(self, outputs, targets):
@@ -206,17 +206,20 @@ class TestInit:
     """Tests for RFDETRModelModule.__init__ — covers attribute assignment and delegation to build_model() /
     build_criterion_and_postprocessors() when pretrain_weights is None."""
 
-    def test_non_keypoint_models_use_automatic_optimization(self, build_module):
-        """Detection and segmentation models should keep Lightning automatic optimization."""
-        module, _, _, _ = build_module(model_config=_base_model_config(use_grouppose_keypoints=False))
-
-        assert module.automatic_optimization is True
-
-    def test_keypoint_models_use_manual_optimization(self, build_module):
-        """Keypoint models need manual optimization for box-normalized accumulation."""
-        module, _, _, _ = build_module(
-            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17])
-        )
+    @pytest.mark.parametrize(
+        "model_config",
+        [
+            pytest.param(_base_model_config(use_grouppose_keypoints=False), id="detection"),
+            pytest.param(_base_model_config(segmentation_head=True), id="segmentation"),
+            pytest.param(
+                _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+                id="keypoints",
+            ),
+        ],
+    )
+    def test_models_use_manual_optimization(self, build_module, model_config):
+        """All DETR-style losses need manual optimization for box-normalized accumulation."""
+        module, _, _, _ = build_module(model_config=model_config)
 
         assert module.automatic_optimization is False
 
@@ -690,7 +693,11 @@ class TestTrainingStep:
     visibility, scalar tensor output, and that losses absent from weight_dict are excluded from the total."""
 
     def _run_step(self, tmp_path, loss_dict=None, weight_dict=None, accumulate_grad_batches=1, model_config=None):
-        module, fake_model, fake_criterion, _ = _build_module(model_config=model_config, tmp_path=tmp_path)
+        module, fake_model, fake_criterion, _ = _build_module(
+            model_config=model_config,
+            train_config=_base_train_config(tmp_path, grad_accum_steps=accumulate_grad_batches),
+            tmp_path=tmp_path,
+        )
         samples, targets = _make_batch()
         fake_model.return_value = {}
         fake_criterion.return_value = loss_dict or {"loss_ce": torch.tensor(1.0)}
@@ -704,7 +711,7 @@ class TestTrainingStep:
         module.manual_backward = MagicMock()
         module.lr_schedulers = MagicMock(return_value=None)
         trainer = MagicMock()
-        trainer.accumulate_grad_batches = accumulate_grad_batches
+        trainer.accumulate_grad_batches = 1
         trainer.num_training_batches = 1
         trainer.gradient_clip_val = 0.0
         trainer.gradient_clip_algorithm = "norm"
@@ -722,8 +729,8 @@ class TestTrainingStep:
 
         assert loss.item() == pytest.approx(1.0 + 10.0 + 6.0)
 
-    def test_fallback_loss_backward_normalised_by_accum_steps(self, tmp_path):
-        """Fallback criteria without raw numerators still receive accumulation-step scaling."""
+    def test_loss_backward_uses_box_normalizer_contract(self, tmp_path):
+        """Backward loss is scaled by criterion box normalizer, not Lightning accumulation."""
         loss_dict = {"loss_ce": torch.tensor(4.0)}
         weight_dict = {"loss_ce": 1.0}
         module, samples, targets, _, _ = self._run_step(
@@ -731,19 +738,33 @@ class TestTrainingStep:
             loss_dict,
             weight_dict,
             accumulate_grad_batches=4,
-            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
         )
+        module.criterion.num_boxes_for_targets.return_value = torch.tensor(4.0)
 
         loss = module.training_step((samples, targets), batch_idx=0)
 
-        assert loss.item() == pytest.approx(4.0)
+        assert loss.item() == pytest.approx(1.0)
         backward_loss = module.manual_backward.call_args.args[0]
         assert backward_loss.item() == pytest.approx(1.0)
 
-    def test_box_normalized_accumulation_matches_large_effective_batch(self, tmp_path):
+    @pytest.mark.parametrize(
+        "model_config",
+        [
+            pytest.param(_base_model_config(use_grouppose_keypoints=False), id="detection"),
+            pytest.param(_base_model_config(segmentation_head=True), id="segmentation"),
+            pytest.param(
+                _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+                id="keypoints",
+            ),
+        ],
+    )
+    def test_box_normalized_accumulation_matches_large_effective_batch(self, tmp_path, model_config):
         """Accumulated gradients should match a large batch normalized by total boxes."""
-        keypoint_config = _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17])
-        large_module, _, _, _ = _build_module(model_config=keypoint_config, tmp_path=tmp_path)
+        large_module, _, _, _ = _build_module(
+            model_config=model_config,
+            train_config=_base_train_config(tmp_path, grad_accum_steps=1),
+            tmp_path=tmp_path,
+        )
         large_model = _ScalarLossModel()
         large_optimizer = torch.optim.SGD(large_model.parameters(), lr=1.0)
         large_module.model = large_model
@@ -762,7 +783,11 @@ class TestTrainingStep:
         large_module._trainer = large_trainer
         type(large_module).trainer = property(lambda self: self._trainer)
 
-        accum_module, _, _, _ = _build_module(model_config=keypoint_config, tmp_path=tmp_path)
+        accum_module, _, _, _ = _build_module(
+            model_config=model_config,
+            train_config=_base_train_config(tmp_path, grad_accum_steps=2),
+            tmp_path=tmp_path,
+        )
         accum_model = _ScalarLossModel()
         accum_optimizer = torch.optim.SGD(accum_model.parameters(), lr=1.0)
         accum_module.model = accum_model
@@ -774,7 +799,7 @@ class TestTrainingStep:
         accum_module.manual_backward = lambda loss: loss.backward()
         accum_module.lr_schedulers = MagicMock(return_value=None)
         accum_trainer = MagicMock()
-        accum_trainer.accumulate_grad_batches = 2
+        accum_trainer.accumulate_grad_batches = 1
         accum_trainer.num_training_batches = 2
         accum_trainer.gradient_clip_val = 0.0
         accum_trainer.gradient_clip_algorithm = "norm"
