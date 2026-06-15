@@ -2035,3 +2035,97 @@ class TestRFDETRTrainNumClassesAutoDetect:
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)  # must not raise
+
+    def test_keypoint_schema_padded_when_num_classes_bumped_for_custom_dataset(self, mock_self, patch_lit):
+        """num_keypoints_per_class is zero-padded when auto-adjust bumps num_classes beyond schema length.
+
+        Regression test for the warning "Keypoint class-logit boost has N classes but detection head has M" on custom
+        (non-Roboflow) datasets.  Root cause: _align_num_classes_from_dataset bumped num_classes but did not pad the
+        keypoint schema.  After the fix the schema length equals num_classes and _aggregate_keypoint_class_logits no
+        longer fires the mismatch warning.
+        """
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+            num_keypoints_per_class=[17, 0],
+        )
+        mock_self.model.args = SimpleNamespace(num_classes=2, num_keypoints_per_class=[17, 0])
+
+        # Dataset has 3 classes; schema covers 2 → triggers the padding path.
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball", "referee"])
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3
+        assert mock_self.model_config.num_keypoints_per_class == [17, 0, 0]
+        assert mock_self.model.args.num_keypoints_per_class == [17, 0, 0]
+
+    def test_keypoint_schema_not_padded_when_already_covers_all_classes(self, mock_self, patch_lit):
+        """Schema is left untouched when it already spans all detection classes.
+
+        Scenario: schema [17, 0, 14] (len=3), dataset has 2 classes.  The schema expansion at
+        max(2, len(schema))=3 sets dataset_num_classes=3, auto-adjust fires (90→3), then the
+        padding guard len(3)<3 evaluates False and the schema is preserved unchanged.
+        Using a 2-class dataset (not 3) ensures the guard is actually reached and evaluated
+        rather than being vacuously bypassed by an early return.
+        """
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+            num_keypoints_per_class=[17, 0, 14],
+        )
+        mock_self.model.args = SimpleNamespace(num_classes=3, num_keypoints_per_class=[17, 0, 14])
+
+        # 2-class dataset so max(2, 3)=3; auto-adjust fires (90→3); guard 3<3=False (no padding).
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball"])
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3
+        assert mock_self.model_config.num_keypoints_per_class == [17, 0, 14]
+        assert mock_self.model.args.num_keypoints_per_class == [17, 0, 14]
+
+    def test_keypoint_schema_padded_when_model_args_absent(self, mock_self, patch_lit):
+        """model_config schema is padded even when model.args is absent (model_args=None path).
+
+        Scenario: schema [17, 0], 3-class dataset, model has no args attribute.
+        Expected: model_config.num_keypoints_per_class padded to [17, 0, 0]; no AttributeError.
+        """
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+            num_keypoints_per_class=[17, 0],
+        )
+        mock_self.model = MagicMock(spec=[])  # no 'args' attr → getattr(model, "args", None) = None
+
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball", "referee"])
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3
+        assert mock_self.model_config.num_keypoints_per_class == [17, 0, 0]
+
+    def test_keypoint_schema_not_padded_when_schema_empty(self, mock_self, patch_lit):
+        """Padding is skipped when num_keypoints_per_class is an empty list.
+
+        Scenario: use_grouppose_keypoints=True but schema is [], 3-class dataset.
+        Expected: auto-adjust fires (90→3) but schema stays [] — the truthiness guard
+        ``if keypoint_schema and ...`` short-circuits before evaluating the length check.
+        """
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+        )
+        mock_self.model_config.num_keypoints_per_class = []  # override default [0, 17]
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[])
+
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball", "referee"])
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3  # auto-adjust still fires
+        assert mock_self.model_config.num_keypoints_per_class == []  # empty schema not padded
