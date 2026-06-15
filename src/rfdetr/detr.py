@@ -1210,6 +1210,13 @@ class RFDETR:
         Failures from ``_detect_num_classes_for_training`` are caught and logged at DEBUG level so that training is
         never blocked by detection errors.
 
+        When ``model_config.use_grouppose_keypoints`` is True and
+        ``model_config.num_keypoints_per_class`` is shorter than the adjusted
+        ``num_classes``, the schema is zero-padded in-place so that
+        ``len(num_keypoints_per_class) == num_classes``.  Both ``model_config``
+        and ``model.args`` (if present) are updated.  Appended classes receive
+        zero keypoints and contribute no class-logit boost.
+
         Args:
             dataset_dir: Path to the training dataset root directory.
         """
@@ -1256,8 +1263,9 @@ class RFDETR:
             if model_args is not None:
                 model_args.num_classes = dataset_num_classes
             # Pad keypoint schema with zeros so len(num_keypoints_per_class) == num_classes.
-            # Without this, _aggregate_keypoint_class_logits fires a mismatch warning every
-            # forward pass and the config state is inconsistent with the detection head width.
+            # Without this, _aggregate_keypoint_class_logits emits a one-time mismatch
+            # warning per model instance and the config state is inconsistent with the
+            # detection head width.
             if self.model_config.use_grouppose_keypoints:
                 current_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
                 if current_schema and len(current_schema) < dataset_num_classes:
