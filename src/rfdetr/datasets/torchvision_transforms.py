@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Dict, Optional, Tuple, cast
+from typing import Any, Dict, Optional, Tuple, TypeAlias, cast
 
 import torch
 import torch.nn.functional as torch_f
@@ -17,9 +17,9 @@ from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional
 
 _GLOBAL_TARGET_FIELDS = frozenset({"boxes", "labels", "orig_size", "size", "image_id"})
-_ImageInput = Image.Image | torch.Tensor
-_Target = Optional[Dict[str, Any]]
-_TransformResult = Tuple[_ImageInput, _Target]
+_ImageInput: TypeAlias = Image.Image | torch.Tensor
+_Target: TypeAlias = Optional[Dict[str, Any]]
+_TransformResult: TypeAlias = Tuple[_ImageInput, _Target]
 
 
 def _image_size(image: Image.Image | torch.Tensor) -> tuple[int, int]:
