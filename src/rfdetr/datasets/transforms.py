@@ -58,6 +58,11 @@ class Normalize(object):
             boxes = box_xyxy_to_cxcywh(boxes)
             boxes = boxes / torch.tensor([w, h, w, h], dtype=torch.float32)
             target["boxes"] = boxes
+        if "keypoints" in target:
+            keypoints = target["keypoints"].clone()  # shape: (N, K, 3) — x, y, visibility
+            keypoints[..., 0] = keypoints[..., 0] / w
+            keypoints[..., 1] = keypoints[..., 1] / h
+            target["keypoints"] = keypoints
         return image, target
 
 
@@ -165,6 +170,7 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> alb.BasicTransfo
         Instantiated Albumentations transform.
 
     Raises:
+        ImportError: If Albumentations is not installed.
         ValueError: If ``name`` is unknown or ``params`` is malformed.
 
     Examples:
@@ -179,6 +185,12 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> alb.BasicTransfo
         >>> isinstance(container, OneOf)
         True
     """
+    if alb is None:
+        raise ImportError(
+            "Albumentations is required to build RF-DETR dataset transforms. "
+            "Install the project dependencies with `uv sync --all-groups` or install albumentations."
+        )
+
     if name in ALBUMENTATIONS_CONTAINERS:
         raw_nested = params.get("transforms", [])
         if not isinstance(raw_nested, list):
@@ -357,9 +369,10 @@ class AlbumentationsWrapper:
         For custom geometric transforms, add the transform class name to the GEOMETRIC_TRANSFORMS set at module level.
     """
 
-    def __init__(self, transform: alb.BasicTransform) -> None:
+    def __init__(self, transform: alb.BasicTransform, keypoint_flip_pairs: list[int] | None = None) -> None:
         # Auto-detect if transform is geometric (recursively for containers)
         self._is_geometric = _is_geometric_transform(transform)
+        self._keypoint_flip_pairs: list[int] = keypoint_flip_pairs or []
 
         if self._is_geometric:
             # Wrap geometric transform with bbox handling capabilities
@@ -371,6 +384,11 @@ class AlbumentationsWrapper:
                     label_fields=["category_ids", "idxs"],  # Track labels and indices for per-instance field sync
                     min_visibility=0.0,  # Remove boxes with zero visibility/area after transformation
                     clip=True,  # Clip box coordinates to image boundaries after transformation
+                ),
+                keypoint_params=alb.KeypointParams(
+                    format="xy",
+                    label_fields=["keypoint_instance_ids", "keypoint_point_ids", "keypoint_visibility"],
+                    remove_invisible=False,
                 ),
             )
         else:
@@ -412,6 +430,149 @@ class AlbumentationsWrapper:
         if len(boxes_np.shape) != 2 or boxes_np.shape[1] != 4:
             raise ValueError(f"boxes must have shape (N, 4), got {boxes_np.shape}")
         return boxes_np
+
+    @staticmethod
+    def _keypoints_to_numpy(keypoints: Union[torch.Tensor, np.ndarray], num_boxes: int) -> np.ndarray:
+        """Convert keypoints to numpy array and validate shape.
+
+        >>> import torch
+        >>> keypoints = torch.tensor([[[10.0, 20.0, 2.0]]])
+        >>> AlbumentationsWrapper._keypoints_to_numpy(keypoints, 1).shape
+        (1, 1, 3)
+        """
+        keypoints_np = keypoints.cpu().numpy() if torch.is_tensor(keypoints) else np.array(keypoints)
+        if len(keypoints_np.shape) != 3 or keypoints_np.shape[2] != 3:
+            raise ValueError(f"keypoints must have shape (N, K, 3), got {keypoints_np.shape}")
+        if keypoints_np.shape[0] != num_boxes:
+            raise ValueError(
+                f"keypoints first dimension must match number of boxes ({num_boxes}), got {keypoints_np.shape[0]}"
+            )
+        return keypoints_np
+
+    @staticmethod
+    def _build_albu_keypoints(
+        keypoints_np: np.ndarray,
+        idxs: List[int],
+    ) -> Dict[str, Any]:
+        """Flatten per-instance keypoints into Albumentations keypoint fields.
+
+        >>> keypoints = np.array([[[10.0, 20.0, 2.0], [0.0, 0.0, 0.0]]], dtype=np.float32)
+        >>> fields = AlbumentationsWrapper._build_albu_keypoints(keypoints, [0])
+        >>> fields["keypoints"]
+        [(10.0, 20.0), (0.0, 0.0)]
+        """
+        albu_keypoints: List[Tuple[float, float]] = []
+        instance_ids: List[float] = []
+        point_ids: List[float] = []
+        visibility: List[float] = []
+        for original_idx in idxs:
+            for point_idx, point in enumerate(keypoints_np[original_idx]):
+                x, y, visible = point.tolist()
+                albu_keypoints.append((float(x), float(y)))
+                instance_ids.append(float(original_idx))
+                point_ids.append(float(point_idx))
+                visibility.append(float(visible))
+        return {
+            "keypoints": albu_keypoints,
+            "keypoint_instance_ids": instance_ids,
+            "keypoint_point_ids": point_ids,
+            "keypoint_visibility": visibility,
+        }
+
+    @staticmethod
+    def _detect_horizontal_flip(
+        boxes_np: np.ndarray,
+        idxs: List[int],
+        bboxes_aug: List[Any],
+        kept_idxs: List[int],
+        aug_width: int,
+    ) -> bool:
+        """Return True when a horizontal flip is detected via bbox center-X mirroring.
+
+        After a pure HorizontalFlip, every box satisfies: center_x_orig + center_x_aug == image_width.
+        Uses the first surviving box as probe; returns False when no boxes are available.
+
+        Args:
+            boxes_np: Original (valid) bounding boxes before the transform, shape (N, 4) pascal_voc.
+            idxs: Original instance indices corresponding to rows of ``boxes_np``.
+            bboxes_aug: Augmented bounding boxes in pascal_voc format.
+            kept_idxs: Original instance indices of boxes that survived the transform.
+            aug_width: Width of the augmented image in pixels.
+
+        Returns:
+            True if a horizontal flip was applied, False otherwise.
+        """
+        if not bboxes_aug or not kept_idxs or boxes_np.shape[0] == 0:
+            return False
+        first_kept_orig_idx = kept_idxs[0]
+        try:
+            pos = idxs.index(first_kept_orig_idx)
+        except ValueError:
+            return False
+        orig_box = boxes_np[pos]
+        aug_box = bboxes_aug[0]
+        orig_cx = (float(orig_box[0]) + float(orig_box[2])) / 2.0
+        aug_cx = (float(aug_box[0]) + float(aug_box[2])) / 2.0
+        return abs(orig_cx + aug_cx - aug_width) < max(1.0, aug_width * 0.02)
+
+    @staticmethod
+    def _rebuild_keypoints_from_albu(
+        augmented: Dict[str, Any],
+        kept_idxs: List[int],
+        keypoints_np: np.ndarray,
+        flip_pairs: List[int] | None = None,
+        did_flip: bool = False,
+    ) -> torch.Tensor:
+        """Rebuild transformed keypoints and keep them synchronized with kept boxes.
+
+        Args:
+            augmented: Augmented output dict from Albumentations.
+            kept_idxs: Original instance indices of surviving boxes.
+            keypoints_np: Original keypoint array, shape (N_orig, K, 3).
+            flip_pairs: Flat list of paired joint indices ``[a0, b0, a1, b1, ...]``
+                to swap when a horizontal flip is detected.  Each consecutive pair
+                ``(flip_pairs[i], flip_pairs[i+1])`` names two joints that are
+                left/right mirrors of each other (e.g., left_eye, right_eye).
+            did_flip: Whether a horizontal flip was applied this step.
+
+        Returns:
+            Keypoint tensor of shape ``(len(kept_idxs), K, 3)``.
+        """
+        num_keypoints = keypoints_np.shape[1]
+        keypoints_out = np.zeros((len(kept_idxs), num_keypoints, 3), dtype=np.float32)
+        kept_position_by_idx = {int(original_idx): position for position, original_idx in enumerate(kept_idxs)}
+        height, width = augmented["image"].shape[:2]
+
+        for point, instance_id, point_id, visible in zip(
+            augmented.get("keypoints", []),
+            augmented.get("keypoint_instance_ids", []),
+            augmented.get("keypoint_point_ids", []),
+            augmented.get("keypoint_visibility", []),
+        ):
+            original_idx = int(instance_id)
+            if original_idx not in kept_position_by_idx:
+                continue
+            point_idx = int(point_id)
+            if point_idx < 0 or point_idx >= num_keypoints:
+                continue
+
+            x, y = float(point[0]), float(point[1])
+            visibility = float(visible)
+            if visibility <= 0 or x < 0 or y < 0 or x >= width or y >= height:
+                x, y, visibility = 0.0, 0.0, 0.0
+            keypoints_out[kept_position_by_idx[original_idx], point_idx] = (x, y, visibility)
+
+        result = torch.as_tensor(keypoints_out, dtype=torch.float32)
+
+        if did_flip and flip_pairs:
+            for i in range(0, len(flip_pairs) - 1, 2):
+                ai, bi = flip_pairs[i], flip_pairs[i + 1]
+                if ai < result.shape[1] and bi < result.shape[1]:
+                    tmp = result[:, ai, :].clone()
+                    result[:, ai, :] = result[:, bi, :]
+                    result[:, bi, :] = tmp
+
+        return result
 
     @staticmethod
     def _clear_per_instance_fields(target: Dict[str, Any], num_boxes: int) -> Dict[str, Any]:
@@ -501,6 +662,9 @@ class AlbumentationsWrapper:
                 raise ValueError(f"masks must have shape (N, H, W), got {masks_np.shape}")
             masks_np = masks_np.astype(np.uint8, copy=False)
             masks_list = [mask for mask in masks_np]
+        keypoints_np = None
+        if "keypoints" in target:
+            keypoints_np = self._keypoints_to_numpy(target["keypoints"], num_boxes)
         # Filter out degenerate boxes (zero-width or zero-height) before passing to
         # Albumentations. Such boxes arise when an annotation sits exactly on or beyond
         # the image boundary so that x_min == x_max (or y_min == y_max) after clipping.
@@ -518,10 +682,21 @@ class AlbumentationsWrapper:
         transform_kwargs = {"image": image_np, "bboxes": boxes_np, "category_ids": labels, "idxs": idxs}
         if masks_list is not None and len(masks_list) > 0:
             transform_kwargs["masks"] = masks_list
+        if keypoints_np is not None:
+            transform_kwargs.update(self._build_albu_keypoints(keypoints_np, idxs))
+        else:
+            transform_kwargs.update(
+                {
+                    "keypoints": [],
+                    "keypoint_instance_ids": [],
+                    "keypoint_point_ids": [],
+                    "keypoint_visibility": [],
+                }
+            )
         augmented = self.transform(**transform_kwargs)
         target_out: Dict[str, Any] = target.copy()
         bboxes_aug = augmented["bboxes"]
-        kept_idxs = augmented.get("idxs", idxs)
+        kept_idxs = [int(idx) for idx in augmented.get("idxs", idxs)]
         # Update target with transformed boxes and labels
         if len(bboxes_aug) == 0:
             target_out["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
@@ -540,6 +715,19 @@ class AlbumentationsWrapper:
             if "area" in target_out:
                 boxes = target_out["boxes"]
                 target_out["area"] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+            if keypoints_np is not None:
+                did_flip = (
+                    self._detect_horizontal_flip(boxes_np, idxs, bboxes_aug, kept_idxs, augmented["image"].shape[1])
+                    if self._keypoint_flip_pairs
+                    else False
+                )
+                target_out["keypoints"] = self._rebuild_keypoints_from_albu(
+                    augmented,
+                    kept_idxs,
+                    keypoints_np,
+                    flip_pairs=self._keypoint_flip_pairs,
+                    did_flip=did_flip,
+                )
         image_out = Image.fromarray(augmented["image"])
         if masks_list is not None and "masks" in augmented:
             height, width = augmented["image"].shape[:2]
@@ -601,7 +789,16 @@ class AlbumentationsWrapper:
             image_np = np.array(image)
             if self._is_geometric:
                 # Geometric A.Compose requires label_fields even when there are no boxes
-                augmented = self.transform(image=image_np, bboxes=[], category_ids=[], idxs=[])
+                augmented = self.transform(
+                    image=image_np,
+                    bboxes=[],
+                    category_ids=[],
+                    idxs=[],
+                    keypoints=[],
+                    keypoint_instance_ids=[],
+                    keypoint_point_ids=[],
+                    keypoint_visibility=[],
+                )
             else:
                 augmented = self.transform(image=image_np)
             return Image.fromarray(augmented["image"]), None
@@ -644,6 +841,7 @@ class AlbumentationsWrapper:
     @staticmethod
     def from_config(
         config_dict: Union[Dict[str, Any], List[Dict[str, Any]]],
+        keypoint_flip_pairs: List[int] | None = None,
     ) -> List["AlbumentationsWrapper"]:
         """Build a list of :class:`AlbumentationsWrapper` instances from a config.
 
@@ -689,6 +887,7 @@ class AlbumentationsWrapper:
             List of :class:`AlbumentationsWrapper` instances in config order.
 
         Raises:
+            ImportError: If Albumentations is not installed.
             TypeError: If *config_dict* is neither a ``dict`` nor a ``list``.
 
         Examples:
@@ -715,6 +914,12 @@ class AlbumentationsWrapper:
             logger.warning("Empty augmentation config provided, no transforms will be applied")
             return []
 
+        if alb is None:
+            raise ImportError(
+                "Albumentations is required to build RF-DETR dataset transforms. "
+                "Install the project dependencies with `uv sync --all-groups` or install albumentations."
+            )
+
         transforms = []
         for entry in entries:
             if not isinstance(entry, dict) or len(entry) != 1:
@@ -739,7 +944,7 @@ class AlbumentationsWrapper:
 
             try:
                 transform = _build_albu_transform(aug_name, params)
-                transforms.append(AlbumentationsWrapper(transform))
+                transforms.append(AlbumentationsWrapper(transform, keypoint_flip_pairs=keypoint_flip_pairs))
             except Exception as e:
                 logger.warning(
                     "Failed to initialize %s with params %r: %s. Skipping.",

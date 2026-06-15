@@ -113,14 +113,15 @@ class TestOptimizeForInferenceDtype:
 class TestOptimizeForInferenceCudaDeviceContext:
     """Verify that optimize_for_inference wraps operations in the correct device context."""
 
-    @patch("rfdetr.detr._ensure_model_on_device")
+    @pytest.mark.gpu
+    @patch("rfdetr.detr._move_model_context_to_device")
     @patch("rfdetr.detr.deepcopy")
     @patch("torch.cuda.device")
     def test_cuda_device_context_manager_is_used_for_cuda_device(
         self,
         mock_cuda_device,
         mock_deepcopy,
-        _mock_ensure_model_on_device,
+        _mock_move_model_context_to_device,
     ) -> None:
         """torch.cuda.device() context should be entered when model is on CUDA."""
         rfdetr = _FakeRFDETR()
@@ -160,14 +161,15 @@ class TestOptimizeForInferenceCudaDeviceContext:
 
         mock_cuda_device.assert_not_called()
 
-    @patch("rfdetr.detr._ensure_model_on_device")
+    @pytest.mark.gpu
+    @patch("rfdetr.detr._move_model_context_to_device")
     @patch("rfdetr.detr.deepcopy")
     @patch("torch.cuda.device")
     def test_cuda_device_context_uses_model_device(
         self,
         mock_cuda_device,
         mock_deepcopy,
-        _mock_ensure_model_on_device,
+        _mock_move_model_context_to_device,
     ) -> None:
         """The device passed to torch.cuda.device() should match self.model.device."""
         rfdetr = _FakeRFDETR()

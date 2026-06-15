@@ -6,6 +6,8 @@
 """COCOEvalCallback — torchmetrics-based mAP and F1 evaluation."""
 
 import contextlib
+import io
+import logging
 from typing import Any
 
 import numpy as np
@@ -15,7 +17,13 @@ import torch.nn.functional as F  # noqa: N812
 from pytorch_lightning import Callback
 from torchmetrics.detection import MeanAveragePrecision
 
+from rfdetr.datasets import get_coco_api_from_dataset
 from rfdetr.evaluation.f1_sweep import sweep_confidence_thresholds
+from rfdetr.evaluation.keypoint_oks import (
+    DEFAULT_KEYPOINT_MAX_DETS,
+    MetricKeypointOKS,
+    OKSKey,
+)
 from rfdetr.evaluation.matching import (
     build_matching_data,
     distributed_merge_matching_data,
@@ -24,6 +32,31 @@ from rfdetr.evaluation.matching import (
 )
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 from rfdetr.utilities.distributed import all_gather, get_world_size, is_dist_avail_and_initialized
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
+
+
+def _get_ema_inner_module(ema_cb: Any) -> Any:
+    """Return the inner ``nn.Module`` wrapped by an EMA callback.
+
+    ``RFDETREMACallback._average_model`` is a private attribute holding a ``torch.optim.swa_utils.AveragedModel``
+    (which exposes the actual module on ``.module``).  This helper centralises the access so that consumers degrade
+    gracefully when the EMA model has not yet been initialised — preferable to reaching through two layers of
+    private attributes at every call site.
+
+    Args:
+        ema_cb: EMA callback instance (or ``None``).
+
+    Returns:
+        The inner module wrapped by ``AveragedModel``, or ``None`` when no EMA model is available.
+    """
+    if ema_cb is None:
+        return None
+    averaged = getattr(ema_cb, "_average_model", None)
+    if averaged is None:
+        return None
+    return getattr(averaged, "module", averaged)
 
 
 class COCOEvalCallback(Callback):
@@ -42,7 +75,7 @@ class COCOEvalCallback(Callback):
 
     Args:
         max_dets: Maximum detections per image passed to
-            ``MeanAveragePrecision``. Defaults to 500.
+            ``MeanAveragePrecision``. Defaults to :data:`~rfdetr.evaluation.keypoint_oks.DEFAULT_KEYPOINT_MAX_DETS`.
         segmentation: When ``True``, evaluate both bbox and segm IoU using
             ``backend="faster_coco_eval"``. Defaults to ``False``.
         eval_interval: Run validation metrics every N epochs. Test metrics are
@@ -52,10 +85,11 @@ class COCOEvalCallback(Callback):
 
     def __init__(
         self,
-        max_dets: int = 500,
+        max_dets: int = DEFAULT_KEYPOINT_MAX_DETS,
         segmentation: bool = False,
         eval_interval: int = 1,
         log_per_class_metrics: bool = True,
+        keypoint_oks_sigmas: list[float] | None = None,
         in_notebook: bool | None = None,
     ) -> None:
         super().__init__()
@@ -66,10 +100,15 @@ class COCOEvalCallback(Callback):
         self._class_names: list[str] = []
         self._cat_id_to_name: dict[int, str] = {}
         self._f1_local: dict[int, dict[str, Any]] = init_matching_accumulator()
+        self._f1_train_local: dict[int, dict[str, Any]] = init_matching_accumulator()
         # Whether the EMA metric received ≥1 update this epoch.  Gates the EMA cross-rank
         # sync so it is issued symmetrically on all DDP ranks (see _should_compute_ema).
         self._ema_has_updates: bool = False
         self._output_widget: Any = None  # ipywidgets.Output, created lazily
+        self._keypoint_mode: bool = False
+        self._use_segm_metrics: bool = segmentation
+        self._keypoint_oks_metrics: dict[str, MetricKeypointOKS] = {}
+        self._keypoint_oks_sigmas = keypoint_oks_sigmas
         self._in_notebook: bool = False
         if in_notebook is None:
             with contextlib.suppress(ImportError):
@@ -91,7 +130,14 @@ class COCOEvalCallback(Callback):
             pl_module: The LightningModule.
             stage: One of ``"fit"``, ``"validate"``, ``"test"``, ``"predict"``.
         """
-        iou_type: Any = ["bbox", "segm"] if self._segmentation else "bbox"
+        model_config = getattr(pl_module, "model_config", None)
+        # Some callback unit shims omit model_config; missing keypoint flag means bbox/segm evaluation.
+        use_grouppose_keypoints = (
+            getattr(model_config, "use_grouppose_keypoints", False) if model_config is not None else False
+        )
+        self._keypoint_mode = use_grouppose_keypoints is True
+        self._use_segm_metrics = self._segmentation and not self._keypoint_mode
+        iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
         kwargs: dict[str, Any] = dict(
             class_metrics=True,
             max_detection_thresholds=[1, 10, self._max_dets],
@@ -105,6 +151,7 @@ class COCOEvalCallback(Callback):
         )
         kwargs["backend"] = "faster_coco_eval"
         self.map_metric = MeanAveragePrecision(iou_type=iou_type, **kwargs)
+        self.map_metric_train = MeanAveragePrecision(iou_type=iou_type, **kwargs)
         # Verify _MAP_STATE_ATTRS is complete for the installed torchmetrics version.  A missing
         # attr is silently skipped in _merge_metric_state_across_ranks, producing wrong mAP with
         # no error — an upgrade that adds a list-type state would hit this silently without the check.
@@ -169,6 +216,10 @@ class COCOEvalCallback(Callback):
             trainer: The PTL Trainer.
             pl_module: The LightningModule.
         """
+        self.map_metric.reset()
+        self._f1_local = init_matching_accumulator()
+        self._reset_keypoint_split("val")
+        self._reset_keypoint_split("val_ema")
         self._prepare_ema_metric(trainer, pl_module)
 
     def on_test_epoch_start(self, trainer: Any, pl_module: Any) -> None:
@@ -184,7 +235,64 @@ class COCOEvalCallback(Callback):
             trainer: The PTL Trainer.
             pl_module: The LightningModule.
         """
+        self.map_metric.reset()
+        self._f1_local = init_matching_accumulator()
+        self._reset_keypoint_split("test")
         self._prepare_ema_metric(trainer, pl_module)
+
+    def on_train_batch_end(
+        self,
+        trainer: Any,
+        pl_module: Any,
+        outputs: Any,
+        batch: Any,
+        batch_idx: int,
+    ) -> None:
+        """Accumulate train predictions for optional train-split mAP logging.
+
+        Args:
+            trainer: The PTL Trainer.
+            pl_module: The LightningModule.
+            outputs: Return value of ``training_step``.
+            batch: The device-transferred batch (unused here).
+            batch_idx: Batch index within the training epoch.
+        """
+        if getattr(getattr(pl_module, "train_config", None), "compute_train_metrics", False) is not True:
+            return
+        if not isinstance(outputs, dict) or "results" not in outputs or "targets" not in outputs:
+            return
+
+        preds: list[dict[str, torch.Tensor]] = self._convert_preds(outputs["results"])
+        targets = self._convert_targets(outputs["targets"])
+        self.map_metric_train.update(preds, targets)
+
+        iou_type = "segm" if self._use_segm_metrics else "bbox"
+        batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
+        merge_matching_data(self._f1_train_local, batch_matching)
+        self._update_keypoint_oks_metric(trainer, outputs, split="train")
+
+    def on_train_epoch_end(self, trainer: Any, pl_module: Any) -> None:
+        """Compute optional train-split mAP at the end of the training epoch.
+
+        Args:
+            trainer: The PTL Trainer.
+            pl_module: The LightningModule.
+        """
+        if getattr(getattr(pl_module, "train_config", None), "compute_train_metrics", False) is not True:
+            self.map_metric_train.reset()
+            self._f1_train_local = init_matching_accumulator()
+            self._reset_keypoint_split("train")
+            return
+        if self._eval_interval > 1:
+            current_epoch = int(getattr(trainer, "current_epoch", 0)) + 1
+            max_epochs = getattr(trainer, "max_epochs", None)
+            is_last_epoch = isinstance(max_epochs, int) and max_epochs > 0 and current_epoch >= max_epochs
+            if current_epoch % self._eval_interval != 0 and not is_last_epoch:
+                self.map_metric_train.reset()
+                self._f1_train_local = init_matching_accumulator()
+                self._reset_keypoint_split("train")
+                return
+        self._compute_and_log(trainer, pl_module, "train", metric=self.map_metric_train)
 
     def on_validation_batch_end(
         self,
@@ -214,9 +322,10 @@ class COCOEvalCallback(Callback):
 
         self.map_metric.update(preds, targets)
 
-        iou_type = "segm" if self._segmentation else "bbox"
+        iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
         merge_matching_data(self._f1_local, batch_matching)
+        self._update_keypoint_oks_metric(trainer, outputs, split="val")
 
         # Run EMA model separately on the same batch so that base and EMA metrics
         # are computed from independent forward passes rather than being aliases.
@@ -226,16 +335,22 @@ class COCOEvalCallback(Callback):
         # availability is rank-invariant (EMA updates fire on the same global step on every
         # rank), so per-rank EMA update counts stay consistent.
         ema_cb = self._get_ema_callback(trainer)
-        if ema_cb is not None and ema_cb._average_model is not None and self.map_metric_ema is not None:
+        ema_inner = _get_ema_inner_module(ema_cb)
+        if ema_cb is not None and ema_inner is not None and self.map_metric_ema is not None:
             samples, _ = batch
             orig_sizes = torch.stack([t["orig_size"] for t in outputs["targets"]]).to(pl_module.device)
-            ema_underlying = ema_cb._average_model.module.model
+            ema_underlying = ema_inner.model
             with torch.no_grad():
                 ema_underlying.eval()  # AveragedModel deepcopy is not managed by PTL
                 ema_outputs = ema_underlying(samples)
                 ema_results = pl_module.postprocess(ema_outputs, orig_sizes)
             ema_preds = self._convert_preds(ema_results)
             self.map_metric_ema.update(ema_preds, targets)
+            self._update_keypoint_oks_metric(
+                trainer,
+                {"results": ema_results, "targets": outputs["targets"]},
+                split="val_ema",
+            )
             self._ema_has_updates = True
 
     def on_validation_epoch_end(self, trainer: Any, pl_module: Any) -> None:
@@ -254,6 +369,8 @@ class COCOEvalCallback(Callback):
                 if self.map_metric_ema is not None:
                     self.map_metric_ema.reset()
                 self._f1_local = init_matching_accumulator()
+                self._reset_keypoint_split("val")
+                self._reset_keypoint_split("val_ema")
                 return
         self._compute_and_log(trainer, pl_module, "val")
 
@@ -284,9 +401,10 @@ class COCOEvalCallback(Callback):
 
         self.map_metric.update(preds, targets)
 
-        iou_type = "segm" if self._segmentation else "bbox"
+        iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
         merge_matching_data(self._f1_local, batch_matching)
+        self._update_keypoint_oks_metric(trainer, outputs, split="test")
 
     def on_test_epoch_end(self, trainer: Any, pl_module: Any) -> None:
         """Compute and log mAP and F1 under ``test/`` prefix at end of test epoch.
@@ -303,7 +421,7 @@ class COCOEvalCallback(Callback):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _compute_and_log(self, trainer: Any, pl_module: Any, split: str) -> None:
+    def _compute_and_log(self, trainer: Any, pl_module: Any, split: str, *, metric: Any | None = None) -> None:
         """Shared epoch-end logic for validation and test evaluation loops.
 
         Computes mAP (via ``self.map_metric``), runs the F1 confidence-threshold sweep, logs all scalar metrics via
@@ -315,15 +433,25 @@ class COCOEvalCallback(Callback):
             trainer: The PTL Trainer.
             pl_module: The LightningModule.
             split: Metric namespace — ``"val"`` or ``"test"``.
+            metric: Optional split-specific mAP accumulator. Defaults to the validation/test accumulator.
         """
+        metric = self.map_metric if metric is None else metric
+        f1_local = self._f1_train_local if split == "train" else self._f1_local
+        if not self._metric_has_updates(metric):
+            metric.reset()
+            self._reset_f1_local(split)
+            self._reset_keypoint_split(split)
+            logger.debug("Skipping %s COCO metric compute because no predictions were accumulated.", split)
+            return
+
         # Merge per-rank state across ranks ourselves (DDP-safe, fixed-shape gather) before the
         # metric computes locally — replaces torchmetrics' deadlock-prone internal sync. No-op when
         # not distributed. Called unconditionally on every rank, so the collectives stay symmetric.
-        self._merge_metric_state_across_ranks(self.map_metric)
-        metrics = self.map_metric.compute()
+        self._merge_metric_state_across_ranks(metric)
+        metrics = self._compute_map_metric(trainer, metric)
 
         # torchmetrics prefixes all keys when iou_type is a list (e.g. "bbox_map")
-        pfx = "bbox_" if self._segmentation else ""
+        pfx = "bbox_" if self._use_segm_metrics else ""
         mar_key = f"{pfx}mar_{self._max_dets}"
 
         overall: dict[str, float] = {
@@ -333,10 +461,14 @@ class COCOEvalCallback(Callback):
             f"mAR @{self._max_dets}": float(metrics[mar_key]),
         }
 
-        pl_module.log(f"{split}/mAP_50_95", metrics[f"{pfx}map"], prog_bar=True)
-        pl_module.log(f"{split}/mAP_50", metrics[f"{pfx}map_50"], prog_bar=True)
-        pl_module.log(f"{split}/mAP_75", metrics[f"{pfx}map_75"])
-        pl_module.log(f"{split}/mAR", metrics[mar_key])
+        pl_module.log(
+            f"{split}/mAP_50_95", metrics[f"{pfx}map"], prog_bar=True, logger=True, on_step=False, on_epoch=True
+        )
+        pl_module.log(
+            f"{split}/mAP_50", metrics[f"{pfx}map_50"], prog_bar=True, logger=True, on_step=False, on_epoch=True
+        )
+        pl_module.log(f"{split}/mAP_75", metrics[f"{pfx}map_75"], logger=True, on_step=False, on_epoch=True)
+        pl_module.log(f"{split}/mAR", metrics[mar_key], logger=True, on_step=False, on_epoch=True)
 
         # Write directly into callback_metrics so ModelCheckpoint / EarlyStopping
         # read fresh values each epoch.  pl_module.log() from a callback's
@@ -353,18 +485,30 @@ class COCOEvalCallback(Callback):
         # or none: a rank whose EMA metric is empty/absent would otherwise skip this
         # collective and desync the DDP collective sequence, deadlocking validation
         # (#931 / #449).  _should_compute_ema makes the decision unanimous across ranks.
-        if self._should_compute_ema(pl_module):
+        should_compute_ema = self._should_compute_ema(pl_module)
+        if should_compute_ema:
             self._merge_metric_state_across_ranks(self.map_metric_ema)
-            ema_metrics = self.map_metric_ema.compute()
-            pl_module.log(f"{split}/ema_mAP_50_95", ema_metrics[f"{pfx}map"], prog_bar=True)
-            pl_module.log(f"{split}/ema_mAP_50", ema_metrics[f"{pfx}map_50"])
-            pl_module.log(f"{split}/ema_mAR", ema_metrics[mar_key])
+            ema_metrics = self._compute_map_metric(trainer, self.map_metric_ema)
+            pl_module.log(
+                f"{split}/ema_mAP_50_95",
+                ema_metrics[f"{pfx}map"],
+                prog_bar=True,
+                logger=True,
+                on_step=False,
+                on_epoch=True,
+            )
+            pl_module.log(f"{split}/ema_mAP_50", ema_metrics[f"{pfx}map_50"], logger=True, on_step=False, on_epoch=True)
+            pl_module.log(f"{split}/ema_mAR", ema_metrics[mar_key], logger=True, on_step=False, on_epoch=True)
             trainer.callback_metrics[f"{split}/ema_mAP_50_95"] = ema_metrics[f"{pfx}map"].detach().cpu()
             trainer.callback_metrics[f"{split}/ema_mAP_50"] = ema_metrics[f"{pfx}map_50"].detach().cpu()
             trainer.callback_metrics[f"{split}/ema_mAR"] = ema_metrics[mar_key].detach().cpu()
-            if self._segmentation:
-                pl_module.log(f"{split}/ema_segm_mAP_50_95", ema_metrics["segm_map"])
-                pl_module.log(f"{split}/ema_segm_mAP_50", ema_metrics["segm_map_50"])
+            if self._use_segm_metrics:
+                pl_module.log(
+                    f"{split}/ema_segm_mAP_50_95", ema_metrics["segm_map"], logger=True, on_step=False, on_epoch=True
+                )
+                pl_module.log(
+                    f"{split}/ema_segm_mAP_50", ema_metrics["segm_map_50"], logger=True, on_step=False, on_epoch=True
+                )
                 trainer.callback_metrics[f"{split}/ema_segm_mAP_50_95"] = ema_metrics["segm_map"].detach().cpu()
                 trainer.callback_metrics[f"{split}/ema_segm_mAP_50"] = ema_metrics["segm_map_50"].detach().cpu()
             self.map_metric_ema.reset()
@@ -373,17 +517,17 @@ class COCOEvalCallback(Callback):
             # sync uniformly on every rank, but clear local state so the next epoch is clean.
             self.map_metric_ema.reset()
 
-        if self._segmentation:
+        if self._use_segm_metrics:
             overall["segm mAP 50:95"] = float(metrics["segm_map"])
             overall["segm mAP 50"] = float(metrics["segm_map_50"])
-            pl_module.log(f"{split}/segm_mAP_50_95", metrics["segm_map"])
-            pl_module.log(f"{split}/segm_mAP_50", metrics["segm_map_50"])
+            pl_module.log(f"{split}/segm_mAP_50_95", metrics["segm_map"], logger=True, on_step=False, on_epoch=True)
+            pl_module.log(f"{split}/segm_mAP_50", metrics["segm_map_50"], logger=True, on_step=False, on_epoch=True)
             trainer.callback_metrics[f"{split}/segm_mAP_50_95"] = metrics["segm_map"].detach().cpu()
             trainer.callback_metrics[f"{split}/segm_mAP_50"] = metrics["segm_map_50"].detach().cpu()
 
         # F1 sweep — run first so per-class F1/prec/rec are available when
         # building the unified per-class table rows below.
-        merged = distributed_merge_matching_data(self._f1_local)
+        merged = distributed_merge_matching_data(f1_local)
         # category_id → {f1, precision, recall} at the best macro-F1 threshold
         f1_by_cid: dict[int, dict[str, float]] = {}
         if merged:
@@ -395,9 +539,18 @@ class COCOEvalCallback(Callback):
             overall["F1"] = float(best["macro_f1"])
             overall["Precision"] = float(best["macro_precision"])
             overall["Recall"] = float(best["macro_recall"])
-            pl_module.log(f"{split}/F1", float(best["macro_f1"]), prog_bar=True)
-            pl_module.log(f"{split}/precision", float(best["macro_precision"]))
-            pl_module.log(f"{split}/recall", float(best["macro_recall"]))
+            pl_module.log(
+                f"{split}/F1",
+                float(best["macro_f1"]),
+                prog_bar=True,
+                logger=True,
+                on_step=False,
+                on_epoch=True,
+            )
+            pl_module.log(
+                f"{split}/precision", float(best["macro_precision"]), logger=True, on_step=False, on_epoch=True
+            )
+            pl_module.log(f"{split}/recall", float(best["macro_recall"]), logger=True, on_step=False, on_epoch=True)
             trainer.callback_metrics[f"{split}/F1"] = torch.tensor(float(best["macro_f1"]))
             trainer.callback_metrics[f"{split}/precision"] = torch.tensor(float(best["macro_precision"]))
             trainer.callback_metrics[f"{split}/recall"] = torch.tensor(float(best["macro_recall"]))
@@ -411,9 +564,9 @@ class COCOEvalCallback(Callback):
             overall["F1"] = 0.0
             overall["Precision"] = 0.0
             overall["Recall"] = 0.0
-            pl_module.log(f"{split}/F1", 0.0, prog_bar=True)
-            pl_module.log(f"{split}/precision", 0.0)
-            pl_module.log(f"{split}/recall", 0.0)
+            pl_module.log(f"{split}/F1", 0.0, prog_bar=True, logger=True, on_step=False, on_epoch=True)
+            pl_module.log(f"{split}/precision", 0.0, logger=True, on_step=False, on_epoch=True)
+            pl_module.log(f"{split}/recall", 0.0, logger=True, on_step=False, on_epoch=True)
             trainer.callback_metrics[f"{split}/F1"] = torch.tensor(0.0)
             trainer.callback_metrics[f"{split}/precision"] = torch.tensor(0.0)
             trainer.callback_metrics[f"{split}/recall"] = torch.tensor(0.0)
@@ -442,9 +595,22 @@ class COCOEvalCallback(Callback):
             metrics=metrics, pfx=pfx, split=split, pl_module=pl_module, ar_by_cid=ar_by_cid, f1_by_cid=f1_by_cid
         )
 
-        self._print_metrics_tables(trainer, split, overall, per_class)
-        self.map_metric.reset()
-        self._f1_local = init_matching_accumulator()
+        if not self._has_progress_bar(trainer):
+            self._print_metrics_tables(trainer, split, overall, per_class)
+        self._compute_and_log_keypoint_map(split, pl_module, trainer)
+        if split == "val" and should_compute_ema:
+            self._compute_and_log_keypoint_map("val_ema", pl_module, trainer, log_split="val", metric_prefix="ema_")
+        elif split == "val":
+            self._reset_keypoint_split("val_ema")
+        metric.reset()
+        self._reset_f1_local(split)
+
+    def _reset_f1_local(self, split: str) -> None:
+        """Reset the F1 accumulator for a metric split."""
+        if split == "train":
+            self._f1_train_local = init_matching_accumulator()
+        else:
+            self._f1_local = init_matching_accumulator()
 
     def _get_ema_callback(self, trainer: Any) -> Any:
         """Return the EMA callback instance, or ``None`` if not present."""
@@ -452,6 +618,29 @@ class COCOEvalCallback(Callback):
             if callable(getattr(callback, "get_ema_model_state_dict", None)):
                 return callback
         return None
+
+    @staticmethod
+    def _has_progress_bar(trainer: Any) -> bool:
+        """Return whether the trainer has a Lightning progress bar callback."""
+        callbacks = getattr(trainer, "callbacks", [])
+        return any(callback.__class__.__name__.endswith("ProgressBar") for callback in callbacks)
+
+    def _compute_map_metric(self, trainer: Any, metric: Any) -> dict[str, Any]:
+        """Compute a torchmetrics mAP metric while suppressing duplicate terminal summaries under progress bars."""
+        if not self._has_progress_bar(trainer):
+            return metric.compute()
+
+        metric_loggers = (logger, logging.getLogger("faster_coco_eval"), logging.getLogger("faster_coco_eval.core"))
+        previous_levels = [(metric_logger, metric_logger.level) for metric_logger in metric_loggers]
+        try:
+            for metric_logger in metric_loggers:
+                if metric_logger.getEffectiveLevel() < logging.WARNING:
+                    metric_logger.setLevel(logging.WARNING)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                return metric.compute()
+        finally:
+            for metric_logger, previous_level in previous_levels:
+                metric_logger.setLevel(previous_level)
 
     def _prepare_ema_metric(self, trainer: Any, pl_module: Any) -> None:
         """Ensure ``map_metric_ema`` exists (and is reset) on EVERY rank when EMA is active.
@@ -470,7 +659,7 @@ class COCOEvalCallback(Callback):
             self.map_metric_ema = None
             return
         if self.map_metric_ema is None:
-            ema_iou_type: Any = ["bbox", "segm"] if self._segmentation else "bbox"
+            ema_iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
             self.map_metric_ema = MeanAveragePrecision(
                 iou_type=ema_iou_type,
                 class_metrics=True,
@@ -561,6 +750,158 @@ class COCOEvalCallback(Callback):
         # torchmetrics 1.x compute() works correctly regardless, but emits a UserWarning
         # ("compute called before update") that spams DDP logs on those ranks.
         metric._update_count = max(getattr(metric, "_update_count", 0), 1)
+
+    @staticmethod
+    def _metric_has_updates(metric: Any) -> bool:
+        """Return whether a torchmetrics metric has accumulated at least one update."""
+        update_count = getattr(metric, "_update_count", None)
+        if isinstance(update_count, int):
+            return update_count > 0
+        if torch.is_tensor(update_count):
+            return bool(update_count.detach().cpu().item() > 0)
+        return True
+
+    def _get_or_create_keypoint_oks_metric(self, trainer: Any, split: str) -> MetricKeypointOKS | None:
+        """Return the :class:`~rfdetr.evaluation.keypoint_oks.MetricKeypointOKS` for *split*, creating it if needed.
+
+        The metric is created lazily on first access per split and reused across epochs (state is reset
+        at epoch boundaries via :meth:`_reset_keypoint_split`).
+
+        Args:
+            trainer: The PTL Trainer (provides access to the datamodule).
+            split: One of ``"train"``, ``"val"``, ``"val_ema"``, or ``"test"``.
+
+        Returns:
+            A :class:`~rfdetr.evaluation.keypoint_oks.MetricKeypointOKS` bound to the split's COCO
+            ground-truth, or ``None`` when no dataset is available.
+        """
+        if split in self._keypoint_oks_metrics:
+            return self._keypoint_oks_metrics[split]
+
+        datamodule = getattr(trainer, "datamodule", None)
+        if datamodule is None:
+            return None
+
+        source_split = split.removesuffix("_ema")
+        split_attrs = {
+            "train": ("_dataset_train",),
+            "val": ("_dataset_val",),
+            "test": ("_dataset_test",),
+        }.get(source_split, ("_dataset_val", "_dataset_test", "_dataset_train"))
+        for attr in split_attrs:
+            dataset = getattr(datamodule, attr, None)
+            if dataset is None:
+                continue
+            coco_api = get_coco_api_from_dataset(dataset)
+            if coco_api is None:
+                continue
+            metric = MetricKeypointOKS(
+                coco_api,
+                keypoint_oks_sigmas=self._keypoint_oks_sigmas,
+                max_dets=self._max_dets,
+            )
+            self._keypoint_oks_metrics[split] = metric
+            return metric
+        return None
+
+    def _reset_keypoint_split(self, split: str) -> None:
+        """Reset accumulated keypoint predictions for *split*.
+
+        Args:
+            split: One of ``"train"``, ``"val"``, ``"val_ema"``, or ``"test"``.
+        """
+        metric = self._keypoint_oks_metrics.get(split)
+        if metric is not None:
+            metric.reset()
+
+    def _update_keypoint_oks_metric(self, trainer: Any, outputs: dict[str, Any], split: str) -> None:
+        """Accumulate batch predictions into the keypoint OKS metric.
+
+        Args:
+            trainer: The PTL Trainer.
+            outputs: Batch output dict with ``"results"`` and ``"targets"`` keys.
+            split: Metric split (``"train"``, ``"val"``, ``"val_ema"``, or ``"test"``).
+        """
+        if not self._keypoint_mode:
+            return
+
+        metric = self._get_or_create_keypoint_oks_metric(trainer, split)
+        if metric is None:
+            return
+
+        predictions: dict[int, dict[str, torch.Tensor]] = {}
+        results = outputs["results"]
+        targets = outputs["targets"]
+        for result, target in zip(results, targets):
+            image_id_tensor = target.get("image_id")
+            if image_id_tensor is None:
+                continue
+            image_id = int(image_id_tensor.item()) if torch.is_tensor(image_id_tensor) else int(image_id_tensor)
+            if "keypoints" not in result:
+                predictions[image_id] = {}
+                continue
+            predictions[image_id] = {
+                "boxes": result["boxes"].detach().cpu(),
+                "scores": result["scores"].detach().cpu(),
+                "labels": result["labels"].detach().cpu(),
+                "keypoints": result["keypoints"].detach().cpu(),
+            }
+
+        if not predictions:
+            return
+        metric.update(predictions)
+
+    def _compute_and_log_keypoint_map(
+        self,
+        split: str,
+        pl_module: Any,
+        trainer: Any,
+        *,
+        log_split: str | None = None,
+        metric_prefix: str = "",
+    ) -> None:
+        """Compute and log OKS keypoint AP/AR metrics when keypoint mode is active.
+
+        Args:
+            split: Internal metric split (``"val"``, ``"val_ema"``, ``"train"``, ``"test"``).
+            pl_module: The LightningModule used to log scalar metrics.
+            trainer: The PTL Trainer (provides ``callback_metrics``).
+            log_split: Namespace prefix for logged keys. Defaults to *split*.
+            metric_prefix: Optional string prepended to each metric name (e.g. ``"ema_"``).
+        """
+        metric = self._keypoint_oks_metrics.get(split)
+        if not self._keypoint_mode or metric is None:
+            return
+        # Cross-rank vote before entering compute(): metric.compute() calls
+        # synchronize_between_processes() which issues an all_gather collective. If any
+        # rank short-circuits here without joining that collective the process group
+        # deadlocks. Use the same all_reduce(MIN) pattern as _should_compute_ema.
+        has_updates_vote = 1 if metric.has_updates else 0
+        if is_dist_avail_and_initialized():
+            flag = torch.tensor([has_updates_vote], device=getattr(pl_module, "device", "cpu"))
+            dist.all_reduce(flag, op=dist.ReduceOp.MIN)
+            has_updates_vote = int(flag.item())
+        if not has_updates_vote:
+            return
+
+        log_split = split if log_split is None else log_split
+        try:
+            stats = metric.compute()
+            keypoint_metrics = {
+                "keypoint_map_50_95": (OKSKey.MAP, True),
+                "keypoint_map_50": (OKSKey.MAP_50, True),
+                "keypoint_map_75": (OKSKey.MAP_75, False),
+                "keypoint_mAR": (OKSKey.MAR, False),
+            }
+            for metric_name, (stat_key, prog_bar) in keypoint_metrics.items():
+                value = stats.get(stat_key, -1.0)
+                if value < 0:
+                    continue
+                log_key = f"{log_split}/{metric_prefix}{metric_name}"
+                pl_module.log(log_key, value, prog_bar=prog_bar, logger=True, on_step=False, on_epoch=True)
+                trainer.callback_metrics[log_key] = torch.tensor(value)
+        finally:
+            metric.reset()
 
     def _build_per_class_rows(
         self,

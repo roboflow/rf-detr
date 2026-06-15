@@ -146,7 +146,12 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
     # .to("cuda") would initialise the CUDA runtime during __init__(), which
     # prevents DDP strategies (ddp_notebook, ddp_spawn) from forking/spawning
     # child processes in notebook environments.
-    postprocess = PostProcess(num_select=args.num_select)
+    postprocess = PostProcess(
+        num_select=args.num_select,
+        num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
+        # Older detection-only namespaces may omit keypoint postprocess knobs; keep the ModelConfig default.
+        trace_alpha=getattr(args, "postprocess_trace_alpha", 0.2),
+    )
 
     return ModelContext(
         model=nn_model,

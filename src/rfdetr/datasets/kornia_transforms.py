@@ -306,7 +306,7 @@ def build_kornia_pipeline(
         ValueError: If *aug_config* contains an unsupported augmentation key.
 
     Examples:
-        >>> from rfdetr.datasets.aug_config import AUG_CONSERVATIVE
+        >>> from rfdetr.datasets.aug_configs import AUG_CONSERVATIVE
         >>> pipeline = build_kornia_pipeline(AUG_CONSERVATIVE, resolution=560)
         >>> pipeline_seg = build_kornia_pipeline(AUG_CONSERVATIVE, resolution=560, with_masks=True)
     """
@@ -527,6 +527,9 @@ def unpack_boxes(
         if masks_aug is not None:
             masks_i = masks_aug[i, :n_orig]  # [N_orig, H, W]
             t["masks"] = masks_i[keep] > _MASK_BINARIZE_THRESHOLD
+        # TODO(keypoints): First public keypoint preview keeps keypoint coordinates unchanged through GPU augmentation
+        # to preserve existing training paths without introducing partial geometry transforms. Add keypoint-aware
+        # Kornia unpack/keep logic once augmentation parity is implemented.
 
         new_targets.append(t)
 
