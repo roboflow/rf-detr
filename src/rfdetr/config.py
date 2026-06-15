@@ -30,12 +30,23 @@ def _detect_device() -> str:
 
     We defer to :func:`torch.accelerator.current_accelerator` (PyTorch ≥ 2.4) when available — it queries the driver
     through NVML without creating a primary context.  On older builds we fall back to ``torch.cuda.is_available()``.
+
+    ``check_available=True`` is required: without it ``current_accelerator()`` only reports the *compile-time*
+    accelerator, so the default CUDA wheel on a machine without an NVIDIA driver yields ``"cuda"`` and every model build
+    crashes with "Found no NVIDIA driver".  The runtime check is NVML-backed and still avoids creating a CUDA context.
+    Builds whose ``current_accelerator`` predates the ``check_available`` kwarg get the same runtime verification via
+    ``torch.accelerator.is_available``.
     """
     accelerator = getattr(torch, "accelerator", None)
     current_accelerator = getattr(accelerator, "current_accelerator", None)
     if current_accelerator is not None:
         try:
-            accel = current_accelerator()
+            try:
+                accel = current_accelerator(check_available=True)
+            except TypeError:
+                accel = current_accelerator()
+                if accel is not None and not accelerator.is_available():
+                    accel = None
             if accel is not None:
                 return str(accel)
             return "cpu"

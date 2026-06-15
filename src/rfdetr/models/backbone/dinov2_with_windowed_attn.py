@@ -26,10 +26,9 @@ Transformers v5 API changes vs v4
     the config is accessed via ``self.config`` internally.
 
 Helper functions copied locally:
-    ``get_aligned_output_features_output_indices`` and
-    ``find_pruneable_heads_and_indices`` were removed from the transformers v5 public API.  Private copies
-    (``_get_aligned_output_features_output_indices`` and ``_find_pruneable_heads_and_indices``)
-    are kept in this module.
+    ``get_aligned_output_features_output_indices`` and ``find_pruneable_heads_and_indices`` were removed
+    from the transformers v5 public API.  Private copies (``_get_aligned_output_features_output_indices``
+    and ``_find_pruneable_heads_and_indices``) are kept in this module.
 """
 
 import collections.abc
@@ -873,7 +872,7 @@ class WindowedDinov2WithRegistersPreTrainedModel(PreTrainedModel):
             ).to(module.cls_token.dtype)
 
 
-DINOV2_WITH_REGISTERS_START_DOCSTRING = r"""
+DINOV2_WITH_REGISTERS_START_DOCSTRING = """
     This model is a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) subclass. Use it
     as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage and
     behavior.
@@ -884,7 +883,7 @@ DINOV2_WITH_REGISTERS_START_DOCSTRING = r"""
             configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
 """
 
-DINOV2_WITH_REGISTERS_BASE_INPUTS_DOCSTRING = r"""
+DINOV2_WITH_REGISTERS_BASE_INPUTS_DOCSTRING = """
     Args:
         pixel_values (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)`):
             Pixel values. Pixel values can be obtained using [`AutoImageProcessor`]. See
@@ -1043,7 +1042,7 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
         )
 
 
-DINOV2_WITH_REGISTERS_INPUTS_DOCSTRING = r"""
+DINOV2_WITH_REGISTERS_INPUTS_DOCSTRING = """
     Args:
         pixel_values (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)`):
             Pixel values. Pixel values can be obtained using [`AutoImageProcessor`]. See
@@ -1061,10 +1060,10 @@ DINOV2_WITH_REGISTERS_INPUTS_DOCSTRING = r"""
 
 
 @add_start_docstrings(
-    """
-    Dinov2WithRegisters Model transformer with an image classification head on top (a linear layer on top of the final
-    hidden state of the [CLS] token) e.g. for ImageNet.
-    """,
+    (
+        "Dinov2WithRegisters Model transformer with an image classification head on top "
+        "(a linear layer on top of the final hidden state of the [CLS] token) e.g. for ImageNet."
+    ),
     DINOV2_WITH_REGISTERS_START_DOCSTRING,
 )
 class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegistersPreTrainedModel):
@@ -1181,9 +1180,7 @@ class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegist
 
 
 @add_start_docstrings(
-    """
-    Dinov2WithRegisters backbone, to be used with frameworks like DETR and MaskFormer.
-    """,
+    "Dinov2WithRegisters backbone, to be used with frameworks like DETR and MaskFormer.",
     DINOV2_WITH_REGISTERS_START_DOCSTRING,
 )
 class WindowedDinov2WithRegistersBackbone(WindowedDinov2WithRegistersPreTrainedModel, BackboneMixin):

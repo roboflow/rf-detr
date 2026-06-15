@@ -241,7 +241,6 @@ class RFDETRModelModule(LightningModule):
             loss_dict: Raw criterion loss dictionary.
             batch_size: Current batch size used by Lightning for metric reduction metadata.
         """
-
         self.log(
             "loss",
             loss,
@@ -279,7 +278,6 @@ class RFDETRModelModule(LightningModule):
             loss_dict: Raw criterion loss dictionary.
             batch_size: Current batch size used by Lightning for metric reduction metadata.
         """
-
         self.log_dict(
             {f"val/{k}": v for k, v in loss_dict.items()},
             on_step=False,

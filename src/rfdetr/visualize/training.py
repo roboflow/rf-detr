@@ -165,9 +165,9 @@ def _drop_trailing_validation_only_epochs(df: Any) -> Any:
 
     The Roboflow finetune demos run ``trainer.validate(...)`` after ``trainer.fit(...)`` to write a final metrics JSON.
     PTL appends that validation pass to the same ``CSVLogger`` file using ``epoch == max_epochs``. That row is useful as
-    a standalone final validation result, but it is not part of the training curve and can create a misleading
-    last-epoch jump in plots. Only trailing epochs with validation/test metrics and no training metrics are removed, and
-    only when the CSV also contains real training rows. Pure validation CSV files are preserved.
+    a standalone final validation result, but it is not part of the training curve and can create a misleading last-
+    epoch jump in plots. Only trailing epochs with validation/test metrics and no training metrics are removed, and only
+    when the CSV also contains real training rows. Pure validation CSV files are preserved.
     """
     train_columns = [column for column in df.columns if str(column).startswith("train/")]
     eval_columns = [column for column in df.columns if str(column).startswith(("val/", "test/"))]

@@ -17,7 +17,8 @@
 """Deprecated: most symbols have moved to ``rfdetr.utilities``.
 
 ``accuracy``, ``inverse_sigmoid``, and ``interpolate`` now live in ``rfdetr.models.math`` and are re-exported here for
-backward compatibility."""
+backward compatibility.
+"""
 
 from rfdetr.utilities.decorators import _warn_deprecated_module
 

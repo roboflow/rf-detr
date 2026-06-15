@@ -10,7 +10,8 @@ required.  After training, reads the CSVLogger output and asserts that every met
 is present and has at least one non-NaN value.
 
 Also verifies that ``train/loss`` is logged at the same scale as ``val/loss`` (i.e. NOT divided by ``grad_accum_steps``
-before logging)."""
+before logging).
+"""
 
 from __future__ import annotations
 
