@@ -323,11 +323,23 @@ class TestBuildTrainerUsesRealFields:
         defaults.update(kwargs)
         return RFDETRBaseConfig(**defaults)
 
-    def test_clip_max_norm_owned_by_model_module(self, tmp_path):
-        """Trainer-owned clipping is disabled because RFDETRModelModule clips manually."""
+    def test_clip_max_norm_forwarded_to_trainer_for_detection(self, tmp_path):
+        """Detection models use Lightning's automatic optimization, so ``gradient_clip_val`` flows through to the
+        Trainer from ``TrainConfig.clip_max_norm`` unchanged."""
         from rfdetr.training import build_trainer
 
         trainer = build_trainer(self._tc(tmp_path, clip_max_norm=0.25), self._mc())
+        assert trainer.gradient_clip_val == pytest.approx(0.25)
+
+    def test_clip_max_norm_owned_by_model_module_for_keypoints(self, tmp_path):
+        """Keypoint models use manual optimization; trainer-owned clipping is disabled and ``clip_max_norm`` is applied
+        inside ``RFDETRModelModule._step_optimizer`` instead."""
+        from rfdetr.training import build_trainer
+
+        trainer = build_trainer(
+            self._tc(tmp_path, clip_max_norm=0.25),
+            self._mc(use_grouppose_keypoints=True),
+        )
         assert trainer.gradient_clip_val is None
 
     def test_seed_not_applied_in_build_trainer_factory(self, tmp_path):

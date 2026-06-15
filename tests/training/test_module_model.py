@@ -207,21 +207,24 @@ class TestInit:
     build_criterion_and_postprocessors() when pretrain_weights is None."""
 
     @pytest.mark.parametrize(
-        "model_config",
+        "model_config,expected_manual",
         [
-            pytest.param(_base_model_config(use_grouppose_keypoints=False), id="detection"),
-            pytest.param(_base_model_config(segmentation_head=True), id="segmentation"),
+            pytest.param(_base_model_config(use_grouppose_keypoints=False), False, id="detection"),
+            pytest.param(_base_model_config(segmentation_head=True), False, id="segmentation"),
             pytest.param(
                 _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+                True,
                 id="keypoints",
             ),
         ],
     )
-    def test_models_use_manual_optimization(self, build_module, model_config):
-        """All DETR-style losses need manual optimization for box-normalized accumulation."""
+    def test_optimization_mode_per_model_type(self, build_module, model_config, expected_manual):
+        """Only keypoint models need manual optimization for box-normalized accumulation; detection and segmentation
+        keep Lightning's automatic optimization path."""
         module, _, _, _ = build_module(model_config=model_config)
 
-        assert module.automatic_optimization is False
+        assert module._use_manual_optimization is expected_manual
+        assert module.automatic_optimization is (not expected_manual)
 
     def test_model_is_set(self, build_module):
         """__init__ must assign the built model to module.model."""
@@ -730,14 +733,17 @@ class TestTrainingStep:
         assert loss.item() == pytest.approx(1.0 + 10.0 + 6.0)
 
     def test_loss_backward_uses_box_normalizer_contract(self, tmp_path):
-        """Backward loss is scaled by criterion box normalizer, not Lightning accumulation."""
+        """Backward loss for keypoint models is scaled by the criterion box normalizer (manual optimization owns
+        accumulation), not by Lightning's ``accumulate_grad_batches``."""
         loss_dict = {"loss_ce": torch.tensor(4.0)}
         weight_dict = {"loss_ce": 1.0}
+        keypoint_config = _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17])
         module, samples, targets, _, _ = self._run_step(
             tmp_path,
             loss_dict,
             weight_dict,
             accumulate_grad_batches=4,
+            model_config=keypoint_config,
         )
         module.criterion.num_boxes_for_targets.return_value = torch.tensor(4.0)
 
@@ -747,82 +753,86 @@ class TestTrainingStep:
         backward_loss = module.manual_backward.call_args.args[0]
         assert backward_loss.item() == pytest.approx(1.0)
 
+    def test_detection_loss_uses_lightning_grad_accum_scaling(self, tmp_path):
+        """Detection (automatic optimization) divides loss by ``trainer.accumulate_grad_batches`` so the returned loss
+        matches the legacy non-manual training path."""
+        loss_dict = {"loss_ce": torch.tensor(4.0)}
+        weight_dict = {"loss_ce": 1.0}
+        module, samples, targets, _, _ = self._run_step(
+            tmp_path,
+            loss_dict,
+            weight_dict,
+            accumulate_grad_batches=1,
+        )
+        module._trainer.accumulate_grad_batches = 4
+
+        loss = module.training_step((samples, targets), batch_idx=0)
+
+        assert loss.item() == pytest.approx(1.0)
+        module.manual_backward.assert_not_called()
+
+    def _make_keypoint_module(self, tmp_path, grad_accum_steps, num_training_batches):
+        """Build a keypoint module wired with ``_ScalarLossModel`` and ``_BoxNormalizedCriterion`` for accum tests."""
+        module, *_ = _build_module(
+            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+            train_config=_base_train_config(tmp_path, grad_accum_steps=grad_accum_steps),
+            tmp_path=tmp_path,
+        )
+        model = _ScalarLossModel()
+        optimizer = torch.optim.SGD(model.parameters(), lr=1.0)
+        module.model = model
+        module.criterion = _BoxNormalizedCriterion()
+        module.postprocess = MagicMock()
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        module.optimizers = MagicMock(return_value=optimizer)
+        module.manual_backward = lambda loss: loss.backward()
+        module.lr_schedulers = MagicMock(return_value=None)
+        trainer = MagicMock()
+        trainer.accumulate_grad_batches = 1
+        trainer.num_training_batches = num_training_batches
+        trainer.gradient_clip_val = 0.0
+        trainer.gradient_clip_algorithm = "norm"
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        return module, model
+
     @pytest.mark.parametrize(
-        "model_config",
+        "grad_accum_steps,box_counts,loss_numerators,expected_value",
         [
-            pytest.param(_base_model_config(use_grouppose_keypoints=False), id="detection"),
-            pytest.param(_base_model_config(segmentation_head=True), id="segmentation"),
-            pytest.param(
-                _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
-                id="keypoints",
-            ),
+            pytest.param(2, (2, 6), (10.0, 6.0), -2.0, id="ga2-balanced"),
+            pytest.param(3, (2, 4, 6), (4.0, 8.0, 12.0), -2.0, id="ga3-balanced"),
+            pytest.param(4, (1, 1, 1, 1), (2.0, 2.0, 2.0, 2.0), -2.0, id="ga4-uniform"),
+            pytest.param(2, (1, 99), (1.0, 99.0), -1.0, id="ga2-skewed-1-vs-99"),
+            pytest.param(4, (1, 1, 1, 97), (1.0, 1.0, 1.0, 97.0), -1.0, id="ga4-skewed-1-1-1-97"),
         ],
     )
-    def test_box_normalized_accumulation_matches_large_effective_batch(self, tmp_path, model_config):
-        """Accumulated gradients should match a large batch normalized by total boxes."""
-        large_module, _, _, _ = _build_module(
-            model_config=model_config,
-            train_config=_base_train_config(tmp_path, grad_accum_steps=1),
-            tmp_path=tmp_path,
+    def test_box_normalized_accumulation_matches_large_effective_batch(
+        self, tmp_path, grad_accum_steps, box_counts, loss_numerators, expected_value
+    ):
+        """Accumulated gradients across ``grad_accum_steps`` microbatches must equal a single large batch normalized by
+        total boxes, regardless of how lopsided the per-microbatch box counts are."""
+        large_module, large_model = self._make_keypoint_module(tmp_path, grad_accum_steps=1, num_training_batches=1)
+        accum_module, accum_model = self._make_keypoint_module(
+            tmp_path, grad_accum_steps=grad_accum_steps, num_training_batches=grad_accum_steps
         )
-        large_model = _ScalarLossModel()
-        large_optimizer = torch.optim.SGD(large_model.parameters(), lr=1.0)
-        large_module.model = large_model
-        large_module.criterion = _BoxNormalizedCriterion()
-        large_module.postprocess = MagicMock()
-        large_module.log = MagicMock()
-        large_module.log_dict = MagicMock()
-        large_module.optimizers = MagicMock(return_value=large_optimizer)
-        large_module.manual_backward = lambda loss: loss.backward()
-        large_module.lr_schedulers = MagicMock(return_value=None)
-        large_trainer = MagicMock()
-        large_trainer.accumulate_grad_batches = 1
-        large_trainer.num_training_batches = 1
-        large_trainer.gradient_clip_val = 0.0
-        large_trainer.gradient_clip_algorithm = "norm"
-        large_module._trainer = large_trainer
-        type(large_module).trainer = property(lambda self: self._trainer)
 
-        accum_module, _, _, _ = _build_module(
-            model_config=model_config,
-            train_config=_base_train_config(tmp_path, grad_accum_steps=2),
-            tmp_path=tmp_path,
-        )
-        accum_model = _ScalarLossModel()
-        accum_optimizer = torch.optim.SGD(accum_model.parameters(), lr=1.0)
-        accum_module.model = accum_model
-        accum_module.criterion = _BoxNormalizedCriterion()
-        accum_module.postprocess = MagicMock()
-        accum_module.log = MagicMock()
-        accum_module.log_dict = MagicMock()
-        accum_module.optimizers = MagicMock(return_value=accum_optimizer)
-        accum_module.manual_backward = lambda loss: loss.backward()
-        accum_module.lr_schedulers = MagicMock(return_value=None)
-        accum_trainer = MagicMock()
-        accum_trainer.accumulate_grad_batches = 1
-        accum_trainer.num_training_batches = 2
-        accum_trainer.gradient_clip_val = 0.0
-        accum_trainer.gradient_clip_algorithm = "norm"
-        accum_module._trainer = accum_trainer
-
+        microbatch_targets = [
+            {
+                "labels": torch.ones(box_count, dtype=torch.int64),
+                "loss_numerator": torch.tensor(loss_numerator),
+                "orig_size": torch.tensor([16, 16]),
+            }
+            for box_count, loss_numerator in zip(box_counts, loss_numerators, strict=True)
+        ]
         samples, _ = _make_batch(batch_size=2)
-        first_target = {
-            "labels": torch.ones(2, dtype=torch.int64),
-            "loss_numerator": torch.tensor(10.0),
-            "orig_size": torch.tensor([16, 16]),
-        }
-        second_target = {
-            "labels": torch.ones(6, dtype=torch.int64),
-            "loss_numerator": torch.tensor(6.0),
-            "orig_size": torch.tensor([16, 16]),
-        }
 
-        large_module.training_step((samples, [first_target, second_target]), batch_idx=0)
-        accum_module.training_step((samples, [first_target]), batch_idx=0)
-        accum_module.training_step((samples, [second_target]), batch_idx=1)
+        large_module.training_step((samples, microbatch_targets), batch_idx=0)
+        for batch_idx, target in enumerate(microbatch_targets):
+            accum_module.training_step((samples, [target]), batch_idx=batch_idx)
 
         torch.testing.assert_close(accum_model.value, large_model.value)
-        assert large_model.value.item() == pytest.approx(-2.0)
+        assert large_model.value.item() == pytest.approx(expected_value)
 
     def test_logs_live_train_loss_to_progress_bar(self, tmp_path):
         """Aggregate training loss must be logged every step as a progress-only metric."""
@@ -921,6 +931,86 @@ class TestTrainingStep:
         loss = module.training_step((samples, targets), batch_idx=0)
 
         assert loss.item() == pytest.approx(2.0)
+
+
+class TestShouldStepOptimizer:
+    """Tests for ``_should_step_optimizer`` — covers the modulo path, the end-of-epoch fallback, and the iterable /
+    infinite dataset case where ``trainer.num_training_batches`` is ``float('inf')``."""
+
+    def _make_module_with_trainer(self, tmp_path, grad_accum_steps, num_training_batches):
+        """Build a module with a stub trainer exposing ``num_training_batches`` for the test scenario."""
+        module, *_ = _build_module(
+            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+            train_config=_base_train_config(tmp_path, grad_accum_steps=grad_accum_steps),
+            tmp_path=tmp_path,
+        )
+        trainer = MagicMock()
+        trainer.num_training_batches = num_training_batches
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        return module
+
+    @pytest.mark.parametrize(
+        "grad_accum_steps,num_training_batches,batch_idx,expected",
+        [
+            pytest.param(1, 10, 0, True, id="ga1-bidx0-steps-every-batch"),
+            pytest.param(1, 10, 9, True, id="ga1-bidx9-steps-every-batch"),
+            pytest.param(2, 10, 0, False, id="ga2-bidx0-mid-window"),
+            pytest.param(2, 10, 1, True, id="ga2-bidx1-closes-window"),
+            pytest.param(2, 10, 2, False, id="ga2-bidx2-opens-new-window"),
+            pytest.param(2, 10, 9, True, id="ga2-bidx9-closes-final-window"),
+            pytest.param(4, 10, 7, True, id="ga4-bidx7-closes-second-window"),
+            pytest.param(4, 10, 8, False, id="ga4-bidx8-opens-partial-window"),
+            pytest.param(4, 10, 9, True, id="ga4-bidx9-final-batch-flushes-partial"),
+            pytest.param(4, 11, 8, False, id="ga4-bidx8-of-11-mid-window"),
+            pytest.param(4, 11, 10, True, id="ga4-bidx10-final-batch-flushes-partial"),
+        ],
+    )
+    def test_finite_dataset_steps_at_window_close_and_epoch_end(
+        self, tmp_path, grad_accum_steps, num_training_batches, batch_idx, expected
+    ):
+        """Optimizer steps when the accumulation window closes or when the epoch ends with a partial window."""
+        module = self._make_module_with_trainer(tmp_path, grad_accum_steps, num_training_batches)
+
+        assert module._should_step_optimizer(batch_idx) is expected
+
+    @pytest.mark.parametrize(
+        "grad_accum_steps,batch_idx,expected",
+        [
+            pytest.param(2, 0, False, id="ga2-bidx0-mid-window"),
+            pytest.param(2, 1, True, id="ga2-bidx1-closes-window"),
+            pytest.param(4, 2, False, id="ga4-bidx2-mid-window"),
+            pytest.param(4, 3, True, id="ga4-bidx3-closes-window"),
+        ],
+    )
+    def test_infinite_dataset_uses_modulo_only(self, tmp_path, grad_accum_steps, batch_idx, expected):
+        """Iterable datasets report ``num_training_batches=float('inf')``; only the modulo path can close the window."""
+        module = self._make_module_with_trainer(tmp_path, grad_accum_steps, float("inf"))
+
+        assert module._should_step_optimizer(batch_idx) is expected
+
+    def test_none_num_training_batches_uses_modulo_only(self, tmp_path):
+        """If trainer.num_training_batches is None (very early in fit), only the modulo path can trigger a step."""
+        module = self._make_module_with_trainer(tmp_path, grad_accum_steps=2, num_training_batches=None)
+
+        assert module._should_step_optimizer(batch_idx=0) is False
+        assert module._should_step_optimizer(batch_idx=1) is True
+
+
+class TestOnTrainEpochStart:
+    """Tests for ``on_train_epoch_start`` — must reset the accumulated box normalizer between epochs."""
+
+    def test_reset_clears_stale_accumulator(self, tmp_path):
+        """A stale normalizer from a previous epoch must not leak into the new epoch's first microbatch."""
+        module, *_ = _build_module(
+            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+            tmp_path=tmp_path,
+        )
+        module._accumulated_box_normalizer = torch.tensor(42.0)
+
+        module.on_train_epoch_start()
+
+        assert module._accumulated_box_normalizer is None
 
 
 class TestValidationStep:

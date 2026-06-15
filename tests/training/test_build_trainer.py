@@ -574,18 +574,34 @@ class TestBuildTrainerLoggers:
 class TestBuildTrainerKwargs:
     """build_trainer() must pass the correct kwargs to Trainer."""
 
-    def test_gradient_clip_val_disabled_for_manual_optimization(self, tmp_path):
-        """Trainer-owned clipping is disabled because RFDETRModelModule clips manually."""
+    def test_gradient_clip_val_disabled_for_keypoint_manual_optimization(self, tmp_path):
+        """Trainer-owned clipping is disabled for keypoint models because RFDETRModelModule clips manually."""
         trainer = build_trainer(
-            _tc(tmp_path, use_ema=False),
-            _mc(),
+            _tc(tmp_path, use_ema=False, clip_max_norm=0.25),
+            _mc(use_grouppose_keypoints=True),
         )
         assert trainer.gradient_clip_val is None
 
-    def test_accumulate_grad_batches_disabled_for_manual_optimization(self, tmp_path):
-        """Trainer-owned accumulation is disabled because RFDETRModelModule accumulates manually."""
-        trainer = build_trainer(_tc(tmp_path, grad_accum_steps=8, use_ema=False), _mc())
+    def test_gradient_clip_val_forwarded_for_detection_automatic_optimization(self, tmp_path):
+        """Detection models use Lightning's automatic optimization; trainer-owned clipping must flow through."""
+        trainer = build_trainer(
+            _tc(tmp_path, use_ema=False, clip_max_norm=0.25),
+            _mc(),
+        )
+        assert trainer.gradient_clip_val == pytest.approx(0.25)
+
+    def test_accumulate_grad_batches_disabled_for_keypoint_manual_optimization(self, tmp_path):
+        """Trainer-owned accumulation is disabled for keypoint models because RFDETRModelModule accumulates manually."""
+        trainer = build_trainer(
+            _tc(tmp_path, grad_accum_steps=8, use_ema=False),
+            _mc(use_grouppose_keypoints=True),
+        )
         assert trainer.accumulate_grad_batches == 1
+
+    def test_accumulate_grad_batches_forwarded_for_detection_automatic_optimization(self, tmp_path):
+        """Detection models use Lightning's automatic optimization; ``accumulate_grad_batches`` must flow through."""
+        trainer = build_trainer(_tc(tmp_path, grad_accum_steps=8, use_ema=False), _mc())
+        assert trainer.accumulate_grad_batches == 8
 
     def test_max_epochs(self, tmp_path):
         """max_epochs maps from config.epochs."""
@@ -621,8 +637,33 @@ class TestBuildTrainerKwargs:
             )
         assert captured["precision"] == "32-true"
 
-    def test_trainer_kwargs_cannot_override_manual_optimization_ownership(self, tmp_path):
-        """Lightning accumulation and clipping remain disabled even when passed as trainer kwargs."""
+    def test_keypoint_trainer_kwargs_cannot_override_manual_optimization_ownership(self, tmp_path):
+        """Keypoint accumulation and clipping remain disabled even when passed as trainer kwargs, and the override emits
+        a UserWarning so the caller can spot the silent coercion."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        with (
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            pytest.warns(UserWarning, match="manual optimization"),
+        ):
+            build_trainer(
+                _tc(tmp_path, use_ema=False),
+                _mc(use_grouppose_keypoints=True),
+                accumulate_grad_batches=8,
+                gradient_clip_val=0.25,
+            )
+
+        assert captured["accumulate_grad_batches"] == 1
+        assert captured["gradient_clip_val"] is None
+
+    def test_detection_trainer_kwargs_override_takes_effect(self, tmp_path):
+        """Detection models use automatic optimization; trainer kwargs must override the built-in defaults."""
         import unittest.mock as mock
 
         captured: dict = {}
@@ -639,8 +680,8 @@ class TestBuildTrainerKwargs:
                 gradient_clip_val=0.25,
             )
 
-        assert captured["accumulate_grad_batches"] == 1
-        assert captured["gradient_clip_val"] is None
+        assert captured["accumulate_grad_batches"] == 8
+        assert captured["gradient_clip_val"] == pytest.approx(0.25)
 
 
 class TestBuildTrainerSeed:
