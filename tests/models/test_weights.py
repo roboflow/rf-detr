@@ -446,10 +446,10 @@ class TestLoadPretrainWeightsPTLCkptFormat:
         assert result == ["from_args"], f"args must take precedence over hyper_parameters, got {result!r}"
 
     def test_ptl_ckpt_non_model_keys_in_state_dict_are_excluded(self, monkeypatch):
-        """Non-model. keys in state_dict (optimizer, lr_scheduler) must not appear in checkpoint['model'].
+        """Non-model keys in state_dict (optimizer, lr_scheduler) must not appear in checkpoint['model'].
 
-        Real PTL checkpoints contain keys like 'optimizer.param_groups' and 'lr_scheduler.last_epoch' alongside the
-        'model.*' weights.  The loader must exclude these non-model keys so they do not pollute the state dict passed to
+        Real PTL checkpoints contain keys like 'optimizer.param_groups' and 'lr_scheduler.last_epoch' alongside
+        'model.*' weights. The loader must exclude these non-model keys so they do not pollute the state dict passed to
         load_state_dict and do not cause KeyError or unexpected parameter names.
         """
         from rfdetr.models.weights import load_pretrain_weights
@@ -775,7 +775,10 @@ class TestLoadPretrainWeightsPerGroupQuerySlice:
         return {"model": state, "args": {"num_queries": num_queries, "group_detr": group_detr}}
 
     def test_decreasing_num_queries_preserves_per_group_structure(self, monkeypatch, tmp_path):
-        """Real flow: checkpoint(nq=4, g=3) → model(nq=2, g=3). Group structure must be preserved."""
+        """Real flow: checkpoint(nq=4, g=3) → model(nq=2, g=3).
+
+        Group structure must be preserved.
+        """
         from rfdetr.models.weights import load_pretrain_weights
 
         mc = RFDETRBaseConfig(
@@ -1027,7 +1030,6 @@ class TestPartialLoadDetector:
 
     def test_unexpected_backbone_missing_keys_warn(self, captured):
         """Missing backbone keys (e.g. register_tokens) must trigger the warning."""
-
         result = SimpleNamespace(
             missing_keys=[
                 "backbone.0.encoder.encoder.embeddings.register_tokens",
@@ -1042,7 +1044,6 @@ class TestPartialLoadDetector:
 
     def test_unexpected_keys_warn(self, captured):
         """Unexpected checkpoint keys (model has no slot for them) must trigger the warning."""
-
         result = SimpleNamespace(
             missing_keys=[],
             unexpected_keys=["backbone.0.encoder.legacy_module.weight"],
@@ -1053,7 +1054,6 @@ class TestPartialLoadDetector:
 
     def test_handles_non_iterable_input_gracefully(self, captured):
         """A MagicMock-style result (used in many existing tests) must not raise."""
-
         _warn_on_partial_load(MagicMock(), "/fake/weights.pth")
         # The crucial assertion is "did not raise"; whether captured is empty
         # depends on MagicMock truthiness — both outcomes are acceptable.

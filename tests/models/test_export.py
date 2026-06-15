@@ -160,7 +160,6 @@ def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
 ) -> None:
     """`RFDETR.export(..., dynamic_batch=True)` must pass a non-None `dynamic_axes` dict to `export_onnx`;
     `dynamic_batch=False` must pass `None`."""
-
     model = types.SimpleNamespace(
         model=types.SimpleNamespace(
             model=_DummyCoreModel(segmentation_head=segmentation_head), device="cpu", resolution=14
@@ -483,7 +482,6 @@ class TestExportPatchSize:
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path, patch_size: int, num_windows: int
     ) -> types.SimpleNamespace:
         """Build a minimal RFDETR-like namespace with controllable patch_size/num_windows."""
-
         model = types.SimpleNamespace(
             model=types.SimpleNamespace(
                 model=_DummyCoreModel(),

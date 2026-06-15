@@ -14,8 +14,8 @@
 # ------------------------------------------------------------------------
 """COCO evaluator for ONNX/TRT export benchmarking.
 
-Provides :class:`CocoEvaluator` used by :mod:`rfdetr.export.benchmark` to compute mAP during ONNX and TensorRT
-inference benchmarks.
+Provides :class:`CocoEvaluator` used by :mod:`rfdetr.export.benchmark` to compute mAP during ONNX and TensorRT inference
+benchmarks.
 
 Implementation mirrors torchvision's evaluator structure but uses ``faster_coco_eval`` as the runtime backend.
 """
