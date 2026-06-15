@@ -2026,3 +2026,44 @@ class TestRFDETRTrainNumClassesAutoDetect:
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)  # must not raise
+
+    def test_keypoint_schema_padded_when_num_classes_bumped_for_custom_dataset(self, mock_self, patch_lit):
+        """num_keypoints_per_class is zero-padded when auto-adjust bumps num_classes beyond schema length.
+
+        Regression test for the warning "Keypoint class-logit boost has N classes but detection head has M" on custom
+        (non-Roboflow) datasets.  Root cause: _align_num_classes_from_dataset bumped num_classes but did not pad the
+        keypoint schema.  After the fix the schema length equals num_classes and _aggregate_keypoint_class_logits no
+        longer fires the mismatch warning.
+        """
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+            num_keypoints_per_class=[17, 0],
+        )
+        mock_self.model.args = SimpleNamespace(num_classes=2, num_keypoints_per_class=[17, 0])
+
+        # Dataset has 3 classes; schema covers 2 → triggers the padding path.
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball", "referee"])
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3
+        assert mock_self.model_config.num_keypoints_per_class == [17, 0, 0]
+        assert mock_self.model.args.num_keypoints_per_class == [17, 0, 0]
+
+    def test_keypoint_schema_not_padded_when_already_covers_all_classes(self, mock_self, patch_lit):
+        """Schema is left untouched when it already spans all detection classes."""
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+            num_keypoints_per_class=[17, 0, 14],
+        )
+        mock_self.model.args = SimpleNamespace(num_classes=3, num_keypoints_per_class=[17, 0, 14])
+
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball", "referee"])
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_keypoints_per_class == [17, 0, 14]

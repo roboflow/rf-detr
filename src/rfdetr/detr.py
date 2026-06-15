@@ -1255,6 +1255,16 @@ class RFDETR:
             model_args = getattr(self.model, "args", None)
             if model_args is not None:
                 model_args.num_classes = dataset_num_classes
+            # Pad keypoint schema with zeros so len(num_keypoints_per_class) == num_classes.
+            # Without this, _aggregate_keypoint_class_logits fires a mismatch warning every
+            # forward pass and the config state is inconsistent with the detection head width.
+            if self.model_config.use_grouppose_keypoints:
+                current_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
+                if current_schema and len(current_schema) < dataset_num_classes:
+                    padded_schema = current_schema + [0] * (dataset_num_classes - len(current_schema))
+                    self.model_config.num_keypoints_per_class = padded_schema
+                    if model_args is not None:
+                        model_args.num_keypoints_per_class = padded_schema
         else:
             logger.warning(
                 "Dataset '%s' has %d classes but model was initialized with num_classes=%d. "
