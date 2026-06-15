@@ -6,10 +6,9 @@
 # Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
-"""CustomOpSymbolicRegistry class."""
-
-
 class CustomOpSymbolicRegistry:
+    """Registry for custom ONNX symbolic optimizer callbacks."""
+
     # _SYMBOLICS = {}
     _OPTIMIZER = []
 
