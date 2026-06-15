@@ -3,7 +3,17 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Torchvision-native transforms for RF-DETR image/target pairs."""
+"""Torchvision-native image/target transforms for RF-DETR dataset pipelines.
+
+Provides drop-in replacements for Albumentations-based augmentations using
+``torchvision.transforms.v2`` primitives. All transforms accept ``(image, target)``
+pairs where ``image`` is a PIL image or ``torch.Tensor`` and ``target`` is an
+optional dict with keys ``boxes``, ``labels``, ``masks``, ``keypoints``, etc.
+
+Examples:
+    >>> from rfdetr.datasets.torchvision_transforms import Compose, Resize, Normalize
+    >>> transform = Compose([Resize((640, 640)), Normalize()])
+"""
 
 from __future__ import annotations
 
@@ -20,6 +30,17 @@ _GLOBAL_TARGET_FIELDS = frozenset({"boxes", "labels", "orig_size", "size", "imag
 _ImageInput: TypeAlias = Image.Image | torch.Tensor
 _Target: TypeAlias = Optional[Dict[str, Any]]
 _TransformResult: TypeAlias = Tuple[_ImageInput, _Target]
+
+__all__ = [
+    "Compose",
+    "RandomSelect",
+    "RandomChoice",
+    "RandomResize",
+    "Resize",
+    "RandomSizedCrop",
+    "RandomHorizontalFlip",
+    "crop",
+]
 
 
 def _image_size(image: Image.Image | torch.Tensor) -> tuple[int, int]:
@@ -50,7 +71,7 @@ def _resize_masks(masks: torch.Tensor, size: tuple[int, int]) -> torch.Tensor:
     if masks.numel() == 0:
         return masks.new_zeros((masks.shape[0], size[0], size[1]), dtype=torch.bool)
     resized = torch_f.interpolate(masks[:, None].float(), size=size, mode="nearest")[:, 0]
-    return resized.to(dtype=torch.bool)
+    return cast(torch.Tensor, resized.to(dtype=torch.bool))
 
 
 def _filter_per_instance_fields(target: Dict[str, Any], keep: torch.Tensor, boxes: torch.Tensor) -> Dict[str, Any]:
@@ -76,8 +97,6 @@ def _filter_per_instance_fields(target: Dict[str, Any], keep: torch.Tensor, boxe
         elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)) and len(value) == num_boxes:
             target_out[key] = [value[int(i)] for i in keep_idx]
 
-    if "labels" in target:
-        target_out["labels"] = target["labels"][keep_idx]
     if "area" in target_out:
         target_out["area"] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
     return target_out
@@ -101,6 +120,8 @@ def _mark_invisible_keypoints(keypoints: torch.Tensor, height: int, width: int) 
         (keypoints[..., 0] >= 0) & (keypoints[..., 0] < width) & (keypoints[..., 1] >= 0) & (keypoints[..., 1] < height)
     )
     invalid = ~(visible & inside)
+    if not invalid.any():
+        return keypoints
     keypoints = keypoints.clone()
     keypoints[invalid] = 0.0
     return keypoints
@@ -129,6 +150,11 @@ class RandomSelect:
         transform1: Transform used when the sampled value is below ``p``.
         transform2: Transform used otherwise.
         p: Probability of selecting ``transform1``.
+
+    Examples:
+        >>> t1 = Resize((480, 480))
+        >>> t2 = Resize((640, 640))
+        >>> selector = RandomSelect(t1, t2, p=0.5)
     """
 
     def __init__(self, transform1: Any, transform2: Any, p: float = 0.5) -> None:
@@ -158,6 +184,11 @@ class RandomChoice:
 
     Args:
         transforms: Candidate transforms.
+
+    Examples:
+        >>> t1 = Resize((480, 480))
+        >>> t2 = Resize((640, 640))
+        >>> choice = RandomChoice([t1, t2])
     """
 
     def __init__(self, transforms: Sequence[Any]) -> None:
@@ -186,6 +217,10 @@ class Compose:
 
     Args:
         transforms: Sequence of transforms accepting ``(image, target)``.
+
+    Examples:
+        >>> from rfdetr.datasets.torchvision_transforms import Compose, Resize, RandomHorizontalFlip
+        >>> pipeline = Compose([Resize((640, 640)), RandomHorizontalFlip(p=0.5)])
     """
 
     def __init__(self, transforms: Sequence[Any]) -> None:
@@ -214,6 +249,9 @@ class RandomResize:
     Args:
         sizes: Candidate shortest-side sizes.
         max_size: Optional maximum longest side after resizing.
+
+    Examples:
+        >>> resizer = RandomResize([480, 512, 640], max_size=1333)
     """
 
     def __init__(self, sizes: Sequence[int], max_size: int | None = None) -> None:
@@ -263,10 +301,10 @@ class RandomResize:
 
         if width < height:
             new_width = size
-            new_height = int(size * height / width)
+            new_height = int(round(size * height / width))
         else:
             new_height = size
-            new_width = int(size * width / height)
+            new_width = int(round(size * width / height))
         return new_height, new_width
 
 
@@ -275,6 +313,9 @@ class Resize:
 
     Args:
         size: Output ``(height, width)``.
+
+    Examples:
+        >>> resizer = Resize((640, 640))
     """
 
     def __init__(self, size: tuple[int, int]) -> None:
@@ -307,12 +348,13 @@ class Resize:
         ratio_width = new_width / old_width
         ratio_height = new_height / old_height
         if "boxes" in target_out:
-            scale = target_out["boxes"].new_tensor([ratio_width, ratio_height, ratio_width, ratio_height])
-            target_out["boxes"] = target_out["boxes"] * scale
+            boxes = target_out["boxes"].float()
+            scale = boxes.new_tensor([ratio_width, ratio_height, ratio_width, ratio_height])
+            target_out["boxes"] = boxes * scale
         if "masks" in target_out:
             target_out["masks"] = _resize_masks(target_out["masks"], (new_height, new_width))
         if "keypoints" in target_out:
-            keypoints = target_out["keypoints"].clone()
+            keypoints = target_out["keypoints"].float().clone()
             keypoints[..., 0] = keypoints[..., 0] * ratio_width
             keypoints[..., 1] = keypoints[..., 1] * ratio_height
             keypoints = _mark_invisible_keypoints(keypoints, new_height, new_width)
@@ -328,6 +370,9 @@ class RandomSizedCrop:
     Args:
         min_max_height: Inclusive candidate range for the crop height.
         size: Output ``(height, width)`` after crop resizing.
+
+    Examples:
+        >>> cropper = RandomSizedCrop((384, 600), (640, 640))
     """
 
     def __init__(self, min_max_height: tuple[int, int], size: tuple[int, int]) -> None:
@@ -364,12 +409,20 @@ class RandomHorizontalFlip:
 
     Args:
         p: Flip probability.
-        keypoint_flip_pairs: Flat list of keypoint indices to swap after flipping.
+        keypoint_flip_pairs: Flat even-length list of index pairs ``(left_i, right_i, ...)`` to swap on horizontal flip.
+            For example, ``[0, 1, 4, 5]`` swaps keypoints 0↔1 and 4↔5.
+
+    Examples:
+        >>> flipper = RandomHorizontalFlip(p=0.5)
     """
 
     def __init__(self, p: float = 0.5, keypoint_flip_pairs: Sequence[int] | None = None) -> None:
         self.p = p
         self.keypoint_flip_pairs = list(keypoint_flip_pairs or [])
+        if len(self.keypoint_flip_pairs) % 2 != 0:
+            raise ValueError(
+                f"keypoint_flip_pairs must have an even number of elements, got {len(self.keypoint_flip_pairs)}"
+            )
 
     def __call__(
         self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
@@ -404,12 +457,14 @@ class RandomHorizontalFlip:
             keypoints[..., 0] = (width - 1) - keypoints[..., 0]
             invisible = (~visible).unsqueeze(-1)  # (N, K, 1) for masked_fill on (N, K, 3)
             keypoints[..., :2] = keypoints[..., :2].masked_fill(invisible, 0.0)
-            for i in range(0, len(self.keypoint_flip_pairs) - 1, 2):
-                ai, bi = self.keypoint_flip_pairs[i], self.keypoint_flip_pairs[i + 1]
-                if ai < keypoints.shape[1] and bi < keypoints.shape[1]:
-                    tmp = keypoints[:, ai, :].clone()
-                    keypoints[:, ai, :] = keypoints[:, bi, :]
-                    keypoints[:, bi, :] = tmp
+            if self.keypoint_flip_pairs:
+                pairs = self.keypoint_flip_pairs
+                perm = list(range(keypoints.shape[1]))
+                for i in range(0, len(pairs), 2):
+                    ai, bi = pairs[i], pairs[i + 1]
+                    if ai < keypoints.shape[1] and bi < keypoints.shape[1]:
+                        perm[ai], perm[bi] = perm[bi], perm[ai]
+                keypoints = keypoints[:, perm, :]
             target_out["keypoints"] = _mark_invisible_keypoints(keypoints, height, width)
         return image, target_out
 
@@ -434,6 +489,11 @@ def crop(
 
     Returns:
         Cropped image and target.
+
+    Examples:
+        >>> from PIL import Image
+        >>> img = Image.new("RGB", (100, 100))
+        >>> cropped_img, cropped_target = crop(img, None, top=0, left=0, height=50, width=50)
     """
     image = functional.crop(image, top=top, left=left, height=height, width=width)
     if target is None:
