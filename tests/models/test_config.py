@@ -499,6 +499,72 @@ class TestDetectDevice:
         mock_torch.backends.mps.is_available.return_value = False
         assert _detect_device() == "cpu"
 
+    @patch("rfdetr.config.torch")
+    def test_returns_cpu_when_accelerator_compiled_in_but_unavailable(self, mock_torch: MagicMock) -> None:
+        """Returns 'cpu' when torch was compiled with CUDA but no driver is present at runtime.
+
+        Without ``check_available=True``, ``current_accelerator()`` reports the compile-time accelerator, so the default
+        CUDA wheel on a driverless machine yields ``device("cuda")`` and every model build crashes with "Found no NVIDIA
+        driver". The runtime availability check must win.
+        """
+
+        def fake_current_accelerator(check_available: bool = False) -> "torch.device | None":
+            return None if check_available else torch.device("cuda")
+
+        mock_torch.accelerator.current_accelerator = fake_current_accelerator
+        assert _detect_device() == "cpu"
+
+    @patch("rfdetr.config.torch")
+    def test_returns_accelerator_when_runtime_available(self, mock_torch: MagicMock) -> None:
+        """Returns the accelerator when it passes the runtime availability check."""
+
+        def fake_current_accelerator(check_available: bool = False) -> "torch.device | None":
+            return torch.device("cuda") if check_available else None
+
+        mock_torch.accelerator.current_accelerator = fake_current_accelerator
+        assert _detect_device() == "cuda"
+
+    @patch("rfdetr.config.torch")
+    def test_legacy_signature_unavailable_accelerator_returns_cpu(self, mock_torch: MagicMock) -> None:
+        """Falls back to ``is_available()`` when ``current_accelerator`` lacks ``check_available`` (PyTorch < 2.7)."""
+
+        def legacy_current_accelerator() -> "torch.device":
+            return torch.device("cuda")
+
+        mock_torch.accelerator.current_accelerator = legacy_current_accelerator
+        mock_torch.accelerator.is_available.return_value = False
+        assert _detect_device() == "cpu"
+
+    @patch("rfdetr.config.torch")
+    def test_legacy_signature_available_accelerator_is_kept(self, mock_torch: MagicMock) -> None:
+        """Keeps the accelerator on pre-``check_available`` builds when ``is_available()`` confirms it."""
+
+        def legacy_current_accelerator() -> "torch.device":
+            return torch.device("cuda")
+
+        mock_torch.accelerator.current_accelerator = legacy_current_accelerator
+        mock_torch.accelerator.is_available.return_value = True
+        assert _detect_device() == "cuda"
+
+    @patch("rfdetr.config.torch")
+    def test_legacy_signature_runtime_error_on_fallback_returns_cpu(self, mock_torch: MagicMock) -> None:
+        """Outer RuntimeError handler catches error from legacy fallback call.
+
+        Control-flow: ``current_accelerator(check_available=True)`` raises ``TypeError`` (inner except),
+        then ``current_accelerator()`` raises ``RuntimeError`` (outer except catches) → ``"cpu"``.
+        """
+        call_count = 0
+
+        def raises_on_fallback(**kwargs: object) -> "torch.device":
+            nonlocal call_count
+            call_count += 1
+            if "check_available" in kwargs:
+                raise TypeError("unexpected keyword argument 'check_available'")
+            raise RuntimeError("NVML error on legacy fallback")
+
+        mock_torch.accelerator.current_accelerator = raises_on_fallback
+        assert _detect_device() == "cpu"
+
 
 class TestPretrainWeightsCompatibilityWarning:
     """Config-time warning for overrides that prevent pretrained weights from loading.
