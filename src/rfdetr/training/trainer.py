@@ -144,8 +144,9 @@ def build_trainer(
                 build_trainer(tc, mc, fast_dev_run=2)
 
             Most keys present in both ``trainer_kwargs`` and the built config dict are overridden by the value in
-            ``trainer_kwargs``. RF-DETR keeps ``accumulate_grad_batches=1`` and ``gradient_clip_val=None`` because
-            ``RFDETRModelModule`` owns both operations under manual optimization.
+            ``trainer_kwargs``. Keypoint models additionally force ``accumulate_grad_batches=1`` and
+            ``gradient_clip_val=None`` because ``RFDETRModelModule`` owns both operations under manual optimization;
+            passing those keys for a keypoint config raises a ``UserWarning`` to make the override explicit.
 
     Returns:
         A configured ``pytorch_lightning.Trainer`` instance.
@@ -392,7 +393,21 @@ def build_trainer(
         raise NotImplementedError("ClearML logging is not yet supported. Remove clearml=True from TrainConfig.")
 
     # --- Promoted config fields (T4-2 added these to TrainConfig) ---
+    clip_max_norm: float = tc.clip_max_norm
     sync_bn: bool = tc.sync_bn
+
+    # Manual optimization (currently scoped to keypoint models) owns gradient accumulation
+    # and clipping inside ``RFDETRModelModule._step_optimizer`` so the box-count denominator
+    # spans the full effective batch.  Detection and segmentation models keep Lightning's
+    # automatic optimization, which means ``accumulate_grad_batches`` and ``gradient_clip_val``
+    # must flow through to the Trainer as usual for them.
+    manual_optimization = has_keypoints
+    if manual_optimization:
+        accumulate_grad_batches: int = 1
+        gradient_clip_val: float | None = None
+    else:
+        accumulate_grad_batches = tc.grad_accum_steps
+        gradient_clip_val = clip_max_norm
 
     trainer_config: dict[str, Any] = {
         "max_epochs": tc.epochs,
@@ -401,13 +416,8 @@ def build_trainer(
         "num_nodes": tc.num_nodes,
         "strategy": strategy,
         "precision": _resolve_precision(),
-        # RFDETRModelModule owns accumulation so denominator scaling is based on
-        # total boxes across the effective batch, independent of Lightning internals.
-        "accumulate_grad_batches": 1,
-        # RFDETRModelModule uses manual optimization so it can normalize losses by
-        # the full accumulated box count. Lightning forbids Trainer-owned gradient
-        # clipping in manual optimization; the module applies tc.clip_max_norm.
-        "gradient_clip_val": None,
+        "accumulate_grad_batches": accumulate_grad_batches,
+        "gradient_clip_val": gradient_clip_val,
         "sync_batchnorm": sync_bn,
         "callbacks": callbacks,
         "logger": loggers if loggers else False,
@@ -418,6 +428,22 @@ def build_trainer(
     }
     trainer_config.update(trainer_kwargs)
     trainer_config["strategy"] = strategy
-    trainer_config["accumulate_grad_batches"] = 1
-    trainer_config["gradient_clip_val"] = None
+    if manual_optimization:
+        # Re-apply manual-optimization invariants so a caller-supplied trainer_kwargs
+        # value cannot silently re-enable Lightning-owned accumulation or clipping while
+        # the module is doing its own.  Warn loudly so the override is visible — silent
+        # coercion has historically masked subtle gradient-scaling bugs on this code path.
+        for key in ("accumulate_grad_batches", "gradient_clip_val"):
+            if key in trainer_kwargs:
+                warnings.warn(
+                    f"build_trainer() ignored Trainer kwarg {key}={trainer_kwargs[key]!r} for a keypoint "
+                    f"model: RFDETRModelModule owns gradient accumulation and clipping under manual "
+                    f"optimization and forces {key}="
+                    + ("1" if key == "accumulate_grad_batches" else "None")
+                    + ". Pass clip_max_norm / grad_accum_steps on TrainConfig instead.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        trainer_config["accumulate_grad_batches"] = 1
+        trainer_config["gradient_clip_val"] = None
     return Trainer(**trainer_config)

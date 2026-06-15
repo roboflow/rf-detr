@@ -51,7 +51,13 @@ class RFDETRModelModule(LightningModule):
         super().__init__()
         self.model_config = model_config
         self.train_config = train_config
-        self.automatic_optimization = False
+        # Manual optimization is enabled only for keypoint models so that the box-count
+        # normalizer can be accumulated across grad-accum microbatches. Detection and
+        # segmentation use Lightning's automatic optimization (PTL handles accumulation,
+        # AMP, and gradient clipping), which keeps their step semantics unchanged from
+        # the pre-fix/scaling behaviour.
+        self._use_manual_optimization: bool = bool(getattr(model_config, "use_grouppose_keypoints", False))
+        self.automatic_optimization = not self._use_manual_optimization
         self._accumulated_box_normalizer: torch.Tensor | None = None
         # Allow partial state-dict loading when resuming from a .pth checkpoint
         # (which contains only model weights, not criterion/postprocess state).
@@ -144,12 +150,25 @@ class RFDETRModelModule(LightningModule):
                     F.interpolate(samples.mask.unsqueeze(1).float(), size=scale, mode="nearest").squeeze(1).bool()
                 )
 
+    def on_train_epoch_start(self) -> None:
+        """Reset the accumulated box normalizer at the start of every training epoch.
+
+        Lightning may reuse the module across epochs without calling ``_step_optimizer`` at the boundary (for example
+        when an epoch ends mid-accumulation window with a non-divisible batch count). Clearing the accumulator here
+        guarantees the manual-optimization path always starts each epoch from a known state, so the first microbatch's
+        gradients are scaled by its own box count and not by a stale previous-epoch denominator.
+
+        This is a no-op for non-keypoint models because they use Lightning's automatic optimization path and never
+        populate ``self._accumulated_box_normalizer``.
+        """
+        self._accumulated_box_normalizer = None
+
     def training_step(self, batch: Tuple, batch_idx: int) -> torch.Tensor | dict[str, Any]:
         """Compute loss for one training step and log metrics.
 
-        PTL handles AMP (``precision``) without a manual ``GradScaler``. The module performs manual optimization so
+        PTL handles AMP (``precision``) without a manual ``GradScaler``. Keypoint models perform manual optimization so
         box-count loss normalization is based on the full accumulated effective batch rather than each microbatch
-        independently.
+        independently; detection and segmentation models keep Lightning's automatic optimization path.
 
         Args:
             batch: Tuple of (NestedTensor samples, list of target dicts).
@@ -163,10 +182,19 @@ class RFDETRModelModule(LightningModule):
         samples, targets = batch
         batch_size = len(targets)
         outputs = self.model(samples, targets)
-        loss_dict, raw_loss, normalizer = self._compute_train_losses(outputs, targets)
-        loss_for_backward = self._scale_loss_for_accumulation(raw_loss, normalizer)
+        if self._use_manual_optimization:
+            loss_dict, raw_loss, normalizer = self._compute_train_losses(outputs, targets)
+            loss_for_backward = self._scale_loss_for_accumulation(raw_loss, normalizer)
+        else:
+            loss_dict = self.criterion(outputs, targets)
+            loss_for_backward = None
         weight_dict = self.criterion.weight_dict
         loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
+        # Automatic optimization path: divide by accumulate_grad_batches so the accumulated
+        # gradient matches a single large batch, matching the legacy engine.  PTL accumulates
+        # full-scale gradients by default; dividing here keeps the effective LR identical.
+        accumulate_grad_batches = max(1, int(self.trainer.accumulate_grad_batches))
+        loss_for_return = loss if self._use_manual_optimization else loss / accumulate_grad_batches
         train_log_sync_dist = bool(self.train_config.train_log_sync_dist)
         train_log_on_step = bool(self.train_config.train_log_on_step)
         self.log_dict(
@@ -200,19 +228,20 @@ class RFDETRModelModule(LightningModule):
             self.log("train/lr", base_lr, prog_bar=False, on_step=True, on_epoch=False)
             self.log("train/lr_min", min_lr, prog_bar=False, on_step=True, on_epoch=False)
             self.log("train/lr_max", max_lr, prog_bar=False, on_step=True, on_epoch=False)
-        self.manual_backward(loss_for_backward)
-        if self._should_step_optimizer(batch_idx):
-            self._step_optimizer(optimizer)
+        if self._use_manual_optimization:
+            self.manual_backward(loss_for_backward)
+            if self._should_step_optimizer(batch_idx):
+                self._step_optimizer(optimizer)
         if self.train_config.compute_train_metrics:
             with torch.no_grad():
                 orig_sizes = torch.stack([t["orig_size"] for t in targets])
                 results = self.postprocess(outputs, orig_sizes)
             return {
-                "loss": loss.detach(),
+                "loss": loss_for_return.detach() if self._use_manual_optimization else loss_for_return,
                 "results": self._detach_results(results),
                 "targets": targets,
             }
-        return loss.detach()
+        return loss_for_return.detach() if self._use_manual_optimization else loss_for_return
 
     def _compute_train_losses(
         self,
@@ -272,6 +301,18 @@ class RFDETRModelModule(LightningModule):
     def _should_step_optimizer(self, batch_idx: int) -> bool:
         """Return whether the current batch closes an optimizer accumulation window.
 
+        The optimizer steps when either:
+
+        - The current batch closes a complete ``grad_accum_steps`` window
+          (``(batch_idx + 1) % grad_accum_steps == 0``), or
+        - This is the final batch of the epoch and a partial accumulation window
+          is still open, so the trailing microbatches are not silently dropped.
+
+        Lightning's ``Trainer.num_training_batches`` may be reported as ``float('inf')``
+        for iterable / streaming datasets where the epoch length is unknown. In that case
+        only the modulo path can ever close the window — the final-batch fallback is
+        skipped because ``batch_idx + 1`` can never reach infinity.
+
         Args:
             batch_idx: Batch index within the epoch.
 
@@ -282,7 +323,11 @@ class RFDETRModelModule(LightningModule):
         if (batch_idx + 1) % accum_steps == 0:
             return True
         num_training_batches = getattr(self.trainer, "num_training_batches", None)
-        return isinstance(num_training_batches, int) and batch_idx + 1 >= num_training_batches
+        return (
+            isinstance(num_training_batches, (int, float))
+            and math.isfinite(num_training_batches)
+            and batch_idx + 1 >= num_training_batches
+        )
 
     def _step_optimizer(self, optimizer: torch.optim.Optimizer) -> None:
         """Clip gradients, step optimizer and scheduler, then reset accumulation state.
@@ -476,7 +521,18 @@ class RFDETRModelModule(LightningModule):
             fused=self._use_fused_optimizer,
         )
 
-        total_steps = int(self.trainer.estimated_stepping_batches)
+        # ``trainer.estimated_stepping_batches`` is reported in *microbatch* units when
+        # the keypoint path runs with ``Trainer(accumulate_grad_batches=1)`` and manages
+        # accumulation manually. ``LambdaLR.step()`` is called once per optimizer-step
+        # (i.e. every ``grad_accum_steps`` microbatches), so the schedule must be sized
+        # in optimizer-step units rather than microbatches; otherwise warmup and cosine
+        # decay finish ``grad_accum_steps``× too early. Detection / segmentation models
+        # still rely on Lightning's automatic optimization, where PTL already accounts
+        # for ``accumulate_grad_batches`` inside ``estimated_stepping_batches`` and the
+        # division below is a no-op (``grad_accum_steps`` would be 1 in that path).
+        grad_accum_steps = max(1, int(tc.grad_accum_steps))
+        microbatches = int(self.trainer.estimated_stepping_batches)
+        total_steps = max(1, microbatches // grad_accum_steps) if self._use_manual_optimization else microbatches
         steps_per_epoch = max(1, total_steps // tc.epochs)
         warmup_steps = int(steps_per_epoch * tc.warmup_epochs)
 
