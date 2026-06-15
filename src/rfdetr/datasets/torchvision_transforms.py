@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, cast
 
 import torch
 import torch.nn.functional as torch_f
@@ -17,6 +17,9 @@ from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional
 
 _GLOBAL_TARGET_FIELDS = frozenset({"boxes", "labels", "orig_size", "size", "image_id"})
+_ImageInput = Image.Image | torch.Tensor
+_Target = Optional[Dict[str, Any]]
+_TransformResult = Tuple[_ImageInput, _Target]
 
 
 def _image_size(image: Image.Image | torch.Tensor) -> tuple[int, int]:
@@ -148,8 +151,8 @@ class RandomSelect:
             Transformed image and target.
         """
         if torch.rand(()) < self.p:
-            return self.transform1(image, target)
-        return self.transform2(image, target)
+            return cast(_TransformResult, self.transform1(image, target))
+        return cast(_TransformResult, self.transform2(image, target))
 
 
 class RandomChoice:
@@ -177,7 +180,7 @@ class RandomChoice:
             Transformed image and target.
         """
         index = int(torch.randint(len(self.transforms), ()).item()) if len(self.transforms) > 1 else 0
-        return self.transforms[index](image, target)
+        return cast(_TransformResult, self.transforms[index](image, target))
 
 
 class Compose:
