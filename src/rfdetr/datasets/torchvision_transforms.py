@@ -102,9 +102,7 @@ def _mark_invisible_keypoints(keypoints: torch.Tensor, height: int, width: int) 
     )
     invalid = ~(visible & inside)
     keypoints = keypoints.clone()
-    keypoints[invalid, 0] = 0.0
-    keypoints[invalid, 1] = 0.0
-    keypoints[invalid, 2] = 0.0
+    keypoints[invalid] = 0.0
     return keypoints
 
 
@@ -404,8 +402,8 @@ class RandomHorizontalFlip:
             keypoints = target_out["keypoints"].clone()
             visible = keypoints[..., 2] > 0
             keypoints[..., 0] = (width - 1) - keypoints[..., 0]
-            keypoints[~visible, 0] = 0.0
-            keypoints[~visible, 1] = 0.0
+            invisible = (~visible).unsqueeze(-1)  # (N, K, 1) for masked_fill on (N, K, 3)
+            keypoints[..., :2] = keypoints[..., :2].masked_fill(invisible, 0.0)
             for i in range(0, len(self.keypoint_flip_pairs) - 1, 2):
                 ai, bi = self.keypoint_flip_pairs[i], self.keypoint_flip_pairs[i + 1]
                 if ai < keypoints.shape[1] and bi < keypoints.shape[1]:
