@@ -503,9 +503,9 @@ class TestDetectDevice:
     def test_returns_cpu_when_accelerator_compiled_in_but_unavailable(self, mock_torch: MagicMock) -> None:
         """Returns 'cpu' when torch was compiled with CUDA but no driver is present at runtime.
 
-        Without ``check_available=True``, ``current_accelerator()`` reports the compile-time accelerator,
-        so the default CUDA wheel on a driverless machine yields ``device("cuda")`` and every model
-        build crashes with "Found no NVIDIA driver". The runtime availability check must win.
+        Without ``check_available=True``, ``current_accelerator()`` reports the compile-time accelerator, so the default
+        CUDA wheel on a driverless machine yields ``device("cuda")`` and every model build crashes with "Found no NVIDIA
+        driver". The runtime availability check must win.
         """
 
         def fake_current_accelerator(check_available: bool = False) -> "torch.device | None":
