@@ -4934,10 +4934,9 @@ the same object.</p>
     <div class="doc doc-contents ">
 
         <p>Compute loss for one training step and log metrics.</p>
-<p>PTL handles gradient accumulation (<code>accumulate_grad_batches</code>), AMP (<code>precision</code>), and gradient clipping
-(<code>gradient_clip_val</code>) — no manual <code>GradScaler</code> or loss scaling here.  The loss is divided by
-<code>trainer.accumulate_grad_batches</code> so that the accumulated gradient magnitude matches the legacy engine (which
-scales each sub-batch by <code>1/grad_accum_steps</code> before calling <code>backward()</code>).</p>
+<p>PTL handles AMP (<code>precision</code>) without a manual <code>GradScaler</code>. Keypoint models perform manual optimization so
+box-count loss normalization is based on the full accumulated effective batch rather than each microbatch
+independently; detection and segmentation models keep Lightning's automatic optimization path.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -5925,7 +5924,7 @@ so that PTL can auto-inject <code>DistributedSampler</code> in DDP mode.</p>
 
         <p>Assemble a PTL <code>Trainer</code> with the full RF-DETR callback and logger stack.</p>
 <p>Resolves training precision from <code>model_config.amp</code> and device capability, guards EMA against sharded strategies,
-wires conditional loggers, and applies promoted training knobs (gradient clipping, sync_batchnorm, strategy).</p>
+wires conditional loggers, and applies promoted training knobs (sync_batchnorm, strategy).</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -6001,13 +6000,16 @@ Defaults to <code>None</code> which reads from <code>train_config.accelerator</c
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Extra keyword arguments forwarded verbatim to
-<code>pytorch_lightning.Trainer</code>.  Use this to pass PTL-native flags that are not exposed through
-<code>TrainConfig</code>, for example::</p>
+                <p>Extra keyword arguments forwarded to <code>pytorch_lightning.Trainer</code>. Use this to pass
+PTL-native flags that are not exposed through <code>TrainConfig</code>, for example::</p>
 <div class="language-text highlight"><pre><span></span><code>build_trainer(tc, mc, fast_dev_run=2)
 </code></pre></div>
-<p>Any key present in both <code>trainer_kwargs</code> and the built config dict will be overridden by the value in
-<code>trainer_kwargs</code>.</p>
+<p>Most keys present in both <code>trainer_kwargs</code> and the built config dict are overridden by the value in
+<code>trainer_kwargs</code>. Detection and segmentation models forward <code>accumulate_grad_batches</code> from
+<code>train_config.grad_accum_steps</code> and <code>gradient_clip_val</code> from <code>train_config.clip_max_norm</code> to the
+Trainer normally. Keypoint models force <code>accumulate_grad_batches=1</code> and <code>gradient_clip_val=None</code>
+because <code>RFDETRModelModule</code> owns both operations under manual optimization; passing those keys for a
+keypoint config raises a <code>UserWarning</code> to make the override explicit.</p>
               </div>
             </td>
             <td>

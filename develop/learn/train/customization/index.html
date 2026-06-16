@@ -91,7 +91,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-05-28T18:32:08">
+  <meta property="article:modified_time" content="2026-06-16T10:39:52">
   
   <script type="application/ld+json">
   {
@@ -106,7 +106,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-05-28T18:32:08",
+    "dateModified": "2026-06-16T10:39:52",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2960,7 +2960,7 @@
 </tr>
 <tr>
 <td><code>training_step</code></td>
-<td>Computes loss, divides by <code>accumulate_grad_batches</code>, and logs <code>train/loss</code> and per-term losses.</td>
+<td>Computes loss and logs <code>train/loss</code> plus per-term losses. Keypoint models use manual optimization with box-normalized accumulation across microbatches; detection and segmentation use Lightning's automatic optimization path.</td>
 </tr>
 <tr>
 <td><code>validation_step</code></td>
@@ -3044,11 +3044,11 @@
 </tr>
 <tr>
 <td>Gradient accumulation</td>
-<td><code>train_config.grad_accum_steps</code></td>
+<td>Detection/segmentation: <code>train_config.grad_accum_steps</code> forwarded to Trainer. Keypoint models: owned by <code>RFDETRModelModule</code> manual optimization (Trainer always sees <code>1</code>).</td>
 </tr>
 <tr>
 <td>Gradient clipping</td>
-<td><code>train_config.clip_max_norm</code> (default <code>0.1</code>)</td>
+<td>Detection/segmentation: <code>train_config.clip_max_norm</code> forwarded to Trainer. Keypoint models: owned by <code>RFDETRModelModule</code> manual optimization (Trainer always sees <code>None</code>).</td>
 </tr>
 <tr>
 <td>Mixed precision</td>
@@ -3081,14 +3081,15 @@
 </tbody>
 </table>
 <h3 id="overriding-ptl-trainer-kwargs">Overriding PTL Trainer kwargs<a class="headerlink" href="#overriding-ptl-trainer-kwargs" title="Permanent link">&para;</a></h3>
-<p>Pass any keyword argument accepted by <code>pytorch_lightning.Trainer</code> via <code>**trainer_kwargs</code>. These override the built configuration:</p>
+<p>Pass keyword arguments accepted by <code>pytorch_lightning.Trainer</code> via <code>**trainer_kwargs</code>. Most keys override the built configuration.</p>
+<p><strong>Detection and segmentation models</strong> forward <code>accumulate_grad_batches</code> and <code>gradient_clip_val</code> to the Trainer normally — you can override them via <code>trainer_kwargs</code> or configure them on <code>TrainConfig</code> (<code>grad_accum_steps</code>, <code>clip_max_norm</code>).</p>
+<p><strong>Keypoint models</strong> use manual optimization, so <code>RFDETRModelModule</code> owns accumulation and clipping internally. <code>build_trainer()</code> forces <code>accumulate_grad_batches=1</code> and <code>gradient_clip_val=None</code> regardless of what is passed, and emits a <code>UserWarning</code> if those keys appear in <code>trainer_kwargs</code> so the override is visible:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">trainer</span> <span class="o">=</span> <span class="n">build_trainer</span><span class="p">(</span>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">train_config</span><span class="p">,</span>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">model_config</span><span class="p">,</span>
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">fast_dev_run</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>  <span class="c1"># run 2 batches per epoch for a smoke test</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">accumulate_grad_batches</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>  <span class="c1"># override TrainConfig.grad_accum_steps</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">log_every_n_steps</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="p">)</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">log_every_n_steps</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="p">)</span>
 </span></code></pre></div>
 <hr />
 <h2 id="running-the-training-loop">Running the training loop<a class="headerlink" href="#running-the-training-loop" title="Permanent link">&para;</a></h2>
@@ -3428,7 +3429,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="May 28, 2026 18:32:08 UTC">2026-05-28 18:32:08</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 16, 2026 10:39:52 UTC">2026-06-16 10:39:52</span>
   </span>
 
     
