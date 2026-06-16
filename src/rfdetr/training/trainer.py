@@ -435,12 +435,13 @@ def build_trainer(
         # coercion has historically masked subtle gradient-scaling bugs on this code path.
         for key in ("accumulate_grad_batches", "gradient_clip_val"):
             if key in trainer_kwargs:
+                effective = "1" if key == "accumulate_grad_batches" else "None"
+                alt = "grad_accum_steps" if key == "accumulate_grad_batches" else "clip_max_norm"
                 warnings.warn(
-                    f"build_trainer() ignored Trainer kwarg {key}={trainer_kwargs[key]!r} for a keypoint "
-                    f"model: RFDETRModelModule owns gradient accumulation and clipping under manual "
-                    f"optimization and forces {key}="
-                    + ("1" if key == "accumulate_grad_batches" else "None")
-                    + ". Pass clip_max_norm / grad_accum_steps on TrainConfig instead.",
+                    f"build_trainer() ignored trainer_kwargs[{key!r}]={trainer_kwargs[key]!r} for a keypoint "
+                    f"model. The model will train with {key}={effective} regardless of the value passed here "
+                    f"because RFDETRModelModule owns gradient accumulation and clipping under manual "
+                    f"optimization. To change the effective value, set TrainConfig.{alt} instead.",
                     UserWarning,
                     stacklevel=2,
                 )

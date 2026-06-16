@@ -160,7 +160,18 @@ class RFDETRModelModule(LightningModule):
 
         This is a no-op for non-keypoint models because they use Lightning's automatic optimization path and never
         populate ``self._accumulated_box_normalizer``.
+
+        Note: on finite datasets the final-batch fallback in ``_should_step_optimizer`` always flushes a partial
+        trailing window, so this reset is the only change needed.  On IterableDatasets (infinite
+        ``num_training_batches``) a partial window may survive epoch end with un-stepped gradients; those are
+        discarded here and the optimizer is zeroed so the first microbatch of the new epoch starts from a clean state.
         """
+        if self._accumulated_box_normalizer is not None and self._trainer is not None:
+            # Discard any partial accumulation window that survived the epoch boundary
+            # (only possible for IterableDatasets where num_training_batches is infinite).
+            opts = self.optimizers()
+            for opt in opts if isinstance(opts, list) else [opts]:
+                opt.zero_grad()
         self._accumulated_box_normalizer = None
 
     def training_step(self, batch: Tuple, batch_idx: int) -> torch.Tensor | dict[str, Any]:
@@ -260,6 +271,13 @@ class RFDETRModelModule(LightningModule):
         weight_dict = self.criterion.weight_dict
         normalizer = self.criterion.num_boxes_for_targets(outputs, targets)
         numerator_loss_dict = self.criterion(outputs, targets, num_boxes=torch.ones_like(normalizer))
+        # Keys in weight_dict are loss terms whose criterion implementation divides by num_boxes
+        # (so passing num_boxes=1.0 yields raw numerators that we divide by normalizer here).
+        # Keys outside weight_dict (e.g. "class_error", "cardinality_error") are diagnostics
+        # that do NOT divide by num_boxes internally — they are passed through unchanged.
+        # If a future loss term divides by num_boxes AND is omitted from weight_dict, its
+        # logged value will be on a different scale than the keypoint path; verify when adding
+        # new criterion terms.
         loss_dict = {
             key: value / normalizer if key in weight_dict else value for key, value in numerator_loss_dict.items()
         }
@@ -532,7 +550,13 @@ class RFDETRModelModule(LightningModule):
         # division below is a no-op (``grad_accum_steps`` would be 1 in that path).
         grad_accum_steps = max(1, int(tc.grad_accum_steps))
         microbatches = int(self.trainer.estimated_stepping_batches)
-        total_steps = max(1, microbatches // grad_accum_steps) if self._use_manual_optimization else microbatches
+        # _should_step_optimizer steps the final partial window at epoch end, so the true
+        # number of optimizer steps is ceil(microbatches / grad_accum_steps).  Using floor
+        # would undercount when the epoch is not evenly divisible, causing warmup / cosine
+        # schedules to finish one step earlier than the last actual step fires.
+        total_steps = (
+            max(1, math.ceil(microbatches / grad_accum_steps)) if self._use_manual_optimization else microbatches
+        )
         steps_per_epoch = max(1, total_steps // tc.epochs)
         warmup_steps = int(steps_per_epoch * tc.warmup_epochs)
 
