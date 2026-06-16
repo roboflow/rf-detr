@@ -13,7 +13,7 @@ description: RF-DETR benchmark results on COCO and RF100-VL for detection, segme
     - RF100-VL results demonstrate strong domain-shift generalization across 100 diverse datasets
     - RF-DETR Keypoint (Preview) achieves 71.8 AP50:95 on COCO person keypoints at 9.7 ms (T4, TensorRT FP16)
 
-This page reports RF-DETR benchmark results for object detection, instance segmentation, and keypoint detection on Microsoft COCO and RF100-VL. All benchmark numbers and plots match the latest released checkpoints and tables shown below. Latency values are measured on an NVIDIA T4 with TensorRT in FP16 at batch size 1. For full methodology details and architectural context, see the RF-DETR paper.
+This page reports RF-DETR benchmark results for object detection, instance segmentation, and keypoint detection on Microsoft COCO and RF100-VL (detection and segmentation only). All benchmark numbers and plots match the latest released checkpoints and tables shown below. Latency values are measured on an NVIDIA T4 with TensorRT in FP16 at batch size 1. For full methodology details and architectural context, see the RF-DETR paper.
 
 ## Methodology
 
@@ -108,3 +108,5 @@ Accuracy and latency are always measured using the same model artifact and the s
 |       YOLO26-pose M        |          68.0           |     4.6      |
 |       YOLO26-pose L        |          69.2           |     5.9      |
 |       YOLO26-pose X        |          71.0           |     9.8      |
+
+> Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric.
