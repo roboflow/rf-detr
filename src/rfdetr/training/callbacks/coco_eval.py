@@ -595,8 +595,11 @@ class COCOEvalCallback(Callback):
             metrics=metrics, pfx=pfx, split=split, pl_module=pl_module, ar_by_cid=ar_by_cid, f1_by_cid=f1_by_cid
         )
 
-        if not self._has_progress_bar(trainer):
-            self._print_metrics_tables(trainer, split, overall, per_class)
+        # Always render the curated Rich summary tables. The noisy raw
+        # pycocotools/faster-coco-eval stdout dump is suppressed under an active
+        # progress bar in _compute_map_metric; these summary tables are not
+        # duplicate output and were previously hidden as a side effect (#1119).
+        self._print_metrics_tables(trainer, split, overall, per_class)
         self._compute_and_log_keypoint_map(split, pl_module, trainer)
         if split == "val" and should_compute_ema:
             self._compute_and_log_keypoint_map("val_ema", pl_module, trainer, log_split="val", metric_prefix="ema_")

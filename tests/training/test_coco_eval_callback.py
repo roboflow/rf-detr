@@ -740,8 +740,8 @@ class TestOnValidationEpochEnd:
         cb.map_metric.compute.assert_called_once()
         module.log.assert_called()
 
-    def test_progress_bar_suppresses_terminal_metric_summaries(self, capsys) -> None:
-        """Progress-bar training should keep scalar logs but suppress duplicate terminal summary text."""
+    def test_progress_bar_suppresses_raw_coco_dump(self, capsys) -> None:
+        """Progress-bar training suppresses the noisy raw pycocotools/faster-coco-eval stdout dump."""
         cb = COCOEvalCallback(max_dets=500)
         trainer = _make_trainer(callbacks=[_TQDMProgressBar()])
         trainer.callback_metrics = {}
@@ -755,13 +755,25 @@ class TestOnValidationEpochEnd:
 
         cb.map_metric.compute.side_effect = _compute_with_terminal_summary
 
-        with patch.object(cb, "_print_metrics_tables") as print_metrics_tables:
+        with patch.object(cb, "_print_metrics_tables"):
             cb._compute_and_log(trainer, module, "val")
 
         assert "Average Precision" not in capsys.readouterr().out
-        print_metrics_tables.assert_not_called()
-        cb.map_metric.compute.assert_called_once()
-        module.log.assert_called()
+
+    def test_summary_tables_printed_even_with_progress_bar(self) -> None:
+        """Curated summary tables render at epoch end even when a progress bar is active (#1119)."""
+        cb = COCOEvalCallback(max_dets=500)
+        trainer = _make_trainer(callbacks=[_TQDMProgressBar()])
+        trainer.callback_metrics = {}
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.compute.return_value = _minimal_metrics()
+        cb.map_metric_ema = None
+        module = _make_pl_module()
+
+        with patch.object(cb, "_print_metrics_tables") as print_metrics_tables:
+            cb._compute_and_log(trainer, module, "val")
+
+        print_metrics_tables.assert_called_once()
 
     def test_per_class_ap_can_be_disabled(self) -> None:
         """log_per_class_metrics=False suppresses val/AP/<class> logging."""
