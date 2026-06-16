@@ -119,7 +119,7 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
 ## Benchmarks
 
-RF-DETR achieves the best accuracy–latency trade-off among real-time object detection and instance segmentation models — both on COCO and on the more demanding RF100-VL benchmark (domain adaptability). For detailed benchmark tables and methodology, check out our [benchmarks](learn/benchmarks.md) page.
+RF-DETR achieves the best accuracy–latency trade-off among real-time object detection, instance segmentation, and keypoint detection models — both on COCO and on the more demanding RF100-VL benchmark (domain adaptability). For detailed benchmark tables and methodology, check out our [benchmarks](learn/benchmarks.md) page.
 
 ### Detection
 
@@ -146,6 +146,14 @@ RF-DETR achieves the best accuracy–latency trade-off among real-time object de
 | RF-DETR-Seg-L   | 70.5                 | 47.1                    | 8.8          | 36.2       | 504×504    |
 | RF-DETR-Seg-XL  | 72.2                 | 48.8                    | 13.5         | 38.1       | 624×624    |
 | RF-DETR-Seg-2XL | 73.1                 | 49.9                    | 21.8         | 38.6       | 768×768    |
+
+### Keypoints
+
+<img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="assets/keypoints/kp-map-latency.png" width="840" height="630" style="max-width: 840px; height: auto;" />
+
+| Architecture | COCO AP<sub>50:95</sub> | Latency (ms) |
+| --------------- | ----------------------- | ------------ |
+| RF-DETR Keypoint (Preview) | 71.8 | 9.7 |
 
 ## Frequently Asked Questions
 

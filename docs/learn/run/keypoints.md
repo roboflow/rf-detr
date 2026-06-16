@@ -1,5 +1,5 @@
 ---
-description: Run RF-DETR keypoint detection on images, video, and streams. COCO-pretrained preview model predicts 17 person keypoints with 71.9 AP at 9.8 ms on NVIDIA T4.
+description: Run RF-DETR keypoint detection on images, video, and streams. COCO-pretrained preview model predicts 17 person keypoints with 71.8 AP at 9.7 ms on NVIDIA T4.
 ---
 
 # Run an RF-DETR Keypoint Model
@@ -20,7 +20,7 @@ RF-DETR Keypoint outperforms YOLO26-pose X and YOLO11-pose X at comparable laten
 
 |     Size     |  RF-DETR package class  | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :----------: | :---------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
-| XL (Preview) | `RFDETRKeypointPreview` |          71.9           |     9.8      |   126.4    |  576x576   | Apache 2.0 |
+| XL (Preview) | `RFDETRKeypointPreview` |          71.8           |     9.7      |   126.4    |  576x576   | Apache 2.0 |
 
 > The keypoint model is available in the `rfdetr` package only. It is not yet available via the `inference` package.
 

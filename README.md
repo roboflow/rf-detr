@@ -118,6 +118,29 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 </details>
 
+### Keypoints
+
+<details>
+<summary>See keypoint detection benchmark numbers</summary>
+
+<br>
+
+| Architecture | COCO AP<sub>50:95</sub> | Latency (ms) | License |
+| :-----------------: | :---------------------: | :----------: | :-----: |
+| RF-DETR Keypoint (Preview) | 71.8 | 9.7 | Apache 2.0 |
+| YOLO11-pose N | 48.9 | 3.2 | AGPL-3.0 |
+| YOLO11-pose S | 57.5 | 3.4 | AGPL-3.0 |
+| YOLO11-pose M | 64.2 | 5.2 | AGPL-3.0 |
+| YOLO11-pose L | 65.2 | 6.6 | AGPL-3.0 |
+| YOLO11-pose X | 68.6 | 10.6 | AGPL-3.0 |
+| YOLO26-pose N | 55.9 | 1.9 | AGPL-3.0 |
+| YOLO26-pose S | 62.0 | 2.7 | AGPL-3.0 |
+| YOLO26-pose M | 68.0 | 4.6 | AGPL-3.0 |
+| YOLO26-pose L | 69.2 | 5.9 | AGPL-3.0 |
+| YOLO26-pose X | 71.0 | 9.8 | AGPL-3.0 |
+
+</details>
+
 ## Run Models
 
 ### Detection
