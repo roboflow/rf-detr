@@ -144,9 +144,11 @@ def build_trainer(
                 build_trainer(tc, mc, fast_dev_run=2)
 
             Most keys present in both ``trainer_kwargs`` and the built config dict are overridden by the value in
-            ``trainer_kwargs``. Keypoint models additionally force ``accumulate_grad_batches=1`` and
-            ``gradient_clip_val=None`` because ``RFDETRModelModule`` owns both operations under manual optimization;
-            passing those keys for a keypoint config raises a ``UserWarning`` to make the override explicit.
+            ``trainer_kwargs``. Detection and segmentation models forward ``accumulate_grad_batches`` from
+            ``train_config.grad_accum_steps`` and ``gradient_clip_val`` from ``train_config.clip_max_norm`` to the
+            Trainer normally. Keypoint models force ``accumulate_grad_batches=1`` and ``gradient_clip_val=None``
+            because ``RFDETRModelModule`` owns both operations under manual optimization; passing those keys for a
+            keypoint config raises a ``UserWarning`` to make the override explicit.
 
     Returns:
         A configured ``pytorch_lightning.Trainer`` instance.
