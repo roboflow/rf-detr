@@ -9,6 +9,8 @@
 # ------------------------------------------------------------------------
 """Loss functions and criterion for RF-DETR training."""
 
+from __future__ import annotations
+
 from typing import Any
 
 import torch
@@ -136,6 +138,12 @@ class SetCriterion(nn.Module):
     2) we supervise each pair of matched ground-truth / prediction (supervise class and box).
     """
 
+    # Signals that forward() accepts an explicit num_boxes denominator and exposes
+    # num_boxes_for_targets() for cross-microbatch accumulation.  Subclasses that
+    # override forward() with the legacy 2-arg signature should set this to False so
+    # RFDETRModelModule._compute_train_losses() can skip the kwarg.
+    supports_loss_normalizer_override: bool = True
+
     def __init__(
         self,
         num_classes,
@@ -180,8 +188,8 @@ class SetCriterion(nn.Module):
         """Return the device used by tensor outputs.
 
         Args:
-            outputs: Model output dictionary. Values may be tensors, lists, or nested dicts;
-                non-tensor entries are skipped when probing for a device.
+            outputs: Model output dictionary. Top-level values are probed for tensors;
+                nested structures (lists, nested dicts) are not traversed.
 
         Returns:
             Device of the first tensor value found in ``outputs``.
@@ -634,8 +642,8 @@ class SetCriterion(nn.Module):
             get an ``"_enc"`` suffix.
 
         Examples:
-            >>> from unittest.mock import MagicMock
             >>> import torch
+            >>> from unittest.mock import MagicMock
             >>> from rfdetr.models.criterion import SetCriterion
             >>> criterion = SetCriterion.__new__(SetCriterion)
             >>> criterion.training = False
