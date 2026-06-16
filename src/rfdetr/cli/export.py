@@ -5,15 +5,12 @@
 # ------------------------------------------------------------------------
 """``rfdetr export`` subcommand.
 
-Thin wrapper around :meth:`rfdetr.detr.RFDETR.export` so its full surface
-is reachable from the shell.  ``jsonargparse.CLI`` introspects
-:func:`export_main` to build the parser, so flag names, types, and help
-text stay in lockstep with the function signature and its Google-style
-docstring.
+Thin wrapper around :meth:`rfdetr.detr.RFDETR.export` so its full surface is reachable from the shell.
+``jsonargparse.CLI`` introspects :func:`export_main` to build the parser, so flag names, types, and help text stay in
+lockstep with the function signature and its Google-style docstring.
 
-YAML config support is automatic via jsonargparse: pass
-``--config path/to/export.yaml`` and any keys matching the parameters
-below are loaded from the file.
+YAML config support is automatic via jsonargparse: pass ``--config path/to/export.yaml`` and any keys matching the
+parameters below are loaded from the file.
 """
 
 from __future__ import annotations

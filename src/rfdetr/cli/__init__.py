@@ -53,9 +53,8 @@ def _print_root_help(stream: TextIO | None = None) -> None:
 def main() -> None:
     """Dispatch ``rfdetr <command>`` to its backend.
 
-    The root renders the top-level help itself (it is not delegated to a
-    backend); ``rfdetr <command> --help`` is rendered by the backend that owns
-    the command.
+    The root renders the top-level help itself (it is not delegated to a backend); ``rfdetr <command> --help`` is
+    rendered by the backend that owns the command.
     """
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help"):
