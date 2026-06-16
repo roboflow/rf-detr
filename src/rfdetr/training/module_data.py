@@ -561,7 +561,7 @@ class RFDETRDataModule(LightningDataModule):
                 import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
             except ImportError as err:
                 raise ImportError(
-                        "GPU augmentation requires kornia. Install with: pip install 'rfdetr[augmentation]'"
+                    "GPU augmentation requires kornia. Install with: pip install 'rfdetr[augmentation]'"
                 ) from err
 
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize
