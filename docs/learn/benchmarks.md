@@ -95,16 +95,16 @@ Accuracy and latency are always measured using the same model artifact and the s
 
 <img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="../../assets/keypoints/kp-map-latency.png" />
 
-| Architecture | COCO AP<sub>50:95</sub> | Latency (ms) |
-| :-------------: | :---------------------: | :----------: |
-| RF-DETR Keypoint (Preview) | 71.8 | 9.7 |
-| YOLO11-pose N | 48.9 | 3.2 |
-| YOLO11-pose S | 57.5 | 3.4 |
-| YOLO11-pose M | 64.2 | 5.2 |
-| YOLO11-pose L | 65.2 | 6.6 |
-| YOLO11-pose X | 68.6 | 10.6 |
-| YOLO26-pose N | 55.9 | 1.9 |
-| YOLO26-pose S | 62.0 | 2.7 |
-| YOLO26-pose M | 68.0 | 4.6 |
-| YOLO26-pose L | 69.2 | 5.9 |
-| YOLO26-pose X | 71.0 | 9.8 |
+|        Architecture        | COCO AP<sub>50:95</sub> | Latency (ms) |
+| :------------------------: | :---------------------: | :----------: |
+| RF-DETR Keypoint (Preview) |          71.8           |     9.7      |
+|       YOLO11-pose N        |          48.9           |     3.2      |
+|       YOLO11-pose S        |          57.5           |     3.4      |
+|       YOLO11-pose M        |          64.2           |     5.2      |
+|       YOLO11-pose L        |          65.2           |     6.6      |
+|       YOLO11-pose X        |          68.6           |     10.6     |
+|       YOLO26-pose N        |          55.9           |     1.9      |
+|       YOLO26-pose S        |          62.0           |     2.7      |
+|       YOLO26-pose M        |          68.0           |     4.6      |
+|       YOLO26-pose L        |          69.2           |     5.9      |
+|       YOLO26-pose X        |          71.0           |     9.8      |
