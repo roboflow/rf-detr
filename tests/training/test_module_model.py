@@ -800,6 +800,7 @@ class TestTrainingStep:
     @pytest.mark.parametrize(
         "grad_accum_steps,box_counts,loss_numerators,expected_value",
         [
+            pytest.param(1, (4,), (8.0,), -2.0, id="ga1-single-microbatch"),
             pytest.param(2, (2, 6), (10.0, 6.0), -2.0, id="ga2-balanced"),
             pytest.param(3, (2, 4, 6), (4.0, 8.0, 12.0), -2.0, id="ga3-balanced"),
             pytest.param(4, (1, 1, 1, 1), (2.0, 2.0, 2.0, 2.0), -2.0, id="ga4-uniform"),
@@ -1011,6 +1012,91 @@ class TestOnTrainEpochStart:
         module.on_train_epoch_start()
 
         assert module._accumulated_box_normalizer is None
+
+    def test_is_noop_for_detection_module(self, tmp_path):
+        """Detection models never populate _accumulated_box_normalizer; reset must leave it None."""
+        module, *_ = _build_module(tmp_path=tmp_path)
+
+        module.on_train_epoch_start()
+
+        assert module._accumulated_box_normalizer is None
+
+    def test_zeros_optimizer_grad_on_stale_accumulator(self, tmp_path):
+        """When a partial window survived epoch end, optimizer gradients must be zeroed before reset."""
+        module, *_ = _build_module(
+            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+            tmp_path=tmp_path,
+        )
+        real_param = nn.Parameter(torch.randn(4))
+        real_param.grad = torch.ones(4)
+        optimizer = torch.optim.SGD([real_param], lr=1.0)
+        module.optimizers = MagicMock(return_value=optimizer)
+        module._accumulated_box_normalizer = torch.tensor(7.0)
+        # Wire a trainer so on_train_epoch_start can call self.optimizers().
+        trainer = MagicMock()
+        module._trainer = trainer
+
+        module.on_train_epoch_start()
+
+        assert module._accumulated_box_normalizer is None
+        assert real_param.grad is None or real_param.grad.abs().sum().item() == pytest.approx(0.0)
+
+
+class TestRescaleAccumulatedGradients:
+    """Direct contract tests for _rescale_accumulated_gradients."""
+
+    def test_scales_all_parameter_grads_by_factor(self, tmp_path):
+        """Calling _rescale with factor 0.5 must halve every parameter's .grad tensor."""
+        module, *_ = _build_module(
+            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+            tmp_path=tmp_path,
+        )
+        param_a = nn.Parameter(torch.zeros(3))
+        param_b = nn.Parameter(torch.zeros(5))
+        param_a.grad = torch.full((3,), 4.0)
+        param_b.grad = torch.full((5,), 8.0)
+        # Wire a real model with the two params so _rescale iterates over them.
+        nano_model = nn.Linear(3, 5)
+        # weight: [5, 3], bias: [5]
+        nano_model.weight.grad = torch.full((5, 3), 4.0)
+        nano_model.bias.grad = torch.full((5,), 8.0)
+        module.model = nano_model
+
+        module._rescale_accumulated_gradients(torch.tensor(0.5))
+
+        torch.testing.assert_close(nano_model.weight.grad, torch.full((5, 3), 2.0))
+        torch.testing.assert_close(nano_model.bias.grad, torch.full((5,), 4.0))
+
+    def test_scale_one_leaves_grads_unchanged(self, tmp_path):
+        """Scale factor 1.0 must leave gradients exactly unchanged (identity)."""
+        module, *_ = _build_module(
+            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+            tmp_path=tmp_path,
+        )
+        nano_model = nn.Linear(2, 2)
+        nano_model.weight.grad = torch.full((2, 2), 3.0)
+        nano_model.bias.grad = torch.full((2,), 7.0)
+        module.model = nano_model
+
+        module._rescale_accumulated_gradients(torch.tensor(1.0))
+
+        torch.testing.assert_close(nano_model.weight.grad, torch.full((2, 2), 3.0))
+        torch.testing.assert_close(nano_model.bias.grad, torch.full((2,), 7.0))
+
+    def test_skips_params_with_no_grad(self, tmp_path):
+        """Parameters without .grad must remain None after rescaling."""
+        module, *_ = _build_module(
+            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+            tmp_path=tmp_path,
+        )
+        nano_model = nn.Linear(2, 2)
+        # No backward pass — all grads are None
+        module.model = nano_model
+
+        module._rescale_accumulated_gradients(torch.tensor(0.5))
+
+        assert nano_model.weight.grad is None
+        assert nano_model.bias.grad is None
 
 
 class TestValidationStep:
@@ -1364,6 +1450,48 @@ class TestConfigureOptimizers:
         module._trainer.precision = "bf16-mixed"
 
         assert not module._use_fused_optimizer
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_total_steps_divided_by_grad_accum_for_keypoint_module(self, mock_get_param_dict, tmp_path):
+        """Keypoint (manual-opt) path must divide estimated_stepping_batches by grad_accum_steps for LR scheduling.
+
+        With microbatches=100, grad_accum_steps=4, epochs=1, warmup_epochs=0 the scheduler should span 25 optimizer
+        steps (ceil(100/4)).  At step 24 (0-indexed last step) a cosine LR schedule should be nearly at lr_min_factor;
+        if total_steps were mistakenly 100 the LR would still be near its peak at step 24.
+        """
+        import math
+
+        grad_accum_steps = 4
+        microbatches = 100
+        lr_min_factor = 0.1
+        tc = _base_train_config(
+            tmp_path,
+            grad_accum_steps=grad_accum_steps,
+            warmup_epochs=0,
+            epochs=1,
+            lr_scheduler="cosine",
+            lr_min_factor=lr_min_factor,
+        )
+        module, _, _, _ = _build_module(
+            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+            train_config=tc,
+        )
+        trainer = MagicMock()
+        trainer.estimated_stepping_batches = microbatches
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        real_param = nn.Parameter(torch.randn(4, 4))
+        mock_get_param_dict.return_value = [{"params": real_param, "lr": tc.lr}]
+
+        result = module.configure_optimizers()
+        scheduler = result["lr_scheduler"]["scheduler"]
+        lr_lambda = scheduler.lr_lambdas[0]
+
+        expected_total_steps = max(1, math.ceil(microbatches / grad_accum_steps))  # 25
+        # The cosine schedule reaches lr_min_factor exactly at step == total_steps (progress=1.0).
+        # If total_steps were wrongly 100, lr at step 25 would still be ~0.87 (near peak).
+        lr_at_decay_end = lr_lambda(expected_total_steps)
+        assert lr_at_decay_end == pytest.approx(lr_min_factor, abs=1e-6)
 
 
 class TestClipGradients:
