@@ -8,13 +8,63 @@ Read each section between your current version and your target — every section
 only the delta between two adjacent releases.
 
 ```
-1.4.x  →  1.5 →  1.6  →  1.7
+1.4.x  →  1.5 →  1.6  →  1.7  →  1.8
 ```
 
 You can apply all changes in one go; working through sections one release at a time
 and verifying between each step is optional but makes failures easier to isolate.
 Deprecated APIs emit a `DeprecationWarning` until the version marked for removal.
 See the [Changelog](../changelog.md) for the full list of changes in each release.
+
+---
+
+## Upgrade 1.7 → 1.8
+
+### Removed
+
+!!! warning "Deprecated in v1.6 → Removed in v1.8: `simplify` and `force` arguments in `RFDETR.export()`"
+
+    **`RFDETR.export(..., simplify=..., force=...)`** — deprecated since v1.6.0, removed in v1.8.0.
+    Both were no-ops. Delete the kwargs from any `model.export(...)` call.
+
+    ```python
+    # Before (raises TypeError in v1.8.0)
+    model.export(output_dir="out/", simplify=True, force=True)
+
+    # After
+    model.export(output_dir="out/")
+    ```
+
+### Breaking changes
+
+!!! warning "Breaking: `rfdetr.datasets.aug_config` renamed to `rfdetr.datasets.aug_configs`"
+
+    The augmentation config module was renamed (singular → plural). If you import from it directly:
+
+    ```python
+    # Before
+    from rfdetr.datasets.aug_config import AUG_AGGRESSIVE
+
+    # After
+    from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
+    ```
+
+    All preset constants (`AUG_AGGRESSIVE`, `AUG_MOSAIC`, etc.) are unchanged.
+
+### Dependency updates
+
+!!! note "New minimum: `supervision>=0.29.0`"
+
+    Required for `sv.KeyPoints` support. `pip install rfdetr==1.8.0` pulls this automatically.
+    If another dependency pins `supervision<0.29.0`, resolve the conflict manually.
+
+!!! note "`pyDeprecate` constraint narrowed to `>=0.9,<0.10`"
+
+    Was `>=0.6,<0.8`. If another package pins an older version, resolve with:
+
+    ```bash
+    pip install "rfdetr==1.8.0" "pyDeprecate>=0.9,<0.10"
+    ```
 
 ---
 
@@ -242,7 +292,7 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
 
 ### Deprecated (removal in v1.8.0)
 
-!!! note "Deprecated: `simplify` and `force` arguments removed from `RFDETR.export()`"
+!!! note "Deprecated in v1.6 → Removed in v1.8: `simplify` and `force` arguments in `RFDETR.export()`"
 
     **`RFDETR.export(..., simplify=..., force=...)`** — both arguments are no-ops.
     Remove them from your calls.
