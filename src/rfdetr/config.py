@@ -7,6 +7,7 @@
 
 import os
 import warnings
+from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Literal, Mapping, Optional, TypeAlias, Union
 
 import torch
@@ -14,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from pydantic_core import PydanticUndefined
 
 EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
+PathLikeStr: TypeAlias = str | Path
 
 
 class PretrainWeightsCompatibilityWarning(UserWarning):
@@ -120,7 +122,7 @@ class ModelConfig(BaseConfig):
     amp: bool = True
     num_channels: int = Field(default=3, ge=1)
     num_classes: int = 90
-    pretrain_weights: Optional[str] = None
+    pretrain_weights: Optional[PathLikeStr] = None
     # torch.device values are accepted at validation time and normalized to string.
     device: str = DEVICE
     resolution: int
@@ -366,9 +368,9 @@ class ModelConfig(BaseConfig):
 
         return self
 
-    @field_validator("pretrain_weights", mode="after")
+    @field_validator("pretrain_weights", mode="before")
     @classmethod
-    def expand_path(cls, v: Optional[str]) -> Optional[str]:
+    def expand_path(cls, v: PathLikeStr | None) -> str | None:
         """Expand and resolve the pretrain_weights path.
 
         Bare filenames (no directory component, e.g. ``rf-detr-base.pth``) are resolved to the model cache directory so
@@ -380,7 +382,7 @@ class ModelConfig(BaseConfig):
         """
         if v is None:
             return v
-        expanded = os.path.expanduser(v)
+        expanded = os.path.expanduser(os.fspath(v))
         if not os.path.dirname(expanded):
             # Bare filename → use model cache dir so weights don't land in CWD.
             from rfdetr.assets.model_weights import get_model_cache_dir
@@ -429,7 +431,7 @@ class RFDETRBaseConfig(ModelConfig):
     num_select: int = 300
     projector_scale: List[Literal["P3", "P4", "P5"]] = ["P4"]
     out_feature_indexes: List[int] = [2, 5, 8, 11]
-    pretrain_weights: Optional[str] = "rf-detr-base.pth"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-base.pth"
     resolution: int = 560
     positional_encoding_size: int = 37
 
@@ -443,7 +445,7 @@ class RFDETRLargeDeprecatedConfig(RFDETRBaseConfig):
     ca_nheads: int = 24
     dec_n_points: int = 4
     projector_scale: List[Literal["P3", "P4", "P5"]] = ["P3", "P5"]
-    pretrain_weights: Optional[str] = "rf-detr-large.pth"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-large.pth"
 
 
 class RFDETRNanoConfig(RFDETRBaseConfig):
@@ -455,7 +457,7 @@ class RFDETRNanoConfig(RFDETRBaseConfig):
     patch_size: int = 16
     resolution: int = 384
     positional_encoding_size: int = 24
-    pretrain_weights: Optional[str] = "rf-detr-nano.pth"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-nano.pth"
 
 
 class RFDETRSmallConfig(RFDETRBaseConfig):
@@ -467,7 +469,7 @@ class RFDETRSmallConfig(RFDETRBaseConfig):
     patch_size: int = 16
     resolution: int = 512
     positional_encoding_size: int = 32
-    pretrain_weights: Optional[str] = "rf-detr-small.pth"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-small.pth"
 
 
 class RFDETRMediumConfig(RFDETRBaseConfig):
@@ -479,7 +481,7 @@ class RFDETRMediumConfig(RFDETRBaseConfig):
     patch_size: int = 16
     resolution: int = 576
     positional_encoding_size: int = 36
-    pretrain_weights: Optional[str] = "rf-detr-medium.pth"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-medium.pth"
 
 
 # res 704, ps 16, 2 windows, 4 dec layers, 300 queries, ViT-S basis
@@ -496,7 +498,7 @@ class RFDETRLargeConfig(ModelConfig):
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_classes: int = 90
     positional_encoding_size: int = 704 // 16
-    pretrain_weights: Optional[str] = "rf-detr-large-2026.pth"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-large-2026.pth"
     resolution: int = 704
     # Explicit so populate_args and _build_args_from_configs agree.
     # ModelConfig does not define these fields; without them the legacy path
@@ -516,7 +518,7 @@ class RFDETRSegPreviewConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 36
     num_queries: int = 200
     num_select: int = 200
-    pretrain_weights: Optional[str] = "rf-detr-seg-preview.pt"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-preview.pt"
     num_classes: int = 90
 
 
@@ -530,7 +532,7 @@ class RFDETRSegNanoConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 312 // 12
     num_queries: int = 100
     num_select: int = 100
-    pretrain_weights: Optional[str] = "rf-detr-seg-nano.pt"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-nano.pt"
     num_classes: int = 90
 
 
@@ -544,7 +546,7 @@ class RFDETRSegSmallConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 384 // 12
     num_queries: int = 100
     num_select: int = 100
-    pretrain_weights: Optional[str] = "rf-detr-seg-small.pt"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-small.pt"
     num_classes: int = 90
 
 
@@ -558,7 +560,7 @@ class RFDETRSegMediumConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 432 // 12
     num_queries: int = 200
     num_select: int = 200
-    pretrain_weights: Optional[str] = "rf-detr-seg-medium.pt"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-medium.pt"
     num_classes: int = 90
 
 
@@ -572,7 +574,7 @@ class RFDETRSegLargeConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 504 // 12
     num_queries: int = 200
     num_select: int = 200
-    pretrain_weights: Optional[str] = "rf-detr-seg-large.pt"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-large.pt"
     num_classes: int = 90
 
 
@@ -586,7 +588,7 @@ class RFDETRSegXLargeConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 624 // 12
     num_queries: int = 300
     num_select: int = 300
-    pretrain_weights: Optional[str] = "rf-detr-seg-xlarge.pt"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-xlarge.pt"
     num_classes: int = 90
 
 
@@ -600,7 +602,7 @@ class RFDETRSeg2XLargeConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 768 // 12
     num_queries: int = 300
     num_select: int = 300
-    pretrain_weights: Optional[str] = "rf-detr-seg-xxlarge.pt"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-xxlarge.pt"
     num_classes: int = 90
 
 
@@ -622,7 +624,7 @@ class RFDETRKeypointPreviewConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 576 // 12
     num_queries: int = 100
     num_select: int = 100
-    pretrain_weights: Optional[str] = "rf-detr-keypoint-preview-xlarge.pth"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-keypoint-preview-xlarge.pth"
     num_classes: int = 90
 
 
@@ -651,7 +653,7 @@ class TrainConfig(BaseConfig):
     auto_batch_max_targets_per_image: int = 100
     auto_batch_ema_headroom: float = 0.7  # scale safe batch by this when use_ema=True (EMA uses extra memory)
     epochs: int = 100
-    resume: Optional[str] = None
+    resume: Optional[PathLikeStr] = None
     ema_decay: float = 0.993
     ema_tau: int = 100
     lr_drop: int = 100
@@ -673,8 +675,8 @@ class TrainConfig(BaseConfig):
     keypoint_oks_sigmas: List[float] | None = None
     dataset_file: Literal["coco", "o365", "roboflow", "yolo"] = "roboflow"
     square_resize_div_64: bool = True
-    dataset_dir: str | None
-    output_dir: str = "output"
+    dataset_dir: PathLikeStr | None
+    output_dir: PathLikeStr = "output"
     multi_scale: bool = True
     expanded_scales: bool = True
     do_random_resize_via_padding: bool = False
@@ -823,14 +825,28 @@ class TrainConfig(BaseConfig):
             raise ValueError("prefetch_factor must be >= 1 when provided.")
         return v
 
-    @field_validator("dataset_dir", "output_dir", mode="after")
+    @field_validator("dataset_dir", "output_dir", mode="before")
     @classmethod
-    def expand_paths(cls, v: str | None) -> str | None:
+    def expand_paths(cls, v: PathLikeStr | None) -> str | None:
         """Expand user paths (e.g., '~' or paths with separators) but leave simple filenames (like 'rf-detr-base.pth')
         unchanged so they can match hosted model keys."""
         if v is None:
             return v
-        return os.path.realpath(os.path.expanduser(v))
+        return os.path.realpath(os.path.expanduser(os.fspath(v)))
+
+    @field_validator("resume", mode="before")
+    @classmethod
+    def _coerce_resume_path(cls, v: PathLikeStr | None) -> str | None:
+        """Normalise the resume checkpoint value to ``str`` without resolving it.
+
+        Unlike ``dataset_dir``/``output_dir``, ``resume`` is forwarded verbatim to PyTorch Lightning's
+        ``trainer.fit(ckpt_path=...)``, which also accepts sentinel values such as ``"last"``. Running
+        ``os.path.realpath`` would rewrite those sentinels into spurious absolute paths, so this validator only coerces
+        the type (``Path`` -> ``str``) and leaves the value untouched.
+        """
+        if v is None:
+            return v
+        return os.fspath(v)
 
 
 class SegmentationTrainConfig(TrainConfig):
