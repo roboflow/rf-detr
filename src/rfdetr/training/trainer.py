@@ -127,7 +127,7 @@ def build_trainer(
     """Assemble a PTL ``Trainer`` with the full RF-DETR callback and logger stack.
 
     Resolves training precision from ``model_config.amp`` and device capability, guards EMA against sharded strategies,
-    wires conditional loggers, and applies promoted training knobs (gradient clipping, sync_batchnorm, strategy).
+    wires conditional loggers, and applies promoted training knobs (sync_batchnorm, strategy).
 
     Args:
         train_config: Training hyperparameter configuration.
@@ -138,14 +138,17 @@ def build_trainer(
             Defaults to ``None`` which reads from ``train_config.accelerator`` (itself defaulting to ``"auto"``). Pass
             ``"cpu"`` to override auto-detection (e.g. when the caller explicitly requests CPU training via
             ``device="cpu"``).
-        **trainer_kwargs: Extra keyword arguments forwarded verbatim to
-            ``pytorch_lightning.Trainer``.  Use this to pass PTL-native flags that are not exposed through
-            ``TrainConfig``, for example::
+        **trainer_kwargs: Extra keyword arguments forwarded to ``pytorch_lightning.Trainer``. Use this to pass
+            PTL-native flags that are not exposed through ``TrainConfig``, for example::
 
                 build_trainer(tc, mc, fast_dev_run=2)
 
-            Any key present in both ``trainer_kwargs`` and the built config dict will be overridden by the value in
-            ``trainer_kwargs``.
+            Most keys present in both ``trainer_kwargs`` and the built config dict are overridden by the value in
+            ``trainer_kwargs``. Detection and segmentation models forward ``accumulate_grad_batches`` from
+            ``train_config.grad_accum_steps`` and ``gradient_clip_val`` from ``train_config.clip_max_norm`` to the
+            Trainer normally. Keypoint models force ``accumulate_grad_batches=1`` and ``gradient_clip_val=None``
+            because ``RFDETRModelModule`` owns both operations under manual optimization; passing those keys for a
+            keypoint config raises a ``UserWarning`` to make the override explicit.
 
     Returns:
         A configured ``pytorch_lightning.Trainer`` instance.
@@ -395,6 +398,19 @@ def build_trainer(
     clip_max_norm: float = tc.clip_max_norm
     sync_bn: bool = tc.sync_bn
 
+    # Manual optimization (currently scoped to keypoint models) owns gradient accumulation
+    # and clipping inside ``RFDETRModelModule._step_optimizer`` so the box-count denominator
+    # spans the full effective batch.  Detection and segmentation models keep Lightning's
+    # automatic optimization, which means ``accumulate_grad_batches`` and ``gradient_clip_val``
+    # must flow through to the Trainer as usual for them.
+    manual_optimization = has_keypoints
+    if manual_optimization:
+        accumulate_grad_batches: int = 1
+        gradient_clip_val: float | None = None
+    else:
+        accumulate_grad_batches = tc.grad_accum_steps
+        gradient_clip_val = clip_max_norm
+
     trainer_config: dict[str, Any] = {
         "max_epochs": tc.epochs,
         "accelerator": accelerator,
@@ -402,8 +418,8 @@ def build_trainer(
         "num_nodes": tc.num_nodes,
         "strategy": strategy,
         "precision": _resolve_precision(),
-        "accumulate_grad_batches": tc.grad_accum_steps,
-        "gradient_clip_val": clip_max_norm,
+        "accumulate_grad_batches": accumulate_grad_batches,
+        "gradient_clip_val": gradient_clip_val,
         "sync_batchnorm": sync_bn,
         "callbacks": callbacks,
         "logger": loggers if loggers else False,
@@ -414,4 +430,23 @@ def build_trainer(
     }
     trainer_config.update(trainer_kwargs)
     trainer_config["strategy"] = strategy
+    if manual_optimization:
+        # Re-apply manual-optimization invariants so a caller-supplied trainer_kwargs
+        # value cannot silently re-enable Lightning-owned accumulation or clipping while
+        # the module is doing its own.  Warn loudly so the override is visible — silent
+        # coercion has historically masked subtle gradient-scaling bugs on this code path.
+        for key in ("accumulate_grad_batches", "gradient_clip_val"):
+            if key in trainer_kwargs:
+                effective = "1" if key == "accumulate_grad_batches" else "None"
+                alt = "grad_accum_steps" if key == "accumulate_grad_batches" else "clip_max_norm"
+                warnings.warn(
+                    f"build_trainer() ignored trainer_kwargs[{key!r}]={trainer_kwargs[key]!r} for a keypoint "
+                    f"model. The model will train with {key}={effective} regardless of the value passed here "
+                    f"because RFDETRModelModule owns gradient accumulation and clipping under manual "
+                    f"optimization. To change the effective value, set TrainConfig.{alt} instead.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        trainer_config["accumulate_grad_batches"] = 1
+        trainer_config["gradient_clip_val"] = None
     return Trainer(**trainer_config)

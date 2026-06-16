@@ -53,17 +53,17 @@ module = RFDETRModelModule(model_config, train_config)
 
 ### Lifecycle hooks
 
-| Hook                       | Behaviour                                                                                       |
-| -------------------------- | ----------------------------------------------------------------------------------------------- |
-| `on_fit_start`             | Seeds RNGs when `train_config.seed` is set.                                                     |
-| `on_train_batch_start`     | Applies multi-scale random resize when `train_config.multi_scale=True`.                         |
-| `transfer_batch_to_device` | Moves `NestedTensor` batches to the target device.                                              |
-| `training_step`            | Computes loss, divides by `accumulate_grad_batches`, and logs `train/loss` and per-term losses. |
-| `validation_step`          | Runs forward pass and postprocessing; returns `{results, targets}` for `COCOEvalCallback`.      |
-| `test_step`                | Same as `validation_step`, logs under `test/`.                                                  |
-| `predict_step`             | Runs inference-only forward pass and returns postprocessed detections.                          |
-| `configure_optimizers`     | Builds AdamW with layer-wise LR decay and a LambdaLR scheduler (cosine or step).                |
-| `on_load_checkpoint`       | Auto-converts legacy `.pth` checkpoints to PTL format.                                          |
+| Hook                       | Behaviour                                                                                                                                                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `on_fit_start`             | Seeds RNGs when `train_config.seed` is set.                                                                                                                                                                                     |
+| `on_train_batch_start`     | Applies multi-scale random resize when `train_config.multi_scale=True`.                                                                                                                                                         |
+| `transfer_batch_to_device` | Moves `NestedTensor` batches to the target device.                                                                                                                                                                              |
+| `training_step`            | Computes loss and logs `train/loss` plus per-term losses. Keypoint models use manual optimization with box-normalized accumulation across microbatches; detection and segmentation use Lightning's automatic optimization path. |
+| `validation_step`          | Runs forward pass and postprocessing; returns `{results, targets}` for `COCOEvalCallback`.                                                                                                                                      |
+| `test_step`                | Same as `validation_step`, logs under `test/`.                                                                                                                                                                                  |
+| `predict_step`             | Runs inference-only forward pass and returns postprocessed detections.                                                                                                                                                          |
+| `configure_optimizers`     | Builds AdamW with layer-wise LR decay and a LambdaLR scheduler (cosine or step).                                                                                                                                                |
+| `on_load_checkpoint`       | Auto-converts legacy `.pth` checkpoints to PTL format.                                                                                                                                                                          |
 
 ### Accessing the underlying model
 
@@ -114,29 +114,32 @@ trainer = build_trainer(train_config, model_config)
 
 ### What build_trainer configures
 
-| Concern               | Source                                                                                                                                                     |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Max epochs            | `train_config.epochs`                                                                                                                                      |
-| Gradient accumulation | `train_config.grad_accum_steps`                                                                                                                            |
-| Gradient clipping     | `train_config.clip_max_norm` (default `0.1`)                                                                                                               |
-| Mixed precision       | Resolved from `model_config.amp` and device capability (`bf16-mixed` on Ampere+, `16-mixed` otherwise)                                                     |
-| Accelerator           | `train_config.accelerator` (default `"auto"`)                                                                                                              |
-| Strategy              | Pass `strategy=` as a `**trainer_kwarg` to `build_trainer`. `TrainConfig` has no `strategy` field — setting it on `TrainConfig` will raise a `ValueError`. |
-| Sync batch norm       | `train_config.sync_bn`                                                                                                                                     |
-| Progress bar          | `train_config.progress_bar`                                                                                                                                |
-| Loggers               | CSVLogger always; TensorBoard, WandB, MLflow when their `train_config` flags are `True`                                                                    |
-| Callbacks             | `RFDETREMACallback`, `DropPathCallback`, `COCOEvalCallback`, `BestModelCallback`, `RFDETREarlyStopping` (conditional)                                      |
+| Concern               | Source                                                                                                                                                                     |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Max epochs            | `train_config.epochs`                                                                                                                                                      |
+| Gradient accumulation | Detection/segmentation: `train_config.grad_accum_steps` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `1`). |
+| Gradient clipping     | Detection/segmentation: `train_config.clip_max_norm` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `None`). |
+| Mixed precision       | Resolved from `model_config.amp` and device capability (`bf16-mixed` on Ampere+, `16-mixed` otherwise)                                                                     |
+| Accelerator           | `train_config.accelerator` (default `"auto"`)                                                                                                                              |
+| Strategy              | Pass `strategy=` as a `**trainer_kwarg` to `build_trainer`. `TrainConfig` has no `strategy` field — setting it on `TrainConfig` will raise a `ValueError`.                 |
+| Sync batch norm       | `train_config.sync_bn`                                                                                                                                                     |
+| Progress bar          | `train_config.progress_bar`                                                                                                                                                |
+| Loggers               | CSVLogger always; TensorBoard, WandB, MLflow when their `train_config` flags are `True`                                                                                    |
+| Callbacks             | `RFDETREMACallback`, `DropPathCallback`, `COCOEvalCallback`, `BestModelCallback`, `RFDETREarlyStopping` (conditional)                                                      |
 
 ### Overriding PTL Trainer kwargs
 
-Pass any keyword argument accepted by `pytorch_lightning.Trainer` via `**trainer_kwargs`. These override the built configuration:
+Pass keyword arguments accepted by `pytorch_lightning.Trainer` via `**trainer_kwargs`. Most keys override the built configuration.
+
+**Detection and segmentation models** forward `accumulate_grad_batches` and `gradient_clip_val` to the Trainer normally — you can override them via `trainer_kwargs` or configure them on `TrainConfig` (`grad_accum_steps`, `clip_max_norm`).
+
+**Keypoint models** use manual optimization, so `RFDETRModelModule` owns accumulation and clipping internally. `build_trainer()` forces `accumulate_grad_batches=1` and `gradient_clip_val=None` regardless of what is passed, and emits a `UserWarning` if those keys appear in `trainer_kwargs` so the override is visible:
 
 ```python
 trainer = build_trainer(
     train_config,
     model_config,
     fast_dev_run=2,  # run 2 batches per epoch for a smoke test
-    accumulate_grad_batches=8,  # override TrainConfig.grad_accum_steps
     log_every_n_steps=10,
 )
 ```
