@@ -249,7 +249,7 @@ RF-DETR uses torchvision-native default augmentations during training. Advanced 
 Install the optional augmentation extra before using custom `aug_config` dictionaries or the built-in presets:
 
 ```bash
-pip install "rfdetr[train,augmentation]"
+pip install "rfdetr[train,augment]"
 ```
 
 → **[Complete Augmentation Guide](augmentations.md)** - Configuration examples, best practices, troubleshooting, and advanced topics.

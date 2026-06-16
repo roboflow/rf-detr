@@ -13,7 +13,7 @@ RF-DETR also supports advanced custom data augmentations via optional [Albumenta
 Install the optional augmentation extra before using custom `aug_config` dictionaries or built-in Albumentations presets:
 
 ```bash
-pip install "rfdetr[train,augmentation]"
+pip install "rfdetr[train,augment]"
 ```
 
 Then pass `aug_config` to your training call. Import one of the built-in presets:
