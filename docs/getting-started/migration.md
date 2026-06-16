@@ -20,21 +20,6 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
 
 ## Upgrade 1.7 → 1.8
 
-### Removed
-
-!!! warning "Deprecated in v1.6 → Removed in v1.8: `simplify` and `force` arguments in `RFDETR.export()`"
-
-    **`RFDETR.export(..., simplify=..., force=...)`** — deprecated since v1.6.0, removed in v1.8.0.
-    Both were no-ops. Delete the kwargs from any `model.export(...)` call.
-
-    ```python
-    # Before (raises TypeError in v1.8.0)
-    model.export(output_dir="out/", simplify=True, force=True)
-
-    # After
-    model.export(output_dir="out/")
-    ```
-
 ### Breaking changes
 
 !!! warning "Breaking: `rfdetr.datasets.aug_config` renamed to `rfdetr.datasets.aug_configs`"
@@ -97,7 +82,7 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     source = detections.metadata["source_image"]
     ```
 
-### Deprecated (removal in v1.9.0)
+### Deprecated in v1.7 → Remove in v1.9
 
 !!! note "Deprecated: `rfdetr.util.*` and `rfdetr.deploy.*` import paths"
 
@@ -200,7 +185,7 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     train_config = TrainConfig(cls_loss_coef=2.0)
     ```
 
-### Deprecated (removal in v2.0.0)
+### Deprecated in v1.7 → Remove in v2.0
 
 !!! note "Deprecated: `RFDETRBase` replaced by size-specific classes"
 
@@ -222,21 +207,23 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
 
 !!! note "Deprecated: `RFDETRSegPreview` replaced by size-specific segmentation classes"
 
-    **`RFDETRSegPreview`** defaulted to the small variant and is replaced by size-specific
-    segmentation classes. If you used `RFDETRSegPreview()` without arguments, switch to
-    `RFDETRSegSmall()`.
+````
+**`RFDETRSegPreview`** defaulted to the small variant and is replaced by size-specific
+segmentation classes. If you used `RFDETRSegPreview()` without arguments, switch to
+`RFDETRSegSmall()`.
 
-    ```python
-    # Before (deprecated)
-    from rfdetr import RFDETRSegPreview
+```python
+# Before (deprecated)
+from rfdetr import RFDETRSegPreview
 
-    model = RFDETRSegPreview()
+model = RFDETRSegPreview()
 
-    # After — pick one
-    from rfdetr import RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, RFDETRSegLarge
+# After — pick one
+from rfdetr import RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, RFDETRSegLarge
 
-    model = RFDETRSegSmall()
-    ```
+model = RFDETRSegSmall()
+```
+````
 
 ---
 
@@ -290,22 +277,7 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     img, polygon = draw_synthetic_shape(...)
     ```
 
-### Deprecated (removal in v1.8.0)
-
-!!! note "Deprecated in v1.6 → Removed in v1.8: `simplify` and `force` arguments in `RFDETR.export()`"
-
-    **`RFDETR.export(..., simplify=..., force=...)`** — both arguments are no-ops.
-    Remove them from your calls.
-
-    ```python
-    # Before (deprecated)
-    model.export("model.onnx", simplify=True, force=True)
-
-    # After
-    model.export("model.onnx")
-    ```
-
-### Deprecated (removal in v1.9.0, extended from v1.7.0)
+### Deprecated in v1.6 → Remove in v1.9
 
 !!! note "Deprecated: `rfdetr.deploy.*` moved to `rfdetr.export.*`"
 
@@ -352,7 +324,7 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     config = ModelConfig()
     ```
 
-### Deprecated (removal in v1.7.0)
+### Deprecated in v1.5 → Remove in v1.7
 
 !!! note "Deprecated: `OPEN_SOURCE_MODELS` replaced by `ModelWeights` enum"
 
