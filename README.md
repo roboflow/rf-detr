@@ -120,6 +120,8 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 ### Keypoints
 
+<img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="docs/assets/keypoints/kp-map-latency.png" />
+
 <details>
 <summary>See keypoint detection benchmark numbers</summary>
 
