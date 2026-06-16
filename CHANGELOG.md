@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Default dataset augmentations now use torchvision-native transforms; non-empty custom `aug_config` dictionaries use the optional Albumentations integration via `pip install 'rfdetr[augmentation]'`. The `[train]` extra no longer installs Albumentations or Kornia; GPU-side augmentation remains available through `pip install 'rfdetr[kornia]'`. ([#1112](https://github.com/roboflow/rf-detr/pull/1112))
+- Default dataset augmentations now use torchvision-native transforms; non-empty custom `aug_config` dictionaries use the optional Albumentations integration and Kornia GPU backend, both via `pip install 'rfdetr[augmentation]'`. The `[train]` extra no longer installs Albumentations or Kornia. ([#1112](https://github.com/roboflow/rf-detr/pull/1112))
 
 ### Deprecated
 
@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `augmentation_backend` field on `TrainConfig` (`"cpu"` / `"auto"` / `"gpu"`): opt-in GPU-side augmentation via [Kornia](https://kornia.readthedocs.io) applied in `RFDETRDataModule.on_after_batch_transfer` after the batch is resident on the GPU. CPU path is unchanged and remains the default. Install with `pip install 'rfdetr[kornia]'`. Supports detection and segmentation (see below). ([#1003](https://github.com/roboflow/rf-detr/pull/1003))
+- `augmentation_backend` field on `TrainConfig` (`"cpu"` / `"auto"` / `"gpu"`): opt-in GPU-side augmentation via [Kornia](https://kornia.readthedocs.io) applied in `RFDETRDataModule.on_after_batch_transfer` after the batch is resident on the GPU. CPU path is unchanged and remains the default. Install with `pip install 'rfdetr[augmentation]'`. Supports detection and segmentation (see below). ([#1003](https://github.com/roboflow/rf-detr/pull/1003))
 - Kornia GPU augmentation now supports instance segmentation: images, boxes, and per-instance masks are augmented in sync on the GPU. New public helper `collate_masks` packs `[N_i, H, W]` boolean masks into a `[B, N_max, H, W]` float32 tensor for Kornia; `build_kornia_pipeline` gains a `with_masks: bool = False` parameter; `unpack_boxes` gains an optional `masks_aug` tensor that re-binarises and filters masks in sync with boxes. Previously `augmentation_backend="gpu"/"auto"` was silently ignored for segmentation models; now it works identically to detection. **Note**: the mask buffer is `[B, N_max, H, W]` float32 — approximately 500 MB at `B=8, N_max=50, H=W=560`; use `augmentation_backend="cpu"` on cards with limited VRAM. ([#1003](https://github.com/roboflow/rf-detr/pull/1003), closes [#997](https://github.com/roboflow/rf-detr/issues/997))
 - `BuilderArgs` — a `@runtime_checkable` `typing.Protocol` documenting the minimum attribute set consumed by `build_model()`, `build_backbone()`, `build_transformer()`, and `build_criterion_and_postprocessors()`. Enables static type-checker support for custom builder integrations. Exported from `rfdetr.models`. ([#841](https://github.com/roboflow/rf-detr/pull/841))
 - `build_model_from_config(model_config, train_config=None, defaults=MODEL_DEFAULTS)` — config-native alternative to `build_model(build_namespace(mc, tc))`; accepts Pydantic config objects directly and constructs the internal namespace automatically. Exported from `rfdetr.models`. ([#845](https://github.com/roboflow/rf-detr/pull/845))

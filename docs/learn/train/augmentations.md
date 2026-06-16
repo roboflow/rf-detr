@@ -115,7 +115,7 @@ RF-DETR automatically handles bounding boxes for **geometric transforms** (flips
 
 - **Default path:** Uses torchvision-native transforms and does not require Albumentations.
 - **Custom CPU path:** Non-empty `aug_config` dictionaries use Albumentations and require `rfdetr[augmentation]`.
-- **GPU path:** `augmentation_backend="gpu"` uses Kornia and requires `rfdetr[kornia]`.
+- **GPU path:** `augmentation_backend="gpu"` uses Kornia and requires `rfdetr[augmentation]`.
 - **CPU-bound custom configs:** More transforms means slower data loading
 - **Use `num_workers`:** Parallelize augmentation across data loader workers
 - **Monitor training mAP vs validation mAP:** With strong augmentations it's normal for training mAP to be lower — validation uses original images while training uses augmented (harder) ones

@@ -67,7 +67,7 @@ GEOMETRIC_TRANSFORMS = {
 ## Kornia GPU Backend
 
 When ``augmentation_backend="auto"`` or ``"gpu"`` is set in ``TrainConfig``, augmentations run on the GPU via Kornia
-instead of CPU Albumentations or torchvision defaults. Install it with ``pip install 'rfdetr[kornia]'``.
+instead of CPU Albumentations or torchvision defaults. Install it with ``pip install 'rfdetr[augmentation]'``.
 
 **Supported transforms** (all presets):
 

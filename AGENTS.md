@@ -69,7 +69,7 @@ uv sync --all-groups
 See `pyproject.toml` for complete dependency specifications:
 
 - **Core:** PyTorch, torchvision, transformers, supervision, pydantic, pyDeprecate
-- **Optional:** `[train]` (minimal training loop dependencies), `[augmentation]` (custom Albumentations CPU augmentations), `[kornia]` (GPU-side augmentations), `[lora]` (LoRA fine-tuning), `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb, mlflow, clearml)
+- **Optional:** `[train]` (minimal training loop dependencies), `[augmentation]` (custom Albumentations CPU augmentations and Kornia GPU augmentations), `[lora]` (LoRA fine-tuning), `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb, mlflow, clearml)
 - **Development:** `tests`, `docs`, `build` groups
 
 **Important version constraints:**
@@ -209,7 +209,7 @@ uv run twine check --strict dist/*
 
 - Default training, validation, prediction, and export preprocessing use torchvision-native transforms.
 - Custom non-empty `aug_config` values on the CPU path use Albumentations and require `rfdetr[augmentation]`.
-- `augmentation_backend="gpu"` uses Kornia and requires `rfdetr[kornia]`; `augmentation_backend="auto"` falls back to CPU when CUDA or Kornia is unavailable.
+- `augmentation_backend="gpu"` uses Kornia and requires `rfdetr[augmentation]`; `augmentation_backend="auto"` falls back to CPU when CUDA or Kornia is unavailable.
 
 **Model Architecture:**
 

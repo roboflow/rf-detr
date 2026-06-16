@@ -130,7 +130,7 @@ def _require_kornia() -> None:
     try:
         import kornia.augmentation  # noqa: F401
     except ImportError as e:
-        raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'") from e
+        raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[augmentation]'") from e
 
 
 # ---------------------------------------------------------------------------

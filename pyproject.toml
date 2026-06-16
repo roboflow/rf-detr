@@ -62,6 +62,7 @@ train = [
 ]
 augmentation = [
     "albumentations>=1.4.24,<3.0.0",  # optional custom CPU augmentations
+    "kornia>=0.7,<1",                  # optional GPU-side augmentation
 ]
 onnx = [
     "onnx>=1.16.0,<2.0",
@@ -82,9 +83,6 @@ tflite = [
     "onnx>=1.20.0,<2.0",
     "tf-keras>=2.16.0",
     "tensorflow>=2.16.0",
-]
-kornia = [
-    "kornia>=0.7,<1",              # GPU-side augmentation via on_after_batch_transfer
 ]
 loggers = [
     "tensorboard>=2.13.0",

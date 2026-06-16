@@ -144,7 +144,7 @@ uv sync --group build      # Build tools only
 
 - `rfdetr[train]` installs the minimal training loop dependencies and uses torchvision-native default augmentations.
 - `rfdetr[augmentation]` installs Albumentations for custom CPU `aug_config` dictionaries and built-in augmentation presets.
-- `rfdetr[kornia]` installs Kornia for GPU-side augmentation with `augmentation_backend="gpu"` or `"auto"`.
+- `rfdetr[augmentation]` also installs Kornia for GPU-side augmentation with `augmentation_backend="gpu"` or `"auto"`.
 
 ### Running Tests
 
