@@ -2284,22 +2284,37 @@ Use the release feed to review versioned package changes, migration notes, and m
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<hr />
+<h2 id="180-2026-06-13">[1.8.0] — 2026-06-13<a class="headerlink" href="#180-2026-06-13" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>RFDETR.export_for_roboflow(output_dir)</code> — writes a Roboflow upload bundle (<code>weights.pt</code> + <code>class_names.txt</code>) without a network call; extracted from <code>deploy_to_roboflow</code>, which now uses it (<a href="https://github.com/roboflow/rf-detr/pull/1086">#1086</a>)</li>
-<li><code>RFDETRKeypointPreview</code> — keypoint detection model variant with GroupPose-style head, covariance-based uncertainty (precision-Cholesky parameterization), and COCO keypoint AP evaluation. Also adds <code>KeypointTrainConfig</code>, <code>infer_coco_keypoint_schema</code>, <code>CocoKeypointSchema</code>, and <code>active_keypoint_counts</code> to the public API (<a href="https://github.com/roboflow/rf-detr/pull/1099">#1099</a>)</li>
+<li><code>RFDETRKeypointPreview</code> — keypoint detection model variant with GroupPose-style head, covariance-based uncertainty (precision-Cholesky parameterization), and COCO keypoint AP evaluation. Public config classes: <code>KeypointTrainConfig</code>, <code>RFDETRKeypointPreviewConfig</code> (from <code>rfdetr.config</code>). Utility: <code>precision_cholesky_to_pixel_covariance</code> (from <code>rfdetr.utilities</code>). Schema helpers <code>infer_coco_keypoint_schema</code>, <code>CocoKeypointSchema</code>, <code>active_keypoint_counts</code> accessible via <code>rfdetr.datasets._keypoint_schema</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1099">#1099</a>)</li>
+<li><code>RFDETR.export_for_roboflow(output_dir)</code> — writes a Roboflow upload bundle (<code>weights.pt</code> + <code>class_names.txt</code>) without a network call; extracted from <code>deploy_to_roboflow</code>, which now delegates to it. (<a href="https://github.com/roboflow/rf-detr/pull/1086">#1086</a>)</li>
+<li>Keypoint fine-tuning cookbook (<code>docs/cookbooks/fine-tune_keypoints.ipynb</code>) — end-to-end walkthrough: dataset download, schema inference, <code>KeypointTrainConfig</code>, training metrics, and inference with covariance uncertainty. (<a href="https://github.com/roboflow/rf-detr/pull/1104">#1104</a>)</li>
+<li><code>MetricKeypointOKS</code> — reusable OKS metric facade over <code>CocoEvaluator</code>, exported from <code>rfdetr.evaluation</code>. Supports arbitrary keypoint counts, per-category OKS sigma values, DDP-safe evaluation with first-rank-wins deduplication, and an <code>OKSKey</code> enum (<code>mAP</code>, <code>mAP@50</code>, <code>mAP@75</code>, <code>mAR</code>) for standardised metric keys. (<a href="https://github.com/roboflow/rf-detr/pull/1107">#1107</a>)</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
-<p>-</p>
-<h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>
-<p>-</p>
+<ul>
+<li>DDP strategy now enables <code>find_unused_parameters=True</code> for all detection, keypoint, and segmentation models when running under <code>strategy='ddp'</code> or <code>strategy='auto'</code> with a distributed launcher. Previously only enabled for segmentation. Opt out via <code>trainer_kwargs={"strategy": DDPStrategy(find_unused_parameters=False)}</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1094">#1094</a>)</li>
+<li><code>rfdetr.datasets.aug_config</code> module renamed to <code>rfdetr.datasets.aug_configs</code> (plural). Direct imports from <code>rfdetr.datasets.aug_config</code> must be updated to <code>rfdetr.datasets.aug_configs</code>; the augmentation preset constants (<code>AUG_AGGRESSIVE</code>, etc.) are unchanged. (<a href="https://github.com/roboflow/rf-detr/pull/1103">#1103</a>)</li>
+</ul>
+<h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>RFDETR.export(simplify=..., force=...)</code> — both kwargs removed from the signature. Deprecated since v1.6.0 with <code>remove_in="1.8.0"</code>; both were no-ops during the deprecation window. Callers passing these args must remove them before upgrading. (<a href="https://github.com/roboflow/rf-detr/pull/1102">#1102</a>)</li>
+</ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fixed <code>import rfdetr</code> failing on NumPy 2.x when a transitive dependency references the removed <code>np.complex_</code> alias (<a href="https://github.com/roboflow/rf-detr/pull/1064">#1064</a>)</li>
+<li><code>RFDETR.from_checkpoint()</code> no longer treats <code>num_classes</code> loaded from the checkpoint as a user-supplied override. Previously, fine-tuning a checkpoint model on a dataset with a different class count was silently refused — the head refused to re-initialise and trained against the stale class count. An explicit <code>num_classes</code> kwarg from the caller still wins over both the checkpoint value and the dataset. (<a href="https://github.com/roboflow/rf-detr/pull/1106">#1106</a>)</li>
+<li>Scale jitter restored in non-square training crop. <code>RandomCrop</code> in the <code>option_b</code> branch replaced with <code>RandomSizedCrop</code>, restoring the scale-augmentation behaviour lost during the Albumentations migration. (<a href="https://github.com/roboflow/rf-detr/pull/1088">#1088</a>)</li>
+<li>Multi-GPU validation deadlock in COCO mAP synchronization prevented. <code>_merge_metric_state_across_ranks</code> now safe across zero-batch ranks. (<a href="https://github.com/roboflow/rf-detr/pull/1085">#1085</a>)</li>
+<li><code>import rfdetr</code> no longer fails on NumPy 2.x when a transitive dependency references the removed <code>np.complex_</code> alias. (<a href="https://github.com/roboflow/rf-detr/pull/1064">#1064</a>)</li>
+<li><code>rfdetr_plus</code> module availability check corrected; false-positive hit when the package was partially installed. (<a href="https://github.com/roboflow/rf-detr/pull/1083">#1083</a>)</li>
 <li>Fixed spurious "Keypoint class-logit boost has N classes but detection head has M" warning on custom (non-Roboflow) keypoint datasets: <code>_align_num_classes_from_dataset</code> now zero-pads <code>num_keypoints_per_class</code> when auto-adjusting <code>num_classes</code> beyond the schema length (<a href="https://github.com/roboflow/rf-detr/pull/1113">#1113</a>)</li>
+<li>Loss scaling corrected for keypoint training under gradient accumulation (<code>accumulate_grad_batches &gt; 1</code>). Keypoint models now use manual optimization to normalize losses by the accumulated box count across the effective batch; detection and segmentation remain on Lightning's automatic-optimization path. Optimizer-step scheduling, LR warmup/decay, and epoch-boundary flushing are correctly handled in both paths. (<a href="https://github.com/roboflow/rf-detr/pull/1117">#1117</a>)</li>
+<li>Device auto-detection now verifies accelerator runtime availability before selecting a device (PyTorch ≥ 2.4: <code>torch.accelerator.current_accelerator</code>; older builds: <code>torch.cuda.is_available()</code>). Previously, a machine with CUDA headers but no GPU driver could be assigned a CUDA device that fails at first use. (<a href="https://github.com/roboflow/rf-detr/pull/1111">#1111</a>)</li>
+<li><code>RFDETR.from_checkpoint()</code> and related APIs now honor an explicit <code>num_classes</code> argument even when its value equals the model default. Previously, passing <code>num_classes=N</code> where <code>N</code> is the default (e.g. 80 for COCO) was silently treated as unset, causing fine-tuning on a different class count to be refused. (<a href="https://github.com/roboflow/rf-detr/pull/1109">#1109</a>)</li>
+<li><code>RFDETR.from_checkpoint()</code> correctly infers the model variant from the checkpoint filename when <code>pretrain_weights</code> is absent or unset-like (empty string, <code>None</code>, whitespace). Previously, starter-like checkpoints without an explicit <code>pretrain_weights</code> entry raised an error or silently loaded the wrong model class. (<a href="https://github.com/roboflow/rf-detr/pull/1065">#1065</a>)</li>
 </ul>
-<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
-<p>-</p>
 <hr />
 <h2 id="170-2026-04-29">[1.7.0] — 2026-04-29<a class="headerlink" href="#170-2026-04-29" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
@@ -2334,7 +2349,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Native RLE annotation support in the COCO segmentation pipeline: <code>convert_coco_poly_to_mask</code> now explicitly detects and decodes both compressed (string counts) and uncompressed (int-list counts) RLE formats alongside existing polygon support. Malformed annotations now raise instead of being silently swallowed. (<a href="https://github.com/roboflow/rf-detr/pull/897">#897</a>)</li>
 <li>Pinned PyTorch Lightning to exclude known-compromised versions. (<a href="https://github.com/roboflow/rf-detr/pull/1020">#1020</a>)</li>
 </ul>
-<h3 id="deprecated_1">Deprecated<a class="headerlink" href="#deprecated_1" title="Permanent link">&para;</a></h3>
+<h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>build_namespace(model_config, train_config)</code> — no longer used internally and deprecated in this release; use <code>build_model_from_config</code>, <code>build_criterion_from_config</code>, or <code>_namespace_from_configs</code> directly. It will be removed in v1.9 and currently emits a <code>DeprecationWarning</code> on use. (<a href="https://github.com/roboflow/rf-detr/pull/845">#845</a>)</li>
 <li><code>load_pretrain_weights(nn_model, model_config, train_config)</code> — the <code>train_config</code> positional argument is deprecated and will be removed in v1.9; it is no longer used internally. Omit it: <code>load_pretrain_weights(nn_model, model_config)</code>. Passing a non-<code>None</code> value emits a <code>DeprecationWarning</code>. (<a href="https://github.com/roboflow/rf-detr/pull/845">#845</a>)</li>
@@ -2450,7 +2465,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Fixed ONNX export for models with dynamic batch dimensions — replaced <code>H_.expand(N_)</code> with <code>torch.full</code> for Python-int spatial dims to eliminate tracer failures. (<a href="https://github.com/roboflow/rf-detr/pull/871">#871</a>)</li>
 </ul>
 <h2 id="161-2026-03-25">[1.6.1] — 2026-03-25<a class="headerlink" href="#161-2026-03-25" title="Permanent link">&para;</a></h2>
-<h3 id="deprecated_2">Deprecated<a class="headerlink" href="#deprecated_2" title="Permanent link">&para;</a></h3>
+<h3 id="deprecated_1">Deprecated<a class="headerlink" href="#deprecated_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>RFDETR.export(..., simplify=..., force=...)</code> — both arguments are now no-ops and emit a <code>DeprecationWarning</code>. RF-DETR no longer runs ONNX simplification automatically; remove these arguments from your calls. They will be removed in v1.8. (<a href="https://github.com/roboflow/rf-detr/pull/861">#861</a>)</li>
 </ul>
@@ -2486,7 +2501,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Current learning rate is now shown in the training progress bar alongside loss. (<a href="https://github.com/roboflow/rf-detr/pull/809">#809</a>)</li>
 <li><code>supervision</code>, <code>pytorch_lightning</code>, and other heavy dependencies are now imported lazily (on first use) rather than at module load, reducing cold-import time in inference-only environments. (<a href="https://github.com/roboflow/rf-detr/pull/801">#801</a>)</li>
 </ul>
-<h3 id="deprecated_3">Deprecated<a class="headerlink" href="#deprecated_3" title="Permanent link">&para;</a></h3>
+<h3 id="deprecated_2">Deprecated<a class="headerlink" href="#deprecated_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>rfdetr.deploy.*</code> — redirects to <code>rfdetr.export.*</code> with a <code>DeprecationWarning</code>. Migrate before v1.7.</li>
 <li><code>rfdetr.util.*</code> — redirects to <code>rfdetr.utilities.*</code> with a <code>DeprecationWarning</code>. Migrate before v1.7.</li>
