@@ -266,9 +266,9 @@ model = RFDETRKeypointPreview()
 key_points = model.predict("image.jpg", threshold=0.5)
 ```
 
-| Size | RF-DETR package class | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution | License |
+|        Size        |  RF-DETR package class  | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :----------------: | :---------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
-| Keypoint (Preview) | `RFDETRKeypointPreview` | 71.8 | 9.7 | 126.4 | 576x576 | Apache 2.0 |
+| Keypoint (Preview) | `RFDETRKeypointPreview` |          71.8           |     9.7      |   126.4    |  576x576   | Apache 2.0 |
 
 ### Train Models
 
