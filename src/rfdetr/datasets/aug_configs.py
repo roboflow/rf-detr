@@ -7,7 +7,7 @@
 
 RF-DETR's default training augmentation path is torchvision-native and does not require Albumentations. Importing and
 passing the presets in this module as ``aug_config`` uses the optional Albumentations integration; install it with
-``pip install 'rfdetr[augmentation]'``.
+``pip install 'rfdetr[augment]'``.
 
 Import a preset and pass it as ``aug_config`` to your training call:
 
@@ -67,7 +67,7 @@ GEOMETRIC_TRANSFORMS = {
 ## Kornia GPU Backend
 
 When ``augmentation_backend="auto"`` or ``"gpu"`` is set in ``TrainConfig``, augmentations run on the GPU via Kornia
-instead of CPU Albumentations or torchvision defaults. Install it with ``pip install 'rfdetr[augmentation]'``.
+instead of CPU Albumentations or torchvision defaults. Install it with ``pip install 'rfdetr[augment]'``.
 
 **Supported transforms** (all presets):
 

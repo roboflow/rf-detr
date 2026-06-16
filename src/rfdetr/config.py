@@ -7,6 +7,7 @@
 
 import os
 import warnings
+from enum import Enum
 from typing import Any, ClassVar, Dict, List, Literal, Mapping, Optional, TypeAlias, Union
 
 import torch
@@ -14,6 +15,44 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from pydantic_core import PydanticUndefined
 
 EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
+
+
+class AugmentationBackend(str, Enum):
+    """Augmentation backend selector for ``TrainConfig.augmentation_backend``.
+
+    ``GPU`` is a Python enum alias for ``KORNIA`` (same value ``"kornia"``); code that previously passed
+    ``augmentation_backend="gpu"`` should migrate to ``"kornia"``.  A Pydantic pre-validator on ``TrainConfig`` still
+    accepts the legacy ``"gpu"`` string for backward compatibility.
+    """
+
+    CPU = "cpu"
+    ALBU = "albu"
+    KORNIA = "kornia"
+    GPU = "kornia"  # alias for KORNIA — backward compat name
+    AUTO = "auto"
+
+    @classmethod
+    def from_str(cls, value: str) -> "AugmentationBackend":
+        """Construct from string, mapping legacy ``"gpu"`` to ``KORNIA``.
+
+        Args:
+            value: Backend name string.
+
+        Returns:
+            Corresponding ``AugmentationBackend`` member.
+
+        Raises:
+            ValueError: When *value* is not a recognised backend name.
+
+        Examples:
+            >>> AugmentationBackend.from_str("cpu")
+            <AugmentationBackend.CPU: 'cpu'>
+            >>> AugmentationBackend.from_str("gpu")
+            <AugmentationBackend.KORNIA: 'kornia'>
+        """
+        if value == "gpu":
+            return cls.KORNIA
+        return cls(value)
 
 
 class PretrainWeightsCompatibilityWarning(UserWarning):
@@ -700,8 +739,17 @@ class TrainConfig(BaseConfig):
     eval_interval: int = 1
     log_per_class_metrics: bool = True
     aug_config: Optional[Dict[str, Any]] = None
-    augmentation_backend: Literal["cpu", "auto", "gpu"] = "cpu"
+    augmentation_backend: AugmentationBackend = AugmentationBackend.CPU
     save_dataset_grids: bool = False
+
+    @field_validator("augmentation_backend", mode="before")
+    @classmethod
+    def _coerce_augmentation_backend(cls, v: Any) -> Any:
+        """Map legacy ``"gpu"`` string to ``"kornia"`` for backward compatibility."""
+        if v == "gpu":
+            return "kornia"
+        return v
+
     notes: Optional[Any] = Field(
         default=None,
         description=(

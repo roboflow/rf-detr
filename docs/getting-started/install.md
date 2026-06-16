@@ -91,8 +91,7 @@ If you plan to contribute to RF-DETR or modify the codebase locally, set up a lo
 - For development, it is recommended to use a virtual environment to avoid conflicts with other packages.
 - **Augmentation extras:**
     - Training uses torchvision-native default augmentations with `pip install "rfdetr[train]"`.
-    - Custom Albumentations configs and built-in augmentation presets require `pip install "rfdetr[train,augmentation]"`.
-    - GPU-side augmentation requires `pip install "rfdetr[train,kornia]"`.
+    - Custom Albumentations CPU configs and Kornia GPU augmentation both require `pip install "rfdetr[train,augment]"`.
 - If you encounter any issues during installation, refer to the [troubleshooting](#troubleshooting) section or open an issue on the [GitHub repository](https://github.com/roboflow/rf-detr).
 
 ## Troubleshooting

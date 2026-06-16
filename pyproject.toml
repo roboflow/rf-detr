@@ -60,7 +60,7 @@ train = [
     "roboflow",
     "rf100vl",
 ]
-augmentation = [
+augment = [
     "albumentations>=1.4.24,<3.0.0",  # optional custom CPU augmentations
     "kornia>=0.7,<1",                  # optional GPU-side augmentation
 ]

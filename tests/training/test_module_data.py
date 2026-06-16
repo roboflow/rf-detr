@@ -936,6 +936,16 @@ class TestTransferBatchToDevice:
         assert isinstance(result_samples, NestedTensor)
 
 
+def _block_optional_imports(name, *args, **kwargs):
+    """Side-effect for patching builtins.__import__ to block albumentations and kornia."""
+    if name in ("albumentations", "kornia", "kornia.augmentation"):
+        raise ImportError(f"Simulated missing package: {name}")
+    return original_import(name, *args, **kwargs)
+
+
+original_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__  # type: ignore[index]
+
+
 # ---------------------------------------------------------------------------
 # TestBackendResolution — validates augmentation_backend logic in setup("fit")
 # ---------------------------------------------------------------------------
@@ -1080,24 +1090,45 @@ class TestBackendResolution:
             "auto + no CUDA must resolve to cpu before dataset build to preserve CPU Normalize"
         )
 
-    def test_resolve_augmentation_backend_auto_no_cuda(self):
-        """_resolve_augmentation_backend returns 'cpu' for auto when CUDA is absent."""
+    def test_resolve_augmentation_backend_auto_no_cuda_no_packages(self):
+        """_resolve_augmentation_backend returns CPU for auto when CUDA, kornia, and albu absent."""
+        from rfdetr.config import AugmentationBackend
         from rfdetr.training.module_data import _resolve_augmentation_backend
 
-        with patch("rfdetr.training.module_data._has_cuda_device", return_value=False):
-            assert _resolve_augmentation_backend("auto") == "cpu"
+        with (
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
+            patch("builtins.__import__", side_effect=_block_optional_imports),
+        ):
+            assert _resolve_augmentation_backend("auto") == AugmentationBackend.CPU
 
-    def test_resolve_augmentation_backend_cpu_passthrough(self):
-        """_resolve_augmentation_backend passes 'cpu' through unchanged."""
+    def test_resolve_augmentation_backend_cpu_no_packages(self):
+        """_resolve_augmentation_backend returns CPU when neither albu nor kornia installed."""
+        from rfdetr.config import AugmentationBackend
         from rfdetr.training.module_data import _resolve_augmentation_backend
 
-        assert _resolve_augmentation_backend("cpu") == "cpu"
+        with patch("builtins.__import__", side_effect=_block_optional_imports):
+            assert _resolve_augmentation_backend("cpu") == AugmentationBackend.CPU
 
-    def test_resolve_augmentation_backend_gpu_passthrough(self):
-        """_resolve_augmentation_backend passes 'gpu' through unchanged."""
+    def test_resolve_augmentation_backend_kornia_passthrough(self):
+        """_resolve_augmentation_backend passes 'kornia' through as KORNIA enum member."""
+        from rfdetr.config import AugmentationBackend
         from rfdetr.training.module_data import _resolve_augmentation_backend
 
-        assert _resolve_augmentation_backend("gpu") == "gpu"
+        assert _resolve_augmentation_backend("kornia") == AugmentationBackend.KORNIA
+
+    def test_resolve_augmentation_backend_gpu_maps_to_kornia(self):
+        """Legacy 'gpu' string resolves to KORNIA for backward compatibility."""
+        from rfdetr.config import AugmentationBackend
+        from rfdetr.training.module_data import _resolve_augmentation_backend
+
+        assert _resolve_augmentation_backend("gpu") == AugmentationBackend.KORNIA
+
+    def test_resolve_augmentation_backend_albu_passthrough(self):
+        """_resolve_augmentation_backend passes 'albu' through as ALBU enum member."""
+        from rfdetr.config import AugmentationBackend
+        from rfdetr.training.module_data import _resolve_augmentation_backend
+
+        assert _resolve_augmentation_backend("albu") == AugmentationBackend.ALBU
 
 
 # ---------------------------------------------------------------------------

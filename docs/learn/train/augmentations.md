@@ -51,7 +51,7 @@ To disable all optional training augmentation including the torchvision default 
 | `AUG_AERIAL`       | Satellite / overhead imagery      |
 | `AUG_INDUSTRIAL`   | Manufacturing / inspection data   |
 
-All presets are Albumentations config dicts and require `rfdetr[augmentation]`. They are plain dicts, so you can inspect or extend them before passing:
+All presets are Albumentations config dicts and require `rfdetr[augment]`. They are plain dicts, so you can inspect or extend them before passing:
 
 ```python
 from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
@@ -114,8 +114,8 @@ RF-DETR automatically handles bounding boxes for **geometric transforms** (flips
     Be careful with aggressive rotations and crops on datasets where object orientation matters (e.g., text detection, oriented objects).
 
 - **Default path:** Uses torchvision-native transforms and does not require Albumentations.
-- **Custom CPU path:** Non-empty `aug_config` dictionaries use Albumentations and require `rfdetr[augmentation]`.
-- **GPU path:** `augmentation_backend="gpu"` uses Kornia and requires `rfdetr[augmentation]`.
+- **Custom CPU path:** Non-empty `aug_config` dictionaries use Albumentations and require `rfdetr[augment]`.
+- **GPU path:** `augmentation_backend="gpu"` uses Kornia and requires `rfdetr[augment]`.
 - **CPU-bound custom configs:** More transforms means slower data loading
 - **Use `num_workers`:** Parallelize augmentation across data loader workers
 - **Monitor training mAP vs validation mAP:** With strong augmentations it's normal for training mAP to be lower — validation uses original images while training uses augmented (harder) ones

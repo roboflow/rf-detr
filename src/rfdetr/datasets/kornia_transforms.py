@@ -46,6 +46,7 @@ from typing import Any
 import torch
 from torch import Tensor
 
+from rfdetr.config import AugmentationBackend
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -82,43 +83,73 @@ def _has_cuda_device() -> bool:
     return str(DEVICE).startswith("cuda")
 
 
-def resolve_augmentation_backend(backend: str) -> str:
-    """Resolve an ``augmentation_backend`` value to a concrete ``"cpu"`` or ``"gpu"``.
+def resolve_augmentation_backend(backend: str) -> AugmentationBackend:
+    """Resolve an ``augmentation_backend`` value to a concrete :class:`AugmentationBackend`.
 
-    ``"auto"`` resolves to ``"gpu"`` only when both CUDA and Kornia are available; otherwise it falls back to ``"cpu"``.
-    Explicit ``"cpu"`` and ``"gpu"`` values pass through unchanged; ``"gpu"`` is validated (CUDA + kornia presence).
+    ``"auto"`` resolves to ``KORNIA`` when both CUDA and Kornia are available, ``ALBU`` when
+    only Albumentations is installed, and ``CPU`` otherwise.
+    ``"kornia"`` passes through without a CUDA requirement — Kornia can run on CPU tensors.
+    ``"albu"`` forces the Albumentations CPU path regardless of whether ``aug_config`` is set.
+    The legacy ``"gpu"`` string is treated as an alias for ``KORNIA``.
 
     Args:
-        backend: One of ``"cpu"``, ``"auto"``, or ``"gpu"``.
+        backend: One of ``"cpu"``, ``"albu"``, ``"kornia"``, ``"auto"``, or legacy ``"gpu"``.
 
     Returns:
-        ``"cpu"`` or ``"gpu"``.
+        Resolved :class:`AugmentationBackend` member (never ``AUTO``).
 
     Raises:
-        RuntimeError: When *backend* is ``"gpu"`` and no CUDA device is found.
-        ImportError: When *backend* is ``"gpu"`` and kornia is not installed.
-        ValueError: When *backend* is not one of ``"cpu"``, ``"auto"``, or ``"gpu"``.
+        ValueError: When *backend* is not a recognised value.
 
     Examples:
         >>> resolve_augmentation_backend("cpu")
-        'cpu'
+        <AugmentationBackend.CPU: 'cpu'>
+        >>> resolve_augmentation_backend("albu")
+        <AugmentationBackend.ALBU: 'albu'>
     """
-    if backend == "cpu":
-        return "cpu"
-    if backend == "auto":
-        if not _has_cuda_device():
-            return "cpu"
+    if backend in (AugmentationBackend.ALBU, "albu"):
+        return AugmentationBackend.ALBU
+    if backend in (AugmentationBackend.KORNIA, "kornia", "gpu"):
+        # "gpu" accepted as legacy alias; no CUDA requirement on this path
+        return AugmentationBackend.KORNIA
+    if backend in (AugmentationBackend.CPU, "cpu"):
+        # Auto-pick best CPU backend: albu > kornia (CPU) > torchvision
+        try:
+            import albumentations
+
+            return AugmentationBackend.ALBU
+        except ImportError:
+            pass
+        try:
+            import kornia.augmentation
+
+            return AugmentationBackend.KORNIA
+        except ImportError:
+            pass
+        return AugmentationBackend.CPU
+    if backend in (AugmentationBackend.AUTO, "auto"):
+        # Priority: kornia (GPU) > albu > kornia (CPU) > torchvision
+        if _has_cuda_device():
+            try:
+                import kornia.augmentation
+
+                return AugmentationBackend.KORNIA
+            except ImportError:
+                pass
+        try:
+            import albumentations  # noqa: F401 # type: ignore[import-not-found]
+
+            return AugmentationBackend.ALBU
+        except ImportError:
+            pass
         try:
             import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
+
+            return AugmentationBackend.KORNIA
         except ImportError:
-            return "cpu"
-        return "gpu"
-    if backend == "gpu":
-        if not _has_cuda_device():
-            raise RuntimeError("augmentation_backend='gpu' requires a CUDA device")
-        _require_kornia()
-        return "gpu"
-    raise ValueError(f"Unknown augmentation_backend {backend!r}; expected 'cpu', 'auto', or 'gpu'.")
+            pass
+        return AugmentationBackend.CPU
+    raise ValueError(f"Unknown augmentation_backend {backend!r}; expected one of 'cpu', 'albu', 'kornia', 'auto'.")
 
 
 def _require_kornia() -> None:
@@ -130,7 +161,7 @@ def _require_kornia() -> None:
     try:
         import kornia.augmentation  # noqa: F401
     except ImportError as e:
-        raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[augmentation]'") from e
+        raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[augment]'") from e
 
 
 # ---------------------------------------------------------------------------

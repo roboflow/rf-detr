@@ -26,6 +26,7 @@ import torchvision
 from PIL import Image
 from torchvision.transforms.v2 import ToDtype, ToImage
 
+from rfdetr.config import AugmentationBackend
 from rfdetr.datasets.aug_configs import AUG_CONFIG
 from rfdetr.datasets.torchvision_transforms import (
     Compose,
@@ -644,7 +645,7 @@ def _build_torchvision_pipeline(
                 "Albumentations (cv2 INTER_LINEAR, no antialias) to torchvision "
                 "(BILINEAR + antialias=True). Pixel values will differ slightly from "
                 "previous versions; mAP may drift on existing benchmarks. "
-                "To restore the previous behaviour, install rfdetr[augmentation] and "
+                "To restore the previous behaviour, install rfdetr[augment] and "
                 "pass aug_config=AUG_CONFIG from rfdetr.datasets.aug_configs.",
                 UserWarning,
                 stacklevel=4,
@@ -760,7 +761,7 @@ def make_coco_transforms(
             * ``{}`` (empty dict) — disable all optional training augmentation
               including the default horizontal flip.
             * non-empty dict — pass to the optional Albumentations backend;
-              requires ``rfdetr[augmentation]`` to be installed.
+              requires ``rfdetr[augment]`` to be installed.
 
             Note:
                 ``aug_config`` has no effect on ``"val"``, ``"test"``, or ``"val_speed"``
@@ -902,12 +903,15 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(augmentation_backend)
-    if resolved_augmentation_backend != augmentation_backend and resolved_augmentation_backend == "cpu":
+    if (
+        resolved_augmentation_backend != augmentation_backend
+        and resolved_augmentation_backend == AugmentationBackend.CPU
+    ):
         logger.warning(
             "augmentation_backend='auto' resolved to 'cpu' because CUDA or kornia is unavailable; "
             "disabling GPU postprocess transforms and retaining CPU normalization."
         )
-    gpu_postprocess = resolved_augmentation_backend != "cpu"
+    gpu_postprocess = resolved_augmentation_backend == AugmentationBackend.KORNIA
 
     if square_resize_div_64:
         logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
@@ -1000,7 +1004,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
     aug_config = getattr(args, "aug_config", None)
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
-    gpu_postprocess = resolved_augmentation_backend != "cpu"
+    gpu_postprocess = resolved_augmentation_backend == AugmentationBackend.KORNIA
 
     if square_resize_div_64:
         logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")

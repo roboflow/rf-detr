@@ -13,6 +13,7 @@ from typing import Any
 
 from PIL import Image
 
+from rfdetr.config import AugmentationBackend
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.utilities.logger import get_logger
 
@@ -35,13 +36,13 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
     resolved_backend = resolve_augmentation_backend(augmentation_backend)
 
-    if resolved_backend != "cpu":
+    if resolved_backend == AugmentationBackend.KORNIA:
         logger.warning(
             "O365 dataset does not support custom aug_config in Phase 1 GPU augmentation; "
             "Albumentations augmentation is skipped and normalization runs on GPU. "
-            "Pass augmentation_backend='cpu' for full CPU augmentation pipeline with O365."
+            "Pass augmentation_backend='cpu' or 'albu' for full CPU augmentation pipeline with O365."
         )
-    gpu_postprocess = resolved_backend != "cpu"
+    gpu_postprocess = resolved_backend == AugmentationBackend.KORNIA
 
     if square_resize_div_64:
         dataset = CocoDetection(

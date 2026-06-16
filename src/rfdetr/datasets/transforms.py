@@ -188,7 +188,7 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> alb.BasicTransfo
     if alb is None:
         raise ImportError(
             "Custom Albumentations augmentations require the optional augmentation extra. "
-            "Install with: pip install 'rfdetr[augmentation]'"
+            "Install with: pip install 'rfdetr[augment]'"
         )
 
     if name in ALBUMENTATIONS_CONTAINERS:
@@ -915,7 +915,7 @@ class AlbumentationsWrapper:
         if alb is None:
             raise ImportError(
                 "Custom Albumentations augmentations require the optional augmentation extra. "
-                "Install with: pip install 'rfdetr[augmentation]'"
+                "Install with: pip install 'rfdetr[augment]'"
             )
 
         transforms = []

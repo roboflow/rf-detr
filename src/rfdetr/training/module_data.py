@@ -14,7 +14,7 @@ from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader
 
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.config import AugmentationBackend, ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
 from rfdetr.datasets.aug_configs import AUG_CONFIG
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
@@ -105,36 +105,29 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset):
 
 
 def _resolve_augmentation_backend(backend: str) -> str:
-    """Resolve ``"auto"`` to ``"cpu"`` or ``"gpu"`` based on runtime availability.
+    """Resolve an ``augmentation_backend`` value (including ``"auto"``) to a concrete backend.
 
-    For ``"cpu"`` and ``"gpu"`` the value is returned unchanged.  For ``"auto"`` the function checks CUDA and kornia
-    availability and returns ``"gpu"`` only when both are present; otherwise ``"cpu"``.
-
-    Called before dataset construction so that ``gpu_postprocess`` in the dataset builders always matches what the
-    DataModule will actually do in ``on_after_batch_transfer``.
+    Delegates to :func:`rfdetr.datasets.kornia_transforms.resolve_augmentation_backend`.
+    Called before dataset construction so that ``gpu_postprocess`` in dataset builders always
+    matches what the DataModule will do in ``on_after_batch_transfer``.
 
     Args:
         backend: Value of ``TrainConfig.augmentation_backend``.
 
     Returns:
-        Resolved backend string, either ``"cpu"`` or ``"gpu"``.
+        One of ``"cpu"``, ``"albu"``, or ``"kornia"``.
 
     Examples:
         >>> _resolve_augmentation_backend("cpu")
         'cpu'
-        >>> _resolve_augmentation_backend("gpu")
-        'gpu'
+        >>> _resolve_augmentation_backend("albu")
+        'albu'
+        >>> _resolve_augmentation_backend("kornia")
+        'kornia'
     """
-    if backend != "auto":
-        return backend
-    if not _has_cuda_device():
-        return "cpu"
-    try:
-        import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
+    from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
 
-        return "gpu"
-    except ImportError:
-        return "cpu"
+    return resolve_augmentation_backend(backend)
 
 
 class RFDETRDataModule(LightningDataModule):
@@ -227,20 +220,22 @@ class RFDETRDataModule(LightningDataModule):
             resolved = _resolve_augmentation_backend(self.train_config.augmentation_backend)
             if resolved != self.train_config.augmentation_backend:
                 ns.augmentation_backend = resolved
-            if self.model_config.use_grouppose_keypoints and resolved != "cpu":
+            # ALBU forces Albumentations even when aug_config is None
+            if resolved == AugmentationBackend.ALBU and ns.aug_config is None:
+                ns.aug_config = AUG_CONFIG
+            if self.model_config.use_grouppose_keypoints and resolved == AugmentationBackend.KORNIA:
                 raise ValueError(
-                    f"GPU augmentation backend '{resolved}' does not support keypoint transforms. "
-                    "Set augmentation_backend='cpu' when use_grouppose_keypoints=True."
+                    f"augmentation_backend='{resolved}' does not support keypoint transforms. "
+                    "Set augmentation_backend='cpu' or 'albu' when use_grouppose_keypoints=True."
                 )
             if self._dataset_train is None:
                 self._dataset_train = build_dataset("train", ns, resolution)
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
-            # Build Kornia GPU augmentation pipeline (once).
-            # Use _kornia_setup_done (not _kornia_pipeline is None) so that fallback
-            # paths — where the pipeline stays None — do not re-run on every setup("fit").
+            # Build Kornia pipeline (once); use _kornia_setup_done so fallback paths
+            # (pipeline stays None) do not re-run on repeated setup("fit") calls.
             if not self._kornia_setup_done:
-                self._setup_kornia_pipeline()
+                self._setup_kornia_pipeline(resolved)
                 self._kornia_setup_done = True
         elif stage == "validate":
             if self._dataset_val is None:
@@ -534,35 +529,24 @@ class RFDETRDataModule(LightningDataModule):
         image_info = coco.loadImgs(image_id)[0]
         return Path(image_folder) / image_info["file_name"]
 
-    def _setup_kornia_pipeline(self) -> None:
-        """Resolve augmentation backend and build the Kornia pipeline if applicable.
+    def _setup_kornia_pipeline(self, resolved: AugmentationBackend) -> None:
+        """Build the Kornia pipeline for the given resolved backend.
 
-        Called once during ``setup("fit")``.  When ``augmentation_backend`` is ``"cpu"`` this is a no-op.  For
-        ``"auto"`` the method falls back silently when CUDA or Kornia are unavailable.  For ``"gpu"`` missing
-        requirements raise hard errors.
+        ``CPU`` and ``ALBU`` are no-ops.  ``KORNIA`` validates that kornia is installed
+        then builds the pipeline on whatever device the batch arrives on.
+
+        Args:
+            resolved: Concrete backend returned by :func:`_resolve_augmentation_backend`.
         """
-        backend = self.train_config.augmentation_backend
-        if backend == "cpu":
+        if resolved != AugmentationBackend.KORNIA:
             return
 
-        if backend == "auto":
-            if not _has_cuda_device():
-                logger.warning("augmentation_backend='auto': no CUDA, falling back to CPU augmentation")
-                return
-            try:
-                import kornia.augmentation  # type: ignore[import-not-found]
-            except ImportError:
-                logger.warning("augmentation_backend='auto': kornia not installed, using CPU augmentation")
-                return
-        elif backend == "gpu":
-            if not _has_cuda_device():
-                raise RuntimeError("augmentation_backend='gpu' requires a CUDA device")
-            try:
-                import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
-            except ImportError as err:
-                raise ImportError(
-                        "GPU augmentation requires kornia. Install with: pip install 'rfdetr[augmentation]'"
-                ) from err
+        try:
+            import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
+        except ImportError as err:
+            raise ImportError(
+                "Kornia augmentation requires kornia. Install with: pip install 'rfdetr[augment]'"
+            ) from err
 
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize
 
@@ -572,7 +556,7 @@ class RFDETRDataModule(LightningDataModule):
             with_masks=self.model_config.segmentation_head,
         )
         self._kornia_normalize = build_normalize()
-        logger.info("Kornia GPU augmentation pipeline built (backend=%s)", backend)
+        logger.info("Kornia augmentation pipeline built (resolved=%s)", resolved)
 
     def on_after_batch_transfer(self, batch: Tuple, dataloader_idx: int) -> Tuple:
         """Apply Kornia GPU augmentation after the batch is transferred to device.
