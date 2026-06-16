@@ -8,13 +8,46 @@ Read each section between your current version and your target — every section
 only the delta between two adjacent releases.
 
 ```
-1.4.x  →  1.5 →  1.6  →  1.7
+1.4.x  →  1.5 →  1.6  →  1.7  →  1.8
 ```
 
 You can apply all changes in one go; working through sections one release at a time
 and verifying between each step is optional but makes failures easier to isolate.
 Deprecated APIs emit a `DeprecationWarning` until the version marked for removal.
 See the [Changelog](../changelog.md) for the full list of changes in each release.
+
+---
+
+## Upgrade 1.7 → 1.8
+
+### Breaking changes
+
+!!! warning "Breaking: `rfdetr.datasets.aug_config` renamed to `rfdetr.datasets.aug_configs`"
+
+    The augmentation config module was renamed (singular → plural). If you import from it directly:
+
+    ```python
+    # Before
+    from rfdetr.datasets.aug_config import AUG_AGGRESSIVE
+
+    # After
+    from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
+    ```
+
+    All preset constants (`AUG_AGGRESSIVE`, `AUG_CONSERVATIVE`, etc.) are unchanged.
+
+!!! warning "Breaking: `supervision>=0.29.0` now required"
+
+    Required for `sv.KeyPoints` support. `pip install rfdetr==1.8.0` pulls this automatically.
+    If another dependency pins `supervision<0.29.0`, resolve the conflict manually.
+
+!!! warning "Breaking: `pyDeprecate` constraint narrowed to `>=0.9,<0.10`"
+
+    Was `>=0.6,<0.8`. If another package pins an older version, resolve with:
+
+    ```bash
+    pip install "rfdetr==1.8.0" "pyDeprecate>=0.9,<0.10"
+    ```
 
 ---
 
@@ -47,52 +80,15 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     source = detections.metadata["source_image"]
     ```
 
-### Deprecated (removal in v1.9.0)
+!!! warning "Breaking: `pyDeprecate` constraint changed to `>=0.6,<0.8`"
 
-!!! note "Deprecated: `rfdetr.util.*` and `rfdetr.deploy.*` import paths"
+    Was `>=0.3,<0.6`. If another package pins an older version, resolve with:
 
-    Backward-compatibility shims are still active but emit `DeprecationWarning` on import.
-    Replace with the canonical paths listed in the table below.
-
-    | Deprecated module                 | Canonical replacement              |
-    | --------------------------------- | ---------------------------------- |
-    | `rfdetr.util.coco_classes`        | `rfdetr.assets.coco_classes`       |
-    | `rfdetr.util.misc`                | `rfdetr.utilities`                 |
-    | `rfdetr.util.logger`              | `rfdetr.utilities.logger`          |
-    | `rfdetr.util.box_ops`             | `rfdetr.utilities.box_ops`         |
-    | `rfdetr.util.files`               | `rfdetr.utilities.files`           |
-    | `rfdetr.util.package`             | `rfdetr.utilities.package`         |
-    | `rfdetr.util.get_param_dicts`     | `rfdetr.training.param_groups`     |
-    | `rfdetr.util.drop_scheduler`      | `rfdetr.training.drop_schedule`    |
-    | `rfdetr.util.visualize`           | `rfdetr.visualize.data`            |
-    | `rfdetr.deploy`                   | `rfdetr.export`                    |
-    | `rfdetr.models.segmentation_head` | `rfdetr.models.heads.segmentation` |
-
-    **Examples:**
-
-    ```python
-    # Before (deprecated)
-    from rfdetr.util.coco_classes import COCO_CLASSES
-    from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
-    from rfdetr.util.logger import get_logger
-    from rfdetr.util.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
-    from rfdetr.util.get_param_dicts import get_param_dict
-    from rfdetr.util.drop_scheduler import drop_scheduler
-    from rfdetr.util.visualize import save_gt_predictions_visualization
-    from rfdetr.deploy import export_onnx
-    from rfdetr.models.segmentation_head import SegmentationHead
-
-    # After
-    from rfdetr.assets.coco_classes import COCO_CLASSES
-    from rfdetr.utilities.distributed import get_rank, get_world_size, is_main_process, save_on_master
-    from rfdetr.utilities.logger import get_logger
-    from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
-    from rfdetr.training.param_groups import get_param_dict
-    from rfdetr.training.drop_schedule import drop_scheduler
-    from rfdetr.visualize.data import save_gt_predictions_visualization
-    from rfdetr.export.main import export_onnx
-    from rfdetr.models.heads.segmentation import SegmentationHead
+    ```bash
+    pip install "rfdetr==1.7.0" "pyDeprecate>=0.6,<0.8"
     ```
+
+### Deprecated in v1.7 → Remove in v1.9
 
 !!! note "Deprecated: `build_namespace()` split into two functions"
 
@@ -150,7 +146,7 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     train_config = TrainConfig(cls_loss_coef=2.0)
     ```
 
-### Deprecated (removal in v2.0.0)
+### Deprecated in v1.7 → Remove in v2.0
 
 !!! note "Deprecated: `RFDETRBase` replaced by size-specific classes"
 
@@ -172,21 +168,23 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
 
 !!! note "Deprecated: `RFDETRSegPreview` replaced by size-specific segmentation classes"
 
-    **`RFDETRSegPreview`** defaulted to the small variant and is replaced by size-specific
-    segmentation classes. If you used `RFDETRSegPreview()` without arguments, switch to
-    `RFDETRSegSmall()`.
+````
+**`RFDETRSegPreview`** defaulted to the small variant and is replaced by size-specific
+segmentation classes. If you used `RFDETRSegPreview()` without arguments, switch to
+`RFDETRSegSmall()`.
 
-    ```python
-    # Before (deprecated)
-    from rfdetr import RFDETRSegPreview
+```python
+# Before (deprecated)
+from rfdetr import RFDETRSegPreview
 
-    model = RFDETRSegPreview()
+model = RFDETRSegPreview()
 
-    # After — pick one
-    from rfdetr import RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, RFDETRSegLarge
+# After — pick one
+from rfdetr import RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, RFDETRSegLarge
 
-    model = RFDETRSegSmall()
-    ```
+model = RFDETRSegSmall()
+```
+````
 
 ---
 
@@ -240,9 +238,9 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     img, polygon = draw_synthetic_shape(...)
     ```
 
-### Deprecated (removal in v1.8.0)
+### Deprecated in v1.6 → Removed in v1.8
 
-!!! note "Deprecated: `simplify` and `force` arguments removed from `RFDETR.export()`"
+!!! note "Deprecated: `simplify` and `force` arguments in `RFDETR.export()`"
 
     **`RFDETR.export(..., simplify=..., force=...)`** — both arguments are no-ops.
     Remove them from your calls.
@@ -255,30 +253,51 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     model.export("model.onnx")
     ```
 
-### Deprecated (removal in v1.9.0, extended from v1.7.0)
+### Deprecated in v1.6 → Remove in v1.9
 
-!!! note "Deprecated: `rfdetr.deploy.*` moved to `rfdetr.export.*`"
+!!! note "Deprecated: `rfdetr.util.*` and `rfdetr.deploy.*` import paths"
 
-    **`rfdetr.deploy.*`** — use `rfdetr.export.*`.
+    Backward-compatibility shims are still active but emit `DeprecationWarning` on import.
+    Replace with the canonical paths listed in the table below.
+
+    | Deprecated module                 | Canonical replacement              |
+    | --------------------------------- | ---------------------------------- |
+    | `rfdetr.util.coco_classes`        | `rfdetr.assets.coco_classes`       |
+    | `rfdetr.util.misc`                | `rfdetr.utilities`                 |
+    | `rfdetr.util.logger`              | `rfdetr.utilities.logger`          |
+    | `rfdetr.util.box_ops`             | `rfdetr.utilities.box_ops`         |
+    | `rfdetr.util.files`               | `rfdetr.utilities.files`           |
+    | `rfdetr.util.package`             | `rfdetr.utilities.package`         |
+    | `rfdetr.util.get_param_dicts`     | `rfdetr.training.param_groups`     |
+    | `rfdetr.util.drop_scheduler`      | `rfdetr.training.drop_schedule`    |
+    | `rfdetr.util.visualize`           | `rfdetr.visualize.data`            |
+    | `rfdetr.deploy`                   | `rfdetr.export`                    |
+    | `rfdetr.models.segmentation_head` | `rfdetr.models.heads.segmentation` |
+
+    **Examples:**
 
     ```python
     # Before (deprecated)
+    from rfdetr.util.coco_classes import COCO_CLASSES
+    from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
+    from rfdetr.util.logger import get_logger
+    from rfdetr.util.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
+    from rfdetr.util.get_param_dicts import get_param_dict
+    from rfdetr.util.drop_scheduler import drop_scheduler
+    from rfdetr.util.visualize import save_gt_predictions_visualization
     from rfdetr.deploy import export_onnx
+    from rfdetr.models.segmentation_head import SegmentationHead
 
     # After
+    from rfdetr.assets.coco_classes import COCO_CLASSES
+    from rfdetr.utilities.distributed import get_rank, get_world_size, is_main_process, save_on_master
+    from rfdetr.utilities.logger import get_logger
+    from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
+    from rfdetr.training.param_groups import get_param_dict
+    from rfdetr.training.drop_schedule import drop_scheduler
+    from rfdetr.visualize.data import save_gt_predictions_visualization
     from rfdetr.export.main import export_onnx
-    ```
-
-!!! note "Deprecated: `rfdetr.util.*` moved to `rfdetr.utilities.*`"
-
-    **`rfdetr.util.*`** — use `rfdetr.utilities.*`.
-
-    ```python
-    # Before (deprecated)
-    from rfdetr.util.misc import get_rank
-
-    # After
-    from rfdetr.utilities.distributed import get_rank
+    from rfdetr.models.heads.segmentation import SegmentationHead
     ```
 
 ---
@@ -302,7 +321,7 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     config = ModelConfig()
     ```
 
-### Deprecated (removal in v1.7.0)
+### Deprecated in v1.5 → Removed in v1.7
 
 !!! note "Deprecated: `OPEN_SOURCE_MODELS` replaced by `ModelWeights` enum"
 

@@ -7,27 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Default dataset augmentations now use torchvision-native transforms; non-empty custom `aug_config` dictionaries use the optional Albumentations integration and Kornia GPU backend, both via `pip install 'rfdetr[augment]'`. The `[train]` extra no longer installs Albumentations or Kornia. ([#1112](https://github.com/roboflow/rf-detr/pull/1112))
+
+---
+
+## [1.8.0] — 2026-06-13
+
 ### Added
 
-- `RFDETR.export_for_roboflow(output_dir)` — writes a Roboflow upload bundle (`weights.pt` + `class_names.txt`) without a network call; extracted from `deploy_to_roboflow`, which now uses it ([#1086](https://github.com/roboflow/rf-detr/pull/1086))
-- `RFDETRKeypointPreview` — keypoint detection model variant with GroupPose-style head, covariance-based uncertainty (precision-Cholesky parameterization), and COCO keypoint AP evaluation. Also adds `KeypointTrainConfig`, `infer_coco_keypoint_schema`, `CocoKeypointSchema`, and `active_keypoint_counts` to the public API ([#1099](https://github.com/roboflow/rf-detr/pull/1099))
+- `RFDETRKeypointPreview` — keypoint detection model variant with GroupPose-style head, covariance-based uncertainty (precision-Cholesky parameterization), and COCO keypoint AP evaluation. Public config classes: `KeypointTrainConfig`, `RFDETRKeypointPreviewConfig` (from `rfdetr.config`). Utility: `precision_cholesky_to_pixel_covariance` (from `rfdetr.utilities`). Schema helpers `infer_coco_keypoint_schema`, `CocoKeypointSchema`, `active_keypoint_counts` accessible via `rfdetr.datasets._keypoint_schema`. ([#1099](https://github.com/roboflow/rf-detr/pull/1099))
+- `RFDETR.export_for_roboflow(output_dir)` — writes a Roboflow upload bundle (`weights.pt` + `class_names.txt`) without a network call; extracted from `deploy_to_roboflow`, which now delegates to it. ([#1086](https://github.com/roboflow/rf-detr/pull/1086))
+- Keypoint fine-tuning cookbook (`docs/cookbooks/fine-tune_keypoints.ipynb`) — end-to-end walkthrough: dataset download, schema inference, `KeypointTrainConfig`, training metrics, and inference with covariance uncertainty. ([#1104](https://github.com/roboflow/rf-detr/pull/1104))
+- `MetricKeypointOKS` — reusable OKS metric facade over `CocoEvaluator`, exported from `rfdetr.evaluation`. Supports arbitrary keypoint counts, per-category OKS sigma values, DDP-safe evaluation with first-rank-wins deduplication, and an `OKSKey` enum (`mAP`, `mAP@50`, `mAP@75`, `mAR`) for standardised metric keys. ([#1107](https://github.com/roboflow/rf-detr/pull/1107))
 
 ### Changed
 
-- Default dataset augmentations now use torchvision-native transforms; non-empty custom `aug_config` dictionaries use the optional Albumentations integration and Kornia GPU backend, both via `pip install 'rfdetr[augment]'`. The `[train]` extra no longer installs Albumentations or Kornia. ([#1112](https://github.com/roboflow/rf-detr/pull/1112))
+- DDP strategy now enables `find_unused_parameters=True` for all detection, keypoint, and segmentation models when running under `strategy='ddp'` or `strategy='auto'` with a distributed launcher. Previously only enabled for segmentation. Opt out via `trainer_kwargs={"strategy": DDPStrategy(find_unused_parameters=False)}`. ([#1094](https://github.com/roboflow/rf-detr/pull/1094))
+- `rfdetr.datasets.aug_config` module renamed to `rfdetr.datasets.aug_configs` (plural). Direct imports from `rfdetr.datasets.aug_config` must be updated to `rfdetr.datasets.aug_configs`; the augmentation preset constants (`AUG_AGGRESSIVE`, etc.) are unchanged. ([#1103](https://github.com/roboflow/rf-detr/pull/1103))
 
-### Deprecated
+### Removed
 
--
+- `RFDETR.export(simplify=..., force=...)` — both kwargs removed from the signature. Deprecated since v1.6.0 with `remove_in="1.8.0"`; both were no-ops during the deprecation window. Callers passing these args must remove them before upgrading. ([#1102](https://github.com/roboflow/rf-detr/pull/1102))
 
 ### Fixed
 
-- Fixed `import rfdetr` failing on NumPy 2.x when a transitive dependency references the removed `np.complex_` alias ([#1064](https://github.com/roboflow/rf-detr/pull/1064))
+- `RFDETR.from_checkpoint()` no longer treats `num_classes` loaded from the checkpoint as a user-supplied override. Previously, fine-tuning a checkpoint model on a dataset with a different class count was silently refused — the head refused to re-initialise and trained against the stale class count. An explicit `num_classes` kwarg from the caller still wins over both the checkpoint value and the dataset. ([#1106](https://github.com/roboflow/rf-detr/pull/1106))
+- Scale jitter restored in non-square training crop. `RandomCrop` in the `option_b` branch replaced with `RandomSizedCrop`, restoring the scale-augmentation behaviour lost during the Albumentations migration. ([#1088](https://github.com/roboflow/rf-detr/pull/1088))
+- Multi-GPU validation deadlock in COCO mAP synchronization prevented. `_merge_metric_state_across_ranks` now safe across zero-batch ranks. ([#1085](https://github.com/roboflow/rf-detr/pull/1085))
+- `import rfdetr` no longer fails on NumPy 2.x when a transitive dependency references the removed `np.complex_` alias. ([#1064](https://github.com/roboflow/rf-detr/pull/1064))
+- `rfdetr_plus` module availability check corrected; false-positive hit when the package was partially installed. ([#1083](https://github.com/roboflow/rf-detr/pull/1083))
 - Fixed spurious "Keypoint class-logit boost has N classes but detection head has M" warning on custom (non-Roboflow) keypoint datasets: `_align_num_classes_from_dataset` now zero-pads `num_keypoints_per_class` when auto-adjusting `num_classes` beyond the schema length ([#1113](https://github.com/roboflow/rf-detr/pull/1113))
-
-### Security
-
--
+- Loss scaling corrected for keypoint training under gradient accumulation (`accumulate_grad_batches > 1`). Keypoint models now use manual optimization to normalize losses by the accumulated box count across the effective batch; detection and segmentation remain on Lightning's automatic-optimization path. Optimizer-step scheduling, LR warmup/decay, and epoch-boundary flushing are correctly handled in both paths. ([#1117](https://github.com/roboflow/rf-detr/pull/1117))
+- Device auto-detection now verifies accelerator runtime availability before selecting a device (PyTorch ≥ 2.4: `torch.accelerator.current_accelerator`; older builds: `torch.cuda.is_available()`). Previously, a machine with CUDA headers but no GPU driver could be assigned a CUDA device that fails at first use. ([#1111](https://github.com/roboflow/rf-detr/pull/1111))
+- `RFDETR.from_checkpoint()` and related APIs now honor an explicit `num_classes` argument even when its value equals the model default. Previously, passing `num_classes=N` where `N` is the default (e.g. 80 for COCO) was silently treated as unset, causing fine-tuning on a different class count to be refused. ([#1109](https://github.com/roboflow/rf-detr/pull/1109))
+- `RFDETR.from_checkpoint()` correctly infers the model variant from the checkpoint filename when `pretrain_weights` is absent or unset-like (empty string, `None`, whitespace). Previously, starter-like checkpoints without an explicit `pretrain_weights` entry raised an error or silently loaded the wrong model class. ([#1065](https://github.com/roboflow/rf-detr/pull/1065))
 
 ---
 
