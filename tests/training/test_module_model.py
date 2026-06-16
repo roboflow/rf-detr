@@ -165,6 +165,7 @@ class _BoxNormalizedCriterion:
     """Criterion with controllable per-target loss numerators and box counts."""
 
     weight_dict = {"loss_ce": 1.0}
+    supports_loss_normalizer_override: bool = True
 
     def num_boxes_for_targets(self, outputs, targets):
         return torch.as_tensor(
@@ -1032,9 +1033,6 @@ class TestOnTrainEpochStart:
         optimizer = torch.optim.SGD([real_param], lr=1.0)
         module.optimizers = MagicMock(return_value=optimizer)
         module._accumulated_box_normalizer = torch.tensor(7.0)
-        # Wire a trainer so on_train_epoch_start can call self.optimizers().
-        trainer = MagicMock()
-        module._trainer = trainer
 
         module.on_train_epoch_start()
 
@@ -1051,11 +1049,6 @@ class TestRescaleAccumulatedGradients:
             model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
             tmp_path=tmp_path,
         )
-        param_a = nn.Parameter(torch.zeros(3))
-        param_b = nn.Parameter(torch.zeros(5))
-        param_a.grad = torch.full((3,), 4.0)
-        param_b.grad = torch.full((5,), 8.0)
-        # Wire a real model with the two params so _rescale iterates over them.
         nano_model = nn.Linear(3, 5)
         # weight: [5, 3], bias: [5]
         nano_model.weight.grad = torch.full((5, 3), 4.0)

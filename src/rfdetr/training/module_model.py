@@ -166,12 +166,15 @@ class RFDETRModelModule(LightningModule):
         ``num_training_batches``) a partial window may survive epoch end with un-stepped gradients; those are
         discarded here and the optimizer is zeroed so the first microbatch of the new epoch starts from a clean state.
         """
-        if self._accumulated_box_normalizer is not None and self._trainer is not None:
+        if self._accumulated_box_normalizer is not None:
             # Discard any partial accumulation window that survived the epoch boundary
             # (only possible for IterableDatasets where num_training_batches is infinite).
-            opts = self.optimizers()
-            for opt in opts if isinstance(opts, list) else [opts]:
-                opt.zero_grad()
+            try:
+                opts = self.optimizers()
+                for opt in opts if isinstance(opts, list) else [opts]:
+                    opt.zero_grad()
+            except RuntimeError:
+                pass  # Not attached to Trainer (unit-test context); nothing to zero.
         self._accumulated_box_normalizer = None
 
     def training_step(self, batch: Tuple, batch_idx: int) -> torch.Tensor | dict[str, Any]:
@@ -269,6 +272,13 @@ class RFDETRModelModule(LightningModule):
             A tuple of normalized loss dictionary, unnormalized weighted loss numerator, and box normalizer.
         """
         weight_dict = self.criterion.weight_dict
+        if not getattr(self.criterion, "supports_loss_normalizer_override", False):
+            raise ValueError(
+                f"{type(self.criterion).__name__}.supports_loss_normalizer_override is False; "
+                "manual optimization (keypoint models) requires a criterion that accepts a "
+                "num_boxes keyword argument. Set supports_loss_normalizer_override = True on "
+                "your criterion subclass and implement the num_boxes parameter in forward()."
+            )
         normalizer = self.criterion.num_boxes_for_targets(outputs, targets)
         numerator_loss_dict = self.criterion(outputs, targets, num_boxes=torch.ones_like(normalizer))
         # Keys in weight_dict are loss terms whose criterion implementation divides by num_boxes
