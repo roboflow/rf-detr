@@ -1553,6 +1553,145 @@ class TestBestEmaStatePersistence:
 
 
 # ---------------------------------------------------------------------------
+# TestBestModelSmoothAlpha
+# ---------------------------------------------------------------------------
+
+
+class TestBestModelSmoothAlpha:
+    """Verify ``smooth_alpha`` smooths the monitored metric before checkpoint comparison.
+
+    Without smoothing, a single noisy spike (e.g. 0.9 surrounded by 0.3-0.4 values) locks the best checkpoint to that
+    spike epoch.  With ``smooth_alpha=0.5`` the EMA of the metric is what the parent ModelCheckpoint compares, so the
+    later, steadily-improving epochs can overtake the early spike.
+    """
+
+    @pytest.mark.parametrize(
+        ("invalid_value", "exc_type"),
+        [
+            pytest.param(True, TypeError, id="bool_true"),
+            pytest.param("0.5", TypeError, id="string"),
+            pytest.param(-0.1, ValueError, id="negative"),
+            pytest.param(1.0, ValueError, id="exactly_one"),
+            pytest.param(1.5, ValueError, id="greater_than_one"),
+            pytest.param(float("nan"), ValueError, id="nan"),
+            pytest.param(float("inf"), ValueError, id="inf"),
+        ],
+    )
+    def test_invalid_smooth_alpha_raises(
+        self, tmp_path: Path, invalid_value: object, exc_type: type[Exception]
+    ) -> None:
+        """BestModelCallback raises TypeError for non-numeric and ValueError for out-of-range smooth_alpha."""
+        with pytest.raises(exc_type):
+            BestModelCallback(output_dir=str(tmp_path), smooth_alpha=invalid_value)  # type: ignore[arg-type]
+
+    def test_smoothing_disabled_when_alpha_zero(self, tmp_path: Path) -> None:
+        """With smooth_alpha=0.0 (default), the raw metric drives checkpoint selection unchanged."""
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.0)
+        pl_module = _make_pl_module()
+
+        trainer = _make_trainer({"val/mAP_50_95": 0.42}, current_epoch=0)
+        cb.on_validation_end(trainer, pl_module)
+
+        # best_model_score reflects the raw value because no smoothing was applied.
+        assert cb.best_model_score is not None
+        assert cb.best_model_score.item() == pytest.approx(0.42)
+        # The smoothing accumulator must stay at its zero default when smoothing is disabled.
+        assert cb._smoothed_regular == 0.0
+
+    def test_smoothing_uses_ema_of_raw_metric(self, tmp_path: Path) -> None:
+        """With smooth_alpha=0.5, best_model_score reflects the smoothed EMA, not the raw value."""
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        pl_module = _make_pl_module()
+
+        trainer = _make_trainer({"val/mAP_50_95": 0.8}, current_epoch=0)
+        cb.on_validation_end(trainer, pl_module)
+
+        # EMA: 0.5 * 0.0 + 0.5 * 0.8 = 0.4 — the smoothed value, not the raw 0.8.
+        assert cb._smoothed_regular == pytest.approx(0.4)
+        assert cb.best_model_score is not None
+        assert cb.best_model_score.item() == pytest.approx(0.4)
+
+    def test_smoothing_prefers_steady_improvement_over_early_spike(self, tmp_path: Path) -> None:
+        """A late, smoothed run that beats the smoothed early spike wins the best checkpoint."""
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        pl_module = _make_pl_module()
+
+        # Epoch 0: raw=0.8 → smoothed=0.4
+        # Epoch 1: raw=0.3 → smoothed=0.35
+        # Epoch 2: raw=0.4 → smoothed=0.375
+        # Epoch 3: raw=0.6 → smoothed=0.4875  (overtakes the early spike's smoothed 0.4)
+        raw_per_epoch = [0.8, 0.3, 0.4, 0.6]
+        for epoch, value in enumerate(raw_per_epoch):
+            trainer = _make_trainer({"val/mAP_50_95": value}, current_epoch=epoch)
+            # Distinct global_step per epoch so ModelCheckpoint does not skip saves on
+            # the second-and-later calls due to its same-step guard.
+            trainer.global_step = epoch + 1
+            cb.on_validation_end(trainer, pl_module)
+
+        # The best smoothed value should be epoch-3's 0.4875, not epoch-0's 0.4.
+        assert cb._smoothed_regular == pytest.approx(0.4875)
+        assert cb.best_model_score is not None
+        assert cb.best_model_score.item() == pytest.approx(0.4875)
+
+    def test_callback_metrics_restored_after_super_call(self, tmp_path: Path) -> None:
+        """trainer.callback_metrics[monitor] must hold the original raw tensor after on_validation_end returns."""
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        pl_module = _make_pl_module()
+        trainer = _make_trainer({"val/mAP_50_95": 0.8}, current_epoch=0)
+        raw_tensor = trainer.callback_metrics["val/mAP_50_95"]
+
+        cb.on_validation_end(trainer, pl_module)
+
+        # The original tensor (raw value 0.8) must be back in callback_metrics so other
+        # callbacks and metrics.csv see the unsmoothed value.
+        assert trainer.callback_metrics["val/mAP_50_95"] is raw_tensor
+        assert trainer.callback_metrics["val/mAP_50_95"].item() == pytest.approx(0.8)
+
+    def test_state_dict_includes_smoothed_regular(self, tmp_path: Path) -> None:
+        """state_dict() must include _smoothed_regular so resumed training continues from the correct EMA value."""
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        pl_module = _make_pl_module()
+        trainer = _make_trainer({"val/mAP_50_95": 0.8}, current_epoch=0)
+        cb.on_validation_end(trainer, pl_module)
+
+        state = cb.state_dict()
+
+        assert "_smoothed_regular" in state
+        assert state["_smoothed_regular"] == pytest.approx(0.4)
+
+    def test_load_state_dict_restores_smoothed_regular(self, tmp_path: Path) -> None:
+        """load_state_dict() must restore _smoothed_regular so the EMA continues from the persisted value."""
+        cb_first = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        pl_module = _make_pl_module()
+        trainer = _make_trainer({"val/mAP_50_95": 0.8}, current_epoch=0)
+        cb_first.on_validation_end(trainer, pl_module)
+        saved_state = cb_first.state_dict()
+
+        cb_resumed = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        cb_resumed.load_state_dict(saved_state)
+
+        assert cb_resumed._smoothed_regular == pytest.approx(0.4)
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [
+            pytest.param(float("nan"), id="nan"),
+            pytest.param(float("inf"), id="inf"),
+            pytest.param(float("-inf"), id="neg_inf"),
+        ],
+    )
+    def test_load_state_dict_non_finite_smoothed_regular_resets_to_zero(self, tmp_path: Path, bad_value: float) -> None:
+        """load_state_dict() resets non-finite persisted _smoothed_regular values to 0.0."""
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        state = cb.state_dict()
+        state["_smoothed_regular"] = bad_value
+
+        cb.load_state_dict(state)
+
+        assert cb._smoothed_regular == 0.0
+
+
+# ---------------------------------------------------------------------------
 # TestCheckpointNotes
 # ---------------------------------------------------------------------------
 

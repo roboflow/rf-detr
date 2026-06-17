@@ -849,4 +849,5 @@ class KeypointTrainConfig(TrainConfig):
     keypoint_l1_loss_coef: float = 1
     keypoint_findable_loss_coef: float = 1
     keypoint_visible_loss_coef: float = 1
-    keypoint_nll_loss_coef: float = 1
+    # Reduced from 1.0: NLL-Cholesky precision coupling amplifies position gradients → OKS@75 oscillation.
+    keypoint_nll_loss_coef: float = 0.5

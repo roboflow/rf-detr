@@ -51,6 +51,15 @@ class BestModelCallback(ModelCheckpoint):
         skip_best_epochs: Ignore the first N epochs (0..N-1) when tracking
             best regular and EMA checkpoints.  Useful when fine-tuning from ``pretrain_weights``: the pretrained model's
             epoch-0 mAP can artificially dominate best-checkpoint selection before training adapts to the new dataset.
+        smooth_alpha: Exponential-moving-average smoothing factor in ``[0.0, 1.0)`` applied to the regular monitor
+            metric before checkpoint comparison.  ``0.0`` (default) disables smoothing and keeps legacy behaviour:
+            ``trainer.callback_metrics[monitor_regular]`` is consumed as-is by the parent
+            :class:`~pytorch_lightning.callbacks.ModelCheckpoint`.  ``smooth_alpha > 0`` maintains an internal EMA
+            state ``self._smoothed_regular = alpha * self._smoothed_regular + (1 - alpha) * raw`` and temporarily
+            substitutes the smoothed value into ``trainer.callback_metrics`` for the duration of the parent's
+            improvement check; the original raw value is always restored before returning so what gets logged to
+            ``metrics.csv`` is unaffected.  Useful for noisy metrics (e.g. keypoint mAP under NLL-Cholesky losses) where
+            raw per-epoch swings can lock the best checkpoint to an early local peak.
 
     Examples:
         Skip the first 3 epochs so pretrained weights do not dominate:
@@ -72,6 +81,7 @@ class BestModelCallback(ModelCheckpoint):
         monitor_ema: str | None = None,
         run_test: bool = True,
         skip_best_epochs: int = 0,
+        smooth_alpha: float = 0.0,
     ) -> None:
         super().__init__(
             dirpath=output_dir,
@@ -93,6 +103,15 @@ class BestModelCallback(ModelCheckpoint):
         if skip_best_epochs < 0:
             raise ValueError("skip_best_epochs must be greater than or equal to 0")
         self._skip_best_epochs = skip_best_epochs
+        if isinstance(smooth_alpha, bool) or not isinstance(smooth_alpha, (int, float)):
+            raise TypeError("smooth_alpha must be a float in [0.0, 1.0)")
+        if not math.isfinite(smooth_alpha) or smooth_alpha < 0.0 or smooth_alpha >= 1.0:
+            raise ValueError("smooth_alpha must be in [0.0, 1.0)")
+        self._smooth_alpha: float = float(smooth_alpha)
+        # EMA accumulator for the regular monitor metric.  Only updated when
+        # ``smooth_alpha > 0``; persisted via state_dict()/load_state_dict() so resumed
+        # training continues smoothing from the correct value rather than restarting at 0.0.
+        self._smoothed_regular: float = 0.0
         # Stash current pl_module so _save_checkpoint (no pl_module param) can access it.
         self._current_pl_module: LightningModule | None = None
 
@@ -233,24 +252,27 @@ class BestModelCallback(ModelCheckpoint):
         return None
 
     def state_dict(self) -> dict[str, Any]:
-        """Return callback state including ``_best_ema`` for Lightning checkpointing.
+        """Return callback state including ``_best_ema`` and ``_smoothed_regular`` for Lightning checkpointing.
 
-        Extends the parent :class:`~pytorch_lightning.callbacks.ModelCheckpoint` state dict with ``_best_ema`` so that
-        ``trainer.fit(ckpt_path=...)`` resumes EMA tracking from the correct high-water mark rather than resetting to
-        ``0.0``.
+        Extends the parent :class:`~pytorch_lightning.callbacks.ModelCheckpoint` state dict with two extra keys so that
+        ``trainer.fit(ckpt_path=...)`` resumes the EMA high-water mark and the smoothed-metric accumulator from their
+        correct values rather than resetting both to ``0.0``.
 
         Returns:
-            State dict with all parent fields plus ``"_best_ema"``.
+            State dict with all parent fields plus ``"_best_ema"`` and ``"_smoothed_regular"``.
         """
         state = super().state_dict()
         state["_best_ema"] = self._best_ema
+        state["_smoothed_regular"] = self._smoothed_regular
         return state
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         """Restore callback state from a Lightning checkpoint.
 
-        Pops ``"_best_ema"`` from a shallow copy of *state_dict* before delegating to the parent so the parent does not
-        receive an unexpected key.  Defaults to ``0.0`` when the key is absent (e.g. checkpoints saved before this fix).
+        Pops ``"_best_ema"`` and ``"_smoothed_regular"`` from a shallow copy of *state_dict* before delegating to the
+        parent so the parent does not receive unexpected keys.  Each key defaults to ``0.0`` when absent (e.g.
+        checkpoints saved before these fields were persisted) and is reset to ``0.0`` when the stored value is
+        non-finite.
 
         Args:
             state_dict: Callback state dict as produced by :meth:`state_dict`.
@@ -260,6 +282,9 @@ class BestModelCallback(ModelCheckpoint):
         self._best_ema = float(state.pop("_best_ema", 0.0))
         if not math.isfinite(self._best_ema):
             self._best_ema = 0.0
+        self._smoothed_regular = float(state.pop("_smoothed_regular", 0.0))
+        if not math.isfinite(self._smoothed_regular):
+            self._smoothed_regular = 0.0
         super().load_state_dict(state)
 
     def _save_checkpoint(self, trainer: Trainer, filepath: str) -> None:
@@ -346,7 +371,22 @@ class BestModelCallback(ModelCheckpoint):
         # so the key is absent from callback_metrics).
         if self.monitor not in trainer.callback_metrics:
             return
-        super().on_validation_end(trainer, pl_module)
+        # Optional EMA smoothing of the monitored metric before the parent's improvement
+        # check.  The smoothed value is substituted into ``trainer.callback_metrics`` for
+        # the duration of the super() call only; the original raw tensor is always
+        # restored in the ``finally`` block so what gets logged to ``metrics.csv`` and
+        # seen by other callbacks (including EMA tracking below) is unaffected.
+        if self._smooth_alpha > 0.0:
+            raw = trainer.callback_metrics[self.monitor].item()
+            self._smoothed_regular = self._smooth_alpha * self._smoothed_regular + (1.0 - self._smooth_alpha) * raw
+            original = trainer.callback_metrics[self.monitor]
+            trainer.callback_metrics[self.monitor] = torch.tensor(self._smoothed_regular)
+            try:
+                super().on_validation_end(trainer, pl_module)
+            finally:
+                trainer.callback_metrics[self.monitor] = original
+        else:
+            super().on_validation_end(trainer, pl_module)
 
         # EMA model — custom tracking on top of parent.
         if self._monitor_ema is None or not trainer.is_global_zero:

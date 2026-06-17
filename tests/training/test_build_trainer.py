@@ -270,6 +270,58 @@ class TestBuildTrainerCallbacks:
         assert isinstance(trainer, __import__("pytorch_lightning").Trainer)
 
 
+class TestBuildTrainerKeypointDefaults:
+    """Verify build_trainer() applies keypoint-specific defaults for noisy fine-tuning metrics."""
+
+    def test_keypoint_default_skip_best_epochs_is_ten(self, tmp_path):
+        """For keypoint models, skip_best_epochs defaults to 10 when the user did not set it explicitly."""
+        with pytest.warns(UserWarning, match="skip_best_epochs defaulted to 10"):
+            trainer = build_trainer(
+                _tc(tmp_path, use_ema=False, early_stopping=True),
+                RFDETRKeypointPreviewConfig(pretrain_weights=None),
+            )
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert best_cb._skip_best_epochs == 10
+        assert early_stop_cb._skip_best_epochs == 10
+
+    def test_keypoint_explicit_skip_best_epochs_overrides_default(self, tmp_path):
+        """An explicitly-set skip_best_epochs on a keypoint config must override the keypoint default with no
+        warning."""
+        with warnings.catch_warnings(record=True) as records:
+            warnings.simplefilter("always")
+            trainer = build_trainer(
+                _tc(tmp_path, use_ema=False, skip_best_epochs=3),
+                RFDETRKeypointPreviewConfig(pretrain_weights=None),
+            )
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb._skip_best_epochs == 3
+        assert not any("skip_best_epochs defaulted to 10" in str(r.message) for r in records)
+
+    def test_non_keypoint_default_skip_best_epochs_is_zero(self, tmp_path):
+        """For detection models, skip_best_epochs default remains 0 (no keypoint-default warning, no override)."""
+        with warnings.catch_warnings(record=True) as records:
+            warnings.simplefilter("always")
+            trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb._skip_best_epochs == 0
+        assert not any("skip_best_epochs defaulted to 10" in str(r.message) for r in records)
+
+    def test_keypoint_smooth_alpha_is_half(self, tmp_path):
+        """BestModelCallback receives smooth_alpha=0.5 for keypoint models to dampen noisy mAP swings."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            trainer = build_trainer(_tc(tmp_path, use_ema=False), RFDETRKeypointPreviewConfig(pretrain_weights=None))
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb._smooth_alpha == pytest.approx(0.5)
+
+    def test_non_keypoint_smooth_alpha_is_zero(self, tmp_path):
+        """Detection / segmentation BestModelCallback keeps smooth_alpha=0.0 (no smoothing)."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb._smooth_alpha == 0.0
+
+
 class TestBuildTrainerPrecision:
     """build_trainer() must resolve training precision from model_config.amp + device caps."""
 
