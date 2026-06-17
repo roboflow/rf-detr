@@ -675,7 +675,7 @@ class TrainConfig(BaseConfig):
     keypoint_oks_sigmas: List[float] | None = None
     dataset_file: Literal["coco", "o365", "roboflow", "yolo"] = "roboflow"
     square_resize_div_64: bool = True
-    dataset_dir: PathLikeStr | None
+    dataset_dir: Optional[PathLikeStr]
     output_dir: PathLikeStr = "output"
     multi_scale: bool = True
     expanded_scales: bool = True
