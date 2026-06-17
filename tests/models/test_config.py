@@ -4,7 +4,9 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import os
 import warnings
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -106,6 +108,61 @@ class TestModelConfigValidation:
         config = ModelConfig(**sample_model_config)
 
         assert config.postprocess_trace_alpha == 0.2
+
+    def test_pretrain_weights_absolute_path_realpath_normalised(self, tmp_path) -> None:
+        """An absolute pathlib.Path for pretrain_weights is stored as the realpath-normalised string."""
+        weights_path = tmp_path / "weights.pth"
+
+        config = RFDETRBaseConfig(pretrain_weights=weights_path)
+
+        assert config.pretrain_weights == os.path.realpath(os.fspath(weights_path))
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            pytest.param("dataset_dir", id="dataset_dir"),
+            pytest.param("output_dir", id="output_dir"),
+        ],
+    )
+    def test_train_dir_fields_accept_path(self, tmp_path, field: str) -> None:
+        """TrainConfig dataset/output dir fields accept pathlib.Path and store the realpath-normalised string."""
+        path = tmp_path / "artifact"
+        kwargs = {"dataset_dir": str(tmp_path)}
+        kwargs[field] = path
+
+        config = TrainConfig(**kwargs)
+
+        assert getattr(config, field) == os.path.realpath(os.fspath(path))
+
+    def test_accepts_bare_path_object_for_pretrain_weights(self) -> None:
+        """Bare pretrained weight Path values resolve the same as bare strings."""
+        path_config = RFDETRBaseConfig(pretrain_weights=Path("rf-detr-base.pth"))
+        string_config = RFDETRBaseConfig(pretrain_weights="rf-detr-base.pth")
+
+        assert path_config.pretrain_weights == string_config.pretrain_weights
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            # PTL trainer.fit(ckpt_path=...) sentinels — must pass through verbatim.
+            pytest.param("best", id="sentinel_best"),
+            pytest.param("last", id="sentinel_last"),
+            pytest.param("hpc", id="sentinel_hpc"),
+            pytest.param("registry:model-name", id="sentinel_registry"),
+            # A relative Path proves os.fspath coercion without realpath resolution.
+            pytest.param(Path("checkpoints/last.ckpt"), id="path_object"),
+        ],
+    )
+    def test_resume_coerced_via_fspath_without_realpath(self, value) -> None:
+        """``resume`` accepts pathlib.Path and is coerced to ``str`` via ``os.fspath`` only.
+
+        Unlike ``dataset_dir``/``output_dir``, ``resume`` is forwarded verbatim to PyTorch Lightning's
+        ``trainer.fit(ckpt_path=...)``, which also accepts sentinels such as ``"last"``. Realpath-normalising it would
+        rewrite those sentinels (and relative paths) into spurious absolute paths, so the value must be preserved.
+        """
+        config = TrainConfig(dataset_dir="/tmp", resume=value)
+
+        assert config.resume == os.fspath(value)
 
 
 class TestRFDETRBaseConfigEncoder:
