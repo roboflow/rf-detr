@@ -717,18 +717,25 @@ def _assert_no_flip_without_pairs(
     on every flipped sample: x-coordinates flip correctly but semantic joint IDs (left vs right)
     do not swap, creating contradictory supervision for ~50% of training data.
     """
-    resolved = aug_config if aug_config is not None else AUG_CONFIG
+    using_default = aug_config is None
+    resolved = AUG_CONFIG if using_default else aug_config
     if not _aug_config_contains_flip(resolved):
         return
     if keypoint_flip_pairs:
         return
+    default_note = (
+        "\nNote: you did not pass aug_config, so the default augmentation pipeline "
+        "(which includes HorizontalFlip) is active."
+        if using_default
+        else ""
+    )
     raise ValueError(
         "Flip augmentation (HorizontalFlip or VerticalFlip) is active for keypoint training "
         "but keypoint_flip_pairs is not set. Without pair-swapping, flipped images have wrong "
         "bilateral joint assignments (e.g. left shoulder labeled as right), producing "
-        "contradictory supervision on ~50%% of training samples.\n"
+        f"contradictory supervision on ~50%% of training samples.{default_note}\n"
         "Options:\n"
-        "  1. Remove HorizontalFlip/VerticalFlip from aug_config (recommended — safest)\n"
+        "  1. Disable flip: pass aug_config={} to your training call (recommended — safest)\n"
         "  2. Set keypoint_flip_pairs=[a, b, ...] listing each bilateral joint pair\n"
         "     Example for COCO person keypoints:\n"
         "       keypoint_flip_pairs=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]"
