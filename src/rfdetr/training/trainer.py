@@ -36,6 +36,22 @@ from rfdetr.utilities.logger import get_logger
 _logger = get_logger()
 
 
+def _try_import_tensorboard_summary_writer() -> None:
+    """Probe the full tensorboard import chain to surface numpy/tensorflow incompatibilities early.
+
+    When tensorboard is installed alongside a numpy-2.0-incompatible tensorflow, importing
+    ``torch.utils.tensorboard`` raises ``AttributeError`` at module level (e.g. ``np.float_`` was
+    removed in NumPy 2.0).  Calling this function inside the logger-construction try/except lets
+    ``build_trainer`` degrade gracefully to CSV-only logging instead of crashing mid-training.
+
+    Raises:
+        ImportError: If the ``tensorboard`` package is absent.
+        AttributeError: If ``torch.utils.tensorboard`` fails to import due to a NumPy 2.0 /
+            tensorflow incompatibility.
+    """
+    from torch.utils.tensorboard import SummaryWriter  # noqa: F401
+
+
 # ---------------------------------------------------------------------------
 # Notebook-safe spawn-based DDP
 # ---------------------------------------------------------------------------
@@ -357,6 +373,7 @@ def build_trainer(
 
     if tc.tensorboard:
         try:
+            _try_import_tensorboard_summary_writer()
             loggers.append(
                 TensorBoardLogger(
                     save_dir=tc.output_dir,
@@ -364,8 +381,14 @@ def build_trainer(
                     version="",
                 )
             )
-        except ModuleNotFoundError as exc:
-            _logger.warning("TensorBoard logging disabled: %s. Install with: pip install tensorboard", exc)
+        except (ImportError, AttributeError) as exc:
+            _logger.warning(
+                "TensorBoard logging disabled: %s. "
+                "If using NumPy 2.x, ensure your TensorBoard installation is NumPy 2.0 compatible "
+                "(the failure can originate from tensorboard.compat.tensorflow_stub). "
+                "Install TensorBoard with: pip install tensorboard",
+                exc,
+            )
 
     if tc.wandb:
         try:
