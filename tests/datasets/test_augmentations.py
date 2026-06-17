@@ -116,22 +116,21 @@ class TestAlbumentationsWrapper:
         )
 
     @pytest.mark.parametrize(
-    "num_instances",
-    [
-        pytest.param(0, id="zero_instances"),
-        pytest.param(1, id="one_instance"),
-        pytest.param(2, id="two_instances"),
-    ],
-    )   
+        "num_instances",
+        [
+            pytest.param(0, id="zero_instances"),
+            pytest.param(1, id="one_instance"),
+            pytest.param(2, id="two_instances"),
+        ],
+    )
     def test_horizontal_flip_with_keypoint_flip_pairs_handles_ndarray_bboxes(self, num_instances):
         """Regression test for #1125.
 
         Albumentations 2.x returns ``bboxes`` as a NumPy ndarray of shape (N, 4); 1.x returned a list of tuples.
-        ``_detect_horizontal_flip`` previously used ``not bboxes_aug`` as an empty-check, which raises
-        ``ValueError: The truth value of an array with more than one element is ambiguous`` on any ndarray with
-        more than one element — i.e. any sample with N >= 1 under Albumentations 2.x. The call is reached only
-        when ``keypoint_flip_pairs`` is configured, so this test exercises that path across multi/single/empty
-        instance counts.
+        ``_detect_horizontal_flip`` previously used ``not bboxes_aug`` as an empty-check, which raises ``ValueError: The
+        truth value of an array with more than one element is ambiguous`` on any ndarray with more than one element —
+        i.e. any sample with N >= 1 under Albumentations 2.x. The call is reached only when ``keypoint_flip_pairs`` is
+        configured, so this test exercises that path across multi/single/empty instance counts.
         """
         wrapper = AlbumentationsWrapper(
             alb.HorizontalFlip(p=1.0),
