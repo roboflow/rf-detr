@@ -683,6 +683,107 @@ def make_coco_transforms_square_div_64(
     raise ValueError(f"unknown {image_set}")
 
 
+_FLIP_TRANSFORM_NAMES: frozenset[str] = frozenset({"HorizontalFlip", "VerticalFlip"})
+
+
+def _aug_config_contains_flip(aug_config: Union[Dict[str, Any], List[Any], None]) -> bool:
+    """Return True if aug_config (possibly nested) contains any flip transform."""
+    if aug_config is None:
+        return False
+    if isinstance(aug_config, dict):
+        for name, params in aug_config.items():
+            if name in _FLIP_TRANSFORM_NAMES:
+                return True
+            if isinstance(params, dict) and "transforms" in params:
+                if _aug_config_contains_flip(params["transforms"]):
+                    return True
+            elif isinstance(params, list):
+                if _aug_config_contains_flip(params):
+                    return True
+    elif isinstance(aug_config, list):
+        for entry in aug_config:
+            if _aug_config_contains_flip(entry):
+                return True
+    return False
+
+
+def _assert_no_flip_without_pairs(
+    aug_config: Union[Dict[str, Any], List[Any], None],
+    keypoint_flip_pairs: List[int],
+) -> None:
+    """Raise ValueError when flip augmentation is used for keypoint training without flip pairs.
+
+    Flip augmentation without keypoint_flip_pairs produces wrong bilateral joint assignments
+    on every flipped sample: x-coordinates flip correctly but semantic joint IDs (left vs right)
+    do not swap, creating contradictory supervision for ~50% of training data.
+    """
+    resolved = aug_config if aug_config is not None else AUG_CONFIG
+    if not _aug_config_contains_flip(resolved):
+        return
+    if keypoint_flip_pairs:
+        return
+    raise ValueError(
+        "Flip augmentation (HorizontalFlip or VerticalFlip) is active for keypoint training "
+        "but keypoint_flip_pairs is not set. Without pair-swapping, flipped images have wrong "
+        "bilateral joint assignments (e.g. left shoulder labeled as right), producing "
+        "contradictory supervision on ~50%% of training samples.\n"
+        "Options:\n"
+        "  1. Remove HorizontalFlip/VerticalFlip from aug_config (recommended — safest)\n"
+        "  2. Set keypoint_flip_pairs=[a, b, ...] listing each bilateral joint pair\n"
+        "     Example for COCO person keypoints:\n"
+        "       keypoint_flip_pairs=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]"
+    )
+
+
+def _validate_and_log_flip_pairs(
+    keypoint_flip_pairs: List[int],
+    num_keypoints_per_class: List[int],
+) -> None:
+    """Validate flip pair indices and log which joints will be swapped on each flip.
+
+    Raises ValueError when:
+    - The flat list length is odd (unpaired index).
+    - Any index is negative or exceeds the maximum per-class keypoint count.
+
+    Note:
+        keypoint_flip_pairs is a single flat list applied to ALL object classes.
+        Different classes may have different keypoint counts; the swap is silently
+        skipped for an instance whose class has fewer keypoints than the pair index.
+        If your dataset has multiple keypoint-annotated classes with different bilateral
+        structure, disable flip augmentation (safest) or apply only universally valid
+        pairs.
+    """
+    if len(keypoint_flip_pairs) % 2 != 0:
+        raise ValueError(
+            f"keypoint_flip_pairs must contain an even number of indices (pairs of joints), "
+            f"got {len(keypoint_flip_pairs)}: {keypoint_flip_pairs}"
+        )
+
+    max_kpts = max(num_keypoints_per_class) if num_keypoints_per_class else 0
+    bad = [idx for idx in keypoint_flip_pairs if idx < 0 or (max_kpts > 0 and idx >= max_kpts)]
+    if bad:
+        raise ValueError(
+            f"keypoint_flip_pairs contains out-of-range indices {sorted(set(bad))}. "
+            f"Valid range is [0, {max_kpts - 1}] (max keypoints per class = {max_kpts} "
+            f"from num_keypoints_per_class={num_keypoints_per_class})."
+        )
+
+    pairs = [(keypoint_flip_pairs[i], keypoint_flip_pairs[i + 1]) for i in range(0, len(keypoint_flip_pairs), 2)]
+    pair_str = ", ".join(f"{a}↔{b}" for a, b in pairs)
+    logger.info("Keypoint flip pairs active — joints swapped on each horizontal/vertical flip: %s", pair_str)
+
+    active_classes = [k for k in num_keypoints_per_class if k > 0]
+    if len(active_classes) > 1:
+        logger.warning(
+            "Dataset has %d classes with keypoints (counts: %s). keypoint_flip_pairs=[%s] is applied "
+            "uniformly to all classes; pairs with index >= per-class keypoint count are silently skipped. "
+            "If classes have different bilateral joint structure, disable flip augmentation for safety.",
+            len(active_classes),
+            active_classes,
+            ", ".join(str(i) for i in keypoint_flip_pairs),
+        )
+
+
 def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     root = Path(getattr(args, "dataset_dir", None) or args.coco_path)
     if not root.exists():
@@ -714,6 +815,11 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             "disabling GPU postprocess transforms and retaining CPU normalization."
         )
     gpu_postprocess = resolved_augmentation_backend != "cpu"
+
+    if include_keypoints and image_set.split("_")[0] == "train":
+        _assert_no_flip_without_pairs(aug_config, keypoint_flip_pairs)
+        if keypoint_flip_pairs:
+            _validate_and_log_flip_pairs(keypoint_flip_pairs, num_keypoints_per_class)
 
     if square_resize_div_64:
         logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
@@ -807,6 +913,11 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     aug_config = getattr(args, "aug_config", None)
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
     gpu_postprocess = resolved_augmentation_backend != "cpu"
+
+    if include_keypoints and image_set.split("_")[0] == "train":
+        _assert_no_flip_without_pairs(aug_config, keypoint_flip_pairs)
+        if keypoint_flip_pairs:
+            _validate_and_log_flip_pairs(keypoint_flip_pairs, num_keypoints_per_class)
 
     if square_resize_div_64:
         logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")
