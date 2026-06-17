@@ -370,7 +370,8 @@ class AlbumentationsWrapper:
     def __init__(self, transform: alb.BasicTransform, keypoint_flip_pairs: list[int] | None = None) -> None:
         # Auto-detect if transform is geometric (recursively for containers)
         self._is_geometric = _is_geometric_transform(transform)
-        self._keypoint_flip_pairs: list[int] = keypoint_flip_pairs or []
+        # Flip pair swapping is not yet implemented; pairs are reserved for a future release.
+        self._keypoint_flip_pairs: list[int] = []
 
         if self._is_geometric:
             # Wrap geometric transform with bbox handling capabilities
