@@ -384,7 +384,8 @@ def build_trainer(
         except (ImportError, AttributeError) as exc:
             _logger.warning(
                 "TensorBoard logging disabled: %s. "
-                "If using NumPy 2.x, ensure your tensorboard/tensorflow packages are NumPy 2.0 compatible. "
+                "If using NumPy 2.x, ensure your TensorBoard installation is NumPy 2.0 compatible "
+                "(the failure can originate from tensorboard.compat.tensorflow_stub). "
                 "Install TensorBoard with: pip install tensorboard",
                 exc,
             )
