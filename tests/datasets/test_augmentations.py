@@ -1680,3 +1680,125 @@ class TestAugPresets:
             f"right/down translation; got {translate!r}"
         )
         assert lo < hi, f"AUG_AGGRESSIVE translate_percent must be a non-degenerate range; got {translate!r}"
+
+
+class TestKeypointScalingAcrossResolutions:
+    """Keypoint coordinates are correctly normalised when training at non-default resolutions.
+
+    The full transform pipeline — Resize → ToImage → ToDtype → Normalize — applies Normalize last. Normalize divides
+    keypoint x by image width and y by image height, so the model always receives relative [0, 1] coordinates regardless
+    of the configured training resolution.  These tests confirm that contract holds for all supported resolutions (576
+    default, 640, 768, 960).
+    """
+
+    # Input image: 480 wide, 360 tall. Box occupies the centre quadrant.
+    _INPUT_W = 480
+    _INPUT_H = 360
+    # Keypoint at exactly 60 % of each axis — well inside the box, visibility=2.
+    _KP_FRAC = 0.6
+    _KP_X = _KP_FRAC * _INPUT_W  # 288.0
+    _KP_Y = _KP_FRAC * _INPUT_H  # 216.0
+
+    def _make_target(self) -> dict:
+        return {
+            "boxes": torch.tensor([[120.0, 90.0, 360.0, 270.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor([[[self._KP_X, self._KP_Y, 2.0], [0.0, 0.0, 0.0]]]),
+        }
+
+    @pytest.mark.parametrize(
+        "resolution",
+        [
+            pytest.param(576, id="default_576"),
+            pytest.param(640, id="larger_640"),
+            pytest.param(768, id="larger_768"),
+            pytest.param(960, id="larger_960"),
+        ],
+    )
+    def test_val_pipeline_keypoints_normalised_to_unit_range(self, resolution: int) -> None:
+        """After Normalize, visible keypoint coords are in [0, 1] for every resolution."""
+        transform = make_coco_transforms_square_div_64("val", resolution)
+        image = Image.new("RGB", (self._INPUT_W, self._INPUT_H))
+
+        _, transformed = transform(image, self._make_target())
+
+        kp = transformed["keypoints"]
+        assert kp[0, 0, 0].item() == pytest.approx(self._KP_FRAC, abs=1e-3), (
+            f"normalised keypoint x must equal original fraction {self._KP_FRAC} at resolution={resolution}"
+        )
+        assert kp[0, 0, 1].item() == pytest.approx(self._KP_FRAC, abs=1e-3), (
+            f"normalised keypoint y must equal original fraction {self._KP_FRAC} at resolution={resolution}"
+        )
+        assert kp[0, 0, 2].item() == pytest.approx(2.0), "visibility must be preserved after normalisation"
+
+    @pytest.mark.parametrize(
+        "resolution",
+        [
+            pytest.param(576, id="default_576"),
+            pytest.param(640, id="larger_640"),
+            pytest.param(768, id="larger_768"),
+            pytest.param(960, id="larger_960"),
+        ],
+    )
+    def test_val_pipeline_invisible_keypoints_stay_zero(self, resolution: int) -> None:
+        """Zero-visibility keypoints must remain at (0, 0, 0) after the full pipeline."""
+        transform = make_coco_transforms_square_div_64("val", resolution)
+        image = Image.new("RGB", (self._INPUT_W, self._INPUT_H))
+
+        _, transformed = transform(image, self._make_target())
+
+        kp = transformed["keypoints"]
+        torch.testing.assert_close(
+            kp[0, 1],
+            torch.zeros(3),
+            rtol=0.0,
+            atol=0.0,
+        )
+
+    @pytest.mark.parametrize(
+        "resolution",
+        [
+            pytest.param(576, id="default_576"),
+            pytest.param(640, id="larger_640"),
+            pytest.param(768, id="larger_768"),
+            pytest.param(960, id="larger_960"),
+        ],
+    )
+    def test_train_pipeline_visible_keypoints_normalised_in_unit_range(self, resolution: int) -> None:
+        """Train transform (random resize/crop) must produce normalised keypoints in [0, 1]."""
+        transform = make_coco_transforms_square_div_64("train", resolution, aug_config={})
+        image = Image.new("RGB", (self._INPUT_W, self._INPUT_H))
+
+        _, transformed = transform(image, self._make_target())
+
+        kp = transformed["keypoints"]  # shape (N, K, 3); x and y already normalised by Normalize
+        visible_mask = kp[:, :, 2] > 0  # (N, K) bool
+        if visible_mask.any():
+            visible_x = kp[:, :, 0][visible_mask]
+            visible_y = kp[:, :, 1][visible_mask]
+            assert (visible_x >= 0).all() and (visible_x <= 1.0).all(), (
+                f"normalised keypoint x out of [0, 1] at resolution={resolution}: {visible_x}"
+            )
+            assert (visible_y >= 0).all() and (visible_y <= 1.0).all(), (
+                f"normalised keypoint y out of [0, 1] at resolution={resolution}: {visible_y}"
+            )
+
+    @pytest.mark.parametrize(
+        "resolution",
+        [
+            pytest.param(576, id="default_576"),
+            pytest.param(640, id="larger_640"),
+            pytest.param(768, id="larger_768"),
+            pytest.param(960, id="larger_960"),
+        ],
+    )
+    def test_output_tensor_shape_matches_resolution(self, resolution: int) -> None:
+        """Transform output image tensor must be (C, resolution, resolution) for all resolutions."""
+        transform = make_coco_transforms_square_div_64("val", resolution, aug_config={})
+        image = Image.new("RGB", (self._INPUT_W, self._INPUT_H))
+
+        tensor, _ = transform(image, None)
+
+        assert tensor.shape[-2:] == (resolution, resolution), (
+            f"expected (C, {resolution}, {resolution}), got {tuple(tensor.shape)}"
+        )
