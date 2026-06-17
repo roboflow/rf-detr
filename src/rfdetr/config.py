@@ -828,8 +828,7 @@ class TrainConfig(BaseConfig):
     @field_validator("dataset_dir", "output_dir", mode="before")
     @classmethod
     def expand_paths(cls, v: PathLikeStr | None) -> str | None:
-        """Expand user paths (e.g., '~' or paths with separators) but leave simple filenames (like 'rf-detr-base.pth')
-        unchanged so they can match hosted model keys."""
+        """Expand and normalize dataset/output directory paths via ``os.fspath`` → ``expanduser`` → ``realpath``."""
         if v is None:
             return v
         return os.path.realpath(os.path.expanduser(os.fspath(v)))
