@@ -48,10 +48,6 @@ def _try_import_tensorboard_summary_writer() -> None:
         ImportError: If the ``tensorboard`` package is absent.
         AttributeError: If ``torch.utils.tensorboard`` fails to import due to a NumPy 2.0 /
             tensorflow incompatibility.
-
-    Examples:
-        >>> # No-op when tensorboard and its deps are compatible.
-        >>> # _try_import_tensorboard_summary_writer()  # doctest: +SKIP
     """
     from torch.utils.tensorboard import SummaryWriter  # noqa: F401
 
