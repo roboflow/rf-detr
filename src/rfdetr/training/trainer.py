@@ -351,11 +351,12 @@ def build_trainer(
     skip_best_epochs_explicit = "skip_best_epochs" in tc.model_fields_set
     if has_keypoints and not skip_best_epochs_explicit:
         effective_skip_best_epochs = keypoint_skip_default
-        _logger.info(
-            "skip_best_epochs defaulted to %d for keypoint fine-tuning because the keypoint "
+        warnings.warn(
+            f"skip_best_epochs defaulted to {keypoint_skip_default} for keypoint fine-tuning because the keypoint "
             "mAP metric is noisy in early epochs and can lock checkpoint selection / early stopping to a transient "
-            "peak.  Set TrainConfig.skip_best_epochs explicitly to override this default.",
-            keypoint_skip_default,
+            "peak. Set TrainConfig.skip_best_epochs explicitly to override this default.",
+            UserWarning,
+            stacklevel=2,
         )
     else:
         effective_skip_best_epochs = tc.skip_best_epochs
