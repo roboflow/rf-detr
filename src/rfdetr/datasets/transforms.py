@@ -501,7 +501,7 @@ class AlbumentationsWrapper:
         Returns:
             True if a horizontal flip was applied, False otherwise.
         """
-        if not bboxes_aug or not kept_idxs or boxes_np.shape[0] == 0:
+        if len(bboxes_aug) == 0 or len(kept_idxs) == 0 or boxes_np.shape[0] == 0:
             return False
         first_kept_orig_idx = kept_idxs[0]
         try:

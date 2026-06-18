@@ -115,6 +115,56 @@ class TestAlbumentationsWrapper:
             atol=1e-6,
         )
 
+    @pytest.mark.parametrize(
+        "num_instances",
+        [
+            pytest.param(0, id="zero_instances"),
+            pytest.param(1, id="one_instance"),
+            pytest.param(2, id="two_instances"),
+        ],
+    )
+    def test_horizontal_flip_with_keypoint_flip_pairs_handles_ndarray_bboxes(self, num_instances):
+        """Regression test for #1125.
+
+        Albumentations 2.x returns ``bboxes`` as a NumPy ndarray of shape (N, 4); 1.x returned a list of tuples.
+        ``_detect_horizontal_flip`` previously used ``not bboxes_aug`` as an empty-check, which raises ``ValueError: The
+        truth value of an array with more than one element is ambiguous`` on any ndarray with more than one element —
+        i.e. any sample with N >= 1 under Albumentations 2.x. The call is reached only when ``keypoint_flip_pairs`` is
+        configured, so this test exercises that path across multi/single/empty instance counts.
+        """
+        wrapper = AlbumentationsWrapper(
+            alb.HorizontalFlip(p=1.0),
+            keypoint_flip_pairs=[0, 1],
+        )
+
+        image = Image.new("RGB", (100, 50))
+
+        if num_instances == 0:
+            target = {
+                "boxes": torch.zeros((0, 4), dtype=torch.float32),
+                "labels": torch.zeros((0,), dtype=torch.long),
+                "keypoints": torch.zeros((0, 2, 3), dtype=torch.float32),
+            }
+        else:
+            boxes = []
+            keypoints = []
+            for i in range(num_instances):
+                x = 10.0 + i * 30.0
+                boxes.append([x, 5.0, x + 20.0, 25.0])
+                keypoints.append([[x + 5.0, 10.0, 2.0], [x + 15.0, 20.0, 2.0]])
+            target = {
+                "boxes": torch.tensor(boxes, dtype=torch.float32),
+                "labels": torch.tensor([1] * num_instances, dtype=torch.long),
+                "keypoints": torch.tensor(keypoints, dtype=torch.float32),
+            }
+
+        # Pre-fix: this call raised ValueError for num_instances >= 1 under Albumentations 2.x.
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        assert aug_target["boxes"].shape[0] == num_instances
+        assert aug_target["keypoints"].shape[0] == num_instances
+
     def test_crop_filters_keypoints_with_removed_boxes(self):
         """When a crop removes a box, its keypoints are removed with the same instance."""
         wrapper = AlbumentationsWrapper(alb.Crop(x_min=0, y_min=0, x_max=50, y_max=50, p=1.0))
