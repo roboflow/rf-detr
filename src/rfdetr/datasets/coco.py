@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from torch import Tensor
 import torch.utils.data
 import torchvision
 from PIL import Image
@@ -139,7 +140,7 @@ def _is_rle(segmentation: Any) -> bool:
     return isinstance(segmentation, dict) and "counts" in segmentation and "size" in segmentation
 
 
-def convert_coco_poly_to_mask(segmentations: list[Any], height: int, width: int) -> torch.Tensor:
+def convert_coco_poly_to_mask(segmentations: list[Any], height: int, width: int) -> Tensor:
     """Convert COCO segmentation annotations to a binary mask tensor of shape ``[N, H, W]``.
 
     Supports both polygon and RLE (Run-Length Encoding) annotation formats. Polygon annotations (lists of coordinate
@@ -323,7 +324,7 @@ class ConvertCoco(object):
         w, h = image.size
 
         image_id = target["image_id"]
-        image_id = torch.tensor([image_id])
+        image_id = Tensor([image_id])
 
         anno = target["annotations"]
 
@@ -348,7 +349,7 @@ class ConvertCoco(object):
                 classes.append(self.cat2label[category_id])
             else:
                 classes.append(category_id)
-        classes = torch.tensor(classes, dtype=torch.int64)
+        classes = Tensor(classes, dtype=torch.int64)
 
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
         boxes = boxes[keep]
@@ -360,12 +361,12 @@ class ConvertCoco(object):
         target["image_id"] = image_id
 
         # for conversion to coco api
-        area = torch.tensor([obj["area"] for obj in anno])
-        iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
+        area = Tensor([obj["area"] for obj in anno])
+        iscrowd = Tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
         target["area"] = area[keep]
         target["iscrowd"] = iscrowd[keep]
 
-        keypoint_keep: torch.Tensor | None = None
+        keypoint_keep: Tensor | None = None
         if self.include_keypoints:
             num_keypoints = self.num_keypoints
             if num_keypoints == 0:
@@ -375,7 +376,7 @@ class ConvertCoco(object):
                         num_keypoints = len(keypoints) // 3
                         break
 
-            keypoint_tensors: list[torch.Tensor] = []
+            keypoint_tensors: list[Tensor] = []
             for obj in anno:
                 raw_keypoints = obj.get("keypoints")
                 if raw_keypoints is None:
