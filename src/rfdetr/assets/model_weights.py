@@ -20,6 +20,7 @@ Download Priority Order:
     2. rfdetr_plus.assets.ModelWeights.from_filename() - lazy import if not found locally
     3. PLATFORM_MODELS dict - legacy fallback for backward compatibility
 """
+from __future__ import annotations
 
 import os
 from dataclasses import dataclass
