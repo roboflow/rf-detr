@@ -148,10 +148,16 @@ def _build_metric_groups(df: Any) -> dict[str, list[str]]:
         return "loss" in leaf or leaf.startswith("kp_")
 
     loss_cols = [name for name in df.columns if _is_loss_col(str(name)) and df[name].notna().any()]
-    detection_map_50 = [c for c in _split_cols("mAP_50", "ema_mAP_50") if "mAP_50_95" not in c]
+    detection_map_50 = [
+        c for c in _split_cols("mAP_50", "ema_mAP_50", "/AP/") if "mAP_50_95" not in c and "mAP_75" not in c
+    ]
+    detection_map_75 = _split_cols("mAP_75", "ema_mAP_75")
     detection_map_50_95 = _split_cols("mAP_50_95", "ema_mAP_50_95")
     detection_mar = [c for c in _split_cols("mAR", "ema_mAR") if "keypoint_" not in c]
-    keypoint_map_50 = [c for c in _split_cols("keypoint_map_50", "ema_keypoint_map_50") if "map_50_95" not in c]
+    keypoint_map_50 = [
+        c for c in _split_cols("keypoint_map_50", "ema_keypoint_map_50") if "map_50_95" not in c and "map_75" not in c
+    ]
+    keypoint_map_75 = _split_cols("keypoint_map_75", "ema_keypoint_map_75")
     keypoint_map_50_95 = _split_cols("keypoint_map_50_95", "ema_keypoint_map_50_95")
     keypoint_mar = _split_cols("keypoint_mAR", "ema_keypoint_mAR")
     f1_precision_recall = _split_cols("F1", "precision", "recall")
@@ -160,9 +166,11 @@ def _build_metric_groups(df: Any) -> dict[str, list[str]]:
         "Loss": loss_cols,
         "Detection AP@0.50": detection_map_50,
         "Detection AP@0.50:0.95": detection_map_50_95,
+        "Detection AP@0.75": detection_map_75,
         "Detection AR": detection_mar,
         "Keypoint AP@0.50": keypoint_map_50,
         "Keypoint AP@0.50:0.95": keypoint_map_50_95,
+        "Keypoint AP@0.75": keypoint_map_75,
         "Keypoint AR": keypoint_mar,
         "F1 / Precision / Recall": f1_precision_recall,
     }
@@ -316,7 +324,15 @@ def plot_map_metrics(
     map_columns = [
         column
         for group_name, columns in metric_groups.items()
-        if group_name in {"Detection AP@0.50", "Detection AP@0.50:0.95", "Keypoint AP@0.50", "Keypoint AP@0.50:0.95"}
+        if group_name
+        in {
+            "Detection AP@0.50",
+            "Detection AP@0.50:0.95",
+            "Detection AP@0.75",
+            "Keypoint AP@0.50",
+            "Keypoint AP@0.50:0.95",
+            "Keypoint AP@0.75",
+        }
         for column in columns
     ]
     if not map_columns:
