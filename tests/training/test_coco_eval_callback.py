@@ -740,8 +740,8 @@ class TestOnValidationEpochEnd:
         cb.map_metric.compute.assert_called_once()
         module.log.assert_called()
 
-    def test_progress_bar_suppresses_terminal_metric_summaries(self, capsys) -> None:
-        """Progress-bar training should keep scalar logs but suppress duplicate terminal summary text."""
+    def test_progress_bar_suppresses_duplicate_pycocotools_output(self, capsys) -> None:
+        """Progress-bar training suppresses duplicate pycocotools stdout but still prints metric tables."""
         cb = COCOEvalCallback(max_dets=500)
         trainer = _make_trainer(callbacks=[_TQDMProgressBar()])
         trainer.callback_metrics = {}
@@ -759,7 +759,7 @@ class TestOnValidationEpochEnd:
             cb._compute_and_log(trainer, module, "val")
 
         assert "Average Precision" not in capsys.readouterr().out
-        print_metrics_tables.assert_not_called()
+        print_metrics_tables.assert_called_once()
         cb.map_metric.compute.assert_called_once()
         module.log.assert_called()
 

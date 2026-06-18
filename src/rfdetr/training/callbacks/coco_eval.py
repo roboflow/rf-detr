@@ -31,6 +31,7 @@ from rfdetr.evaluation.matching import (
     merge_matching_data,
 )
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
+from rfdetr.utilities.console import _get_rich_console
 from rfdetr.utilities.distributed import all_gather, get_world_size, is_dist_avail_and_initialized
 from rfdetr.utilities.logger import get_logger
 
@@ -595,8 +596,7 @@ class COCOEvalCallback(Callback):
             metrics=metrics, pfx=pfx, split=split, pl_module=pl_module, ar_by_cid=ar_by_cid, f1_by_cid=f1_by_cid
         )
 
-        if not self._has_progress_bar(trainer):
-            self._print_metrics_tables(trainer, split, overall, per_class)
+        self._print_metrics_tables(trainer, split, overall, per_class)
         self._compute_and_log_keypoint_map(split, pl_module, trainer)
         if split == "val" and should_compute_ema:
             self._compute_and_log_keypoint_map("val_ema", pl_module, trainer, log_split="val", metric_prefix="ema_")
@@ -624,6 +624,58 @@ class COCOEvalCallback(Callback):
         """Return whether the trainer has a Lightning progress bar callback."""
         callbacks = getattr(trainer, "callbacks", [])
         return any(callback.__class__.__name__.endswith("ProgressBar") for callback in callbacks)
+
+    @staticmethod
+    def _render_summary_tables(
+        console: Any,
+        title_pfx: str,
+        overall_rendered: str,
+        per_class: list[dict[str, Any]],
+    ) -> None:
+        """Print overall and per-class metric tables to ``console``.
+
+        Args:
+            console: Rich ``Console`` instance to print to.
+            title_pfx: Split label (e.g. ``"Val"`` or ``"Test"``).
+            overall_rendered: Pre-rendered overall table string from
+                :meth:`_render_overall_merged`.
+            per_class: Per-class dicts with keys ``name``, ``ap``, ``ar``,
+                ``f1``, ``precision``, ``recall``; skipped when empty.
+        """
+        try:
+            from rich.table import Table
+        except ImportError:
+            return
+
+        def _fmt(v: float) -> str:
+            if v != v or v < 0:  # NaN or pycocotools sentinel -1 → em-dash
+                return "—"
+            return f"{v:.4f}"
+
+        console.print(overall_rendered)
+        if per_class:
+            table = Table(
+                title=f"{title_pfx} — Per-class Metrics",
+                title_style="bold cyan",
+                show_header=True,
+                header_style="bold cyan",
+            )
+            table.add_column("Class", style="dim", no_wrap=True)
+            table.add_column("AP 50:95", justify="right")
+            table.add_column("AR", justify="right")
+            table.add_column("F1", justify="right")
+            table.add_column("Precision", justify="right")
+            table.add_column("Recall", justify="right")
+            for row in per_class:
+                table.add_row(
+                    row["name"],
+                    _fmt(row["ap"]),
+                    _fmt(row["ar"]),
+                    _fmt(row["f1"]),
+                    _fmt(row["precision"]),
+                    _fmt(row["recall"]),
+                )
+            console.print(table)
 
     def _compute_map_metric(self, trainer: Any, metric: Any) -> dict[str, Any]:
         """Compute a torchmetrics mAP metric while suppressing duplicate terminal summaries under progress bars."""
@@ -972,47 +1024,13 @@ class COCOEvalCallback(Callback):
         if not getattr(trainer, "is_global_zero", True):
             return
         try:
-            from rich.console import Console
-            from rich.table import Table
+            import rich.table  # noqa: F401 — availability guard; Table used inside _render_summary_tables
         except ImportError:
             return
 
-        def _fmt(v: float) -> str:
-            if v != v or v < 0:  # NaN or pycocotools sentinel -1 → em-dash
-                return "—"
-            return f"{v:.4f}"
-
-        console = Console(force_terminal=True)
+        console = _get_rich_console(trainer)
         title_pfx = split.capitalize()
-
-        def _render_all() -> None:
-            # Table 1: Overall metrics — colour-free merged-header table.
-            console.print(self._render_overall_merged(title_pfx, overall))
-
-            # Table 2: Per-class metrics (Rich Table)
-            if per_class:
-                t2 = Table(
-                    title=f"{title_pfx} — Per-class Metrics",
-                    title_style="bold cyan",
-                    show_header=True,
-                    header_style="bold cyan",
-                )
-                t2.add_column("Class", style="dim", no_wrap=True)
-                t2.add_column("AP 50:95", justify="right")
-                t2.add_column("AR", justify="right")
-                t2.add_column("F1", justify="right")
-                t2.add_column("Precision", justify="right")
-                t2.add_column("Recall", justify="right")
-                for row in per_class:
-                    t2.add_row(
-                        row["name"],
-                        _fmt(row["ap"]),
-                        _fmt(row["ar"]),
-                        _fmt(row["f1"]),
-                        _fmt(row["precision"]),
-                        _fmt(row["recall"]),
-                    )
-                console.print(t2)
+        overall_rendered = self._render_overall_merged(title_pfx, overall)
 
         if self._in_notebook:
             # Lazily create an ipywidgets.Output on the first table print so it
@@ -1030,10 +1048,10 @@ class COCOEvalCallback(Callback):
             if self._output_widget is not None:
                 self._output_widget.clear_output(wait=True)
                 with self._output_widget:
-                    _render_all()
+                    COCOEvalCallback._render_summary_tables(console, title_pfx, overall_rendered, per_class)
                 return
 
-        _render_all()
+        COCOEvalCallback._render_summary_tables(console, title_pfx, overall_rendered, per_class)
 
     def _render_overall_merged(self, title_pfx: str, overall: dict[str, float]) -> str:
         """Render the overall metrics table with merged group-header cells.
