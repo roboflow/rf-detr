@@ -71,12 +71,41 @@ def _create_interpreter(model_path: str | Path) -> Any:
     return interp
 
 
-def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArray[np.bool_]:
-    """Upsample raw mask logits to image size and threshold at zero.
+def _bilinear_resize_half_pixel(src: NDArray[np.float32], out_h: int, out_w: int) -> NDArray[np.float32]:
+    """Bilinear resize matching ``F.interpolate(mode="bilinear", align_corners=False)``.
 
-    Approximates ``PostProcess.forward``: bilinear resize followed by ``> 0``. Uses Pillow's bilinear resampling rather
-    than ``F.interpolate`` (no PyTorch dependency at inference time); border pixels may differ slightly due to distinct
-    half-pixel conventions.
+    Uses the half-pixel center convention so mask upsampling matches ``PostProcess.forward``.
+
+    Args:
+        src: Source array of shape ``(K, src_h, src_w)``.
+        out_h: Target height in pixels.
+        out_w: Target width in pixels.
+
+    Returns:
+        Float32 array of shape ``(K, out_h, out_w)``.
+    """
+    src_h, src_w = src.shape[-2], src.shape[-1]
+    src_y = (np.arange(out_h, dtype=np.float32) + 0.5) * (src_h / out_h) - 0.5
+    src_x = (np.arange(out_w, dtype=np.float32) + 0.5) * (src_w / out_w) - 0.5
+    src_y = np.clip(src_y, 0.0, src_h - 1)
+    src_x = np.clip(src_x, 0.0, src_w - 1)
+    y0 = np.floor(src_y).astype(np.int64)
+    x0 = np.floor(src_x).astype(np.int64)
+    y1 = np.minimum(y0 + 1, src_h - 1)
+    x1 = np.minimum(x0 + 1, src_w - 1)
+    dy = (src_y - y0)[:, None]
+    dx = (src_x - x0)[None, :]
+    a = src[..., y0[:, None], x0[None, :]]
+    b = src[..., y0[:, None], x1[None, :]]
+    c = src[..., y1[:, None], x0[None, :]]
+    d = src[..., y1[:, None], x1[None, :]]
+    return (1 - dy) * ((1 - dx) * a + dx * b) + dy * ((1 - dx) * c + dx * d)
+
+
+def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArray[np.bool_]:
+    """Upsample mask logits to image size and threshold at zero.
+
+    Matches ``PostProcess.forward``: bilinear upsample with ``align_corners=False`` followed by ``> 0``.
 
     Args:
         mask_logits: Raw mask logits of shape ``(K, Hm, Wm)``.
@@ -94,12 +123,65 @@ def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArr
             "This usually means the rank-4 mask-output heuristic in _run_inference matched the wrong tensor."
         )
     width, height = out_size
-    out = np.empty((mask_logits.shape[0], height, width), dtype=np.bool_)
-    for i, logit_map in enumerate(mask_logits):
-        mask_img = PILImage.fromarray(logit_map.astype(np.float32), mode="F")
-        resized = mask_img.resize((width, height), _PIL_BILINEAR)
-        out[i] = np.asarray(resized) > 0.0
-    return out
+    resized = _bilinear_resize_half_pixel(mask_logits.astype(np.float32), height, width)
+    return resized > 0.0
+
+
+def _preprocess_image(
+    pil_img: PILImage.Image,
+    hw: tuple[int, int],
+    channels: int = 3,
+) -> NDArray[np.float32]:
+    """Resize and ImageNet-normalise an image to match ``RFDETR.predict()``.
+
+    Uses ``torchvision.transforms.functional`` when importable for bit-exact parity, and falls back
+    to ``PIL.Image.resize`` with BILINEAR for torch-free deployments.
+
+    Args:
+        pil_img: Source PIL image at native resolution.
+        hw: Target ``(height, width)`` from the interpreter's input shape.
+        channels: Channel count (3 for RGB, 1 for grayscale).
+
+    Returns:
+        Float32 array of shape ``(1, height, width, channels)`` in NHWC.
+    """
+    height, width = hw
+    pil_mode = "L" if channels == 1 else "RGB"
+    pil_rgb = pil_img.convert(pil_mode)
+
+    nchw_float: NDArray[np.float32] | None = None
+    try:
+        # Match PyTorch.predict() exactly: torchvision to_tensor -> resize -> normalize.
+        import torch
+        import torchvision.transforms.functional as _F  # noqa: N812
+
+        with torch.no_grad():
+            t = _F.to_tensor(pil_rgb)
+            t = _F.resize(t, list(hw))
+            _imagenet_mean = [0.485, 0.456, 0.406]
+            _imagenet_std = [0.229, 0.224, 0.225]
+            mean_list = [_imagenet_mean[i % 3] for i in range(channels)]
+            std_list = [_imagenet_std[i % 3] for i in range(channels)]
+            t = _F.normalize(t, mean_list, std_list)
+        nchw_float = t.unsqueeze(0).cpu().numpy()
+    except ImportError:
+        pass
+
+    if nchw_float is not None:
+        # NCHW -> NHWC for the TFLite interpreter.
+        return nchw_float.transpose(0, 2, 3, 1).astype(np.float32)
+
+    # Torch-free fallback: PIL BILINEAR. PIL's default is BICUBIC, which diverges from PyTorch.
+    arr = np.array(pil_rgb.resize((width, height), _PIL_BILINEAR), dtype=np.float32) / 255.0
+    if arr.ndim == 2:  # "L" -> (height, width); TFLite needs (height, width, 1).
+        arr = arr[:, :, np.newaxis]
+
+    _imagenet_mean = [0.485, 0.456, 0.406]
+    _imagenet_std = [0.229, 0.224, 0.225]
+    mean = np.array([_imagenet_mean[i % 3] for i in range(channels)], dtype=np.float32)
+    std = np.array([_imagenet_std[i % 3] for i in range(channels)], dtype=np.float32)
+
+    return ((arr - mean) / std)[np.newaxis]
 
 
 def _run_inference(
@@ -135,19 +217,10 @@ def _run_inference(
             "Export the model with float32 quantization or implement input quantization manually."
         )
 
-    _imagenet_mean = [0.485, 0.456, 0.406]
-    _imagenet_std = [0.229, 0.224, 0.225]
-    mean = np.array([_imagenet_mean[i % 3] for i in range(channels)], dtype=np.float32)
-    std = np.array([_imagenet_std[i % 3] for i in range(channels)], dtype=np.float32)
-
     pil_img = PILImage.open(image_path)
-    pil_mode = "L" if channels == 1 else "RGB"
-    arr = np.array(pil_img.convert(pil_mode).resize((width, height)), dtype=np.float32) / 255.0
-    if arr.ndim == 2:  # "L" → (height, width); TFLite needs (height, width, 1)
-        arr = arr[:, :, np.newaxis]
-    inp_tensor = (arr - mean) / std
+    inp_tensor = _preprocess_image(pil_img, (int(height), int(width)), int(channels))
 
-    interp.set_tensor(inp_det[0]["index"], inp_tensor[np.newaxis])
+    interp.set_tensor(inp_det[0]["index"], inp_tensor)
     interp.invoke()
 
     # RF-DETR ONNX output names: "dets" = pred_boxes, "labels" = pred_logits.
