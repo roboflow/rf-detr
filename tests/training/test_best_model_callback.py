@@ -146,6 +146,25 @@ class TestBestModelCallback:
 
         assert payload["model_config"] == {"num_keypoints_per_class": [0, 17], "use_grouppose_keypoints": True}
 
+    def test_checkpoint_payload_loops_include_validate_and_test_stubs(self) -> None:
+        """Checkpoint loops dict must include validate_loop and test_loop stubs.
+
+        trainer.validate(ckpt_path=...) and trainer.test(ckpt_path=...) call restore_loops() which does
+        checkpoint["loops"]["validate_loop"] / checkpoint["loops"]["test_loop"] — KeyError if absent.
+        """
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        payload = BestModelCallback._build_checkpoint_payload(
+            {"w": torch.zeros(1)},
+            {"num_classes": 1},
+            trainer,
+        )
+
+        loops = payload["loops"]
+        assert "validate_loop" in loops, "validate_loop missing — trainer.validate(ckpt_path=...) will KeyError"
+        assert "test_loop" in loops, "test_loop missing — trainer.test(ckpt_path=...) will KeyError"
+        assert "state_dict" in loops["validate_loop"]
+        assert "state_dict" in loops["test_loop"]
+
     @pytest.mark.parametrize(
         "monitor_ema, metrics, checkpoint_file",
         [

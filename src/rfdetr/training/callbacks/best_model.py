@@ -144,7 +144,13 @@ class BestModelCallback(ModelCheckpoint):
             "state_dict": {f"model.{k}": v for k, v in model_state_dict.items()},
             "global_step": trainer.global_step,
             "pytorch-lightning_version": ptl_version,
-            "loops": {"fit_loop": _make_fit_loop_state(trainer.current_epoch)},
+            "loops": {
+                "fit_loop": _make_fit_loop_state(trainer.current_epoch),
+                # Minimal stubs so trainer.validate(ckpt_path=...) and trainer.test(ckpt_path=...)
+                # don't crash on KeyError — PTL restore_loops() expects both keys.
+                "validate_loop": {"state_dict": {}},
+                "test_loop": {"state_dict": {}},
+            },
             # Keep keys present with empty values so PTL resume paths that
             # expect them can proceed without loading optimizer state.
             "optimizer_states": [],
