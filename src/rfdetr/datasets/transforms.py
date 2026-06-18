@@ -28,8 +28,8 @@ except ImportError:
 import numpy as np
 import PIL
 import torch
-from torch import Tensor
 from PIL import Image
+from torch import Tensor
 from torchvision.transforms import Normalize as _TVNormalize
 
 from rfdetr.util.box_ops import box_xyxy_to_cxcywh
@@ -46,9 +46,7 @@ class Normalize(object):
     ) -> None:
         self._normalize = _TVNormalize(mean, std)
 
-    def __call__(
-        self, image: Tensor, target: dict[str, Any] | None = None
-    ) -> tuple[Tensor, dict[str, Any]] | None:
+    def __call__(self, image: Tensor, target: dict[str, Any] | None = None) -> tuple[Tensor, dict[str, Any]] | None:
         image = self._normalize(image)
         if target is None:
             return image, None

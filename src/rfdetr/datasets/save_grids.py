@@ -10,11 +10,10 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
-from torch import Tensor
 import torchvision.transforms as T  # noqa: N812
 from matplotlib.axes import Axes
 from supervision import BoxAnnotator, Color, Detections, LabelAnnotator
+from torch import Tensor
 from torch.utils.data import DataLoader
 
 from rfdetr.util.box_ops import box_cxcywh_to_xyxy

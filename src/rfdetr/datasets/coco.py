@@ -16,16 +16,17 @@
 
 Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references/detection/coco_utils.py
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
 import torch
-from torch import Tensor
 import torch.utils.data
 import torchvision
 from PIL import Image
+from torch import Tensor
 from torchvision.transforms.v2 import Compose, ToDtype, ToImage
 
 from rfdetr.datasets.aug_configs import AUG_CONFIG
