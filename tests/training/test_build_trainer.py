@@ -504,7 +504,10 @@ class TestBuildTrainerLoggers:
         from pytorch_lightning.loggers import TensorBoardLogger
 
         fake_logger = mock.MagicMock(spec=TensorBoardLogger)
-        with mock.patch("rfdetr.training.trainer.TensorBoardLogger", return_value=fake_logger):
+        with (
+            mock.patch("rfdetr.training.trainer._try_import_tensorboard_summary_writer"),
+            mock.patch("rfdetr.training.trainer.TensorBoardLogger", return_value=fake_logger),
+        ):
             trainer = build_trainer(
                 _tc(tmp_path, tensorboard=True, use_ema=False),
                 _mc(),
@@ -529,7 +532,10 @@ class TestBuildTrainerLoggers:
         """If tensorboard package is absent, a warning is logged and training continues."""
         import unittest.mock as mock
 
-        with mock.patch("rfdetr.training.trainer.TensorBoardLogger", side_effect=ModuleNotFoundError("no tensorboard")):
+        with mock.patch(
+            "rfdetr.training.trainer._try_import_tensorboard_summary_writer",
+            side_effect=ModuleNotFoundError("no module named 'tensorboard'"),
+        ):
             with mock.patch("rfdetr.training.trainer._logger") as mock_logger:
                 trainer = build_trainer(
                     _tc(tmp_path, tensorboard=True, use_ema=False),
@@ -538,6 +544,27 @@ class TestBuildTrainerLoggers:
         mock_logger.warning.assert_called_once()
         assert "TensorBoard" in mock_logger.warning.call_args[0][0]
         # CSVLogger is always present; TensorBoard was not added due to missing dep
+        from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
+
+        assert all(not isinstance(lg, TensorBoardLogger) for lg in trainer.loggers)
+        assert any(isinstance(lg, CSVLogger) for lg in trainer.loggers)
+
+    def test_numpy2_tensorboard_incompatibility_warns_not_crashes(self, tmp_path):
+        """AttributeError from NumPy 2.0/tensorflow incompatibility falls back to CSV logger."""
+        import unittest.mock as mock
+
+        numpy2_error = AttributeError("`np.float_` was removed in the NumPy 2.0 release. Use `np.float64` instead.")
+        with mock.patch(
+            "rfdetr.training.trainer._try_import_tensorboard_summary_writer",
+            side_effect=numpy2_error,
+        ):
+            with mock.patch("rfdetr.training.trainer._logger") as mock_logger:
+                trainer = build_trainer(
+                    _tc(tmp_path, tensorboard=True, use_ema=False),
+                    _mc(),
+                )
+        mock_logger.warning.assert_called_once()
+        assert "TensorBoard" in mock_logger.warning.call_args[0][0]
         from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
 
         assert all(not isinstance(lg, TensorBoardLogger) for lg in trainer.loggers)
@@ -560,6 +587,7 @@ class TestBuildTrainerLoggers:
         fake_tb = mock.MagicMock(spec=TensorBoardLogger)
         fake_mlflow = mock.MagicMock(spec=MLFlowLogger)
         with (
+            mock.patch("rfdetr.training.trainer._try_import_tensorboard_summary_writer"),
             mock.patch("rfdetr.training.trainer.TensorBoardLogger", return_value=fake_tb),
             mock.patch("rfdetr.training.trainer.MLFlowLogger", return_value=fake_mlflow),
         ):
