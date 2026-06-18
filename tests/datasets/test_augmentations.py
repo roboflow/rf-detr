@@ -15,6 +15,7 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from torchvision.transforms.v2 import Compose
 
+from rfdetr.datasets._augmentation_utils import filter_keypoint_hflip_augmentations
 from rfdetr.datasets._develop import _SimpleDataset
 from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE, AUG_CONFIG
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
@@ -39,6 +40,57 @@ class _FakeRandomSizedCropV1:
         self.height = height
         self.width = width
         self.p = p
+
+
+class TestKeypointHFlipFiltering:
+    """Shared keypoint hflip filtering behavior for augmentation backends."""
+
+    def test_drops_hflip_and_warns_for_keypoint_pipeline(self) -> None:
+        """Keypoint augmentation config drops hflip transforms while keeping other transforms."""
+        config = {"HorizontalFlip": {"p": 0.5}, "VerticalFlip": {"p": 0.5}}
+        warning = mock.Mock()
+
+        filtered = filter_keypoint_hflip_augmentations(config, warn=warning)
+
+        assert filtered == {"VerticalFlip": {"p": 0.5}}
+        warning.assert_called_once()
+        assert "HorizontalFlip" in str(warning.call_args)
+
+    def test_keeps_hflip_when_keypoints_are_not_active(self) -> None:
+        """Detection augmentation config keeps hflip transforms unchanged."""
+        config = {"HorizontalFlip": {"p": 0.5}}
+        warning = mock.Mock()
+
+        filtered = filter_keypoint_hflip_augmentations(config, warn=warning, include_keypoints=False)
+
+        assert filtered == config
+        warning.assert_not_called()
+
+    def test_drops_nested_hflip_from_container(self) -> None:
+        """Keypoint augmentation config drops hflip transforms inside containers."""
+        config = {
+            "OneOf": {
+                "transforms": [
+                    {"HorizontalFlip": {"p": 1.0}},
+                    {"VerticalFlip": {"p": 1.0}},
+                ],
+                "p": 0.5,
+            }
+        }
+        warning = mock.Mock()
+
+        filtered = filter_keypoint_hflip_augmentations(config, warn=warning)
+
+        assert filtered == {
+            "OneOf": {
+                "transforms": [
+                    {"VerticalFlip": {"p": 1.0}},
+                ],
+                "p": 0.5,
+            }
+        }
+        warning.assert_called_once()
+        assert "HorizontalFlip" in str(warning.call_args)
 
 
 class TestAlbumentationsWrapper:

@@ -31,6 +31,7 @@ import torch
 from PIL import Image
 from torchvision.transforms import Normalize as _TVNormalize
 
+from rfdetr.datasets._augmentation_utils import filter_keypoint_hflip_augmentations
 from rfdetr.util.box_ops import box_xyxy_to_cxcywh
 from rfdetr.util.logger import get_logger
 
@@ -67,12 +68,6 @@ class Normalize(object):
 
 
 # Albumentations wrapper for RF-DETR
-
-# Transforms that include a horizontal-flip component.  Applying these to keypoint data without
-# swapping left/right joint pairs produces incorrect annotations (e.g. left-shoulder mapped to
-# right-shoulder position after a flip).  Flip-pair swapping is planned but not yet implemented;
-# these transforms are disabled when from_config is called for a keypoint pipeline.
-HFLIP_TRANSFORM_NAMES: frozenset[str] = frozenset({"HorizontalFlip", "Flip", "D4"})
 
 # Geometric transforms that affect bounding boxes
 # These transforms modify spatial coordinates, so bounding boxes must be transformed accordingly.
@@ -915,6 +910,12 @@ class AlbumentationsWrapper:
         Note:
             Invalid transforms or invalid parameters are logged and skipped gracefully.
         """
+        original_config_empty = isinstance(config_dict, (dict, list)) and len(config_dict) == 0
+        config_dict = filter_keypoint_hflip_augmentations(
+            config_dict,
+            include_keypoints=keypoint_flip_pairs is not None,
+            warn=logger.warning,
+        )
         if isinstance(config_dict, list):
             entries = config_dict
         elif isinstance(config_dict, dict):
@@ -923,6 +924,8 @@ class AlbumentationsWrapper:
             raise TypeError(f"config_dict must be a dictionary or list, got {type(config_dict)}")
 
         if not entries:
+            if not original_config_empty:
+                return []
             logger.warning("Empty augmentation config provided, no transforms will be applied")
             return []
 
@@ -954,17 +957,6 @@ class AlbumentationsWrapper:
                 )
                 continue
 
-            if keypoint_flip_pairs is not None and aug_name in HFLIP_TRANSFORM_NAMES:
-                logger.warning(
-                    "Keypoint pipeline: '%s' performs a horizontal flip but flip-pair swapping "
-                    "(swapping left/right joint labels after a horizontal flip) is not yet "
-                    "implemented. The transform has been disabled to prevent incorrect keypoint "
-                    "annotations. Remove '%s' from your augmentation config or wait for flip-pair "
-                    "support in a future release.",
-                    aug_name,
-                    aug_name,
-                )
-                continue
             try:
                 transform = _build_albu_transform(aug_name, params)
                 transforms.append(AlbumentationsWrapper(transform, keypoint_flip_pairs=keypoint_flip_pairs))
