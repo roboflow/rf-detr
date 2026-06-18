@@ -5,7 +5,8 @@
 # ------------------------------------------------------------------------
 """Unit tests for COCOEvalCallback."""
 
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -332,6 +333,122 @@ class TestOnTrainBatchEnd:
 
         cb.map_metric.reset.assert_called_once()
         cb.map_metric_train.reset.assert_not_called()
+
+
+class TestMetricsTablePrinting:
+    """Metric table terminal/notebook rendering behavior."""
+
+    def test_terminal_metrics_tables_update_live_display(self) -> None:
+        """Terminal metric tables update one Rich Live display instead of appending one table block per epoch."""
+        cb = COCOEvalCallback(in_notebook=False)
+        trainer = _make_trainer()
+        trainer.is_global_zero = True
+        console = MagicMock(name="console")
+        live = MagicMock(name="live")
+
+        with (
+            patch("rfdetr.training.callbacks.coco_eval._get_rich_console", return_value=console),
+            patch("rfdetr.training.callbacks.coco_eval.Live", return_value=live) as live_cls,
+            patch("rfdetr.training.callbacks.coco_eval._render_overall_merged", side_effect=["overall-1", "overall-2"]),
+        ):
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.1}, [])
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.2}, [])
+
+        live_cls.assert_called_once()
+        assert live_cls.call_args.kwargs == {
+            "console": console,
+            "auto_refresh": False,
+            "transient": False,
+        }
+        live.start.assert_called_once_with(refresh=True)
+        live.update.assert_called_once()
+        assert live.update.call_args.kwargs == {"refresh": True}
+        console.print.assert_not_called()
+
+    def test_missing_rich_warns_once_and_skips_metric_tables(self) -> None:
+        """Missing Rich emits one warning and skips noisy table rendering."""
+        cb = COCOEvalCallback(in_notebook=False)
+        trainer = _make_trainer()
+        trainer.is_global_zero = True
+
+        with (
+            patch("rfdetr.training.callbacks.coco_eval._IS_RICH_AVAILABLE", False),
+            patch("rfdetr.training.callbacks.coco_eval.logger.warning") as warning,
+            patch("rfdetr.training.callbacks.coco_eval._get_rich_console") as get_console,
+        ):
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.1}, [])
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.2}, [])
+
+        warning.assert_called_once_with(
+            "Rich is not installed; skipping metric table rendering. Install `rich` to enable tables."
+        )
+        get_console.assert_not_called()
+
+    def test_teardown_stops_terminal_live_display(self) -> None:
+        """Teardown stops the terminal Live display so it is not left active."""
+        cb = COCOEvalCallback(in_notebook=False)
+        live = MagicMock(name="live")
+        cb._metrics_live = live
+
+        cb.teardown(_make_trainer(), _make_pl_module(), "fit")
+
+        live.stop.assert_called_once()
+        assert cb._metrics_live is None
+
+    def test_notebook_metrics_tables_reuse_and_clear_output_widget(self) -> None:
+        """Notebook metric tables update one output widget instead of appending one table block per epoch."""
+
+        class FakeOutput:
+            """Minimal ipywidgets.Output stand-in."""
+
+            def __init__(self) -> None:
+                self.clear_output = MagicMock(name="clear_output")
+                self.enter_count = 0
+
+            def __enter__(self) -> "FakeOutput":
+                self.enter_count += 1
+                return self
+
+            def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+                return False
+
+        output_widget = FakeOutput()
+        display = MagicMock(name="display")
+        widgets_module = ModuleType("ipywidgets")
+        widgets_module.Output = MagicMock(return_value=output_widget)
+        ipython_module = ModuleType("IPython")
+        ipython_module.__path__ = []
+        display_module = ModuleType("IPython.display")
+        display_module.display = display
+
+        cb = COCOEvalCallback(in_notebook=True)
+        trainer = _make_trainer()
+        trainer.is_global_zero = True
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "ipywidgets": widgets_module,
+                    "IPython": ipython_module,
+                    "IPython.display": display_module,
+                },
+            ),
+            patch("rfdetr.training.callbacks.coco_eval._render_overall_merged", side_effect=["overall-1", "overall-2"]),
+            patch("rfdetr.training.callbacks.coco_eval._render_summary_tables") as render_summary_tables,
+        ):
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.1}, [])
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.2}, [])
+
+        widgets_module.Output.assert_called_once()
+        display.assert_called_once_with(output_widget)
+        assert cb._output_widget is output_widget
+        assert [call.kwargs for call in output_widget.clear_output.call_args_list] == [
+            {"wait": True},
+            {"wait": True},
+        ]
+        assert output_widget.enter_count == 2
+        assert render_summary_tables.call_count == 2
 
 
 @pytest.mark.parametrize(

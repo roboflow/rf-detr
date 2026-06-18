@@ -31,11 +31,34 @@ from rfdetr.evaluation.matching import (
     merge_matching_data,
 )
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
-from rfdetr.utilities.console import _get_rich_console
+from rfdetr.utilities.console import (
+    _IS_RICH_AVAILABLE,
+    Live,
+    _build_summary_renderable,
+    _get_rich_console,
+    _has_progress_bar,
+    _render_overall_merged,
+    _render_summary_tables,
+)
 from rfdetr.utilities.distributed import all_gather, get_world_size, is_dist_avail_and_initialized
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
+
+
+def _warn_missing_rich_once(warning_emitted: bool) -> bool:
+    """Warn once when metric table rendering is skipped because Rich is unavailable.
+
+    Args:
+        warning_emitted: Whether this warning has already been emitted.
+
+    Returns:
+        ``True`` after warning emission or when it had already been emitted.
+    """
+    if warning_emitted:
+        return True
+    logger.warning("Rich is not installed; skipping metric table rendering. Install `rich` to enable tables.")
+    return True
 
 
 def _get_ema_inner_module(ema_cb: Any) -> Any:
@@ -105,6 +128,8 @@ class COCOEvalCallback(Callback):
         # Whether the EMA metric received ≥1 update this epoch.  Gates the EMA cross-rank
         # sync so it is issued symmetrically on all DDP ranks (see _should_compute_ema).
         self._ema_has_updates: bool = False
+        self._metrics_live: Any = None  # rich.live.Live, created lazily for terminal table updates
+        self._missing_rich_warning_emitted: bool = False
         self._output_widget: Any = None  # ipywidgets.Output, created lazily
         self._keypoint_mode: bool = False
         self._use_segm_metrics: bool = segmentation
@@ -173,6 +198,16 @@ class COCOEvalCallback(Callback):
         # on_validation_epoch_start / on_test_epoch_start (see _prepare_ema_metric) so its
         # cross-rank compute() sync is issued symmetrically and cannot deadlock DDP val.
         self.map_metric_ema: Any = None
+
+    def teardown(self, trainer: Any, pl_module: Any, stage: str) -> None:
+        """Stop the terminal metrics Live display when the trainer exits.
+
+        Args:
+            trainer: The PTL Trainer.
+            pl_module: The LightningModule.
+            stage: One of ``"fit"``, ``"validate"``, ``"test"``, ``"predict"``.
+        """
+        self._stop_metrics_live()
 
     def on_fit_start(self, trainer: Any, pl_module: Any) -> None:
         """Pull class names from the DataModule once the datasets are set up.
@@ -619,67 +654,18 @@ class COCOEvalCallback(Callback):
                 return callback
         return None
 
-    @staticmethod
-    def _has_progress_bar(trainer: Any) -> bool:
-        """Return whether the trainer has a Lightning progress bar callback."""
-        callbacks = getattr(trainer, "callbacks", [])
-        return any(callback.__class__.__name__.endswith("ProgressBar") for callback in callbacks)
-
-    @staticmethod
-    def _render_summary_tables(
-        console: Any,
-        title_pfx: str,
-        overall_rendered: str,
-        per_class: list[dict[str, Any]],
-    ) -> None:
-        """Print overall and per-class metric tables to ``console``.
-
-        Args:
-            console: Rich ``Console`` instance to print to.
-            title_pfx: Split label (e.g. ``"Val"`` or ``"Test"``).
-            overall_rendered: Pre-rendered overall table string from
-                :meth:`_render_overall_merged`.
-            per_class: Per-class dicts with keys ``name``, ``ap``, ``ar``,
-                ``f1``, ``precision``, ``recall``; skipped when empty.
-        """
-        try:
-            from rich.table import Table
-        except ImportError:
+    def _stop_metrics_live(self) -> None:
+        """Stop and clear the terminal metrics Live display if it exists."""
+        metrics_live = self._metrics_live
+        self._metrics_live = None
+        if metrics_live is None:
             return
-
-        def _fmt(v: float) -> str:
-            if v != v or v < 0:  # NaN or pycocotools sentinel -1 → em-dash
-                return "—"
-            return f"{v:.4f}"
-
-        console.print(overall_rendered)
-        if per_class:
-            table = Table(
-                title=f"{title_pfx} — Per-class Metrics",
-                title_style="bold cyan",
-                show_header=True,
-                header_style="bold cyan",
-            )
-            table.add_column("Class", style="dim", no_wrap=True)
-            table.add_column("AP 50:95", justify="right")
-            table.add_column("AR", justify="right")
-            table.add_column("F1", justify="right")
-            table.add_column("Precision", justify="right")
-            table.add_column("Recall", justify="right")
-            for row in per_class:
-                table.add_row(
-                    row["name"],
-                    _fmt(row["ap"]),
-                    _fmt(row["ar"]),
-                    _fmt(row["f1"]),
-                    _fmt(row["precision"]),
-                    _fmt(row["recall"]),
-                )
-            console.print(table)
+        with contextlib.suppress(Exception):
+            metrics_live.stop()
 
     def _compute_map_metric(self, trainer: Any, metric: Any) -> dict[str, Any]:
         """Compute a torchmetrics mAP metric while suppressing duplicate terminal summaries under progress bars."""
-        if not self._has_progress_bar(trainer):
+        if not _has_progress_bar(trainer):
             return metric.compute()
 
         metric_loggers = (logger, logging.getLogger("faster_coco_eval"), logging.getLogger("faster_coco_eval.core"))
@@ -1023,14 +1009,13 @@ class COCOEvalCallback(Callback):
         """
         if not getattr(trainer, "is_global_zero", True):
             return
-        try:
-            import rich.table  # noqa: F401 — availability guard; Table used inside _render_summary_tables
-        except ImportError:
+        if not _IS_RICH_AVAILABLE:
+            self._missing_rich_warning_emitted = _warn_missing_rich_once(self._missing_rich_warning_emitted)
             return
 
         console = _get_rich_console(trainer)
         title_pfx = split.capitalize()
-        overall_rendered = self._render_overall_merged(title_pfx, overall)
+        overall_rendered = _render_overall_merged(title_pfx, overall, self._max_dets)
 
         if self._in_notebook:
             # Lazily create an ipywidgets.Output on the first table print so it
@@ -1048,165 +1033,26 @@ class COCOEvalCallback(Callback):
             if self._output_widget is not None:
                 self._output_widget.clear_output(wait=True)
                 with self._output_widget:
-                    COCOEvalCallback._render_summary_tables(console, title_pfx, overall_rendered, per_class)
+                    _render_summary_tables(console, title_pfx, overall_rendered, per_class)
                 return
 
-        COCOEvalCallback._render_summary_tables(console, title_pfx, overall_rendered, per_class)
-
-    def _render_overall_merged(self, title_pfx: str, overall: dict[str, float]) -> str:
-        """Render the overall metrics table with merged group-header cells.
-
-        Uses only plain Unicode box-drawing characters (no ANSI colour codes) so the output renders correctly in both
-        terminals and Jupyter/Colab notebook widgets.
-
-        .. code-block:: text
-
-                        Val — Overall Metrics
-            ┏━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┓
-            ┃          mAP          ┃   mAR   ┃        F1 sweep       ┃
-            ┡━━━━━━━━━┳━━━━━━┳━━━━━━╇━━━━━━━━━╇━━━━━━┳━━━━━━┳━━━━━━━━━┩
-            │  50:95  │  50  │  75  │  @500   │  F1  │ Prec │ Recall  │
-            ├─────────┼──────┼──────┼─────────┼──────┼──────┼─────────┤
-            │    —    │0.1510│0.1228│  0.4017 │0.1573│0.2607│  0.1562 │
-            └─────────┴──────┴──────┴─────────┴──────┴──────┴─────────┘
-
-        Args:
-            title_pfx: Capitalised split name used in the title (e.g. ``"Val"``).
-            overall: Ordered mapping of metric label → scalar value.
-
-        Returns:
-            Multi-line plain-text string ready to pass to ``console.print()``.
-        """
-
-        def _fmt(v: float) -> str:
-            if v != v or v < 0:  # NaN or pycocotools sentinel -1 → em-dash
-                return "—"
-            return f"{v:.4f}"
-
-        mar_lbl = f"@{self._max_dets}"
-        mar_key = f"mAR @{self._max_dets}"
-
-        # Groups: (group_name, [(sub_label, formatted_value), ...])
-        groups: list[tuple[str, list[tuple[str, str]]]] = [
-            (
-                "mAP",
-                [
-                    ("50:95", _fmt(overall["mAP 50:95"])),
-                    ("50", _fmt(overall["mAP 50"])),
-                    ("75", _fmt(overall["mAP 75"])),
-                ],
-            ),
-            ("mAR", [(mar_lbl, _fmt(overall[mar_key]))]),
-            (
-                "F1 sweep",
-                [
-                    ("F1", _fmt(overall["F1"])),
-                    ("Prec", _fmt(overall["Precision"])),
-                    ("Recall", _fmt(overall["Recall"])),
-                ],
-            ),
-        ]
-        if "segm mAP 50:95" in overall:
-            groups.append(
-                (
-                    "segm mAP",
-                    [
-                        ("50:95", _fmt(overall["segm mAP 50:95"])),
-                        ("50", _fmt(overall["segm mAP 50"])),
-                    ],
-                )
+        assert Live is not None
+        renderable = _build_summary_renderable(title_pfx, overall_rendered, per_class)
+        if self._metrics_live is None:
+            self._metrics_live = Live(
+                renderable,
+                console=console,
+                auto_refresh=False,
+                transient=False,
             )
+            try:
+                self._metrics_live.start(refresh=True)
+            except Exception:
+                self._metrics_live = None
+                _render_summary_tables(console, title_pfx, overall_rendered, per_class)
+            return
 
-        # Flatten sub-columns and compute widths (+2 for single-space padding each side)
-        flat: list[tuple[str, str]] = [(s, v) for _, cols in groups for s, v in cols]
-        widths: list[int] = [max(len(s), len(v)) + 2 for s, v in flat]
-
-        # Expand widths so each group label fits in its merged cell
-        col = 0
-        for grp, cols in groups:
-            nc = len(cols)
-            cell_w = sum(widths[col : col + nc]) + (nc - 1)  # nc-1 internal separators
-            needed = len(grp) + 2
-            if needed > cell_w:
-                for k in range(needed - cell_w):
-                    widths[col + k % nc] += 1
-            col += nc
-
-        # Compute group spans: (start_col, end_col_inclusive, name)
-        spans: list[tuple[int, int, str]] = []
-        col = 0
-        for grp, cols in groups:
-            nc = len(cols)
-            spans.append((col, col + nc - 1, grp))
-            col += nc
-
-        grp_ends = {end for start, end, _ in spans[:-1]}
-        n = len(flat)
-
-        def grp_w(start: int, end: int) -> int:
-            """Merged cell width for columns start..end inclusive."""
-            return sum(widths[start : end + 1]) + (end - start)
-
-        # Box-drawing character sets
-        heavy_horizontal = "━"
-        light_horizontal = "─"
-        heavy_vertical = "┃"
-        light_vertical = "│"
-        top_left_corner, top_right_corner = "┏", "┓"
-        top_t_down = "┳"  # heavy T-down: top-border internal group separator
-        transition_left, transition_right = "┡", "┩"  # transition-row left/right edges
-        group_join = "╇"  # transition-row at group boundary: heavy-up, heavy-horiz, light-down
-        subgroup_join = "┯"  # transition-row within group: no-up, heavy-horiz, light-down
-        mid_left, mid_right, mid_cross = "├", "┤", "┼"
-        bottom_left_corner, bottom_right_corner, bottom_t_up = "└", "┘", "┴"
-
-        # Title (centred over the full table width)
-        inner_w = sum(widths) + n - 1
-        title = f"{title_pfx} — Overall Metrics"
-        title_line = title.center(inner_w + 2)
-
-        # Row 1: top border — group-level separators only
-        r1 = top_left_corner
-        for i, (s, e, _) in enumerate(spans):
-            r1 += heavy_horizontal * grp_w(s, e)
-            r1 += top_t_down if i < len(spans) - 1 else top_right_corner
-
-        # Row 2: group labels centred in merged cells
-        r2 = heavy_vertical
-        for s, e, grp in spans:
-            r2 += grp.center(grp_w(s, e)) + heavy_vertical
-
-        # Row 3: transition row — heavy horizontal; ╇ at group ends, ┯ within groups
-        r3 = transition_left
-        for i, w in enumerate(widths):
-            r3 += heavy_horizontal * w
-            if i < n - 1:
-                r3 += group_join if i in grp_ends else subgroup_join
-        r3 += transition_right
-
-        # Row 4: sub-labels with light borders
-        r4 = light_vertical
-        for i, (sub, _) in enumerate(flat):
-            r4 += sub.center(widths[i]) + light_vertical
-
-        # Row 5: light separator between sub-labels and values
-        r5 = mid_left
-        for i, w in enumerate(widths):
-            r5 += light_horizontal * w
-            r5 += mid_cross if i < n - 1 else mid_right
-
-        # Row 6: values
-        r6 = light_vertical
-        for i, (_, val) in enumerate(flat):
-            r6 += val.center(widths[i]) + light_vertical
-
-        # Row 7: bottom border
-        r7 = bottom_left_corner
-        for i, w in enumerate(widths):
-            r7 += light_horizontal * w
-            r7 += bottom_t_up if i < n - 1 else bottom_right_corner
-
-        return "\n".join([title_line, r1, r2, r3, r4, r5, r6, r7])
+        self._metrics_live.update(renderable, refresh=True)
 
     def _convert_preds(self, preds: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:
         """Normalise prediction dicts from ``PostProcess`` for torchmetrics.
