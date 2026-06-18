@@ -66,7 +66,7 @@ class RFDETRBase(RFDETR):
     """Train an RF-DETR Base model.
 
     Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
-    num_windows``. Deprecated in v1.7.0, scheduled for removal in v2.0.0.
+    num_windows``.
     """
 
     size = "rfdetr-base"
@@ -85,7 +85,11 @@ class RFDETRNano(RFDETR):
 
 
 class RFDETRKeypointPreview(RFDETR):
-    """Train or run inference with the RF-DETR keypoint preview model."""
+    """Train or run inference with the RF-DETR keypoint preview model.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``.
+    """
 
     size = "rfdetr-keypoint-preview"
     _model_config_class = RFDETRKeypointPreviewConfig
@@ -123,7 +127,7 @@ class RFDETRLargeDeprecated(RFDETR):
     """Train an RF-DETR Large model using the legacy config.
 
     Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
-    num_windows``. Deprecated in v1.7.0, scheduled for removal in v2.0.0.
+    num_windows``.
     """
 
     size = "rfdetr-large"

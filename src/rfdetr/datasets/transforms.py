@@ -68,6 +68,12 @@ class Normalize(object):
 
 # Albumentations wrapper for RF-DETR
 
+# Transforms that include a horizontal-flip component.  Applying these to keypoint data without
+# swapping left/right joint pairs produces incorrect annotations (e.g. left-shoulder mapped to
+# right-shoulder position after a flip).  Flip-pair swapping is planned but not yet implemented;
+# these transforms are disabled when from_config is called for a keypoint pipeline.
+HFLIP_TRANSFORM_NAMES: frozenset[str] = frozenset({"HorizontalFlip", "Flip", "D4"})
+
 # Geometric transforms that affect bounding boxes
 # These transforms modify spatial coordinates, so bounding boxes must be transformed accordingly.
 # For custom geometric transforms, add the class name to this set.
@@ -372,6 +378,13 @@ class AlbumentationsWrapper:
         self._is_geometric = _is_geometric_transform(transform)
         # Flip pair swapping is not yet implemented; pairs are reserved for a future release.
         self._keypoint_flip_pairs: list[int] = []
+        if keypoint_flip_pairs:
+            logger.warning(
+                "AlbumentationsWrapper received keypoint_flip_pairs=%r, but flip-pair swapping is not yet "
+                "implemented and will be ignored. Semantic joint index swapping after horizontal flips is planned "
+                "for a future release.",
+                keypoint_flip_pairs,
+            )
 
         if self._is_geometric:
             # Wrap geometric transform with bbox handling capabilities
@@ -941,6 +954,17 @@ class AlbumentationsWrapper:
                 )
                 continue
 
+            if keypoint_flip_pairs is not None and aug_name in HFLIP_TRANSFORM_NAMES:
+                logger.warning(
+                    "Keypoint pipeline: '%s' performs a horizontal flip but flip-pair swapping "
+                    "(swapping left/right joint labels after a horizontal flip) is not yet "
+                    "implemented. The transform has been disabled to prevent incorrect keypoint "
+                    "annotations. Remove '%s' from your augmentation config or wait for flip-pair "
+                    "support in a future release.",
+                    aug_name,
+                    aug_name,
+                )
+                continue
             try:
                 transform = _build_albu_transform(aug_name, params)
                 transforms.append(AlbumentationsWrapper(transform, keypoint_flip_pairs=keypoint_flip_pairs))

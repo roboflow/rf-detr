@@ -683,16 +683,6 @@ def make_coco_transforms_square_div_64(
     raise ValueError(f"unknown {image_set}")
 
 
-def _warn_flip_pairs_not_yet_supported(keypoint_flip_pairs: List[int]) -> None:
-    """Emit a warning when keypoint_flip_pairs is set before the feature ships."""
-    if keypoint_flip_pairs:
-        logger.warning(
-            "keypoint_flip_pairs is not yet implemented and will be ignored. "
-            "Flip pair swapping (swapping left/right joint indices after a horizontal flip) "
-            "is planned for a future release. Training will proceed without semantic joint swapping."
-        )
-
-
 def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     root = Path(getattr(args, "dataset_dir", None) or args.coco_path)
     if not root.exists():
@@ -724,9 +714,6 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             "disabling GPU postprocess transforms and retaining CPU normalization."
         )
     gpu_postprocess = resolved_augmentation_backend != "cpu"
-
-    if include_keypoints and image_set.split("_")[0] == "train":
-        _warn_flip_pairs_not_yet_supported(keypoint_flip_pairs)
 
     if square_resize_div_64:
         logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
@@ -820,9 +807,6 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     aug_config = getattr(args, "aug_config", None)
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
     gpu_postprocess = resolved_augmentation_backend != "cpu"
-
-    if include_keypoints and image_set.split("_")[0] == "train":
-        _warn_flip_pairs_not_yet_supported(keypoint_flip_pairs)
 
     if square_resize_div_64:
         logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")

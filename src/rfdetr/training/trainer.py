@@ -351,18 +351,21 @@ def build_trainer(
     skip_best_epochs_explicit = "skip_best_epochs" in tc.model_fields_set
     if has_keypoints and not skip_best_epochs_explicit:
         effective_skip_best_epochs = keypoint_skip_default
-        warnings.warn(
-            f"skip_best_epochs defaulted to {keypoint_skip_default} for keypoint fine-tuning because the keypoint "
+        _logger.info(
+            "skip_best_epochs defaulted to %d for keypoint fine-tuning because the keypoint "
             "mAP metric is noisy in early epochs and can lock checkpoint selection / early stopping to a transient "
             "peak.  Set TrainConfig.skip_best_epochs explicitly to override this default.",
-            UserWarning,
-            stacklevel=2,
+            keypoint_skip_default,
         )
     else:
         effective_skip_best_epochs = tc.skip_best_epochs
-    best_model_smooth_alpha = 0.5 if has_keypoints else 0.0
+    # 0.5 is the default; tunable via KeypointTrainConfig.smooth_alpha for short runs or low-noise datasets.
+    best_model_smooth_alpha = getattr(tc, "smooth_alpha", 0.5) if has_keypoints else 0.0
 
     # Best-model checkpointing — monitor EMA metric only when EMA is active and emitted.
+    # BestModelCallback must be appended BEFORE RFDETREarlyStopping so PTL callback ordering
+    # (Checkpoint subclasses last) ensures EarlyStopping.on_validation_end fires after
+    # BestModelCallback has finished its try/finally restore of callback_metrics[monitor].
     callbacks.append(
         BestModelCallback(
             output_dir=tc.output_dir,

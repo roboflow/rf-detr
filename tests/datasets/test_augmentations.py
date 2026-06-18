@@ -1208,6 +1208,44 @@ class TestAlbumentationsWrapperNestedConfig:
         assert isinstance(inner, alb.SomeOf)
         assert inner.p == pytest.approx(0.5)
 
+    @pytest.mark.parametrize(
+        "hflip_name",
+        [
+            pytest.param("HorizontalFlip", id="HorizontalFlip"),
+            pytest.param("Flip", id="Flip"),
+            pytest.param("D4", id="D4"),
+        ],
+    )
+    def test_hflip_disabled_for_keypoint_pipeline(self, hflip_name: str) -> None:
+        """HFlip-type transforms are skipped when keypoint_flip_pairs is provided."""
+        config = {hflip_name: {"p": 0.5}, "GaussianBlur": {"p": 0.5}}
+
+        transforms = AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=[])
+
+        names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert hflip_name not in names
+        assert "GaussianBlur" in names
+
+    def test_hflip_disable_logs_warning(self) -> None:
+        """from_config logs a warning when HorizontalFlip is disabled for a keypoint pipeline."""
+        config = {"HorizontalFlip": {"p": 0.5}}
+
+        with mock.patch("rfdetr.datasets.transforms.logger") as mock_log:
+            AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=[])
+
+        assert mock_log.warning.called
+        call_args = mock_log.warning.call_args[0]
+        assert "HorizontalFlip" in str(call_args)
+
+    def test_hflip_included_when_no_keypoints(self) -> None:
+        """HorizontalFlip is NOT skipped when keypoint_flip_pairs is None (detection pipeline)."""
+        config = {"HorizontalFlip": {"p": 0.5}}
+
+        transforms = AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=None)
+
+        names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert "HorizontalFlip" in names
+
 
 class TestIntegration:
     """Integration tests for full augmentation pipeline."""

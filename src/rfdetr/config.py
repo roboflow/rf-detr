@@ -866,3 +866,19 @@ class KeypointTrainConfig(TrainConfig):
     keypoint_visible_loss_coef: float = 1
     # Reduced from 1.0: NLL-Cholesky precision coupling amplifies position gradients → OKS@75 oscillation.
     keypoint_nll_loss_coef: float = 0.5
+    # EMA smoothing coefficient for BestModelCallback's per-epoch metric comparison.
+    # 0.5 balances responsiveness and noise suppression for keypoint mAP.
+    smooth_alpha: float = 0.5
+
+    @model_validator(mode="after")
+    def _warn_keypoint_flip_pairs_not_yet_implemented(self) -> "KeypointTrainConfig":
+        """Emit a warning when keypoint_flip_pairs is set before the feature ships."""
+        if self.keypoint_flip_pairs:
+            warnings.warn(
+                "keypoint_flip_pairs is accepted but not yet implemented and will be ignored. "
+                "Flip pair swapping (swapping left/right joint indices after a horizontal flip) "
+                "is planned for a future release. Training will proceed without semantic joint swapping.",
+                UserWarning,
+                stacklevel=2,
+            )
+        return self

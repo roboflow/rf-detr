@@ -301,7 +301,34 @@ def plot_loss_metrics(
     output_path: Optional[str] = None,
     loss_log_scale: bool = False,
 ) -> Figure:
-    """Plot aggregate and component training losses from a PTL ``metrics.csv`` file."""
+    """Plot aggregate and component training losses from a PTL ``metrics.csv`` file.
+
+    Reads the CSV written by PyTorch Lightning's ``CSVLogger``, groups loss columns
+    (aggregate loss, per-component scalars, and keypoint NLL terms) into a single panel,
+    and renders an optional seaborn error-band overlay when seaborn is installed.
+
+    Args:
+        metrics_csv: Path to the ``metrics.csv`` written by PTL's ``CSVLogger``.
+        output_path: Optional filesystem path to save the rendered figure (PNG, PDF, …).
+            When ``None`` the figure is returned but not written to disk.
+        loss_log_scale: When ``True``, the loss y-axis uses a logarithmic scale.
+            Useful when loss components span several orders of magnitude.
+
+    Returns:
+        A ``matplotlib.figure.Figure`` containing the loss panel.
+
+    Raises:
+        FileNotFoundError: When ``metrics_csv`` does not exist.
+        ImportError: When ``pandas`` or ``matplotlib`` is not installed.
+        ValueError: When ``metrics_csv`` contains no loss columns.
+
+    Examples:
+        .. code-block:: python
+
+            from rfdetr.visualize.training import plot_loss_metrics
+            fig = plot_loss_metrics("output/rfdetr_small/metrics.csv")
+            fig = plot_loss_metrics("output/rfdetr_small/metrics.csv", output_path="loss.png", loss_log_scale=True)
+    """
     raw_df, epoch_df = _read_metrics_csv(metrics_csv)
     groups = _build_metric_groups(epoch_df)
     return _plot_metric_groups(
@@ -318,7 +345,33 @@ def plot_map_metrics(
     metrics_csv: str,
     output_path: Optional[str] = None,
 ) -> Figure:
-    """Plot train/val/test detection and keypoint mAP metrics from a PTL ``metrics.csv`` file."""
+    """Plot train/val/test detection and keypoint mAP metrics from a PTL ``metrics.csv`` file.
+
+    Reads the CSV written by PyTorch Lightning's ``CSVLogger``, selects all AP-family
+    columns (AP@0.50, AP@0.75, AP@0.50:0.95 for both detection and keypoints), and renders
+    them in a single combined panel.  EMA series are included when present so both live and
+    EMA metric trajectories are visible in the legend.
+
+    Args:
+        metrics_csv: Path to the ``metrics.csv`` written by PTL's ``CSVLogger``.
+        output_path: Optional filesystem path to save the rendered figure (PNG, PDF, …).
+            When ``None`` the figure is returned but not written to disk.
+
+    Returns:
+        A ``matplotlib.figure.Figure`` containing the combined mAP panel.
+
+    Raises:
+        FileNotFoundError: When ``metrics_csv`` does not exist.
+        ImportError: When ``pandas`` or ``matplotlib`` is not installed.
+        ValueError: When ``metrics_csv`` contains no supported mAP metric columns.
+
+    Examples:
+        .. code-block:: python
+
+            from rfdetr.visualize.training import plot_map_metrics
+            fig = plot_map_metrics("output/rfdetr_small/metrics.csv")
+            fig = plot_map_metrics("output/rfdetr_small/metrics.csv", output_path="map.png")
+    """
     raw_df, epoch_df = _read_metrics_csv(metrics_csv)
     metric_groups = _build_metric_groups(epoch_df)
     map_columns = [

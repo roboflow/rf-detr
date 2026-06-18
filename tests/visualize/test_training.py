@@ -69,12 +69,15 @@ def test_build_metric_groups_includes_detection_and_keypoint_metrics() -> None:
             "train/mAP_50_95": [0.04, 0.09],
             "val/mAP_50": [0.1, 0.2],
             "val/mAP_50_95": [0.05, 0.1],
+            "val/mAP_75": [0.07, 0.15],
             "val/mAR": [0.2, 0.3],
             "train/keypoint_map_50": [0.008, 0.018],
             "train/keypoint_map_50_95": [0.004, 0.009],
             "val/keypoint_map_50": [0.01, 0.02],
             "val/keypoint_map_50_95": [0.005, 0.01],
+            "val/keypoint_map_75": [0.006, 0.012],
             "val/keypoint_mAR": [0.03, 0.04],
+            "val/AP/small": [0.05, 0.1],
             "val/F1": [0.4, 0.5],
             "val/precision": [0.6, 0.7],
             "val/recall": [0.3, 0.4],
@@ -84,11 +87,13 @@ def test_build_metric_groups_includes_detection_and_keypoint_metrics() -> None:
     groups = _build_metric_groups(metrics)
 
     assert groups["Loss"] == ["train/loss", "train/loss_cls", "train/kp_nll", "val/loss", "val/loss_keypoints_visible"]
-    assert groups["Detection AP@0.50"] == ["train/mAP_50", "val/mAP_50"]
+    assert groups["Detection AP@0.50"] == ["train/mAP_50", "val/mAP_50", "val/AP/small"]
     assert groups["Detection AP@0.50:0.95"] == ["train/mAP_50_95", "val/mAP_50_95"]
+    assert groups["Detection AP@0.75"] == ["val/mAP_75"]
     assert groups["Detection AR"] == ["val/mAR"]
     assert groups["Keypoint AP@0.50"] == ["train/keypoint_map_50", "val/keypoint_map_50"]
     assert groups["Keypoint AP@0.50:0.95"] == ["train/keypoint_map_50_95", "val/keypoint_map_50_95"]
+    assert groups["Keypoint AP@0.75"] == ["val/keypoint_map_75"]
     assert groups["Keypoint AR"] == ["val/keypoint_mAR"]
     assert groups["F1 / Precision / Recall"] == ["val/F1", "val/precision", "val/recall"]
 

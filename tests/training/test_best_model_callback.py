@@ -1709,6 +1709,35 @@ class TestBestModelSmoothAlpha:
 
         assert cb._smoothed_regular == 0.0
 
+    def test_load_state_dict_smoothed_regular_missing_key_defaults_to_zero(self, tmp_path: Path) -> None:
+        """load_state_dict() defaults _smoothed_regular to 0.0 when key is absent (backward compat)."""
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        cb._smoothed_regular = 0.42
+        state = cb.state_dict()
+        state.pop("_smoothed_regular")
+
+        cb.load_state_dict(state)
+
+        assert cb._smoothed_regular == 0.0
+
+    def test_callback_metrics_restored_when_super_raises(self, tmp_path: Path) -> None:
+        """trainer.callback_metrics[monitor] is restored in the finally block even when super() raises."""
+        from unittest.mock import patch
+
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        pl_module = _make_pl_module()
+        trainer = _make_trainer({"val/mAP_50_95": 0.8}, current_epoch=0)
+        raw_tensor = trainer.callback_metrics["val/mAP_50_95"]
+
+        with patch(
+            "rfdetr.training.callbacks.best_model.ModelCheckpoint.on_validation_end",
+            side_effect=RuntimeError("simulated failure"),
+        ):
+            with pytest.raises(RuntimeError, match="simulated failure"):
+                cb.on_validation_end(trainer, pl_module)
+
+        assert trainer.callback_metrics["val/mAP_50_95"] is raw_tensor
+
 
 # ---------------------------------------------------------------------------
 # TestCheckpointNotes
@@ -1731,26 +1760,6 @@ class TestCheckpointNotes:
         """Notes supplied via TrainConfig are accessible under checkpoint['args']['notes']."""
         from rfdetr.config import TrainConfig
 
-        cb = BestModelCallback(output_dir=str(tmp_path))
-        trainer = _make_trainer({"val/mAP_50_95": 0.5})
-
-        pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, notes=notes)
-
-        cb.on_validation_end(trainer, pl_module)
-
-        checkpoint = torch.load(
-            tmp_path / "checkpoint_best_regular.pth",
-            map_location="cpu",
-            weights_only=False,
-        )
-        assert checkpoint["args"]["notes"] == notes
-
-    def test_notes_also_preserved_in_args_dict(self, tmp_path: Path) -> None:
-        """Notes are also accessible inside checkpoint['args']['notes'] via TrainConfig dump."""
-        from rfdetr.config import TrainConfig
-
-        notes = {"project": "ceramics", "batch": 7}
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
 
