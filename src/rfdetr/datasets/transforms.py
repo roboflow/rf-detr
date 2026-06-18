@@ -19,7 +19,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Sequence
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 try:
     import albumentations as alb
@@ -28,6 +28,7 @@ except ImportError:
 import numpy as np
 import PIL
 import torch
+from torch import Tensor
 from PIL import Image
 from torchvision.transforms import Normalize as _TVNormalize
 
@@ -40,14 +41,14 @@ logger = get_logger()
 class Normalize(object):
     def __init__(
         self,
-        mean: Tuple[float, ...] = (0.485, 0.456, 0.406),
-        std: Tuple[float, ...] = (0.229, 0.224, 0.225),
+        mean: tuple[float, ...] = (0.485, 0.456, 0.406),
+        std: tuple[float, ...] = (0.229, 0.224, 0.225),
     ) -> None:
         self._normalize = _TVNormalize(mean, std)
 
     def __call__(
-        self, image: torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[torch.Tensor, Optional[Dict[str, Any]]]:
+        self, image: Tensor, target: dict[str, Any] | None = None
+    ) -> tuple[Tensor, dict[str, Any]] | None:
         image = self._normalize(image)
         if target is None:
             return image, None
@@ -151,7 +152,7 @@ def _is_geometric_transform(transform: alb.BasicTransform) -> bool:
     return False
 
 
-def _build_albu_transform(name: str, params: Dict[str, Any]) -> alb.BasicTransform:
+def _build_albu_transform(name: str, params: dict[str, Any]) -> alb.BasicTransform:
     """Build a single Albumentations transform from its name and parameter dict.
 
     Handles container transforms (``OneOf``, ``SomeOf``, ``Sequential``) by recursively building the nested
@@ -195,7 +196,7 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> alb.BasicTransfo
         raw_nested = params.get("transforms", [])
         if not isinstance(raw_nested, list):
             raise ValueError(f"'{name}.transforms' must be a list, got {type(raw_nested).__name__}")
-        nested_transforms: List[alb.BasicTransform] = []
+        nested_transforms: list[alb.BasicTransform] = []
         for entry in raw_nested:
             if not isinstance(entry, dict) or len(entry) != 1:
                 raise ValueError(f"Each nested transform entry must be a single-key dict, got {entry!r}")
@@ -247,7 +248,7 @@ def _random_sized_crop_uses_size_param(aug_cls: type) -> bool:
     return "size" in signature.parameters
 
 
-def _normalize_albu_params(name: str, params: Dict[str, Any], aug_cls: type) -> Dict[str, Any]:
+def _normalize_albu_params(name: str, params: dict[str, Any], aug_cls: type) -> dict[str, Any]:
     """Normalize transform params across Albumentations API variations.
 
     Currently this adapts ``RandomSizedCrop`` arguments so a config using ``height``/``width`` works on Albumentations
@@ -416,7 +417,7 @@ class AlbumentationsWrapper:
         return f"{self.__class__.__name__}(transform={transform}, type={transform_type})"
 
     @staticmethod
-    def _boxes_to_numpy(boxes: Union[torch.Tensor, np.ndarray]) -> np.ndarray:
+    def _boxes_to_numpy(boxes: Tensor | np.ndarray) -> np.ndarray:
         """Convert boxes to numpy array and validate shape.
 
         >>> import torch
@@ -430,7 +431,7 @@ class AlbumentationsWrapper:
         return boxes_np
 
     @staticmethod
-    def _keypoints_to_numpy(keypoints: Union[torch.Tensor, np.ndarray], num_boxes: int) -> np.ndarray:
+    def _keypoints_to_numpy(keypoints: Tensor | np.ndarray, num_boxes: int) -> np.ndarray:
         """Convert keypoints to numpy array and validate shape.
 
         >>> import torch
@@ -450,8 +451,8 @@ class AlbumentationsWrapper:
     @staticmethod
     def _build_albu_keypoints(
         keypoints_np: np.ndarray,
-        idxs: List[int],
-    ) -> Dict[str, Any]:
+        idxs: list[int],
+    ) -> dict[str, Any]:
         """Flatten per-instance keypoints into Albumentations keypoint fields.
 
         >>> keypoints = np.array([[[10.0, 20.0, 2.0], [0.0, 0.0, 0.0]]], dtype=np.float32)
@@ -459,10 +460,10 @@ class AlbumentationsWrapper:
         >>> fields["keypoints"]
         [(10.0, 20.0), (0.0, 0.0)]
         """
-        albu_keypoints: List[Tuple[float, float]] = []
-        instance_ids: List[float] = []
-        point_ids: List[float] = []
-        visibility: List[float] = []
+        albu_keypoints: list[tuple[float, float]] = []
+        instance_ids: list[float] = []
+        point_ids: list[float] = []
+        visibility: list[float] = []
         for original_idx in idxs:
             for point_idx, point in enumerate(keypoints_np[original_idx]):
                 x, y, visible = point.tolist()
@@ -480,9 +481,9 @@ class AlbumentationsWrapper:
     @staticmethod
     def _detect_horizontal_flip(
         boxes_np: np.ndarray,
-        idxs: List[int],
-        bboxes_aug: List[Any],
-        kept_idxs: List[int],
+        idxs: list[int],
+        bboxes_aug: list[Any],
+        kept_idxs: list[int],
         aug_width: int,
     ) -> bool:
         """Return True when a horizontal flip is detected via bbox center-X mirroring.
@@ -515,12 +516,12 @@ class AlbumentationsWrapper:
 
     @staticmethod
     def _rebuild_keypoints_from_albu(
-        augmented: Dict[str, Any],
-        kept_idxs: List[int],
+        augmented: dict[str, Any],
+        kept_idxs: list[int],
         keypoints_np: np.ndarray,
-        flip_pairs: List[int] | None = None,
+        flip_pairs: list[int] | None = None,
         did_flip: bool = False,
-    ) -> torch.Tensor:
+    ) -> Tensor:
         """Rebuild transformed keypoints and keep them synchronized with kept boxes.
 
         Args:
@@ -573,7 +574,7 @@ class AlbumentationsWrapper:
         return result
 
     @staticmethod
-    def _clear_per_instance_fields(target: Dict[str, Any], num_boxes: int) -> Dict[str, Any]:
+    def _clear_per_instance_fields(target: dict[str, Any], num_boxes: int) -> dict[str, Any]:
         """Clear all per-instance fields when no boxes remain.
 
         >>> import torch
@@ -598,7 +599,7 @@ class AlbumentationsWrapper:
         return result
 
     @staticmethod
-    def _filter_per_instance_fields(target: Dict[str, Any], num_boxes: int, kept_idxs: List[int]) -> Dict[str, Any]:
+    def _filter_per_instance_fields(target: dict[str, Any], num_boxes: int, kept_idxs: list[int]) -> dict[str, Any]:
         """Filter per-instance fields to match kept box indices.
 
         >>> import torch
@@ -624,8 +625,8 @@ class AlbumentationsWrapper:
         return result
 
     def _apply_geometric_transform(
-        self, image_np: np.ndarray, target: Dict[str, Any], labels: List[int]
-    ) -> Tuple[Image.Image, Dict[str, Any]]:
+        self, image_np: np.ndarray, target: dict[str, Any], labels: list[int]
+    ) -> tuple[Image.Image, dict[str, Any]]:
         """Apply geometric transform to image with boxes and optionally masks.
 
         Converts data to Albumentations format, applies the transform, and converts back to RF-DETR format. Handles box
@@ -692,7 +693,7 @@ class AlbumentationsWrapper:
                 }
             )
         augmented = self.transform(**transform_kwargs)
-        target_out: Dict[str, Any] = target.copy()
+        target_out: dict[str, Any] = target.copy()
         bboxes_aug = augmented["bboxes"]
         kept_idxs = [int(idx) for idx in augmented.get("idxs", idxs)]
         # Update target with transformed boxes and labels
@@ -738,8 +739,8 @@ class AlbumentationsWrapper:
         return image_out, target_out
 
     def __call__(
-        self, image: PIL.Image.Image, target: Optional[Dict[str, Any]]
-    ) -> Tuple[PIL.Image.Image, Optional[Dict[str, Any]]]:
+        self, image: PIL.Image.Image, target: dict[str, Any] | None
+    ) -> tuple[PIL.Image.Image, dict[str, Any] | None]:
         """Apply the Albumentations transform to image and target.
 
         This method handles the data format conversion between RF-DETR and Albumentations:
@@ -838,9 +839,9 @@ class AlbumentationsWrapper:
 
     @staticmethod
     def from_config(
-        config_dict: Union[Dict[str, Any], List[Dict[str, Any]]],
-        keypoint_flip_pairs: List[int] | None = None,
-    ) -> List["AlbumentationsWrapper"]:
+        config_dict: dict[str, Any] | list[dict[str, Any]],
+        keypoint_flip_pairs: list[int] | None = None,
+    ) -> list["AlbumentationsWrapper"]:
         """Build a list of :class:`AlbumentationsWrapper` instances from a config.
 
         Supports both a flat dictionary format (backward-compatible) and a list format that allows duplicate transform
