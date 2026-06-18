@@ -255,10 +255,13 @@ class RFDETRModelModule(LightningModule):
                 # 13×300=3900) and postprocess top-k selection draws from all
                 # groups, producing OKS/mAP values ~50× below true accuracy.
                 nq = self.model_config.num_queries
+                # Only include tensor-valued keys — pred_masks is a dict in
+                # train mode (sparse_forward) and postprocess cannot handle it.
                 inference_outputs = {
-                    k: v[:, :nq] if isinstance(v, torch.Tensor) and v.ndim >= 2 else v
+                    k: v[:, :nq] if v.ndim >= 2 else v
                     for k, v in outputs.items()
                     if k in ("pred_logits", "pred_boxes", "pred_masks", "pred_keypoints")
+                    and isinstance(v, torch.Tensor)
                 }
                 results = self.postprocess(inference_outputs, orig_sizes)
             return {
