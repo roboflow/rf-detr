@@ -685,6 +685,7 @@ class TrainConfig(BaseConfig):
     ema_update_interval: int = 1
     num_workers: int = 2
     weight_decay: float = 1e-4
+    amp_dtype: Literal["auto", "bf16", "fp16"] = "auto"
     early_stopping: bool = False
     early_stopping_patience: int = 10
     early_stopping_min_delta: float = 0.001
@@ -751,6 +752,23 @@ class TrainConfig(BaseConfig):
         """
         if isinstance(value, bool):
             return "tqdm" if value else None
+        return value
+
+    @field_validator("amp_dtype", mode="before")
+    @classmethod
+    def _coerce_amp_dtype(cls, value: Any) -> Any:
+        """Fall back to ``'auto'`` (with a warning) for an unrecognised or wrong-typed ``amp_dtype``.
+
+        Mixed precision is a best-effort speed/memory optimisation, so an invalid request degrades to the auto-selected
+        dtype rather than failing the whole training run.
+        """
+        if value not in ("auto", "bf16", "fp16"):
+            warnings.warn(
+                f"Unknown amp_dtype={value!r}; expected one of 'auto', 'bf16', 'fp16'. Falling back to 'auto'.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return "auto"
         return value
 
     # Promoted from populate_args() — PTL migration (T4-2).
