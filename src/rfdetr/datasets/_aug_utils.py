@@ -73,7 +73,7 @@ def _filter_keypoint_hflip_entries(entries: list[dict[str, Any]], *, warn: Calla
 
         aug_name, params = next(iter(entry.items()))
         filtered_params = _filter_keypoint_hflip_item(aug_name, params, warn=warn)
-        if filtered_params is _DROP_AUGMENTATION:
+        if isinstance(filtered_params, _DropAugmentation):
             continue
         filtered_entries.append({aug_name: filtered_params})
     return filtered_entries
@@ -84,7 +84,7 @@ def _filter_keypoint_hflip_dict(config: dict[str, Any], *, warn: Callable[..., N
     filtered_config: dict[str, Any] = {}
     for aug_name, params in config.items():
         filtered_params = _filter_keypoint_hflip_item(aug_name, params, warn=warn)
-        if filtered_params is _DROP_AUGMENTATION:
+        if isinstance(filtered_params, _DropAugmentation):
             continue
         filtered_config[aug_name] = filtered_params
     return filtered_config
@@ -92,9 +92,6 @@ def _filter_keypoint_hflip_dict(config: dict[str, Any], *, warn: Callable[..., N
 
 class _DropAugmentation:
     """Sentinel used when an augmentation entry should be removed."""
-
-
-_DROP_AUGMENTATION = _DropAugmentation()
 
 
 def _filter_keypoint_hflip_item(
@@ -106,14 +103,14 @@ def _filter_keypoint_hflip_item(
     """Filter one augmentation entry, recursing into supported containers."""
     if aug_name in HFLIP_TRANSFORM_NAMES:
         _warn_keypoint_hflip_disabled(aug_name, warn)
-        return _DROP_AUGMENTATION
+        return _DropAugmentation()
 
     if aug_name not in CONTAINER_TRANSFORM_NAMES:
         return params
 
     if isinstance(params, list):
         filtered_transforms = _filter_keypoint_hflip_entries(params, warn=warn)
-        return filtered_transforms if filtered_transforms else _DROP_AUGMENTATION
+        return filtered_transforms if filtered_transforms else _DropAugmentation()
 
     if not isinstance(params, dict) or "transforms" not in params:
         return params
@@ -124,6 +121,6 @@ def _filter_keypoint_hflip_item(
 
     filtered_transforms = _filter_keypoint_hflip_entries(transforms, warn=warn)
     if not filtered_transforms:
-        return _DROP_AUGMENTATION
+        return _DropAugmentation()
 
     return {**params, "transforms": filtered_transforms}

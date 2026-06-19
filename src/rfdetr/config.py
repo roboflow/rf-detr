@@ -885,6 +885,10 @@ class KeypointTrainConfig(TrainConfig):
             comparison. Overrides the :class:`TrainConfig` default of ``0.0``
             (disabled) to ``0.5``, which balances responsiveness and noise
             suppression for noisy keypoint mAP curves.
+        skip_best_epochs: Number of epochs to skip before checkpoint selection begins.
+            Overrides the :class:`TrainConfig` default of ``0`` to ``10`` because
+            ``val/keypoint_map_50_95`` under the NLL-Cholesky loss is noisy in early
+            fine-tuning and can lock checkpoint selection to a transient peak.
     """
 
     cls_loss_coef: float = 2.0  # TODO: verify empirically before final release; ported as-is from internal recipe.
@@ -893,6 +897,7 @@ class KeypointTrainConfig(TrainConfig):
     keypoint_visible_loss_coef: float = 1
     keypoint_nll_loss_coef: float = 0.5
     smooth_alpha: float = 0.5
+    skip_best_epochs: int = Field(default=10, ge=0)
 
     @model_validator(mode="after")
     def _warn_keypoint_flip_pairs_not_yet_implemented(self) -> "KeypointTrainConfig":

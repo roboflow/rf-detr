@@ -345,27 +345,6 @@ def build_trainer(
         early_stopping_monitor_ema = "val/ema_mAP_50_95"
     monitor_ema = early_stopping_monitor_ema if enable_ema else None
 
-    # Keypoint defaults: val/keypoint_map_50_95 under the NLL-Cholesky loss is noisy in
-    # early fine-tuning (10x swings in epochs 4-19 while train/loss decreases monotonically).
-    # The raw metric is unreliable for both checkpoint selection (locks to an early local
-    # peak) and early-stopping patience (premature stop on a transient dip).  When the user
-    # has not explicitly set ``skip_best_epochs`` on the TrainConfig, default it to 10 for
-    # keypoint runs so the first ~10 epochs do not dominate selection.  ``smooth_alpha=0.5``
-    # is also passed to BestModelCallback so the per-epoch raw metric is smoothed before the
-    # parent's improvement comparison.
-    keypoint_skip_default = 10
-    skip_best_epochs_explicit = "skip_best_epochs" in tc.model_fields_set
-    if has_keypoints and not skip_best_epochs_explicit:
-        effective_skip_best_epochs = keypoint_skip_default
-        warnings.warn(
-            f"skip_best_epochs defaulted to {keypoint_skip_default} for keypoint fine-tuning because the keypoint "
-            "mAP metric is noisy in early epochs and can lock checkpoint selection / early stopping to a transient "
-            "peak. Set TrainConfig.skip_best_epochs explicitly to override this default.",
-            UserWarning,
-            stacklevel=2,
-        )
-    else:
-        effective_skip_best_epochs = tc.skip_best_epochs
     best_model_smooth_alpha = tc.smooth_alpha
 
     # Best-model checkpointing — monitor EMA metric only when EMA is active and emitted.
@@ -380,7 +359,7 @@ def build_trainer(
             monitor_regular=monitor_regular,
             monitor_ema=monitor_ema,
             run_test=tc.run_test,
-            skip_best_epochs=effective_skip_best_epochs,
+            skip_best_epochs=tc.skip_best_epochs,
             smooth_alpha=best_model_smooth_alpha,
         )
     )
@@ -394,7 +373,7 @@ def build_trainer(
                 use_ema=tc.early_stopping_use_ema,
                 monitor_regular=monitor_regular,
                 monitor_ema=early_stopping_monitor_ema,
-                skip_best_epochs=effective_skip_best_epochs,
+                skip_best_epochs=tc.skip_best_epochs,
             )
         )
 
