@@ -375,7 +375,7 @@ class Transformer(nn.Module):
             batch_size, _, _ = memory_ts.shape
             keypoint_memory_ts = self.keypoint_query_initializer_enc(memory_ts)
             boxes_ref = boxes_ts if self.bbox_reparam else boxes_ts.sigmoid()
-            group_detr = len(self.enc_out_keypoint_embed)
+            group_detr = len(self.enc_out_keypoint_embed) if self.training else 1
 
             kp_mem_chunks = keypoint_memory_ts.chunk(group_detr, dim=1)
             boxes_chunks = boxes_ref.chunk(group_detr, dim=1)

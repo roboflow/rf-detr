@@ -15,6 +15,7 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from torchvision.transforms.v2 import Compose
 
+from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
 from rfdetr.datasets._develop import _SimpleDataset
 from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE, AUG_CONFIG
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
@@ -39,6 +40,57 @@ class _FakeRandomSizedCropV1:
         self.height = height
         self.width = width
         self.p = p
+
+
+class TestKeypointHFlipFiltering:
+    """Shared keypoint hflip filtering behavior for augmentation backends."""
+
+    def test_drops_hflip_and_warns_for_keypoint_pipeline(self) -> None:
+        """Keypoint augmentation config drops hflip transforms while keeping other transforms."""
+        config = {"HorizontalFlip": {"p": 0.5}, "VerticalFlip": {"p": 0.5}}
+        warning = mock.Mock()
+
+        filtered = filter_keypoint_hflip_augmentations(config, warn=warning)
+
+        assert filtered == {"VerticalFlip": {"p": 0.5}}
+        warning.assert_called_once()
+        assert "HorizontalFlip" in str(warning.call_args)
+
+    def test_keeps_hflip_when_keypoints_are_not_active(self) -> None:
+        """Detection augmentation config keeps hflip transforms unchanged."""
+        config = {"HorizontalFlip": {"p": 0.5}}
+        warning = mock.Mock()
+
+        filtered = filter_keypoint_hflip_augmentations(config, warn=warning, include_keypoints=False)
+
+        assert filtered == config
+        warning.assert_not_called()
+
+    def test_drops_nested_hflip_from_container(self) -> None:
+        """Keypoint augmentation config drops hflip transforms inside containers."""
+        config = {
+            "OneOf": {
+                "transforms": [
+                    {"HorizontalFlip": {"p": 1.0}},
+                    {"VerticalFlip": {"p": 1.0}},
+                ],
+                "p": 0.5,
+            }
+        }
+        warning = mock.Mock()
+
+        filtered = filter_keypoint_hflip_augmentations(config, warn=warning)
+
+        assert filtered == {
+            "OneOf": {
+                "transforms": [
+                    {"VerticalFlip": {"p": 1.0}},
+                ],
+                "p": 0.5,
+            }
+        }
+        warning.assert_called_once()
+        assert "HorizontalFlip" in str(warning.call_args)
 
 
 class TestAlbumentationsWrapper:
@@ -1208,6 +1260,44 @@ class TestAlbumentationsWrapperNestedConfig:
         assert isinstance(inner, alb.SomeOf)
         assert inner.p == pytest.approx(0.5)
 
+    @pytest.mark.parametrize(
+        "hflip_name",
+        [
+            pytest.param("HorizontalFlip", id="HorizontalFlip"),
+            pytest.param("Flip", id="Flip"),
+            pytest.param("D4", id="D4"),
+        ],
+    )
+    def test_hflip_disabled_for_keypoint_pipeline(self, hflip_name: str) -> None:
+        """HFlip-type transforms are skipped when keypoint_flip_pairs is provided."""
+        config = {hflip_name: {"p": 0.5}, "GaussianBlur": {"p": 0.5}}
+
+        transforms = AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=[])
+
+        names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert hflip_name not in names
+        assert "GaussianBlur" in names
+
+    def test_hflip_disable_logs_warning(self) -> None:
+        """from_config logs a warning when HorizontalFlip is disabled for a keypoint pipeline."""
+        config = {"HorizontalFlip": {"p": 0.5}}
+
+        with mock.patch("rfdetr.datasets.transforms.logger") as mock_log:
+            AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=[])
+
+        assert mock_log.warning.called
+        call_args = mock_log.warning.call_args[0]
+        assert "HorizontalFlip" in str(call_args)
+
+    def test_hflip_included_when_no_keypoints(self) -> None:
+        """HorizontalFlip is NOT skipped when keypoint_flip_pairs is None (detection pipeline)."""
+        config = {"HorizontalFlip": {"p": 0.5}}
+
+        transforms = AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=None)
+
+        names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert "HorizontalFlip" in names
+
 
 class TestIntegration:
     """Integration tests for full augmentation pipeline."""
@@ -1730,3 +1820,125 @@ class TestAugPresets:
             f"right/down translation; got {translate!r}"
         )
         assert lo < hi, f"AUG_AGGRESSIVE translate_percent must be a non-degenerate range; got {translate!r}"
+
+
+class TestKeypointScalingAcrossResolutions:
+    """Keypoint coordinates are correctly normalised when training at non-default resolutions.
+
+    The full transform pipeline — Resize → ToImage → ToDtype → Normalize — applies Normalize last. Normalize divides
+    keypoint x by image width and y by image height, so the model always receives relative [0, 1] coordinates regardless
+    of the configured training resolution.  These tests confirm that contract holds for all supported resolutions (576
+    default, 640, 768, 960).
+    """
+
+    # Input image: 480 wide, 360 tall. Box occupies the centre quadrant.
+    _INPUT_W = 480
+    _INPUT_H = 360
+    # Keypoint at exactly 60 % of each axis — well inside the box, visibility=2.
+    _KP_FRAC = 0.6
+    _KP_X = _KP_FRAC * _INPUT_W  # 288.0
+    _KP_Y = _KP_FRAC * _INPUT_H  # 216.0
+
+    def _make_target(self) -> dict:
+        return {
+            "boxes": torch.tensor([[120.0, 90.0, 360.0, 270.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor([[[self._KP_X, self._KP_Y, 2.0], [0.0, 0.0, 0.0]]]),
+        }
+
+    @pytest.mark.parametrize(
+        "resolution",
+        [
+            pytest.param(576, id="default_576"),
+            pytest.param(640, id="larger_640"),
+            pytest.param(768, id="larger_768"),
+            pytest.param(960, id="larger_960"),
+        ],
+    )
+    def test_val_pipeline_keypoints_normalised_to_unit_range(self, resolution: int) -> None:
+        """After Normalize, visible keypoint coords are in [0, 1] for every resolution."""
+        transform = make_coco_transforms_square_div_64("val", resolution)
+        image = Image.new("RGB", (self._INPUT_W, self._INPUT_H))
+
+        _, transformed = transform(image, self._make_target())
+
+        kp = transformed["keypoints"]
+        assert kp[0, 0, 0].item() == pytest.approx(self._KP_FRAC, abs=1e-3), (
+            f"normalised keypoint x must equal original fraction {self._KP_FRAC} at resolution={resolution}"
+        )
+        assert kp[0, 0, 1].item() == pytest.approx(self._KP_FRAC, abs=1e-3), (
+            f"normalised keypoint y must equal original fraction {self._KP_FRAC} at resolution={resolution}"
+        )
+        assert kp[0, 0, 2].item() == pytest.approx(2.0), "visibility must be preserved after normalisation"
+
+    @pytest.mark.parametrize(
+        "resolution",
+        [
+            pytest.param(576, id="default_576"),
+            pytest.param(640, id="larger_640"),
+            pytest.param(768, id="larger_768"),
+            pytest.param(960, id="larger_960"),
+        ],
+    )
+    def test_val_pipeline_invisible_keypoints_stay_zero(self, resolution: int) -> None:
+        """Zero-visibility keypoints must remain at (0, 0, 0) after the full pipeline."""
+        transform = make_coco_transforms_square_div_64("val", resolution)
+        image = Image.new("RGB", (self._INPUT_W, self._INPUT_H))
+
+        _, transformed = transform(image, self._make_target())
+
+        kp = transformed["keypoints"]
+        torch.testing.assert_close(
+            kp[0, 1],
+            torch.zeros(3),
+            rtol=0.0,
+            atol=0.0,
+        )
+
+    @pytest.mark.parametrize(
+        "resolution",
+        [
+            pytest.param(576, id="default_576"),
+            pytest.param(640, id="larger_640"),
+            pytest.param(768, id="larger_768"),
+            pytest.param(960, id="larger_960"),
+        ],
+    )
+    def test_train_pipeline_visible_keypoints_normalised_in_unit_range(self, resolution: int) -> None:
+        """Train transform (random resize/crop) must produce normalised keypoints in [0, 1]."""
+        transform = make_coco_transforms_square_div_64("train", resolution, aug_config={})
+        image = Image.new("RGB", (self._INPUT_W, self._INPUT_H))
+
+        _, transformed = transform(image, self._make_target())
+
+        kp = transformed["keypoints"]  # shape (N, K, 3); x and y already normalised by Normalize
+        visible_mask = kp[:, :, 2] > 0  # (N, K) bool
+        if visible_mask.any():
+            visible_x = kp[:, :, 0][visible_mask]
+            visible_y = kp[:, :, 1][visible_mask]
+            assert (visible_x >= 0).all() and (visible_x <= 1.0).all(), (
+                f"normalised keypoint x out of [0, 1] at resolution={resolution}: {visible_x}"
+            )
+            assert (visible_y >= 0).all() and (visible_y <= 1.0).all(), (
+                f"normalised keypoint y out of [0, 1] at resolution={resolution}: {visible_y}"
+            )
+
+    @pytest.mark.parametrize(
+        "resolution",
+        [
+            pytest.param(576, id="default_576"),
+            pytest.param(640, id="larger_640"),
+            pytest.param(768, id="larger_768"),
+            pytest.param(960, id="larger_960"),
+        ],
+    )
+    def test_output_tensor_shape_matches_resolution(self, resolution: int) -> None:
+        """Transform output image tensor must be (C, resolution, resolution) for all resolutions."""
+        transform = make_coco_transforms_square_div_64("val", resolution, aug_config={})
+        image = Image.new("RGB", (self._INPUT_W, self._INPUT_H))
+
+        tensor, _ = transform(image, None)
+
+        assert tensor.shape[-2:] == (resolution, resolution), (
+            f"expected (C, {resolution}, {resolution}), got {tuple(tensor.shape)}"
+        )

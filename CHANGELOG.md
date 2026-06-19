@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.1] — 2026-06-19
+
+### Changed
+
+- Config path parameters (e.g. `dataset_dir`, `output_dir`, `pretrain_weights`) now accept `pathlib.Path` objects in addition to strings. Paths are coerced to `str` automatically via the `expand_paths` validator. No API changes required; existing string usage unaffected. ([#1124](https://github.com/roboflow/rf-detr/pull/1124))
+- Keypoint training now disables horizontal flip augmentation until keypoint flip-pair swapping is implemented. Previously, flipping was applied without reordering keypoint pairs, producing incorrect labels. ([#1122](https://github.com/roboflow/rf-detr/pull/1122))
+- Training metric plots improved with optional seaborn error bands, AP@0.75 metric grouping, and custom AP metric group configuration. ([#1122](https://github.com/roboflow/rf-detr/pull/1122))
+
+### Fixed
+
+- Keypoint encoder in eval mode now routes all queries through head 0 instead of splitting across group heads. Previously, `group_detr = len(self.enc_out_keypoint_embed)` caused the encoder keypoint path to split `num_queries` queries across all group heads in eval; now uses `if self.training else 1` guard. ([#1135](https://github.com/roboflow/rf-detr/pull/1135))
+- `config.use_return_dict` (deprecated in `transformers`) replaced with `config.return_dict` in DINOv2 windowed attention backbone. ([#1135](https://github.com/roboflow/rf-detr/pull/1135))
+- Epoch metric tables now display correctly when a Rich progress bar callback is active. Tables are printed through the progress bar's owned Rich console, preventing cursor conflicts with active live displays. ([#1128](https://github.com/roboflow/rf-detr/pull/1128))
+- Keypoint fine-tuning checkpoint selection stabilised with smoothed (EMA) best-metric comparison to avoid spurious checkpoint switches on noisy OKS metrics. Smoothing state is correctly restored on training resume. ([#1122](https://github.com/roboflow/rf-detr/pull/1122))
+- Group DETR train-time metric evaluation now evaluates only the primary query group, preventing crashes on non-tensor mask outputs from auxiliary decoder layers. ([#1122](https://github.com/roboflow/rf-detr/pull/1122))
+- `_detect_horizontal_flip` in Albumentations transform pipeline now uses `len(bboxes) == 0` instead of `not bboxes` to correctly handle Albumentations 2.x where bboxes is a NumPy array (falsy even when non-empty). ([#1126](https://github.com/roboflow/rf-detr/pull/1126))
+- TensorBoard logger is now disabled gracefully when `tensorboard` is installed alongside a NumPy-2.0-incompatible `tensorflow`. Training degrades to CSV-only logging with a clear warning instead of crashing inside `_log_hyperparams`. ([#1123](https://github.com/roboflow/rf-detr/pull/1123))
+
+---
+
 ## [1.8.0] — 2026-06-13
 
 ### Added

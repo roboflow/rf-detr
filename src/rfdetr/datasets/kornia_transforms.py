@@ -46,6 +46,7 @@ from typing import Any
 import torch
 from torch import Tensor
 
+from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -283,6 +284,7 @@ def build_kornia_pipeline(
     aug_config: dict[str, dict[str, Any]],
     resolution: int,
     with_masks: bool = False,
+    include_keypoints: bool = False,
 ) -> Any:
     """Build a Kornia ``AugmentationSequential`` from an aug_config dict.
 
@@ -298,6 +300,8 @@ def build_kornia_pipeline(
             instance segmentation masks are augmented in sync with images and boxes.  The pipeline then expects three
             inputs ``(img, boxes, masks)`` and returns three outputs.  Defaults to ``False`` (detection-only, two
             inputs/outputs).
+        include_keypoints: When ``True``, keypoint-unsafe horizontal-flip
+            transforms are dropped with a warning before the Kornia pipeline is built.
 
     Returns:
         A ``kornia.augmentation.AugmentationSequential`` instance.
@@ -313,8 +317,15 @@ def build_kornia_pipeline(
     _require_kornia()
     from kornia.augmentation import AugmentationSequential
 
+    filtered_aug_config = filter_keypoint_hflip_augmentations(
+        aug_config,
+        include_keypoints=include_keypoints,
+        warn=logger.warning,
+    )
+    assert isinstance(filtered_aug_config, dict)
+
     transforms: list[Any] = []
-    for name, params in aug_config.items():
+    for name, params in filtered_aug_config.items():
         factory = _REGISTRY.get(name)
         if factory is None:
             raise ValueError(
