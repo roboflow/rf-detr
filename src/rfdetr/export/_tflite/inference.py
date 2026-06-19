@@ -29,6 +29,9 @@ logger = get_logger()
 # PILImage.Resampling was introduced in Pillow 9.1; fall back to the legacy constant.
 _PIL_BILINEAR = getattr(PILImage, "Resampling", PILImage).BILINEAR
 
+_IMAGENET_MEAN: list[float] = [0.485, 0.456, 0.406]
+_IMAGENET_STD: list[float] = [0.229, 0.224, 0.225]
+
 
 def _create_interpreter(model_path: str | Path) -> Any:
     """Load a TFLite model, allocate tensors, and log I/O shapes.
@@ -83,6 +86,10 @@ def _bilinear_resize_half_pixel(src: NDArray[np.float32], out_h: int, out_w: int
 
     Returns:
         Float32 array of shape ``(K, out_h, out_w)``.
+
+    Note:
+        Replaces ``PIL.Image.resize(BILINEAR)``, which uses a corner-aligned half-pixel convention and
+        produced border-pixel discrepancies vs ``F.interpolate``.
     """
     src_h, src_w = src.shape[-2], src.shape[-1]
     src_y = (np.arange(out_h, dtype=np.float32) + 0.5) * (src_h / out_h) - 0.5
@@ -99,13 +106,18 @@ def _bilinear_resize_half_pixel(src: NDArray[np.float32], out_h: int, out_w: int
     b = src[..., y0[:, None], x1[None, :]]
     c = src[..., y1[:, None], x0[None, :]]
     d = src[..., y1[:, None], x1[None, :]]
-    return (1 - dy) * ((1 - dx) * a + dx * b) + dy * ((1 - dx) * c + dx * d)
+    return np.asarray(
+        (1 - dy) * ((1 - dx) * a + dx * b) + dy * ((1 - dx) * c + dx * d),
+        dtype=np.float32,
+    )
 
 
 def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArray[np.bool_]:
     """Upsample mask logits to image size and threshold at zero.
 
     Matches ``PostProcess.forward``: bilinear upsample with ``align_corners=False`` followed by ``> 0``.
+    Uses ``torch.nn.functional.interpolate`` when torch is importable for bit-exact parity, and falls
+    back to the pure-NumPy ``_bilinear_resize_half_pixel`` otherwise.
 
     Args:
         mask_logits: Raw mask logits of shape ``(K, Hm, Wm)``.
@@ -116,6 +128,10 @@ def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArr
 
     Raises:
         ValueError: If *mask_logits* is not rank-3.
+
+    Note:
+        ``out_size`` follows PIL convention ``(width, height)``; the returned array uses
+        NumPy/PyTorch convention ``(K, height, width)``.
     """
     if mask_logits.ndim != 3:
         raise ValueError(
@@ -123,7 +139,18 @@ def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArr
             "This usually means the rank-4 mask-output heuristic in _run_inference matched the wrong tensor."
         )
     width, height = out_size
-    resized = _bilinear_resize_half_pixel(mask_logits.astype(np.float32), height, width)
+    if mask_logits.shape[0] == 0:
+        return np.zeros((0, height, width), dtype=np.bool_)
+    try:
+        import torch
+        import torch.nn.functional as _F  # noqa: N812
+
+        with torch.no_grad():
+            t = torch.from_numpy(mask_logits.astype(np.float32)).unsqueeze(0)
+            t = _F.interpolate(t, size=(height, width), mode="bilinear", align_corners=False)
+        resized: NDArray[np.float32] = np.asarray(t.squeeze(0).numpy(), dtype=np.float32)
+    except ImportError:
+        resized = _bilinear_resize_half_pixel(mask_logits.astype(np.float32), height, width)
     return resized > 0.0
 
 
@@ -144,6 +171,11 @@ def _preprocess_image(
 
     Returns:
         Float32 array of shape ``(1, height, width, channels)`` in NHWC.
+
+    Note:
+        The PIL fallback uses BILINEAR resize, which does not perfectly match PyTorch's ``F.resize``
+        (different coordinate conventions). For bit-exact parity with ``RFDETR.predict()``, ensure
+        ``torch`` and ``torchvision`` are importable.
     """
     height, width = hw
     pil_mode = "L" if channels == 1 else "RGB"
@@ -158,28 +190,24 @@ def _preprocess_image(
         with torch.no_grad():
             t = _F.to_tensor(pil_rgb)
             t = _F.resize(t, list(hw))
-            _imagenet_mean = [0.485, 0.456, 0.406]
-            _imagenet_std = [0.229, 0.224, 0.225]
-            mean_list = [_imagenet_mean[i % 3] for i in range(channels)]
-            std_list = [_imagenet_std[i % 3] for i in range(channels)]
+            mean_list = [_IMAGENET_MEAN[i % 3] for i in range(channels)]
+            std_list = [_IMAGENET_STD[i % 3] for i in range(channels)]
             t = _F.normalize(t, mean_list, std_list)
-        nchw_float = t.unsqueeze(0).cpu().numpy()
+        nchw_float = np.asarray(t.unsqueeze(0).cpu().numpy(), dtype=np.float32)
     except ImportError:
         pass
 
     if nchw_float is not None:
         # NCHW -> NHWC for the TFLite interpreter.
-        return nchw_float.transpose(0, 2, 3, 1).astype(np.float32)
+        return np.asarray(nchw_float.transpose(0, 2, 3, 1), dtype=np.float32)
 
     # Torch-free fallback: PIL BILINEAR. PIL's default is BICUBIC, which diverges from PyTorch.
     arr = np.array(pil_rgb.resize((width, height), _PIL_BILINEAR), dtype=np.float32) / 255.0
     if arr.ndim == 2:  # "L" -> (height, width); TFLite needs (height, width, 1).
         arr = arr[:, :, np.newaxis]
 
-    _imagenet_mean = [0.485, 0.456, 0.406]
-    _imagenet_std = [0.229, 0.224, 0.225]
-    mean = np.array([_imagenet_mean[i % 3] for i in range(channels)], dtype=np.float32)
-    std = np.array([_imagenet_std[i % 3] for i in range(channels)], dtype=np.float32)
+    mean = np.array([_IMAGENET_MEAN[i % 3] for i in range(channels)], dtype=np.float32)
+    std = np.array([_IMAGENET_STD[i % 3] for i in range(channels)], dtype=np.float32)
 
     return ((arr - mean) / std)[np.newaxis]
 

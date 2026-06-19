@@ -22,7 +22,13 @@ import pytest
 import supervision as sv
 from PIL import Image as PILImage
 
-from rfdetr.export._tflite.inference import _create_interpreter, _decode_masks, _run_inference
+from rfdetr.export._tflite.inference import (
+    _bilinear_resize_half_pixel,
+    _create_interpreter,
+    _decode_masks,
+    _preprocess_image,
+    _run_inference,
+)
 
 # ---------------------------------------------------------------------------
 # Shared helpers / factories
@@ -676,3 +682,103 @@ class TestMaskDecoding:
         # Interior rows well away from the half-way boundary
         assert out[0, 1:6, :].all()  # top rows → all True
         assert not out[0, 15:27, :].any()  # bottom rows → all False
+
+
+# ---------------------------------------------------------------------------
+# TestBilinearResizeHalfPixel
+# ---------------------------------------------------------------------------
+
+
+class TestBilinearResizeHalfPixel:
+    """Tests for ``_bilinear_resize_half_pixel()``."""
+
+    def test_output_shape(self) -> None:
+        """Output shape is (K, out_h, out_w)."""
+        src = np.ones((3, 8, 8), dtype=np.float32)
+        out = _bilinear_resize_half_pixel(src, 16, 16)
+        assert out.shape == (3, 16, 16)
+
+    def test_output_dtype_is_float32(self) -> None:
+        """Output dtype is float32 regardless of input magnitude."""
+        src = np.ones((1, 4, 4), dtype=np.float32)
+        out = _bilinear_resize_half_pixel(src, 8, 8)
+        assert out.dtype == np.float32
+
+    def test_identity_when_no_resize(self) -> None:
+        """Output equals input when target dimensions match source dimensions."""
+        rng = np.random.default_rng(0)
+        src = rng.random((2, 8, 8)).astype(np.float32)
+        out = _bilinear_resize_half_pixel(src, 8, 8)
+        np.testing.assert_allclose(out, src, atol=1e-6)
+
+    @pytest.mark.parametrize(
+        ("src_shape", "out_h", "out_w"),
+        [
+            pytest.param((1, 4, 4), 8, 8, id="upsample_square"),
+            pytest.param((3, 7, 5), 14, 10, id="upsample_nonsquare"),
+            pytest.param((2, 8, 8), 4, 4, id="downsample"),
+            pytest.param((1, 1, 1), 3, 3, id="degenerate_1x1"),
+        ],
+    )
+    def test_parity_with_torch_interpolate(self, src_shape: tuple[int, int, int], out_h: int, out_w: int) -> None:
+        """Output matches F.interpolate(mode='bilinear', align_corners=False) to within 1e-5."""
+        torch = pytest.importorskip("torch")
+        import torch.nn.functional as F  # noqa: N812
+
+        rng = np.random.default_rng(42)
+        src = rng.random(src_shape).astype(np.float32)
+
+        result = _bilinear_resize_half_pixel(src, out_h, out_w)
+
+        t = torch.from_numpy(src).unsqueeze(0)
+        with torch.no_grad():
+            ref = F.interpolate(t, size=(out_h, out_w), mode="bilinear", align_corners=False)
+        ref_np = ref.squeeze(0).numpy()
+
+        np.testing.assert_allclose(result, ref_np, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# TestPreprocessImage
+# ---------------------------------------------------------------------------
+
+
+class TestPreprocessImage:
+    """Tests for ``_preprocess_image()``."""
+
+    def test_output_shape_rgb(self) -> None:
+        """RGB image returns float32 array of shape (1, H, W, 3)."""
+        pil_img = PILImage.new("RGB", (100, 80))
+        out = _preprocess_image(pil_img, (64, 64))
+        assert out.shape == (1, 64, 64, 3)
+        assert out.dtype == np.float32
+
+    def test_output_shape_grayscale(self) -> None:
+        """Grayscale image with channels=1 returns float32 array of shape (1, H, W, 1)."""
+        pil_img = PILImage.new("L", (100, 80))
+        out = _preprocess_image(pil_img, (64, 64), channels=1)
+        assert out.shape == (1, 64, 64, 1)
+        assert out.dtype == np.float32
+
+    def test_output_values_are_normalized(self) -> None:
+        """ImageNet normalization shifts black-pixel output below -1.0."""
+        pil_img = PILImage.new("RGB", (32, 32), color=(0, 0, 0))
+        out = _preprocess_image(pil_img, (32, 32))
+        # pixel 0 → 0.0 → (0.0 - 0.485) / 0.229 ≈ -2.12
+        assert out.min() < -1.0
+
+    def test_pil_fallback_when_torch_unavailable(self) -> None:
+        """PIL path is used when torch is masked from sys.modules."""
+        pil_img = PILImage.new("RGB", (100, 80))
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "torch": None,
+                "torchvision": None,
+                "torchvision.transforms": None,
+                "torchvision.transforms.functional": None,
+            },
+        ):
+            out = _preprocess_image(pil_img, (64, 64))
+        assert out.shape == (1, 64, 64, 3)
+        assert out.dtype == np.float32
