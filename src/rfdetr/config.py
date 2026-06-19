@@ -810,6 +810,14 @@ class TrainConfig(BaseConfig):
             raise ValueError("auto_batch_ema_headroom must be in (0, 1].")
         return v
 
+    @field_validator("smooth_alpha", mode="after")
+    @classmethod
+    def validate_smooth_alpha(cls, v: float) -> float:
+        """Validate smooth_alpha is in [0.0, 1.0)."""
+        if not (0.0 <= v < 1.0):
+            raise ValueError("smooth_alpha must be in [0.0, 1.0).")
+        return v
+
     @field_validator("ema_update_interval", "eval_interval", mode="after")
     @classmethod
     def validate_positive_intervals(cls, v: int) -> int:
