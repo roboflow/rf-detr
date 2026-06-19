@@ -22,7 +22,7 @@ from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_version
-from rfdetr.utilities.state_dict import _make_fit_loop_state, strip_checkpoint
+from rfdetr.utilities.state_dict import _LOOP_STATE_STUB, _make_fit_loop_state, strip_checkpoint
 
 logger = get_logger()
 
@@ -59,7 +59,9 @@ class BestModelCallback(ModelCheckpoint):
             substitutes the smoothed value into ``trainer.callback_metrics`` for the duration of the parent's
             improvement check; the original raw value is always restored before returning so what gets logged to
             ``metrics.csv`` is unaffected.  Useful for noisy metrics (e.g. keypoint mAP under NLL-Cholesky losses) where
-            raw per-epoch swings can lock the best checkpoint to an early local peak.
+            raw per-epoch swings can lock the best checkpoint to an early local peak.  The EMA accumulator is updated
+            on every validation epoch including epochs within the ``skip_best_epochs`` window so the smoothed value
+            is pre-warmed by the first eligible comparison.
 
     Examples:
         Skip the first 3 epochs so pretrained weights do not dominate:
@@ -153,8 +155,8 @@ class BestModelCallback(ModelCheckpoint):
                 # Minimal stubs so trainer.validate(ckpt_path=...) and trainer.test(ckpt_path=...)
                 # don't crash on KeyError — PTL restore_loops() expects both keys (PTL>=2.x,
                 # checkpoint_connector.py:restore_loops).
-                "validate_loop": {"state_dict": {}},
-                "test_loop": {"state_dict": {}},
+                "validate_loop": _LOOP_STATE_STUB,
+                "test_loop": _LOOP_STATE_STUB,
             },
             # Keep keys present with empty values so PTL resume paths that
             # expect them can proceed without loading optimizer state.
@@ -263,14 +265,15 @@ class BestModelCallback(ModelCheckpoint):
         return None
 
     def state_dict(self) -> dict[str, Any]:
-        """Return callback state including ``_best_ema`` and ``_smoothed_regular`` for Lightning checkpointing.
+        """Return callback state including ``_best_ema``, ``_smoothed_regular``, and ``_best_raw_regular``.
 
-        Extends the parent :class:`~pytorch_lightning.callbacks.ModelCheckpoint` state dict with two extra keys so that
-        ``trainer.fit(ckpt_path=...)`` resumes the EMA high-water mark and the smoothed-metric accumulator from their
-        correct values rather than resetting both to ``0.0``.
+        Extends the parent :class:`~pytorch_lightning.callbacks.ModelCheckpoint` state dict with three extra keys so
+        that ``trainer.fit(ckpt_path=...)`` resumes the EMA high-water mark, the smoothed-metric accumulator, and the
+        raw metric at the smoothed-best epoch from their correct values rather than resetting to ``0.0``.
 
         Returns:
-            State dict with all parent fields plus ``"_best_ema"`` and ``"_smoothed_regular"``.
+            State dict with all parent fields plus ``"_best_ema"``, ``"_smoothed_regular"``,
+            and ``"_best_raw_regular"``.
         """
         state = super().state_dict()
         state["_best_ema"] = self._best_ema
@@ -281,10 +284,10 @@ class BestModelCallback(ModelCheckpoint):
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         """Restore callback state from a Lightning checkpoint.
 
-        Pops ``"_best_ema"`` and ``"_smoothed_regular"`` from a shallow copy of *state_dict* before delegating to the
-        parent so the parent does not receive unexpected keys.  Each key defaults to ``0.0`` when absent (e.g.
-        checkpoints saved before these fields were persisted) and is reset to ``0.0`` when the stored value is
-        non-finite.
+        Pops ``"_best_ema"``, ``"_smoothed_regular"``, and ``"_best_raw_regular"`` from a shallow copy of *state_dict*
+        before delegating to the parent so the parent does not receive unexpected keys.  Each key defaults to ``0.0``
+        when absent (e.g. checkpoints saved before these fields were persisted) and is reset to ``0.0`` when the stored
+        value is non-finite.
 
         Args:
             state_dict: Callback state dict as produced by :meth:`state_dict`.
@@ -472,6 +475,12 @@ class BestModelCallback(ModelCheckpoint):
 
         # Use _best_raw_regular when smoothing is active: best_model_score tracks the
         # smoothed value, so comparing it directly against raw _best_ema is biased.
+        # _best_raw_regular is the raw (un-smoothed) metric value at the epoch where the
+        # SMOOTHED metric last set a new high-water mark — i.e. the raw value for the
+        # checkpoint that was actually saved.  This is intentionally not the all-time raw
+        # peak: the saved checkpoint corresponds to the smoothed-best epoch, which may differ
+        # from the epoch with the highest raw reading.  Do not change this to an all-time raw
+        # max without adding a corresponding saved checkpoint for that epoch.
         if self._smooth_alpha > 0.0:
             best_regular = self._best_raw_regular
         else:

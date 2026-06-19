@@ -659,6 +659,7 @@ class TrainConfig(BaseConfig):
     lr_drop: int = 100
     checkpoint_interval: int = Field(default=10, ge=1)
     skip_best_epochs: int = Field(default=0, ge=0)
+    smooth_alpha: float = 0.0
     warmup_epochs: float = 0.0
     lr_vit_layer_decay: float = 0.8
     lr_component_decay: float = 0.7
@@ -858,16 +859,31 @@ class SegmentationTrainConfig(TrainConfig):
 
 
 class KeypointTrainConfig(TrainConfig):
-    """Keypoint-specific training defaults."""
+    """Training configuration for keypoint detection models.
+
+    Extends :class:`TrainConfig` with keypoint-specific loss coefficients and
+    metric-smoothing defaults tuned for the NLL-Cholesky keypoint head, which
+    produces noisy per-epoch OKS metrics during early fine-tuning.
+
+    Attributes:
+        cls_loss_coef: Classification loss weight.
+        keypoint_l1_loss_coef: L1 regression loss weight for keypoint coordinates.
+        keypoint_findable_loss_coef: Loss weight for the keypoint visibility head.
+        keypoint_visible_loss_coef: Loss weight for the keypoint visibility score.
+        keypoint_nll_loss_coef: NLL-Cholesky loss weight. Reduced from 1.0 to 0.5
+            to dampen OKS@75 oscillation caused by precision-coupling in the
+            Cholesky parameterisation.
+        smooth_alpha: EMA smoothing factor for :class:`BestModelCallback` metric
+            comparison. Overrides the :class:`TrainConfig` default of ``0.0``
+            (disabled) to ``0.5``, which balances responsiveness and noise
+            suppression for noisy keypoint mAP curves.
+    """
 
     cls_loss_coef: float = 2.0  # TODO: verify empirically before final release; ported as-is from internal recipe.
     keypoint_l1_loss_coef: float = 1
     keypoint_findable_loss_coef: float = 1
     keypoint_visible_loss_coef: float = 1
-    # Reduced from 1.0: NLL-Cholesky precision coupling amplifies position gradients → OKS@75 oscillation.
     keypoint_nll_loss_coef: float = 0.5
-    # EMA smoothing coefficient for BestModelCallback's per-epoch metric comparison.
-    # 0.5 balances responsiveness and noise suppression for keypoint mAP.
     smooth_alpha: float = 0.5
 
     @model_validator(mode="after")

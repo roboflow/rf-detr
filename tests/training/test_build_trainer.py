@@ -11,7 +11,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pytorch_lightning.callbacks import ModelCheckpoint
 
-from rfdetr.config import RFDETRBaseConfig, RFDETRKeypointPreviewConfig, SegmentationTrainConfig, TrainConfig
+from rfdetr.config import (
+    KeypointTrainConfig,
+    RFDETRBaseConfig,
+    RFDETRKeypointPreviewConfig,
+    SegmentationTrainConfig,
+    TrainConfig,
+)
 from rfdetr.training import build_trainer
 from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyStopping
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
@@ -52,6 +58,23 @@ def _tc(tmp_path, **kwargs):
     return TrainConfig(**defaults)
 
 
+def _kp_tc(tmp_path, **kwargs):
+    """Minimal KeypointTrainConfig for tests that exercise keypoint model paths."""
+    defaults = dict(
+        dataset_dir=str(tmp_path / "ds"),
+        output_dir=str(tmp_path / "out"),
+        epochs=1,
+        batch_size=2,
+        num_workers=0,
+        tensorboard=False,
+        wandb=False,
+        mlflow=False,
+        clearml=False,
+    )
+    defaults.update(kwargs)
+    return KeypointTrainConfig(**defaults)
+
+
 class TestBuildTrainerReturnType:
     """build_trainer() must return a PTL Trainer."""
 
@@ -86,7 +109,7 @@ class TestBuildTrainerCallbacks:
         """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""
         sigmas = [0.05] * 25
         trainer = build_trainer(
-            _tc(tmp_path, use_ema=False, keypoint_oks_sigmas=sigmas),
+            _kp_tc(tmp_path, use_ema=False, keypoint_oks_sigmas=sigmas),
             RFDETRKeypointPreviewConfig(pretrain_weights=None),
         )
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
@@ -106,7 +129,7 @@ class TestBuildTrainerCallbacks:
 
     def test_keypoint_best_model_monitors_keypoint_map(self, tmp_path):
         """Keypoint training checkpoints should rank models by keypoint AP, not bbox mAP."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=True), RFDETRKeypointPreviewConfig(pretrain_weights=None))
+        trainer = build_trainer(_kp_tc(tmp_path, use_ema=True), RFDETRKeypointPreviewConfig(pretrain_weights=None))
         best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
         assert best_cb.monitor == "val/keypoint_map_50_95"
         assert best_cb._monitor_ema == "val/ema_keypoint_map_50_95"
@@ -230,7 +253,7 @@ class TestBuildTrainerCallbacks:
     def test_keypoint_early_stopping_monitors_keypoint_map(self, tmp_path):
         """Keypoint early stopping should use keypoint AP as the regular metric."""
         trainer = build_trainer(
-            _tc(tmp_path, early_stopping=True, early_stopping_use_ema=True),
+            _kp_tc(tmp_path, early_stopping=True, early_stopping_use_ema=True),
             RFDETRKeypointPreviewConfig(pretrain_weights=None),
         )
         early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
@@ -277,7 +300,7 @@ class TestBuildTrainerKeypointDefaults:
         """For keypoint models, skip_best_epochs defaults to 10 when the user did not set it explicitly."""
         with pytest.warns(UserWarning, match="skip_best_epochs defaulted to 10"):
             trainer = build_trainer(
-                _tc(tmp_path, use_ema=False, early_stopping=True),
+                _kp_tc(tmp_path, use_ema=False, early_stopping=True),
                 RFDETRKeypointPreviewConfig(pretrain_weights=None),
             )
         best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
@@ -291,7 +314,7 @@ class TestBuildTrainerKeypointDefaults:
         with warnings.catch_warnings(record=True) as records:
             warnings.simplefilter("always")
             trainer = build_trainer(
-                _tc(tmp_path, use_ema=False, skip_best_epochs=3),
+                _kp_tc(tmp_path, use_ema=False, skip_best_epochs=3),
                 RFDETRKeypointPreviewConfig(pretrain_weights=None),
             )
         best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
@@ -311,7 +334,7 @@ class TestBuildTrainerKeypointDefaults:
         """BestModelCallback receives smooth_alpha=0.5 for keypoint models to dampen noisy mAP swings."""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            trainer = build_trainer(_tc(tmp_path, use_ema=False), RFDETRKeypointPreviewConfig(pretrain_weights=None))
+            trainer = build_trainer(_kp_tc(tmp_path, use_ema=False), RFDETRKeypointPreviewConfig(pretrain_weights=None))
         best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
         assert best_cb._smooth_alpha == pytest.approx(0.5)
 
@@ -657,7 +680,7 @@ class TestBuildTrainerKwargs:
     def test_gradient_clip_val_disabled_for_keypoint_manual_optimization(self, tmp_path):
         """Trainer-owned clipping is disabled for keypoint models because RFDETRModelModule clips manually."""
         trainer = build_trainer(
-            _tc(tmp_path, use_ema=False, clip_max_norm=0.25),
+            _kp_tc(tmp_path, use_ema=False, clip_max_norm=0.25),
             _mc(use_grouppose_keypoints=True),
         )
         assert trainer.gradient_clip_val is None
@@ -673,7 +696,7 @@ class TestBuildTrainerKwargs:
     def test_accumulate_grad_batches_disabled_for_keypoint_manual_optimization(self, tmp_path):
         """Trainer-owned accumulation is disabled for keypoint models because RFDETRModelModule accumulates manually."""
         trainer = build_trainer(
-            _tc(tmp_path, grad_accum_steps=8, use_ema=False),
+            _kp_tc(tmp_path, grad_accum_steps=8, use_ema=False),
             _mc(use_grouppose_keypoints=True),
         )
         assert trainer.accumulate_grad_batches == 1
@@ -733,7 +756,7 @@ class TestBuildTrainerKwargs:
             pytest.warns(UserWarning, match="manual optimization"),
         ):
             build_trainer(
-                _tc(tmp_path, use_ema=False),
+                _kp_tc(tmp_path, use_ema=False),
                 _mc(use_grouppose_keypoints=True),
                 accumulate_grad_batches=8,
                 gradient_clip_val=0.25,
@@ -873,7 +896,7 @@ class TestBuildTrainerKeypointDistributedGuard:
 
     def test_keypoint_ddp_strategy_raises_clear_error(self, tmp_path):
         """Keypoint mode rejects explicit distributed strategy requests with a clear error."""
-        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
+        tc = _kp_tc(tmp_path, use_ema=False, strategy="ddp")
         mc = _mc(use_grouppose_keypoints=True)
 
         with pytest.raises(NotImplementedError, match="Keypoint training currently does not support distributed"):
@@ -881,7 +904,7 @@ class TestBuildTrainerKeypointDistributedGuard:
 
     def test_keypoint_auto_devices_raises_when_cuda_has_multiple_devices(self, tmp_path):
         """Keypoint mode rejects devices='auto' when it would resolve to multi-GPU execution."""
-        tc = _tc(tmp_path, use_ema=False, devices="auto")
+        tc = _kp_tc(tmp_path, use_ema=False, devices="auto")
         mc = _mc(use_grouppose_keypoints=True)
 
         with (

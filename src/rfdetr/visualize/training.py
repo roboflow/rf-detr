@@ -20,7 +20,6 @@ Usage::
 
 from __future__ import annotations
 
-import importlib.util
 import re
 import warnings
 from pathlib import Path
@@ -32,7 +31,12 @@ if TYPE_CHECKING:
 _AUXILIARY_LOSS_SUFFIX_RE = re.compile(r"_\d+$")
 _LEGEND_COLUMNS = 4
 
-_IS_SEABORN_AVAILABLE: bool = importlib.util.find_spec("seaborn") is not None
+try:
+    import seaborn  # noqa: F401
+
+    _IS_SEABORN_AVAILABLE: bool = True
+except ImportError:
+    _IS_SEABORN_AVAILABLE = False
 
 
 def _place_legend_below_axes(ax: Any, *, n_columns: int = _LEGEND_COLUMNS) -> None:
@@ -148,11 +152,11 @@ def _build_metric_groups(df: Any) -> dict[str, list[str]]:
         return "loss" in leaf or leaf.startswith("kp_")
 
     loss_cols = [name for name in df.columns if _is_loss_col(str(name)) and df[name].notna().any()]
-    detection_map_50 = [
-        c for c in _split_cols("mAP_50", "ema_mAP_50", "/AP/") if "mAP_50_95" not in c and "mAP_75" not in c
-    ]
+    detection_map_50 = [c for c in _split_cols("mAP_50", "ema_mAP_50") if "mAP_50_95" not in c and "mAP_75" not in c]
     detection_map_75 = _split_cols("mAP_75", "ema_mAP_75")
-    detection_map_50_95 = _split_cols("mAP_50_95", "ema_mAP_50_95")
+    detection_map_50_95 = [
+        c for c in _split_cols("mAP_50_95", "ema_mAP_50_95", "/AP/") if "mAP_50" not in c or "mAP_50_95" in c
+    ]
     detection_mar = [c for c in _split_cols("mAR", "ema_mAR") if "keypoint_" not in c]
     keypoint_map_50 = [
         c for c in _split_cols("keypoint_map_50", "ema_keypoint_map_50") if "map_50_95" not in c and "map_75" not in c

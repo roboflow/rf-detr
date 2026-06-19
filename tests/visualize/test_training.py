@@ -87,8 +87,8 @@ def test_build_metric_groups_includes_detection_and_keypoint_metrics() -> None:
     groups = _build_metric_groups(metrics)
 
     assert groups["Loss"] == ["train/loss", "train/loss_cls", "train/kp_nll", "val/loss", "val/loss_keypoints_visible"]
-    assert groups["Detection AP@0.50"] == ["train/mAP_50", "val/mAP_50", "val/AP/small"]
-    assert groups["Detection AP@0.50:0.95"] == ["train/mAP_50_95", "val/mAP_50_95"]
+    assert groups["Detection AP@0.50"] == ["train/mAP_50", "val/mAP_50"]
+    assert groups["Detection AP@0.50:0.95"] == ["train/mAP_50_95", "val/mAP_50_95", "val/AP/small"]
     assert groups["Detection AP@0.75"] == ["val/mAP_75"]
     assert groups["Detection AR"] == ["val/mAR"]
     assert groups["Keypoint AP@0.50"] == ["train/keypoint_map_50", "val/keypoint_map_50"]
@@ -336,6 +336,38 @@ def test_plot_metrics_warns_when_log_loss_has_non_positive_values(tmp_path: Path
     np.testing.assert_allclose(lines["train/kp_nll"].get_ydata(), [-1.0, -2.0])
     assert not (tmp_path / "metrics_plot.png").exists()
     plt.close(figure)
+
+
+class TestPlotMetricsNoSeaborn:
+    """Verify plot_metrics falls back gracefully when seaborn is unavailable."""
+
+    def test_plot_metrics_succeeds_without_seaborn(self, tmp_path: Path) -> None:
+        """plot_metrics returns a Figure when _IS_SEABORN_AVAILABLE is False (matplotlib-only fallback).
+
+        Scenario: seaborn flag patched to False; plot_metrics called with a minimal DataFrame
+        containing epoch and one metric column.  Expected outcome: call succeeds, returns a
+        matplotlib Figure, raises no ImportError.
+        """
+        pytest.importorskip("matplotlib")
+        pd = pytest.importorskip("pandas")
+        from unittest.mock import patch
+
+        from matplotlib import pyplot as plt
+        from matplotlib.figure import Figure
+
+        metrics_csv = tmp_path / "metrics.csv"
+        pd.DataFrame(
+            {
+                "epoch": [0, 1],
+                "val/mAP_50": [0.1, 0.2],
+            }
+        ).to_csv(metrics_csv, index=False)
+
+        with patch("rfdetr.visualize.training._IS_SEABORN_AVAILABLE", False):
+            figure = plot_metrics(str(metrics_csv))
+
+        assert isinstance(figure, Figure), "plot_metrics must return a matplotlib Figure when seaborn is absent"
+        plt.close(figure)
 
 
 class TestSeabornErrorBands:

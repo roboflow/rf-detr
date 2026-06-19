@@ -31,7 +31,7 @@ import torch
 from PIL import Image
 from torchvision.transforms import Normalize as _TVNormalize
 
-from rfdetr.datasets._augmentation_utils import filter_keypoint_hflip_augmentations
+from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
 from rfdetr.util.box_ops import box_xyxy_to_cxcywh
 from rfdetr.util.logger import get_logger
 
@@ -351,6 +351,10 @@ class AlbumentationsWrapper:
 
     Args:
         transform: Albumentations transform to apply (e.g., alb.HorizontalFlip, alb.GaussianBlur).
+        keypoint_flip_pairs: Joint index pairs for left/right swapping after a horizontal flip.
+            ``None`` (default) means a detection pipeline -- no keypoint handling. An empty list
+            ``[]`` marks a keypoint pipeline where flip-pair swapping is not yet implemented;
+            horizontal-flip transforms should have been stripped from config before this point.
 
     Examples:
         >>> from albumentations import GaussianBlur, HorizontalFlip
@@ -889,6 +893,11 @@ class AlbumentationsWrapper:
         Args:
             config_dict: Augmentation configuration -- either a ``dict`` mapping
                 transform names to parameter dicts, or a ``list`` of single-key dicts ``{name: params}``.
+            keypoint_flip_pairs: Joint index pairs for swapping left/right keypoints after a horizontal
+                flip (e.g. ``[0, 1, 2, 3]`` swaps joint 0↔1 and 2↔3). Pass ``None`` (default) for
+                detection pipelines where horizontal flips are always permitted. Pass an empty list
+                ``[]`` to mark a keypoint pipeline without any defined flip pairs -- horizontal-flip
+                augmentations are then disabled until flip-pair swapping is implemented.
 
         Returns:
             List of :class:`AlbumentationsWrapper` instances in config order.

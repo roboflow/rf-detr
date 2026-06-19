@@ -1544,6 +1544,38 @@ class TestBestEmaStatePersistence:
 
         assert cb._best_ema == 0.0
 
+    def test_state_dict_round_trip_preserves_all_three_smooth_fields(self, tmp_path: Path) -> None:
+        """state_dict/load_state_dict round-trip preserves _best_ema, _smoothed_regular, and _best_raw_regular.
+
+        Scenario: user trains with smooth_alpha=0.5, two validation epochs advance all three accumulators,
+        then a fresh callback is restored from the persisted state — all three fields must survive unchanged.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", smooth_alpha=0.5)
+        pl_module = _make_pl_module()
+
+        # Epoch 0: raw=0.6 → smoothed=0.3, EMA=0.5 (saves EMA checkpoint)
+        trainer0 = _make_trainer({"val/mAP_50_95": 0.6, "val/ema_mAP_50_95": 0.5}, current_epoch=0)
+        trainer0.global_step = 1
+        cb.on_validation_end(trainer0, pl_module)
+
+        # Epoch 1: raw=0.4 → smoothed=0.35, EMA=0.7 > 0.5 (saves new EMA checkpoint); raw at smoothed-best=0.4
+        trainer1 = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.7}, current_epoch=1)
+        trainer1.global_step = 2
+        cb.on_validation_end(trainer1, pl_module)
+
+        state = cb.state_dict()
+
+        cb_resumed = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", smooth_alpha=0.5)
+        cb_resumed.load_state_dict(state)
+
+        assert cb_resumed._best_ema == pytest.approx(cb._best_ema), "_best_ema must survive round-trip"
+        assert cb_resumed._smoothed_regular == pytest.approx(cb._smoothed_regular), (
+            "_smoothed_regular must survive round-trip"
+        )
+        assert cb_resumed._best_raw_regular == pytest.approx(cb._best_raw_regular), (
+            "_best_raw_regular must survive round-trip"
+        )
+
     def test_load_state_dict_does_not_mutate_caller_dict(self, tmp_path: Path) -> None:
         """load_state_dict must not pop or mutate the caller-supplied dict."""
         cb1 = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
@@ -1719,6 +1751,44 @@ class TestBestModelSmoothAlpha:
         cb.load_state_dict(state)
 
         assert cb._smoothed_regular == 0.0
+
+    @pytest.mark.parametrize(
+        "skip_epochs",
+        [
+            pytest.param(2, id="skip_two"),
+        ],
+    )
+    def test_ema_accumulator_warms_up_during_skip_window(self, tmp_path: Path, skip_epochs: int) -> None:
+        """_smoothed_regular is pre-warmed by skip-window epochs so epoch 2 starts from a non-zero EMA.
+
+        Scenario: skip_best_epochs=2, smooth_alpha=0.5, metric=0.5 each epoch.
+        The EMA accumulator must update on epochs 0 and 1 (skip window) so that by epoch 2 it
+        is already non-zero.  No checkpoint file should be written during the skip window.
+        """
+        cb = BestModelCallback(
+            output_dir=str(tmp_path), monitor_regular="val/mAP_50_95", smooth_alpha=0.5, skip_best_epochs=skip_epochs
+        )
+        pl_module = _make_pl_module()
+
+        # Epochs 0 and 1 are inside the skip window.
+        for epoch in range(skip_epochs):
+            trainer_skip = _make_trainer({"val/mAP_50_95": 0.5}, current_epoch=epoch)
+            trainer_skip.global_step = epoch + 1
+            cb.on_validation_end(trainer_skip, pl_module)
+
+        # No checkpoint must have been written during the skip window.
+        assert not (tmp_path / "checkpoint_best_regular.pth").exists(), (
+            "checkpoint must not be written during the skip window (epochs 0 and 1)"
+        )
+
+        # Epoch 2 is the first eligible epoch — accumulator must be pre-warmed.
+        trainer_eligible = _make_trainer({"val/mAP_50_95": 0.5}, current_epoch=skip_epochs)
+        trainer_eligible.global_step = skip_epochs + 1
+        cb.on_validation_end(trainer_eligible, pl_module)
+
+        assert cb._smoothed_regular > 0.0, (
+            "_smoothed_regular must be > 0.0 at epoch 2 because the skip-window epochs warmed the EMA"
+        )
 
     def test_callback_metrics_restored_when_super_raises(self, tmp_path: Path) -> None:
         """trainer.callback_metrics[monitor] is restored in the finally block even when super() raises."""

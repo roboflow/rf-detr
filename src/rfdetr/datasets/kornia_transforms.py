@@ -46,7 +46,7 @@ from typing import Any
 import torch
 from torch import Tensor
 
-from rfdetr.datasets._augmentation_utils import filter_keypoint_hflip_augmentations
+from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
