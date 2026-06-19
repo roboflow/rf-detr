@@ -46,23 +46,24 @@ class Normalize(object):
     ) -> None:
         self._normalize = _TVNormalize(mean, std)
 
+
 def __call__(self, image: Tensor, target: dict[str, Any] | None = None) -> tuple[Tensor, dict[str, Any] | None]:
-        image = self._normalize(image)
-        if target is None:
-            return image, None
-        target = target.copy()
-        h, w = image.shape[-2:]
-        if "boxes" in target:
-            boxes = target["boxes"]
-            boxes = box_xyxy_to_cxcywh(boxes)
-            boxes = boxes / torch.tensor([w, h, w, h], dtype=torch.float32)
-            target["boxes"] = boxes
-        if "keypoints" in target:
-            keypoints = target["keypoints"].clone()  # shape: (N, K, 3) — x, y, visibility
-            keypoints[..., 0] = keypoints[..., 0] / w
-            keypoints[..., 1] = keypoints[..., 1] / h
-            target["keypoints"] = keypoints
-        return image, target
+    image = self._normalize(image)
+    if target is None:
+        return image, None
+    target = target.copy()
+    h, w = image.shape[-2:]
+    if "boxes" in target:
+        boxes = target["boxes"]
+        boxes = box_xyxy_to_cxcywh(boxes)
+        boxes = boxes / torch.tensor([w, h, w, h], dtype=torch.float32)
+        target["boxes"] = boxes
+    if "keypoints" in target:
+        keypoints = target["keypoints"].clone()  # shape: (N, K, 3) — x, y, visibility
+        keypoints[..., 0] = keypoints[..., 0] / w
+        keypoints[..., 1] = keypoints[..., 1] / h
+        target["keypoints"] = keypoints
+    return image, target
 
 
 # Albumentations wrapper for RF-DETR
