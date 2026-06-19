@@ -40,17 +40,15 @@ dependencies = [
     "torch>=2.2.0",                    # core tensor ops and model forward pass
     "torchvision>=0.17.0",             # image transforms and ops (aligned with torch>=2.2.0)
     "tqdm",                            # progress bars during weight download
-    "transformers>=5.1.0,<6.0.0",     # DINOv2 backbone loading
-    "pydantic>=2.0,<3",               # ModelConfig / TrainConfig validation
-    "supervision>=0.29.0",       # inference output (Detections, Masks)
-    "pyDeprecate>=0.9,<0.10",             # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
+    "transformers>=5.1.0,<6.0.0",      # DINOv2 backbone loading
+    "pydantic>=2.0,<3",                # ModelConfig / TrainConfig validation
+    "supervision>=0.29.0",             # inference output (Detections, Masks)
+    "pyDeprecate>=0.9,<0.10",          # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
     "pillow>=12.2.0",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
-    "faster-coco-eval>=1.7.2",
     "opencv-python>=4.11.0.86",
     "opencv-python-headless>=4.10.0.84",
-    "pycocotools>=2.0.11",
 ]
 
 [project.optional-dependencies]
