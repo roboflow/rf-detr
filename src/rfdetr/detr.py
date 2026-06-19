@@ -18,7 +18,7 @@ from collections.abc import Callable
 from copy import copy, deepcopy
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, Concatenate, Literal, ParamSpec, TypeVar
 
 import numpy as np
 import requests
@@ -217,6 +217,144 @@ def _ensure_model_on_device(method: Callable[Concatenate[Any, _P], _R]) -> Calla
         return method(self, *args, **kwargs)
 
     return wrapper
+
+
+def _prepare_run_config(detector: RFDETR, **kwargs: Any) -> tuple[TrainConfig, str | None, list[int] | None]:
+    """Absorb the special run kwargs and build a :class:`~rfdetr.config.TrainConfig`.
+
+    Shared by :meth:`RFDETR.train` and :meth:`RFDETR.evaluate` so both accept exactly the same keyword arguments.
+    Handles the kwargs that are not plain ``TrainConfig`` fields: the deprecated ``callbacks`` / ``start_epoch`` /
+    ``do_benchmark`` (warned then dropped), ``device`` (mapped to PyTorch Lightning accelerator/devices), and
+    ``resolution`` (a ``ModelConfig`` field applied to ``detector.model_config`` in place, with the positional-encoding
+    size and cached inference context kept in sync). Remaining kwargs are forwarded to
+    :meth:`RFDETR.get_train_config`; ``batch_size="auto"`` is resolved by auto-batch probing.
+    ``model_config.model_name`` is set to the concrete subclass name.
+
+    Defined at module scope (rather than as a method) so that :meth:`RFDETR.train` / :meth:`RFDETR.evaluate`, which are
+    unit-tested by calling the unbound method with a ``MagicMock`` ``self``, still run the real preprocessing: a
+    module-level function is not intercepted by the mock, so no per-test monkeypatching of this helper is needed.
+
+    Args:
+        detector: The :class:`RFDETR` instance whose ``model_config`` and model context the run targets.
+        **kwargs: Keyword arguments accepted by :meth:`RFDETR.train` / :meth:`RFDETR.evaluate`.
+
+    Returns:
+        ``(train_config, accelerator, devices)`` where ``accelerator`` / ``devices`` are PTL trainer kwargs derived
+        from the ``device`` kwarg (``None`` when ``device`` was not provided).
+
+    Raises:
+        ValueError: If ``resolution`` is not a positive integer or is not divisible by
+            ``patch_size * num_windows`` for the model variant.
+    """
+    # Imported eagerly (not only under batch_size="auto") so a broken/absent training
+    # submodule surfaces its original ModuleNotFoundError here rather than being masked.
+    from rfdetr.training.auto_batch import resolve_auto_batch_config
+
+    # Absorb legacy `callbacks` dict — warn if non-empty, then discard.
+    callbacks_dict = kwargs.pop("callbacks", None)
+    if callbacks_dict and any(callbacks_dict.values()):
+        warnings.warn(
+            "Custom callbacks dict is not forwarded to PTL. "
+            "Deprecated since v1.7.0, will be removed in v1.9.0. "
+            "Use PTL Callback objects instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    # Parse `device` kwarg and map it to PTL accelerator/devices.
+    # Supports torch-style strings and torch.device (e.g. "cuda:1").
+    _device = kwargs.pop("device", None)
+    _accelerator, _devices = RFDETR._resolve_trainer_device_kwargs(_device)
+
+    # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
+    if "start_epoch" in kwargs:
+        warnings.warn(
+            "`start_epoch` is deprecated since v1.7.0 and will be removed in v1.9.0; "
+            "PTL resumes automatically via `resume`.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        kwargs.pop("start_epoch")
+
+    # Pop `do_benchmark`; benchmarking via `.train()` is deprecated.
+    run_benchmark = bool(kwargs.pop("do_benchmark", False))
+    if run_benchmark:
+        warnings.warn(
+            "`do_benchmark` in `.train()` is deprecated since v1.7.0 and will be removed in v1.9.0; "
+            "use `rfdetr benchmark`.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    # Apply resolution override to model_config before building the train config.
+    # resolution is a ModelConfig field, not a TrainConfig field, so we pop it
+    # here to avoid it being silently ignored by TrainConfig.
+    _resolution = kwargs.pop("resolution", None)
+    if _resolution is not None:
+        if isinstance(_resolution, bool):
+            raise ValueError("resolution must be a positive integer")
+        try:
+            _resolution = operator.index(_resolution)
+        except TypeError as error:
+            raise ValueError("resolution must be a positive integer") from error
+        if _resolution <= 0:
+            raise ValueError("resolution must be a positive integer")
+        block_size = detector.model_config.patch_size * detector.model_config.num_windows
+        if _resolution % block_size != 0:
+            raise ValueError(
+                f"resolution={_resolution} is not divisible by "
+                f"patch_size ({detector.model_config.patch_size}) * num_windows "
+                f"({detector.model_config.num_windows}) = {block_size}. "
+                f"Choose a resolution that is a multiple of {block_size}."
+            )
+        # Smart PE update: only recompute positional_encoding_size when the
+        # current config derives it formulaically (PE == resolution // patch_size).
+        # Configs with a pretrained-specific PE (e.g. RFDETRBase uses DINOv2's
+        # PE=37 at 518 px, training at 560 px) must not have PE silently changed
+        # — doing so causes shape mismatches when loading pretrained checkpoints.
+        _current_pe = detector.model_config.positional_encoding_size
+        _derived_pe = detector.model_config.resolution // detector.model_config.patch_size
+        if _current_pe == _derived_pe:
+            # Formula-derived: update PE proportionally to the new resolution.
+            new_pe = _resolution // detector.model_config.patch_size
+            detector.model_config.positional_encoding_size = new_pe
+        else:
+            # Pretrained-specific PE; leave it unchanged.
+            new_pe = _current_pe
+        detector.model_config.resolution = _resolution
+
+        # Keep the cached inference/export context in sync with model_config so
+        # predict()/export()/deployment all see the same resolution metadata.
+        if hasattr(detector, "model") and detector.model is not None:
+            if hasattr(detector.model, "resolution"):
+                detector.model.resolution = _resolution
+            model_args = getattr(detector.model, "args", None)
+            if model_args is not None:
+                if hasattr(model_args, "resolution"):
+                    model_args.resolution = _resolution
+                if hasattr(model_args, "positional_encoding_size"):
+                    model_args.positional_encoding_size = new_pe
+    config = detector.get_train_config(**kwargs)
+    if config.batch_size == "auto":
+        # Auto-batch probing runs forward/backward on the actual model, which
+        # must be on the target device (typically CUDA).  Lazy placement keeps
+        # the model on CPU until first use — move it now.
+        _move_model_context_to_device(detector.model)
+        auto_batch = resolve_auto_batch_config(
+            model_context=detector.model,
+            model_config=detector.model_config,
+            train_config=config,
+        )
+        config.batch_size = auto_batch.safe_micro_batch
+        config.grad_accum_steps = auto_batch.recommended_grad_accum_steps
+        logger.info(
+            "[auto-batch] resolved train config: batch_size=%s grad_accum_steps=%s effective_batch_size=%s",
+            config.batch_size,
+            config.grad_accum_steps,
+            auto_batch.effective_batch_size,
+        )
+    detector.model_config.model_name = type(detector).__name__
+    return config, _accelerator, _devices
 
 
 class RFDETR:
@@ -590,13 +728,11 @@ class RFDETR:
             ValueError: If ``resolution`` is not a positive integer or is not
                 divisible by ``patch_size * num_windows`` for the model variant.
         """
-        # Both imports are grouped in a single try block because they both live in
-        # the `rfdetr[train]` extras group — a missing `pytorch_lightning` (or any
-        # other training-extras package) causes either import to fail, and the
-        # remediation is identical: `pip install "rfdetr[train,loggers]"`.
+        # The training stack lives in the `rfdetr[train]` extras group — a missing
+        # `pytorch_lightning` (or any other training-extras package) causes the import to fail,
+        # and the remediation is `pip install "rfdetr[train,loggers]"`.
         try:
             from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
-            from rfdetr.training.auto_batch import resolve_auto_batch_config
         except ModuleNotFoundError as exc:
             # Preserve internal import errors so packaging/regression issues in
             # rfdetr.* are not misreported as missing optional extras.
@@ -607,110 +743,10 @@ class RFDETR:
                 'Install them with `pip install "rfdetr[train,loggers]"` and try again.',
             ) from exc
 
-        # Absorb legacy `callbacks` dict — warn if non-empty, then discard.
-        callbacks_dict = kwargs.pop("callbacks", None)
-        if callbacks_dict and any(callbacks_dict.values()):
-            warnings.warn(
-                "Custom callbacks dict is not forwarded to PTL. "
-                "Deprecated since v1.7.0, will be removed in v1.9.0. "
-                "Use PTL Callback objects instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        # Parse `device` kwarg and map it to PTL accelerator/devices.
-        # Supports torch-style strings and torch.device (e.g. "cuda:1").
-        _device = kwargs.pop("device", None)
-        _accelerator, _devices = RFDETR._resolve_trainer_device_kwargs(_device)
-
-        # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
-        if "start_epoch" in kwargs:
-            warnings.warn(
-                "`start_epoch` is deprecated since v1.7.0 and will be removed in v1.9.0; "
-                "PTL resumes automatically via `resume`.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            kwargs.pop("start_epoch")
-
-        # Pop `do_benchmark`; benchmarking via `.train()` is deprecated.
-        run_benchmark = bool(kwargs.pop("do_benchmark", False))
-        if run_benchmark:
-            warnings.warn(
-                "`do_benchmark` in `.train()` is deprecated since v1.7.0 and will be removed in v1.9.0; "
-                "use `rfdetr benchmark`.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        # Apply resolution override to model_config before building the train config.
-        # resolution is a ModelConfig field, not a TrainConfig field, so we pop it
-        # here to avoid it being silently ignored by TrainConfig.
-        _resolution = kwargs.pop("resolution", None)
-        if _resolution is not None:
-            if isinstance(_resolution, bool):
-                raise ValueError("resolution must be a positive integer")
-            try:
-                _resolution = operator.index(_resolution)
-            except TypeError as error:
-                raise ValueError("resolution must be a positive integer") from error
-            if _resolution <= 0:
-                raise ValueError("resolution must be a positive integer")
-            block_size = self.model_config.patch_size * self.model_config.num_windows
-            if _resolution % block_size != 0:
-                raise ValueError(
-                    f"resolution={_resolution} is not divisible by "
-                    f"patch_size ({self.model_config.patch_size}) * num_windows "
-                    f"({self.model_config.num_windows}) = {block_size}. "
-                    f"Choose a resolution that is a multiple of {block_size}."
-                )
-            # Smart PE update: only recompute positional_encoding_size when the
-            # current config derives it formulaically (PE == resolution // patch_size).
-            # Configs with a pretrained-specific PE (e.g. RFDETRBase uses DINOv2's
-            # PE=37 at 518 px, training at 560 px) must not have PE silently changed
-            # — doing so causes shape mismatches when loading pretrained checkpoints.
-            _current_pe = self.model_config.positional_encoding_size
-            _derived_pe = self.model_config.resolution // self.model_config.patch_size
-            if _current_pe == _derived_pe:
-                # Formula-derived: update PE proportionally to the new resolution.
-                new_pe = _resolution // self.model_config.patch_size
-                self.model_config.positional_encoding_size = new_pe
-            else:
-                # Pretrained-specific PE; leave it unchanged.
-                new_pe = _current_pe
-            self.model_config.resolution = _resolution
-
-            # Keep the cached inference/export context in sync with model_config so
-            # predict()/export()/deployment all see the same resolution metadata.
-            if hasattr(self, "model") and self.model is not None:
-                if hasattr(self.model, "resolution"):
-                    self.model.resolution = _resolution
-                model_args = getattr(self.model, "args", None)
-                if model_args is not None:
-                    if hasattr(model_args, "resolution"):
-                        model_args.resolution = _resolution
-                    if hasattr(model_args, "positional_encoding_size"):
-                        model_args.positional_encoding_size = new_pe
-        config = self.get_train_config(**kwargs)
-        if config.batch_size == "auto":
-            # Auto-batch probing runs forward/backward on the actual model, which
-            # must be on the target device (typically CUDA).  Lazy placement keeps
-            # the model on CPU until first use — move it now.
-            _move_model_context_to_device(self.model)
-            auto_batch = resolve_auto_batch_config(
-                model_context=self.model,
-                model_config=self.model_config,
-                train_config=config,
-            )
-            config.batch_size = auto_batch.safe_micro_batch
-            config.grad_accum_steps = auto_batch.recommended_grad_accum_steps
-            logger.info(
-                "[auto-batch] resolved train config: batch_size=%s grad_accum_steps=%s effective_batch_size=%s",
-                config.batch_size,
-                config.grad_accum_steps,
-                auto_batch.effective_batch_size,
-            )
-        self.model_config.model_name = type(self).__name__
+        # Absorb the special train/evaluate kwargs (device, resolution, deprecated knobs),
+        # build the TrainConfig, and resolve any auto batch size.  Shared with evaluate()
+        # so both accept exactly the same keyword arguments.
+        config, _accelerator, _devices = _prepare_run_config(self, **kwargs)
 
         # Auto-detect num_classes from the training dataset and align model_config.
         # This must run before RFDETRModelModule is constructed so that weight loading
@@ -774,6 +810,104 @@ class RFDETR:
                     json.dump(complete_config, f, indent=2, default=str)
             except OSError as exc:
                 logger.warning("Could not save training_config.json to %s: %s", config.output_dir, exc)
+
+    def evaluate(self, *, split: Literal["test", "val"] = "test", **kwargs: Any) -> dict[str, float]:
+        """Evaluate the current model on a dataset split and return COCO metrics.
+
+        Runs a single evaluation pass over the requested split via the PyTorch Lightning stack and returns the COCO
+        metrics (mAP, mAR, and the macro-F1 sweep) computed by
+        :class:`~rfdetr.training.callbacks.coco_eval.COCOEvalCallback`. The same metrics are also printed to the
+        terminal. This works both directly after :meth:`train` and on a model loaded via :meth:`from_checkpoint` — the
+        weights already held in memory are evaluated; no checkpoint file is re-loaded.
+
+        Apart from ``split``, this method accepts exactly the same keyword arguments as :meth:`train` (``dataset_dir``,
+        ``device``, ``resolution``, ``batch_size``, ``output_dir``, ``num_workers``, ...); they are handled identically
+        via the shared :func:`_prepare_run_config`.
+
+        Unlike :meth:`train`, this method never adapts the detection head to the dataset: the model is evaluated exactly
+        as configured. If the dataset's class count differs from the model's ``num_classes`` a :class:`UserWarning` is
+        emitted and evaluation proceeds with the model's head unchanged.
+
+        Args:
+            split: Which split to evaluate. ``"test"`` evaluates the ``test/`` folder (Roboflow datasets; falls back to
+                the validation split otherwise) via ``trainer.test``; ``"val"`` evaluates the ``valid/`` folder via
+                ``trainer.validate``.
+            **kwargs: The same keyword arguments accepted by :meth:`train` — ``dataset_dir`` is required (here or
+                already on the config), and the rest are forwarded to :func:`_prepare_run_config` /
+                :meth:`get_train_config`.
+
+        Returns:
+            Mapping of metric name to value for the evaluated split, e.g. ``{"test/mAP_50_95": ..., "test/mAP_50": ...,
+            "test/F1": ..., "test/AP/<class>": ...}``. Empty when the trainer returns no metrics.
+
+        Raises:
+            ImportError: If training dependencies are not installed. Install with
+                ``pip install "rfdetr[train,loggers]"``.
+            ValueError: If ``split`` is not ``"test"`` or ``"val"``.
+        """
+        from rfdetr.models.weights import interpolate_position_embeddings
+
+        # Training extras (pytorch_lightning et al.) are optional; mirror train()'s import guard.
+        try:
+            from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
+        except ModuleNotFoundError as exc:
+            if exc.name and exc.name.startswith("rfdetr."):
+                raise
+            raise ImportError(
+                "RF-DETR training dependencies are missing. "
+                'Install them with `pip install "rfdetr[train,loggers]"` and try again.',
+            ) from exc
+
+        if split not in ("test", "val"):
+            raise ValueError(f"split must be 'test' or 'val', got {split!r}.")
+
+        # Same kwarg handling as train() (device, resolution, deprecated knobs, auto-batch).
+        config, _accelerator, _devices = _prepare_run_config(self, **kwargs)
+
+        # Build the module without re-loading pretrain weights, then transplant the
+        # already-loaded in-memory weights into it (the reverse of train()'s final
+        # `self.model.model = module.model`).  This evaluates the current weights and
+        # never passes ``ckpt_path``, sidestepping PTL's loop-state restore on a bare .pth.
+        eval_model_config = self.model_config.model_copy(update={"pretrain_weights": None})
+        module = RFDETRModelModule(eval_model_config, config)
+        source_state = self.model.model.state_dict()
+        # Reconcile DINOv2 positional embeddings when a `resolution` override changed the PE grid
+        # (no-op when unchanged), so the transplant works at the evaluation resolution.
+        interpolate_position_embeddings(source_state, eval_model_config.positional_encoding_size)
+        module.model.load_state_dict(source_state)
+        datamodule = RFDETRDataModule(self.model_config, config)
+
+        # Warn (do not adapt) when the dataset class count differs from the model's head.
+        stage = "test" if split == "test" else "validate"
+        datamodule.setup(stage)
+        dataset_class_names = getattr(datamodule, "class_names", None)
+        if isinstance(dataset_class_names, list) and len(dataset_class_names) != self.model_config.num_classes:
+            warnings.warn(
+                f"Dataset '{config.dataset_dir}' has {len(dataset_class_names)} classes but the model has "
+                f"num_classes={self.model_config.num_classes}. Evaluating with the model's head unchanged; "
+                "class indices may not line up with the dataset.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        trainer_kwargs: dict[str, Any] = {"include_training_callbacks": False}
+        if _accelerator is not None:
+            trainer_kwargs["accelerator"] = _accelerator
+        if _devices is not None:
+            trainer_kwargs["devices"] = _devices
+        trainer = build_trainer(config, self.model_config, **trainer_kwargs)
+
+        # The eval trainer intentionally has no logger; the metric callback still logs with
+        # ``logger=True``, so PTL emits one "no logger configured" warning per metric.  Suppress
+        # only that specific message — the metrics are still collected from the trainer's results.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*no logger configured.*")
+            if split == "test":
+                results = trainer.test(module, datamodule)
+            else:
+                results = trainer.validate(module, datamodule)
+
+        return {key: float(value) for key, value in dict(results[0]).items()} if results else {}
 
     @_ensure_model_on_device
     def optimize_for_inference(

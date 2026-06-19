@@ -226,6 +226,26 @@ schema so `RFDETR.from_checkpoint()` can reconstruct the same label/keypoint slo
     detections = model.predict("<IMAGE_PATH>")
     ```
 
+## Evaluate a Fine-Tuned Model
+
+`model.evaluate()` runs a single evaluation pass over a dataset split and returns (and prints) the COCO metrics — mAP,
+mAR, and the macro-F1 sweep. It works both right after `model.train()` and on a model loaded from a checkpoint; the
+weights already in memory are evaluated, so no checkpoint file is re-loaded.
+
+```python
+from rfdetr import RFDETRMedium
+
+model = RFDETRMedium(pretrain_weights="<CHECKPOINT_PATH>")
+
+metrics = model.evaluate(dataset_dir="<DATASET_PATH>", split="test")
+print(metrics["test/mAP_50_95"])
+```
+
+- `split="test"` evaluates the `test/` folder; `split="val"` evaluates `valid/`.
+- The detection head is never adapted to the dataset — the model is evaluated exactly as configured. If the dataset's
+    class count differs from the model's `num_classes`, a warning is emitted and evaluation proceeds unchanged.
+- Evaluation writes no checkpoints or logs to `output_dir`.
+
 ## Next Steps
 
 After training your model, you can:

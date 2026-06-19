@@ -985,3 +985,41 @@ class TestBuildTrainerDDPFindUnusedParameters:
             build_trainer(tc, mc)
 
         assert captured["strategy"] == "auto"
+
+
+class TestBuildTrainerEvalMode:
+    """``include_training_callbacks=False`` builds a lean eval-only trainer (issue #1110).
+
+    The eval path keeps only the metric callback (and progress bar) so ``RFDETR.evaluate()`` does not write checkpoints
+    or training logs to ``output_dir`` or run training-only callbacks such as EMA and early stopping.
+    """
+
+    def test_coco_eval_callback_present(self, tmp_path):
+        """The metric callback is retained — it computes the returned COCO metrics."""
+        trainer = build_trainer(_tc(tmp_path), _mc(), include_training_callbacks=False)
+        assert any(isinstance(cb, COCOEvalCallback) for cb in trainer.callbacks)
+
+    def test_no_checkpoint_callbacks(self, tmp_path):
+        """No ModelCheckpoint — including BestModelCallback — is wired in eval mode."""
+        trainer = build_trainer(_tc(tmp_path), _mc(), include_training_callbacks=False)
+        assert not [cb for cb in trainer.callbacks if isinstance(cb, ModelCheckpoint)]
+
+    def test_no_ema_callback(self, tmp_path):
+        """EMA is a training-only concern and must be absent in eval mode."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=True), _mc(), include_training_callbacks=False)
+        assert not [cb for cb in trainer.callbacks if isinstance(cb, RFDETREMACallback)]
+
+    def test_no_early_stopping_callback(self, tmp_path):
+        """Early stopping is a training-only concern and must be absent in eval mode."""
+        trainer = build_trainer(_tc(tmp_path, early_stopping=True), _mc(), include_training_callbacks=False)
+        assert not [cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping)]
+
+    def test_loggers_disabled(self, tmp_path):
+        """No loggers are attached so no metrics.csv / lightning_logs are written."""
+        trainer = build_trainer(_tc(tmp_path), _mc(), include_training_callbacks=False)
+        assert trainer.loggers == []
+
+    def test_training_callbacks_present_by_default(self, tmp_path):
+        """The default (training) path is unchanged: BestModelCallback is still wired."""
+        trainer = build_trainer(_tc(tmp_path), _mc())
+        assert any(isinstance(cb, BestModelCallback) for cb in trainer.callbacks)
