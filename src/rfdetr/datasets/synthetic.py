@@ -62,7 +62,7 @@ DEFAULT_SPLIT_RATIOS = DatasetSplitRatios()  # 70/20/10 split
 
 
 # Type alias for split ratios parameter
-SplitRatiosType = DatasetSplitRatios, tuple[float, ...] | dict[str, float]
+SplitRatiosType = DatasetSplitRatios | tuple[float, ...] | dict[str, float]
 
 
 def _normalize_split_ratios(split_ratios: SplitRatiosType) -> dict[str, float]:

@@ -134,7 +134,7 @@ class _SimpleDataset:
     def __len__(self) -> int:
         return self.num_samples
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, dict]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, dict[str, Any]]:
         # Create synthetic image
         image = Image.new("RGB", (640, 480))
 

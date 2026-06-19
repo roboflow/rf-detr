@@ -47,7 +47,11 @@ class Normalize(object):
         self._normalize = _TVNormalize(mean, std)
 
 
-def __call__(self, image: Tensor, target: dict[str, Any] | None = None) -> tuple[Tensor, dict[str, Any] | None]:
+def __call__(
+    self,
+    image: Tensor,
+    target: dict[str, Any] | None = None
+) -> tuple[Tensor, dict[str, Any] | None]:
     image = self._normalize(image)
     if target is None:
         return image, None

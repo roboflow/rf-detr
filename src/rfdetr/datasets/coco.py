@@ -325,7 +325,7 @@ class ConvertCoco(object):
         w, h = image.size
 
         image_id = target["image_id"]
-        image_id = Tensor([image_id])
+        image_id = torch.as_tensor([image_id])
 
         anno = target["annotations"]
 
@@ -350,7 +350,7 @@ class ConvertCoco(object):
                 classes.append(self.cat2label[category_id])
             else:
                 classes.append(category_id)
-        classes = Tensor(classes, dtype=torch.int64)
+        classes = torch.as_tensor(classes, dtype=torch.int64)
 
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
         boxes = boxes[keep]
@@ -362,8 +362,8 @@ class ConvertCoco(object):
         target["image_id"] = image_id
 
         # for conversion to coco api
-        area = Tensor([obj["area"] for obj in anno])
-        iscrowd = Tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
+        area = torch.as_tensor([obj["area"] for obj in anno])
+        iscrowd = torch.as_tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
         target["area"] = area[keep]
         target["iscrowd"] = iscrowd[keep]
 
