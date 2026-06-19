@@ -528,6 +528,20 @@ class TestBuildTrainerLoggers:
             )
         assert fake_logger in trainer.loggers
 
+    def test_wandb_logger_wired(self, tmp_path):
+        """WandbLogger is added when wandb=True (dep mocked)."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.loggers import WandbLogger
+
+        fake_logger = mock.MagicMock(spec=WandbLogger)
+        with mock.patch("rfdetr.training.trainer.WandbLogger", return_value=fake_logger):
+            trainer = build_trainer(
+                _tc(tmp_path, wandb=True, use_ema=False),
+                _mc(),
+            )
+        assert fake_logger in trainer.loggers
+
     def test_missing_tensorboard_dep_warns_not_crashes(self, tmp_path):
         """If tensorboard package is absent, a warning is logged and training continues."""
         import unittest.mock as mock
@@ -568,6 +582,46 @@ class TestBuildTrainerLoggers:
         from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
 
         assert all(not isinstance(lg, TensorBoardLogger) for lg in trainer.loggers)
+        assert any(isinstance(lg, CSVLogger) for lg in trainer.loggers)
+
+    def test_missing_wandb_dep_warns_not_crashes(self, tmp_path):
+        """If the wandb package is absent, a warning is logged and training continues."""
+        import unittest.mock as mock
+
+        with mock.patch(
+            "rfdetr.training.trainer.WandbLogger",
+            side_effect=ModuleNotFoundError("no module named 'wandb'"),
+        ):
+            with mock.patch("rfdetr.training.trainer._logger") as mock_logger:
+                trainer = build_trainer(
+                    _tc(tmp_path, wandb=True, use_ema=False),
+                    _mc(),
+                )
+        mock_logger.warning.assert_called_once()
+        assert "WandB" in mock_logger.warning.call_args[0][0]
+        from pytorch_lightning.loggers import CSVLogger, WandbLogger
+
+        assert all(not isinstance(lg, WandbLogger) for lg in trainer.loggers)
+        assert any(isinstance(lg, CSVLogger) for lg in trainer.loggers)
+
+    def test_missing_mlflow_dep_warns_not_crashes(self, tmp_path):
+        """If the mlflow package is absent, a warning is logged and training continues."""
+        import unittest.mock as mock
+
+        with mock.patch(
+            "rfdetr.training.trainer.MLFlowLogger",
+            side_effect=ModuleNotFoundError("no module named 'mlflow'"),
+        ):
+            with mock.patch("rfdetr.training.trainer._logger") as mock_logger:
+                trainer = build_trainer(
+                    _tc(tmp_path, mlflow=True, use_ema=False),
+                    _mc(),
+                )
+        mock_logger.warning.assert_called_once()
+        assert "MLflow" in mock_logger.warning.call_args[0][0]
+        from pytorch_lightning.loggers import CSVLogger, MLFlowLogger
+
+        assert all(not isinstance(lg, MLFlowLogger) for lg in trainer.loggers)
         assert any(isinstance(lg, CSVLogger) for lg in trainer.loggers)
 
     def test_clearml_flag_raises_not_implemented(self, tmp_path):
