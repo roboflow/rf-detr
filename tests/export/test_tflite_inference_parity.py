@@ -23,7 +23,7 @@ import pytest
 import torchvision.transforms.functional as F  # noqa: N812
 from PIL import Image as PILImage
 
-from rfdetr.export._tflite.inference import _preprocess_image
+from rfdetr.export._tflite.inference import _bilinear_resize_half_pixel, _preprocess_image
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
@@ -184,4 +184,78 @@ class TestPreprocessingFilterRegression:
             f"_preprocess_image is too close to BICUBIC behaviour: "
             f"current max|diff|={max_diff_current:.4f}, BICUBIC max|diff|={max_diff_bicubic:.4f}. "
             f"Check that _PIL_BILINEAR is being passed to .resize()."
+        )
+
+
+class TestBilinearResizeHalfPixelParity:
+    """``_bilinear_resize_half_pixel`` is the torch-free fallback used by ``_decode_masks``.
+
+    It must match ``torch.nn.functional.interpolate(..., mode="bilinear", align_corners=False)``
+    -- the same call ``PostProcess.forward`` uses -- byte-for-byte modulo float noise. Sharp-edge
+    inputs are the worst case: even a sub-pixel shift in the half-pixel convention flips boundary
+    pixels and tanks mask IoU.
+    """
+
+    @staticmethod
+    def _torch_interpolate(src: np.ndarray, out_hw: tuple[int, int]) -> np.ndarray:
+        """Reference implementation: ``F.interpolate`` with ``align_corners=False``."""
+        import torch
+        import torch.nn.functional as TF  # noqa: N812
+
+        with torch.no_grad():
+            t = torch.from_numpy(src.astype(np.float32)).unsqueeze(0)
+            out = TF.interpolate(t, size=out_hw, mode="bilinear", align_corners=False)
+        return out.squeeze(0).cpu().numpy()
+
+    @pytest.mark.parametrize(
+        ("src_hw", "out_hw"),
+        [
+            pytest.param((28, 28), (384, 384), id="upsample_28_to_384"),
+            pytest.param((56, 56), (256, 256), id="upsample_56_to_256"),
+            pytest.param((100, 100), (100, 100), id="identity_100"),
+            pytest.param((100, 100), (50, 50), id="downsample_100_to_50"),
+            pytest.param((40, 60), (200, 400), id="non_square_upsample"),
+        ],
+    )
+    def test_matches_torch_interpolate_on_random_logits(self, src_hw: tuple[int, int], out_hw: tuple[int, int]) -> None:
+        """Random logits over a small batch must resize identically to ``F.interpolate``."""
+        rng = np.random.default_rng(0)
+        src = rng.standard_normal((3, *src_hw)).astype(np.float32) * 4.0
+
+        ours = _bilinear_resize_half_pixel(src, out_hw[0], out_hw[1])
+        ref = self._torch_interpolate(src, out_hw)
+
+        max_diff = float(np.abs(ours - ref).max())
+        # 1e-4 absorbs the float32 op-order noise that accumulates on large upsample ratios
+        # (mine: split bilinear sums in pure numpy; torch: fused kernel). Half-pixel-convention
+        # drift would push this several orders of magnitude higher.
+        assert max_diff < 1e-4, (
+            f"_bilinear_resize_half_pixel diverged from F.interpolate(align_corners=False): "
+            f"max|diff|={max_diff:.2e} on shape {src_hw} -> {out_hw}. "
+            "Half-pixel convention drift would surface here."
+        )
+
+    def test_sharp_edge_mask_matches_torch(self) -> None:
+        """A mask with a sharp left/right boundary is the regression-prone case.
+
+        This is the shape ``_decode_masks`` actually consumes (logits with a zero-crossing). A half-pixel shift would
+        flip the boundary column and is exactly what the original PIL.BILINEAR path got wrong.
+        """
+        src = np.full((1, 28, 28), -10.0, dtype=np.float32)
+        src[0, :, 14:] = 10.0  # sharp vertical edge at column 14
+
+        out_hw = (224, 224)
+        ours = _bilinear_resize_half_pixel(src, out_hw[0], out_hw[1])
+        ref = self._torch_interpolate(src, out_hw)
+
+        max_diff = float(np.abs(ours - ref).max())
+        assert max_diff < 1e-4, (
+            f"Sharp-edge resize diverged from F.interpolate: max|diff|={max_diff:.2e}. "
+            "This is the case that previously dropped mask IoU below 0.6 with PIL.BILINEAR."
+        )
+
+        # Also assert the thresholded output matches: this is what _decode_masks actually returns.
+        assert np.array_equal(ours > 0, ref > 0), (
+            "Boolean mask after thresholding diverged from F.interpolate. Even a single column of "
+            "flipped pixels would show up here -- the exact failure mode the original PR fixes."
         )
