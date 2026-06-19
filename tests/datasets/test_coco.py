@@ -701,10 +701,12 @@ def _make_coco_builder_args(tmp_path: Path, *, use_grouppose_keypoints: bool) ->
         do_random_resize_via_padding=False,
         patch_size=16,
         num_windows=4,
-        aug_config=None,
+        # Empty aug_config disables augmentation — these tests verify annotation routing, not aug.
+        aug_config={},
         augmentation_backend="cpu",
         use_grouppose_keypoints=use_grouppose_keypoints,
         num_keypoints_per_class=[0, 17] if use_grouppose_keypoints else [],
+        keypoint_flip_pairs=[],
     )
 
 

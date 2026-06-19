@@ -166,6 +166,14 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     for key in _PTL_COMPAT_KEYS:
         if key in state_dict:
             new_state_dict[key] = state_dict[key]
+    # Backfill validate_loop/test_loop stubs so old checkpoints (saved before the stubs
+    # were added to _build_checkpoint_payload) can be passed as ckpt_path to
+    # trainer.validate() / trainer.test() without a KeyError from PTL restore_loops().
+    if "loops" in new_state_dict:
+        loops = new_state_dict["loops"]
+        for loop_key in ("validate_loop", "test_loop"):
+            if loop_key not in loops:
+                loops[loop_key] = {"state_dict": {}}
     # Create the temp file in the destination directory so os.replace stays on the same filesystem (atomic).
     checkpoint_dir = os.path.dirname(os.path.abspath(os.fspath(checkpoint)))
     with tempfile.NamedTemporaryFile(dir=checkpoint_dir, delete=False) as tmp_file:
