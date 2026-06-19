@@ -184,7 +184,7 @@ def _preprocess_image(
 
     if nchw_float is not None:
         # NCHW -> NHWC for the TFLite interpreter.
-        return nchw_float.transpose(0, 2, 3, 1).astype(np.float32)
+        return np.asarray(nchw_float.transpose(0, 2, 3, 1), dtype=np.float32)
 
     # Torch-free fallback: PIL BILINEAR. PIL's default is BICUBIC, which diverges from PyTorch.
     arr = np.array(pil_rgb.resize((width, height), _PIL_BILINEAR), dtype=np.float32) / 255.0
