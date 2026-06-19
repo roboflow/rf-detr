@@ -32,8 +32,8 @@ from PIL import Image
 from torchvision.transforms import Normalize as _TVNormalize
 
 from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
-from rfdetr.util.box_ops import box_xyxy_to_cxcywh
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
+from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
