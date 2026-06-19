@@ -934,6 +934,97 @@ class TestTrainingStep:
 
         assert loss.item() == pytest.approx(2.0)
 
+    def test_train_metrics_slices_to_group0_queries(self, tmp_path):
+        """compute_train_metrics postprocess must receive only group-0 queries ([:num_queries]).
+
+        Group DETR emits group_detr×num_queries outputs in train mode. Without the slice, postprocess top-k draws from
+        all groups and OKS/mAP reads ~50× below true accuracy. Assert the received pred_logits has shape (B,
+        num_queries, C).
+        """
+        nq = 10
+        group_detr = 3
+        batch_size = 2
+        num_classes = 5
+        mc = _base_model_config(num_classes=num_classes, num_queries=nq)
+        tc = _base_train_config(tmp_path, compute_train_metrics=True)
+        module, fake_model, fake_criterion, _ = _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+
+        full_logits = torch.randn(batch_size, group_detr * nq, num_classes)
+        model_output = {
+            "pred_logits": full_logits,
+            "pred_boxes": torch.randn(batch_size, group_detr * nq, 4),
+        }
+        fake_model.return_value = model_output
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        fake_criterion.weight_dict = {"loss_ce": 1.0}
+
+        received: dict = {}
+
+        def capture_postprocess(outputs, orig_sizes):
+            received.update(outputs)
+            return [
+                {"boxes": torch.zeros(nq, 4), "scores": torch.ones(nq), "labels": torch.zeros(nq, dtype=torch.long)}
+            ]
+
+        module.postprocess = capture_postprocess
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        real_param = nn.Parameter(torch.randn(4))
+        module.optimizers = MagicMock(return_value=torch.optim.SGD([real_param], lr=1e-3))
+        trainer = MagicMock()
+        trainer.accumulate_grad_batches = 1
+        trainer.num_training_batches = 1
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        samples, targets = _make_batch(batch_size=batch_size)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        assert "pred_logits" in received
+        assert received["pred_logits"].shape == (batch_size, nq, num_classes)
+        torch.testing.assert_close(received["pred_logits"], full_logits[:, :nq])
+
+    def test_train_metrics_skips_dict_pred_masks(self, tmp_path):
+        """Dict-valued pred_masks (sparse_forward in train mode) must not crash training_step.
+
+        In segmentation train mode lwdetr uses sparse_forward which returns pred_masks as a dict. PostProcess cannot
+        handle a dict — it calls .shape[0] on it. The fix filters out non-tensor values so postprocess receives
+        pred_masks=None (box path).
+        """
+        tc = _base_train_config(tmp_path, compute_train_metrics=True)
+        module, fake_model, fake_criterion, _ = _build_module(train_config=tc, tmp_path=tmp_path)
+
+        model_output = {
+            "pred_logits": torch.randn(2, 10, 5),
+            "pred_boxes": torch.randn(2, 10, 4),
+            "pred_masks": {"spatial_features": torch.randn(2, 256, 8, 8), "query_features": torch.randn(2, 10, 256)},
+        }
+        fake_model.return_value = model_output
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        fake_criterion.weight_dict = {"loss_ce": 1.0}
+
+        received: dict = {}
+
+        def capture_postprocess(outputs, orig_sizes):
+            received.update(outputs)
+            return [{"boxes": torch.zeros(1, 4), "scores": torch.ones(1), "labels": torch.zeros(1, dtype=torch.long)}]
+
+        module.postprocess = capture_postprocess
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        real_param = nn.Parameter(torch.randn(4))
+        module.optimizers = MagicMock(return_value=torch.optim.SGD([real_param], lr=1e-3))
+        trainer = MagicMock()
+        trainer.accumulate_grad_batches = 1
+        trainer.num_training_batches = 1
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        samples, targets = _make_batch()
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        assert "pred_masks" not in received
+
 
 class TestShouldStepOptimizer:
     """Tests for ``_should_step_optimizer`` — covers the modulo path, the end-of-epoch fallback, and the iterable /

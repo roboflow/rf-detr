@@ -6,6 +6,7 @@
 """Unit tests for rfdetr.utilities.state_dict."""
 
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +16,7 @@ from pytorch_lightning import LightningModule, Trainer
 from rfdetr.utilities.state_dict import (
     _make_fit_loop_state,
     remap_projector_to_cross_attn,
+    strip_checkpoint,
     validate_checkpoint_compatibility,
 )
 
@@ -447,3 +449,45 @@ class TestRemapProjectorToCrossAttn:
 
         warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
         assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"
+
+
+class TestStripCheckpoint:
+    """Tests for strip_checkpoint loop-stub backfill."""
+
+    def _make_minimal_ckpt(self, tmp_path, extra: dict | None = None) -> Path:
+        """Write a minimal checkpoint to a temp file."""
+        payload = {"model": {"w": torch.tensor(1.0)}, "args": {"lr": 1e-4}}
+        if extra:
+            payload.update(extra)
+        ckpt_path = Path(tmp_path) / "ckpt.pth"
+        torch.save(payload, ckpt_path)
+        return ckpt_path
+
+    def test_strip_adds_validate_loop_stub_when_loops_present_but_missing_key(self, tmp_path) -> None:
+        """Old checkpoints with loops but no validate_loop/test_loop get stubs backfilled."""
+        ckpt_path = self._make_minimal_ckpt(
+            tmp_path,
+            extra={"loops": {"fit_loop": {"state_dict": {}}}},
+        )
+        strip_checkpoint(ckpt_path)
+        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        assert result["loops"]["validate_loop"] == {"state_dict": {}}
+        assert result["loops"]["test_loop"] == {"state_dict": {}}
+
+    def test_strip_preserves_existing_validate_loop_stub(self, tmp_path) -> None:
+        """Checkpoints with validate_loop already present are not overwritten."""
+        original_stub = {"state_dict": {"some_key": 1}}
+        ckpt_path = self._make_minimal_ckpt(
+            tmp_path,
+            extra={"loops": {"fit_loop": {"state_dict": {}}, "validate_loop": original_stub}},
+        )
+        strip_checkpoint(ckpt_path)
+        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        assert result["loops"]["validate_loop"] == original_stub
+
+    def test_strip_no_loops_key_leaves_loops_absent(self, tmp_path) -> None:
+        """Checkpoints without a loops key must not gain one after stripping."""
+        ckpt_path = self._make_minimal_ckpt(tmp_path)
+        strip_checkpoint(ckpt_path)
+        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        assert "loops" not in result
