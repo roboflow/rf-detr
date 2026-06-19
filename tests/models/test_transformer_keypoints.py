@@ -178,8 +178,8 @@ def test_enc_keypoint_embed_eval_uses_only_head_zero() -> None:
     sentinel = 50.0
 
     srcs, masks, pos_embeds, _, _ = _build_transformer_inputs(batch_size=batch_size, hidden_dim=hidden_dim)
-    refpoint_embed = torch.rand(num_queries * group_detr, 4)
-    query_feat = torch.randn(num_queries * group_detr, hidden_dim)
+    refpoint_embed = torch.rand(num_queries, 4)
+    query_feat = torch.randn(num_queries, hidden_dim)
 
     transformer = Transformer(
         d_model=hidden_dim,
@@ -201,7 +201,7 @@ def test_enc_keypoint_embed_eval_uses_only_head_zero() -> None:
 
     # Zero all keypoint head weights and biases; give head 0 a distinctive output.
     with torch.no_grad():
-        for g_idx, head in enumerate(transformer.enc_out_keypoint_embed):
+        for _, head in enumerate(transformer.enc_out_keypoint_embed):
             for layer in head.layers:
                 layer.weight.zero_()
                 layer.bias.zero_()
@@ -218,7 +218,7 @@ def test_enc_keypoint_embed_eval_uses_only_head_zero() -> None:
     kp_beyond_xy = enc_kp_predictions[..., 2:]
     assert (kp_beyond_xy == sentinel).all(), (
         f"Eval mode must route all {num_queries} queries through head 0 (bias={sentinel}). "
-        f"Got min={kp_beyond_xy.min():.2f}, max={kp_beyond_xy.max():.2f}. "
+        f"Got min={kp_beyond_xy.min().item():.2f}, max={kp_beyond_xy.max().item():.2f}. "
         "Bug: group_detr not guarded by self.training in enc_out_keypoint_embed loop."
     )
 
