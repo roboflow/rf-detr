@@ -100,17 +100,31 @@ def _plot_columns_on_axes(ax: Any, raw_df: Any, epoch_df: Any, metric_columns: l
 
             col_data = raw_df[["epoch", column]].dropna(subset=[column])
             if not col_data.empty:
-                sns.lineplot(
-                    data=col_data,
-                    x="epoch",
-                    y=column,
-                    ax=ax,
-                    errorbar=("sd", 1),
-                    color=color,
-                    linestyle=linestyle,
-                    linewidth=1.7,
-                    label=column,
-                )
+                try:
+                    sns.lineplot(
+                        data=col_data,
+                        x="epoch",
+                        y=column,
+                        ax=ax,
+                        errorbar=("sd", 1),
+                        color=color,
+                        linestyle=linestyle,
+                        linewidth=1.7,
+                        label=column,
+                    )
+                except TypeError:
+                    # seaborn <0.12: errorbar= kwarg not supported
+                    sns.lineplot(
+                        data=col_data,
+                        x="epoch",
+                        y=column,
+                        ax=ax,
+                        ci="sd",
+                        color=color,
+                        linestyle=linestyle,
+                        linewidth=1.7,
+                        label=column,
+                    )
         else:
             ax.plot(
                 epoch_df["epoch"],
