@@ -29,7 +29,7 @@ def test_keypoint_config_defaults() -> None:
     assert train.keypoint_l1_loss_coef == pytest.approx(1.0)
     assert train.keypoint_findable_loss_coef == pytest.approx(1.0)
     assert train.keypoint_visible_loss_coef == pytest.approx(1.0)
-    assert train.keypoint_nll_loss_coef == pytest.approx(1.0)
+    assert train.keypoint_nll_loss_coef == pytest.approx(0.5)
     assert train.cls_loss_coef == pytest.approx(2.0)
 
 

@@ -195,6 +195,10 @@ ignore = [
     "E402",  # cell-local imports are intentional in percent-format scripts
     "E501",  # jupytext notebook — markdown prose lines are intentionally unwrapped
 ]
+"docs/cookbooks/*.py" = [
+    "E402",  # cell-local imports are intentional in percent-format scripts
+    "E501",  # .py mirror of jupytext notebook — markdown prose lines are intentionally unwrapped
+]
 
 [tool.docformatter]
 wrap-summaries = 120

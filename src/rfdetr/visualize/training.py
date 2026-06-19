@@ -31,6 +31,13 @@ if TYPE_CHECKING:
 _AUXILIARY_LOSS_SUFFIX_RE = re.compile(r"_\d+$")
 _LEGEND_COLUMNS = 4
 
+try:
+    import seaborn  # noqa: F401
+
+    _IS_SEABORN_AVAILABLE: bool = True
+except ImportError:
+    _IS_SEABORN_AVAILABLE = False
+
 
 def _place_legend_below_axes(ax: Any, *, n_columns: int = _LEGEND_COLUMNS) -> None:
     """Place a compact multi-column legend below a matplotlib axes."""
@@ -65,8 +72,12 @@ def _line_style_for_split(split: str) -> str:
     return "-"
 
 
-def _plot_columns_on_axes(ax: Any, df: Any, metric_columns: list[str]) -> None:
-    """Plot columns with color by metric name and line style by split."""
+def _plot_columns_on_axes(ax: Any, raw_df: Any, epoch_df: Any, metric_columns: list[str]) -> None:
+    """Plot columns with color by metric name and line style by split.
+
+    When seaborn is installed, draws mean ± 1 std-dev bands computed from within-epoch step-level rows in ``raw_df``.
+    Falls back to epoch-averaged lines from ``epoch_df`` when seaborn is absent.
+    """
     try:
         import matplotlib.pyplot as plt
     except ImportError as exc:
@@ -81,14 +92,48 @@ def _plot_columns_on_axes(ax: Any, df: Any, metric_columns: list[str]) -> None:
         split, metric_name = _split_metric_column(column)
         if metric_name not in metric_colors:
             metric_colors[metric_name] = color_cycle[len(metric_colors) % len(color_cycle)] if color_cycle else "C0"
-        ax.plot(
-            df["epoch"],
-            df[column],
-            linewidth=1.7,
-            linestyle=_line_style_for_split(split),
-            color=metric_colors[metric_name],
-            label=column,
-        )
+        color = metric_colors[metric_name]
+        linestyle = _line_style_for_split(split)
+
+        if _IS_SEABORN_AVAILABLE:
+            import seaborn as sns
+
+            col_data = raw_df[["epoch", column]].dropna(subset=[column])
+            if not col_data.empty:
+                try:
+                    sns.lineplot(
+                        data=col_data,
+                        x="epoch",
+                        y=column,
+                        ax=ax,
+                        errorbar=("sd", 1),
+                        color=color,
+                        linestyle=linestyle,
+                        linewidth=1.7,
+                        label=column,
+                    )
+                except TypeError:
+                    # seaborn <0.12: errorbar= kwarg not supported
+                    sns.lineplot(
+                        data=col_data,
+                        x="epoch",
+                        y=column,
+                        ax=ax,
+                        ci="sd",
+                        color=color,
+                        linestyle=linestyle,
+                        linewidth=1.7,
+                        label=column,
+                    )
+        else:
+            ax.plot(
+                epoch_df["epoch"],
+                epoch_df[column],
+                linewidth=1.7,
+                linestyle=linestyle,
+                color=color,
+                label=column,
+            )
 
 
 def _build_metric_groups(df: Any) -> dict[str, list[str]]:
@@ -121,10 +166,16 @@ def _build_metric_groups(df: Any) -> dict[str, list[str]]:
         return "loss" in leaf or leaf.startswith("kp_")
 
     loss_cols = [name for name in df.columns if _is_loss_col(str(name)) and df[name].notna().any()]
-    detection_map_50 = [c for c in _split_cols("mAP_50", "ema_mAP_50") if "mAP_50_95" not in c]
-    detection_map_50_95 = _split_cols("mAP_50_95", "ema_mAP_50_95")
+    detection_map_50 = [c for c in _split_cols("mAP_50", "ema_mAP_50") if "mAP_50_95" not in c and "mAP_75" not in c]
+    detection_map_75 = _split_cols("mAP_75", "ema_mAP_75")
+    detection_map_50_95 = [
+        c for c in _split_cols("mAP_50_95", "ema_mAP_50_95", "/AP/") if "mAP_50" not in c or "mAP_50_95" in c
+    ]
     detection_mar = [c for c in _split_cols("mAR", "ema_mAR") if "keypoint_" not in c]
-    keypoint_map_50 = [c for c in _split_cols("keypoint_map_50", "ema_keypoint_map_50") if "map_50_95" not in c]
+    keypoint_map_50 = [
+        c for c in _split_cols("keypoint_map_50", "ema_keypoint_map_50") if "map_50_95" not in c and "map_75" not in c
+    ]
+    keypoint_map_75 = _split_cols("keypoint_map_75", "ema_keypoint_map_75")
     keypoint_map_50_95 = _split_cols("keypoint_map_50_95", "ema_keypoint_map_50_95")
     keypoint_mar = _split_cols("keypoint_mAR", "ema_keypoint_mAR")
     f1_precision_recall = _split_cols("F1", "precision", "recall")
@@ -133,17 +184,25 @@ def _build_metric_groups(df: Any) -> dict[str, list[str]]:
         "Loss": loss_cols,
         "Detection AP@0.50": detection_map_50,
         "Detection AP@0.50:0.95": detection_map_50_95,
+        "Detection AP@0.75": detection_map_75,
         "Detection AR": detection_mar,
         "Keypoint AP@0.50": keypoint_map_50,
         "Keypoint AP@0.50:0.95": keypoint_map_50_95,
+        "Keypoint AP@0.75": keypoint_map_75,
         "Keypoint AR": keypoint_mar,
         "F1 / Precision / Recall": f1_precision_recall,
     }
     return {name: columns for name, columns in metric_groups.items() if columns}
 
 
-def _read_metrics_csv(metrics_csv: str) -> Any:
-    """Read and epoch-average a PTL CSVLogger metrics file."""
+def _read_metrics_csv(metrics_csv: str) -> tuple[Any, Any]:
+    """Read a PTL CSVLogger metrics file and return both step-level and epoch-averaged DataFrames.
+
+    Returns:
+        A ``(raw_df, epoch_df)`` pair where ``raw_df`` contains every logged row
+        (one per training step or validation epoch) and ``epoch_df`` is the per-epoch
+        mean used for column detection and log-scale checks.
+    """
     try:
         import pandas as pd
     except ImportError as exc:
@@ -156,8 +215,9 @@ def _read_metrics_csv(metrics_csv: str) -> Any:
     df = pd.read_csv(csv_path)
     if "epoch" not in df.columns:
         raise ValueError("metrics.csv does not contain an 'epoch' column.")
-    df = _drop_trailing_validation_only_epochs(df)
-    return df.groupby("epoch").mean(numeric_only=True).reset_index()
+    raw_df = _drop_trailing_validation_only_epochs(df)
+    epoch_df = raw_df.groupby("epoch").mean(numeric_only=True).reset_index()
+    return raw_df, epoch_df
 
 
 def _drop_trailing_validation_only_epochs(df: Any) -> Any:
@@ -192,14 +252,15 @@ def _drop_trailing_validation_only_epochs(df: Any) -> Any:
 
 
 def _plot_metric_groups(
-    df: Any,
+    raw_df: Any,
+    epoch_df: Any,
     metric_groups: dict[str, list[str]],
     *,
     title: str,
     output_path: Optional[str],
     loss_log_scale: bool,
 ) -> Figure:
-    """Build a seaborn figure for grouped metrics."""
+    """Build a figure for grouped metrics."""
     try:
         import matplotlib
 
@@ -222,13 +283,13 @@ def _plot_metric_groups(
 
     for idx, (subplot_title, metric_list) in enumerate(metric_groups.items()):
         ax = axes_flat[idx]
-        _plot_columns_on_axes(ax, df, metric_list)
+        _plot_columns_on_axes(ax, raw_df, epoch_df, metric_list)
         ax.set_title(subplot_title, fontsize=13, fontweight="bold")
         ax.set_xlabel("Epoch", fontsize=11)
         ax.set_ylabel(subplot_title, fontsize=11)
         ax.grid(True, alpha=0.3)
         if subplot_title == "Loss" and loss_log_scale:
-            group_data = df[metric_list]
+            group_data = epoch_df[metric_list]
             if (group_data <= 0).any(axis=None):
                 warnings.warn(
                     "loss_log_scale=True was requested, but at least one loss value is non-positive; "
@@ -258,11 +319,39 @@ def plot_loss_metrics(
     output_path: Optional[str] = None,
     loss_log_scale: bool = False,
 ) -> Figure:
-    """Plot aggregate and component training losses from a PTL ``metrics.csv`` file."""
-    df = _read_metrics_csv(metrics_csv)
-    groups = _build_metric_groups(df)
+    """Plot aggregate and component training losses from a PTL ``metrics.csv`` file.
+
+    Reads the CSV written by PyTorch Lightning's ``CSVLogger``, groups loss columns
+    (aggregate loss, per-component scalars, and keypoint NLL terms) into a single panel,
+    and renders an optional seaborn error-band overlay when seaborn is installed.
+
+    Args:
+        metrics_csv: Path to the ``metrics.csv`` written by PTL's ``CSVLogger``.
+        output_path: Optional filesystem path to save the rendered figure (PNG, PDF, …).
+            When ``None`` the figure is returned but not written to disk.
+        loss_log_scale: When ``True``, the loss y-axis uses a logarithmic scale.
+            Useful when loss components span several orders of magnitude.
+
+    Returns:
+        A ``matplotlib.figure.Figure`` containing the loss panel.
+
+    Raises:
+        FileNotFoundError: When ``metrics_csv`` does not exist.
+        ImportError: When ``pandas`` or ``matplotlib`` is not installed.
+        ValueError: When ``metrics_csv`` contains no loss columns.
+
+    Examples:
+        .. code-block:: python
+
+            from rfdetr.visualize.training import plot_loss_metrics
+            fig = plot_loss_metrics("output/rfdetr_small/metrics.csv")
+            fig = plot_loss_metrics("output/rfdetr_small/metrics.csv", output_path="loss.png", loss_log_scale=True)
+    """
+    raw_df, epoch_df = _read_metrics_csv(metrics_csv)
+    groups = _build_metric_groups(epoch_df)
     return _plot_metric_groups(
-        df,
+        raw_df,
+        epoch_df,
         {"Loss": groups["Loss"]} if "Loss" in groups else {},
         title="RF-DETR Loss Metrics",
         output_path=output_path,
@@ -274,21 +363,55 @@ def plot_map_metrics(
     metrics_csv: str,
     output_path: Optional[str] = None,
 ) -> Figure:
-    """Plot train/val/test detection and keypoint mAP metrics from a PTL ``metrics.csv`` file."""
-    df = _read_metrics_csv(metrics_csv)
-    metric_groups = _build_metric_groups(df)
+    """Plot train/val/test detection and keypoint mAP metrics from a PTL ``metrics.csv`` file.
+
+    Reads the CSV written by PyTorch Lightning's ``CSVLogger``, selects all AP-family
+    columns (AP@0.50, AP@0.75, AP@0.50:0.95 for both detection and keypoints), and renders
+    them in a single combined panel.  EMA series are included when present so both live and
+    EMA metric trajectories are visible in the legend.
+
+    Args:
+        metrics_csv: Path to the ``metrics.csv`` written by PTL's ``CSVLogger``.
+        output_path: Optional filesystem path to save the rendered figure (PNG, PDF, …).
+            When ``None`` the figure is returned but not written to disk.
+
+    Returns:
+        A ``matplotlib.figure.Figure`` containing the combined mAP panel.
+
+    Raises:
+        FileNotFoundError: When ``metrics_csv`` does not exist.
+        ImportError: When ``pandas`` or ``matplotlib`` is not installed.
+        ValueError: When ``metrics_csv`` contains no supported mAP metric columns.
+
+    Examples:
+        .. code-block:: python
+
+            from rfdetr.visualize.training import plot_map_metrics
+            fig = plot_map_metrics("output/rfdetr_small/metrics.csv")
+            fig = plot_map_metrics("output/rfdetr_small/metrics.csv", output_path="map.png")
+    """
+    raw_df, epoch_df = _read_metrics_csv(metrics_csv)
+    metric_groups = _build_metric_groups(epoch_df)
     map_columns = [
         column
         for group_name, columns in metric_groups.items()
-        if group_name in {"Detection AP@0.50", "Detection AP@0.50:0.95", "Keypoint AP@0.50", "Keypoint AP@0.50:0.95"}
+        if group_name
+        in {
+            "Detection AP@0.50",
+            "Detection AP@0.50:0.95",
+            "Detection AP@0.75",
+            "Keypoint AP@0.50",
+            "Keypoint AP@0.50:0.95",
+            "Keypoint AP@0.75",
+        }
         for column in columns
     ]
     if not map_columns:
         raise ValueError("metrics.csv does not contain any supported non-empty mAP metric columns.")
-    return _plot_map_columns(df, map_columns, output_path=output_path)
+    return _plot_map_columns(raw_df, epoch_df, map_columns, output_path=output_path)
 
 
-def _plot_map_columns(df: Any, metric_columns: list[str], *, output_path: Optional[str]) -> Figure:
+def _plot_map_columns(raw_df: Any, epoch_df: Any, metric_columns: list[str], *, output_path: Optional[str]) -> Figure:
     """Plot mAP metrics on a single axes with line style by split."""
     try:
         import matplotlib
@@ -301,7 +424,7 @@ def _plot_map_columns(df: Any, metric_columns: list[str], *, output_path: Option
         ) from exc
 
     fig, ax = plt.subplots(figsize=(12, 6))
-    _plot_columns_on_axes(ax, df, metric_columns)
+    _plot_columns_on_axes(ax, raw_df, epoch_df, metric_columns)
 
     ax.set_title("RF-DETR mAP Metrics", fontsize=13, fontweight="bold")
     ax.set_xlabel("Epoch", fontsize=11)
@@ -320,31 +443,39 @@ def plot_metrics(
     output_path: Optional[str] = None,
     loss_log_scale: bool = False,
 ) -> Figure:
-    """Read a PTL ``CSVLogger`` metrics file and build a seaborn training plot.
+    """Read a PTL ``CSVLogger`` metrics file and build a training plot.
 
     The figure contains one subplot per metric group (loss, detection metrics,
     keypoint metrics, and F1/precision/recall), arranged in a 2-column grid.
     Only groups with at least one non-NaN column are shown.
+
+    When seaborn is installed, each series is drawn as mean ± 1 std-dev band
+    computed from the within-epoch step-level rows logged by PTL's
+    ``CSVLogger``.  Metrics recorded only once per epoch (e.g. ``val/mAP_50``)
+    show a plain line because their per-epoch std is zero.  When seaborn is
+    absent the plot falls back to epoch-averaged lines.
 
     Args:
         metrics_csv: Path to the ``metrics.csv`` file produced by
             ``CSVLogger``.
         output_path: Optional destination for the PNG file. If omitted, the
             figure is returned without saving.
+        loss_log_scale: If ``True``, use a logarithmic y-axis for the Loss
+            panel when all loss values are positive.
 
     Returns:
         The matplotlib figure. The figure is left open so notebook cells can
         display it inline.
 
     Raises:
-        ImportError: If ``matplotlib``, ``pandas``, or ``seaborn`` are not
-            installed.
+        ImportError: If ``matplotlib`` or ``pandas`` are not installed.
         FileNotFoundError: If ``metrics_csv`` does not exist.
     """
-    df = _read_metrics_csv(metrics_csv)
-    metric_groups = _build_metric_groups(df)
+    raw_df, epoch_df = _read_metrics_csv(metrics_csv)
+    metric_groups = _build_metric_groups(epoch_df)
     return _plot_metric_groups(
-        df,
+        raw_df,
+        epoch_df,
         metric_groups,
         title="RF-DETR Training Metrics",
         output_path=output_path,
