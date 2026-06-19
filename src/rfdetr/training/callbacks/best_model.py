@@ -22,7 +22,7 @@ from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_version
-from rfdetr.utilities.state_dict import _LOOP_STATE_STUB, _make_fit_loop_state, strip_checkpoint
+from rfdetr.utilities.state_dict import _make_fit_loop_state, strip_checkpoint
 
 logger = get_logger()
 
@@ -155,8 +155,8 @@ class BestModelCallback(ModelCheckpoint):
                 # Minimal stubs so trainer.validate(ckpt_path=...) and trainer.test(ckpt_path=...)
                 # don't crash on KeyError — PTL restore_loops() expects both keys (PTL>=2.x,
                 # checkpoint_connector.py:restore_loops).
-                "validate_loop": _LOOP_STATE_STUB,
-                "test_loop": _LOOP_STATE_STUB,
+                "validate_loop": {"state_dict": {}},
+                "test_loop": {"state_dict": {}},
             },
             # Keep keys present with empty values so PTL resume paths that
             # expect them can proceed without loading optimizer state.

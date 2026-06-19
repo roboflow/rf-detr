@@ -25,11 +25,6 @@ _PTL_COMPAT_KEYS = (
     "lr_schedulers",
 )
 
-# Minimal stub for PTL loop state keys.  Both _build_checkpoint_payload (fresh writes)
-# and strip_checkpoint (backfill for old checkpoints) share this shape; a single constant
-# makes future PTL upgrades to the expected structure a one-place edit.
-_LOOP_STATE_STUB: dict[str, object] = {"state_dict": {}}
-
 
 def _raise_patch_size_mismatch(ckpt_patch_size: int, model_patch_size: int) -> None:
     """Raise a descriptive ValueError for a patch_size incompatibility.
@@ -178,7 +173,7 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
         loops = new_state_dict["loops"]
         for loop_key in ("validate_loop", "test_loop"):
             if loop_key not in loops:
-                loops[loop_key] = _LOOP_STATE_STUB
+                loops[loop_key] = {"state_dict": {}}
     # Create the temp file in the destination directory so os.replace stays on the same filesystem (atomic).
     checkpoint_dir = os.path.dirname(os.path.abspath(os.fspath(checkpoint)))
     with tempfile.NamedTemporaryFile(dir=checkpoint_dir, delete=False) as tmp_file:
