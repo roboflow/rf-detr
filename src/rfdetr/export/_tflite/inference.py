@@ -75,9 +75,9 @@ def _create_interpreter(model_path: str | Path) -> Any:
 
 
 def _bilinear_resize_half_pixel(src: NDArray[np.float32], out_h: int, out_w: int) -> NDArray[np.float32]:
-    """Bilinear resize matching ``F.interpolate(mode="bilinear", align_corners=False)``.
+    """Numpy bilinear resize matching ``F.interpolate(mode="bilinear", align_corners=False)``.
 
-    Uses the half-pixel center convention so mask upsampling matches ``PostProcess.forward``.
+    Half-pixel center convention. Used by ``_decode_masks`` only when ``torch`` is not importable.
 
     Args:
         src: Source array of shape ``(K, src_h, src_w)``.
@@ -106,10 +106,8 @@ def _bilinear_resize_half_pixel(src: NDArray[np.float32], out_h: int, out_w: int
     b = src[..., y0[:, None], x1[None, :]]
     c = src[..., y1[:, None], x0[None, :]]
     d = src[..., y1[:, None], x1[None, :]]
-    return np.asarray(
-        (1 - dy) * ((1 - dx) * a + dx * b) + dy * ((1 - dx) * c + dx * d),
-        dtype=np.float32,
-    )
+    out = (1 - dy) * ((1 - dx) * a + dx * b) + dy * ((1 - dx) * c + dx * d)
+    return np.asarray(out, dtype=np.float32)
 
 
 def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArray[np.bool_]:
