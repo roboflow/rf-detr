@@ -44,6 +44,15 @@ dependencies = [
     "pydantic>=2.0,<3",               # ModelConfig / TrainConfig validation
     "supervision>=0.29.0",       # inference output (Detections, Masks)
     "pyDeprecate>=0.9,<0.10",             # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
+    "ipython>=9.12.0",
+    "ipywidgets>=8.1.8",
+    "pillow>=12.2.0",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "faster-coco-eval>=1.7.2",
+    "opencv-python>=4.11.0.86",
+    "opencv-python-headless>=4.10.0.84",
+    "pycocotools>=2.0.11",
 ]
 
 [project.optional-dependencies]
@@ -142,6 +151,11 @@ docs = [
     "mkdocs-git-revision-date-localized-plugin>=1.2.4",
     "tomli>=2.0; python_version < '3.11'",
 ]
+dev = [
+    "deptry>=0.25.1",
+    "pybind11-stubgen>=2.5.5",
+    "pytest>=9.0.2",
+]
 
 [project.urls]
 Homepage = "https://github.com/roboflow/rf-detr"
@@ -158,6 +172,15 @@ rfdetr = "rfdetr.cli:main"
 override-dependencies = [
     "ml-dtypes==0.5.1; python_version >= '3.12' and python_version < '3.13'",
 ]
+environments = [
+    "python_version >= '3.12'",
+]
+
+[tool.pyright]
+stubPath = "typings"
+
+[tool.deptry]
+exclude = ["docs", ".venv", "tests"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
