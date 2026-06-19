@@ -3490,6 +3490,10 @@
               Bases: <code><span title="rfdetr.variants.RFDETRSeg">RFDETRSeg</span></code></p>
 
 
+        <p>Train an RF-DETR Segmentation Large model.</p>
+<p>Training accepts custom square integer <code>resolution</code> values. The value must be divisible by <code>patch_size *
+num_windows</code>; this variant uses multiples of 24.</p>
+
 
 
 
@@ -3498,11 +3502,23 @@
 
               <details class="quote">
                 <summary>Source code in <code>src/rfdetr/variants.py</code></summary>
-                <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-223">223</a></span>
-<span class="normal"><a href="#__codelineno-0-224">224</a></span>
-<span class="normal"><a href="#__codelineno-0-225">225</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-223"><a id="__codelineno-0-223" name="__codelineno-0-223"></a><span class="k">class</span><span class="w"> </span><span class="nc">RFDETRSegLarge</span><span class="p">(</span><span class="n">RFDETRSeg</span><span class="p">):</span>
-</span><span id="__span-0-224"><a id="__codelineno-0-224" name="__codelineno-0-224"></a>    <span class="n">size</span> <span class="o">=</span> <span class="s2">&quot;rfdetr-seg-large&quot;</span>
-</span><span id="__span-0-225"><a id="__codelineno-0-225" name="__codelineno-0-225"></a>    <span class="n">_model_config_class</span> <span class="o">=</span> <span class="n">RFDETRSegLargeConfig</span>
+                <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-279">279</a></span>
+<span class="normal"><a href="#__codelineno-0-280">280</a></span>
+<span class="normal"><a href="#__codelineno-0-281">281</a></span>
+<span class="normal"><a href="#__codelineno-0-282">282</a></span>
+<span class="normal"><a href="#__codelineno-0-283">283</a></span>
+<span class="normal"><a href="#__codelineno-0-284">284</a></span>
+<span class="normal"><a href="#__codelineno-0-285">285</a></span>
+<span class="normal"><a href="#__codelineno-0-286">286</a></span>
+<span class="normal"><a href="#__codelineno-0-287">287</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-279"><a id="__codelineno-0-279" name="__codelineno-0-279"></a><span class="k">class</span><span class="w"> </span><span class="nc">RFDETRSegLarge</span><span class="p">(</span><span class="n">RFDETRSeg</span><span class="p">):</span>
+</span><span id="__span-0-280"><a id="__codelineno-0-280" name="__codelineno-0-280"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Train an RF-DETR Segmentation Large model.</span>
+</span><span id="__span-0-281"><a id="__codelineno-0-281" name="__codelineno-0-281"></a>
+</span><span id="__span-0-282"><a id="__codelineno-0-282" name="__codelineno-0-282"></a><span class="sd">    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *</span>
+</span><span id="__span-0-283"><a id="__codelineno-0-283" name="__codelineno-0-283"></a><span class="sd">    num_windows``; this variant uses multiples of 24.</span>
+</span><span id="__span-0-284"><a id="__codelineno-0-284" name="__codelineno-0-284"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-285"><a id="__codelineno-0-285" name="__codelineno-0-285"></a>
+</span><span id="__span-0-286"><a id="__codelineno-0-286" name="__codelineno-0-286"></a>    <span class="n">size</span> <span class="o">=</span> <span class="s2">&quot;rfdetr-seg-large&quot;</span>
+</span><span id="__span-0-287"><a id="__codelineno-0-287" name="__codelineno-0-287"></a>    <span class="n">_model_config_class</span> <span class="o">=</span> <span class="n">RFDETRSegLargeConfig</span>
 </span></code></pre></div></td></tr></table></div>
               </details>
 

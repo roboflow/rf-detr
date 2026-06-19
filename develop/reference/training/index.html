@@ -2991,6 +2991,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.best_model.BestModelCallback(smooth_alpha)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;smooth_alpha
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rfdetr.training.callbacks.best_model.BestModelCallback-functions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4323,6 +4334,17 @@
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;skip_best_epochs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.best_model.BestModelCallback(smooth_alpha)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;smooth_alpha
       
     </span>
   </a>
@@ -6305,6 +6327,32 @@ epoch-0 mAP can artificially dominate best-checkpoint selection before training 
                   <code>0</code>
             </td>
           </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.training.callbacks.best_model.BestModelCallback(smooth_alpha)" class="doc doc-heading doc-heading-parameter">                  <code>smooth_alpha</code>
+<a href="#rfdetr.training.callbacks.best_model.BestModelCallback(smooth_alpha)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="float">float</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Exponential-moving-average smoothing factor in <code>[0.0, 1.0)</code> applied to the regular monitor
+metric before checkpoint comparison.  <code>0.0</code> (default) disables smoothing and keeps legacy behaviour:
+<code>trainer.callback_metrics[monitor_regular]</code> is consumed as-is by the parent
+:class:<code>~pytorch_lightning.callbacks.ModelCheckpoint</code>.  <code>smooth_alpha &gt; 0</code> maintains an internal EMA
+state <code>self._smoothed_regular = alpha * self._smoothed_regular + (1 - alpha) * raw</code> and temporarily
+substitutes the smoothed value into <code>trainer.callback_metrics</code> for the duration of the parent's
+improvement check; the original raw value is always restored before returning so what gets logged to
+<code>metrics.csv</code> is unaffected.  Useful for noisy metrics (e.g. keypoint mAP under NLL-Cholesky losses) where
+raw per-epoch swings can lock the best checkpoint to an early local peak.  The EMA accumulator is updated
+on every validation epoch including epochs within the <code>skip_best_epochs</code> window so the smoothed value
+is pre-warmed by the first eligible comparison.</p>
+              </div>
+            </td>
+            <td>
+                  <code>0.0</code>
+            </td>
+          </tr>
       </tbody>
     </table>
 
@@ -6342,7 +6390,7 @@ epoch-0 mAP can artificially dominate best-checkpoint selection before training 
 
 
 <h3 id="rfdetr.training.callbacks.best_model.BestModelCallback.__init__" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="n">monitor_regular</span><span class="o">=</span><span class="s1">&#39;val/mAP_50_95&#39;</span><span class="p">,</span> <span class="n">monitor_ema</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">run_test</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">skip_best_epochs</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span></code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="n">monitor_regular</span><span class="o">=</span><span class="s1">&#39;val/mAP_50_95&#39;</span><span class="p">,</span> <span class="n">monitor_ema</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">run_test</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">skip_best_epochs</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">smooth_alpha</span><span class="o">=</span><span class="mf">0.0</span><span class="p">)</span></code>
 
 <a href="#rfdetr.training.callbacks.best_model.BestModelCallback.__init__" class="headerlink" title="Permanent link">&para;</a></h3>
 
