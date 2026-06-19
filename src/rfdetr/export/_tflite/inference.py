@@ -72,9 +72,9 @@ def _create_interpreter(model_path: str | Path) -> Any:
 
 
 def _bilinear_resize_half_pixel(src: NDArray[np.float32], out_h: int, out_w: int) -> NDArray[np.float32]:
-    """Bilinear resize matching ``F.interpolate(mode="bilinear", align_corners=False)``.
+    """Numpy bilinear resize matching ``F.interpolate(mode="bilinear", align_corners=False)``.
 
-    Uses the half-pixel center convention so mask upsampling matches ``PostProcess.forward``.
+    Half-pixel center convention. Used by ``_decode_masks`` only when ``torch`` is not importable.
 
     Args:
         src: Source array of shape ``(K, src_h, src_w)``.
@@ -123,8 +123,22 @@ def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArr
             "This usually means the rank-4 mask-output heuristic in _run_inference matched the wrong tensor."
         )
     width, height = out_size
-    resized = _bilinear_resize_half_pixel(mask_logits.astype(np.float32), height, width)
-    return resized > 0.0
+    if mask_logits.shape[0] == 0:
+        return np.empty((0, height, width), dtype=np.bool_)
+    logits_f32 = mask_logits.astype(np.float32)
+
+    try:
+        import torch
+        import torch.nn.functional as _F  # noqa: N812
+
+        with torch.no_grad():
+            t = torch.from_numpy(logits_f32).unsqueeze(0)
+            t = _F.interpolate(t, size=(height, width), mode="bilinear", align_corners=False)
+        return (t.squeeze(0).cpu().numpy() > 0.0).astype(np.bool_)
+    except ImportError:
+        pass
+
+    return _bilinear_resize_half_pixel(logits_f32, height, width) > 0.0
 
 
 def _preprocess_image(
