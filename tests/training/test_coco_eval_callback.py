@@ -336,34 +336,41 @@ class TestOnTrainBatchEnd:
 
 
 class TestMetricsTablePrinting:
-    """Metric table terminal/notebook rendering behavior."""
+    """Metric table terminal/notebook rendering behavior.
 
-    def test_terminal_metrics_tables_update_live_display(self) -> None:
-        """Terminal metric tables update one Rich Live display instead of appending one table block per epoch."""
+    Covers: terminal (console.print path), Rich-missing warning, teardown
+    cleanup, RichProgressBar console routing, notebook in-place updates.
+    """
+
+    @pytest.mark.parametrize(
+        "split,title_pfx",
+        [
+            pytest.param("val", "Val", id="val"),
+            pytest.param("test", "Test", id="test"),
+        ],
+    )
+    def test_terminal_metrics_tables_print_to_console(self, split: str, title_pfx: str) -> None:
+        """Terminal metric tables print directly through the Rich console each epoch."""
         cb = COCOEvalCallback(in_notebook=False)
         trainer = _make_trainer()
         trainer.is_global_zero = True
         console = MagicMock(name="console")
-        live = MagicMock(name="live")
 
         with (
             patch("rfdetr.training.callbacks.coco_eval._get_rich_console", return_value=console),
-            patch("rfdetr.training.callbacks.coco_eval.Live", return_value=live) as live_cls,
-            patch("rfdetr.training.callbacks.coco_eval._render_overall_merged", side_effect=["overall-1", "overall-2"]),
+            patch(
+                "rfdetr.training.callbacks.coco_eval._render_overall_merged",
+                side_effect=["overall-1", "overall-2"],
+            ),
+            patch("rfdetr.training.callbacks.coco_eval._render_summary_tables") as render_tables,
         ):
-            cb._print_metrics_tables(trainer, "val", {"mAP": 0.1}, [])
-            cb._print_metrics_tables(trainer, "val", {"mAP": 0.2}, [])
+            cb._print_metrics_tables(trainer, split, {"mAP": 0.1}, [])
+            cb._print_metrics_tables(trainer, split, {"mAP": 0.2}, [])
 
-        live_cls.assert_called_once()
-        assert live_cls.call_args.kwargs == {
-            "console": console,
-            "auto_refresh": False,
-            "transient": False,
-        }
-        live.start.assert_called_once_with(refresh=True)
-        live.update.assert_called_once()
-        assert live.update.call_args.kwargs == {"refresh": True}
-        console.print.assert_not_called()
+        assert render_tables.call_count == 2
+        assert render_tables.call_args_list[0].args[0] is console
+        assert render_tables.call_args_list[0].args[1] == title_pfx
+        assert render_tables.call_args_list[0].args[2] == "overall-1"
 
     def test_missing_rich_warns_once_and_skips_metric_tables(self) -> None:
         """Missing Rich emits one warning and skips noisy table rendering."""
@@ -382,18 +389,48 @@ class TestMetricsTablePrinting:
         warning.assert_called_once_with(
             "Rich is not installed; skipping metric table rendering. Install `rich` to enable tables."
         )
+        assert cb._missing_rich_warning_emitted is True
         get_console.assert_not_called()
 
-    def test_teardown_stops_terminal_live_display(self) -> None:
-        """Teardown stops the terminal Live display so it is not left active."""
-        cb = COCOEvalCallback(in_notebook=False)
-        live = MagicMock(name="live")
-        cb._metrics_live = live
+    def test_teardown_releases_notebook_widget(self) -> None:
+        """Teardown clears the notebook output widget reference."""
+        cb = COCOEvalCallback(in_notebook=True)
+        cb._output_widget = MagicMock(name="output_widget")
 
         cb.teardown(_make_trainer(), _make_pl_module(), "fit")
 
-        live.stop.assert_called_once()
-        assert cb._metrics_live is None
+        assert cb._output_widget is None
+
+    @pytest.mark.parametrize("stage", ["fit", "validate", "test", "predict"])
+    def test_teardown_no_op_when_no_widget(self, stage: str) -> None:
+        """Teardown does not raise when no output widget was created."""
+        cb = COCOEvalCallback(in_notebook=False)
+        assert cb._output_widget is None
+
+        cb.teardown(_make_trainer(), _make_pl_module(), stage)
+
+        assert cb._output_widget is None
+
+    def test_terminal_prints_through_rich_progress_bar_console(self) -> None:
+        """Metric tables route through RichProgressBar._console when active."""
+        # Create a fake callback whose class name is RichProgressBar so
+        # _get_rich_console picks it up without importing PTL.
+        rich_progress_bar_fake = type("RichProgressBar", (), {})
+        rich_console = MagicMock(name="rich_console")
+        fake_pb = rich_progress_bar_fake()
+        fake_pb._console = rich_console  # type: ignore[attr-defined]
+
+        cb = COCOEvalCallback(in_notebook=False)
+        trainer = _make_trainer(callbacks=[fake_pb])
+        trainer.is_global_zero = True
+
+        with patch(
+            "rfdetr.training.callbacks.coco_eval._render_overall_merged",
+            return_value="overall",
+        ):
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.5}, [])
+
+        rich_console.print.assert_called_once()
 
     def test_notebook_metrics_tables_reuse_and_clear_output_widget(self) -> None:
         """Notebook metric tables update one output widget instead of appending one table block per epoch."""

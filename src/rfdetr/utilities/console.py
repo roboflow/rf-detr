@@ -5,6 +5,8 @@
 # ------------------------------------------------------------------------
 """Rich console helper for the training callback stack."""
 
+from __future__ import annotations
+
 from typing import Any
 
 try:
@@ -12,10 +14,10 @@ try:
     from rich.live import Live
     from rich.table import Table
 except ImportError:
-    Console = None
-    Group = None
-    Live = None
-    Table = None
+    Console = None  # type: ignore[assignment, misc]
+    Group = None  # type: ignore[assignment, misc]
+    Live = None  # type: ignore[assignment, misc]
+    Table = None  # type: ignore[assignment, misc]
     _IS_RICH_AVAILABLE = False
 else:
     _IS_RICH_AVAILABLE = True
@@ -36,11 +38,21 @@ def _get_rich_console(trainer: Any) -> Any:
 
     Returns:
         A Rich ``Console`` instance suitable for printing metric tables.
+
+    Note:
+        Reads ``RichProgressBar._console``, a private PTL attribute. When ``_console`` is
+        ``None`` (outside an active fit/validate/test stage) or the attribute is renamed in a
+        future PTL release, the function silently falls back to ``Console(force_terminal=True)``
+        — a fresh console with an empty live stack that may reintroduce cursor conflicts on
+        Windows. Subclasses and theme wrappers of ``RichProgressBar`` are matched via MRO.
     """
-    assert Console is not None
+    if Console is None:
+        raise RuntimeError(  # pragma: no cover
+            "_get_rich_console called when Rich is not installed; check _IS_RICH_AVAILABLE first."
+        )
 
     for cb in getattr(trainer, "callbacks", []):
-        if cb.__class__.__name__ == "RichProgressBar":
+        if any(cls.__name__ == "RichProgressBar" for cls in type(cb).__mro__):
             cb_console = getattr(cb, "_console", None)
             if cb_console is not None:
                 return cb_console
@@ -197,7 +209,7 @@ def _build_summary_renderable(
     title_pfx: str,
     overall_rendered: str,
     per_class: list[dict[str, Any]],
-) -> Any:
+) -> Group:
     """Build a single Rich renderable for overall and per-class metric tables.
 
     Args:
@@ -207,8 +219,8 @@ def _build_summary_renderable(
             ``f1``, ``precision``, ``recall``; skipped when empty.
 
     Returns:
-        Rich renderable containing the overall table and, when present, the
-        per-class table.
+        Rich ``Group`` renderable containing the overall table and, when present,
+        the per-class table.
     """
     assert Group is not None
 

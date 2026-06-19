@@ -33,8 +33,6 @@ from rfdetr.evaluation.matching import (
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 from rfdetr.utilities.console import (
     _IS_RICH_AVAILABLE,
-    Live,
-    _build_summary_renderable,
     _get_rich_console,
     _has_progress_bar,
     _render_overall_merged,
@@ -53,7 +51,7 @@ def _warn_missing_rich_once(warning_emitted: bool) -> bool:
         warning_emitted: Whether this warning has already been emitted.
 
     Returns:
-        ``True`` after warning emission or when it had already been emitted.
+        Always ``True``; caller assigns back to suppress future warnings.
     """
     if warning_emitted:
         return True
@@ -128,7 +126,6 @@ class COCOEvalCallback(Callback):
         # Whether the EMA metric received ≥1 update this epoch.  Gates the EMA cross-rank
         # sync so it is issued symmetrically on all DDP ranks (see _should_compute_ema).
         self._ema_has_updates: bool = False
-        self._metrics_live: Any = None  # rich.live.Live, created lazily for terminal table updates
         self._missing_rich_warning_emitted: bool = False
         self._output_widget: Any = None  # ipywidgets.Output, created lazily
         self._keypoint_mode: bool = False
@@ -200,14 +197,14 @@ class COCOEvalCallback(Callback):
         self.map_metric_ema: Any = None
 
     def teardown(self, trainer: Any, pl_module: Any, stage: str) -> None:
-        """Stop the terminal metrics Live display when the trainer exits.
+        """Release the notebook output widget when the trainer exits.
 
         Args:
             trainer: The PTL Trainer.
             pl_module: The LightningModule.
             stage: One of ``"fit"``, ``"validate"``, ``"test"``, ``"predict"``.
         """
-        self._stop_metrics_live()
+        self._output_widget = None
 
     def on_fit_start(self, trainer: Any, pl_module: Any) -> None:
         """Pull class names from the DataModule once the datasets are set up.
@@ -654,15 +651,6 @@ class COCOEvalCallback(Callback):
                 return callback
         return None
 
-    def _stop_metrics_live(self) -> None:
-        """Stop and clear the terminal metrics Live display if it exists."""
-        metrics_live = self._metrics_live
-        self._metrics_live = None
-        if metrics_live is None:
-            return
-        with contextlib.suppress(Exception):
-            metrics_live.stop()
-
     def _compute_map_metric(self, trainer: Any, metric: Any) -> dict[str, Any]:
         """Compute a torchmetrics mAP metric while suppressing duplicate terminal summaries under progress bars."""
         if not _has_progress_bar(trainer):
@@ -1036,23 +1024,11 @@ class COCOEvalCallback(Callback):
                     _render_summary_tables(console, title_pfx, overall_rendered, per_class)
                 return
 
-        assert Live is not None
-        renderable = _build_summary_renderable(title_pfx, overall_rendered, per_class)
-        if self._metrics_live is None:
-            self._metrics_live = Live(
-                renderable,
-                console=console,
-                auto_refresh=False,
-                transient=False,
-            )
-            try:
-                self._metrics_live.start(refresh=True)
-            except Exception:
-                self._metrics_live = None
-                _render_summary_tables(console, title_pfx, overall_rendered, per_class)
-            return
-
-        self._metrics_live.update(renderable, refresh=True)
+        # Print directly through the console.  A second rich.live.Live on the same
+        # console as RichProgressBar would silently nest (Live._nested=True) and
+        # delegate all refresh() calls to the progress-bar renderable, so metric
+        # tables would never appear.  console.print() avoids that nesting issue.
+        _render_summary_tables(console, title_pfx, overall_rendered, per_class)
 
     def _convert_preds(self, preds: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:
         """Normalise prediction dicts from ``PostProcess`` for torchmetrics.
