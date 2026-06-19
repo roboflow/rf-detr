@@ -158,6 +158,10 @@ rfdetr = "rfdetr.cli:main"
 override-dependencies = [
     "ml-dtypes==0.5.1; python_version >= '3.12' and python_version < '3.13'",
 ]
+environments = [
+    "python_version >= '3.12'",
+]
+
 
 [tool.setuptools.packages.find]
 where = ["src"]
