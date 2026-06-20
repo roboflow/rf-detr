@@ -151,6 +151,11 @@ def _lower_qnn(model: nn.Module, input_tensors: torch.Tensor, *, soc_model: str)
     selection ops (``topk``/``max.dim``) and a couple of attention-mask ops run on CPU (see
     :data:`_QNN_CPU_FALLBACK_OPS`).
 
+    Any op the QNN partitioner cannot evaluate support for -- one with no HTP visitor at all, or one whose visitor
+    chokes on an unusual signature (e.g. the keypoint head's weightless ``LayerNorm``, where ET 1.3.1's
+    ``op_layer_norm`` dereferences a ``None`` weight node) -- is treated as unsupported and left on CPU rather than
+    aborting the whole lowering.  This keeps QNN export robust across the detection, segmentation, and keypoint heads.
+
     Args:
         model: RF-DETR module in export mode, on CPU.
         input_tensors: Example input ``(batch, channels, height, width)``; its shape is baked in.
@@ -164,6 +169,7 @@ def _lower_qnn(model: nn.Module, input_tensors: torch.Tensor, *, soc_model: str)
         ValueError: If *soc_model* is not a known ``QcomChipset``.
     """
     try:
+        from executorch.backends.qualcomm.partition.qnn_partitioner import QnnOperatorSupport
         from executorch.backends.qualcomm.serialization.qc_schema import QcomChipset
         from executorch.backends.qualcomm.utils.utils import (
             generate_htp_compiler_spec,
@@ -193,13 +199,27 @@ def _lower_qnn(model: nn.Module, input_tensors: torch.Tensor, *, soc_model: str)
         kwargs["strict"] = False
         return _original_export(*args, **kwargs)
 
+    # ET 1.3.1's QnnOperatorSupport.is_node_supported can raise instead of returning False: an op with no HTP
+    # visitor raises KeyError, and a visitor fed an unusual signature (e.g. a weightless LayerNorm -> op_layer_norm
+    # dereferences a None weight node) raises AttributeError. Either aborts the whole lowering. Treat any such
+    # failure as "unsupported" so the node falls back to CPU and the rest of the graph still delegates.
+    _original_is_node_supported = QnnOperatorSupport.is_node_supported
+
+    def _safe_is_node_supported(self: Any, *args: Any, **kwargs: Any) -> bool:
+        try:
+            return bool(_original_is_node_supported(self, *args, **kwargs))
+        except Exception:
+            return False
+
     try:
         _torch_export.export = _nonstrict_export
+        QnnOperatorSupport.is_node_supported = _safe_is_node_supported
         edge_program = to_edge_transform_and_lower_to_qnn(
             model, (input_tensors,), compiler_specs, skip_node_op_set=set(_QNN_CPU_FALLBACK_OPS)
         )
     finally:
         _torch_export.export = _original_export
+        QnnOperatorSupport.is_node_supported = _original_is_node_supported
     return edge_program.to_executorch()
 
 

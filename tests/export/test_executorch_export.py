@@ -413,9 +413,14 @@ class TestLowerQnn:
             SM8650 = 30
             SM8750 = 69
 
+        class _QnnOperatorSupport:
+            def is_node_supported(self, *args: Any, **kwargs: Any) -> bool:
+                return True
+
         mods = _fake_executorch_tree(
             {
                 "executorch.backends.qualcomm.serialization.qc_schema": {"QcomChipset": _QcomChipset},
+                "executorch.backends.qualcomm.partition.qnn_partitioner": {"QnnOperatorSupport": _QnnOperatorSupport},
                 "executorch.backends.qualcomm.utils.utils": {
                     "generate_htp_compiler_spec": mock.MagicMock(return_value="htp"),
                     "generate_qnn_executorch_compiler_spec": mock.MagicMock(return_value="specs"),
@@ -441,6 +446,34 @@ class TestLowerQnn:
             result = _lower_qnn(mock.MagicMock(), torch.zeros(1, 3, 8, 8), soc_model="sm8650")
         assert result is program
         assert base_export.call_args.kwargs.get("strict") is False
+
+    def test_op_support_exception_is_treated_as_unsupported(self) -> None:
+        """A QnnOperatorSupport.is_node_supported that raises (no HTP visitor / weightless LayerNorm) is caught and the
+        node is left on CPU instead of aborting the lowering; the original method is restored after."""
+        from rfdetr.export._executorch.converter import _lower_qnn
+
+        mods, program, edge = self._qnn_modules()
+        qnn_support_cls = mods["executorch.backends.qualcomm.partition.qnn_partitioner"].QnnOperatorSupport
+
+        def _raise(self: Any, *args: Any, **kwargs: Any) -> bool:
+            raise AttributeError("'NoneType' object has no attribute 'name'")  # weightless-LayerNorm signature
+
+        qnn_support_cls.is_node_supported = _raise
+        original = qnn_support_cls.is_node_supported
+        seen: dict[str, Any] = {}
+
+        def _lower(model: Any, args: Any, compiler_specs: Any, skip_node_op_set: Any = None) -> Any:
+            # while lowering, the wrapper is installed -> a throwing support check returns False, not raises
+            seen["supported"] = qnn_support_cls().is_node_supported(object())
+            return edge
+
+        mods["executorch.backends.qualcomm.utils.utils"].to_edge_transform_and_lower_to_qnn.side_effect = _lower
+        with mock.patch.dict(sys.modules, mods):
+            result = _lower_qnn(mock.MagicMock(), torch.zeros(1, 3, 8, 8), soc_model="sm8650")
+
+        assert result is program
+        assert seen["supported"] is False  # exception swallowed -> CPU fallback
+        assert qnn_support_cls.is_node_supported is original  # restored after lowering
 
     def test_unknown_soc_raises_value_error(self) -> None:
         from rfdetr.export._executorch.converter import _lower_qnn
@@ -544,6 +577,22 @@ class TestPackageAvailabilityFlag:
             reloaded = importlib.reload(pkg)
             assert reloaded._IS_EXECUTORCH_AVAILABLE is True
         importlib.reload(pkg)  # restore the real availability state now that the mock is gone
+
+    def test_false_when_executorch_missing(self) -> None:
+        """Reloading the package with executorch unavailable sets the flag False (the except branch).
+
+        Covered explicitly (not just by the import-time state) so the result is deterministic whether or not the
+        executorch extra happens to be installed in the test environment.
+        """
+        import importlib
+
+        import rfdetr.export._executorch as pkg
+        import rfdetr.export._executorch.converter as conv
+
+        with mock.patch.object(conv, "_check_executorch_available", side_effect=ImportError("no executorch")):
+            reloaded = importlib.reload(pkg)
+            assert reloaded._IS_EXECUTORCH_AVAILABLE is False
+        importlib.reload(pkg)  # restore the real availability state
 
 
 # ---------------------------------------------------------------------------
