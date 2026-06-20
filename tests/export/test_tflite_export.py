@@ -1103,9 +1103,8 @@ _TFLITE_STRIDED_SLICE_MAX_RANK = 5
 def _export_msdeformattn_to_onnx(path: Path) -> None:
     """Export a small export-mode ``MSDeformAttn`` (4-coord reference points) to ONNX.
 
-    Uses the ``reference_points.shape[-1] == 4`` (reference-box) branch — the path the
-    rank-4 slicing fix touches — and the legacy ONNX exporter (``dynamo=False`` where
-    available), matching ``rfdetr.export._onnx.exporter``.
+    Uses the ``reference_points.shape[-1] == 4`` (reference-box) branch — the path the rank-4 slicing fix touches — and
+    the legacy ONNX exporter (``dynamo=False`` where available), matching ``rfdetr.export._onnx.exporter``.
     """
     import inspect
 
@@ -1196,10 +1195,9 @@ class TestMSDeformAttnSliceRank:
     def test_export_has_no_rank6_slice(self, tmp_path: Path) -> None:
         """Exported MSDeformAttn must contain no Slice on a tensor of rank > 5.
 
-        Regresses if the reference-box slicing reverts to slicing the rank-6
-        broadcast-expanded tensor (``reference_points[:, :, None, :, None, :2]``),
-        which onnx2tf lowers to a FlexStridedSlice that won't load on a mobile
-        LiteRT runtime.
+        Regresses if the reference-box slicing reverts to slicing the rank-6 broadcast-expanded tensor
+        (``reference_points[:, :, None, :, None, :2]``), which onnx2tf lowers to a FlexStridedSlice that won't load on a
+        mobile LiteRT runtime.
         """
         pytest.importorskip("onnx", reason="onnx not installed")
         onnx_path = tmp_path / "msdeformattn.onnx"
