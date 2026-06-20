@@ -1084,3 +1084,152 @@ class TestGridSampleOnnxRewrite:
         np.testing.assert_allclose(
             result, ref, atol=1e-5, rtol=0, err_msg="Gather(axis=0) rewrite output diverges from F.grid_sample"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestMSDeformAttnSliceRank — regression guard for the rank-6 StridedSlice fix
+# ---------------------------------------------------------------------------
+
+# TFLite's StridedSlice kernel supports at most 5 dimensions.  A rank-6 Slice in
+# MSDeformAttn's reference-box path is lowered by onnx2tf to a FlexStridedSlice
+# (which needs the Select-TF/Flex delegate, absent from the standalone mobile
+# LiteRT runtime) or, on older onnx2tf, to a native rank-6 STRIDED_SLICE that the
+# mobile kernel rejects at interpreter creation.  Either way the exported model
+# fails to load on-device.  MSDeformAttn must therefore never emit a Slice on a
+# tensor of rank > 5.  See the rank-4 slicing comment in ``MSDeformAttn.forward``.
+_TFLITE_STRIDED_SLICE_MAX_RANK = 5
+
+
+def _export_msdeformattn_to_onnx(path: Path) -> None:
+    """Export a small export-mode ``MSDeformAttn`` (4-coord reference points) to ONNX.
+
+    Uses the ``reference_points.shape[-1] == 4`` (reference-box) branch — the path the
+    rank-4 slicing fix touches — and the legacy ONNX exporter (``dynamo=False`` where
+    available), matching ``rfdetr.export._onnx.exporter``.
+    """
+    import inspect
+
+    import numpy as np
+    import torch
+    from torch import nn
+
+    from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
+
+    class _Wrapper(nn.Module):
+        """Holds the non-tensor args as constants so export takes only tensors."""
+
+        def __init__(self, module: nn.Module, spatial: list[tuple[int, int]], level_start: torch.Tensor) -> None:
+            super().__init__()
+            self.module = module
+            self.spatial = spatial
+            self.register_buffer("spatial_shapes", torch.tensor(spatial, dtype=torch.long))
+            self.register_buffer("level_start_index", level_start)
+
+        def forward(
+            self, query: torch.Tensor, reference_points: torch.Tensor, input_flatten: torch.Tensor
+        ) -> torch.Tensor:
+            return self.module(
+                query,
+                reference_points,
+                input_flatten,
+                self.spatial_shapes,
+                self.level_start_index,
+                None,
+                self.spatial,
+            )
+
+    torch.manual_seed(0)
+    d_model, n_heads, n_levels, n_points = 32, 4, 2, 4
+    module = MSDeformAttn(d_model=d_model, n_levels=n_levels, n_heads=n_heads, n_points=n_points)
+    module.export()  # switch to the export code path (_export=True)
+    module.eval()
+
+    spatial = [(8, 8), (4, 4)]
+    sizes = [h * w for h, w in spatial]
+    level_start = torch.tensor([0, *np.cumsum(sizes)[:-1].tolist()], dtype=torch.long)
+    n, len_q = 1, 6
+    query = torch.rand(n, len_q, d_model)
+    reference_points = torch.rand(n, len_q, n_levels, 4)  # 4-coord (reference-box) path
+    input_flatten = torch.rand(n, sum(sizes), d_model)
+
+    wrapper = _Wrapper(module, spatial, level_start).eval()
+    export_kwargs: dict[str, Any] = {}
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        export_kwargs["dynamo"] = False
+    with torch.no_grad():
+        torch.onnx.export(
+            wrapper,
+            (query, reference_points, input_flatten),
+            str(path),
+            input_names=["query", "reference_points", "input_flatten"],
+            output_names=["output"],
+            opset_version=17,
+            **export_kwargs,
+        )
+
+
+def _slice_nodes_exceeding_rank(onnx_path: Path, max_rank: int) -> list[tuple[str, int]]:
+    """Return ``(name, rank)`` for every Slice node whose data input exceeds *max_rank*."""
+    import onnx
+    import onnx.shape_inference
+
+    model = onnx.shape_inference.infer_shapes(onnx.load(str(onnx_path)))
+    ranks: dict[str, int] = {}
+    for vi in [*model.graph.input, *model.graph.value_info, *model.graph.output]:
+        if vi.type.tensor_type.HasField("shape"):
+            ranks[vi.name] = len(vi.type.tensor_type.shape.dim)
+    for init in model.graph.initializer:
+        ranks[init.name] = len(init.dims)
+
+    offenders: list[tuple[str, int]] = []
+    for node in model.graph.node:
+        if node.op_type in ("Slice", "StridedSlice") and node.input:
+            rank = ranks.get(node.input[0])
+            if rank is not None and rank > max_rank:
+                offenders.append((node.name or node.op_type, rank))
+    return offenders
+
+
+class TestMSDeformAttnSliceRank:
+    """Regression guard: ``MSDeformAttn`` export must not emit a rank-6 StridedSlice."""
+
+    def test_export_has_no_rank6_slice(self, tmp_path: Path) -> None:
+        """Exported MSDeformAttn must contain no Slice on a tensor of rank > 5.
+
+        Regresses if the reference-box slicing reverts to slicing the rank-6
+        broadcast-expanded tensor (``reference_points[:, :, None, :, None, :2]``),
+        which onnx2tf lowers to a FlexStridedSlice that won't load on a mobile
+        LiteRT runtime.
+        """
+        pytest.importorskip("onnx", reason="onnx not installed")
+        onnx_path = tmp_path / "msdeformattn.onnx"
+        _export_msdeformattn_to_onnx(onnx_path)
+
+        offenders = _slice_nodes_exceeding_rank(onnx_path, _TFLITE_STRIDED_SLICE_MAX_RANK)
+        assert offenders == [], (
+            f"MSDeformAttn export emitted Slice node(s) exceeding TFLite's "
+            f"{_TFLITE_STRIDED_SLICE_MAX_RANK}-D StridedSlice limit: {offenders}. "
+            "This regresses the rank-4 reference-point slicing fix and produces a "
+            "FlexStridedSlice that fails to load on a mobile LiteRT runtime."
+        )
+
+    def test_xy_wh_split_matches_rank6_slice(self) -> None:
+        """The rank-4 slice-then-broadcast is numerically identical to the rank-6 form."""
+        import torch
+
+        torch.manual_seed(0)
+        n, len_q, n_heads, n_levels, n_points = 1, 6, 4, 2, 4
+        reference_points = torch.rand(n, len_q, n_levels, 4)
+        sampling_offsets = torch.rand(n, len_q, n_heads, n_levels, n_points, 2)
+
+        # Original (rank-6 slice) form.
+        old = (
+            reference_points[:, :, None, :, None, :2]
+            + sampling_offsets / n_points * reference_points[:, :, None, :, None, 2:] * 0.5
+        )
+        # Fixed (rank-4 slice, then broadcast) form.
+        xy = reference_points[..., :2]
+        wh = reference_points[..., 2:]
+        new = xy[:, :, None, :, None, :] + sampling_offsets / n_points * wh[:, :, None, :, None, :] * 0.5
+
+        torch.testing.assert_close(new, old)
