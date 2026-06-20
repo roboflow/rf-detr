@@ -150,6 +150,13 @@ class MSDeformAttn(nn.Module):
                 + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
             )
         elif reference_points.shape[-1] == 4:
+            # Slice the rank-4 reference_points BEFORE inserting the broadcast
+            # (None) axes.  Slicing the last axis of the rank-6 expanded tensor
+            # (reference_points[:, :, None, :, None, :2]) emits a rank-6
+            # StridedSlice, which exceeds TFLite's 5-D StridedSlice kernel limit
+            # and forces a Flex (FlexStridedSlice) fallback at conversion time.
+            # Narrowing at rank 4 first, then unsqueezing, is numerically
+            # identical but keeps the slice within TFLite's native op support.
             reference_points_xy = reference_points[..., :2]
             reference_points_wh = reference_points[..., 2:]
             sampling_locations = (
