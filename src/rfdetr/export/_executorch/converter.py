@@ -10,7 +10,7 @@ ONNX), ExecuTorch consumes a :func:`torch.export.export` graph directly, lowers 
 supported subgraphs to a hardware backend:
 
 * **XNNPACK** (default) -- the portable CPU backend.  Works on every platform ExecuTorch supports (Android, iOS, Linux,
-  macOS), needs no extra SDK, runs in fp32; validated end-to-end on ordinary CI/CPU hardware.
+  macOS), needs no extra SDK, runs in fp32; validated end-to-end against eager.
 * **CoreML** -- Apple's Neural Engine / GPU / CPU backend for iOS and macOS.  Requires ``coremltools`` at export time
   and an Apple device to run.  Defaults to fp16, so raw outputs differ noticeably from eager PyTorch while detections
   remain correct -- typical of CoreML exports (see Ultralytics YOLO CoreML, same behaviour); validate by detections,
@@ -64,7 +64,7 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 # Backends accepted by :func:`export_executorch`.  XNNPACK (portable CPU, fp32) and CoreML (Apple devices, fp16) are
-# validated end-to-end on accessible hardware.  Qualcomm QNN (Snapdragon HTP/NPU, fp16) lowers cleanly and delegates
+# validated end-to-end.  Qualcomm QNN (Snapdragon HTP/NPU, fp16) lowers cleanly and delegates
 # the bulk of the network to the HTP -- but its delegate ships neither in the ``executorch`` wheel nor runs off a
 # Snapdragon device, so it requires a source build of ExecuTorch against the Qualcomm AI Engine Direct SDK.  Vulkan is
 # omitted (blocked by two upstream ExecuTorch bugs + missing ops; see triage notes).
@@ -93,7 +93,7 @@ _QNN_HINT = (
 #     boundary outputs are fp32), so they do exactly what eager does. Their inputs, however, still carry
 #     the backbone+decoder's fp16 rounding, so the selected outputs differ from eager at fp16 level --
 #     expected and harmless (the CPU ops propagate that error, they don't add to it). Verified by
-#     layer-wise bisection on a real Snapdragon 8 Elite (SM8750): pre-selection proposals match eager to
+#     layer-wise bisection on-device: pre-selection proposals match eager to
 #     rel_rmse 3e-4 (fp16-accurate, not bit-exact); with HTP topk/max the post-selection reference points
 #     diverge by ~0.9, and forcing just these two ops to CPU restores the top detections to sub-pixel
 #     agreement. Everything else (incl. deformable-attention grid_sample) still delegates to the HTP.
@@ -286,7 +286,7 @@ def export_executorch(
                 logger.warning(
                     "ExecuTorch QNN export is EXPERIMENTAL. It requires a source build of ExecuTorch "
                     "against the QAIRT SDK (not the pip wheel) and so cannot be CI-tested. Validated "
-                    "on-device on a real Snapdragon 8 Elite (SM8750) HTP: top detections match the "
+                    "on-device on the Snapdragon HTP: top detections match the "
                     "PyTorch model to sub-pixel accuracy, with the two-stage selection ops (topk/max.dim) "
                     "kept on CPU -- the HTP fp16 path computes wrong indices for them (see "
                     "_QNN_CPU_FALLBACK_OPS). Remaining differences are fp16-level; validate detections on "

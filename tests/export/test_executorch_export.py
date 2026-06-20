@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import importlib
 import sys
+import types
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -311,6 +312,202 @@ class TestExportFormatParameter:
         obj = self._make_rfdetr()
         with pytest.raises(ValueError, match="Unsupported export format"):
             obj.export(format="bogus", output_dir=str(self._tmp_path / "out"))
+
+
+# ---------------------------------------------------------------------------
+# Converter body coverage with executorch fully mocked (no optional package, no native libraries)
+# ---------------------------------------------------------------------------
+
+
+def _fake_executorch_tree(leaves: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Build a ``sys.modules`` patch dict for the converter's lazy imports.
+
+    Each leaf dotted module is created with the given attributes, plus empty parent packages, so a ``from
+    executorch.<...> import <name>`` succeeds even when the real ``executorch`` is not installed.
+    """
+    out: dict[str, Any] = {}
+    for dotted, attrs in leaves.items():
+        parts = dotted.split(".")
+        for i in range(1, len(parts) + 1):
+            name = ".".join(parts[:i])
+            if name not in out:
+                module = types.ModuleType(name)
+                module.__path__ = []  # mark as a package so nested submodule imports resolve
+                out[name] = module
+        for key, value in attrs.items():
+            setattr(out[dotted], key, value)
+    return out
+
+
+class TestBuildPartitioner:
+    """``_build_partitioner`` backend selection and missing-extension handling (executorch mocked)."""
+
+    @pytest.mark.parametrize(
+        ("backend", "leaf", "cls"),
+        [
+            pytest.param(
+                "xnnpack",
+                "executorch.backends.xnnpack.partition.xnnpack_partitioner",
+                "XnnpackPartitioner",
+                id="xnnpack",
+            ),
+            pytest.param(
+                "coreml",
+                "executorch.backends.apple.coreml.partition.coreml_partitioner",
+                "CoreMLPartitioner",
+                id="coreml",
+            ),
+        ],
+    )
+    def test_returns_partitioner(self, backend: str, leaf: str, cls: str) -> None:
+        from rfdetr.export._executorch.converter import _build_partitioner
+
+        sentinel = object()
+        mods = _fake_executorch_tree({leaf: {cls: mock.MagicMock(return_value=sentinel)}})
+        with mock.patch.dict(sys.modules, mods):
+            assert _build_partitioner(backend) == [sentinel]
+
+    @pytest.mark.parametrize(
+        ("backend", "leaf"),
+        [
+            pytest.param("xnnpack", "executorch.backends.xnnpack.partition.xnnpack_partitioner", id="xnnpack"),
+            pytest.param("coreml", "executorch.backends.apple.coreml.partition.coreml_partitioner", id="coreml"),
+        ],
+    )
+    def test_missing_extension_raises_import_error(self, backend: str, leaf: str) -> None:
+        from rfdetr.export._executorch.converter import _build_partitioner
+
+        with mock.patch.dict(sys.modules, {leaf: None}):
+            with pytest.raises(ImportError):
+                _build_partitioner(backend)
+
+    def test_unknown_backend_raises_value_error(self) -> None:
+        from rfdetr.export._executorch.converter import _build_partitioner
+
+        with pytest.raises(ValueError, match="Unsupported ExecuTorch backend"):
+            _build_partitioner("bogus")
+
+
+class TestLowerQnn:
+    """``_lower_qnn`` lowering, SoC validation, and missing-delegate handling (qualcomm backend mocked)."""
+
+    @staticmethod
+    def _qnn_modules() -> tuple[dict[str, Any], Any]:
+        program = mock.MagicMock()
+        program.buffer = b"QNNPTE"
+        edge = mock.MagicMock()
+        edge.to_executorch.return_value = program
+
+        class _QcomChipset:
+            SM8650 = 30
+            SM8750 = 69
+
+        mods = _fake_executorch_tree(
+            {
+                "executorch.backends.qualcomm.serialization.qc_schema": {"QcomChipset": _QcomChipset},
+                "executorch.backends.qualcomm.utils.utils": {
+                    "generate_htp_compiler_spec": mock.MagicMock(return_value="htp"),
+                    "generate_qnn_executorch_compiler_spec": mock.MagicMock(return_value="specs"),
+                    "to_edge_transform_and_lower_to_qnn": mock.MagicMock(return_value=edge),
+                },
+            }
+        )
+        return mods, program
+
+    def test_success_returns_executorch_program(self) -> None:
+        from rfdetr.export._executorch.converter import _lower_qnn
+
+        mods, program = self._qnn_modules()
+        with mock.patch.dict(sys.modules, mods):
+            assert _lower_qnn(mock.MagicMock(), torch.zeros(1, 3, 8, 8), soc_model="sm8650") is program
+
+    def test_unknown_soc_raises_value_error(self) -> None:
+        from rfdetr.export._executorch.converter import _lower_qnn
+
+        mods, _ = self._qnn_modules()
+        with mock.patch.dict(sys.modules, mods):
+            with pytest.raises(ValueError, match="Unknown QNN SoC"):
+                _lower_qnn(mock.MagicMock(), torch.zeros(1, 3, 8, 8), soc_model="SM9999")
+
+    def test_missing_delegate_raises_import_error(self) -> None:
+        from rfdetr.export._executorch.converter import _lower_qnn
+
+        with mock.patch.dict(sys.modules, {"executorch.backends.qualcomm.serialization.qc_schema": None}):
+            with pytest.raises(ImportError, match=r"QNN|executorch"):
+                _lower_qnn(mock.MagicMock(), torch.zeros(1, 3, 8, 8), soc_model="SM8650")
+
+
+class TestExportExecutorchBody:
+    """``export_executorch`` lowering dispatch + ``.pte`` writing, with executorch and its backends mocked."""
+
+    @staticmethod
+    def _generic_modules(buffer: bytes = b"PTEBYTES") -> dict[str, Any]:
+        program = mock.MagicMock()
+        program.buffer = buffer
+        edge = mock.MagicMock()
+        edge.to_executorch.return_value = program
+        return _fake_executorch_tree(
+            {
+                "executorch.exir": {"to_edge_transform_and_lower": mock.MagicMock(return_value=edge)},
+                "executorch.backends.xnnpack.partition.xnnpack_partitioner": {"XnnpackPartitioner": mock.MagicMock()},
+                "executorch.backends.apple.coreml.partition.coreml_partitioner": {
+                    "CoreMLPartitioner": mock.MagicMock()
+                },
+            }
+        )
+
+    @pytest.mark.parametrize("backend", [pytest.param("xnnpack", id="xnnpack"), pytest.param("coreml", id="coreml")])
+    def test_generic_backend_writes_pte(self, tmp_path: Path, backend: str) -> None:
+        with mock.patch.dict(sys.modules, self._generic_modules(b"PTE")), mock.patch("torch.export.export"):
+            out = export_executorch(
+                model=mock.MagicMock(),
+                input_tensors=torch.zeros(1, 3, 8, 8),
+                output_dir=tmp_path,
+                backend=backend,
+            )
+        assert out.name == "inference_model.pte"
+        assert out.read_bytes() == b"PTE"
+
+    def test_variant_name_sanitized_to_basename(self, tmp_path: Path) -> None:
+        """A path-like ``variant_name`` is reduced to its basename stem (mirrors the ONNX exporter)."""
+        with mock.patch.dict(sys.modules, self._generic_modules()), mock.patch("torch.export.export"):
+            out = export_executorch(
+                model=mock.MagicMock(),
+                input_tensors=torch.zeros(1, 3, 8, 8),
+                output_dir=tmp_path,
+                backend="xnnpack",
+                variant_name="sub/dir/rfdetr-nano.pte",
+            )
+        assert out.name == "rfdetr-nano.pte"
+
+    def test_lowering_failure_wrapped_as_runtime_error(self, tmp_path: Path) -> None:
+        mods = self._generic_modules()
+        mods["executorch.exir"].to_edge_transform_and_lower.side_effect = RuntimeError("boom")
+        with mock.patch.dict(sys.modules, mods), mock.patch("torch.export.export"):
+            with pytest.raises(RuntimeError, match="ExecuTorch export failed"):
+                export_executorch(
+                    model=mock.MagicMock(),
+                    input_tensors=torch.zeros(1, 3, 8, 8),
+                    output_dir=tmp_path,
+                    backend="xnnpack",
+                )
+
+    def test_qnn_backend_dispatches_to_lower_qnn(self, tmp_path: Path) -> None:
+        program = mock.MagicMock()
+        program.buffer = b"QNN"
+        with (
+            mock.patch.dict(sys.modules, self._generic_modules()),
+            mock.patch("rfdetr.export._executorch.converter._lower_qnn", return_value=program) as mock_lower,
+        ):
+            out = export_executorch(
+                model=mock.MagicMock(),
+                input_tensors=torch.zeros(1, 3, 8, 8),
+                output_dir=tmp_path,
+                backend="qnn",
+                soc="SM8650",
+            )
+        mock_lower.assert_called_once()
+        assert out.read_bytes() == b"QNN"
 
 
 # ---------------------------------------------------------------------------
