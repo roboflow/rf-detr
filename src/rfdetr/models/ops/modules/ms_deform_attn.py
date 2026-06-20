@@ -150,9 +150,11 @@ class MSDeformAttn(nn.Module):
                 + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
             )
         elif reference_points.shape[-1] == 4:
+            reference_points_xy = reference_points[..., :2]
+            reference_points_wh = reference_points[..., 2:]
             sampling_locations = (
-                reference_points[:, :, None, :, None, :2]
-                + sampling_offsets / self.n_points * reference_points[:, :, None, :, None, 2:] * 0.5
+                reference_points_xy[:, :, None, :, None, :]
+                + sampling_offsets / self.n_points * reference_points_wh[:, :, None, :, None, :] * 0.5
             )
         else:
             raise ValueError(
