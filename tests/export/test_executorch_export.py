@@ -313,6 +313,17 @@ class TestExportFormatParameter:
         with pytest.raises(ValueError, match="Unsupported export format"):
             obj.export(format="bogus", output_dir=str(self._tmp_path / "out"))
 
+    def test_converter_import_error_propagates(self) -> None:
+        """If the executorch converter cannot be imported, ``export()`` surfaces an actionable ImportError."""
+        obj = self._make_rfdetr()
+        # Bypass _resolve_export_backend's own converter import, then make the dispatch-site import fail.
+        with (
+            mock.patch("rfdetr.detr._resolve_export_backend", return_value=("xnnpack", None)),
+            mock.patch.dict(sys.modules, {"rfdetr.export._executorch.converter": None}),
+        ):
+            with pytest.raises(ImportError):
+                obj.export(format="executorch", backend="xnnpack", output_dir=str(self._tmp_path / "out"))
+
 
 # ---------------------------------------------------------------------------
 # Converter body coverage with executorch fully mocked (no optional package, no native libraries)
@@ -392,7 +403,7 @@ class TestLowerQnn:
     """``_lower_qnn`` lowering, SoC validation, and missing-delegate handling (qualcomm backend mocked)."""
 
     @staticmethod
-    def _qnn_modules() -> tuple[dict[str, Any], Any]:
+    def _qnn_modules() -> tuple[dict[str, Any], Any, Any]:
         program = mock.MagicMock()
         program.buffer = b"QNNPTE"
         edge = mock.MagicMock()
@@ -412,19 +423,29 @@ class TestLowerQnn:
                 },
             }
         )
-        return mods, program
+        return mods, program, edge
 
     def test_success_returns_executorch_program(self) -> None:
         from rfdetr.export._executorch.converter import _lower_qnn
 
-        mods, program = self._qnn_modules()
-        with mock.patch.dict(sys.modules, mods):
-            assert _lower_qnn(mock.MagicMock(), torch.zeros(1, 3, 8, 8), soc_model="sm8650") is program
+        mods, program, edge = self._qnn_modules()
+
+        # Make the (mocked) QNN lowering call torch.export.export so the strict=False shim that _lower_qnn
+        # installs around it is exercised; _original_export (the patched base export) should receive strict=False.
+        def _lower(model: Any, args: Any, compiler_specs: Any, skip_node_op_set: Any = None) -> Any:
+            torch.export.export(model, args, strict=True)
+            return edge
+
+        mods["executorch.backends.qualcomm.utils.utils"].to_edge_transform_and_lower_to_qnn.side_effect = _lower
+        with mock.patch.dict(sys.modules, mods), mock.patch("torch.export.export") as base_export:
+            result = _lower_qnn(mock.MagicMock(), torch.zeros(1, 3, 8, 8), soc_model="sm8650")
+        assert result is program
+        assert base_export.call_args.kwargs.get("strict") is False
 
     def test_unknown_soc_raises_value_error(self) -> None:
         from rfdetr.export._executorch.converter import _lower_qnn
 
-        mods, _ = self._qnn_modules()
+        mods, _, _ = self._qnn_modules()
         with mock.patch.dict(sys.modules, mods):
             with pytest.raises(ValueError, match="Unknown QNN SoC"):
                 _lower_qnn(mock.MagicMock(), torch.zeros(1, 3, 8, 8), soc_model="SM9999")
@@ -508,6 +529,21 @@ class TestExportExecutorchBody:
             )
         mock_lower.assert_called_once()
         assert out.read_bytes() == b"QNN"
+
+
+class TestPackageAvailabilityFlag:
+    """The ``_IS_EXECUTORCH_AVAILABLE`` flag set at package import."""
+
+    def test_true_when_executorch_importable(self) -> None:
+        """Reloading the package with executorch importable sets the flag True (the success branch)."""
+        import importlib
+
+        import rfdetr.export._executorch as pkg
+
+        with mock.patch.dict(sys.modules, _fake_executorch_tree({"executorch": {}})):
+            reloaded = importlib.reload(pkg)
+            assert reloaded._IS_EXECUTORCH_AVAILABLE is True
+        importlib.reload(pkg)  # restore the real availability state now that the mock is gone
 
 
 # ---------------------------------------------------------------------------
