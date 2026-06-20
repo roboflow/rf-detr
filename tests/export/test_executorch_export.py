@@ -1,0 +1,351 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+"""Tests for the PyTorch → ExecuTorch (``.pte``) export pipeline.
+
+Tests cover:
+* ``_resolve_export_backend``: the ``format`` / ``backend`` / ``soc`` validation, its warnings and errors.
+* ``export_executorch()`` argument validation and the missing-dependency error path (no ``executorch`` needed).
+* ``format="executorch"`` + ``backend`` / ``soc`` wiring through ``RFDETR.export()`` (heavy deps mocked, fast).
+* A real end-to-end export + numerical-parity check, gated behind the ``executorch`` marker so it only runs where the
+  ``executorch`` package is installed.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import importlib
+import sys
+from pathlib import Path
+from typing import Any
+from unittest import mock
+
+import pytest
+import torch
+
+from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
+from rfdetr.export._executorch.converter import (
+    _VALID_BACKENDS,
+    _check_executorch_available,
+    export_executorch,
+)
+
+executorch_only = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
+
+
+def _runtime_parity(model: Any, example: torch.Tensor, pte_path: Path) -> list[float]:
+    """Run *example* through the eager model and the ExecuTorch runtime; return per-output max-abs-diff.
+
+    The export-mode forward mutates its input in place, so a fresh clone is fed to each run.
+    """
+    from executorch.runtime import Runtime
+    from torch.utils._pytree import tree_flatten
+
+    with torch.no_grad():
+        eager_out = model(example.clone())
+    eager_tensors = [t for t in tree_flatten(eager_out)[0] if isinstance(t, torch.Tensor)]
+
+    method = Runtime.get().load_program(str(pte_path)).load_method("forward")
+    runtime_tensors = [t for t in method.execute([example.clone()]) if isinstance(t, torch.Tensor)]
+
+    assert len(runtime_tensors) == len(eager_tensors), "ExecuTorch output count differs from the source model"
+    return [(eager - runtime).abs().max().item() for eager, runtime in zip(eager_tensors, runtime_tensors)]
+
+
+# ---------------------------------------------------------------------------
+# format / backend / soc validation (no executorch required)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveExportBackend:
+    """Validation of the ``format`` / ``backend`` / ``soc`` combination by ``_resolve_export_backend``."""
+
+    @pytest.mark.parametrize(
+        ("export_format", "backend", "soc", "expected"),
+        [
+            pytest.param("onnx", None, None, (None, None), id="onnx"),
+            pytest.param("tflite", None, None, (None, None), id="tflite"),
+            pytest.param("executorch", "xnnpack", None, ("xnnpack", None), id="executorch-xnnpack"),
+            pytest.param("executorch", "coreml", None, ("coreml", None), id="executorch-coreml"),
+            pytest.param("executorch", "qnn", "SM8650", ("qnn", "SM8650"), id="executorch-qnn"),
+        ],
+    )
+    def test_valid_combination_resolves(
+        self, export_format: str, backend: str | None, soc: str | None, expected: tuple[str | None, str | None]
+    ) -> None:
+        from rfdetr.detr import _resolve_export_backend
+
+        assert _resolve_export_backend(export_format, backend, soc) == expected
+
+    def test_unknown_format_raises_value_error(self) -> None:
+        from rfdetr.detr import _resolve_export_backend
+
+        with pytest.raises(ValueError, match="Unsupported export format"):
+            _resolve_export_backend("bogus", None, None)
+
+    def test_format_without_required_backend_raises_value_error(self) -> None:
+        """A backend-bearing format needs a backend; omitting it is an error that lists the choices."""
+        from rfdetr.detr import _resolve_export_backend
+
+        with pytest.raises(ValueError, match="requires a valid backend"):
+            _resolve_export_backend("executorch", None, None)
+
+    def test_unknown_backend_raises_value_error(self) -> None:
+        from rfdetr.detr import _resolve_export_backend
+
+        with pytest.raises(ValueError, match="Unsupported backend"):
+            _resolve_export_backend("executorch", "vulkan", None)
+
+    def test_soc_backend_without_soc_raises_value_error(self) -> None:
+        """A backend that compiles for a specific chip (qnn) requires a soc."""
+        from rfdetr.detr import _resolve_export_backend
+
+        with pytest.raises(ValueError, match="requires a valid soc"):
+            _resolve_export_backend("executorch", "qnn", None)
+
+    @pytest.mark.parametrize(
+        ("export_format", "backend", "soc", "match"),
+        [
+            pytest.param("onnx", "xnnpack", None, r"backend=.*ignored", id="onnx-ignores-backend"),
+            pytest.param("onnx", None, "SM8650", r"soc=.*ignored", id="onnx-ignores-soc"),
+            pytest.param("executorch", "xnnpack", "SM8650", r"soc=.*ignored", id="xnnpack-ignores-soc"),
+        ],
+    )
+    def test_unused_argument_warns(self, export_format: str, backend: str | None, soc: str | None, match: str) -> None:
+        from rfdetr.detr import _resolve_export_backend
+
+        with pytest.warns(UserWarning, match=match):
+            _resolve_export_backend(export_format, backend, soc)
+
+
+# ---------------------------------------------------------------------------
+# Converter argument validation / dependency handling (no executorch required)
+# ---------------------------------------------------------------------------
+
+
+class TestExportExecutorchValidation:
+    """Argument validation and dependency-error behaviour of ``export_executorch``."""
+
+    def test_unsupported_backend_raises_value_error(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="Unsupported ExecuTorch backend"):
+            export_executorch(
+                model=mock.MagicMock(),
+                input_tensors=torch.zeros(1, 3, 8, 8),
+                output_dir=tmp_path,
+                backend="vulkan",
+            )
+
+    @pytest.mark.parametrize(
+        "backend",
+        [
+            pytest.param("xnnpack", id="xnnpack"),
+            pytest.param("coreml", id="coreml"),
+            pytest.param("qnn", id="qnn"),
+        ],
+    )
+    def test_supported_backend_is_valid(self, backend: str) -> None:
+        assert backend in _VALID_BACKENDS
+
+    @pytest.mark.parametrize("backend", ["xnnpack", "coreml", "qnn"])
+    def test_dynamic_batch_not_supported_raises(self, tmp_path: Path, backend: str) -> None:
+        """``dynamic_batch`` is refused up front on executorch 1.3.1 (runtime can't resize windowed reshapes)."""
+        with pytest.raises(NotImplementedError, match="dynamic_batch"):
+            export_executorch(
+                model=mock.MagicMock(),
+                input_tensors=torch.zeros(1, 3, 8, 8),
+                output_dir=tmp_path,
+                backend=backend,
+                dynamic_batch=True,
+            )
+
+    def test_coreml_backend_missing_dependency_raises_import_error(self, tmp_path: Path) -> None:
+        """Without ``coremltools`` (or the ``executorch`` package), the coreml backend raises an actionable hint."""
+        try:
+            importlib.import_module("executorch.backends.apple.coreml.partition.coreml_partitioner")
+        except Exception:
+            pass
+        else:
+            pytest.skip("ExecuTorch CoreML backend is available; missing-dependency path not exercised here")
+        with pytest.raises(ImportError, match=r"coremltools|executorch"):
+            export_executorch(
+                model=mock.MagicMock(),
+                input_tensors=torch.zeros(1, 3, 8, 8),
+                output_dir=tmp_path,
+                backend="coreml",
+            )
+
+    def test_qnn_backend_missing_delegate_raises_import_error(self, tmp_path: Path) -> None:
+        """Without an ExecuTorch source build against the QNN SDK, the qnn backend raises an actionable hint."""
+        try:
+            importlib.import_module("executorch.backends.qualcomm.utils.utils")
+        except Exception:
+            pass
+        else:
+            pytest.skip("ExecuTorch QNN backend is available; missing-delegate path not exercised here")
+        with pytest.raises((ImportError, RuntimeError), match=r"QNN|executorch"):
+            export_executorch(
+                model=mock.MagicMock(),
+                input_tensors=torch.zeros(1, 3, 8, 8),
+                output_dir=tmp_path,
+                backend="qnn",
+            )
+
+    def test_check_executorch_available_raises_when_missing(self) -> None:
+        """``_check_executorch_available`` should raise an actionable ImportError when executorch is absent."""
+        with mock.patch.dict(sys.modules, {"executorch": None}):
+            with pytest.raises(ImportError, match=r"pip install rfdetr\[executorch\]"):
+                _check_executorch_available()
+
+    def test_export_executorch_missing_dependency_raises_import_error(self, tmp_path: Path) -> None:
+        with mock.patch.dict(sys.modules, {"executorch": None}):
+            with pytest.raises(ImportError, match=r"pip install rfdetr\[executorch\]"):
+                export_executorch(
+                    model=mock.MagicMock(),
+                    input_tensors=torch.zeros(1, 3, 8, 8),
+                    output_dir=tmp_path,
+                    backend="xnnpack",
+                )
+
+
+# ---------------------------------------------------------------------------
+# format="executorch" wiring through RFDETR.export() (heavy deps mocked)
+# ---------------------------------------------------------------------------
+
+
+class TestExportFormatParameter:
+    """Tests for ``format="executorch"`` wiring through ``RFDETR.export()``."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_export_deps(self, tmp_path: Path) -> Any:
+        """Mock the heavy export dependencies so ``RFDETR.export()`` is fast and dependency-free."""
+        self._tmp_path = tmp_path
+        pte_out = tmp_path / "inference_model.pte"
+        pte_out.write_bytes(b"pte")
+
+        self._mock_stack = contextlib.ExitStack()
+        # make_infer_image returns a small tensor instead of building a real image.
+        self._mock_stack.enter_context(
+            mock.patch(
+                "rfdetr.export.main.make_infer_image",
+                return_value=torch.zeros(1, 3, 560, 560),
+            )
+        )
+        # Mock the converter so no torch.export / executorch work happens.
+        self._mock_export_executorch = self._mock_stack.enter_context(
+            mock.patch(
+                "rfdetr.export._executorch.converter.export_executorch",
+                return_value=pte_out,
+            )
+        )
+        # Mock export_onnx so the ONNX-format branch is also dependency-free.
+        self._mock_export_onnx = self._mock_stack.enter_context(
+            mock.patch("rfdetr.export.main.export_onnx", return_value=str(tmp_path / "inference_model.onnx"))
+        )
+        yield
+        self._mock_stack.close()
+
+    @staticmethod
+    def _make_rfdetr() -> Any:
+        """Create a minimal RFDETR instance with mocked internals (mirrors the TFLite suite)."""
+        from rfdetr.detr import RFDETR
+
+        obj = RFDETR.__new__(RFDETR)
+        obj.model = mock.MagicMock()
+        obj.model.resolution = 560
+        obj.model.device = "cpu"
+        obj.model.model.to.return_value = obj.model.model
+        obj.model_config = mock.MagicMock()
+        obj.model_config.segmentation_head = False
+        obj.model_config.use_grouppose_keypoints = False
+        obj.model_config.patch_size = 14
+        obj.model_config.num_windows = 1
+        return obj
+
+    def test_executorch_format_calls_export_executorch(self) -> None:
+        obj = self._make_rfdetr()
+        obj.export(format="executorch", backend="xnnpack", output_dir=str(self._tmp_path / "out"))
+        self._mock_export_executorch.assert_called_once()
+
+    def test_executorch_format_does_not_call_export_onnx(self) -> None:
+        obj = self._make_rfdetr()
+        obj.export(format="executorch", backend="xnnpack", output_dir=str(self._tmp_path / "out"))
+        self._mock_export_onnx.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("backend", "soc"),
+        [
+            pytest.param("xnnpack", None, id="xnnpack"),
+            pytest.param("coreml", None, id="coreml"),
+            pytest.param("qnn", "SM8650", id="qnn"),
+        ],
+    )
+    def test_backend_forwarded_to_converter(self, backend: str, soc: str | None) -> None:
+        obj = self._make_rfdetr()
+        obj.export(format="executorch", backend=backend, soc=soc, output_dir=str(self._tmp_path / "out"))
+        assert self._mock_export_executorch.call_args.kwargs.get("backend") == backend
+
+    def test_soc_forwarded_to_converter(self) -> None:
+        obj = self._make_rfdetr()
+        obj.export(format="executorch", backend="qnn", soc="SM8750", output_dir=str(self._tmp_path / "out"))
+        assert self._mock_export_executorch.call_args.kwargs.get("soc") == "SM8750"
+
+    def test_non_qnn_backend_does_not_forward_soc(self) -> None:
+        """Xnnpack/coreml bake in no SoC, so the converter is called without a ``soc`` kwarg."""
+        obj = self._make_rfdetr()
+        obj.export(format="executorch", backend="xnnpack", output_dir=str(self._tmp_path / "out"))
+        assert "soc" not in self._mock_export_executorch.call_args.kwargs
+
+    def test_dynamic_batch_forwarded_to_converter(self) -> None:
+        obj = self._make_rfdetr()
+        obj.export(format="executorch", backend="xnnpack", dynamic_batch=True, output_dir=str(self._tmp_path / "out"))
+        assert self._mock_export_executorch.call_args.kwargs.get("dynamic_batch") is True
+
+    def test_onnx_format_does_not_call_export_executorch(self) -> None:
+        obj = self._make_rfdetr()
+        obj.export(format="onnx", output_dir=str(self._tmp_path / "out"))
+        self._mock_export_executorch.assert_not_called()
+
+    def test_invalid_format_raises_value_error(self) -> None:
+        obj = self._make_rfdetr()
+        with pytest.raises(ValueError, match="Unsupported export format"):
+            obj.export(format="bogus", output_dir=str(self._tmp_path / "out"))
+
+
+# ---------------------------------------------------------------------------
+# Real end-to-end export + numerical parity (requires the executorch package)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def exported(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, torch.Tensor, Path]:
+    """Export RFDETRNano to a ``.pte`` once and reuse it across the parity checks."""
+    from rfdetr import RFDETRNano
+
+    out_dir = tmp_path_factory.mktemp("executorch")
+    detector = RFDETRNano(pretrain_weights=None)
+    pte_path = detector.export(output_dir=str(out_dir), format="executorch", backend="xnnpack", verbose=False)
+
+    model = detector.model.model.to("cpu").eval()
+    model.export()
+    example = torch.randn(1, 3, detector.model.resolution, detector.model.resolution)
+    return model, example, Path(pte_path)
+
+
+@executorch_only
+@pytest.mark.executorch
+class TestExecutorchEndToEnd:
+    """End-to-end export of a real RF-DETR model, gated on the executorch package."""
+
+    def test_pte_file_written(self, exported: tuple[Any, torch.Tensor, Path]) -> None:
+        _, _, pte_path = exported
+        assert pte_path.is_file()
+        assert pte_path.suffix == ".pte"
+        assert pte_path.stat().st_size > 0
+
+    def test_runtime_output_matches_pytorch(self, exported: tuple[Any, torch.Tensor, Path]) -> None:
+        model, example, pte_path = exported
+        diffs = _runtime_parity(model, example, pte_path)
+        assert diffs, "expected at least one output to compare"
+        assert max(diffs) < 1e-3, f"ExecuTorch outputs diverge from PyTorch: max abs diff {max(diffs)}"

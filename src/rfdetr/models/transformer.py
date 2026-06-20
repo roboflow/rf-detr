@@ -451,6 +451,7 @@ class Transformer(nn.Module):
                 refpoints_unsigmoid=refpoint_embed,
                 level_start_index=level_start_index,
                 spatial_shapes=spatial_shapes,
+                spatial_shapes_hw=spatial_shapes_hw,
                 valid_ratios=valid_ratios.to(decoder_memory.dtype) if valid_ratios is not None else valid_ratios,
                 tgt_keypoints=tgt_keypoints,
                 init_kp_ref_xy=init_kp_ref_xy,
@@ -597,6 +598,7 @@ class TransformerDecoder(nn.Module):
         # for memory
         level_start_index: Optional[Tensor] = None,  # num_levels
         spatial_shapes: Optional[Tensor] = None,  # num_levels, 2
+        spatial_shapes_hw: Optional[list[tuple[int, int]]] = None,  # num_levels (H, W) Python ints
         valid_ratios: Optional[Tensor] = None,
         # keypoints
         tgt_keypoints: Optional[Tensor] = None,
@@ -674,6 +676,7 @@ class TransformerDecoder(nn.Module):
                     is_first=(layer_id == 0),
                     reference_points=refpoints_input,
                     spatial_shapes=spatial_shapes,
+                    spatial_shapes_hw=spatial_shapes_hw,
                     level_start_index=level_start_index,
                     keypoint_tgt=keypoint_tgt,
                     keypoint_pos=kp_query_pos,
@@ -696,6 +699,7 @@ class TransformerDecoder(nn.Module):
                     is_first=(layer_id == 0),
                     reference_points=refpoints_input,
                     spatial_shapes=spatial_shapes,
+                    spatial_shapes_hw=spatial_shapes_hw,
                     level_start_index=level_start_index,
                 )
 
@@ -864,6 +868,7 @@ class TransformerDecoderLayer(nn.Module):
         is_first: bool = False,
         reference_points: Optional[Tensor] = None,
         spatial_shapes: Tensor | None = None,
+        spatial_shapes_hw: list[tuple[int, int]] | None = None,
         level_start_index: Tensor | None = None,
         # Keypoint processing parameters
         keypoint_tgt: Optional[Tensor] = None,  # [B, N, total_kp_per_instance, C]
@@ -900,6 +905,7 @@ class TransformerDecoderLayer(nn.Module):
             spatial_shapes,
             level_start_index,
             memory_key_padding_mask,
+            input_spatial_shapes_hw=spatial_shapes_hw,
         )
         # ========== End of Cross-Attention =============
 
@@ -989,6 +995,7 @@ class TransformerDecoderLayer(nn.Module):
                         spatial_shapes,
                         level_start_index,
                         memory_key_padding_mask,
+                        input_spatial_shapes_hw=spatial_shapes_hw,
                     ).reshape(bs, num_queries, num_kp, kp_dim)
                 )
                 keypoint_tgt = self.kp_cross_attn_norm(keypoint_tgt)
@@ -1020,6 +1027,7 @@ class TransformerDecoderLayer(nn.Module):
         is_first: bool = False,
         reference_points: Optional[Tensor] = None,
         spatial_shapes: Tensor | None = None,
+        spatial_shapes_hw: list[tuple[int, int]] | None = None,
         level_start_index: Tensor | None = None,
         keypoint_tgt: Optional[Tensor] = None,
         keypoint_pos: Optional[Tensor] = None,
@@ -1039,6 +1047,7 @@ class TransformerDecoderLayer(nn.Module):
             is_first=is_first,
             reference_points=reference_points,
             spatial_shapes=spatial_shapes,
+            spatial_shapes_hw=spatial_shapes_hw,
             level_start_index=level_start_index,
             keypoint_tgt=keypoint_tgt,
             keypoint_pos=keypoint_pos,
