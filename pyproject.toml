@@ -43,7 +43,7 @@ dependencies = [
     "transformers>=5.1.0,<6.0.0",      # DINOv2 backbone loading
     "pydantic>=2.0,<3",                # ModelConfig / TrainConfig validation
     "supervision>=0.29.0",             # inference output (Detections, Masks)
-    "pyDeprecate>=0.9,<0.10",          # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
+    "pyDeprecate>=0.9,<0.10",             # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
     "pillow>=12.2.0",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
@@ -149,7 +149,6 @@ docs = [
 ]
 dev = [
     "deptry>=0.25.1",
-    "pybind11-stubgen>=2.5.5",
     "pytest>=9.0.2",
 ]
 
@@ -171,9 +170,6 @@ override-dependencies = [
 environments = [
     "python_version >= '3.12'",
 ]
-
-[tool.pyright]
-stubPath = "typings"
 
 [tool.deptry]
 exclude = ["docs", ".venv", "tests"]
