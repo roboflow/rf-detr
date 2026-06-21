@@ -321,14 +321,12 @@ class TestHungarianMatcherFocalAlpha:
     """The configured ``focal_alpha`` must drive the classification matching cost."""
 
     def test_focal_alpha_changes_assignment(self) -> None:
-        """Two matchers differing only in ``focal_alpha`` must be able to produce
-        different assignments.
+        """Two matchers differing only in ``focal_alpha`` must be able to produce different assignments.
 
-        ``focal_alpha`` is accepted, documented as "used in the classification
-        cost", and stored on the matcher, so it must actually influence matching.
-        This input is chosen so the optimal query->target pairing flips between
-        ``focal_alpha=0.25`` and ``focal_alpha=0.90``; if the cost ignores the
-        configured alpha, both assignments collapse to the same result.
+        ``focal_alpha`` is accepted, documented as "used in the classification cost", and stored on the matcher, so it
+        must actually influence matching. This input is chosen so the optimal query->target pairing flips between
+        ``focal_alpha=0.25`` and ``focal_alpha=0.90``; if the cost ignores the configured alpha, both assignments
+        collapse to the same result.
         """
         outputs = {
             "pred_logits": torch.tensor(
