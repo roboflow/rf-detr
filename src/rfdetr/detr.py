@@ -1413,12 +1413,10 @@ class RFDETR:
     def _ensure_eval_mode_for_unoptimized_inference(self) -> None:
         """Put the underlying module in eval mode before unoptimized inference.
 
-        Inference must never run with dropout / batch-norm in training mode. The
-        warning that the model is not optimized is emitted at most once, but eval
-        mode is (re)asserted on every call: ``train()`` reassigns
-        ``self.model.model`` to a module that PyTorch Lightning leaves in training
-        mode (see ``train()``), so gating ``eval()`` behind the once-only warning
-        would let a later ``predict()`` silently run with dropout active.
+        Inference must never run with dropout / batch-norm in training mode. The warning that the model is not optimized
+        is emitted at most once, but eval mode is (re)asserted on every call: ``train()`` reassigns ``self.model.model``
+        to a module that PyTorch Lightning leaves in training mode (see ``train()``), so gating ``eval()`` behind the
+        once-only warning would let a later ``predict()`` silently run with dropout active.
         """
         if self._is_optimized_for_inference:
             return

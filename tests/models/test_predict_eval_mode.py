@@ -48,11 +48,10 @@ class TestUnoptimizedInferenceEvalMode:
     """`_ensure_eval_mode_for_unoptimized_inference` must keep the module in eval mode."""
 
     def test_eval_mode_reasserted_after_train_round_trip(self) -> None:
-        """eval mode must be (re)applied on every call, not just the first.
+        """Eval mode must be (re)applied on every call, not just the first.
 
-        ``train()`` reassigns ``self.model.model`` to a module left in training
-        mode, so a subsequent inference call must put it back in eval mode.
-        Otherwise inference runs with dropout active and yields nondeterministic,
+        ``train()`` reassigns ``self.model.model`` to a module left in training mode, so a subsequent inference call
+        must put it back in eval mode. Otherwise inference runs with dropout active and yields nondeterministic,
         degraded predictions.
         """
         rfdetr = _FakeRFDETR()
