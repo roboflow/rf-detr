@@ -315,3 +315,45 @@ class TestHungarianMatcherSanitization:
 
         assert torch.isfinite(sanitized).all()
         assert sanitized[0, 1] == dtype_max
+
+
+class TestHungarianMatcherFocalAlpha:
+    """The configured ``focal_alpha`` must drive the classification matching cost."""
+
+    def test_focal_alpha_changes_assignment(self) -> None:
+        """Two matchers differing only in ``focal_alpha`` must be able to produce
+        different assignments.
+
+        ``focal_alpha`` is accepted, documented as "used in the classification
+        cost", and stored on the matcher, so it must actually influence matching.
+        This input is chosen so the optimal query->target pairing flips between
+        ``focal_alpha=0.25`` and ``focal_alpha=0.90``; if the cost ignores the
+        configured alpha, both assignments collapse to the same result.
+        """
+        outputs = {
+            "pred_logits": torch.tensor(
+                [[[2.3936, -1.4217], [2.3731, -2.1974]]],
+                dtype=torch.float32,
+            ),
+            "pred_boxes": torch.tensor(
+                [[[0.3898, 0.4340, 0.5331, 0.1901], [0.4256, 0.1002, 0.6955, 0.7815]]],
+                dtype=torch.float32,
+            ),
+        }
+        targets = [
+            {
+                "labels": torch.tensor([0, 1], dtype=torch.int64),
+                "boxes": torch.tensor(
+                    [[0.2111, 0.6630, 0.7569, 0.8855], [0.7750, 0.4393, 0.8838, 0.8792]],
+                    dtype=torch.float32,
+                ),
+            }
+        ]
+
+        def assignment(focal_alpha: float) -> list[int]:
+            matcher = HungarianMatcher(cost_class=2.0, cost_bbox=5.0, cost_giou=2.0, focal_alpha=focal_alpha)
+            matched_queries, matched_targets = matcher(outputs, targets)[0]
+            # Queries ordered by the target index they are matched to.
+            return matched_queries[matched_targets.argsort()].tolist()
+
+        assert assignment(0.25) != assignment(0.90)

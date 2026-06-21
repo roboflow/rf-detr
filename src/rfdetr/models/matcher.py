@@ -176,7 +176,7 @@ class HungarianMatcher(nn.Module):
         cost_giou = -giou
 
         # Compute the classification cost.
-        alpha = 0.25
+        alpha = self.focal_alpha
         gamma = 2.0
 
         # neg_cost_class = (1 - alpha) * (out_prob ** gamma) * (-(1 - out_prob + 1e-8).log())
