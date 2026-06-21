@@ -323,8 +323,10 @@ def export_executorch(
                 exported_program = torch.export.export(model, (input_tensors,), strict=False)
                 edge_program = to_edge_transform_and_lower(exported_program, partitioner=_build_partitioner(backend))
                 executorch_program = edge_program.to_executorch()
+    except (ImportError, ValueError):
+        raise
     except Exception as exc:
-        logger.error(f"ExecuTorch export failed: {exc}")
+        logger.exception("ExecuTorch export failed")
         raise RuntimeError(f"ExecuTorch export failed: {exc}") from exc
 
     output_file.write_bytes(executorch_program.buffer)
