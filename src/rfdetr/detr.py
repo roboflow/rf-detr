@@ -1410,6 +1410,26 @@ class RFDETR:
 
         return list(COCO_CLASS_NAMES)
 
+    def _ensure_eval_mode_for_unoptimized_inference(self) -> None:
+        """Put the underlying module in eval mode before unoptimized inference.
+
+        Inference must never run with dropout / batch-norm in training mode. The
+        warning that the model is not optimized is emitted at most once, but eval
+        mode is (re)asserted on every call: ``train()`` reassigns
+        ``self.model.model`` to a module that PyTorch Lightning leaves in training
+        mode (see ``train()``), so gating ``eval()`` behind the once-only warning
+        would let a later ``predict()`` silently run with dropout active.
+        """
+        if self._is_optimized_for_inference:
+            return
+        if not self._has_warned_about_not_being_optimized_for_inference:
+            logger.warning(
+                "Model is not optimized for inference. Latency may be higher than expected."
+                " You can optimize the model for inference by calling model.optimize_for_inference().",
+            )
+            self._has_warned_about_not_being_optimized_for_inference = True
+        self.model.model.eval()
+
     @torch.no_grad()
     @_ensure_model_on_device
     def predict(
@@ -1505,14 +1525,7 @@ class RFDETR:
         else:
             shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
 
-        if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
-            logger.warning(
-                "Model is not optimized for inference. Latency may be higher than expected."
-                " You can optimize the model for inference by calling model.optimize_for_inference().",
-            )
-            self._has_warned_about_not_being_optimized_for_inference = True
-
-            self.model.model.eval()
+        self._ensure_eval_mode_for_unoptimized_inference()
 
         if not isinstance(images, list):
             images = [images]
