@@ -71,6 +71,24 @@ class TestBuildKorniaPipeline:
         with pytest.raises(ValueError, match="BogusTransform"):
             build_kornia_pipeline(mixed, 560)
 
+    def test_hflip_disabled_for_keypoint_pipeline(self):
+        """Keypoint-mode Kornia augmentation drops hflip transforms with a warning."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        config = {"HorizontalFlip": {"p": 0.5}, "VerticalFlip": {"p": 0.5}}
+        mock_warning = mock.patch.object(kornia_transforms.logger, "warning")
+
+        with mock_warning as warning:
+            pipeline = kornia_transforms.build_kornia_pipeline(config, 560, include_keypoints=True)
+
+        transform_names = [child.__class__.__name__ for child in pipeline.children()]
+        assert "RandomHorizontalFlip" not in transform_names
+        assert "RandomVerticalFlip" in transform_names
+        assert warning.called
+        assert "HorizontalFlip" in str(warning.call_args)
+
 
 # ---------------------------------------------------------------------------
 # TestCollateBoxes — validates packing of variable-length per-image boxes

@@ -23,7 +23,7 @@ try:
 except ImportError:  # pragma: no cover - exercised in unit tests via monkeypatch
     _MultiProcessingLauncher = None  # type: ignore[assignment]
 
-from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.config import KeypointTrainConfig, ModelConfig, TrainConfig
 from rfdetr.training.callbacks import (
     BestModelCallback,
     DropPathCallback,
@@ -209,6 +209,12 @@ def build_trainer(
     num_nodes = trainer_kwargs.get("num_nodes", tc.num_nodes)
     strategy_name = strategy.strip().lower() if isinstance(strategy, str) else None
     has_keypoints = bool(model_config.use_grouppose_keypoints)
+    if isinstance(tc, KeypointTrainConfig) != has_keypoints:
+        raise ValueError(
+            f"Config/model mismatch: isinstance(tc, KeypointTrainConfig)={isinstance(tc, KeypointTrainConfig)} "
+            f"but model_config.use_grouppose_keypoints={model_config.use_grouppose_keypoints}. "
+            "Pass KeypointTrainConfig for keypoint models and TrainConfig for detection models."
+        )
     distributed_requested = (
         _is_distributed_strategy_requested(str(strategy))
         or num_nodes > 1
@@ -339,7 +345,14 @@ def build_trainer(
         early_stopping_monitor_ema = "val/ema_mAP_50_95"
     monitor_ema = early_stopping_monitor_ema if enable_ema else None
 
+    best_model_smooth_alpha = tc.smooth_alpha
+
     # Best-model checkpointing — monitor EMA metric only when EMA is active and emitted.
+    # PTL _reorder_callbacks moves all Checkpoint subclasses (including BestModelCallback)
+    # to the end of the callback list; RFDETREarlyStopping (not a Checkpoint subclass) always
+    # fires BEFORE BestModelCallback on every on_validation_end, regardless of append order.
+    # The try/finally restore in BestModelCallback.on_validation_end guarantees EarlyStopping
+    # always reads the raw (un-smoothed) metric value.
     callbacks.append(
         BestModelCallback(
             output_dir=tc.output_dir,
@@ -347,6 +360,7 @@ def build_trainer(
             monitor_ema=monitor_ema,
             run_test=tc.run_test,
             skip_best_epochs=tc.skip_best_epochs,
+            smooth_alpha=best_model_smooth_alpha,
         )
     )
 
@@ -471,5 +485,10 @@ def build_trainer(
                     stacklevel=2,
                 )
         trainer_config["accumulate_grad_batches"] = 1
+        # gradient_clip_val=None here does NOT disable gradient clipping — clipping is
+        # performed inside RFDETRModelModule._step_optimizer using train_config.clip_max_norm
+        # (see src/rfdetr/training/module_model.py).  Under manual optimization the module
+        # owns the clipping step; passing None to the PTL Trainer simply prevents PTL from
+        # doing a second redundant clip on top of the module's own.
         trainer_config["gradient_clip_val"] = None
     return Trainer(**trainer_config)

@@ -14,6 +14,7 @@ import torch
 from pydantic import ValidationError
 
 from rfdetr.config import (
+    KeypointTrainConfig,
     ModelConfig,
     PretrainWeightsCompatibilityWarning,
     RFDETRBaseConfig,
@@ -362,6 +363,19 @@ class TestBuildTrainerUsesRealFields:
         defaults.update(kwargs)
         return TrainConfig(**defaults)
 
+    def _kp_tc(self, tmp_path, **kwargs):
+        defaults = dict(
+            dataset_dir=str(tmp_path),
+            output_dir=str(tmp_path),
+            tensorboard=False,
+            wandb=False,
+            mlflow=False,
+            clearml=False,
+            use_ema=False,
+        )
+        defaults.update(kwargs)
+        return KeypointTrainConfig(**defaults)
+
     def _mc(self, **kwargs):
         from rfdetr.config import RFDETRBaseConfig
 
@@ -383,7 +397,7 @@ class TestBuildTrainerUsesRealFields:
         from rfdetr.training import build_trainer
 
         trainer = build_trainer(
-            self._tc(tmp_path, clip_max_norm=0.25),
+            self._kp_tc(tmp_path, clip_max_norm=0.25),
             self._mc(use_grouppose_keypoints=True),
         )
         assert trainer.gradient_clip_val is None

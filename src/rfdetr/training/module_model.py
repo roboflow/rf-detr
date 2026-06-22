@@ -249,7 +249,21 @@ class RFDETRModelModule(LightningModule):
         if self.train_config.compute_train_metrics:
             with torch.no_grad():
                 orig_sizes = torch.stack([t["orig_size"] for t in targets])
-                results = self.postprocess(outputs, orig_sizes)
+                # Slice to group-0 queries only — mirrors the eval-mode path in
+                # lwdetr.py that trims refpoint_embed to [:num_queries]. Without
+                # this, training mode emits group_detr×num_queries queries (e.g.
+                # 13×300=3900) and postprocess top-k selection draws from all
+                # groups, producing OKS/mAP values ~50× below true accuracy.
+                nq = self.model_config.num_queries
+                # Only include tensor-valued keys — pred_masks is a dict in
+                # train mode (sparse_forward) and postprocess cannot handle it.
+                inference_outputs = {
+                    k: v[:, :nq] if v.ndim >= 2 else v
+                    for k, v in outputs.items()
+                    if k in ("pred_logits", "pred_boxes", "pred_masks", "pred_keypoints")
+                    and isinstance(v, torch.Tensor)
+                }
+                results = self.postprocess(inference_outputs, orig_sizes)
             return {
                 "loss": loss_for_return.detach() if self._use_manual_optimization else loss_for_return,
                 "results": self._detach_results(results),

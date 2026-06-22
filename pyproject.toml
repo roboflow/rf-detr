@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.8.0"
+version = "1.8.1"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -195,6 +195,10 @@ ignore = [
     "E402",  # cell-local imports are intentional in percent-format scripts
     "E501",  # jupytext notebook — markdown prose lines are intentionally unwrapped
 ]
+"docs/cookbooks/*.py" = [
+    "E402",  # cell-local imports are intentional in percent-format scripts
+    "E501",  # .py mirror of jupytext notebook — markdown prose lines are intentionally unwrapped
+]
 
 [tool.docformatter]
 wrap-summaries = 120
@@ -270,6 +274,10 @@ overrides = [
     "tflite_runtime", "tflite_runtime.*",
     "tensorflow", "tensorflow.*",
   ], ignore_missing_imports = true },
+  # Optional-import None assignments in console.py: type: ignore[assignment, misc] is needed when
+  # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the
+  # pre-commit hook (which runs mypy with --ignore-missing-imports so rich types are unresolved).
+  { module = ["rfdetr.utilities.console"], warn_unused_ignores = false },
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [
     "rfdetr",

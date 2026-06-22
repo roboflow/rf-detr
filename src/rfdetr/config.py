@@ -638,6 +638,7 @@ class TrainConfig(BaseConfig):
     lr_drop: int = 100
     checkpoint_interval: int = Field(default=10, ge=1)
     skip_best_epochs: int = Field(default=0, ge=0)
+    smooth_alpha: float = 0.0
     warmup_epochs: float = 0.0
     lr_vit_layer_decay: float = 0.8
     lr_component_decay: float = 0.7
@@ -758,6 +759,14 @@ class TrainConfig(BaseConfig):
             raise ValueError("auto_batch_ema_headroom must be in (0, 1].")
         return v
 
+    @field_validator("smooth_alpha", mode="after")
+    @classmethod
+    def validate_smooth_alpha(cls, v: float) -> float:
+        """Validate smooth_alpha is in [0.0, 1.0)."""
+        if not (0.0 <= v < 1.0):
+            raise ValueError("smooth_alpha must be in [0.0, 1.0).")
+        return v
+
     @field_validator("ema_update_interval", "eval_interval", mode="after")
     @classmethod
     def validate_positive_intervals(cls, v: int) -> int:
@@ -805,10 +814,47 @@ class SegmentationTrainConfig(TrainConfig):
 
 
 class KeypointTrainConfig(TrainConfig):
-    """Keypoint-specific training defaults."""
+    """Training configuration for keypoint detection models.
+
+    Extends :class:`TrainConfig` with keypoint-specific loss coefficients and
+    metric-smoothing defaults tuned for the NLL-Cholesky keypoint head, which
+    produces noisy per-epoch OKS metrics during early fine-tuning.
+
+    Attributes:
+        cls_loss_coef: Classification loss weight.
+        keypoint_l1_loss_coef: L1 regression loss weight for keypoint coordinates.
+        keypoint_findable_loss_coef: Loss weight for the keypoint visibility head.
+        keypoint_visible_loss_coef: Loss weight for the keypoint visibility score.
+        keypoint_nll_loss_coef: NLL-Cholesky loss weight. Reduced from 1.0 to 0.5
+            to dampen OKS@75 oscillation caused by precision-coupling in the
+            Cholesky parameterisation.
+        smooth_alpha: EMA smoothing factor for :class:`BestModelCallback` metric
+            comparison. Overrides the :class:`TrainConfig` default of ``0.0``
+            (disabled) to ``0.5``, which balances responsiveness and noise
+            suppression for noisy keypoint mAP curves.
+        skip_best_epochs: Number of epochs to skip before checkpoint selection begins.
+            Overrides the :class:`TrainConfig` default of ``0`` to ``10`` because
+            ``val/keypoint_map_50_95`` under the NLL-Cholesky loss is noisy in early
+            fine-tuning and can lock checkpoint selection to a transient peak.
+    """
 
     cls_loss_coef: float = 2.0  # Ported as-is from internal recipe.
     keypoint_l1_loss_coef: float = 1
     keypoint_findable_loss_coef: float = 1
     keypoint_visible_loss_coef: float = 1
-    keypoint_nll_loss_coef: float = 1
+    keypoint_nll_loss_coef: float = 0.5
+    smooth_alpha: float = 0.5
+    skip_best_epochs: int = Field(default=10, ge=0)
+
+    @model_validator(mode="after")
+    def _warn_keypoint_flip_pairs_not_yet_implemented(self) -> "KeypointTrainConfig":
+        """Emit a warning when keypoint_flip_pairs is set before the feature ships."""
+        if self.keypoint_flip_pairs:
+            warnings.warn(
+                "keypoint_flip_pairs is accepted but not yet implemented and will be ignored. "
+                "Flip pair swapping (swapping left/right joint indices after a horizontal flip) "
+                "is planned for a future release. Training will proceed without semantic joint swapping.",
+                UserWarning,
+                stacklevel=2,
+            )
+        return self
