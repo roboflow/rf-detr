@@ -284,6 +284,12 @@ def _onnx_runtime(
     import time
 
     sess = _create_onnx_session(onnx_path, providers=providers)
+    active = sess.get_providers()[0]
+    if active != providers[0]:
+        raise RuntimeError(
+            f"Requested provider {providers[0]!r} not active — ORT fell back to {active!r}. "
+            "Install onnxruntime-gpu: `pip install onnxruntime-gpu`"
+        )
     input_meta = sess.get_inputs()[0]
     _, _, height, width = input_meta.shape
     inp = _preprocess_pil_to_nchw(image, height, width)
