@@ -40,6 +40,10 @@ class HungarianMatcher(nn.Module):
 
     Because of this, in general, there are more predictions than targets. In this case, we do a 1-to-1 matching of the
     best predictions, while the others are un-matched (and thus treated as non-objects).
+
+    Note:
+        The focal loss exponent ``gamma`` is hardcoded to 2.0 and is not configurable.
+        Only ``focal_alpha`` can be adjusted at construction time.
     """
 
     def __init__(
@@ -136,11 +140,12 @@ class HungarianMatcher(nn.Module):
         group_detr: int = 1,
     ) -> list[tuple[torch.Tensor, torch.Tensor]]:
         """Performs the matching
-        Params:
-            outputs: This is a dict that contains at least these entries:
+
+        Args:
+            outputs: Dict containing at least these entries:
                  "pred_logits": Tensor of dim [batch_size, num_queries, num_classes] with the classification logits
                  "pred_boxes": Tensor of dim [batch_size, num_queries, 4] with the predicted box coordinates
-            targets: This is a list of targets (len(targets) = batch_size), where each target is a dict containing:
+            targets: List of targets (len(targets) = batch_size), where each target is a dict containing:
                  "labels": Tensor of dim [num_target_boxes] (where num_target_boxes is the number of ground-truth
                            objects in the target) containing the class labels
                  "boxes": Tensor of dim [num_target_boxes, 4] containing the target box coordinates "masks": Tensor of
@@ -292,7 +297,18 @@ class HungarianMatcher(nn.Module):
         return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
 
 
-def build_matcher(args):
+def build_matcher(args) -> HungarianMatcher:
+    """Build a HungarianMatcher from a training argument namespace.
+
+    Args:
+        args: Namespace supplying ``focal_alpha``, ``set_cost_class``, ``set_cost_bbox``,
+            ``set_cost_giou``, ``segmentation_head``, and optional keypoint cost
+            coefficients (``keypoint_l1_loss_coef``, ``keypoint_findable_loss_coef``,
+            ``keypoint_visible_loss_coef``, ``keypoint_nll_loss_coef``).
+
+    Returns:
+        Configured HungarianMatcher instance.
+    """
     # Detection-only matcher args may omit keypoint costs; zero defaults disable keypoint matching terms.
     common_kwargs = {
         "cost_class": args.set_cost_class,
