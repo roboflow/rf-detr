@@ -284,12 +284,6 @@ def _onnx_runtime(
     import time
 
     sess = _create_onnx_session(onnx_path, providers=providers)
-    active = sess.get_providers()[0]
-    if active != providers[0]:
-        raise RuntimeError(
-            f"Requested provider {providers[0]!r} not active; ORT fell back to {active!r}. "
-            "Install onnxruntime-gpu for CUDA acceleration: `pip install onnxruntime-gpu`"
-        )
     input_meta = sess.get_inputs()[0]
     _, _, height, width = input_meta.shape
     inp = _preprocess_pil_to_nchw(image, height, width)
@@ -303,5 +297,5 @@ def _onnx_runtime(
         sess.run(None, feed)
         timings.append((time.perf_counter() - t0) * 1000.0)
     arr_t = np.array(timings)
-    provider_label = active.replace("ExecutionProvider", "")
+    provider_label = sess.get_providers()[0].replace("ExecutionProvider", "")
     return float(arr_t.mean()), float(arr_t.std()), provider_label
