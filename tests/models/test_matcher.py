@@ -396,5 +396,6 @@ class TestHungarianMatcherFocalAlpha:
         matcher = HungarianMatcher(cost_class=2.0, cost_bbox=5.0, cost_giou=2.0, focal_alpha=focal_alpha)
         matched_queries, matched_targets = matcher(outputs, targets)[0]
 
+        assert not matcher._warned_non_finite_costs, "boundary focal_alpha produced non-finite costs"
         result = matched_queries[matched_targets.argsort()].tolist()
         assert result == expected

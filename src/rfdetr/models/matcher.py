@@ -304,7 +304,9 @@ def build_matcher(args) -> HungarianMatcher:
         args: Namespace supplying ``focal_alpha``, ``set_cost_class``, ``set_cost_bbox``,
             ``set_cost_giou``, ``segmentation_head``, and optional keypoint cost
             coefficients (``keypoint_l1_loss_coef``, ``keypoint_findable_loss_coef``,
-            ``keypoint_visible_loss_coef``, ``keypoint_nll_loss_coef``).
+            ``keypoint_visible_loss_coef``, ``keypoint_nll_loss_coef``). When
+            ``segmentation_head`` is truthy, also requires ``mask_ce_loss_coef``,
+            ``mask_dice_loss_coef``, and ``mask_point_sample_ratio``.
 
     Returns:
         Configured HungarianMatcher instance.
