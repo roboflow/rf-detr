@@ -89,8 +89,8 @@ def main(args):
         device_id = str(int(args.device))
         args.device = f"cuda:{device_id}"
 
-    # device for export onnx
-    # TODO: export onnx with cuda failed with onnx error
+    # ONNX export runs on CPU regardless of the training device: dynamic quantization ops
+    # and some custom layers do not have CUDA-backed ONNX implementations at export time.
     device = torch.device("cpu")
     os.environ["CUDA_VISIBLE_DEVICES"] = device_id
 

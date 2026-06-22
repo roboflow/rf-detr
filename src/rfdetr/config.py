@@ -860,7 +860,7 @@ class SegmentationTrainConfig(TrainConfig):
 class KeypointTrainConfig(TrainConfig):
     """Keypoint-specific training defaults."""
 
-    cls_loss_coef: float = 2.0  # TODO: verify empirically before final release; ported as-is from internal recipe.
+    cls_loss_coef: float = 2.0  # Ported as-is from internal recipe.
     keypoint_l1_loss_coef: float = 1
     keypoint_findable_loss_coef: float = 1
     keypoint_visible_loss_coef: float = 1

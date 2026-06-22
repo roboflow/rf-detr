@@ -138,7 +138,6 @@ class PositionEmbeddingLearned(nn.Module):
 def build_position_encoding(hidden_dim, position_embedding):
     num_steps = hidden_dim // 2
     if position_embedding in ("v2", "sine"):
-        # TODO find a better way of exposing other arguments
         position_embedding = PositionEmbeddingSine(num_steps, normalize=True)
     elif position_embedding in ("v3", "learned"):
         position_embedding = PositionEmbeddingLearned(num_steps)

@@ -142,7 +142,10 @@ class LWDETR(nn.Module):
                          Conditional DETR can detect in a single image. For COCO, we recommend 100 queries.
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
             group_detr: Number of groups to speed detr training. Default is 1.
-            lite_refpoint_refine: TODO
+            lite_refpoint_refine: When True, reference points are computed once from initial
+                anchors before the decoder loop and reused across all layers. When False,
+                reference points are recomputed per layer (more expensive). Required for
+                keypoint mode.
         """
         super().__init__()
         self.num_queries = num_queries
@@ -845,7 +848,6 @@ def build_criterion_and_postprocessors(args: "BuilderArgs"):
         weight_dict["loss_keypoints_findable"] = getattr(args, "keypoint_findable_loss_coef", 0.0)
         weight_dict["loss_keypoints_visible"] = getattr(args, "keypoint_visible_loss_coef", 0.0)
         weight_dict["loss_keypoints_nll"] = getattr(args, "keypoint_nll_loss_coef", 0.0)
-    # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict = {}
         for i in range(args.dec_layers - 1):

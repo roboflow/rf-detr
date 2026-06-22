@@ -124,14 +124,12 @@ def nested_tensor_from_tensor_list(
         NestedTensor with all images padded to the maximum spatial dimensions (rounded up to *block_size* when
         provided).
     """
-    # TODO make this more general
     if tensor_list[0].ndim == 3:
         if torchvision._is_tracing():
             # nested_tensor_from_tensor_list() does not export well to ONNX
             # call _onnx_nested_tensor_from_tensor_list() instead
             return _onnx_nested_tensor_from_tensor_list(tensor_list, block_size=block_size)
 
-        # TODO make it support different-sized images
         max_size = _max_by_axis([list(img.shape) for img in tensor_list])
         if block_size is not None:
             max_size[1] = _round_up_to_multiple(max_size[1], block_size)

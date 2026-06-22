@@ -34,9 +34,10 @@ class LayerNorm(nn.Module):
         self.normalized_shape = (normalized_shape,)
 
     def forward(self, x):
-        """
-        LayerNorm forward
-        TODO: this is a hack to avoid overflow when using fp16
+        """Apply LayerNorm over the channel dimension of an NCHW feature map.
+
+        Permutes to NHWC so channel is the last (normalized) dimension, which is
+        required by F.layer_norm, then permutes back.
         """
         x = x.permute(0, 2, 3, 1)
         x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
