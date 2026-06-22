@@ -75,11 +75,11 @@ trt = [
     "polygraphy",
 ]
 tflite = [
-    "onnx2tf>=2.4.0,<3.0.0",
-    "flatbuffers>=23.5.26",
-    "onnx>=1.20.0,<2.0",
-    "tf-keras>=2.16.0",
-    "tensorflow>=2.16.0",
+    "onnx2tf>=2.4.0,<3.0.0; python_version >= '3.12' and python_version < '3.13'",
+    "flatbuffers>=23.5.26; python_version >= '3.12' and python_version < '3.13'",
+    "onnx>=1.20.0,<2.0; python_version >= '3.12' and python_version < '3.13'",
+    "tf-keras>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
+    "tensorflow>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
 ]
 kornia = [
     "kornia>=0.7,<1",              # GPU-side augmentation via on_after_batch_transfer
@@ -150,14 +150,15 @@ Homepage = "https://github.com/roboflow/rf-detr"
 rfdetr = "rfdetr.cli:main"
 
 [tool.uv]
-# onnx2tf 2.4.0 pins ml-dtypes==0.5.1 unconditionally, but ml-dtypes 0.5.1 requires
-# numpy>=2.1.0 on Python 3.13 while onnx2tf also pins numpy==1.26.4 — contradiction.
-# The entire [tflite] extra is gated to python_version>='3.12', and onnx2tf 2.4.0 requires
-# Python>=3.12 and <3.13 (tensorflow constraint); override ml-dtypes to the same window
-# so uv's universal resolver doesn't see the conflict on Python 3.13+.
+# onnx2tf>=2.4.0 pins numpy==1.26.4 (exact). Its dependency ml-dtypes==0.5.1 in turn requires
+# numpy>=2.1.0 on python_full_version>='3.13' — contradicting the numpy==1.26.4 pin on 3.13.
+# tflite deps carry python_version>='3.12' and <'3.13' markers because onnx2tf's numpy pin
+# cannot be satisfied on 3.13 via any available release; when onnx2tf relaxes the exact pin,
+# remove the <'3.13' upper bound from the tflite deps AND from the override below.
 override-dependencies = [
     "ml-dtypes==0.5.1; python_version >= '3.12' and python_version < '3.13'",
 ]
+
 
 [tool.setuptools.packages.find]
 where = ["src"]
