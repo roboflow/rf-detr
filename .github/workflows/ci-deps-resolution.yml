@@ -1,0 +1,51 @@
+name: Dependency resolution
+
+on:
+  push:
+    branches: ["main", "release/*", "develop", "feat/*"]
+    paths: ["pyproject.toml"]
+  pull_request:
+    paths: ["pyproject.toml"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: deps-resolution-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tflite-resolution:
+    name: Resolve [tflite] extra — Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # tflite deps carry python_version>='3.12' markers; tensorflow has no 3.13 wheels yet.
+        # Extend matrix when tensorflow adds 3.13 support.
+        python-version: ["3.12"]
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 🔍 Resolve [tflite] optional dependencies
+        run: |
+          uv pip compile pyproject.toml \
+            --extra tflite \
+            --python-version ${{ matrix.python-version }} \
+            --no-header \
+            --quiet
+
+      - name: Minimize uv cache
+        continue-on-error: true
+        run: uv cache prune --ci
