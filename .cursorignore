@@ -1,0 +1,9 @@
+# Confidential media ? IDE/AI upload guard
+confidential/**
+sample/**
+artifacts/**
+*.mov
+*.mp4
+*.avi
+*.mkv
+*.webm

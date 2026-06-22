@@ -1,0 +1,80 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+"""Model factory helpers for video demo inference."""
+
+from __future__ import annotations
+
+import logging
+
+from rfdetr.detr import RFDETR
+from rfdetr_demo.inference.types import ModelSize
+
+logger = logging.getLogger(__name__)
+
+_MODEL_FACTORIES: dict[str, type[RFDETR]] = {}
+_SEG_MODEL_FACTORIES: dict[str, type[RFDETR]] = {}
+
+
+def _register_detection_models() -> None:
+    if _MODEL_FACTORIES:
+        return
+    from rfdetr import RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall
+
+    _MODEL_FACTORIES.update(
+        {
+            "nano": RFDETRNano,
+            "small": RFDETRSmall,
+            "medium": RFDETRMedium,
+            "large": RFDETRLarge,
+        },
+    )
+
+
+def _register_segmentation_models() -> None:
+    if _SEG_MODEL_FACTORIES:
+        return
+    from rfdetr import RFDETRSegLarge, RFDETRSegMedium, RFDETRSegNano, RFDETRSegSmall
+
+    _SEG_MODEL_FACTORIES.update(
+        {
+            "nano": RFDETRSegNano,
+            "small": RFDETRSegSmall,
+            "medium": RFDETRSegMedium,
+            "large": RFDETRSegLarge,
+        },
+    )
+
+
+def build_detection_model(model_size: ModelSize) -> RFDETR:
+    """Instantiate a detection model."""
+    _register_detection_models()
+    factory = _MODEL_FACTORIES.get(model_size)
+    if factory is None:
+        supported = ", ".join(sorted(_MODEL_FACTORIES))
+        msg = f"Unsupported model size {model_size!r}. Choose from: {supported}"
+        raise ValueError(msg)
+    logger.info("Loading RF-DETR detection model: %s", model_size)
+    return factory()
+
+
+def build_segmentation_model(model_size: ModelSize) -> RFDETR:
+    """Instantiate a segmentation model."""
+    _register_segmentation_models()
+    factory = _SEG_MODEL_FACTORIES.get(model_size)
+    if factory is None:
+        supported = ", ".join(sorted(_SEG_MODEL_FACTORIES))
+        msg = f"Unsupported segmentation model size {model_size!r}. Choose from: {supported}"
+        raise ValueError(msg)
+    logger.info("Loading RF-DETR segmentation model: %s", model_size)
+    return factory()
+
+
+def build_keypoint_model() -> RFDETR:
+    """Instantiate the keypoint preview model."""
+    from rfdetr import RFDETRKeypointPreview
+
+    logger.info("Loading RF-DETR keypoint preview model")
+    return RFDETRKeypointPreview()

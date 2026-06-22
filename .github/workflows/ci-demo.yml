@@ -1,0 +1,40 @@
+name: CI Demo
+
+on:
+  push:
+    paths:
+      - "src/rfdetr_demo/**"
+      - "tests/rfdetr_demo/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - ".github/workflows/ci-demo.yml"
+  pull_request:
+    paths:
+      - "src/rfdetr_demo/**"
+      - "tests/rfdetr_demo/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - ".github/workflows/ci-demo.yml"
+
+jobs:
+  demo-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync demo dependencies
+        run: uv sync --extra demo --extra tests
+
+      - name: Run demo pytest suite
+        run: uv run pytest tests/rfdetr_demo -v --tb=short
+
+      - name: Media guard coverage
+        run: uv run pytest tests/rfdetr_demo/test_media_guard.py --cov=rfdetr_demo.media.guard --cov-report=term-missing --cov-fail-under=90
