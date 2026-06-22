@@ -75,11 +75,11 @@ trt = [
     "polygraphy",
 ]
 tflite = [
-    "onnx2tf>=2.4.0,<3.0.0; python_version >= '3.12'",
-    "flatbuffers>=23.5.26; python_version >= '3.12'",
-    "onnx>=1.20.0,<2.0; python_version >= '3.12'",
-    "tf-keras>=2.16.0; python_version >= '3.12'",
-    "tensorflow>=2.16.0; python_version >= '3.12'",
+    "onnx2tf>=2.4.0,<3.0.0; python_version >= '3.12' and python_version < '3.13'",
+    "flatbuffers>=23.5.26; python_version >= '3.12' and python_version < '3.13'",
+    "onnx>=1.20.0,<2.0; python_version >= '3.12' and python_version < '3.13'",
+    "tf-keras>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
+    "tensorflow>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
 ]
 kornia = [
     "kornia>=0.7,<1",              # GPU-side augmentation via on_after_batch_transfer
@@ -152,9 +152,9 @@ rfdetr = "rfdetr.cli:main"
 [tool.uv]
 # onnx2tf 2.4.0 pins ml-dtypes==0.5.1 unconditionally, but ml-dtypes 0.5.1 requires
 # numpy>=2.1.0 on Python 3.13 while onnx2tf also pins numpy==1.26.4 — contradiction.
-# tflite deps carry python_version>='3.12' markers (onnx2tf requires-python>=3.12), so
-# uv's universal resolver only considers them for 3.12; override ml-dtypes to the same
-# window so the 3.12/3.13 numpy conflict doesn't surface.
+# tflite deps carry python_version>='3.12' and <'3.13' markers (onnx2tf requires-python>=3.12;
+# tensorflow has no 3.13 wheels yet), so uv's universal resolver only considers them for 3.12.*;
+# override ml-dtypes to the same window so the 3.12/3.13 numpy conflict doesn't surface.
 override-dependencies = [
     "ml-dtypes==0.5.1; python_version >= '3.12' and python_version < '3.13'",
 ]
