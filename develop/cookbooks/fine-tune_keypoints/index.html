@@ -87,7 +87,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-06-19T19:06:36">
+  <meta property="article:modified_time" content="2026-06-22T09:40:03">
   
   <script type="application/ld+json">
   {
@@ -102,7 +102,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-06-19T19:06:36",
+    "dateModified": "2026-06-22T09:40:03",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2371,10 +2371,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#11-visualize-inference-and-keypoint-table" class="md-nav__link">
+  <a href="#11-visualize-inference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        11 - Visualize inference and keypoint table
+        11 - Visualize inference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-keypoint-prediction-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12 - Keypoint prediction table
       
     </span>
   </a>
@@ -3123,19 +3134,54 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </style>
 <!-- End of mermaid configuration --><div class="jupyter-wrapper">
 <div class="jp-Notebook" data-jp-theme-light="true" data-jp-theme-name="JupyterLab Light">
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=6d361242">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7e465973">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h1 id="rf-detr-keypoint-training-demo-on-multiple-roboflow-universe-datasets">RF-DETR keypoint training demo on multiple Roboflow Universe datasets<a class="anchor-link" href="#rf-detr-keypoint-training-demo-on-multiple-roboflow-universe-datasets">¶</a></h1><p>Select one dataset with <code>DATASET_KEY</code>, then run the same fine-tuning, plotting, checkpoint loading, and inference cells.</p>
-<p>RF-DETR is a real-time detection transformer that extends bounding-box detection to predict structured keypoint skeletons — useful for human pose estimation, sports field calibration, product inspection, and any task where <em>where</em> matters as much as <em>what</em>. This cookbook walks you through the full cycle from raw dataset to a deployable checkpoint using four ready-made Roboflow Universe datasets: darts (<code>"dart"</code>), human body pose (<code>"human_pose"</code>), a basketball court (<code>"basketball_court"</code>), and a football pitch (<code>"football_field"</code>). Change <code>DATASET_KEY</code> in the configuration cell and every subsequent cell adapts automatically. By the end you will have a fine-tuned model, training curves, and annotated inference images with optional uncertainty ellipses.</p>
+<p>RF-DETR extends bounding-box detection to predict structured keypoint skeletons — useful for human pose
+estimation, sports field calibration, product inspection, and any task where <em>where</em> matters as much as <em>what</em>.</p>
+<p><strong>Datasets</strong> — set <code>DATASET_KEY</code> to one of:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Dataset</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"dart"</code></td>
+<td>Darts Detection</td>
+</tr>
+<tr>
+<td><code>"human_pose"</code></td>
+<td>Human Body Pose</td>
+</tr>
+<tr>
+<td><code>"basketball_court"</code></td>
+<td>Basketball Court Detection</td>
+</tr>
+<tr>
+<td><code>"football_field"</code></td>
+<td>Football Field Detection</td>
+</tr>
+<tr>
+<td><code>"tennis_court"</code></td>
+<td>Tennis Court Keypoint</td>
+</tr>
+</tbody>
+</table>
+<p>Every subsequent cell (fine-tuning, plotting, checkpoint loading, inference) adapts automatically.
+By the end you will have a fine-tuned model, training curves, and annotated inference images with
+optional uncertainty ellipses.</p>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=ca1b5461">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=6d361242">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3146,7 +3192,7 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d89771c9">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ca1b5461">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3164,16 +3210,16 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[train,visual]"</span> <span class="n">roboflow</span> <span class="n">pandas</span> <span class="n">seaborn</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[train,visual]==1.8.1"</span> <span class="n">roboflow</span> <span class="n">pandas</span> <span class="n">seaborn</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">!pip install -q "rfdetr[train,visual]" roboflow pandas seaborn</div>
+<div class="clipboard-copy-txt" id="cell-1">!pip install -q "rfdetr[train,visual]==1.8.1" roboflow pandas seaborn</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0b7de4e2">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d89771c9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3248,7 +3294,7 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3d1ca469">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0b7de4e2">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3320,6 +3366,19 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
         <span class="c1"># 768 — a full football pitch captured in a single frame compresses many line</span>
         <span class="c1"># intersections into a small pixel area; the higher resolution separates</span>
         <span class="c1"># closely spaced markings and reduces keypoint confusion near the centre circle.</span>
+        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">768</span><span class="p">,</span>
+    <span class="p">},</span>
+    <span class="s2">"tennis_court"</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Tennis Court Keypoint"</span><span class="p">,</span>
+        <span class="s2">"workspace"</span><span class="p">:</span> <span class="s2">"shj-pk1wt"</span><span class="p">,</span>
+        <span class="s2">"project"</span><span class="p">:</span> <span class="s2">"tennis_court_keypoint"</span><span class="p">,</span>
+        <span class="s2">"version"</span><span class="p">:</span> <span class="mi">6</span><span class="p">,</span>
+        <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/shj-pk1wt/tennis_court_keypoint"</span><span class="p">,</span>
+        <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"keypoint_tennis_court_demo"</span><span class="p">,</span>
+        <span class="s2">"keypoint_flip_pairs"</span><span class="p">:</span> <span class="p">[],</span>
+        <span class="c1"># 768 — a full court viewed from broadcast angles packs many line intersections</span>
+        <span class="c1"># into a small pixel area; the higher resolution reduces confusion between</span>
+        <span class="c1"># closely spaced baseline and service-box corners.</span>
         <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">768</span><span class="p">,</span>
     <span class="p">},</span>
 <span class="p">}</span>
@@ -3414,6 +3473,19 @@ DATASETS: dict[str, dict[str, Any]] = {
         # closely spaced markings and reduces keypoint confusion near the centre circle.
         "resolution": 768,
     },
+    "tennis_court": {
+        "name": "Tennis Court Keypoint",
+        "workspace": "shj-pk1wt",
+        "project": "tennis_court_keypoint",
+        "version": 6,
+        "source_url": "https://universe.roboflow.com/shj-pk1wt/tennis_court_keypoint",
+        "output_name": "keypoint_tennis_court_demo",
+        "keypoint_flip_pairs": [],
+        # 768 — a full court viewed from broadcast angles packs many line intersections
+        # into a small pixel area; the higher resolution reduces confusion between
+        # closely spaced baseline and service-box corners.
+        "resolution": 768,
+    },
 }
 
 DATASET_KEY = "dart"
@@ -3455,7 +3527,7 @@ print(f"resolution={RESOLUTION}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=b7920201">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3d1ca469">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3466,7 +3538,7 @@ print(f"resolution={RESOLUTION}")</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=08de3f94">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b7920201">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3515,7 +3587,7 @@ _enable_notebook_inline_matplotlib()</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=b2109a1e">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=08de3f94">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3526,7 +3598,7 @@ _enable_notebook_inline_matplotlib()</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=2f59cc9e">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b2109a1e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3607,7 +3679,7 @@ print(f"dataset_dir={DATASET_DIR}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3111b71a">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=2f59cc9e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3618,7 +3690,7 @@ print(f"dataset_dir={DATASET_DIR}")</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4c9b5a6b">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3111b71a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3679,7 +3751,7 @@ else:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e0bd03c1">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=4c9b5a6b">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3690,7 +3762,7 @@ else:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f516409d">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e0bd03c1">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3757,7 +3829,7 @@ else:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=80f4317b">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=f516409d">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3768,7 +3840,7 @@ else:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=80f50cd8">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=80f4317b">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3815,7 +3887,7 @@ else:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=51734ce1">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=80f50cd8">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3826,7 +3898,7 @@ else:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=2e548c8c">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=51734ce1">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3887,7 +3959,7 @@ else:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=757c151a">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=2e548c8c">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3898,7 +3970,7 @@ else:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=105aefc9">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=757c151a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3965,7 +4037,7 @@ else:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=fe060e29">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=105aefc9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3976,7 +4048,7 @@ else:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4cdfa696">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=fe060e29">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4101,7 +4173,7 @@ trainer = build_trainer(train_config, variant.model_config)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=df126db6">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=4cdfa696">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4112,7 +4184,7 @@ trainer = build_trainer(train_config, variant.model_config)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=76be07a3">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=df126db6">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4153,7 +4225,7 @@ plt.close(sample_figure)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=71d28853">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=76be07a3">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4164,7 +4236,7 @@ plt.close(sample_figure)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e1e72b80">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=71d28853">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4193,7 +4265,7 @@ print(f"output_dir={OUTPUT_DIR}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5a052495">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e1e72b80">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4204,7 +4276,7 @@ print(f"output_dir={OUTPUT_DIR}")</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=1482fa79">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=5a052495">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4233,7 +4305,7 @@ print(f"saved_checkpoint_model={final_checkpoint}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7aa26516">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=1482fa79">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4245,7 +4317,7 @@ print(f"saved_checkpoint_model={final_checkpoint}")</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0aa1a943">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7aa26516">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4298,7 +4370,7 @@ print(f"validation_metrics_json={VALIDATION_METRICS_JSON}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=37589b33">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=0aa1a943">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4309,7 +4381,7 @@ print(f"validation_metrics_json={VALIDATION_METRICS_JSON}")</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a5608045">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=37589b33">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4342,7 +4414,7 @@ plt.close(loss_figure)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=690a200a">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a5608045">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4373,7 +4445,7 @@ plt.close(map_figure)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=c8d75b0f">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=690a200a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4384,7 +4456,7 @@ plt.close(map_figure)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7bee8d28">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c8d75b0f">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4411,7 +4483,7 @@ plt.close(map_figure)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=a5182f47">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7bee8d28">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4422,7 +4494,7 @@ plt.close(map_figure)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=1c7654a9">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a5182f47">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4485,18 +4557,18 @@ print(f"inference_images={[str(path) for path in inference_image_paths]}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e520b84c">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=1c7654a9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="11-visualize-inference-and-keypoint-table">11 - Visualize inference and keypoint table<a class="anchor-link" href="#11-visualize-inference-and-keypoint-table">¶</a></h2><p>Two thresholds control what you see in this cell and they operate at different levels. <code>INFERENCE_THRESHOLD</code> is a detection confidence threshold: only object detections whose bounding-box score exceeds this value are shown at all. Raise it to suppress false positives; lower it to surface low-confidence detections you might want to investigate. <code>KEYPOINT_THRESHOLD</code> operates within each accepted detection: individual keypoints whose confidence falls below this value are treated as not visible and omitted from the overlay. The uncertainty ellipses (drawn when <code>DRAW_UNCERTAINTY_ELLIPSES = True</code>) visualise the predicted covariance for each keypoint — a larger ellipse means the model is less certain about that joint's exact location. Below the image grid, the keypoint table gives you the raw coordinates and per-keypoint confidence scores in a format that is easy to copy into a spreadsheet or feed into downstream analysis.</p>
+<h2 id="11-visualize-inference">11 - Visualize inference<a class="anchor-link" href="#11-visualize-inference">¶</a></h2><p>Two thresholds control what you see here. <code>INFERENCE_THRESHOLD</code> is a detection confidence threshold: only detections whose bounding-box score exceeds this value are shown. Raise it to suppress false positives; lower it to surface low-confidence detections. <code>KEYPOINT_THRESHOLD</code> operates within each accepted detection: individual keypoints whose confidence falls below this value are treated as not visible and omitted from the overlay. The uncertainty ellipses (drawn when <code>DRAW_UNCERTAINTY_ELLIPSES = True</code>) visualise the predicted covariance for each keypoint — a larger ellipse means the model is less certain about that joint's exact location.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=005f3543">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e520b84c">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4534,8 +4606,6 @@ print(f"inference_images={[str(path) for path in inference_image_paths]}")</div>
     <span class="n">figure</span> <span class="o">=</span> <span class="n">_keypoint_grid_figure</span><span class="p">(</span><span class="n">inference_grid_items</span><span class="p">,</span> <span class="n">columns</span><span class="o">=</span><span class="n">INFERENCE_COLUMNS</span><span class="p">)</span>
     <span class="n">display</span><span class="p">(</span><span class="n">figure</span><span class="p">)</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="n">figure</span><span class="p">)</span>
-
-<span class="n">_display_keypoint_records</span><span class="p">(</span><span class="n">keypoint_rows</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-20">inference_grid_items = []
 keypoint_rows = []
@@ -4556,9 +4626,45 @@ for image_path in inference_image_paths:
 if inference_grid_items:
     figure = _keypoint_grid_figure(inference_grid_items, columns=INFERENCE_COLUMNS)
     display(figure)
-    plt.close(figure)
-
-_display_keypoint_records(keypoint_rows)</div>
+    plt.close(figure)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=93df94eb">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="12-keypoint-prediction-table">12 - Keypoint prediction table<a class="anchor-link" href="#12-keypoint-prediction-table">¶</a></h2><p>The table below gives you the raw coordinates and per-keypoint confidence scores for every detection in the grid above. Fields that are constant across all keypoints in an image (filename, detection score) are printed once as a header line rather than repeated in every row. This format is easy to copy into a spreadsheet or feed into downstream analysis.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=de9b2707">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-21">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">_display_keypoint_records</span><span class="p">(</span><span class="n">keypoint_rows</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-21">_display_keypoint_records(keypoint_rows)</div>
 </div>
 </div>
 </div>
@@ -4592,7 +4698,7 @@ _display_keypoint_records(keypoint_rows)</div>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 19, 2026 19:06:36 UTC">2026-06-19 19:06:36</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 22, 2026 09:40:03 UTC">2026-06-22 09:40:03</span>
   </span>
 
     
