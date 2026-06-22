@@ -749,6 +749,9 @@ class RFDETR:
 
         # Sync the trained weights back so predict() / export() see the updated model.
         self.model.model = module.model
+        # Invalidate any compiled inference snapshot: it was built from the pre-training
+        # weights and must not survive the model reassignment above.
+        self.remove_optimized_model()
         # Sync class names: prefer explicit config.class_names, otherwise fall back to dataset (#509).
         config_class_names = getattr(config, "class_names", None)
         if config_class_names is not None:
@@ -1410,6 +1413,27 @@ class RFDETR:
 
         return list(COCO_CLASS_NAMES)
 
+    def _ensure_eval_mode_for_unoptimized_inference(self) -> None:
+        """Put the underlying module in eval mode before unoptimized inference.
+
+        Inference must never run with dropout / batch-norm in training mode. The warning that the model is not optimized
+        is emitted at most once, but eval mode is (re)asserted on every call: ``train()`` reassigns ``self.model.model``
+        to a module that PyTorch Lightning leaves in training mode (see ``train()``), so gating ``eval()`` behind the
+        once-only warning would let a later ``predict()`` silently run with dropout active.
+
+        When ``_is_optimized_for_inference`` is ``True``, the method returns immediately — the compiled
+        ``inference_model`` snapshot is already in eval mode and ``self.model.model`` is not used for inference.
+        """
+        if self._is_optimized_for_inference:
+            return
+        if not self._has_warned_about_not_being_optimized_for_inference:
+            logger.warning(
+                "Model is not optimized for inference. Latency may be higher than expected."
+                " You can optimize the model for inference by calling model.optimize_for_inference().",
+            )
+            self._has_warned_about_not_being_optimized_for_inference = True
+        self.model.model.eval()
+
     @torch.no_grad()
     @_ensure_model_on_device
     def predict(
@@ -1505,14 +1529,7 @@ class RFDETR:
         else:
             shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
 
-        if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
-            logger.warning(
-                "Model is not optimized for inference. Latency may be higher than expected."
-                " You can optimize the model for inference by calling model.optimize_for_inference().",
-            )
-            self._has_warned_about_not_being_optimized_for_inference = True
-
-            self.model.model.eval()
+        self._ensure_eval_mode_for_unoptimized_inference()
 
         if not isinstance(images, list):
             images = [images]
