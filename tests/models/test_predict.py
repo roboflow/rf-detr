@@ -933,3 +933,67 @@ class TestPredictClassNameData:
         )
         unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
         assert not unmapped_warnings, "class_id=90 (valid COCO category) must not trigger unmapped-class-id warning"
+
+
+class TestPredictKeypointClassNameMapping:
+    """class_name mapping for keypoint models (issue #1150).
+
+    Keypoint models use a shifted class scheme: slot 0 = background (0 keypoints), real classes
+    start at slot 1.  After ``load_pretrain_weights`` auto-aligns to the 2-slot checkpoint head,
+    ``num_logit_slots`` becomes 1, which collides with person's class_id=1 and wrongly triggers the
+    ``__background__`` sentinel for every detection.
+    """
+
+    def test_person_class_id_1_maps_to_person_not_background(self) -> None:
+        """Person detections (class_id=1) must map to 'person', not '__background__'.
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/1150.
+        Simulates the auto-aligned state: num_classes=1 (from 2-slot head: 2-1=1), person at slot 1.
+        """
+        kp_model = _DummyModel(class_names=["person"], labels=[1], include_keypoints=True)
+        kp_model.args = SimpleNamespace(num_classes=1, num_keypoints_per_class=[0, 17])
+        model = _DummyRFDETR()
+        model.model = kp_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        key_points = model.predict(img)
+
+        assert isinstance(key_points, sv.KeyPoints)
+        assert key_points.data["class_name"][0] == "person", (
+            f"Keypoint model: class_id=1 (person slot) must map to 'person', "
+            f"got '{key_points.data['class_name'][0]}' (issue #1150)"
+        )
+
+    def test_background_slot_0_maps_to_background(self) -> None:
+        """Background detections (class_id=0) must map to '__background__' in keypoint models."""
+        kp_model = _DummyModel(class_names=["person"], labels=[0], include_keypoints=True)
+        kp_model.args = SimpleNamespace(num_classes=1, num_keypoints_per_class=[0, 17])
+        model = _DummyRFDETR()
+        model.model = kp_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        key_points = model.predict(img)
+
+        assert isinstance(key_points, sv.KeyPoints)
+        assert key_points.data["class_name"][0] == "__background__", (
+            f"Keypoint model: class_id=0 (background slot) must map to '__background__', "
+            f"got '{key_points.data['class_name'][0]}'"
+        )
+
+    def test_multi_class_keypoint_mapping(self) -> None:
+        """Multi-class keypoint model maps slots 1 and 2 to class_names[0] and [1]."""
+        kp_model = _DummyModel(class_names=["person", "bicycle"], labels=[1, 2], include_keypoints=True)
+        kp_model.args = SimpleNamespace(num_classes=2, num_keypoints_per_class=[0, 17, 4])
+        model = _DummyRFDETR()
+        model.model = kp_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        key_points = model.predict(img)
+
+        assert isinstance(key_points, sv.KeyPoints)
+        assert key_points.data["class_name"][0] == "person", (
+            f"Slot 1 must map to class_names[0]='person', got '{key_points.data['class_name'][0]}'"
+        )
+        assert key_points.data["class_name"][1] == "bicycle", (
+            f"Slot 2 must map to class_names[1]='bicycle', got '{key_points.data['class_name'][1]}'"
+        )

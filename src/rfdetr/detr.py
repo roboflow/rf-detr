@@ -1640,10 +1640,21 @@ class RFDETR:
             )
         num_logit_slots: int = getattr(_model_args, "num_classes", n)
         _is_coco_pretrained = num_logit_slots > n and model_class_names == list(COCO_CLASS_NAMES)
+        # Keypoint models use a shifted class scheme: slot 0 = background (0 keypoints),
+        # real classes start at slot 1. The standard no-object sentinel (class_id == num_logit_slots)
+        # therefore collides with the first real keypoint class (person=1 when num_logit_slots=1).
+        # Detect by checking for a non-empty keypoints-per-class schema with background-first layout.
+        _num_keypoints_per_class: list[int] = getattr(_model_args, "num_keypoints_per_class", []) or []
+        _is_keypoint_model = bool(_num_keypoints_per_class) and _num_keypoints_per_class[0] == 0
         if _is_coco_pretrained:
             _class_id_to_name: dict[int, str] = {
                 coco_id: model_class_names[i] for i, coco_id in enumerate(COCO_CLASSES) if i < n
             }
+        elif _is_keypoint_model:
+            # Map foreground keypoint slots (slots where num_keypoints > 0) to class names.
+            # Slot 0 is background and is skipped. Slot 1 → class_names[0], slot 2 → class_names[1], …
+            _kp_foreground_slots = [idx for idx, k in enumerate(_num_keypoints_per_class) if k > 0]
+            _class_id_to_name = {slot: model_class_names[i] for i, slot in enumerate(_kp_foreground_slots) if i < n}
         else:
             _class_id_to_name = dict(enumerate(model_class_names))
         predictions_list: list[Detections | KeyPoints] = []
@@ -1695,7 +1706,11 @@ class RFDETR:
             # IDs not in _class_id_to_name are genuinely unexpected and produce an empty
             # string with a one-time warning.
             class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
-            truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != num_logit_slots]
+            # Sentinel for the no-object / background class differs by model type.
+            # Keypoint models: slot 0 is background in the keypoint schema.
+            # Detection/segmentation models: the no-object slot is at index num_logit_slots.
+            _bg_sentinel = 0 if _is_keypoint_model else num_logit_slots
+            truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != _bg_sentinel]
             if truly_oob:
                 logger.warning_once(
                     "predict() encountered unmapped class_id(s): %s — mapping to empty string",
@@ -1705,7 +1720,7 @@ class RFDETR:
                 class_names = [_class_id_to_name.get(cid, "") for cid in class_ids]
             else:
                 class_names = [
-                    "__background__" if cid == num_logit_slots else _class_id_to_name.get(cid, "") for cid in class_ids
+                    "__background__" if cid == _bg_sentinel else _class_id_to_name.get(cid, "") for cid in class_ids
                 ]
             detections.data["class_name"] = np.array(class_names, dtype=object)
 
