@@ -32,6 +32,7 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 _SANITIZED_COST_MARGIN = 1.0
+_FOCAL_LOSS_GAMMA = 2.0
 
 
 class HungarianMatcher(nn.Module):
@@ -42,8 +43,8 @@ class HungarianMatcher(nn.Module):
     best predictions, while the others are un-matched (and thus treated as non-objects).
 
     Note:
-        The focal loss exponent ``gamma`` is hardcoded to 2.0 and is not configurable.
-        Only ``focal_alpha`` can be adjusted at construction time.
+        The focal loss exponent ``gamma`` is fixed at ``_FOCAL_LOSS_GAMMA`` (2.0) and is not
+        configurable. Only ``focal_alpha`` can be adjusted at construction time.
     """
 
     def __init__(
@@ -182,7 +183,7 @@ class HungarianMatcher(nn.Module):
 
         # Compute the classification cost.
         alpha = self.focal_alpha
-        gamma = 2.0
+        gamma = _FOCAL_LOSS_GAMMA
 
         # neg_cost_class = (1 - alpha) * (out_prob ** gamma) * (-(1 - out_prob + 1e-8).log())
         # pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-(out_prob + 1e-8).log())
