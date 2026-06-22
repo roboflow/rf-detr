@@ -607,41 +607,10 @@ class RFDETR:
                 'Install them with `pip install "rfdetr[train,loggers]"` and try again.',
             ) from exc
 
-        # Absorb legacy `callbacks` dict — warn if non-empty, then discard.
-        callbacks_dict = kwargs.pop("callbacks", None)
-        if callbacks_dict and any(callbacks_dict.values()):
-            warnings.warn(
-                "Custom callbacks dict is not forwarded to PTL. "
-                "Deprecated since v1.7.0, will be removed in v1.9.0. "
-                "Use PTL Callback objects instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         # Parse `device` kwarg and map it to PTL accelerator/devices.
         # Supports torch-style strings and torch.device (e.g. "cuda:1").
         _device = kwargs.pop("device", None)
         _accelerator, _devices = RFDETR._resolve_trainer_device_kwargs(_device)
-
-        # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
-        if "start_epoch" in kwargs:
-            warnings.warn(
-                "`start_epoch` is deprecated since v1.7.0 and will be removed in v1.9.0; "
-                "PTL resumes automatically via `resume`.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            kwargs.pop("start_epoch")
-
-        # Pop `do_benchmark`; benchmarking via `.train()` is deprecated.
-        run_benchmark = bool(kwargs.pop("do_benchmark", False))
-        if run_benchmark:
-            warnings.warn(
-                "`do_benchmark` in `.train()` is deprecated since v1.7.0 and will be removed in v1.9.0; "
-                "use `rfdetr benchmark`.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
         # Apply resolution override to model_config before building the train config.
         # resolution is a ModelConfig field, not a TrainConfig field, so we pop it

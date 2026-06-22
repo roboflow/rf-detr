@@ -20,7 +20,6 @@ import json
 import os
 import sys
 import warnings
-from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -284,86 +283,6 @@ class TestRFDETRTrainPTL:
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
         mock_self.get_train_config.assert_called_once_with()
 
-    def test_callbacks_none_no_warning(self, tmp_path, patch_lit):
-        """Callbacks=None produces no DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=None)
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    def test_callbacks_empty_dict_no_warning(self, tmp_path, patch_lit):
-        """Callbacks={} (falsy dict) produces no DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks={})
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    def test_callbacks_all_empty_lists_no_warning(self, tmp_path, patch_lit):
-        """Callbacks dict with all-empty lists produces no DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        callbacks = defaultdict(list)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=callbacks)
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    def test_callbacks_non_empty_emits_deprecation_warning(self, tmp_path, patch_lit):
-        """Callbacks dict with a non-empty list emits DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        callbacks = {"on_fit_epoch_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=callbacks)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(depr) >= 1
-        assert "PTL" in str(depr[0].message)
-
-    def test_callbacks_mixed_emits_deprecation_warning(self, tmp_path, patch_lit):
-        """Mixed callbacks (some empty, some non-empty) triggers DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        callbacks = {"on_fit_epoch_end": [], "on_train_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=callbacks)
-        assert any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    def test_do_benchmark_false_no_warning(self, tmp_path, patch_lit):
-        """do_benchmark=False (default) emits no DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, do_benchmark=False)
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    @pytest.mark.parametrize("truthy_value", [True, 1, "yes"], ids=["bool_true", "int_1", "str_yes"])
-    def test_do_benchmark_truthy_emits_deprecation_warning(self, tmp_path, truthy_value, patch_lit):
-        """Any truthy do_benchmark value emits DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, do_benchmark=truthy_value)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(depr) >= 1
-        assert "rfdetr benchmark" in str(depr[0].message)
-
-    def test_do_benchmark_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
-        """do_benchmark is popped before calling get_train_config."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, do_benchmark=True)
-        mock_self.get_train_config.assert_called_once_with()
-
     def test_device_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
         """Device= is popped and not passed on to get_train_config."""
         mock_self = _make_rfdetr_self(tmp_path)
@@ -493,46 +412,6 @@ class TestRFDETRTrainPTLAbsorption:
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator=None)
         assert "devices" not in mock_bt.call_args.kwargs
-
-    def test_callbacks_empty_dict_no_error(self, tmp_path, patch_lit):
-        """Callbacks={} is accepted without error."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, callbacks={})  # must not raise
-
-    def test_callbacks_non_empty_emits_deprecation_warning(self, tmp_path, patch_lit):
-        """Callbacks with non-empty lists emits DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        callbacks = {"on_fit_epoch_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=callbacks)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(depr) >= 1
-
-    def test_start_epoch_emits_deprecation_warning(self, tmp_path, patch_lit):
-        """start_epoch=1 emits DeprecationWarning and is dropped."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, start_epoch=1)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert any("start_epoch" in str(d.message) for d in depr)
-        # start_epoch must not reach get_train_config
-        assert "start_epoch" not in mock_self.get_train_config.call_args.kwargs
-
-    def test_do_benchmark_true_emits_deprecation_warning(self, tmp_path, patch_lit):
-        """do_benchmark=True emits DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, do_benchmark=True)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert any("do_benchmark" in str(d.message) or "rfdetr benchmark" in str(d.message) for d in depr)
 
     def test_returns_none(self, tmp_path, patch_lit):
         """RFDETR.train() returns None."""
