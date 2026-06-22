@@ -32,7 +32,7 @@ def _copy_key_points(key_points: KeyPoints) -> KeyPoints:
     )
 
 
-def _key_points_for_display(
+def key_points_for_display(
     key_points: KeyPoints,
     *,
     keypoint_threshold: float = 0.0,
@@ -73,6 +73,16 @@ def _key_points_for_display(
     existing_visible = key_points.visible
     setattr(key_points, "visible", visible if existing_visible is None else existing_visible & visible)
     return key_points
+
+
+# Backward-compatible alias (deprecated in v2.0)
+_key_points_for_display = key_points_for_display
+
+__all__ = [
+    "key_points_for_display",
+    "_key_points_for_display",
+    "_keypoint_prediction_records",
+]
 
 
 def _keypoint_prediction_records(

@@ -218,3 +218,14 @@ demo_*.ipynb
 
 # original notebooks before conversion from scripts
 docs/cookbooks/*.py
+
+# Local demo outputs (see scripts/run_video_demo.py)
+artifacts/
+
+# Local-only sample videos (private media — never commit or push)
+sample/*
+!sample/README.md
+
+# Confidential media compartment (README only tracked)
+confidential/**
+!confidential/README.md

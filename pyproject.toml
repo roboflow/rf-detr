@@ -96,6 +96,22 @@ visual = [
     "pandas",
     "seaborn",
 ]
+vast = [
+    "vastai>=0.3.0",                   # Vast.ai CLI + Python SDK for remote GPU jobs
+]
+demo = [
+    "opencv-python-headless>=4.8",
+    "pillow>=10.0",
+]
+demo-gui = [
+    "opencv-python-headless>=4.8",
+    "pillow>=10.0",
+]
+demo-vast = [
+    "opencv-python-headless>=4.8",
+    "pillow>=10.0",
+    "vastai>=0.3.0",
+]
 cli = ["jsonargparse[signatures]>=4.27.7"]
 plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
 
@@ -148,6 +164,9 @@ Homepage = "https://github.com/roboflow/rf-detr"
 
 [project.scripts]
 rfdetr = "rfdetr.cli:main"
+rfdetr-demo = "rfdetr_demo.cli:main"
+rfdetr-demo-gui = "rfdetr_demo.gui.app:main"
+rfdetr-vast-cleanup = "rfdetr_demo.vast.cleanup_cli:main"
 
 [tool.uv]
 # onnx2tf 2.4.0 pins ml-dtypes==0.5.1 unconditionally, but ml-dtypes 0.5.1 requires
@@ -161,7 +180,7 @@ override-dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["rfdetr*"]
+include = ["rfdetr*", "rfdetr_demo*"]
 
 [tool.setuptools]
 include-package-data = false
