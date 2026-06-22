@@ -749,6 +749,9 @@ class RFDETR:
 
         # Sync the trained weights back so predict() / export() see the updated model.
         self.model.model = module.model
+        # Invalidate any compiled inference snapshot: it was built from the pre-training
+        # weights and must not survive the model reassignment above.
+        self.remove_optimized_model()
         # Sync class names: prefer explicit config.class_names, otherwise fall back to dataset (#509).
         config_class_names = getattr(config, "class_names", None)
         if config_class_names is not None:
@@ -1417,6 +1420,9 @@ class RFDETR:
         is emitted at most once, but eval mode is (re)asserted on every call: ``train()`` reassigns ``self.model.model``
         to a module that PyTorch Lightning leaves in training mode (see ``train()``), so gating ``eval()`` behind the
         once-only warning would let a later ``predict()`` silently run with dropout active.
+
+        When ``_is_optimized_for_inference`` is ``True``, the method returns immediately — the compiled
+        ``inference_model`` snapshot is already in eval mode and ``self.model.model`` is not used for inference.
         """
         if self._is_optimized_for_inference:
             return
