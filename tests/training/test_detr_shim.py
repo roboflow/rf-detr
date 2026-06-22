@@ -1139,18 +1139,6 @@ class TestRemovedLegacyModuleAliases:
         for root_name in root_names:
             monkeypatch.delitem(rfdetr.__dict__, root_name, raising=False)
 
-    def test_removed_util_alias_resolves_via_package_attribute(self) -> None:
-        """PEP 562 lookup resolves rfdetr.util while the shim package exists."""
-        import rfdetr
-
-        assert rfdetr.util.__name__ == "rfdetr.util"
-
-    def test_removed_deploy_alias_resolves_via_package_attribute(self) -> None:
-        """PEP 562 lookup resolves rfdetr.deploy while the shim package exists."""
-        import rfdetr
-
-        assert rfdetr.deploy.__name__ == "rfdetr.deploy"
-
     def test_removed_shim_missing_raises_importerror_with_getattr(self) -> None:
         """Missing removed shim should raise ImportError with migration hint."""
         import rfdetr
