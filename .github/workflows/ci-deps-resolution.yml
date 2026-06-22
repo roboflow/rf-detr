@@ -2,7 +2,7 @@ name: Dependency resolution
 
 on:
   push:
-    branches: ["main", "release/*", "develop", "feat/*"]
+    branches: ["main", "release/*", "develop"]
     paths: ["pyproject.toml"]
   pull_request:
     paths: ["pyproject.toml"]
