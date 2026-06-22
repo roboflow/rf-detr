@@ -51,7 +51,16 @@ def _create_onnx_session(model_path: str | Path) -> Any:
             "ONNX Runtime inference requires 'onnxruntime'. Install it: `pip install onnxruntime`"
         ) from exc
 
-    session = ort.InferenceSession(str(model_path))
+    _preferred = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    _available = ort.get_available_providers()
+    providers = [p for p in _preferred if p in _available] or ["CPUExecutionProvider"]
+    if providers[0] == "CPUExecutionProvider":
+        logger.warning(
+            "CUDAExecutionProvider not available — running ONNX inference on CPU. "
+            "Install onnxruntime-gpu for GPU acceleration: `pip install onnxruntime-gpu`"
+        )
+    session = ort.InferenceSession(str(model_path), providers=providers)
+    logger.debug("ONNX Runtime providers in use: %s", session.get_providers())
     for inp in session.get_inputs():
         logger.debug("Input  : name=%s  shape=%s  type=%s", inp.name, inp.shape, inp.type)
     for out in session.get_outputs():
