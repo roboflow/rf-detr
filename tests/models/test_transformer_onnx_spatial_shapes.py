@@ -5,19 +5,16 @@
 # ------------------------------------------------------------------------
 """ONNX-export regression tests for the shared Transformer's spatial_shapes path.
 
-These guard the fix that builds ``spatial_shapes`` from symbolic feature-map
-shapes (``Shape`` -> ``Concat``) instead of ``torch.empty`` + in-place index
-assignment. The latter (added in #871 to keep the trace symbolic for dynamic-batch
-export) emitted a ``ScatterND`` that fed a shape tensor, which TensorRT rejects
-("IScatterLayer cannot be used to compute a shape tensor"). The constant-baking
-``torch.as_tensor`` alternative avoids the ScatterND but regresses the symbolic
-trace back to a baked constant.
+These guard the fix that builds ``spatial_shapes`` from symbolic feature-map shapes (``Shape`` -> ``Concat``) instead of
+``torch.empty`` + in-place index assignment. The latter (added in #871 to keep the trace symbolic for dynamic-batch
+export) emitted a ``ScatterND`` that fed a shape tensor, which TensorRT rejects ("IScatterLayer cannot be used to
+compute a shape tensor"). The constant-baking ``torch.as_tensor`` alternative avoids the ScatterND but regresses the
+symbolic trace back to a baked constant.
 
-The Transformer is shared by detection, segmentation and keypoint models, so a
-single low-level export here covers the spatial_shapes path for all of them.
+The Transformer is shared by detection, segmentation and keypoint models, so a single low-level export here covers the
+spatial_shapes path for all of them.
 """
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -36,10 +33,8 @@ class _TransformerExportWrapper(nn.Module):
         super().__init__()
         self.transformer = transformer
 
-    def forward(self, s0, s1, p0, p1, m0, m1, refpoint_embed, query_feat):  # noqa: ANN001
-        outputs = self.transformer(
-            [s0, s1], [m0, m1], [p0, p1], refpoint_embed, query_feat, cross_attn_srcs=None
-        )
+    def forward(self, s0, s1, p0, p1, m0, m1, refpoint_embed, query_feat):
+        outputs = self.transformer([s0, s1], [m0, m1], [p0, p1], refpoint_embed, query_feat, cross_attn_srcs=None)
         return outputs[0]
 
 
