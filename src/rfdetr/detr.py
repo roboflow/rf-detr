@@ -1579,11 +1579,10 @@ class RFDETR:
             h, w = img_tensor.shape[1:]
             orig_sizes.append((h, w))
 
-            processed_images.append(img_tensor)
+            processed_images.append(img_tensor.to(self.model.device))
 
         resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
-        batch_tensor = torch.stack(processed_images).to(self.model.device)
-        batch_tensor = F.resize(batch_tensor, resize_to)
+        batch_tensor = torch.stack([F.resize(t, resize_to) for t in processed_images])
         batch_tensor = F.normalize(batch_tensor, self.means, self.stds)
 
         if self._is_optimized_for_inference:

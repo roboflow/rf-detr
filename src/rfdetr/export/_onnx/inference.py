@@ -101,7 +101,6 @@ def _preprocess_pil_to_nchw(
         .. code-block:: python
 
             inp = _preprocess_pil_to_nchw(image, height=640, width=640)
-            outputs = session.run(None, {session.get_inputs()[0].name: inp})
     """
     _imagenet_mean = [0.485, 0.456, 0.406]
     _imagenet_std = [0.229, 0.224, 0.225]
@@ -250,6 +249,7 @@ def _run_inference(
     return Detections(xyxy=xyxy, confidence=scores[keep], class_id=cls[keep].astype(int)), pil_img
 
 
+# Benchmarking helper — not part of production inference API; subject to removal.
 def _onnx_runtime(
     onnx_path: Path | str,
     image: PILImage.Image,
@@ -260,8 +260,8 @@ def _onnx_runtime(
     """Benchmark ONNX Runtime inference for one image and provider list.
 
     Creates a fresh ``InferenceSession`` with the requested providers, preprocesses ``image`` once using ImageNet
-    normalisation, then runs timed inference with ``time.perf_counter``.  The CUDA execution provider synchronises the
-    device before returning from ``Run()``, so wall-clock timings are accurate without a separate CUDA sync.
+    normalisation, then runs timed inference with ``time.perf_counter``.  GPU timings may underestimate real latency
+    if the CUDA execution provider is configured for asynchronous execution; for accurate GPU timing use CUDA events.
 
     Args:
         onnx_path: Path to the ``.onnx`` model file.
@@ -278,7 +278,7 @@ def _onnx_runtime(
     Examples:
         .. code-block:: python
 
-            mean_ms, std_ms, label = _onnx_rt("model.onnx", image, ["CPUExecutionProvider"])
+            mean_ms, std_ms, label = _onnx_runtime("model.onnx", image, ["CPUExecutionProvider"])
             print(f"{label}: {mean_ms:.1f} ms ± {std_ms:.1f}")
     """
     import time
@@ -291,8 +291,8 @@ def _onnx_runtime(
             "Install onnxruntime-gpu: `pip install onnxruntime-gpu`"
         )
     input_meta = sess.get_inputs()[0]
-    _, _, height, width = input_meta.shape
-    inp = _preprocess_pil_to_nchw(image, height, width)
+    _, channels, height, width = input_meta.shape
+    inp = _preprocess_pil_to_nchw(image, height, width, channels)
     feed = {input_meta.name: inp}
 
     for _ in range(warmup):
