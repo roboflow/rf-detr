@@ -2287,6 +2287,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>HungarianMatcher.forward()</code> now uses the configured <code>focal_alpha</code> in the focal classification matching cost. Previously the value was hardcoded to <code>0.25</code>, silently ignoring any non-default <code>focal_alpha</code> passed to the constructor or <code>build_matcher</code>. This misaligned the bipartite matching cost with the focal classification loss in <code>criterion.py</code>, which correctly used <code>self.focal_alpha</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1147">#1147</a>)</li>
+<li><code>spatial_shapes</code> in <code>Transformer.forward()</code> is now built from symbolic <code>Shape</code> ops (<code>torch.stack</code> of per-level <code>torch._shape_as_tensor</code> slices) instead of <code>torch.empty</code> + in-place index assignment. The previous pattern emitted a <code>ScatterND</code> feeding a shape tensor (<code>level_start_index</code>), which TensorRT rejected with "IScatterLayer cannot be used to compute a shape tensor". This fix is required to export any RF-DETR model to a TensorRT engine. (<a href="https://github.com/roboflow/rf-detr/pull/1155">#1155</a>)</li>
 </ul>
 <hr />
 <h2 id="181-2026-06-19">[1.8.1] — 2026-06-19<a class="headerlink" href="#181-2026-06-19" title="Permanent link">&para;</a></h2>
