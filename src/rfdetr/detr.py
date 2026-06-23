@@ -1429,12 +1429,13 @@ class RFDETR:
         if not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(
                 "Model is not optimized for inference. Latency may be higher than expected."
-                " You can optimize the model for inference by calling model.optimize_for_inference().",
+                " For full GPU throughput (e.g. ~8x on T4 via FP16 Tensor Cores),"
+                " call model.optimize_for_inference(dtype=torch.float16).",
             )
             self._has_warned_about_not_being_optimized_for_inference = True
         self.model.model.eval()
 
-    @torch.no_grad()
+    @torch.inference_mode()
     @_ensure_model_on_device
     def predict(
         self,
@@ -1578,14 +1579,11 @@ class RFDETR:
             h, w = img_tensor.shape[1:]
             orig_sizes.append((h, w))
 
-            img_tensor = img_tensor.to(self.model.device)
-            resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
-            img_tensor = F.resize(img_tensor, resize_to)
-            img_tensor = F.normalize(img_tensor, self.means, self.stds)
+            processed_images.append(img_tensor.to(self.model.device))
 
-            processed_images.append(img_tensor)
-
-        batch_tensor = torch.stack(processed_images)
+        resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
+        batch_tensor = torch.stack([F.resize(t, resize_to) for t in processed_images])
+        batch_tensor = F.normalize(batch_tensor, self.means, self.stds)
 
         if self._is_optimized_for_inference:
             if (
