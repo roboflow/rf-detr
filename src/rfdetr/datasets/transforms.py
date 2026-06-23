@@ -47,24 +47,50 @@ class Normalize(object):
     ) -> None:
         self._normalize = _TVNormalize(mean, std)
 
+    def __call__(self, image: Tensor, target: dict[str, Any] | None = None) -> tuple[Tensor, dict[str, Any] | None]:
+        """Normalize image and convert target coordinates to relative format.
 
-  def __call__(self, image: Tensor, target: dict[str, Any] | None = None) -> tuple[Tensor, dict[str, Any] | None]:
-      image = self._normalize(image)
-      if target is None:
-          return image, None
-      target = target.copy()
-      h, w = image.shape[-2:]
-      if "boxes" in target:
-          boxes = target["boxes"]
-          boxes = box_xyxy_to_cxcywh(boxes)
-          boxes = boxes / torch.tensor([w, h, w, h], dtype=torch.float32)
-          target["boxes"] = boxes
-      if "keypoints" in target:
-          keypoints = target["keypoints"].clone()  # shape: (N, K, 3) — x, y, visibility
-          keypoints[..., 0] = keypoints[..., 0] / w
-          keypoints[..., 1] = keypoints[..., 1] / h
-          target["keypoints"] = keypoints
-      return image, target
+        Applies ImageNet-style channel normalization to the image, then converts
+        bounding boxes from absolute xyxy pixel coordinates to normalized cxcywh
+        format (divided by ``[w, h, w, h]``) and scales keypoint x/y by image
+        width/height respectively.
+
+        Args:
+            image: CHW float tensor to normalize.
+            target: Optional dict with keys ``"boxes"`` (xyxy pixel coords,
+                shape ``[N, 4]``) and/or ``"keypoints"`` (shape ``[N, K, 3]``
+                where the third channel is visibility). Mutated copy returned;
+                original is not modified.
+
+        Returns:
+            Tuple of ``(normalized_image, target)`` where ``target`` has boxes
+            in normalized cxcywh format and keypoints scaled to ``[0, 1]``, or
+            ``(normalized_image, None)`` when ``target`` is ``None``.
+
+        Examples:
+            >>> import torch
+            >>> normalize = Normalize()
+            >>> img = torch.zeros(3, 64, 64)
+            >>> out_img, out_tgt = normalize(img, None)
+            >>> out_tgt is None
+            True
+        """
+        image = self._normalize(image)
+        if target is None:
+            return image, None
+        target = target.copy()
+        h, w = image.shape[-2:]
+        if "boxes" in target:
+            boxes = target["boxes"]
+            boxes = box_xyxy_to_cxcywh(boxes)
+            boxes = boxes / torch.tensor([w, h, w, h], dtype=torch.float32)
+            target["boxes"] = boxes
+        if "keypoints" in target:
+            keypoints = target["keypoints"].clone()  # shape: (N, K, 3) — x, y, visibility
+            keypoints[..., 0] = keypoints[..., 0] / w
+            keypoints[..., 1] = keypoints[..., 1] / h
+            target["keypoints"] = keypoints
+        return image, target
 
 
 # Albumentations wrapper for RF-DETR
