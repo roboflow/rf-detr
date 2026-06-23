@@ -528,36 +528,31 @@ class TestBuildTrainerAmpDtype:
         """amp_dtype is a real TrainConfig field (reachable via train(**kwargs)), not silently dropped."""
         assert _tc(tmp_path, amp_dtype="fp16").amp_dtype == "fp16"
 
-    def test_auto_keeps_default_bf16_on_capable_cuda(self, tmp_path):
-        """amp_dtype='auto' (default) preserves the historical bf16 selection on bf16-capable CUDA."""
-        assert self._resolved_precision(tmp_path, cuda=True, bf16=True, amp_dtype="auto") == "bf16-mixed"
+    @pytest.mark.parametrize(
+        "cuda, bf16, mps, amp_dtype, expected",
+        [
+            pytest.param(True, True, False, "auto", "bf16-mixed", id="auto-cuda-bf16"),
+            pytest.param(True, True, False, "fp16", "16-mixed", id="fp16-cuda-bf16"),
+            pytest.param(True, True, False, "bf16", "bf16-mixed", id="bf16-cuda-bf16"),
+            pytest.param(True, False, False, "auto", "16-mixed", id="auto-cuda-no-bf16"),
+            pytest.param(False, False, True, "fp16", "16-mixed", id="fp16-mps"),
+        ],
+    )
+    def test_resolved_precision(self, tmp_path, cuda, bf16, mps, amp_dtype, expected):
+        """amp_dtype + hardware caps resolve to the correct Lightning precision string."""
+        assert self._resolved_precision(tmp_path, cuda=cuda, bf16=bf16, mps=mps, amp_dtype=amp_dtype) == expected
 
-    def test_fp16_forces_16_mixed_even_when_bf16_supported(self, tmp_path):
-        """amp_dtype='fp16' forces '16-mixed' even on bf16-capable CUDA (the #1132 use case)."""
-        assert self._resolved_precision(tmp_path, cuda=True, bf16=True, amp_dtype="fp16") == "16-mixed"
-
-    def test_bf16_on_capable_cuda_gives_bf16_mixed(self, tmp_path):
-        """amp_dtype='bf16' on bf16-capable CUDA gives 'bf16-mixed'."""
-        assert self._resolved_precision(tmp_path, cuda=True, bf16=True, amp_dtype="bf16") == "bf16-mixed"
-
-    def test_bf16_without_hardware_support_falls_back_to_fp16(self, tmp_path):
-        """amp_dtype='bf16' on CUDA without bf16 support falls back to '16-mixed' and warns."""
-        with pytest.warns(UserWarning, match="bf16"):
-            precision = self._resolved_precision(tmp_path, cuda=True, bf16=False, amp_dtype="bf16")
-        assert precision == "16-mixed"
-
-    def test_auto_on_cuda_without_bf16_gives_16_mixed(self, tmp_path):
-        """amp_dtype='auto' on CUDA without bf16 support (e.g. V100) resolves to '16-mixed'."""
-        assert self._resolved_precision(tmp_path, cuda=True, bf16=False, amp_dtype="auto") == "16-mixed"
-
-    def test_fp16_on_mps_gives_16_mixed(self, tmp_path):
-        """amp_dtype='fp16' on MPS gives '16-mixed'."""
-        assert self._resolved_precision(tmp_path, cuda=False, mps=True, amp_dtype="fp16") == "16-mixed"
-
-    def test_bf16_on_mps_warns_and_uses_fp16(self, tmp_path):
-        """amp_dtype='bf16' is not applied on MPS; RF-DETR uses fp16 ('16-mixed') and warns."""
-        with pytest.warns(UserWarning, match="MPS"):
-            precision = self._resolved_precision(tmp_path, cuda=False, mps=True, amp_dtype="bf16")
+    @pytest.mark.parametrize(
+        "cuda, bf16, mps, amp_dtype, warn_match",
+        [
+            pytest.param(True, False, False, "bf16", "bf16", id="bf16-cuda-no-hw-support"),
+            pytest.param(False, False, True, "bf16", "MPS", id="bf16-mps"),
+        ],
+    )
+    def test_resolved_precision_warns(self, tmp_path, cuda, bf16, mps, amp_dtype, warn_match):
+        """amp_dtype falls back to '16-mixed' and emits a UserWarning when hardware cannot satisfy the request."""
+        with pytest.warns(UserWarning, match=warn_match):
+            precision = self._resolved_precision(tmp_path, cuda=cuda, bf16=bf16, mps=mps, amp_dtype=amp_dtype)
         assert precision == "16-mixed"
 
     def test_amp_false_overrides_amp_dtype(self, tmp_path):
