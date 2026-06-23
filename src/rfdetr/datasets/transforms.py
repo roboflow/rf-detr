@@ -31,8 +31,9 @@ import torch
 from PIL import Image
 from torchvision.transforms import Normalize as _TVNormalize
 
-from rfdetr.util.box_ops import box_xyxy_to_cxcywh
-from rfdetr.util.logger import get_logger
+from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
+from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
+from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
@@ -243,7 +244,6 @@ def _random_sized_crop_uses_size_param(aug_cls: type) -> bool:
     Returns:
         ``True`` when the class accepts a ``size`` keyword argument; otherwise ``False``.
     """
-
     signature = inspect.signature(aug_cls.__init__)
     return "size" in signature.parameters
 
@@ -272,7 +272,6 @@ def _normalize_albu_params(name: str, params: Dict[str, Any], aug_cls: type) -> 
         ... )
         {'min_max_height': [384, 600], 'size': (640, 640)}
     """
-
     normalized_params = dict(params)
     if name != "RandomSizedCrop":
         return normalized_params
@@ -352,6 +351,10 @@ class AlbumentationsWrapper:
 
     Args:
         transform: Albumentations transform to apply (e.g., alb.HorizontalFlip, alb.GaussianBlur).
+        keypoint_flip_pairs: Joint index pairs for left/right swapping after a horizontal flip.
+            ``None`` (default) means a detection pipeline -- no keypoint handling. An empty list
+            ``[]`` marks a keypoint pipeline where flip-pair swapping is not yet implemented;
+            horizontal-flip transforms should have been stripped from config before this point.
 
     Examples:
         >>> from albumentations import GaussianBlur, HorizontalFlip
@@ -372,7 +375,15 @@ class AlbumentationsWrapper:
     def __init__(self, transform: alb.BasicTransform, keypoint_flip_pairs: list[int] | None = None) -> None:
         # Auto-detect if transform is geometric (recursively for containers)
         self._is_geometric = _is_geometric_transform(transform)
-        self._keypoint_flip_pairs: list[int] = keypoint_flip_pairs or []
+        # Flip pair swapping is not yet implemented; pairs are reserved for a future release.
+        self._keypoint_flip_pairs: list[int] = []
+        if keypoint_flip_pairs:
+            logger.warning(
+                "AlbumentationsWrapper received keypoint_flip_pairs=%r, but flip-pair swapping is not yet "
+                "implemented and will be ignored. Semantic joint index swapping after horizontal flips is planned "
+                "for a future release.",
+                keypoint_flip_pairs,
+            )
 
         if self._is_geometric:
             # Wrap geometric transform with bbox handling capabilities
@@ -502,7 +513,7 @@ class AlbumentationsWrapper:
         Returns:
             True if a horizontal flip was applied, False otherwise.
         """
-        if not bboxes_aug or not kept_idxs or boxes_np.shape[0] == 0:
+        if len(bboxes_aug) == 0 or len(kept_idxs) == 0 or boxes_np.shape[0] == 0:
             return False
         first_kept_orig_idx = kept_idxs[0]
         try:
@@ -882,6 +893,11 @@ class AlbumentationsWrapper:
         Args:
             config_dict: Augmentation configuration -- either a ``dict`` mapping
                 transform names to parameter dicts, or a ``list`` of single-key dicts ``{name: params}``.
+            keypoint_flip_pairs: Joint index pairs for swapping left/right keypoints after a horizontal
+                flip (e.g. ``[0, 1, 2, 3]`` swaps joint 0↔1 and 2↔3). Pass ``None`` (default) for
+                detection pipelines where horizontal flips are always permitted. Pass an empty list
+                ``[]`` to mark a keypoint pipeline without any defined flip pairs -- horizontal-flip
+                augmentations are then disabled until flip-pair swapping is implemented.
 
         Returns:
             List of :class:`AlbumentationsWrapper` instances in config order.
@@ -903,6 +919,12 @@ class AlbumentationsWrapper:
         Note:
             Invalid transforms or invalid parameters are logged and skipped gracefully.
         """
+        original_config_empty = isinstance(config_dict, (dict, list)) and len(config_dict) == 0
+        config_dict = filter_keypoint_hflip_augmentations(
+            config_dict,
+            include_keypoints=keypoint_flip_pairs is not None,
+            warn=logger.warning,
+        )
         if isinstance(config_dict, list):
             entries = config_dict
         elif isinstance(config_dict, dict):
@@ -911,6 +933,8 @@ class AlbumentationsWrapper:
             raise TypeError(f"config_dict must be a dictionary or list, got {type(config_dict)}")
 
         if not entries:
+            if not original_config_empty:
+                return []
             logger.warning("Empty augmentation config provided, no transforms will be applied")
             return []
 

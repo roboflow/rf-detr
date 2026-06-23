@@ -6,7 +6,8 @@
 """Package-private helper: build a self-contained namespace from Pydantic configs.
 
 Replaces the previous shim in ``_args.py`` that called the deprecated ``populate_args()`` function from ``main.py``.
-This module has zero dependency on ``main.py`` and can survive its deletion."""
+This module has zero dependency on ``main.py`` and can survive its deletion.
+"""
 
 import dataclasses
 import types

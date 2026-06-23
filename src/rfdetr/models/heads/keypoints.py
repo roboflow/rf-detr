@@ -75,7 +75,6 @@ class ConditionalQueryInitializer(nn.Module):
             num_queries: Number of query tokens to instantiate.
             out_dim: Output embedding size. Defaults to ``dim``.
         """
-
         super().__init__()
         out_dim = out_dim or dim
 
@@ -291,7 +290,6 @@ def compute_l1_keypoint_loss(
 
 def _cdist_bce_with_logits(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     """Compute pairwise BCE-with-logits summed along the last dim."""
-
     y_float = y.to(dtype=x.dtype)
     softplus = F.softplus(x).sum(dim=1, keepdim=True)
     dot = torch.matmul(x, y_float.t())

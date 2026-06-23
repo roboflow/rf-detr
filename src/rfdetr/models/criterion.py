@@ -9,6 +9,10 @@
 # ------------------------------------------------------------------------
 """Loss functions and criterion for RF-DETR training."""
 
+from __future__ import annotations
+
+from typing import Any
+
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
@@ -134,6 +138,12 @@ class SetCriterion(nn.Module):
     2) we supervise each pair of matched ground-truth / prediction (supervise class and box).
     """
 
+    # Signals that forward() accepts an explicit num_boxes denominator and exposes
+    # num_boxes_for_targets() for cross-microbatch accumulation.  Subclasses that
+    # override forward() with the legacy 2-arg signature should set this to False so
+    # RFDETRModelModule._compute_train_losses() can skip the kwarg.
+    supports_loss_normalizer_override: bool = True
+
     def __init__(
         self,
         num_classes,
@@ -172,6 +182,79 @@ class SetCriterion(nn.Module):
         self.ia_bce_loss = ia_bce_loss
         self.mask_point_sample_ratio = mask_point_sample_ratio
         self.num_keypoints_per_class = num_keypoints_per_class or []
+
+    @staticmethod
+    def _output_device(outputs: dict[str, Any]) -> torch.device:
+        """Return the device used by tensor outputs.
+
+        Args:
+            outputs: Model output dictionary. Top-level values are probed for tensors;
+                nested structures (lists, nested dicts) are not traversed.
+
+        Returns:
+            Device of the first tensor value found in ``outputs``.
+
+        Raises:
+            ValueError: If no tensor output is present.
+        """
+        for value in outputs.values():
+            if torch.is_tensor(value):
+                return value.device
+        raise ValueError("SetCriterion requires at least one tensor output to infer the loss device.")
+
+    def num_boxes_for_targets(
+        self,
+        outputs: dict[str, Any],
+        targets: list[dict[str, torch.Tensor]],
+    ) -> torch.Tensor:
+        """Compute the distributed target-box denominator for a target batch.
+
+        The denominator is the total number of ground-truth boxes in the batch, multiplied by the active number of
+        DETR groups (unless ``sum_group_losses`` collapses them), reduced across all distributed ranks, divided by the
+        world size, and finally clamped to be at least ``1.0`` so divide-by-zero never occurs on empty batches.
+
+        Args:
+            outputs: Model output dictionary; used only to infer the device for the
+                returned scalar tensor.
+            targets: Per-image target dictionaries for the current batch. Each must
+                contain a ``"labels"`` tensor whose length equals the number of
+                ground-truth boxes for that image.
+
+        Returns:
+            Scalar tensor on the same device as the model outputs, holding the
+            average box-count denominator used to normalize criterion losses.
+
+        Note:
+            When ``torch.distributed`` is initialized this method performs an
+            in-place ``all_reduce`` collective on the returned tensor. Every rank
+            must reach this call together or the program will deadlock.
+
+        Note:
+            ``group_detr`` is multiplied in only when ``self.training`` is ``True``.
+            During evaluation (``self.training`` is ``False``) the denominator
+            collapses to a single group, so train-time and eval-time normalizers
+            cannot be compared directly.
+
+        Examples:
+            >>> import torch
+            >>> from rfdetr.models.criterion import SetCriterion
+            >>> criterion = SetCriterion.__new__(SetCriterion)
+            >>> criterion.training = False
+            >>> criterion.group_detr = 1
+            >>> criterion.sum_group_losses = False
+            >>> outputs = {"pred_logits": torch.zeros(1, 1, 1)}
+            >>> targets = [{"labels": torch.tensor([0, 1, 2])}]
+            >>> criterion.num_boxes_for_targets(outputs, targets).item()
+            3.0
+        """
+        group_detr = self.group_detr if self.training else 1
+        num_boxes = sum(len(t["labels"]) for t in targets)
+        if not self.sum_group_losses:
+            num_boxes = num_boxes * group_detr
+        num_boxes_tensor = torch.as_tensor(num_boxes, dtype=torch.float, device=self._output_device(outputs))
+        if is_dist_avail_and_initialized():
+            torch.distributed.all_reduce(num_boxes_tensor)
+        return torch.clamp(num_boxes_tensor / get_world_size(), min=1.0)
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (Binary focal loss) targets dicts must contain the key "labels" containing a tensor of
@@ -445,9 +528,18 @@ class SetCriterion(nn.Module):
                 mode="nearest",
             ).squeeze(1)
 
+        # ``sigmoid_ce_loss_jit`` and ``dice_loss_jit`` are TorchScripted with
+        # ``num_masks: float`` in their signatures, so they reject Tensor inputs at
+        # runtime with a "expected float, got Tensor" error.  ``SetCriterion.forward``
+        # now hands the criterion a Tensor denominator (so it can be all-reduced across
+        # ranks and accumulated across grad-accum microbatches), so it must be unwrapped
+        # to a Python scalar exactly here before the JIT call boundary.  Using
+        # ``float(...)`` instead of ``.item()`` keeps the conversion safe whether
+        # ``num_boxes`` arrives as a Tensor, a Python int/float, or a numpy scalar.
+        num_boxes_scalar = float(num_boxes)
         losses = {
-            "loss_mask_ce": sigmoid_ce_loss_jit(point_logits, point_labels, num_boxes),
-            "loss_mask_dice": dice_loss_jit(point_logits, point_labels, num_boxes),
+            "loss_mask_ce": sigmoid_ce_loss_jit(point_logits, point_labels, num_boxes_scalar),
+            "loss_mask_dice": dice_loss_jit(point_logits, point_labels, num_boxes_scalar),
         }
 
         del src_masks
@@ -508,13 +600,61 @@ class SetCriterion(nn.Module):
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
 
-    def forward(self, outputs, targets):
-        """This performs the loss computation.
+    def forward(
+        self,
+        outputs: dict[str, Any],
+        targets: list[dict[str, torch.Tensor]],
+        num_boxes: torch.Tensor | float | None = None,
+    ) -> dict[str, torch.Tensor]:
+        """Compute every configured loss for one (outputs, targets) pair.
 
-        Parameters:
-             outputs: dict of tensors, see the output specification of the model for the format
-             targets: list of dicts, such that len(targets) == batch_size.
-                      The expected keys in each dict depends on the losses applied, see each loss' doc
+        The Hungarian matcher is invoked on the last layer's outputs and reused for the auxiliary intermediate layers
+        and the optional encoder outputs; each loss is then evaluated on the matched indices and normalized by
+        ``num_boxes``.
+
+        Args:
+            outputs: Model output dictionary. Must contain the tensors required by
+                every loss in ``self.losses`` (for example ``"pred_logits"``,
+                ``"pred_boxes"``, ``"pred_masks"``, ``"pred_keypoints"``). May also
+                contain ``"aux_outputs"`` (list of layer-wise outputs) and
+                ``"enc_outputs"`` (encoder outputs); both are processed identically
+                to the last layer and contribute prefixed keys to the returned dict.
+            targets: Per-image target dictionaries; ``len(targets) == batch_size``.
+                The expected keys depend on the losses being applied — see each
+                ``loss_*`` method for its target requirements.
+            num_boxes: Optional explicit box-count denominator.
+
+                - ``None`` (default): call :meth:`num_boxes_for_targets` to derive
+                  the distributed-reduced normalizer for the current batch.
+                - ``float`` / ``int``: cast to a tensor on the model output device
+                  and used verbatim. Passing ``1.0`` yields *unnormalized* loss
+                  numerators (used by the manual-optimization path so the caller
+                  can apply its own accumulated denominator).
+                - ``torch.Tensor``: moved to the model output device and used
+                  verbatim. The caller is responsible for any cross-rank reduction;
+                  no extra all-reduce is performed in this branch.
+
+        Returns:
+            Dictionary of named loss tensors. Last-layer losses keep their base
+            names (``"loss_ce"``, ``"loss_bbox"``, ``"loss_giou"``,
+            ``"loss_mask_ce"``, ``"loss_mask_dice"``, ``"loss_keypoints_*"``).
+            Auxiliary-layer losses get a ``"_<i>"`` suffix; encoder-layer losses
+            get an ``"_enc"`` suffix.
+
+        Examples:
+            >>> import torch
+            >>> from unittest.mock import MagicMock
+            >>> from rfdetr.models.criterion import SetCriterion
+            >>> criterion = SetCriterion.__new__(SetCriterion)
+            >>> criterion.training = False
+            >>> criterion.group_detr = 1
+            >>> criterion.sum_group_losses = False
+            >>> criterion.losses = []
+            >>> criterion.matcher = MagicMock(return_value=[])
+            >>> outputs = {"pred_logits": torch.zeros(1, 1, 1)}
+            >>> targets = [{"labels": torch.tensor([0])}]
+            >>> criterion.forward(outputs, targets, num_boxes=1.0)
+            {}
         """
         group_detr = self.group_detr if self.training else 1
         outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
@@ -522,14 +662,12 @@ class SetCriterion(nn.Module):
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets, group_detr=group_detr)
 
-        # Compute the average number of target boxes across all nodes, for normalization purposes
-        num_boxes = sum(len(t["labels"]) for t in targets)
-        if not self.sum_group_losses:
-            num_boxes = num_boxes * group_detr
-        num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device)
-        if is_dist_avail_and_initialized():
-            torch.distributed.all_reduce(num_boxes)
-        num_boxes = torch.clamp(num_boxes / get_world_size(), min=1).item()
+        if num_boxes is None:
+            num_boxes = self.num_boxes_for_targets(outputs, targets)
+        elif not torch.is_tensor(num_boxes):
+            num_boxes = torch.as_tensor(num_boxes, dtype=torch.float, device=self._output_device(outputs))
+        else:
+            num_boxes = num_boxes.to(device=self._output_device(outputs), dtype=torch.float)
 
         # Compute all the requested losses
         losses = {}

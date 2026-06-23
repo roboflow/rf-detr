@@ -5,7 +5,8 @@
 # ------------------------------------------------------------------------
 """Unit tests for COCOEvalCallback."""
 
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -334,6 +335,159 @@ class TestOnTrainBatchEnd:
         cb.map_metric_train.reset.assert_not_called()
 
 
+class TestMetricsTablePrinting:
+    """Metric table terminal/notebook rendering behavior.
+
+    Covers: terminal (console.print path), Rich-missing warning, teardown
+    cleanup, RichProgressBar console routing, notebook in-place updates.
+    """
+
+    @pytest.mark.parametrize(
+        "split,title_pfx",
+        [
+            pytest.param("val", "Val", id="val"),
+            pytest.param("test", "Test", id="test"),
+        ],
+    )
+    def test_terminal_metrics_tables_print_to_console(self, split: str, title_pfx: str) -> None:
+        """Terminal metric tables print directly through the Rich console each epoch."""
+        cb = COCOEvalCallback(in_notebook=False)
+        trainer = _make_trainer()
+        trainer.is_global_zero = True
+        console = MagicMock(name="console")
+
+        with (
+            patch("rfdetr.training.callbacks.coco_eval._get_rich_console", return_value=console),
+            patch(
+                "rfdetr.training.callbacks.coco_eval._render_overall_merged",
+                side_effect=["overall-1", "overall-2"],
+            ),
+            patch("rfdetr.training.callbacks.coco_eval._render_summary_tables") as render_tables,
+        ):
+            cb._print_metrics_tables(trainer, split, {"mAP": 0.1}, [])
+            cb._print_metrics_tables(trainer, split, {"mAP": 0.2}, [])
+
+        assert render_tables.call_count == 2
+        assert render_tables.call_args_list[0].args[0] is console
+        assert render_tables.call_args_list[0].args[1] == title_pfx
+        assert render_tables.call_args_list[0].args[2] == "overall-1"
+
+    def test_missing_rich_warns_once_and_skips_metric_tables(self) -> None:
+        """Missing Rich emits one warning and skips noisy table rendering."""
+        cb = COCOEvalCallback(in_notebook=False)
+        trainer = _make_trainer()
+        trainer.is_global_zero = True
+
+        with (
+            patch("rfdetr.training.callbacks.coco_eval._IS_RICH_AVAILABLE", False),
+            patch("rfdetr.training.callbacks.coco_eval.logger.warning") as warning,
+            patch("rfdetr.training.callbacks.coco_eval._get_rich_console") as get_console,
+        ):
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.1}, [])
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.2}, [])
+
+        warning.assert_called_once_with(
+            "Rich is not installed; skipping metric table rendering. Install `rich` to enable tables."
+        )
+        assert cb._missing_rich_warning_emitted is True
+        get_console.assert_not_called()
+
+    def test_teardown_releases_notebook_widget(self) -> None:
+        """Teardown clears the notebook output widget reference."""
+        cb = COCOEvalCallback(in_notebook=True)
+        cb._output_widget = MagicMock(name="output_widget")
+
+        cb.teardown(_make_trainer(), _make_pl_module(), "fit")
+
+        assert cb._output_widget is None
+
+    @pytest.mark.parametrize("stage", ["fit", "validate", "test", "predict"])
+    def test_teardown_no_op_when_no_widget(self, stage: str) -> None:
+        """Teardown does not raise when no output widget was created."""
+        cb = COCOEvalCallback(in_notebook=False)
+        assert cb._output_widget is None
+
+        cb.teardown(_make_trainer(), _make_pl_module(), stage)
+
+        assert cb._output_widget is None
+
+    def test_terminal_prints_through_rich_progress_bar_console(self) -> None:
+        """Metric tables route through RichProgressBar._console when active."""
+        # Create a fake callback whose class name is RichProgressBar so
+        # _get_rich_console picks it up without importing PTL.
+        rich_progress_bar_fake = type("RichProgressBar", (), {})
+        rich_console = MagicMock(name="rich_console")
+        fake_pb = rich_progress_bar_fake()
+        fake_pb._console = rich_console  # type: ignore[attr-defined]
+
+        cb = COCOEvalCallback(in_notebook=False)
+        trainer = _make_trainer(callbacks=[fake_pb])
+        trainer.is_global_zero = True
+
+        with patch(
+            "rfdetr.training.callbacks.coco_eval._render_overall_merged",
+            return_value="overall",
+        ):
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.5}, [])
+
+        rich_console.print.assert_called_once()
+
+    def test_notebook_metrics_tables_reuse_and_clear_output_widget(self) -> None:
+        """Notebook metric tables update one output widget instead of appending one table block per epoch."""
+
+        class FakeOutput:
+            """Minimal ipywidgets.Output stand-in."""
+
+            def __init__(self) -> None:
+                self.clear_output = MagicMock(name="clear_output")
+                self.enter_count = 0
+
+            def __enter__(self) -> "FakeOutput":
+                self.enter_count += 1
+                return self
+
+            def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+                return False
+
+        output_widget = FakeOutput()
+        display = MagicMock(name="display")
+        widgets_module = ModuleType("ipywidgets")
+        widgets_module.Output = MagicMock(return_value=output_widget)
+        ipython_module = ModuleType("IPython")
+        ipython_module.__path__ = []
+        display_module = ModuleType("IPython.display")
+        display_module.display = display
+
+        cb = COCOEvalCallback(in_notebook=True)
+        trainer = _make_trainer()
+        trainer.is_global_zero = True
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "ipywidgets": widgets_module,
+                    "IPython": ipython_module,
+                    "IPython.display": display_module,
+                },
+            ),
+            patch("rfdetr.training.callbacks.coco_eval._render_overall_merged", side_effect=["overall-1", "overall-2"]),
+            patch("rfdetr.training.callbacks.coco_eval._render_summary_tables") as render_summary_tables,
+        ):
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.1}, [])
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.2}, [])
+
+        widgets_module.Output.assert_called_once()
+        display.assert_called_once_with(output_widget)
+        assert cb._output_widget is output_widget
+        assert [call.kwargs for call in output_widget.clear_output.call_args_list] == [
+            {"wait": True},
+            {"wait": True},
+        ]
+        assert output_widget.enter_count == 2
+        assert render_summary_tables.call_count == 2
+
+
 @pytest.mark.parametrize(
     "stage,hook,prefix",
     [
@@ -445,7 +599,7 @@ class TestKeypointCocoEvalRouting:
         cb.setup(trainer, module, stage="fit")
 
         evaluator = MagicMock(name="keypoint_coco_eval")
-        cb._get_or_create_keypoint_coco_evaluator = MagicMock(return_value=evaluator)  # type: ignore[method-assign]
+        cb._get_or_create_keypoint_oks_metric = MagicMock(return_value=evaluator)  # type: ignore[method-assign]
         outputs = {
             "results": [
                 {
@@ -458,7 +612,7 @@ class TestKeypointCocoEvalRouting:
             "targets": [{"image_id": torch.tensor([12])}],
         }
 
-        cb._update_keypoint_coco_eval(trainer, outputs, split="val")
+        cb._update_keypoint_oks_metric(trainer, outputs, split="val")
 
         evaluator.update.assert_called_once()
         predictions = evaluator.update.call_args.args[0]
@@ -467,7 +621,7 @@ class TestKeypointCocoEvalRouting:
         assert predictions[12]["keypoints"].shape == (1, 1, 3)
 
     def test_keypoint_coco_eval_exposes_keypoint_ap_and_ar_metrics(self) -> None:
-        """Epoch-end logging should expose keypoint AP and AR metrics from COCO keypoint stats."""
+        """Epoch-end logging should expose keypoint AP and AR metrics from MetricKeypointOKS.compute()."""
         cb = COCOEvalCallback(max_dets=500)
         module = _make_pl_module()
         module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
@@ -477,12 +631,10 @@ class TestKeypointCocoEvalRouting:
         cb.map_metric = MagicMock(name="map_metric")
         cb.map_metric.compute.return_value = _minimal_metrics()
 
-        keypoint_eval = MagicMock(name="keypoint_coco_eval")
-        keypoint_eval.coco_eval = {
-            "keypoints": SimpleNamespace(stats=np.array([0.42, 0.72, 0.31, -1.0, -1.0, 0.55], dtype=np.float32))
-        }
-        cb._keypoint_coco_evaluator = keypoint_eval
-        cb._keypoint_eval_has_updates = True
+        keypoint_metric = MagicMock(name="keypoint_oks_metric")
+        keypoint_metric.has_updates = True
+        keypoint_metric.compute.return_value = {"map": 0.42, "map_50": 0.72, "map_75": 0.31, "mar": 0.55}
+        cb._keypoint_oks_metrics["val"] = keypoint_metric
 
         cb.on_validation_epoch_end(trainer, module)
 
@@ -501,8 +653,7 @@ class TestKeypointCocoEvalRouting:
         assert trainer.callback_metrics["val/keypoint_map_50"].item() == pytest.approx(0.72)
         assert trainer.callback_metrics["val/keypoint_map_75"].item() == pytest.approx(0.31)
         assert trainer.callback_metrics["val/keypoint_mAR"].item() == pytest.approx(0.55)
-        keypoint_eval.synchronize_between_processes.assert_called_once()
-        keypoint_eval.accumulate.assert_called_once()
+        keypoint_metric.compute.assert_called_once()
 
     def test_keypoint_coco_eval_exposes_ema_keypoint_ap_and_ar_metrics(self) -> None:
         """EMA keypoint epoch-end logging should expose val/ema_keypoint_* metrics."""
@@ -513,12 +664,10 @@ class TestKeypointCocoEvalRouting:
         trainer.callback_metrics = {}
         cb.setup(trainer, module, stage="fit")
 
-        keypoint_eval = MagicMock(name="ema_keypoint_coco_eval")
-        keypoint_eval.coco_eval = {
-            "keypoints": SimpleNamespace(stats=np.array([0.25, 0.5, 0.2, -1.0, -1.0, 0.45], dtype=np.float32))
-        }
-        cb._keypoint_coco_evaluators["val_ema"] = keypoint_eval
-        cb._keypoint_eval_updated_splits.add("val_ema")
+        keypoint_metric = MagicMock(name="ema_keypoint_oks_metric")
+        keypoint_metric.has_updates = True
+        keypoint_metric.compute.return_value = {"map": 0.25, "map_50": 0.5, "map_75": 0.2, "mar": 0.45}
+        cb._keypoint_oks_metrics["val_ema"] = keypoint_metric
 
         cb._compute_and_log_keypoint_map("val_ema", module, trainer, log_split="val", metric_prefix="ema_")
 
@@ -539,11 +688,10 @@ class TestKeypointCocoEvalRouting:
         assert trainer.callback_metrics["val/ema_keypoint_map_50"].item() == pytest.approx(0.5)
         assert trainer.callback_metrics["val/ema_keypoint_map_75"].item() == pytest.approx(0.2)
         assert trainer.callback_metrics["val/ema_keypoint_mAR"].item() == pytest.approx(0.45)
-        keypoint_eval.synchronize_between_processes.assert_called_once()
-        keypoint_eval.accumulate.assert_called_once()
+        keypoint_metric.compute.assert_called_once()
 
-    def test_keypoint_coco_evaluator_suppresses_verbose_summary(self) -> None:
-        """PTL keypoint validation should log scalar metrics without printing the full COCO summary block."""
+    def test_keypoint_oks_metric_created_with_correct_args(self) -> None:
+        """_get_or_create_keypoint_oks_metric must construct MetricKeypointOKS with coco_api and sigmas."""
         cb = COCOEvalCallback(max_dets=500, keypoint_oks_sigmas=[0.05])
         dataset = MagicMock(name="dataset")
         datamodule = MagicMock()
@@ -552,24 +700,18 @@ class TestKeypointCocoEvalRouting:
         datamodule._dataset_train = None
         trainer = _make_trainer(datamodule=datamodule)
         coco_api = MagicMock(name="coco_api")
-        evaluator = MagicMock(name="evaluator")
 
         with (
             patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", return_value=coco_api),
-            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
+            patch("rfdetr.training.callbacks.coco_eval.MetricKeypointOKS") as oks_metric_cls,
         ):
-            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="val") is evaluator
+            result = cb._get_or_create_keypoint_oks_metric(trainer, split="val")
 
-        coco_evaluator_cls.assert_called_once_with(
-            coco_api,
-            ["keypoints"],
-            max_dets=500,
-            keypoint_oks_sigmas=[0.05],
-            log_summary=False,
-        )
+        assert result is oks_metric_cls.return_value
+        oks_metric_cls.assert_called_once_with(coco_api, keypoint_oks_sigmas=[0.05], max_dets=500)
 
     def test_keypoint_train_eval_uses_train_dataset(self) -> None:
-        """Train keypoint mAP must build the COCO evaluator from the train dataset."""
+        """Train keypoint mAP must construct MetricKeypointOKS from the train dataset."""
         cb = COCOEvalCallback(max_dets=500, keypoint_oks_sigmas=[0.05])
         train_dataset = MagicMock(name="train_dataset")
         val_dataset = MagicMock(name="val_dataset")
@@ -580,7 +722,6 @@ class TestKeypointCocoEvalRouting:
         trainer = _make_trainer(datamodule=datamodule)
         train_coco_api = MagicMock(name="train_coco_api")
         val_coco_api = MagicMock(name="val_coco_api")
-        evaluator = MagicMock(name="evaluator")
 
         def _get_coco_api(dataset):
             if dataset is train_dataset:
@@ -591,14 +732,14 @@ class TestKeypointCocoEvalRouting:
 
         with (
             patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", side_effect=_get_coco_api),
-            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
+            patch("rfdetr.training.callbacks.coco_eval.MetricKeypointOKS") as oks_metric_cls,
         ):
-            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="train") is evaluator
+            cb._get_or_create_keypoint_oks_metric(trainer, split="train")
 
-        assert coco_evaluator_cls.call_args.args[0] is train_coco_api
+        assert oks_metric_cls.call_args.args[0] is train_coco_api
 
     def test_keypoint_ema_eval_uses_validation_dataset(self) -> None:
-        """EMA keypoint mAP must build the COCO evaluator from the validation dataset."""
+        """EMA keypoint mAP must construct MetricKeypointOKS from the validation dataset."""
         cb = COCOEvalCallback(max_dets=500, keypoint_oks_sigmas=[0.05])
         train_dataset = MagicMock(name="train_dataset")
         val_dataset = MagicMock(name="val_dataset")
@@ -609,7 +750,6 @@ class TestKeypointCocoEvalRouting:
         trainer = _make_trainer(datamodule=datamodule)
         train_coco_api = MagicMock(name="train_coco_api")
         val_coco_api = MagicMock(name="val_coco_api")
-        evaluator = MagicMock(name="evaluator")
 
         def _get_coco_api(dataset):
             if dataset is train_dataset:
@@ -620,14 +760,14 @@ class TestKeypointCocoEvalRouting:
 
         with (
             patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", side_effect=_get_coco_api),
-            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
+            patch("rfdetr.training.callbacks.coco_eval.MetricKeypointOKS") as oks_metric_cls,
         ):
-            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="val_ema") is evaluator
+            cb._get_or_create_keypoint_oks_metric(trainer, split="val_ema")
 
-        assert coco_evaluator_cls.call_args.args[0] is val_coco_api
+        assert oks_metric_cls.call_args.args[0] is val_coco_api
 
-    def test_mixed_keypoint_counts_create_keypoint_evaluator(self) -> None:
-        """Mixed keypoint counts should be handled by the evaluator instead of being skipped by the callback."""
+    def test_mixed_keypoint_counts_create_keypoint_oks_metric(self) -> None:
+        """Mixed keypoint counts should be handled by MetricKeypointOKS instead of being skipped."""
         cb = COCOEvalCallback(max_dets=500)
         dataset = MagicMock(name="dataset")
         datamodule = MagicMock()
@@ -635,16 +775,16 @@ class TestKeypointCocoEvalRouting:
         datamodule._dataset_val = None
         datamodule._dataset_test = None
         trainer = _make_trainer(datamodule=datamodule)
-        evaluator = MagicMock(name="evaluator")
 
         with (
             patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", return_value=MagicMock()),
-            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
+            patch("rfdetr.training.callbacks.coco_eval.MetricKeypointOKS") as oks_metric_cls,
             patch("rfdetr.training.callbacks.coco_eval.logger.warning") as warning,
         ):
-            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="train") is evaluator
+            result = cb._get_or_create_keypoint_oks_metric(trainer, split="train")
 
-        coco_evaluator_cls.assert_called_once()
+        assert result is oks_metric_cls.return_value
+        oks_metric_cls.assert_called_once()
         warning.assert_not_called()
 
 
@@ -754,8 +894,8 @@ class TestOnValidationEpochEnd:
         cb.map_metric.compute.assert_called_once()
         module.log.assert_called()
 
-    def test_progress_bar_suppresses_terminal_metric_summaries(self, capsys) -> None:
-        """Progress-bar training should keep scalar logs but suppress duplicate terminal summary text."""
+    def test_progress_bar_suppresses_duplicate_pycocotools_output(self, capsys) -> None:
+        """Progress-bar training suppresses duplicate pycocotools stdout but still prints metric tables."""
         cb = COCOEvalCallback(max_dets=500)
         trainer = _make_trainer(callbacks=[_TQDMProgressBar()])
         trainer.callback_metrics = {}
@@ -773,7 +913,7 @@ class TestOnValidationEpochEnd:
             cb._compute_and_log(trainer, module, "val")
 
         assert "Average Precision" not in capsys.readouterr().out
-        print_metrics_tables.assert_not_called()
+        print_metrics_tables.assert_called_once()
         cb.map_metric.compute.assert_called_once()
         module.log.assert_called()
 
@@ -1095,8 +1235,8 @@ class TestEmaCollectiveSymmetry:
     def test_ema_metric_created_on_val_epoch_start_when_ema_active(self) -> None:
         """map_metric_ema is created on validation start whenever the EMA callback is present.
 
-        This makes the EMA ``compute()`` collective rank-invariant — created on every rank regardless of how many
-        (or zero) val batches that rank later processes — rather than lazily per-batch.
+        This makes the EMA ``compute()`` collective rank-invariant — created on every rank regardless of how many (or
+        zero) val batches that rank later processes — rather than lazily per-batch.
         """
         cb = COCOEvalCallback(max_dets=500)
         trainer = _make_trainer(callbacks=[_ema_callback()])
@@ -1271,7 +1411,7 @@ class TestPrepareEmaMetricSecondEpoch:
 
 
 class TestComputeAndLogEmaResetPath:
-    """elif branch in _compute_and_log: gate False + metric not None → reset() fires."""
+    """Elif branch in _compute_and_log: gate False + metric not None → reset() fires."""
 
     def test_resets_ema_metric(self) -> None:
         """EMA not computed this epoch but metric exists → reset() clears state for the next epoch."""

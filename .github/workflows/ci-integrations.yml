@@ -41,7 +41,7 @@ jobs:
         timeout-minutes: 5
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
         # [visual] pulls in supervision, required by the predict() call in
-        # tests/try_instantiate_all_models.py (supervision is optional since #1074).
+        # tests/run_smoke_all_models.py (supervision is optional since #1074).
         run: uv pip install -e ".[plus,visual]"
 
       - name: 🔎 Smoke-test model instantiation, downloads, and inference

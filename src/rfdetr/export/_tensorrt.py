@@ -6,9 +6,7 @@
 # Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
-"""
-TensorRT export helpers: trtexec invocation and output parsing.
-"""
+"""TensorRT export helpers: trtexec invocation and output parsing."""
 
 import argparse
 import os

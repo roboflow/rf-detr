@@ -23,10 +23,9 @@ def reset_random_seeds() -> None:
 def reset_build_namespace_warning_state() -> Generator[None, Any, None]:
     """Reset ``build_namespace`` deprecation call counters before each test.
 
-    ``@deprecated(..., num_warns=1)`` emits only once per process by default.
-    This fixture makes warning assertions deterministic regardless of test order.
+    ``@deprecated(..., num_warns=1)`` emits only once per process by default. This fixture makes warning assertions
+    deterministic regardless of test order.
     """
-
     from rfdetr._namespace import build_namespace
 
     state = build_namespace._state

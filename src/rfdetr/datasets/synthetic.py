@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Tuple, Union
 
-import cv2
 import numpy as np
+from PIL import Image
 from tqdm.auto import tqdm
 from typing_extensions import Literal
 
@@ -506,7 +506,9 @@ def generate_coco_dataset(
 
             file_name = f"{i:06d}.jpg"
             file_path = str(split_dir / file_name)
-            cv2.imwrite(file_path, img)
+            # ``supervision.draw_filled_polygon`` paints colors in BGR order (via ``cv2.fillPoly``);
+            # flip the last axis so PIL writes a true RGB JPEG that downstream loaders read correctly.
+            Image.fromarray(img[..., ::-1]).save(file_path)
 
             file_paths_ordered.append(file_path)
             detections_ordered.append(detections)

@@ -15,7 +15,7 @@ import numpy as np
 import torch
 
 if TYPE_CHECKING:
-    import supervision as sv
+    from supervision import Detections
 from PIL import Image, ImageDraw
 from torchvision.datasets import VisionDataset
 
@@ -160,7 +160,7 @@ class _LazyYoloSample:
     class_id: np.ndarray
     polygons: tuple[np.ndarray, ...]
 
-    def to_detections(self) -> "sv.Detections":
+    def to_detections(self) -> "Detections":
         """Materialize the current sample as a supervision ``Detections`` object."""
         sv = import_supervision()
 
@@ -190,14 +190,14 @@ class _LazyYoloDetectionDataset:
     def __len__(self) -> int:
         return len(self._samples)
 
-    def __getitem__(self, idx: int) -> tuple[str, np.ndarray, "sv.Detections"]:
-        import cv2
-
+    def __getitem__(self, idx: int) -> tuple[str, np.ndarray, "Detections"]:
         sample = self._samples[idx]
-        image = cv2.imread(sample.image_path)
-        if image is None:
-            raise ValueError(f"Could not read image from path: {sample.image_path}")
-        return sample.image_path, image, sample.to_detections()
+        try:
+            with Image.open(sample.image_path) as image:
+                rgb_image = np.array(image.convert("RGB"))
+        except (FileNotFoundError, OSError, Image.UnidentifiedImageError) as exc:
+            raise ValueError(f"Could not read image from path: {sample.image_path}") from exc
+        return sample.image_path, rgb_image, sample.to_detections()
 
     def get_image_info(self, idx: int) -> _LazyYoloSample:
         """Return lightweight metadata without loading pixels or dense masks."""
@@ -431,8 +431,8 @@ def _build_coco_api_from_samples(classes: list[str], dataset: Any) -> Any:
             class_id = sample.class_id
             has_masks = len(sample.polygons) > 0
         else:
-            image_path, cv2_image, detections = dataset[img_id]
-            height, width = cv2_image.shape[:2]
+            image_path, image_array, detections = dataset[img_id]
+            height, width = image_array.shape[:2]
             xyxy = detections.xyxy
             class_id = detections.class_id
             has_masks = detections.mask is not None
@@ -501,11 +501,11 @@ class ConvertYolo:
 
     Examples:
         >>> import numpy as np
-        >>> import supervision as sv
+        >>> from supervision import Detections
         >>> from PIL import Image
         >>> # Create a sample image and target
         >>> image = Image.new("RGB", (100, 100))
-        >>> detections = sv.Detections(
+        >>> detections = Detections(
         ...     xyxy=np.array([[10, 20, 30, 40]]),
         ...     class_id=np.array([0])
         ... )
@@ -532,7 +532,7 @@ class ConvertYolo:
 
         Args:
             image: PIL Image
-            target: dict with 'image_id' and 'detections' (sv.Detections)
+            target: dict with 'image_id' and 'detections'
 
         Returns:
             tuple of (image, target_dict)
@@ -637,10 +637,8 @@ class YoloDetection(VisionDataset):
 
     def __getitem__(self, idx: int):
         image_id = self.ids[idx]
-        image_path, cv2_image, detections = self.sv_dataset[idx]
+        image_path, rgb_image, detections = self.sv_dataset[idx]
 
-        # Convert BGR (OpenCV) to RGB (PIL)
-        rgb_image = cv2_image[:, :, ::-1]
         img = Image.fromarray(rgb_image)
 
         target = {"image_id": image_id, "detections": detections}
@@ -665,7 +663,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
             ``dataset_dir``, ``square_resize_div_64``, ``aug_config``, ``segmentation_head``, ``multi_scale``,
             ``expanded_scales``, ``do_random_resize_via_padding``, ``patch_size``, ``num_windows``. ``aug_config`` is
             forwarded to the transform builder; when ``None`` the builder falls back to the default
-            :data:`~rfdetr.datasets.aug_config.AUG_CONFIG`.
+            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG`.
         resolution: Target square resolution in pixels.
 
     Returns:

@@ -52,18 +52,6 @@ class _FakeDataFrame:
         return _FakeSeries(self._data[key])
 
 
-class _FakePlotDataFrame:
-    """Minimal DataFrame-like object for matplotlib plot calls."""
-
-    def __init__(self, data: dict[str, list[float]]) -> None:
-        """Store list-valued metric columns."""
-        self._data = data
-
-    def __getitem__(self, key: str) -> list[float]:
-        """Return fake plot column by name."""
-        return self._data[key]
-
-
 def test_build_metric_groups_includes_detection_and_keypoint_metrics() -> None:
     """Metric grouping should include both detection and keypoint validation series."""
     metrics = _FakeDataFrame(
@@ -81,12 +69,15 @@ def test_build_metric_groups_includes_detection_and_keypoint_metrics() -> None:
             "train/mAP_50_95": [0.04, 0.09],
             "val/mAP_50": [0.1, 0.2],
             "val/mAP_50_95": [0.05, 0.1],
+            "val/mAP_75": [0.07, 0.15],
             "val/mAR": [0.2, 0.3],
             "train/keypoint_map_50": [0.008, 0.018],
             "train/keypoint_map_50_95": [0.004, 0.009],
             "val/keypoint_map_50": [0.01, 0.02],
             "val/keypoint_map_50_95": [0.005, 0.01],
+            "val/keypoint_map_75": [0.006, 0.012],
             "val/keypoint_mAR": [0.03, 0.04],
+            "val/AP/small": [0.05, 0.1],
             "val/F1": [0.4, 0.5],
             "val/precision": [0.6, 0.7],
             "val/recall": [0.3, 0.4],
@@ -97,10 +88,12 @@ def test_build_metric_groups_includes_detection_and_keypoint_metrics() -> None:
 
     assert groups["Loss"] == ["train/loss", "train/loss_cls", "train/kp_nll", "val/loss", "val/loss_keypoints_visible"]
     assert groups["Detection AP@0.50"] == ["train/mAP_50", "val/mAP_50"]
-    assert groups["Detection AP@0.50:0.95"] == ["train/mAP_50_95", "val/mAP_50_95"]
+    assert groups["Detection AP@0.50:0.95"] == ["train/mAP_50_95", "val/mAP_50_95", "val/AP/small"]
+    assert groups["Detection AP@0.75"] == ["val/mAP_75"]
     assert groups["Detection AR"] == ["val/mAR"]
     assert groups["Keypoint AP@0.50"] == ["train/keypoint_map_50", "val/keypoint_map_50"]
     assert groups["Keypoint AP@0.50:0.95"] == ["train/keypoint_map_50_95", "val/keypoint_map_50_95"]
+    assert groups["Keypoint AP@0.75"] == ["val/keypoint_map_75"]
     assert groups["Keypoint AR"] == ["val/keypoint_mAR"]
     assert groups["F1 / Precision / Recall"] == ["val/F1", "val/precision", "val/recall"]
 
@@ -176,8 +169,11 @@ def test_split_loss_and_map_plots_return_separate_figures(tmp_path: Path) -> Non
     assert loss_lines["train/loss"].get_linestyle() == ":"
     assert loss_lines["val/loss"].get_linestyle() == "-"
     assert loss_lines["train/loss"].get_color() == loss_lines["val/loss"].get_color()
+    assert {line.get_marker() for line in loss_lines.values()} == {"None"}
     assert len(map_figure.axes) == 1
     assert map_figure.axes[0].get_title() == "RF-DETR mAP Metrics"
+    map_lines = {line.get_label(): line for line in map_figure.axes[0].lines}
+    assert {line.get_marker() for line in map_lines.values()} == {"None"}
     plt.close(loss_figure)
     plt.close(map_figure)
 
@@ -197,10 +193,10 @@ def test_metrics_reader_drops_trailing_post_fit_validation_epoch(tmp_path: Path)
         }
     ).to_csv(metrics_csv, index=False)
 
-    df = _read_metrics_csv(str(metrics_csv))
+    _, epoch_df = _read_metrics_csv(str(metrics_csv))
 
-    assert df["epoch"].tolist() == [0, 1]
-    assert df["val/mAP_50_95"].tolist() == pytest.approx([0.1, 0.2])
+    assert epoch_df["epoch"].tolist() == [0, 1]
+    assert epoch_df["val/mAP_50_95"].tolist() == pytest.approx([0.1, 0.2])
 
 
 def test_map_plot_uses_line_style_for_train_and_val_splits(tmp_path: Path) -> None:
@@ -234,9 +230,10 @@ def test_map_plot_uses_line_style_for_train_and_val_splits(tmp_path: Path) -> No
 def test_map_renderer_uses_line_style_for_train_and_val_splits() -> None:
     """MAP renderer should pair train/val lines by color and distinguish split by style."""
     pytest.importorskip("matplotlib")
+    pd = pytest.importorskip("pandas")
     from matplotlib import pyplot as plt
 
-    df = _FakePlotDataFrame(
+    df = pd.DataFrame(
         {
             "epoch": [0, 1],
             "train/mAP_50_95": [0.04, 0.09],
@@ -248,16 +245,18 @@ def test_map_renderer_uses_line_style_for_train_and_val_splits() -> None:
 
     figure = _plot_map_columns(
         df,
+        df,
         ["train/mAP_50_95", "val/mAP_50_95", "train/keypoint_map_50_95", "val/keypoint_map_50_95"],
         output_path=None,
     )
 
     assert len(figure.axes) == 1
-    lines = {line.get_label(): line for line in figure.axes[0].lines}
+    lines = {line.get_label(): line for line in figure.axes[0].lines if not line.get_label().startswith("_")}
     assert lines["train/mAP_50_95"].get_linestyle() == ":"
     assert lines["val/mAP_50_95"].get_linestyle() == "-"
     assert lines["train/keypoint_map_50_95"].get_linestyle() == ":"
     assert lines["val/keypoint_map_50_95"].get_linestyle() == "-"
+    assert {line.get_marker() for line in lines.values()} == {"None"}
     assert lines["train/mAP_50_95"].get_color() == lines["val/mAP_50_95"].get_color()
     assert lines["train/keypoint_map_50_95"].get_color() == lines["val/keypoint_map_50_95"].get_color()
     assert lines["train/mAP_50_95"].get_color() != lines["train/keypoint_map_50_95"].get_color()
@@ -267,18 +266,20 @@ def test_map_renderer_uses_line_style_for_train_and_val_splits() -> None:
 def test_map_renderer_preserves_negative_values() -> None:
     """MAP renderer should plot raw metric values from the CSV without sentinel masking."""
     pytest.importorskip("matplotlib")
+    pd = pytest.importorskip("pandas")
     from matplotlib import pyplot as plt
 
-    df = _FakePlotDataFrame(
+    df = pd.DataFrame(
         {
             "epoch": [0, 1, 2],
             "val/keypoint_map_50_95": [-1.0, 0.15, -0.5],
         }
     )
 
-    figure = _plot_map_columns(df, ["val/keypoint_map_50_95"], output_path=None)
+    figure = _plot_map_columns(df, df, ["val/keypoint_map_50_95"], output_path=None)
 
-    y_values = figure.axes[0].lines[0].get_ydata()
+    lines = {line.get_label(): line for line in figure.axes[0].lines if not line.get_label().startswith("_")}
+    y_values = lines["val/keypoint_map_50_95"].get_ydata()
     assert y_values[0] == pytest.approx(-1.0)
     assert y_values[1] == pytest.approx(0.15)
     assert y_values[2] == pytest.approx(-0.5)
@@ -288,9 +289,10 @@ def test_map_renderer_preserves_negative_values() -> None:
 def test_loss_renderer_preserves_negative_component_losses() -> None:
     """Loss renderer should plot negative NLL values rather than treating them as COCO sentinels."""
     pytest.importorskip("matplotlib")
+    pd = pytest.importorskip("pandas")
     from matplotlib import pyplot as plt
 
-    df = _FakePlotDataFrame(
+    df = pd.DataFrame(
         {
             "epoch": [0, 1],
             "train/kp_nll": [-1.0, -2.0],
@@ -299,13 +301,14 @@ def test_loss_renderer_preserves_negative_component_losses() -> None:
 
     figure = _plot_metric_groups(
         df,
+        df,
         {"Loss": ["train/kp_nll"]},
         title="RF-DETR Loss Metrics",
         output_path=None,
         loss_log_scale=False,
     )
 
-    lines = {line.get_label(): line for line in figure.axes[0].lines}
+    lines = {line.get_label(): line for line in figure.axes[0].lines if not line.get_label().startswith("_")}
     np.testing.assert_allclose(lines["train/kp_nll"].get_ydata(), [-1.0, -2.0])
     plt.close(figure)
 
@@ -333,3 +336,64 @@ def test_plot_metrics_warns_when_log_loss_has_non_positive_values(tmp_path: Path
     np.testing.assert_allclose(lines["train/kp_nll"].get_ydata(), [-1.0, -2.0])
     assert not (tmp_path / "metrics_plot.png").exists()
     plt.close(figure)
+
+
+class TestPlotMetricsNoSeaborn:
+    """Verify plot_metrics falls back gracefully when seaborn is unavailable."""
+
+    def test_plot_metrics_succeeds_without_seaborn(self, tmp_path: Path) -> None:
+        """plot_metrics returns a Figure when _IS_SEABORN_AVAILABLE is False (matplotlib-only fallback).
+
+        Scenario: seaborn flag patched to False; plot_metrics called with a minimal DataFrame
+        containing epoch and one metric column.  Expected outcome: call succeeds, returns a
+        matplotlib Figure, raises no ImportError.
+        """
+        pytest.importorskip("matplotlib")
+        pd = pytest.importorskip("pandas")
+        from unittest.mock import patch
+
+        from matplotlib import pyplot as plt
+        from matplotlib.figure import Figure
+
+        metrics_csv = tmp_path / "metrics.csv"
+        pd.DataFrame(
+            {
+                "epoch": [0, 1],
+                "val/mAP_50": [0.1, 0.2],
+            }
+        ).to_csv(metrics_csv, index=False)
+
+        with patch("rfdetr.visualize.training._IS_SEABORN_AVAILABLE", False):
+            figure = plot_metrics(str(metrics_csv))
+
+        assert isinstance(figure, Figure), "plot_metrics must return a matplotlib Figure when seaborn is absent"
+        plt.close(figure)
+
+
+class TestSeabornErrorBands:
+    """Error band rendering when seaborn is available."""
+
+    def test_multi_step_epoch_produces_error_band_on_train_metrics(self, tmp_path: Path) -> None:
+        """Train metrics logged at multiple steps per epoch produce a shaded ±1-std band."""
+        pytest.importorskip("matplotlib")
+        pd = pytest.importorskip("pandas")
+        pytest.importorskip("seaborn")
+        from matplotlib import pyplot as plt
+        from matplotlib.collections import PolyCollection
+
+        metrics_csv = tmp_path / "metrics.csv"
+        pd.DataFrame(
+            {
+                "epoch": [0, 0, 1, 1],
+                "step": [0, 1, 2, 3],
+                "train/loss": [2.0, 3.0, 1.0, 1.5],
+                "val/loss": [None, 2.2, None, 1.6],
+            }
+        ).to_csv(metrics_csv, index=False)
+
+        figure = plot_metrics(str(metrics_csv))
+        loss_ax = figure.axes[0]
+
+        poly_collections = [c for c in loss_ax.collections if isinstance(c, PolyCollection)]
+        assert len(poly_collections) >= 1, "Expected error-band patch for multi-step train/loss"
+        plt.close(figure)
