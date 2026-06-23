@@ -2284,6 +2284,14 @@ Use the release feed to review versioned package changes, migration notes, and m
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>amp_dtype</code> field on <code>TrainConfig</code> (<code>"auto"</code> / <code>"bf16"</code> / <code>"fp16"</code>): pin the mixed-precision
+    autocast dtype instead of relying on device-capability auto-detection. <code>"auto"</code> (default)
+    preserves the historical behaviour — <code>bf16-mixed</code> on Ampere+ CUDA, <code>16-mixed</code> otherwise.
+    Invalid values degrade gracefully to <code>"auto"</code> with a <code>UserWarning</code>.
+    (<a href="https://github.com/roboflow/rf-detr/pull/1143">#1143</a>)</li>
+</ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>HungarianMatcher.forward()</code> now uses the configured <code>focal_alpha</code> in the focal classification matching cost. Previously the value was hardcoded to <code>0.25</code>, silently ignoring any non-default <code>focal_alpha</code> passed to the constructor or <code>build_matcher</code>. This misaligned the bipartite matching cost with the focal classification loss in <code>criterion.py</code>, which correctly used <code>self.focal_alpha</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1147">#1147</a>)</li>
@@ -2309,7 +2317,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <hr />
 <h2 id="180-2026-06-13">[1.8.0] — 2026-06-13<a class="headerlink" href="#180-2026-06-13" title="Permanent link">&para;</a></h2>
-<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>RFDETRKeypointPreview</code> — keypoint detection model variant with GroupPose-style head, covariance-based uncertainty (precision-Cholesky parameterization), and COCO keypoint AP evaluation. Public config classes: <code>KeypointTrainConfig</code>, <code>RFDETRKeypointPreviewConfig</code> (from <code>rfdetr.config</code>). Utility: <code>precision_cholesky_to_pixel_covariance</code> (from <code>rfdetr.utilities</code>). Schema helpers <code>infer_coco_keypoint_schema</code>, <code>CocoKeypointSchema</code>, <code>active_keypoint_counts</code> accessible via <code>rfdetr.datasets._keypoint_schema</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1099">#1099</a>)</li>
 <li><code>RFDETR.export_for_roboflow(output_dir)</code> — writes a Roboflow upload bundle (<code>weights.pt</code> + <code>class_names.txt</code>) without a network call; extracted from <code>deploy_to_roboflow</code>, which now delegates to it. (<a href="https://github.com/roboflow/rf-detr/pull/1086">#1086</a>)</li>
@@ -2340,7 +2348,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <hr />
 <h2 id="170-2026-04-29">[1.7.0] — 2026-04-29<a class="headerlink" href="#170-2026-04-29" title="Permanent link">&para;</a></h2>
-<h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
+<h3 id="added_2">Added<a class="headerlink" href="#added_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>augmentation_backend</code> field on <code>TrainConfig</code> (<code>"cpu"</code> / <code>"auto"</code> / <code>"gpu"</code>): opt-in GPU-side augmentation via <a href="https://kornia.readthedocs.io">Kornia</a> applied in <code>RFDETRDataModule.on_after_batch_transfer</code> after the batch is resident on the GPU. CPU path is unchanged and remains the default. Install with <code>pip install 'rfdetr[kornia]'</code>. Supports detection and segmentation (see below). (<a href="https://github.com/roboflow/rf-detr/pull/1003">#1003</a>)</li>
 <li>Kornia GPU augmentation now supports instance segmentation: images, boxes, and per-instance masks are augmented in sync on the GPU. New public helper <code>collate_masks</code> packs <code>[N_i, H, W]</code> boolean masks into a <code>[B, N_max, H, W]</code> float32 tensor for Kornia; <code>build_kornia_pipeline</code> gains a <code>with_masks: bool = False</code> parameter; <code>unpack_boxes</code> gains an optional <code>masks_aug</code> tensor that re-binarises and filters masks in sync with boxes. Previously <code>augmentation_backend="gpu"/"auto"</code> was silently ignored for segmentation models; now it works identically to detection. <strong>Note</strong>: the mask buffer is <code>[B, N_max, H, W]</code> float32 — approximately 500 MB at <code>B=8, N_max=50, H=W=560</code>; use <code>augmentation_backend="cpu"</code> on cards with limited VRAM. (<a href="https://github.com/roboflow/rf-detr/pull/1003">#1003</a>, closes <a href="https://github.com/roboflow/rf-detr/issues/997">#997</a>)</li>
@@ -2474,7 +2482,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Fixed <code>deploy_to_roboflow</code> failing with <code>FileNotFoundError</code> after PyTorch Lightning migration: <code>class_names.txt</code> is now written to the upload directory and <code>args.class_names</code> is populated before saving the checkpoint. (<a href="https://github.com/roboflow/rf-detr/pull/890">#890</a>)</li>
 </ul>
 <h2 id="162-2026-03-27">[1.6.2] — 2026-03-27<a class="headerlink" href="#162-2026-03-27" title="Permanent link">&para;</a></h2>
-<h3 id="added_2">Added<a class="headerlink" href="#added_2" title="Permanent link">&para;</a></h3>
+<h3 id="added_3">Added<a class="headerlink" href="#added_3" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>RFDETR.predict(shape=...)</code> — optional <code>(height, width)</code> tuple overrides the default square inference resolution; useful when matching a non-square ONNX export. Both dimensions must be positive integers divisible by <code>patch_size × num_windows</code> as determined by the model configuration. (<a href="https://github.com/roboflow/rf-detr/pull/866">#866</a>)</li>
 </ul>
@@ -2502,7 +2510,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Fixed duplicate <code>ModelCheckpoint</code> state keys when <code>checkpoint_interval=1</code>; <code>last.ckpt</code> is omitted in that configuration to avoid collision. (<a href="https://github.com/roboflow/rf-detr/pull/859">#859</a>)</li>
 </ul>
 <h2 id="160-2026-03-20">[1.6.0] — 2026-03-20<a class="headerlink" href="#160-2026-03-20" title="Permanent link">&para;</a></h2>
-<h3 id="added_3">Added<a class="headerlink" href="#added_3" title="Permanent link">&para;</a></h3>
+<h3 id="added_4">Added<a class="headerlink" href="#added_4" title="Permanent link">&para;</a></h3>
 <ul>
 <li>PyTorch Lightning training building blocks: <code>RFDETRModelModule</code>, <code>RFDETRDataModule</code>, <code>build_trainer()</code>, and individual callbacks (<code>RFDETREMACallback</code>, <code>COCOEvalCallback</code>, <code>BestModelCallback</code>, <code>DropPathCallback</code>, <code>MetricsPlotCallback</code>) — all standard PTL components, swap/subclass/extend any piece. Level 3: <code>rfdetr fit --config</code> CLI with zero Python required. (<a href="https://github.com/roboflow/rf-detr/pull/757">#757</a>, <a href="https://github.com/roboflow/rf-detr/pull/794">#794</a>)</li>
 <li>Multi-GPU DDP via <code>model.train()</code>: <code>strategy</code>, <code>devices</code>, and <code>num_nodes</code> added to <code>TrainConfig</code>; single-GPU behaviour unchanged when omitted. (<a href="https://github.com/roboflow/rf-detr/pull/808">#808</a>)</li>
@@ -2544,7 +2552,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <hr />
 <h2 id="152-2026-03-04">[1.5.2] — 2026-03-04<a class="headerlink" href="#152-2026-03-04" title="Permanent link">&para;</a></h2>
-<h3 id="added_4">Added<a class="headerlink" href="#added_4" title="Permanent link">&para;</a></h3>
+<h3 id="added_5">Added<a class="headerlink" href="#added_5" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Added peak GPU memory (<code>max_mem</code> in MB) to training and evaluation progress bars on CUDA; omitted on CPU and MPS. (<a href="https://github.com/roboflow/rf-detr/pull/773">#773</a>)</li>
 </ul>
@@ -2558,7 +2566,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Fixed evaluation metric corruption on 1-indexed Roboflow datasets caused by a flawed contiguity check in <code>_should_use_raw_category_ids</code>. (<a href="https://github.com/roboflow/rf-detr/pull/755">#755</a>)</li>
 </ul>
 <h2 id="151-2026-02-27">[1.5.1] — 2026-02-27<a class="headerlink" href="#151-2026-02-27" title="Permanent link">&para;</a></h2>
-<h3 id="added_5">Added<a class="headerlink" href="#added_5" title="Permanent link">&para;</a></h3>
+<h3 id="added_6">Added<a class="headerlink" href="#added_6" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Added support for nested Albumentations containers (<code>OneOf</code>, <code>Sequential</code>) inside <code>aug_config</code>. (<a href="https://github.com/roboflow/rf-detr/pull/752">#752</a>)</li>
 </ul>
@@ -2576,7 +2584,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Pinned <code>onnxsim&lt;0.6.0</code> to prevent <code>pip install</code> from hanging indefinitely. (<a href="https://github.com/roboflow/rf-detr/pull/749">#749</a>)</li>
 </ul>
 <h2 id="150-2026-02-23">[1.5.0] — 2026-02-23<a class="headerlink" href="#150-2026-02-23" title="Permanent link">&para;</a></h2>
-<h3 id="added_6">Added<a class="headerlink" href="#added_6" title="Permanent link">&para;</a></h3>
+<h3 id="added_7">Added<a class="headerlink" href="#added_7" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Added custom training augmentations via <code>aug_config</code> in <code>model.train()</code> — accepts a dict of Albumentations transforms, a built-in preset (<code>AUG_CONSERVATIVE</code>, <code>AUG_AGGRESSIVE</code>, <code>AUG_AERIAL</code>, <code>AUG_INDUSTRIAL</code>), or <code>{}</code> to disable. Bounding boxes and segmentation masks are transformed automatically. (<a href="https://github.com/roboflow/rf-detr/pull/263">#263</a>, <a href="https://github.com/roboflow/rf-detr/pull/702">#702</a>)</li>
 <li>Added <code>save_dataset_grids=True</code> in <code>TrainConfig</code> to write 3×3 JPEG grids of augmented samples to <code>output_dir</code> before training begins. (<a href="https://github.com/roboflow/rf-detr/pull/153">#153</a>)</li>
@@ -2618,7 +2626,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Fixed missing <code>info</code> key in COCO export format. (<a href="https://github.com/roboflow/rf-detr/pull/681">#681</a>)</li>
 </ul>
 <h2 id="142-2026-02-12">[1.4.2] — 2026-02-12<a class="headerlink" href="#142-2026-02-12" title="Permanent link">&para;</a></h2>
-<h3 id="added_7">Added<a class="headerlink" href="#added_7" title="Permanent link">&para;</a></h3>
+<h3 id="added_8">Added<a class="headerlink" href="#added_8" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Added <code>generate_coco_dataset()</code> utility for generating synthetic COCO-format datasets with configurable class counts, split ratios, and bounding box annotations. (<a href="https://github.com/roboflow/rf-detr/pull/617">#617</a>)</li>
 <li>Added <code>run_test=False</code> to <code>TrainConfig</code> — skip test-split evaluation when your dataset has no test set. (<a href="https://github.com/roboflow/rf-detr/pull/628">#628</a>)</li>
@@ -2633,7 +2641,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Fixed segmentation ONNX export failure. (<a href="https://github.com/roboflow/rf-detr/pull/626">#626</a>)</li>
 </ul>
 <h2 id="141-2026-01-30">[1.4.1] — 2026-01-30<a class="headerlink" href="#141-2026-01-30" title="Permanent link">&para;</a></h2>
-<h3 id="added_8">Added<a class="headerlink" href="#added_8" title="Permanent link">&para;</a></h3>
+<h3 id="added_9">Added<a class="headerlink" href="#added_9" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Added native YOLO dataset format support alongside COCO. (<a href="https://github.com/roboflow/rf-detr/pull/74">#74</a>)</li>
 <li>Added <code>--print-freq</code> CLI argument to control training log frequency. (<a href="https://github.com/roboflow/rf-detr/pull/603">#603</a>)</li>
