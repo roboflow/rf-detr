@@ -284,16 +284,10 @@ class Transformer(nn.Module):
         src_flatten = []
         mask_flatten = [] if masks is not None else None
         lvl_pos_embed_flatten = []
-        # Build spatial_shapes as a tensor directly so that the ONNX tracer
-        # can track h/w symbolically instead of baking constants into a constant
-        # shape node.
-        spatial_shapes = torch.empty((len(srcs), 2), device=srcs[0].device, dtype=torch.long)
         spatial_shapes_hw: list[tuple[int, int]] = []
         valid_ratios = [] if masks is not None else None
         for lvl, (src, pos_embed) in enumerate(zip(srcs, pos_embeds)):
             _, c, h, w = src.shape
-            spatial_shapes[lvl, 0] = h
-            spatial_shapes[lvl, 1] = w
             spatial_shapes_hw.append((h, w))
 
             src = src.flatten(2).transpose(1, 2)  # bs, hw, c
@@ -309,6 +303,18 @@ class Transformer(nn.Module):
             mask_flatten = torch.cat(mask_flatten, 1)  # bs, \sum{hxw}
             valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
         lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten, 1)  # bs, \sum{hxw}, c
+        # spatial_shapes must not be built by torch.empty(...) + in-place index assignment:
+        # that emits a ScatterND feeding a shape tensor (level_start_index), which TensorRT
+        # rejects ("IScatterLayer cannot be used to compute a shape tensor").
+        # torch.as_tensor(python-int list) avoids ScatterND but bakes values as a Constant.
+        # torch.stack of per-level torch._shape_as_tensor slices also produces a Constant
+        # node in TorchScript ONNX export (the tracer records concrete H,W values at trace
+        # time), but that Constant is accepted by TensorRT as a valid shape tensor source —
+        # unlike ScatterND. torch._shape_as_tensor(t) is a private ATen op that returns a
+        # 1-D int64 tensor of t's dimension sizes; [2:4] extracts (H, W) from NCHW.
+        spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
+            device=srcs[0].device, dtype=torch.long
+        )
         level_start_index = torch.cat((spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
 
         # Flatten optional dual-projector features for keypoint-specific cross-attention.
