@@ -685,7 +685,16 @@ class TrainConfig(BaseConfig):
     ema_update_interval: int = 1
     num_workers: int = 2
     weight_decay: float = 1e-4
-    amp_dtype: Literal["auto", "bf16", "fp16"] = "auto"
+    amp_dtype: Literal["auto", "bf16", "fp16"] = Field(
+        default="auto",
+        description=(
+            "Mixed-precision autocast dtype. "
+            "'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
+            "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported). "
+            "'fp16' forces fp16. "
+            "Has no effect when model_config.amp=False or when training on CPU."
+        ),
+    )
     early_stopping: bool = False
     early_stopping_patience: int = 10
     early_stopping_min_delta: float = 0.001
@@ -763,6 +772,7 @@ class TrainConfig(BaseConfig):
         dtype rather than failing the whole training run.
         """
         if value not in ("auto", "bf16", "fp16"):
+            # stacklevel=2 points into Pydantic internals; unavoidable with @field_validator in Pydantic v2.
             warnings.warn(
                 f"Unknown amp_dtype={value!r}; expected one of 'auto', 'bf16', 'fp16'. Falling back to 'auto'.",
                 UserWarning,
