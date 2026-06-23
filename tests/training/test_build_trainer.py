@@ -546,6 +546,10 @@ class TestBuildTrainerAmpDtype:
             precision = self._resolved_precision(tmp_path, cuda=True, bf16=False, amp_dtype="bf16")
         assert precision == "16-mixed"
 
+    def test_auto_on_cuda_without_bf16_gives_16_mixed(self, tmp_path):
+        """amp_dtype='auto' on CUDA without bf16 support (e.g. V100) resolves to '16-mixed'."""
+        assert self._resolved_precision(tmp_path, cuda=True, bf16=False, amp_dtype="auto") == "16-mixed"
+
     def test_fp16_on_mps_gives_16_mixed(self, tmp_path):
         """amp_dtype='fp16' on MPS gives '16-mixed'."""
         assert self._resolved_precision(tmp_path, cuda=False, mps=True, amp_dtype="fp16") == "16-mixed"
@@ -575,10 +579,19 @@ class TestBuildTrainerAmpDtype:
             build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp16"), _mc(amp=True), accelerator="cpu")
         assert captured["precision"] == "32-true"
 
-    def test_invalid_amp_dtype_falls_back_to_auto_with_warning(self, tmp_path):
-        """An unrecognised amp_dtype falls back to 'auto' with a warning rather than raising."""
+    @pytest.mark.parametrize(
+        "bad_value",
+        [
+            pytest.param("float8", id="string-float8"),
+            pytest.param(None, id="none"),
+            pytest.param(42, id="int"),
+            pytest.param(True, id="bool"),
+        ],
+    )
+    def test_invalid_amp_dtype_falls_back_to_auto_with_warning(self, tmp_path, bad_value):
+        """An unrecognised or wrong-typed amp_dtype falls back to 'auto' with a warning rather than raising."""
         with pytest.warns(UserWarning, match="amp_dtype"):
-            tc = _tc(tmp_path, amp_dtype="float8")
+            tc = _tc(tmp_path, amp_dtype=bad_value)
         assert tc.amp_dtype == "auto"
 
 
