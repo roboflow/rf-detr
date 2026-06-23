@@ -933,3 +933,69 @@ class TestPredictClassNameData:
         )
         unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
         assert not unmapped_warnings, "class_id=90 (valid COCO category) must not trigger unmapped-class-id warning"
+
+
+class TestPredictKeypointClassNameMapping:
+    """class_name mapping for keypoint and detection models (issue #1150).
+
+    Keypoint models use a shifted class scheme: slot 0 = background (0 keypoints), real classes
+    start at slot 1.  After ``load_pretrain_weights`` auto-aligns to the 2-slot checkpoint head,
+    ``num_logit_slots`` becomes 1, which collides with person's class_id=1 and wrongly triggers the
+    ``__background__`` sentinel for every detection.
+    """
+
+    @pytest.mark.parametrize(
+        "class_names,labels,num_kp_per_class,expected_class_name",
+        [
+            # Background-first schema (regression for https://github.com/roboflow/rf-detr/issues/1150)
+            pytest.param(["person"], [1], [0, 17], "person", id="bg-first-slot-1-maps-to-person"),
+            pytest.param(["person"], [0], [0, 17], "__background__", id="bg-first-slot-0-maps-to-background"),
+            pytest.param(
+                ["person", "bicycle"], [1], [0, 17, 4], "person", id="bg-first-multi-class-slot-1-maps-to-person"
+            ),
+            pytest.param(
+                ["person", "bicycle"], [2], [0, 17, 4], "bicycle", id="bg-first-multi-class-slot-2-maps-to-bicycle"
+            ),
+            # Active-first schemas (no leading zero) — fallback path must stay correct
+            pytest.param(["person"], [0], [25], "person", id="active-first-single-class-slot-0-maps-to-person"),
+            pytest.param(
+                ["person", "bicycle"], [0], [17, 4], "person", id="active-first-multi-class-slot-0-maps-to-person"
+            ),
+        ],
+    )
+    def test_keypoint_class_name_mapping(
+        self,
+        class_names: list[str],
+        labels: list[int],
+        num_kp_per_class: list[int],
+        expected_class_name: str,
+    ) -> None:
+        """class_name resolved correctly for background-first and active-first keypoint schemas."""
+        kp_model = _DummyModel(class_names=class_names, labels=labels, include_keypoints=True)
+        kp_model.args = SimpleNamespace(num_classes=len(class_names), num_keypoints_per_class=num_kp_per_class)
+        model = _DummyRFDETR()
+        model.model = kp_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        key_points = model.predict(img)
+
+        assert isinstance(key_points, sv.KeyPoints)
+        assert key_points.data["class_name"][0] == expected_class_name, (
+            f"schema={num_kp_per_class}, class_id={labels[0]}: "
+            f"expected '{expected_class_name}', got '{key_points.data['class_name'][0]}'"
+        )
+
+    def test_detection_model_class_names_unaffected_by_keypoint_branch(self) -> None:
+        """Detection models (no num_keypoints_per_class) map class_id via 0-based index, unchanged by fix."""
+        det_model = _DummyModel(class_names=["cat"], labels=[0], include_keypoints=False)
+        det_model.args = SimpleNamespace(num_classes=1)
+        model = _DummyRFDETR()
+        model.model = det_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert isinstance(detections, sv.Detections)
+        assert detections.data["class_name"][0] == "cat", (
+            f"Detection model: class_id=0 must map to 'cat', got '{detections.data['class_name'][0]}'"
+        )
