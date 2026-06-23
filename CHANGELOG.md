@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `amp_dtype` field on `TrainConfig` (`"auto"` / `"bf16"` / `"fp16"`): pin the mixed-precision
+    autocast dtype instead of relying on device-capability auto-detection. `"auto"` (default)
+    preserves the historical behaviour — `bf16-mixed` on Ampere+ CUDA, `16-mixed` otherwise.
+    Invalid values degrade gracefully to `"auto"` with a `UserWarning`.
+    ([#1143](https://github.com/roboflow/rf-detr/pull/1143))
+
 ### Fixed
 
 - `HungarianMatcher.forward()` now uses the configured `focal_alpha` in the focal classification matching cost. Previously the value was hardcoded to `0.25`, silently ignoring any non-default `focal_alpha` passed to the constructor or `build_matcher`. This misaligned the bipartite matching cost with the focal classification loss in `criterion.py`, which correctly used `self.focal_alpha`. ([#1147](https://github.com/roboflow/rf-detr/pull/1147))
