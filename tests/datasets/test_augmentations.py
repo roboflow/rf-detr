@@ -19,7 +19,7 @@ from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
 from rfdetr.datasets._develop import _SimpleDataset
 from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE, AUG_CONFIG
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
-from rfdetr.datasets.transforms import AlbumentationsWrapper, _build_albu_transform
+from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize, _build_albu_transform
 from rfdetr.utilities import collate_fn
 
 
@@ -1942,3 +1942,75 @@ class TestKeypointScalingAcrossResolutions:
         assert tensor.shape[-2:] == (resolution, resolution), (
             f"expected (C, {resolution}, {resolution}), got {tuple(tensor.shape)}"
         )
+
+
+class TestNormalize:
+    """Unit tests for Normalize.__call__."""
+
+    def test_normalize_call_is_bound_method(self) -> None:
+        """Normalize.__call__ must be a class method, not a module-level function."""
+        import inspect
+
+        normalize = Normalize()
+        assert callable(normalize), "Normalize instance must be callable"
+        assert inspect.ismethod(normalize.__call__), "__call__ must be a bound method"
+
+    def test_normalize_call_image_only_returns_normalized_tensor(self) -> None:
+        """Normalize(image, None) returns (tensor, None) without raising."""
+        normalize = Normalize()
+        image = torch.zeros(3, 64, 64)
+        out_img, out_tgt = normalize(image, None)
+        assert isinstance(out_img, torch.Tensor)
+        assert out_tgt is None
+
+    @pytest.mark.parametrize(
+        "boxes,image_hw,expected_cxcywh_norm",
+        [
+            pytest.param(
+                torch.tensor([[0.0, 0.0, 100.0, 50.0]]),
+                (50, 100),
+                torch.tensor([[0.5, 0.5, 1.0, 1.0]]),
+                id="full_image_box",
+            ),
+            pytest.param(
+                torch.tensor([[10.0, 10.0, 30.0, 40.0]]),
+                (100, 100),
+                torch.tensor([[0.2, 0.25, 0.2, 0.3]]),
+                id="non_square_box",
+            ),
+        ],
+    )
+    def test_normalize_call_normalizes_boxes(
+        self,
+        boxes: torch.Tensor,
+        image_hw: tuple[int, int],
+        expected_cxcywh_norm: torch.Tensor,
+    ) -> None:
+        """Normalize.__call__ converts boxes from xyxy pixel coords to normalized cxcywh."""
+        height, width = image_hw
+        normalize = Normalize()
+        image = torch.zeros(3, height, width)
+        target = {"boxes": boxes.clone()}
+        _, out_tgt = normalize(image, target)
+        torch.testing.assert_close(out_tgt["boxes"], expected_cxcywh_norm, atol=1e-4, rtol=0.0)
+
+    def test_normalize_call_normalizes_keypoints_to_unit_range(self) -> None:
+        """Normalize.__call__ divides keypoint x by width and y by height."""
+        normalize = Normalize()
+        height, width = 100, 200
+        image = torch.zeros(3, height, width)
+        kp = torch.tensor([[[100.0, 50.0, 2.0]]])  # x=100 of 200w, y=50 of 100h
+        target = {"boxes": torch.zeros(1, 4), "keypoints": kp}
+        _, out_tgt = normalize(image, target)
+        assert out_tgt["keypoints"][0, 0, 0].item() == pytest.approx(0.5, abs=1e-5)
+        assert out_tgt["keypoints"][0, 0, 1].item() == pytest.approx(0.5, abs=1e-5)
+        assert out_tgt["keypoints"][0, 0, 2].item() == pytest.approx(2.0)
+
+    def test_normalize_call_does_not_mutate_original_target(self) -> None:
+        """Normalize.__call__ must not mutate the caller's target dict."""
+        normalize = Normalize()
+        image = torch.zeros(3, 50, 100)
+        boxes_original = torch.tensor([[0.0, 0.0, 100.0, 50.0]])
+        target = {"boxes": boxes_original.clone()}
+        normalize(image, target)
+        torch.testing.assert_close(target["boxes"], boxes_original, rtol=0.0, atol=0.0)
