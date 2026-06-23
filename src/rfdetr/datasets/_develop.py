@@ -15,9 +15,10 @@ import os
 import shutil
 import time
 import zipfile
+from collections.abc import Generator
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generator, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.request import urlretrieve
 
 import numpy as np
@@ -126,14 +127,14 @@ class _SimpleDataset:
         >>> image, target = dataset[0]
     """
 
-    def __init__(self, num_samples: int = 10, transforms: Optional[Any] = None) -> None:
+    def __init__(self, num_samples: int = 10, transforms: Any | None = None) -> None:
         self.num_samples = num_samples
         self.transforms = transforms
 
     def __len__(self) -> int:
         return self.num_samples
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, dict]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, dict[str, Any]]:
         # Create synthetic image
         image = Image.new("RGB", (640, 480))
 

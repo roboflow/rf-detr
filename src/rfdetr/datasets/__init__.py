@@ -14,8 +14,10 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import torchvision
 from torch.utils.data import Dataset, Subset
@@ -25,7 +27,7 @@ from rfdetr.datasets.o365 import build_o365
 from rfdetr.datasets.yolo import YoloDetection, build_roboflow_from_yolo
 
 
-def get_coco_api_from_dataset(dataset: Dataset[Any]) -> Optional[Any]:
+def get_coco_api_from_dataset(dataset: Dataset[Any]) -> Any | None:
     for _ in range(10):
         if isinstance(dataset, Subset):
             dataset = dataset.dataset

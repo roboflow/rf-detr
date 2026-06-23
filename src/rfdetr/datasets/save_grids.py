@@ -3,16 +3,17 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
 import torchvision.transforms as T  # noqa: N812
 from matplotlib.axes import Axes
 from supervision import BoxAnnotator, Color, Detections, LabelAnnotator
+from torch import Tensor
 from torch.utils.data import DataLoader
 
 from rfdetr.util.box_ops import box_cxcywh_to_xyxy
@@ -84,7 +85,7 @@ class DatasetGridSaver:
 
     @staticmethod
     def _annotate_and_plot(
-        single_image: torch.Tensor,
+        single_image: Tensor,
         single_target: dict[str, Any],
         ax: Axes,
         inv_normalize: T.Normalize,
@@ -104,24 +105,24 @@ class DatasetGridSaver:
         from PIL import Image as PILImage
 
         resized_size = single_target["size"]
-        if isinstance(resized_size, torch.Tensor):
+        if isinstance(resized_size, Tensor):
             resized_size = resized_size.detach().cpu()
         h, w = int(resized_size[0]), int(resized_size[1])
 
         de_normalized_img = inv_normalize(single_image)
-        if isinstance(de_normalized_img, torch.Tensor):
+        if isinstance(de_normalized_img, Tensor):
             de_normalized_img = de_normalized_img.detach().cpu().numpy()
         scene = PILImage.fromarray((np.clip(de_normalized_img.transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8))
 
         if len(single_target["boxes"]) > 0:
             labels_tensor = single_target["labels"]
-            if isinstance(labels_tensor, torch.Tensor):
+            if isinstance(labels_tensor, Tensor):
                 class_ids = labels_tensor.detach().cpu().numpy().astype(int)
             else:
                 class_ids = np.asarray(labels_tensor, dtype=int)
 
             boxes = single_target["boxes"]
-            if isinstance(boxes, torch.Tensor):
+            if isinstance(boxes, Tensor):
                 boxes_iter = boxes.detach().cpu()
             else:
                 boxes_iter = boxes
