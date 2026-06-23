@@ -1498,11 +1498,16 @@ class RFDETR:
             ``detections.metadata["source_image"]``.
 
         Note:
-            ``class_name`` mapping uses one of two modes depending on the checkpoint. For pretrained COCO checkpoints
+            ``class_name`` mapping uses one of three modes depending on the checkpoint. For pretrained COCO checkpoints
             (detected when ``model.args.num_classes > len(class_names)`` and ``class_names`` matches
             ``COCO_CLASS_NAMES``), raw COCO category IDs (1–90, sparse) are looked up by category ID rather than by
-            position — so ``class_id=18`` yields ``"dog"``, not ``class_names[18]``. For fine-tuned models, ``class_id``
-            is a 0-based index into ``class_names``.
+            position — so ``class_id=18`` yields ``"dog"``, not ``class_names[18]``. For fine-tuned detection and
+            segmentation models, ``class_id`` is a 0-based index into ``class_names``. For keypoint models
+            (detected when ``args.num_keypoints_per_class[0] == 0``), slot 0 is background and maps to
+            ``"__background__"``; foreground slots (those where ``num_keypoints_per_class[slot] > 0``) map to
+            ``class_names`` in order — so slot 1 → ``class_names[0]``, slot 2 → ``class_names[1]``, and so on.
+            The standard no-object sentinel used for detection models (``class_id == num_logit_slots``) does not apply
+            to keypoint models because slot 0 already occupies the background role.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -1653,6 +1658,10 @@ class RFDETR:
         elif _is_keypoint_model:
             # Map foreground keypoint slots (slots where num_keypoints > 0) to class names.
             # Slot 0 is background and is skipped. Slot 1 → class_names[0], slot 2 → class_names[1], …
+            # Note: slots where num_keypoints == 0 but slot != 0 (detect-only classes in a mixed schema
+            # such as [0, 17, 0, 4]) are not present in _kp_foreground_slots and will map to an empty
+            # string with a one-time warning. Mixed keypoint+detection schemas are not a supported
+            # configuration for the shipped models.
             _kp_foreground_slots = [idx for idx, k in enumerate(_num_keypoints_per_class) if k > 0]
             _class_id_to_name = {slot: model_class_names[i] for i, slot in enumerate(_kp_foreground_slots) if i < n}
         else:
