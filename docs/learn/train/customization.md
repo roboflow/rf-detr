@@ -119,7 +119,7 @@ trainer = build_trainer(train_config, model_config)
 | Max epochs            | `train_config.epochs`                                                                                                                                                      |
 | Gradient accumulation | Detection/segmentation: `train_config.grad_accum_steps` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `1`). |
 | Gradient clipping     | Detection/segmentation: `train_config.clip_max_norm` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `None`). |
-| Mixed precision       | Resolved from `model_config.amp` and device capability (`bf16-mixed` on Ampere+, `16-mixed` otherwise)                                                                     |
+| Mixed precision       | `model_config.amp` enables AMP; dtype resolved from `train_config.amp_dtype` (`"auto"` selects `bf16-mixed` on Ampere+, `"bf16"` / `"fp16"` force a specific dtype)        |
 | Accelerator           | `train_config.accelerator` (default `"auto"`)                                                                                                                              |
 | Strategy              | Pass `strategy=` as a `**trainer_kwarg` to `build_trainer`. `TrainConfig` has no `strategy` field — setting it on `TrainConfig` will raise a `ValueError`.                 |
 | Sync batch norm       | `train_config.sync_bn`                                                                                                                                                     |

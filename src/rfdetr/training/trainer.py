@@ -176,16 +176,28 @@ def build_trainer(
     # --- Precision resolution ---
     def _resolve_precision() -> str:
         if not model_config.amp:
+            if tc.amp_dtype != "auto":
+                warnings.warn(
+                    f"amp_dtype={tc.amp_dtype!r} has no effect when model_config.amp=False.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             return "32-true"
         # CPU accelerator: bf16 autocast on macOS CPU (Apple Silicon) is ~13x slower
         # than fp32 due to missing native bfloat16 kernels — no benefit, high cost.
         if accelerator == "cpu":
             return "32-true"
+        # ``train_config.amp_dtype`` (a train() kwarg) lets callers pin the autocast dtype (see issue #1132):
+        #   "auto" — bf16 on bf16-capable CUDA, fp16 otherwise (historical default);
+        #   "fp16" — force "16-mixed" (e.g. deployment targets without bf16 support);
+        #   "bf16" — force "bf16-mixed", falling back to fp16 with a warning when unsupported.
+        # Unrecognised values are coerced to "auto" (with a warning) by TrainConfig validation.
+        amp_dtype = tc.amp_dtype
         # Ampere+ GPUs support bf16-mixed which is scaler-free —
         # no GradScaler.scale/unscale/update overhead per optimizer step.
         # BF16 is safe for fine-tuning (pretrained weights loaded by default).
-        # Training from random init with very small LR may underflow; callers
-        # can override via trainer_kwargs(precision="16-mixed") if needed.
+        # Training from random init with very small LR may underflow; pass
+        # ``amp_dtype="fp16"`` if needed.
         #
         # Note: torch.cuda.is_available() and torch.cuda.is_bf16_supported() both
         # create a CUDA driver context in the parent process.  This is intentional
@@ -196,10 +208,34 @@ def build_trainer(
         # parent has initialised. If a fork-based path is ever added, this
         # precision check must be moved into the child process.
         if torch.cuda.is_available():
-            if torch.cuda.is_bf16_supported():
-                return "bf16-mixed"
-            return "16-mixed"
+            if amp_dtype == "fp16":
+                return "16-mixed"
+            if amp_dtype == "bf16":
+                if torch.cuda.is_bf16_supported():
+                    return "bf16-mixed"
+                _logger.warning(
+                    "amp_dtype='bf16' was requested but this CUDA device does not support bfloat16; "
+                    "falling back to fp16 ('16-mixed')."
+                )
+                warnings.warn(
+                    "amp_dtype='bf16' was requested but this CUDA device does not support bfloat16; "
+                    "falling back to fp16 ('16-mixed').",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                return "16-mixed"
+            # amp_dtype == "auto"
+            return "bf16-mixed" if torch.cuda.is_bf16_supported() else "16-mixed"
         if torch.backends.mps.is_available():
+            if amp_dtype == "bf16":
+                _logger.warning(
+                    "amp_dtype='bf16' is not applied on MPS; RF-DETR uses fp16 ('16-mixed') for MPS autocast."
+                )
+                warnings.warn(
+                    "amp_dtype='bf16' is not applied on MPS; RF-DETR uses fp16 ('16-mixed') for MPS autocast.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             return "16-mixed"
         return "32-true"
 
