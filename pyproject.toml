@@ -47,8 +47,6 @@ dependencies = [
     "pillow>=12.2.0",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
-    "opencv-python>=4.11.0.86",
-    "opencv-python-headless>=4.10.0.84",
 ]
 
 [project.optional-dependencies]
@@ -126,6 +124,9 @@ tests = [
   "pytest-timeout>=2,<3",
   "pytest-doctestplus>=1.2,<2",
   "tomli>=2.0; python_version < '3.11'",
+  "pycocotools",
+  "faster_coco_eval",
+  "opencv-python-headless"
 ]
 
 typing = [
