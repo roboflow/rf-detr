@@ -32,7 +32,7 @@ from rfdetr.models.transformer import Transformer  # noqa: E402
 # loudly in CI before users hit an AttributeError at inference time.
 assert hasattr(torch, "_shape_as_tensor"), (
     "torch._shape_as_tensor not found — update spatial_shapes construction in "
-    "src/rfdetr/models/transformer.py:313 for the new PyTorch API."
+    "Transformer.forward() for the new PyTorch API."
 )
 
 # dynamo kwarg was added in PyTorch 2.1; our minimum is >=2.2.0, so it is always present.
@@ -301,9 +301,16 @@ def test_spatial_shapes_export_has_no_scatternd(exported_static_onnx: "onnx.Mode
 
 
 def test_spatial_shapes_export_is_shape_derived(exported_static_onnx: "onnx.ModelProto") -> None:
-    """Shape ops must be present — spatial_shapes should not be a baked constant (cheap proxy)."""
+    """Sanity-check that the exported 2-level Transformer graph contains Shape ops.
+
+    Note: ``spatial_shapes`` itself traces as a ``Constant`` node in TorchScript ONNX export —
+    the tracer records concrete H,W values at trace time, not ``Shape`` ops. The ``Shape`` ops
+    present here originate from other model computations (e.g. batch-size extraction). The true
+    regression guards are ``test_spatial_shapes_export_has_no_scatternd`` (no ScatterND) and
+    ``test_spatial_shapes_dynamic_batch_inference`` (runtime correctness at variable batch size).
+    """
     op_types = [n.op_type for n in exported_static_onnx.graph.node]
-    assert "Shape" in op_types, "Expected Shape nodes — spatial_shapes appears to be baked as a constant."
+    assert "Shape" in op_types, "No Shape op in 2-level Transformer ONNX graph — unexpected graph structure change."
 
 
 # ---------------------------------------------------------------------------
@@ -360,9 +367,16 @@ def test_spatial_shapes_single_level_export_has_no_scatternd(
 def test_spatial_shapes_single_level_export_is_shape_derived(
     exported_1lvl_onnx: "onnx.ModelProto",
 ) -> None:
-    """Single-level Transformer ONNX export must contain Shape ops (not a baked constant)."""
+    """Sanity-check that the exported 1-level Transformer graph contains Shape ops.
+
+    Note: ``spatial_shapes`` itself traces as a ``Constant`` node in TorchScript ONNX export —
+    the tracer records the concrete H,W value at trace time. The ``Shape`` ops present here
+    originate from other model computations. The true regression guards are
+    ``test_spatial_shapes_single_level_export_has_no_scatternd`` and the dynamic-batch
+    inference test.
+    """
     op_types = [n.op_type for n in exported_1lvl_onnx.graph.node]
-    assert "Shape" in op_types, "Expected Shape nodes in single-level export."
+    assert "Shape" in op_types, "No Shape op in 1-level Transformer ONNX graph — unexpected graph structure change."
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +388,7 @@ def test_level_start_index_correctness_two_levels() -> None:
     """spatial_shapes construction must extract correct (H, W) for non-square feature maps.
 
     Uses H0=8, W0=6 and H1=4, W1=3 — non-square and H≠W so a transposed [2:4] slice would produce wrong values. Verifies
-    that the ``torch.stack(_shape_as_tensor)`` formula from ``transformer.py:313`` yields
+    that the ``torch.stack(_shape_as_tensor)`` formula in ``Transformer.forward()`` yields
     ``spatial_shapes=[[8,6],[4,3]]`` and ``level_start_index=[0, 48]`` (cumulative H*W: 8*6=48, then 48+4*3=60 but index
     stops at level boundaries → [0, 48]).
     """

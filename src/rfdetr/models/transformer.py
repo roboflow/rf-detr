@@ -303,16 +303,15 @@ class Transformer(nn.Module):
             mask_flatten = torch.cat(mask_flatten, 1)  # bs, \sum{hxw}
             valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
         lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten, 1)  # bs, \sum{hxw}, c
-        # spatial_shapes must stay a Shape-derived tensor (the symbolic-trace form #871
-        # introduced for dynamic-batch export), but it must not be built by
-        # torch.empty(...) + in-place index assignment: that emits a ScatterND feeding a
-        # shape tensor (level_start_index), which TensorRT rejects ("IScatterLayer cannot
-        # be used to compute a shape tensor"). torch.as_tensor(python-int list) would avoid
-        # the ScatterND but bakes the values as a Constant, regressing the symbolic trace.
-        # torch.stack of per-level Shape slices is both symbolic and a valid TRT shape source.
-        # torch._shape_as_tensor(t) is a private ATen op that returns a 1-D int64 tensor of
-        # t's dimension sizes, traced by ONNX export as symbolic Shape ops (not a Constant);
-        # [2:4] extracts (H, W) from the NCHW feature map.
+        # spatial_shapes must not be built by torch.empty(...) + in-place index assignment:
+        # that emits a ScatterND feeding a shape tensor (level_start_index), which TensorRT
+        # rejects ("IScatterLayer cannot be used to compute a shape tensor").
+        # torch.as_tensor(python-int list) avoids ScatterND but bakes values as a Constant.
+        # torch.stack of per-level torch._shape_as_tensor slices also produces a Constant
+        # node in TorchScript ONNX export (the tracer records concrete H,W values at trace
+        # time), but that Constant is accepted by TensorRT as a valid shape tensor source —
+        # unlike ScatterND. torch._shape_as_tensor(t) is a private ATen op that returns a
+        # 1-D int64 tensor of t's dimension sizes; [2:4] extracts (H, W) from NCHW.
         spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
             device=srcs[0].device, dtype=torch.long
         )
