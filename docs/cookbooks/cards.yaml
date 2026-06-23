@@ -1,4 +1,10 @@
 cards:
+  - href: inference-latency-benchmark/
+    name: "Inference Latency Benchmark"
+    labels: [INFERENCE, ONNX, GPU]
+    version: v1.8.1
+    author: Borda
+    description: "Benchmark detection, segmentation, and keypoint models across FP32, FP16+JIT, and ONNX Runtime — measures latency and FPS on GPU using CUDA events."
   - href: fine-tune_keypoints/
     name: "Fine-Tune RF-DETR Keypoint Detection"
     labels: [TRAINING, PYTORCH LIGHTNING, INFERENCE]
