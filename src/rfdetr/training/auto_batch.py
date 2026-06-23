@@ -109,6 +109,7 @@ def _probe_step(
     segmentation_head: bool = False,
     max_targets_per_image: int = 1,
     num_channels: int = 3,
+    autocast_dtype: torch.dtype | None = None,
 ) -> bool:
     """Run one forward + loss + backward; return True if successful, False on OOM."""
     try:
@@ -124,7 +125,10 @@ def _probe_step(
             num_channels=num_channels,
         )
 
-        with torch.autocast(device_type="cuda", enabled=amp):
+        autocast_kwargs: dict[str, Any] = {"device_type": "cuda", "enabled": amp}
+        if autocast_dtype is not None:
+            autocast_kwargs["dtype"] = autocast_dtype
+        with torch.autocast(**autocast_kwargs):
             outputs = model(samples, targets)
             loss_dict = cast(dict[str, torch.Tensor], criterion(outputs, targets))
             weight_dict = cast(dict[str, float], getattr(criterion, "weight_dict"))
@@ -162,6 +166,7 @@ def probe_max_micro_batch(
     safety_margin: float = 0.9,
     max_micro_batch: int = 128,
     num_channels: int = 3,
+    autocast_dtype: torch.dtype | None = None,
 ) -> int:
     """Find the largest per-device batch size that fits in memory for one train step.
 
@@ -218,6 +223,7 @@ def probe_max_micro_batch(
                 segmentation_head,
                 max_targets_per_image,
                 num_channels,
+                autocast_dtype,
             ):
                 lower_ok = candidate
                 candidate *= 2
@@ -249,6 +255,7 @@ def probe_max_micro_batch(
                 segmentation_head,
                 max_targets_per_image,
                 num_channels,
+                autocast_dtype,
             ):
                 lower_ok = mid
                 lo = mid + 1
@@ -339,18 +346,30 @@ def resolve_auto_batch_config(
     criterion, _ = build_criterion_from_config(model_config, train_config)
     criterion = criterion.to(device)
 
+    amp_enabled = bool(model_config.amp)
+    amp_dtype_str = getattr(train_config, "amp_dtype", "auto")
+    if amp_enabled:
+        if amp_dtype_str == "fp16":
+            probe_autocast_dtype: torch.dtype | None = torch.float16
+        else:
+            # "bf16" or "auto" — both use bf16 on capable hardware, fp16 as fallback
+            probe_autocast_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    else:
+        probe_autocast_dtype = None
+
     safe_micro_batch = probe_max_micro_batch(
         model=model_context.model,
         criterion=criterion,
         resolution=probe_resolution,
         device=device,
         num_classes=model_config.num_classes,
-        amp=bool(model_config.amp),
+        amp=amp_enabled,
         segmentation_head=model_config.segmentation_head,
         max_targets_per_image=max_targets_per_image,
         safety_margin=safety_margin,
         max_micro_batch=max_micro_batch,
         num_channels=getattr(model_config, "num_channels", 3),
+        autocast_dtype=probe_autocast_dtype,
     )
 
     use_ema = getattr(train_config, "use_ema", False)

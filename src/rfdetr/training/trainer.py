@@ -176,6 +176,12 @@ def build_trainer(
     # --- Precision resolution ---
     def _resolve_precision() -> str:
         if not model_config.amp:
+            if tc.amp_dtype != "auto":
+                warnings.warn(
+                    f"amp_dtype={tc.amp_dtype!r} has no effect when model_config.amp=False.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             return "32-true"
         # CPU accelerator: bf16 autocast on macOS CPU (Apple Silicon) is ~13x slower
         # than fp32 due to missing native bfloat16 kernels — no benefit, high cost.
@@ -207,6 +213,10 @@ def build_trainer(
             if amp_dtype == "bf16":
                 if torch.cuda.is_bf16_supported():
                     return "bf16-mixed"
+                _logger.warning(
+                    "amp_dtype='bf16' was requested but this CUDA device does not support bfloat16; "
+                    "falling back to fp16 ('16-mixed')."
+                )
                 warnings.warn(
                     "amp_dtype='bf16' was requested but this CUDA device does not support bfloat16; "
                     "falling back to fp16 ('16-mixed').",
@@ -218,6 +228,9 @@ def build_trainer(
             return "bf16-mixed" if torch.cuda.is_bf16_supported() else "16-mixed"
         if torch.backends.mps.is_available():
             if amp_dtype == "bf16":
+                _logger.warning(
+                    "amp_dtype='bf16' is not applied on MPS; RF-DETR uses fp16 ('16-mixed') for MPS autocast."
+                )
                 warnings.warn(
                     "amp_dtype='bf16' is not applied on MPS; RF-DETR uses fp16 ('16-mixed') for MPS autocast.",
                     UserWarning,
