@@ -23,14 +23,21 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
-def _create_onnx_session(model_path: str | Path) -> Any:
+def _create_onnx_session(model_path: str | Path, providers: list[str] | None = None) -> Any:
     """Load an ONNX model and create an ONNX Runtime inference session.
 
     Imports ``onnxruntime`` at call time so that the rest of the package remains usable without it installed.  Input and
     output names / shapes are logged at DEBUG level for troubleshooting.
 
+    When ``providers`` is ``None``, the session auto-selects the best available backend: CUDA if ``onnxruntime-gpu`` is
+    installed, otherwise CPU (with a warning).  Pass an explicit list to pin the backend — useful for benchmarking
+    CPU vs CUDA side-by-side.
+
     Args:
         model_path: Path to the ``.onnx`` model file.
+        providers: Ordered list of ORT execution providers, e.g.
+            ``["CUDAExecutionProvider", "CPUExecutionProvider"]``.  When ``None`` (default), the best available
+            provider is selected automatically.
 
     Returns:
         An ``onnxruntime.InferenceSession`` ready for inference.
@@ -51,12 +58,68 @@ def _create_onnx_session(model_path: str | Path) -> Any:
             "ONNX Runtime inference requires 'onnxruntime'. Install it: `pip install onnxruntime`"
         ) from exc
 
-    session = ort.InferenceSession(str(model_path))
+    if providers is None:
+        _preferred = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        _available = ort.get_available_providers()
+        providers = [p for p in _preferred if p in _available] or ["CPUExecutionProvider"]
+        if providers[0] == "CPUExecutionProvider":
+            logger.warning(
+                "CUDAExecutionProvider not available — running ONNX inference on CPU. "
+                "Install onnxruntime-gpu for GPU acceleration: `pip install onnxruntime-gpu`"
+            )
+    session = ort.InferenceSession(str(model_path), providers=providers)
+    logger.debug("ONNX Runtime providers in use: %s", session.get_providers())
     for inp in session.get_inputs():
         logger.debug("Input  : name=%s  shape=%s  type=%s", inp.name, inp.shape, inp.type)
     for out in session.get_outputs():
         logger.debug("Output : name=%s  shape=%s  type=%s", out.name, out.shape, out.type)
     return session
+
+
+def _preprocess_pil_to_nchw(
+    image: PILImage.Image,
+    height: int,
+    width: int,
+    channels: int = 3,
+) -> np.ndarray:
+    """Resize and normalise a PIL image to an ``(1, C, H, W)`` float32 NCHW tensor.
+
+    Resizes using ``BILINEAR`` to match ``torchvision.transforms.functional.resize()`` (PIL's default is ``BICUBIC``
+    which produces slightly different values and can lower confidence scores).  Normalises with ImageNet statistics:
+    ``mean=[0.485, 0.456, 0.406]``, ``std=[0.229, 0.224, 0.225]``.
+
+    Args:
+        image: Input PIL image; any mode — converted to ``"RGB"`` (3-channel) or ``"L"`` (1-channel) internally.
+        height: Target spatial height expected by the model.
+        width: Target spatial width expected by the model.
+        channels: Number of channels the model expects (``1`` for grayscale, ``3`` for RGB).
+
+    Returns:
+        Float32 ndarray of shape ``(1, channels, height, width)``.
+
+    Examples:
+        .. code-block:: python
+
+            inp = _preprocess_pil_to_nchw(image, height=640, width=640)
+    """
+    _imagenet_mean = [0.485, 0.456, 0.406]
+    _imagenet_std = [0.229, 0.224, 0.225]
+    mean = np.array([_imagenet_mean[i % 3] for i in range(channels)], dtype=np.float32)
+    std = np.array([_imagenet_std[i % 3] for i in range(channels)], dtype=np.float32)
+    pil_mode = "L" if channels == 1 else "RGB"
+    # BILINEAR matches torchvision default; PIL default (BICUBIC) causes confidence drop
+    arr = (
+        np.array(
+            image.convert(pil_mode).resize((width, height), PILImage.Resampling.BILINEAR),
+            dtype=np.float32,
+        )
+        / 255.0
+    )
+    if arr.ndim == 2:  # "L" → (H, W); needs (H, W, 1)
+        arr = arr[:, :, np.newaxis]
+    arr = (arr - mean) / std
+    arr = arr.transpose(2, 0, 1)  # HWC → CHW
+    return np.expand_dims(arr, axis=0).astype(np.float32)  # (1, C, H, W)
 
 
 def _run_inference(
@@ -107,30 +170,8 @@ def _run_inference(
     # ONNX NCHW: [batch, channels, height, width]
     _, channels, height, width = inputs[0].shape
 
-    _imagenet_mean = [0.485, 0.456, 0.406]
-    _imagenet_std = [0.229, 0.224, 0.225]
-    mean = np.array([_imagenet_mean[i % 3] for i in range(channels)], dtype=np.float32)
-    std = np.array([_imagenet_std[i % 3] for i in range(channels)], dtype=np.float32)
-
     pil_img = PILImage.open(image_path)
-    pil_mode = "L" if channels == 1 else "RGB"
-    # Use BILINEAR resampling to match torchvision.transforms.functional.resize()
-    # which defaults to InterpolationMode.BILINEAR.  PIL's default (None → BICUBIC)
-    # produces different pixel values and can cause a measurable confidence drop.
-    arr = (
-        np.array(
-            pil_img.convert(pil_mode).resize((width, height), PILImage.Resampling.BILINEAR),
-            dtype=np.float32,
-        )
-        / 255.0
-    )
-    if arr.ndim == 2:  # "L" → (height, width); needs (height, width, 1)
-        arr = arr[:, :, np.newaxis]
-
-    # Normalise HWC, then transpose to CHW for ONNX (NCHW)
-    arr = (arr - mean) / std
-    arr = arr.transpose(2, 0, 1)  # HWC → CHW
-    inp_tensor = arr[np.newaxis].astype(np.float32)  # (1, C, H, W)
+    inp_tensor = _preprocess_pil_to_nchw(pil_img, height, width, channels)
 
     raw_outputs = session.run(None, {input_name: inp_tensor})
 
@@ -206,3 +247,61 @@ def _run_inference(
     xyxy *= np.array([ow, oh, ow, oh], dtype=np.float32)
 
     return Detections(xyxy=xyxy, confidence=scores[keep], class_id=cls[keep].astype(int)), pil_img
+
+
+# Benchmarking helper — not part of production inference API; subject to removal.
+def _onnx_runtime(
+    onnx_path: Path | str,
+    image: PILImage.Image,
+    providers: list[str],
+    warmup: int = 20,
+    runs: int = 100,
+) -> tuple[float, float, str]:
+    """Benchmark ONNX Runtime inference for one image and provider list.
+
+    Creates a fresh ``InferenceSession`` with the requested providers, preprocesses ``image`` once using ImageNet
+    normalisation, then runs timed inference with ``time.perf_counter``.  GPU timings may underestimate real latency
+    if the CUDA execution provider is configured for asynchronous execution; for accurate GPU timing use CUDA events.
+
+    Args:
+        onnx_path: Path to the ``.onnx`` model file.
+        image: Input image (any size); resized to the model's expected spatial resolution.
+        providers: Ordered list of ORT execution providers, e.g.
+            ``["CUDAExecutionProvider", "CPUExecutionProvider"]``.
+        warmup: Number of un-timed warm-up runs before measurement begins.
+        runs: Number of timed runs used to compute statistics.
+
+    Returns:
+        A ``(mean_ms, std_ms, provider_label)`` tuple where ``provider_label`` is the first active provider with
+        ``"ExecutionProvider"`` stripped, e.g. ``"CUDA"`` or ``"CPU"``.
+
+    Examples:
+        .. code-block:: python
+
+            mean_ms, std_ms, label = _onnx_runtime("model.onnx", image, ["CPUExecutionProvider"])
+            print(f"{label}: {mean_ms:.1f} ms ± {std_ms:.1f}")
+    """
+    import time
+
+    sess = _create_onnx_session(onnx_path, providers=providers)
+    active = sess.get_providers()[0]
+    if active != providers[0]:
+        raise RuntimeError(
+            f"Requested provider {providers[0]!r} not active — ORT fell back to {active!r}. "
+            "Install onnxruntime-gpu: `pip install onnxruntime-gpu`"
+        )
+    input_meta = sess.get_inputs()[0]
+    _, channels, height, width = input_meta.shape
+    inp = _preprocess_pil_to_nchw(image, height, width, channels)
+    feed = {input_meta.name: inp}
+
+    for _ in range(warmup):
+        sess.run(None, feed)
+    timings: list[float] = []
+    for _ in range(runs):
+        t0 = time.perf_counter()
+        sess.run(None, feed)
+        timings.append((time.perf_counter() - t0) * 1000.0)
+    arr_t = np.array(timings)
+    provider_label = sess.get_providers()[0].replace("ExecutionProvider", "")
+    return float(arr_t.mean()), float(arr_t.std()), provider_label
