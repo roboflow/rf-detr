@@ -119,7 +119,7 @@ def _preprocess_pil_to_nchw(
         arr = arr[:, :, np.newaxis]
     arr = (arr - mean) / std
     arr = arr.transpose(2, 0, 1)  # HWC → CHW
-    return arr[np.newaxis].astype(np.float32)  # (1, C, H, W)
+    return np.expand_dims(arr, axis=0).astype(np.float32)  # (1, C, H, W)
 
 
 def _run_inference(
