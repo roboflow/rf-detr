@@ -310,6 +310,9 @@ class Transformer(nn.Module):
         # be used to compute a shape tensor"). torch.as_tensor(python-int list) would avoid
         # the ScatterND but bakes the values as a Constant, regressing the symbolic trace.
         # torch.stack of per-level Shape slices is both symbolic and a valid TRT shape source.
+        # torch._shape_as_tensor(t) is a private ATen op that returns a 1-D int64 tensor of
+        # t's dimension sizes, traced by ONNX export as symbolic Shape ops (not a Constant);
+        # [2:4] extracts (H, W) from the NCHW feature map.
         spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
             device=srcs[0].device, dtype=torch.long
         )
