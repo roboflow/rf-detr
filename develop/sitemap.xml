@@ -25,6 +25,10 @@
          <lastmod>2026-06-23</lastmod>
     </url>
     <url>
+         <loc>https://rfdetr.roboflow.com/develop/cookbooks/inference-latency-benchmark/</loc>
+         <lastmod>2026-06-23</lastmod>
+    </url>
+    <url>
          <loc>https://rfdetr.roboflow.com/develop/cookbooks/pytorch-lightning/</loc>
          <lastmod>2026-06-23</lastmod>
     </url>
