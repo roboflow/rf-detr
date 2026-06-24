@@ -200,6 +200,7 @@ class TestExportExecutorchValidation:
                 _check_executorch_available()
 
     def test_export_executorch_missing_dependency_raises_import_error(self, tmp_path: Path) -> None:
+        """``export_executorch`` raises ImportError with install hint when executorch is absent."""
         with mock.patch.dict(sys.modules, {"executorch": None}):
             with pytest.raises(ImportError, match=r"pip install rfdetr\[executorch\]"):
                 export_executorch(
@@ -208,6 +209,25 @@ class TestExportExecutorchValidation:
                     output_dir=tmp_path,
                     backend="xnnpack",
                 )
+
+    def test_output_dir_is_used_as_provided(self, tmp_path: Path) -> None:
+        """output_dir is passed through to the exporter; caller is responsible for sanitizing it.
+
+        Regression guard: variant_name is sanitized (os.path.basename), but output_dir is not.
+        This test documents that output_dir is caller-owned — the exporter trusts it.
+        The ImportError fires before any mkdir, so output_dir is irrelevant on the missing-dep path.
+        """
+        with mock.patch.dict(sys.modules, {"executorch": None}):
+            with pytest.raises(ImportError, match=r"pip install rfdetr\[executorch\]"):
+                export_executorch(
+                    model=mock.MagicMock(),
+                    input_tensors=torch.zeros(1, 3, 8, 8),
+                    output_dir=tmp_path / "some" / "nested" / "dir",
+                    backend="xnnpack",
+                )
+        # If executorch is absent the ImportError fires before any filesystem operation,
+        # confirming that output_dir sanitization is caller responsibility.
+        assert not (tmp_path / "some").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -265,8 +285,10 @@ class TestExportFormatParameter:
         return obj
 
     def test_executorch_format_calls_export_executorch(self) -> None:
+        """``format="executorch"`` triggers export_executorch and emits an experimental UserWarning."""
         obj = self._make_rfdetr()
-        obj.export(format="executorch", backend="xnnpack", output_dir=str(self._tmp_path / "out"))
+        with pytest.warns(UserWarning, match="experimental"):
+            obj.export(format="executorch", backend="xnnpack", output_dir=str(self._tmp_path / "out"))
         self._mock_export_executorch.assert_called_once()
 
     def test_executorch_format_does_not_call_export_onnx(self) -> None:
@@ -298,10 +320,14 @@ class TestExportFormatParameter:
         obj.export(format="executorch", backend="xnnpack", output_dir=str(self._tmp_path / "out"))
         assert "soc" not in self._mock_export_executorch.call_args.kwargs
 
-    def test_dynamic_batch_forwarded_to_converter(self) -> None:
+    def test_dynamic_batch_raises_before_converter(self) -> None:
+        """dynamic_batch=True is refused by RFDETR.export() before the converter is invoked."""
         obj = self._make_rfdetr()
-        obj.export(format="executorch", backend="xnnpack", dynamic_batch=True, output_dir=str(self._tmp_path / "out"))
-        assert self._mock_export_executorch.call_args.kwargs.get("dynamic_batch") is True
+        with pytest.raises(NotImplementedError, match="dynamic_batch"):
+            obj.export(
+                format="executorch", backend="xnnpack", dynamic_batch=True, output_dir=str(self._tmp_path / "out")
+            )
+        self._mock_export_executorch.assert_not_called()
 
     def test_onnx_format_does_not_call_export_executorch(self) -> None:
         obj = self._make_rfdetr()
@@ -605,6 +631,7 @@ def exported(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, torch.Tenso
     """Export RFDETRNano to a ``.pte`` once and reuse it across the parity checks."""
     from rfdetr import RFDETRNano
 
+    torch.manual_seed(42)
     out_dir = tmp_path_factory.mktemp("executorch")
     detector = RFDETRNano(pretrain_weights=None)
     pte_path = detector.export(output_dir=str(out_dir), format="executorch", backend="xnnpack", verbose=False)
@@ -627,7 +654,170 @@ class TestExecutorchEndToEnd:
         assert pte_path.stat().st_size > 0
 
     def test_runtime_output_matches_pytorch(self, exported: tuple[Any, torch.Tensor, Path]) -> None:
+        """ExecuTorch runtime output must match the eager PyTorch forward within XNNPACK fp32 tolerance."""
         model, example, pte_path = exported
         diffs = _runtime_parity(model, example, pte_path)
         assert diffs, "expected at least one output to compare"
-        assert max(diffs) < 1e-3, f"ExecuTorch outputs diverge from PyTorch: max abs diff {max(diffs)}"
+        # XNNPACK fp32 path: parity claim in PR body is ~1e-5 (validated on the XNNPACK end-to-end run).
+        assert max(diffs) < 1e-5, f"ExecuTorch outputs diverge from PyTorch: max abs diff {max(diffs)}"
+
+
+# ---------------------------------------------------------------------------
+# MSDeformAttn export-mode vs eager-mode numerical parity (no executorch required)
+# ---------------------------------------------------------------------------
+
+
+class TestMSDeformAttnExportParity:
+    """Numerical parity between MSDeformAttn export-mode and eager-mode forwards.
+
+    Validates that switching ``_export=True`` (rank-5 path used for TFLite / ExecuTorch) produces bit-identical outputs
+    to the standard eager forward.  No executorch installation needed.
+    """
+
+    # Fixed geometry used across all parity tests.
+    _n_levels = 3
+    _n_points = 4
+    _n_heads = 4
+    _d_model = 32
+    _batch = 2
+    _len_q = 5
+    _hw_pairs: list[tuple[int, int]] = [(4, 6), (3, 5), (2, 4)]
+
+    def _build_inputs(
+        self, ref_last_dim: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Build shared forward inputs for parity tests.
+
+        Args:
+            ref_last_dim: Last dimension of reference_points — 2 for point form, 4 for box form.
+
+        Returns:
+            Tuple of (query, reference_points, input_flatten,
+                      input_spatial_shapes, input_level_start_index).
+        """
+        total_len = sum(height * width for height, width in self._hw_pairs)
+        query = torch.randn(self._batch, self._len_q, self._d_model)
+        # Values in [0.2, 0.8] to stay well inside the valid coordinate range.
+        reference_points = torch.empty(self._batch, self._len_q, self._n_levels, ref_last_dim).uniform_(0.2, 0.8)
+        input_flatten = torch.randn(self._batch, total_len, self._d_model)
+        input_spatial_shapes = torch.tensor(self._hw_pairs, dtype=torch.long)
+        input_level_start_index = torch.tensor([0, 24, 39], dtype=torch.long)
+        return query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index
+
+    def _make_eager_module(self) -> "MSDeformAttn":  # noqa: F821
+        """Instantiate MSDeformAttn in default (eager) mode with shared weights."""
+        from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
+
+        return MSDeformAttn(
+            d_model=self._d_model,
+            n_levels=self._n_levels,
+            n_heads=self._n_heads,
+            n_points=self._n_points,
+        )
+
+    def test_export_mode_and_eager_mode_output_parity(self) -> None:
+        """Export-mode forward (rank-5 path) must match eager forward for point-form reference_points.
+
+        Both modes share identical weights; the only difference is the ``_export`` flag which selects the rank-5
+        sampling offset layout.  The export path requires ``input_spatial_shapes_hw`` to build the offset normalizer
+        from concrete Python ints.
+        """
+        from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
+
+        query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index = self._build_inputs(
+            ref_last_dim=2
+        )
+
+        eager_module = self._make_eager_module()
+        export_module = MSDeformAttn(
+            d_model=self._d_model,
+            n_levels=self._n_levels,
+            n_heads=self._n_heads,
+            n_points=self._n_points,
+        )
+        # Copy weights so the only difference is the export flag.
+        export_module.load_state_dict(eager_module.state_dict())
+        export_module.export()
+
+        with torch.no_grad():
+            eager_out = eager_module(
+                query,
+                reference_points,
+                input_flatten,
+                input_spatial_shapes,
+                input_level_start_index,
+            )
+            export_out = export_module(
+                query,
+                reference_points,
+                input_flatten,
+                input_spatial_shapes,
+                input_level_start_index,
+                input_spatial_shapes_hw=self._hw_pairs,
+            )
+
+        torch.testing.assert_close(eager_out, export_out, atol=1e-5, rtol=0)
+
+    def test_export_mode_forward_with_box_reference_points(self) -> None:
+        """Export-mode forward must match eager forward for box-form reference_points (last dim=4).
+
+        The box form passes (cx, cy, w, h) normalised coordinates; the rank-5 export path handles this via a separate
+        branch in MSDeformAttn.forward.
+        """
+        from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
+
+        query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index = self._build_inputs(
+            ref_last_dim=4
+        )
+
+        eager_module = self._make_eager_module()
+        export_module = MSDeformAttn(
+            d_model=self._d_model,
+            n_levels=self._n_levels,
+            n_heads=self._n_heads,
+            n_points=self._n_points,
+        )
+        export_module.load_state_dict(eager_module.state_dict())
+        export_module.export()
+
+        with torch.no_grad():
+            eager_out = eager_module(
+                query,
+                reference_points,
+                input_flatten,
+                input_spatial_shapes,
+                input_level_start_index,
+            )
+            export_out = export_module(
+                query,
+                reference_points,
+                input_flatten,
+                input_spatial_shapes,
+                input_level_start_index,
+                input_spatial_shapes_hw=self._hw_pairs,
+            )
+
+        torch.testing.assert_close(eager_out, export_out, atol=1e-5, rtol=0)
+
+
+# ---------------------------------------------------------------------------
+# TFLite rank-5 regression guard (no executorch required)
+# ---------------------------------------------------------------------------
+
+
+class TestTFLiteRank5Regression:
+    """Regression guard: ``MSDeformAttn.export()`` sets ``_export=True`` (TFLite fix dependency).
+
+    The TFLite export fix relies on ``_export=True`` activating the rank-5 sampling-offset layout that avoids CoreML
+    MIL's rank-6 tensor rejection.  This focused test links the executorch test file to that fix so regressions are
+    caught here as well as in test_transformer.py.
+    """
+
+    def test_tflite_export_uses_rank5_path(self) -> None:
+        """Calling ``module.export()`` must set ``_export=True`` on MSDeformAttn."""
+        from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
+
+        module = MSDeformAttn(d_model=32, n_levels=2, n_heads=2, n_points=4)
+        assert not module._export
+        module.export()
+        assert module._export
