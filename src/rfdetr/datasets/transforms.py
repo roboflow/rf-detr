@@ -573,34 +573,41 @@ class AlbumentationsWrapper:
         kept_position_by_idx = {int(original_idx): position for position, original_idx in enumerate(kept_idxs)}
         height, width = augmented["image"].shape[:2]
 
-        for point, instance_id, point_id, visible in zip(
-            augmented.get("keypoints", []),
-            augmented.get("keypoint_instance_ids", []),
-            augmented.get("keypoint_point_ids", []),
-            augmented.get("keypoint_visibility", []),
-        ):
-            original_idx = int(instance_id)
-            if original_idx not in kept_position_by_idx:
-                continue
-            point_idx = int(point_id)
-            if point_idx < 0 or point_idx >= num_keypoints:
-                continue
-
-            x, y = float(point[0]), float(point[1])
-            visibility = float(visible)
-            if visibility <= 0 or x < 0 or y < 0 or x >= width or y >= height:
-                x, y, visibility = 0.0, 0.0, 0.0
-            keypoints_out[kept_position_by_idx[original_idx], point_idx] = (x, y, visibility)
+        albu_kps = augmented.get("keypoints", [])
+        if albu_kps:
+            inst_ids = augmented.get("keypoint_instance_ids", [])
+            pt_ids = augmented.get("keypoint_point_ids", [])
+            visible = augmented.get("keypoint_visibility", [])
+            xy = np.asarray([(float(p[0]), float(p[1])) for p in albu_kps], dtype=np.float32)
+            inst = np.array([kept_position_by_idx.get(int(ii), -1) for ii in inst_ids], dtype=np.intp)
+            ptid = np.array([int(p) for p in pt_ids], dtype=np.intp)
+            vis = np.asarray([float(v) for v in visible], dtype=np.float32)
+            valid = (
+                (inst >= 0)
+                & (ptid >= 0)
+                & (ptid < num_keypoints)
+                & (vis > 0)
+                & (xy[:, 0] >= 0)
+                & (xy[:, 0] < width)
+                & (xy[:, 1] >= 0)
+                & (xy[:, 1] < height)
+            )
+            valid_idx = np.where(valid)[0]
+            if len(valid_idx) > 0:
+                keypoints_out[inst[valid_idx], ptid[valid_idx]] = np.column_stack([xy[valid_idx], vis[valid_idx]])
 
         result = torch.as_tensor(keypoints_out, dtype=torch.float32)
 
         if did_flip and flip_pairs:
+            # Build permutation index and apply in a single indexed gather (O(1) dispatch vs O(K) clones)
+            num_kpts = result.shape[1]
+            perm = torch.arange(num_kpts)
             for i in range(0, len(flip_pairs) - 1, 2):
                 ai, bi = flip_pairs[i], flip_pairs[i + 1]
-                if ai < result.shape[1] and bi < result.shape[1]:
-                    tmp = result[:, ai, :].clone()
-                    result[:, ai, :] = result[:, bi, :]
-                    result[:, bi, :] = tmp
+                if ai < num_kpts and bi < num_kpts:
+                    perm[ai] = bi
+                    perm[bi] = ai
+            result = result[:, perm, :]
 
         return result
 
