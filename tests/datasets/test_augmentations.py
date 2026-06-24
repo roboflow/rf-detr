@@ -217,6 +217,28 @@ class TestAlbumentationsWrapper:
         assert aug_target["boxes"].shape[0] == num_instances
         assert aug_target["keypoints"].shape[0] == num_instances
 
+    def test_horizontal_flip_swaps_paired_keypoints(self):
+        """HFlip with keypoint_flip_pairs exchanges keypoint slots for the configured pair."""
+        wrapper = AlbumentationsWrapper(
+            alb.HorizontalFlip(p=1.0),
+            keypoint_flip_pairs=[0, 1],
+        )
+        image = Image.new("RGB", (100, 50))
+        target = {
+            "boxes": torch.tensor([[5.0, 5.0, 95.0, 45.0]]),
+            "labels": torch.tensor([1]),
+            # kp0 at x=10 (left), kp1 at x=80 (right)
+            "keypoints": torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 2.0]]]),
+        }
+
+        _, transformed = wrapper(image, target)
+
+        kp = transformed["keypoints"][0]  # shape [2, 3]
+        # After HFlip (W=100): kp0→x=89, kp1→x=19. After swap: slot0 gets kp1's flipped x=19,
+        # slot1 gets kp0's flipped x=89. Without swap the ordering would be inverted (89 > 19).
+        torch.testing.assert_close(kp[0, 0], torch.tensor(19.0), rtol=1e-4, atol=1e-6)
+        torch.testing.assert_close(kp[1, 0], torch.tensor(89.0), rtol=1e-4, atol=1e-6)
+
     def test_crop_filters_keypoints_with_removed_boxes(self):
         """When a crop removes a box, its keypoints are removed with the same instance."""
         wrapper = AlbumentationsWrapper(alb.Crop(x_min=0, y_min=0, x_max=50, y_max=50, p=1.0))
@@ -1294,6 +1316,15 @@ class TestAlbumentationsWrapperNestedConfig:
         config = {"HorizontalFlip": {"p": 0.5}}
 
         transforms = AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=None)
+
+        names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert "HorizontalFlip" in names
+
+    def test_hflip_included_when_keypoint_flip_pairs_are_configured(self) -> None:
+        """HorizontalFlip is safe for keypoint pipelines when semantic flip pairs are configured."""
+        config = {"HorizontalFlip": {"p": 0.5}}
+
+        transforms = AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=[0, 1])
 
         names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
         assert "HorizontalFlip" in names

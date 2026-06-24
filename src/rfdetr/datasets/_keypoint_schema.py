@@ -12,7 +12,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-__all__ = ["CocoKeypointSchema", "KeypointSchema", "active_keypoint_counts", "infer_coco_keypoint_schema"]
+__all__ = [
+    "CocoKeypointSchema",
+    "KeypointSchema",
+    "YoloKeypointSchema",
+    "active_keypoint_counts",
+    "infer_coco_keypoint_schema",
+    "infer_yolo_keypoint_schema",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,9 +47,146 @@ class CocoKeypointSchema:
     keypoint_oks_sigmas: list[float]
 
 
-# Forward-compat alias: KeypointSchema is kept as the public name so future schema
-# variants (e.g. YOLOKeypointSchema) can be swapped in without touching call sites.
-KeypointSchema = CocoKeypointSchema
+@dataclass(frozen=True, slots=True)
+class YoloKeypointSchema:
+    """Keypoint schema inferred from an Ultralytics YOLO pose YAML file.
+
+    Args:
+        class_names: Class names ordered by YOLO class id.
+        num_keypoints_per_class: Number of keypoints for each YOLO class slot.
+        keypoint_oks_sigmas: Default OKS sigmas matching the global keypoint count.
+        keypoint_names: Keypoint names ordered by keypoint index.
+        flip_idx: Optional Ultralytics horizontal-flip index mapping.
+        keypoint_dim: Number of keypoint dimensions in label files, either 2 or 3.
+
+    Returns:
+        Immutable schema value used to configure YOLO pose training.
+
+    Raises:
+        This value object does not raise.
+
+    Example:
+        >>> YoloKeypointSchema(["person"], [1], [0.1], ["nose"], [], 3).keypoint_dim
+        3
+    """
+
+    class_names: list[str]
+    num_keypoints_per_class: list[int]
+    keypoint_oks_sigmas: list[float]
+    keypoint_names: list[str]
+    flip_idx: list[int]
+    keypoint_dim: int
+
+
+# Public union alias covering both concrete schema types.
+KeypointSchema = CocoKeypointSchema | YoloKeypointSchema
+
+
+def _load_yaml_mapping(yaml_path: Path) -> dict[str, Any]:
+    """Load a YAML file and require a mapping root.
+
+    Args:
+        yaml_path: Path to a YAML data file.
+
+    Returns:
+        Parsed YAML mapping.
+
+    Raises:
+        ValueError: If the YAML root is not a mapping.
+        OSError: If the file cannot be read.
+
+    Example:
+        >>> import tempfile
+        >>> path = Path(tempfile.mkdtemp()) / "data.yaml"
+        >>> _ = path.write_text("names: [person]\\nkpt_shape: [1, 3]\\n", encoding="utf-8")
+        >>> sorted(_load_yaml_mapping(path))
+        ['kpt_shape', 'names']
+    """
+    import yaml
+
+    with yaml_path.open(encoding="utf-8") as file:
+        data = yaml.safe_load(file)
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected mapping in data file {str(yaml_path)!r}, got {type(data).__name__}.")
+    return data
+
+
+def _extract_yolo_class_names_from_data(data: dict[str, Any], data_file: Path) -> list[str]:
+    """Extract contiguous YOLO class names from parsed YAML data."""
+    names = data.get("names")
+    if isinstance(names, dict):
+        numeric_keys: list[int] = []
+        non_numeric_keys: list[Any] = []
+        for key in names.keys():
+            key_str = str(key)
+            if key_str.isdigit():
+                numeric_keys.append(int(key_str))
+            else:
+                non_numeric_keys.append(key)
+
+        unique_sorted_keys = sorted(set(numeric_keys))
+        if not unique_sorted_keys or unique_sorted_keys != list(range(len(unique_sorted_keys))) or non_numeric_keys:
+            raise ValueError(
+                "Unsupported 'names' mapping in data file "
+                f"{str(data_file)!r}: expected integer keys 0..N-1 with no gaps."
+            )
+        return [str(names[idx]) for idx in unique_sorted_keys]
+    if isinstance(names, list):
+        return [str(name) for name in names]
+    raise ValueError(f"Expected 'names' to be a list or dict in {str(data_file)!r}, got {type(names).__name__}.")
+
+
+def _validate_yolo_kpt_shape(raw_kpt_shape: Any, data_file: Path) -> tuple[int, int]:
+    """Validate and normalize a YOLO pose ``kpt_shape`` entry."""
+    if not isinstance(raw_kpt_shape, (list, tuple)) or len(raw_kpt_shape) != 2:
+        raise ValueError(f"YOLO pose data file {str(data_file)!r} must define kpt_shape as [num_keypoints, 2_or_3].")
+    try:
+        num_keypoints = int(raw_kpt_shape[0])
+        keypoint_dim = int(raw_kpt_shape[1])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"YOLO pose data file {str(data_file)!r} has invalid kpt_shape={raw_kpt_shape!r}; expected integer values."
+        ) from exc
+    if num_keypoints <= 0 or keypoint_dim not in (2, 3):
+        raise ValueError(
+            f"YOLO pose data file {str(data_file)!r} has invalid kpt_shape={raw_kpt_shape!r}; "
+            "expected [positive_num_keypoints, 2_or_3]."
+        )
+    return num_keypoints, keypoint_dim
+
+
+def _extract_yolo_keypoint_names(data: dict[str, Any], num_keypoints: int) -> list[str]:
+    """Extract YOLO keypoint names or synthesize stable placeholders."""
+    raw_kpt_names = data.get("kpt_names")
+    keypoint_names: Any = None
+    if isinstance(raw_kpt_names, dict) and raw_kpt_names:
+        keypoint_names = raw_kpt_names.get(0, raw_kpt_names.get("0"))
+    elif isinstance(raw_kpt_names, list):
+        keypoint_names = raw_kpt_names
+
+    if keypoint_names is None:
+        return [f"keypoint_{idx}" for idx in range(num_keypoints)]
+    if not isinstance(keypoint_names, list) or len(keypoint_names) != num_keypoints:
+        raise ValueError(
+            f"YOLO pose kpt_names length must match kpt_shape keypoint count {num_keypoints}, got {keypoint_names!r}."
+        )
+    return [str(name) for name in keypoint_names]
+
+
+def _extract_yolo_flip_idx(data: dict[str, Any], num_keypoints: int) -> list[int]:
+    """Extract and validate optional YOLO ``flip_idx`` metadata."""
+    raw_flip_idx = data.get("flip_idx")
+    if raw_flip_idx is None:
+        return []
+    if not isinstance(raw_flip_idx, list) or len(raw_flip_idx) != num_keypoints:
+        raise ValueError(f"YOLO pose flip_idx must contain {num_keypoints} integer indexes.")
+    try:
+        flip_idx = [int(idx) for idx in raw_flip_idx]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("YOLO pose flip_idx must contain integer indexes.") from exc
+    if sorted(flip_idx) != list(range(num_keypoints)):
+        raise ValueError(f"YOLO pose flip_idx must be a permutation of 0..{num_keypoints - 1}.")
+    return flip_idx
 
 
 def _load_coco_annotation(annotation_path: Path) -> dict[str, Any]:
@@ -210,6 +354,49 @@ def infer_coco_keypoint_schema(
         class_names=class_names,
         num_keypoints_per_class=num_keypoints_per_class,
         keypoint_oks_sigmas=[keypoint_oks_sigma] * max_keypoints,
+    )
+
+
+def infer_yolo_keypoint_schema(
+    data_file: str | Path,
+    *,
+    keypoint_oks_sigma: float = 0.1,
+) -> YoloKeypointSchema:
+    """Infer a keypoint schema from an Ultralytics YOLO pose YAML file.
+
+    Args:
+        data_file: Path to a YOLO ``data.yaml`` or ``data.yml`` file.
+        keypoint_oks_sigma: Default OKS sigma to repeat for the global keypoint count.
+
+    Returns:
+        Class-aligned keypoint counts plus optional YOLO keypoint names and flip indexes.
+
+    Raises:
+        FileNotFoundError: If the YAML file does not exist.
+        ValueError: If required YOLO pose fields are missing or malformed.
+
+    Example:
+        >>> import tempfile
+        >>> path = Path(tempfile.mkdtemp()) / "data.yaml"
+        >>> _ = path.write_text("names: [person]\\nkpt_shape: [1, 3]\\n", encoding="utf-8")
+        >>> infer_yolo_keypoint_schema(path).num_keypoints_per_class
+        [1]
+    """
+    path = Path(data_file)
+    data = _load_yaml_mapping(path)
+    class_names = _extract_yolo_class_names_from_data(data, path)
+    if "kpt_shape" not in data:
+        raise ValueError(f"YOLO pose data file {str(path)!r} is missing required kpt_shape metadata.")
+    num_keypoints, keypoint_dim = _validate_yolo_kpt_shape(data["kpt_shape"], path)
+    keypoint_names = _extract_yolo_keypoint_names(data, num_keypoints)
+    flip_idx = _extract_yolo_flip_idx(data, num_keypoints)
+    return YoloKeypointSchema(
+        class_names=class_names,
+        num_keypoints_per_class=[num_keypoints] * len(class_names),
+        keypoint_oks_sigmas=[keypoint_oks_sigma] * num_keypoints,
+        keypoint_names=keypoint_names,
+        flip_idx=flip_idx,
+        keypoint_dim=keypoint_dim,
     )
 
 

@@ -926,16 +926,3 @@ class KeypointTrainConfig(TrainConfig):
     keypoint_nll_loss_coef: float = 0.5
     smooth_alpha: float = 0.5
     skip_best_epochs: int = Field(default=10, ge=0)
-
-    @model_validator(mode="after")
-    def _warn_keypoint_flip_pairs_not_yet_implemented(self) -> "KeypointTrainConfig":
-        """Emit a warning when keypoint_flip_pairs is set before the feature ships."""
-        if self.keypoint_flip_pairs:
-            warnings.warn(
-                "keypoint_flip_pairs is accepted but not yet implemented and will be ignored. "
-                "Flip pair swapping (swapping left/right joint indices after a horizontal flip) "
-                "is planned for a future release. Training will proceed without semantic joint swapping.",
-                UserWarning,
-                stacklevel=2,
-            )
-        return self
