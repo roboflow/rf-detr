@@ -76,6 +76,10 @@ _VALID_BACKENDS: frozenset[str] = frozenset({"xnnpack", "coreml", "qnn"})
 # format string.
 _SOC_BACKENDS: frozenset[str] = frozenset({"qnn"})
 
+# Public aliases so detr.py can import these without crossing a private-name boundary.
+VALID_BACKENDS: frozenset[str] = _VALID_BACKENDS
+SOC_BACKENDS: frozenset[str] = _SOC_BACKENDS
+
 _INSTALL_HINT = "ExecuTorch export requires the `executorch` package. Install it with: pip install rfdetr[executorch]"
 _COREML_HINT = "CoreML export requires `coremltools`. Install it with: pip install coremltools"
 _QNN_HINT = (
@@ -103,15 +107,29 @@ _QNN_CPU_FALLBACK_OPS: frozenset[str] = frozenset(
 
 
 def _check_executorch_available() -> None:
-    """Verify that the ``executorch`` package is importable.
+    """Verify that the ``executorch`` package is importable and meets the minimum version requirement.
 
     Raises:
-        ImportError: If ``executorch`` is not installed.
+        ImportError: If ``executorch`` is not installed or is older than 1.3.
     """
     try:
         import executorch  # noqa: F401
     except ImportError as exc:
         raise ImportError(_INSTALL_HINT) from exc
+
+    import importlib.metadata
+
+    try:
+        _et_version = importlib.metadata.version("executorch")
+        _major, _minor = (int(x) for x in _et_version.split(".")[:2])
+        if (_major, _minor) < (1, 3):
+            raise ImportError(
+                f"executorch {_et_version} is installed but rfdetr[executorch] requires >=1.3 "
+                "(private APIs used for QNN lowering changed in 1.3). "
+                "Upgrade: pip install 'rfdetr[executorch]'"
+            )
+    except importlib.metadata.PackageNotFoundError:
+        pass  # Source-build install — skip version check.
 
 
 def _build_partitioner(backend: str) -> list[Any]:
@@ -138,7 +156,8 @@ def _build_partitioner(backend: str) -> list[Any]:
         except ImportError as exc:
             raise ImportError(_COREML_HINT) from exc
         return [CoreMLPartitioner()]
-    # Unreachable: callers validate against _VALID_BACKENDS first.
+    # QNN uses _lower_qnn instead of this function; this raise is reached only if a new
+    # backend is added to _VALID_BACKENDS without a corresponding branch above.
     raise ValueError(f"Unsupported ExecuTorch backend {backend!r}.")
 
 
@@ -208,7 +227,10 @@ def _lower_qnn(model: nn.Module, input_tensors: torch.Tensor, *, soc_model: str)
     def _safe_is_node_supported(self: Any, *args: Any, **kwargs: Any) -> bool:
         try:
             return bool(_original_is_node_supported(self, *args, **kwargs))
-        except Exception:
+        except (KeyError, AttributeError) as exc:
+            # ET 1.3.1: op with no HTP visitor raises KeyError; weightless LayerNorm raises
+            # AttributeError (op_layer_norm dereferences a None weight). Treat as unsupported.
+            logger.debug("QNN op support check suppressed (CPU fallback): %s", exc)
             return False
 
     try:
@@ -263,6 +285,19 @@ def export_executorch(
         ValueError: If *backend* is not supported.
         NotImplementedError: If *dynamic_batch* is requested (unsupported on executorch 1.3.1).
         RuntimeError: If ``torch.export`` or ExecuTorch lowering fails.
+
+    Examples:
+        Export for portable CPU inference (XNNPACK, fp32)::
+
+            pte_path = export_executorch(model, input_tensor, "output/", backend="xnnpack")
+
+        Export for Apple Neural Engine (CoreML, fp16; detections correct, raw diffs from fp16 expected)::
+
+            pte_path = export_executorch(model, input_tensor, "output/", backend="coreml")
+
+        Export for Qualcomm HTP (QNN, fp16; requires ExecuTorch source build against QAIRT SDK)::
+
+            pte_path = export_executorch(model, input_tensor, "output/", backend="qnn", soc="SM8650")
     """
     backend = backend.lower()
     if backend not in _VALID_BACKENDS:

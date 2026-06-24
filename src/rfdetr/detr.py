@@ -229,18 +229,21 @@ def _resolve_export_backend(format: str, backend: str | None, soc: str | None) -
         return None, None
 
     # Backend-bearing format: the converter owns the authoritative capability sets.  These are keyed by format
-    # (accepted backends) and by format+backend (which backends require a ``soc``), so a second backend-bearing
-    # format with its own backends/SoC rules is a data addition here, not a code change.  Imported lazily so that
-    # backend-agnostic exports never pull in the (optional, heavy) executorch dependency.
-    from rfdetr.export._executorch.converter import _SOC_BACKENDS, _VALID_BACKENDS
+    # (accepted backends) and by format+backend (which backends require a ``soc``).  Adding a second backend-bearing
+    # format is primarily a data change (add entries below + update _EXPORT_FORMATS / _BACKEND_FORMATS), but also
+    # requires a lazy import and an elif branch in export().  Imported lazily so that backend-agnostic exports never
+    # pull in the (optional, heavy) executorch dependency.
+    from rfdetr.export._executorch.converter import SOC_BACKENDS, VALID_BACKENDS
 
-    accepted_backends: dict[str, frozenset[str]] = {"executorch": _VALID_BACKENDS}
-    soc_backends: dict[str, frozenset[str]] = {"executorch": _SOC_BACKENDS}
+    accepted_backends: dict[str, frozenset[str]] = {"executorch": VALID_BACKENDS}
+    soc_backends: dict[str, frozenset[str]] = {"executorch": SOC_BACKENDS}
     valid = accepted_backends.get(format, frozenset())
     soc_required = soc_backends.get(format, frozenset())
 
     if backend is None:
         raise ValueError(f"format {format!r} requires a valid backend (one of {sorted(valid)}), but none was provided.")
+    # Normalise case so RFDETR.export(backend="XNNPACK") and backend="xnnpack" behave identically.
+    backend = backend.lower()
     if backend not in valid:
         raise ValueError(f"Unsupported backend {backend!r} for format {format!r}. Choose from: {sorted(valid)}.")
 
@@ -1071,15 +1074,15 @@ class RFDETR:
                 accuracy.
             max_images: Maximum number of images to load from a calibration directory.  Defaults to ``100``.  Only used
                 when *calibration_data* is a directory path.
-            backend: Hardware backend to specialize the export for.  Required for formats that target a specific
-                backend (see :data:`_BACKEND_FORMATS`; currently only ``"executorch"``) and ignored — with a warning —
-                for any other format.  The accepted backends are defined by the target format's converter; for
-                ``"executorch"`` they are ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple devices, fp16), and
-                ``"qnn"`` (Qualcomm Snapdragon HTP, fp16; needs an ExecuTorch source build against the QNN SDK).
-            soc: Target chip identifier for backends that compile for a specific SoC.  Required for such a backend
-                (see the converter's ``_SOC_BACKENDS``; currently only ``"qnn"``) and ignored — with a warning — for
-                any other backend or format.  For ``"qnn"`` it is a ``QcomChipset`` name such as ``"SM8650"``
-                (Snapdragon 8 Gen 3); see the QNN converter documentation for valid names.
+            backend: Hardware backend to specialize the export for.  Required when ``format="executorch"`` and
+                ignored — with a warning — for any other format.  Accepted values for ExecuTorch:
+                ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple devices, fp16; requires ``coremltools``),
+                and ``"qnn"`` (Qualcomm Snapdragon HTP, fp16; requires an ExecuTorch source build against the
+                QAIRT SDK — not available via pip).
+            soc: Target chip identifier for backends that compile for a specific SoC.  Required when
+                ``backend="qnn"`` and ignored — with a warning — for any other backend or format.  Must be a
+                ``QcomChipset`` name, e.g. ``"SM8650"`` (Snapdragon 8 Gen 3).  Has no effect for ``"xnnpack"``
+                or ``"coreml"``.
             notes: Optional user-defined metadata (string, dict, list, or
                 any JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata
                 property.  When ``None`` no metadata entry is written.  String values are stored verbatim; all other
@@ -1091,6 +1094,13 @@ class RFDETR:
             Path to the exported model file (``.onnx``, ``.tflite``, or ``.pte``).
         """
         backend, soc = _resolve_export_backend(format, backend, soc)
+        # Fail fast: dynamic_batch is statically incompatible with ExecuTorch; refuse before any forward pass
+        # so the user doesn't pay the full DINOv2 forward (seconds + GBs) before seeing the error.
+        if dynamic_batch and format == "executorch":
+            raise NotImplementedError(
+                "ExecuTorch export does not support dynamic_batch (see export_executorch for details). "
+                "Export one .pte per batch size instead."
+            )
         logger.info(f"Exporting model to {format} format")
         try:
             from rfdetr.export.main import export_onnx, make_infer_image
@@ -1180,8 +1190,18 @@ class RFDETR:
             input_tensors = input_tensors.cpu()
 
             if format == "executorch":
-                # _resolve_export_backend guarantees a backend for executorch (and a SoC for qnn).
-                assert backend is not None
+                if notes is not None:
+                    warnings.warn(
+                        "`notes` is not forwarded to format='executorch' (ExecuTorch .pte has no metadata slot). "
+                        "This argument is ignored.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                # Invariant: _resolve_export_backend always sets backend for executorch formats.
+                if backend is None:  # pragma: no cover
+                    raise RuntimeError(
+                        "backend must not be None for format='executorch' — invariant: _resolve_export_backend."
+                    )
                 warnings.warn(
                     "ExecuTorch export is experimental and work-in-progress.",
                     UserWarning,
