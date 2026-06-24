@@ -755,7 +755,13 @@ class YoloDetection(VisionDataset):
         self._transforms = transforms
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
-        self.keypoint_schema = infer_yolo_keypoint_schema(data_file) if include_keypoints else None
+        if include_keypoints:
+            try:
+                self.keypoint_schema = infer_yolo_keypoint_schema(data_file)
+            except (FileNotFoundError, ValueError, OSError) as exc:
+                raise ValueError(f"YOLO keypoint training requires kpt_shape metadata in {data_file!r}.") from exc
+        else:
+            self.keypoint_schema = None
         self.num_keypoints = max(num_keypoints_per_class or [], default=0)
         if self.keypoint_schema is not None:
             self.num_keypoints = max(self.keypoint_schema.num_keypoints_per_class, default=self.num_keypoints)
@@ -765,8 +771,6 @@ class YoloDetection(VisionDataset):
             num_keypoints=self.num_keypoints,
         )
         if include_keypoints:
-            if self.keypoint_schema is None:
-                raise ValueError(f"YOLO keypoint training requires kpt_shape metadata in {data_file!r}.")
             self.sv_dataset = _build_lazy_yolo_keypoint_dataset(
                 img_folder,
                 lb_folder,
@@ -846,7 +850,9 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     aug_config = getattr(args, "aug_config", None)
     include_keypoints = getattr(args, "use_grouppose_keypoints", False)
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
-    keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
+    keypoint_flip_pairs: list[int] | None = (
+        (getattr(args, "keypoint_flip_pairs", []) or []) if include_keypoints else None
+    )
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
     gpu_postprocess = resolved_augmentation_backend != "cpu"
 
