@@ -1389,23 +1389,31 @@ class RFDETR:
         dataset_dir = getattr(config, "dataset_dir", None)
         if not dataset_dir:
             return
-        annotation_path = RFDETR._roboflow_keypoint_annotation_path(dataset_dir)
-        source_path: Path | None = annotation_path
-        source_kind = "Roboflow COCO"
 
-        try:
-            if annotation_path is not None:
-                inferred = infer_coco_keypoint_schema(annotation_path)
-            else:
-                yolo_data_file = RFDETR._yolo_data_file_path(dataset_dir)
-                if yolo_data_file is None:
-                    return
-                source_path = yolo_data_file
-                source_kind = "YOLO pose"
-                inferred = infer_yolo_keypoint_schema(yolo_data_file)
-        except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
-            logger.info("Could not infer keypoint schema from dataset '%s': %s", dataset_dir, exc)
-            return
+        if not hasattr(self, "_keypoint_schema_cache"):
+            self._keypoint_schema_cache: dict = {}
+
+        if dataset_dir in self._keypoint_schema_cache:
+            inferred, source_path, source_kind = self._keypoint_schema_cache[dataset_dir]
+        else:
+            annotation_path = RFDETR._roboflow_keypoint_annotation_path(dataset_dir)
+            source_path: Path | None = annotation_path
+            source_kind = "Roboflow COCO"
+
+            try:
+                if annotation_path is not None:
+                    inferred = infer_coco_keypoint_schema(annotation_path)
+                else:
+                    yolo_data_file = RFDETR._yolo_data_file_path(dataset_dir)
+                    if yolo_data_file is None:
+                        return
+                    source_path = yolo_data_file
+                    source_kind = "YOLO pose"
+                    inferred = infer_yolo_keypoint_schema(yolo_data_file)
+            except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
+                logger.info("Could not infer keypoint schema from dataset '%s': %s", dataset_dir, exc)
+                return
+            self._keypoint_schema_cache[dataset_dir] = (inferred, source_path, source_kind)
 
         inferred_schema = inferred.num_keypoints_per_class
         if hasattr(inferred, "flip_idx") and not getattr(config, "keypoint_flip_pairs", []):

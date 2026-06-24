@@ -19,7 +19,12 @@ if TYPE_CHECKING:
 from PIL import Image, ImageDraw
 from torchvision.datasets import VisionDataset
 
-from rfdetr.datasets._keypoint_schema import YoloKeypointSchema, infer_yolo_keypoint_schema
+from rfdetr.datasets._keypoint_schema import (
+    YoloKeypointSchema,
+    _extract_yolo_class_names_from_data,
+    _load_yaml_mapping,
+    infer_yolo_keypoint_schema,
+)
 from rfdetr.datasets.coco import (
     _resolve_runtime_augmentation_backend,
     make_coco_transforms,
@@ -95,53 +100,9 @@ def _list_yolo_image_paths(images_directory_path: str) -> list[str]:
 
 def _extract_yolo_class_names(data_file: str) -> list[str]:
     """Read class names from a YOLO ``data.yaml`` file."""
-    import yaml
-
-    with Path(data_file).open(encoding="utf-8") as handle:
-        data = yaml.safe_load(handle)
-    if not isinstance(data, dict):
-        raise ValueError(f"Expected mapping in data file {data_file!r}, got {type(data).__name__}.")
-    names = data.get("names")
-    if isinstance(names, dict):
-        # YOLO label files use integer class IDs. When ``names`` is a mapping, we
-        # only support the standard numeric-keyed form where keys are a contiguous
-        # 0-based range: {0: "cat", 1: "dog", ...}. This keeps class IDs consistent
-        # with range checks downstream that assume valid IDs are 0..N-1.
-        numeric_keys: list[int] = []
-        non_numeric_keys: list[Any] = []
-        for key in names.keys():
-            key_str = str(key)
-            if key_str.isdigit():
-                numeric_keys.append(int(key_str))
-            else:
-                non_numeric_keys.append(key)
-
-        if not numeric_keys:
-            raise ValueError(
-                "Unsupported 'names' mapping in data file "
-                f"{data_file!r}: expected integer keys 0..N-1 when 'names' is a dict, "
-                f"got only non-numeric keys {list(names.keys())!r}. "
-                "Please provide 'names' as a list or as a dict with 0-based contiguous "
-                "integer keys."
-            )
-
-        unique_sorted_keys = sorted(set(numeric_keys))
-        expected_keys = list(range(len(unique_sorted_keys)))
-        if unique_sorted_keys != expected_keys or non_numeric_keys:
-            raise ValueError(
-                "Unsupported 'names' mapping in data file "
-                f"{data_file!r}: expected integer keys 0..N-1 with no gaps, "
-                f"got numeric keys {unique_sorted_keys!r} and "
-                f"non-numeric keys {non_numeric_keys!r}. "
-                "This loader assumes class IDs are contiguous 0..N-1; please remap "
-                "the 'names' keys or use the list form."
-            )
-
-        # At this point, keys are exactly 0..N-1; order them by numeric ID.
-        return [str(names[idx]) for idx in unique_sorted_keys]
-    if isinstance(names, list):
-        return [str(name) for name in names]
-    raise ValueError(f"Expected 'names' to be a list or dict in {data_file!r}, got {type(names).__name__}.")
+    path = Path(data_file)
+    data = _load_yaml_mapping(path)
+    return _extract_yolo_class_names_from_data(data, path)
 
 
 @dataclass(frozen=True)
@@ -310,9 +271,17 @@ def _parse_yolo_pose_label_line(
     """Parse one Ultralytics YOLO pose row into pixel boxes and COCO-style keypoints."""
     expected_fields = 5 + num_keypoints * keypoint_dim
     if len(values) != expected_fields:
+        hint = (
+            " This looks like a detection-only label row (5 fields). "
+            "Check whether the dataset mixes detection and pose annotations "
+            "or whether the kpt_shape in data.yaml is correct."
+            if len(values) == 5 and num_keypoints > 0
+            else ""
+        )
         raise ValueError(
             f"Malformed YOLO pose label in {str(label_path)!r} at line {line_num}: "
-            f"expected {expected_fields} fields from kpt_shape=[{num_keypoints}, {keypoint_dim}], got {len(values)}."
+            f"expected {expected_fields} fields from kpt_shape=[{num_keypoints}, {keypoint_dim}], "
+            f"got {len(values)}.{hint}"
         )
 
     cid, xyxy_px, _ = _parse_yolo_label_line(

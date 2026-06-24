@@ -904,5 +904,5 @@ class TestExtractYoloClassNames:
         """
         data_file = tmp_path / "data.yaml"
         data_file.write_text(yaml_content, encoding="utf-8")
-        with pytest.raises(ValueError, match="contiguous"):
+        with pytest.raises(ValueError, match="0..N-1"):
             _extract_yolo_class_names(str(data_file))

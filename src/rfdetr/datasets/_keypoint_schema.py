@@ -78,9 +78,8 @@ class YoloKeypointSchema:
     keypoint_dim: int
 
 
-# Forward-compat alias: KeypointSchema is kept as the public name so future schema
-# variants (e.g. YOLOKeypointSchema) can be swapped in without touching call sites.
-KeypointSchema = CocoKeypointSchema
+# Public union alias covering both concrete schema types.
+KeypointSchema = CocoKeypointSchema | YoloKeypointSchema
 
 
 def _load_yaml_mapping(yaml_path: Path) -> dict[str, Any]:
