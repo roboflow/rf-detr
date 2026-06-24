@@ -12,7 +12,12 @@ from pathlib import Path
 
 import pytest
 
-from rfdetr.datasets._keypoint_schema import CocoKeypointSchema, infer_coco_keypoint_schema
+from rfdetr.datasets._keypoint_schema import (
+    CocoKeypointSchema,
+    YoloKeypointSchema,
+    infer_coco_keypoint_schema,
+    infer_yolo_keypoint_schema,
+)
 
 
 def _write_coco_annotations(
@@ -202,3 +207,42 @@ def test_active_keypoint_counts_filters_zeros(counts: list[int], expected: list[
     result = active_keypoint_counts(counts)
 
     assert result == expected, f"active_keypoint_counts({counts!r}) = {result!r}, expected {expected!r}"
+
+
+def test_infer_yolo_keypoint_schema_reads_pose_yaml_metadata(tmp_path: Path) -> None:
+    """YOLO pose YAML should define class names, keypoint count, names, and flip pairs."""
+    data_file = tmp_path / "data.yaml"
+    data_file.write_text(
+        "names:\n  0: person\nkpt_shape: [2, 3]\nflip_idx: [0, 1]\nkpt_names:\n  0:\n    - left_eye\n    - right_eye\n",
+        encoding="utf-8",
+    )
+
+    schema = infer_yolo_keypoint_schema(data_file)
+
+    assert schema == YoloKeypointSchema(
+        class_names=["person"],
+        num_keypoints_per_class=[2],
+        keypoint_oks_sigmas=[0.1, 0.1],
+        keypoint_names=["left_eye", "right_eye"],
+        flip_idx=[0, 1],
+        keypoint_dim=3,
+    )
+
+
+def test_infer_yolo_keypoint_schema_rejects_detection_yaml(tmp_path: Path) -> None:
+    """Detection-only YOLO YAML should fail fast in keypoint schema inference."""
+    data_file = tmp_path / "data.yaml"
+    data_file.write_text("names:\n  - person\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="kpt_shape"):
+        infer_yolo_keypoint_schema(data_file)
+
+
+@pytest.mark.parametrize("kpt_shape", ["[17, 1]", "[0, 3]", "[17]", "[17, 4]"])
+def test_infer_yolo_keypoint_schema_rejects_invalid_kpt_shape(tmp_path: Path, kpt_shape: str) -> None:
+    """YOLO pose kpt_shape must be [positive_count, 2_or_3]."""
+    data_file = tmp_path / "data.yaml"
+    data_file.write_text(f"names:\n  - person\nkpt_shape: {kpt_shape}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="kpt_shape"):
+        infer_yolo_keypoint_schema(data_file)

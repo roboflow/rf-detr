@@ -195,12 +195,12 @@ model.train(
 
 ## Keypoint Preview Parameters
 
-These parameters apply when training `RFDETRKeypointPreview` on COCO keypoint annotations.
+These parameters apply when training `RFDETRKeypointPreview` on COCO keypoint annotations or Ultralytics YOLO pose labels.
 
 | Parameter                     | Type                  | Default   | Description                                                                                                                                                                                                                                                                                                      |
 | ----------------------------- | --------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `num_keypoints_per_class`     | `list[int]`           | `[0, 17]` | Keypoint schema by model label slot. A zero entry marks a detection-only class slot.                                                                                                                                                                                                                             |
-| `keypoint_flip_pairs`         | `list[int]`           | `[]`      | Flat left/right keypoint index pairs used to swap joints after horizontal-flip augmentation.                                                                                                                                                                                                                     |
+| `keypoint_flip_pairs`         | `list[int]`           | `[]`      | Flat left/right keypoint index pairs used to swap joints after horizontal-flip augmentation. YOLO `flip_idx` metadata is a permutation; RF-DETR converts it to this pair-list form during automatic schema inference when possible.                                                                              |
 | `keypoint_l1_loss_coef`       | `float`               | `1.0`     | Weight for keypoint coordinate L1 loss in keypoint preview training.                                                                                                                                                                                                                                             |
 | `keypoint_findable_loss_coef` | `float`               | `1.0`     | Weight for keypoint findable/objectness loss.                                                                                                                                                                                                                                                                    |
 | `keypoint_visible_loss_coef`  | `float`               | `1.0`     | Weight for keypoint visibility loss.                                                                                                                                                                                                                                                                             |
@@ -209,7 +209,7 @@ These parameters apply when training `RFDETRKeypointPreview` on COCO keypoint an
 
 !!! note "OKS sigma values: flat vs per-keypoint"
 
-    `infer_coco_keypoint_schema` returns a flat sigma of 0.1 for all inferred keypoints, and the keypoint demo passes those values explicitly for custom Roboflow datasets. If `keypoint_oks_sigmas=None`, COCO person-keypoint evaluation uses the standard 17-keypoint COCO sigmas, while non-17 custom keypoint counts use RF-DETR's uniform custom fallback. Flat custom sigmas are not directly comparable to official COCO benchmark numbers.
+    `infer_coco_keypoint_schema` and `infer_yolo_keypoint_schema` return a flat sigma of 0.1 for all inferred keypoints, and the keypoint demos pass those values explicitly for custom datasets. If `keypoint_oks_sigmas=None`, COCO person-keypoint evaluation uses the standard 17-keypoint COCO sigmas, while non-17 custom keypoint counts use RF-DETR's uniform custom fallback. Flat custom sigmas are not directly comparable to official COCO benchmark numbers.
 
 ## Advanced Parameters
 

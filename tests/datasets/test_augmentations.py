@@ -1298,6 +1298,15 @@ class TestAlbumentationsWrapperNestedConfig:
         names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
         assert "HorizontalFlip" in names
 
+    def test_hflip_included_when_keypoint_flip_pairs_are_configured(self) -> None:
+        """HorizontalFlip is safe for keypoint pipelines when semantic flip pairs are configured."""
+        config = {"HorizontalFlip": {"p": 0.5}}
+
+        transforms = AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=[0, 1])
+
+        names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert "HorizontalFlip" in names
+
 
 class TestIntegration:
     """Integration tests for full augmentation pipeline."""
