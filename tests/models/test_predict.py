@@ -938,9 +938,8 @@ class TestPredictClassNameData:
 class TestPredictKeypointClassNameMapping:
     """class_name mapping for keypoint and detection models (issue #1150).
 
-    Active-first keypoint models use normal 0-based class IDs. Legacy background-first
-    checkpoints use slot 0 as background and start real classes at slot 1; that path
-    must keep class-name mapping compatible.
+    Active-first keypoint models use normal 0-based class IDs. Legacy background-first checkpoints use slot 0 as
+    background and start real classes at slot 1; that path must keep class-name mapping compatible.
     """
 
     @pytest.mark.parametrize(
