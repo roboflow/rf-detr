@@ -67,8 +67,23 @@ class MSDeformAttn(nn.Module):
 
         self._export = False
 
-    def export(self):
-        """Export mode."""
+    def export(self) -> None:
+        """Switch module to export mode for torch.export / TFLite compatibility.
+
+        In export mode the module uses ``torch._assert`` instead of Python ``assert`` for shape
+        checks (FakeTensor tracing cannot evaluate data-dependent asserts), and the forward pass
+        routes through the rank-5 tensor path that avoids runtime tensor-shape reads incompatible
+        with ``torch.export.export``.
+
+        Note:
+            There is no corresponding ``unexport()`` — export mode is one-way.  If you need the
+            original eager-mode behaviour after calling ``export()``, deepcopy the module before
+            calling this method::
+
+                import copy
+                attn_eager = copy.deepcopy(attn)
+                attn.export()
+        """
         self._export = True
 
     def _reset_parameters(self):
