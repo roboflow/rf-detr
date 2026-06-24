@@ -48,8 +48,10 @@ Current tag colours are assigned dynamically by the docs UI, so they may change 
 
 ## Current notebooks
 
-| File                         | Card title                                      | Version |
-| ---------------------------- | ----------------------------------------------- | ------- |
-| `custom-augmentations.ipynb` | Custom Augmentations and Live Training Progress | v1.5.0  |
-| `fine-tune_keypoints.ipynb`  | Fine-Tune RF-DETR Keypoint Detection            | v1.8.0  |
-| `pytorch-lightning.ipynb`    | Training with PyTorch Lightning                 | v1.6.0  |
+| File                                 | Card title                                      | Version |
+| ------------------------------------ | ----------------------------------------------- | ------- |
+| `custom-augmentations.ipynb`         | Custom Augmentations and Live Training Progress | v1.5.0  |
+| `fine-tune_keypoints.ipynb`          | Fine-Tune RF-DETR Keypoint Detection            | v1.8.0  |
+| `fine-tune_segmentation.ipynb`       | Fine-Tune RF-DETR Instance Segmentation         | v1.8.1  |
+| `inference-latency-benchmark.ipynb`  | Inference Latency Benchmark                     | v1.8.1  |
+| `pytorch-lightning.ipynb`            | Training with PyTorch Lightning                 | v1.6.0  |
