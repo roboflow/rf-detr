@@ -453,11 +453,6 @@ class TestYoloDetectionLazyMasks:
         "bad_label, expected_match",
         [
             pytest.param(
-                "0 0.5 0.5 0.5 0.5 1.5 0.5 2.0 0.5 0.5 2.0\n",
-                "normalized to",
-                id="coord_out_of_range",
-            ),
-            pytest.param(
                 "0 0.5 0.5 0.5 0.5 0.5 0.5 3.0 0.5 0.5 2.0\n",
                 "visibility values must be",
                 id="visibility_out_of_range",
@@ -472,7 +467,7 @@ class TestYoloDetectionLazyMasks:
     def test_pose_malformed_label_value_raises_clear_error(
         self, tmp_path: Path, bad_label: str, expected_match: str
     ) -> None:
-        """Out-of-range coordinates, out-of-range visibility, or NaN keypoints raise ValueError."""
+        """Out-of-range visibility or NaN keypoints raise ValueError."""
         image_dir, label_dir, data_file = _write_yolo_pose_dataset(tmp_path, keypoint_dim=3)
         (label_dir / "sample.txt").write_text(bad_label, encoding="utf-8")
 
@@ -484,6 +479,66 @@ class TestYoloDetectionLazyMasks:
                 transforms=None,
                 include_keypoints=True,
             )
+
+    def test_pose_dim3_out_of_bounds_coord_clamped_to_image_edge(self, tmp_path: Path) -> None:
+        """Dim-3: OOB keypoint coords are clamped to [0, 1]; visibility flag unchanged.
+
+        Roboflow exports sometimes annotate keypoints slightly outside the image frame. Clamping maps them to the
+        nearest edge so training proceeds without crashing. Image fixture is 8 × 6 px.
+        """
+        image_dir, label_dir, data_file = _write_yolo_pose_dataset(tmp_path, keypoint_dim=3)
+        # kpt0: x=1.5 (OOB right), y=0.5, v=2 → clamp x to 1.0 → pixel x = 8.0
+        # kpt1: x=-0.1 (OOB left), y=0.5, v=1 → clamp x to 0.0 → pixel x = 0.0; v=1 preserved
+        (label_dir / "sample.txt").write_text("0 0.5 0.5 0.5 0.5 1.5 0.5 2.0 -0.1 0.5 1.0\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_keypoints=True,
+            num_keypoints_per_class=[2],
+        )
+
+        _, target = dataset[0]
+        kpts = target["keypoints"]
+        assert kpts.shape == (1, 2, 3)
+        assert kpts[0, 0, 0].item() == pytest.approx(8.0)
+        assert kpts[0, 0, 2].item() == pytest.approx(2.0)
+        assert kpts[0, 1, 0].item() == pytest.approx(0.0)
+        assert kpts[0, 1, 2].item() == pytest.approx(1.0)
+
+    def test_pose_dim2_negative_coord_treated_as_absent(self, tmp_path: Path) -> None:
+        """Dim-2: negative coordinate is the Ultralytics absent-keypoint sentinel.
+
+        Per the YOLO pose spec, a negative x or y signals the keypoint is not labeled.  The parser must detect absence
+        BEFORE clamping so that a keypoint like (-0.1, 0.5) is not clamped to (0.0, 0.5) and mistaken for a present
+        keypoint at the left image edge. Image fixture is 8 × 6 px.
+        """
+        image_dir, label_dir, data_file = _write_yolo_pose_dataset(tmp_path, keypoint_dim=2)
+        # kpt0: x=1.5 (OOB, positive) → clamp to 1.0 → pixel x=8; present → v=2
+        # kpt1: x=-0.1 (negative absent signal), y=0.5 → absent → coords zeroed, v=0
+        (label_dir / "sample.txt").write_text("0 0.5 0.5 0.5 0.5 1.5 0.5 -0.1 0.5\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_keypoints=True,
+            num_keypoints_per_class=[2],
+        )
+
+        _, target = dataset[0]
+        kpts = target["keypoints"]
+        assert kpts.shape == (1, 2, 3)
+        # kpt0: present, clamped to right edge
+        assert kpts[0, 0, 0].item() == pytest.approx(8.0)
+        assert kpts[0, 0, 2].item() == pytest.approx(2.0)
+        # kpt1: absent — coords zeroed, visibility 0
+        assert kpts[0, 1, 0].item() == pytest.approx(0.0)
+        assert kpts[0, 1, 1].item() == pytest.approx(0.0)
+        assert kpts[0, 1, 2].item() == pytest.approx(0.0)
 
     def test_build_dataset_accepts_explicit_yolo_pose_file(self, tmp_path: Path) -> None:
         """dataset_file='yolo' should use the same pose path as Roboflow auto-detection."""

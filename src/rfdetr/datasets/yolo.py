@@ -304,28 +304,32 @@ def _parse_yolo_pose_label_line(
     if not np.isfinite(raw_keypoints).all():
         raise ValueError(f"Malformed YOLO pose label in {str(label_path)!r} at line {line_num}: non-finite keypoint.")
     xy = raw_keypoints[:, :2]
-    if np.any((xy < 0.0) | (xy > 1.0)):
-        raise ValueError(
-            f"Malformed YOLO pose label in {str(label_path)!r} at line {line_num}: "
-            "keypoint coordinates must be normalized to [0, 1]."
-        )
 
     keypoints = np.zeros((num_keypoints, 3), dtype=np.float32)
-    keypoints[:, 0] = xy[:, 0] * float(width)
-    keypoints[:, 1] = xy[:, 1] * float(height)
     if keypoint_dim == 3:
+        # v is authoritative for absent/present; clamp OOB coords to image edge.
         visibility = raw_keypoints[:, 2]
         if np.any((visibility < 0.0) | (visibility > 2.0)):
             raise ValueError(
                 f"Malformed YOLO pose label in {str(label_path)!r} at line {line_num}: "
                 "keypoint visibility values must be in [0, 2]."
             )
+        np.clip(xy, 0.0, 1.0, out=xy)
         keypoints[:, 2] = visibility
     else:
-        # Ultralytics 2D pose labels omit visibility. Treat (0, 0) as absent,
-        # matching common YOLO conversion output for unlabeled points.
+        # Ultralytics dim-2 format: absent keypoints are marked with negative
+        # coordinates (any coord < 0 → absent).  Detect BEFORE clamping so that
+        # a keypoint like (-0.1, 0.5) is not clamped to (0.0, 0.5) and
+        # mistakenly treated as a present keypoint at the left image edge.
+        absent_2d = (xy[:, 0] < 0.0) | (xy[:, 1] < 0.0)
+        np.clip(xy, 0.0, 1.0, out=xy)
+        # Zero coords for absent keypoints so the (0, 0) absent sentinel is set.
+        xy[absent_2d, :] = 0.0
         present = ~((xy[:, 0] == 0.0) & (xy[:, 1] == 0.0))
         keypoints[present, 2] = 2.0
+
+    keypoints[:, 0] = xy[:, 0] * float(width)
+    keypoints[:, 1] = xy[:, 1] * float(height)
 
     absent = keypoints[:, 2] <= 0.0
     keypoints[absent, :2] = 0.0
