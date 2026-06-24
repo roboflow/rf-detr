@@ -221,18 +221,38 @@ class BestModelCallback(ModelCheckpoint):
 
     @staticmethod
     def _serialize_model_config(pl_module: LightningModule) -> dict[str, object] | None:
-        """Serialize the model architecture config when the module exposes one."""
+        """Serialize the model architecture config when the module exposes one.
+
+        Schema-critical fields (``num_keypoints_per_class``, ``num_classes``) are synced from live model weights so the
+        saved config reflects what the model actually learned, not a stale constructor default (e.g. COCO ``[0, 17]``
+        when the model was fine-tuned on ``[0, 33]``).
+        """
         model_config = getattr(pl_module, "model_config", None)
         if model_config is None:
             return None
         if isinstance(model_config, dict):
             return model_config
         model_dump = getattr(model_config, "model_dump", None)
-        if callable(model_dump):
-            dumped = model_dump()
-            if isinstance(dumped, dict):
-                return dumped
-        return None
+        if not callable(model_dump):
+            return None
+        dumped = model_dump()
+        if not isinstance(dumped, dict):
+            return None
+
+        # Sync schema-critical fields from live model weights.
+        _orig = getattr(pl_module.model, "_orig_mod", None)
+        raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
+        state_dict = raw.state_dict()
+
+        _kp_mask = state_dict.get("_kp_active_mask")
+        if isinstance(_kp_mask, torch.Tensor) and _kp_mask.ndim == 2 and "num_keypoints_per_class" in dumped:
+            dumped["num_keypoints_per_class"] = [int(n) for n in _kp_mask.sum(dim=1).tolist()]
+
+        _ce_weight = state_dict.get("class_embed.weight")
+        if isinstance(_ce_weight, torch.Tensor) and _ce_weight.ndim == 2 and "num_classes" in dumped:
+            dumped["num_classes"] = _ce_weight.shape[0]
+
+        return dumped
 
     @staticmethod
     def _resolve_model_name(pl_module: LightningModule) -> str | None:

@@ -1892,3 +1892,103 @@ class TestCheckpointNotes:
             weights_only=False,
         )
         assert checkpoint["args"]["notes"] == notes
+
+
+# ---------------------------------------------------------------------------
+# _serialize_model_config — schema sync from live weights
+# ---------------------------------------------------------------------------
+
+
+def _make_kp_active_mask(schema: list[int]) -> torch.Tensor:
+    """Build a bool _kp_active_mask tensor from a keypoints-per-class schema list."""
+    max_kp = max(schema) if schema else 0
+    mask = torch.zeros(len(schema), max_kp, dtype=torch.bool)
+    for cls_idx, n in enumerate(schema):
+        mask[cls_idx, :n] = True
+    return mask
+
+
+class TestSerializeModelConfig:
+    """Verify _serialize_model_config syncs schema-critical fields from live model weights."""
+
+    def test_syncs_keypoint_schema_from_kp_active_mask(self) -> None:
+        """Stale num_keypoints_per_class in model_config is overridden by _kp_active_mask from weights."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = MagicMock()
+        pl_module.model_config.model_dump.return_value = {
+            "num_keypoints_per_class": [0, 17],
+            "num_classes": 2,
+        }
+        pl_module.model.state_dict.return_value = {
+            "_kp_active_mask": _make_kp_active_mask([0, 33]),
+        }
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is not None
+        assert result["num_keypoints_per_class"] == [0, 33]
+
+    def test_syncs_num_classes_from_class_embed_weight(self) -> None:
+        """Stale num_classes in model_config is overridden by class_embed.weight.shape[0] from weights."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = MagicMock()
+        pl_module.model_config.model_dump.return_value = {
+            "num_keypoints_per_class": [0, 33],
+            "num_classes": 90,
+        }
+        pl_module.model.state_dict.return_value = {
+            "class_embed.weight": torch.zeros(2, 256),
+        }
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is not None
+        assert result["num_classes"] == 2
+
+    def test_no_sync_when_kp_mask_absent(self) -> None:
+        """num_keypoints_per_class is left unchanged when model has no _kp_active_mask."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = MagicMock()
+        pl_module.model_config.model_dump.return_value = {
+            "num_keypoints_per_class": [0, 17],
+            "num_classes": 2,
+        }
+        pl_module.model.state_dict.return_value = {"w": torch.zeros(1)}
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is not None
+        assert result["num_keypoints_per_class"] == [0, 17]
+
+    def test_no_sync_when_field_absent_from_dumped_config(self) -> None:
+        """_kp_active_mask in weights does not insert num_keypoints_per_class when key absent from config."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = MagicMock()
+        pl_module.model_config.model_dump.return_value = {"num_classes": 2}
+        pl_module.model.state_dict.return_value = {
+            "_kp_active_mask": _make_kp_active_mask([0, 33]),
+        }
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is not None
+        assert "num_keypoints_per_class" not in result
+
+    def test_returns_none_when_model_config_absent(self) -> None:
+        """Returns None when pl_module exposes no model_config."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = None
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is None
+
+    def test_returns_dict_directly_for_dict_model_config(self) -> None:
+        """Returns a dict model_config as-is without any weight-based sync."""
+        pl_module = _make_pl_module()
+        raw = {"num_classes": 3, "num_keypoints_per_class": [0, 5]}
+        pl_module.model_config = raw
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is raw
