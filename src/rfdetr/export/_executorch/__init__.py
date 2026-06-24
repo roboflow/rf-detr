@@ -16,4 +16,4 @@ try:
 except ImportError:
     _IS_EXECUTORCH_AVAILABLE = False
 
-__all__ = ["export_executorch", "_IS_EXECUTORCH_AVAILABLE"]
+__all__ = ["export_executorch"]

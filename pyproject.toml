@@ -82,7 +82,7 @@ tflite = [
     "tensorflow>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
 ]
 executorch = [
-    "executorch>=1.0,<2.0",  # torch.export -> .pte, XNNPACK CPU delegate
+    "executorch>=1.3,<2.0",  # torch.export -> .pte, XNNPACK CPU delegate; validated on 1.3.1
 ]
 kornia = [
     "kornia>=0.7,<1",              # GPU-side augmentation via on_after_batch_transfer
