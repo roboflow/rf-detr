@@ -1189,8 +1189,9 @@ class RFDETR:
 
         For COCO-style datasets this counts all categories by ``id`` from ``train/_annotations.coco.json`` (matching the
         remapping based on ``coco.cats`` used by the training datamodule). In keypoint mode it instead counts the
-        inferred RF-DETR keypoint label slots, where slot ``0`` may be reserved for classes without keypoints. For YOLO-
-        style datasets it falls back to ``_load_classes``.
+        inferred RF-DETR keypoint label slots. In legacy background-first schemas (e.g. ``[0, 17]``) slot ``0`` is
+        reserved for classes without keypoints; active-first schemas (e.g. ``[17]``) use normal 0-based indices. For
+        YOLO-style datasets it falls back to ``_load_classes``.
         """
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
@@ -1435,6 +1436,17 @@ class RFDETR:
                     source_path,
                 )
             else:
+                if current_schema and current_schema[0] == 0 and inferred_schema and inferred_schema[0] != 0:
+                    warnings.warn(
+                        f"Loaded checkpoint uses a legacy background-first keypoint schema "
+                        f"num_keypoints_per_class={current_schema!r}, but the dataset infers "
+                        f"active-first {inferred_schema!r}. Training will shift person from slot 1 "
+                        f"to slot 0; checkpoint head weights are now misaligned. "
+                        f"Pass num_keypoints_per_class={current_schema!r} to train() to keep the "
+                        f"legacy schema.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
                 logger.info(
                     "Inferred num_keypoints_per_class=%s from %s keypoint metadata at '%s'.",
                     inferred_schema,
@@ -1705,12 +1717,12 @@ class RFDETR:
         # (0 keypoints), real classes start at slot 1. Active-first schemas such as
         # [17] use normal 0-based class IDs and fall through to the default mapping.
         _num_keypoints_per_class: list[int] = getattr(_model_args, "num_keypoints_per_class", []) or []
-        _is_keypoint_model = bool(_num_keypoints_per_class) and _num_keypoints_per_class[0] == 0
+        _is_legacy_bgfirst_keypoint = bool(_num_keypoints_per_class) and _num_keypoints_per_class[0] == 0
         if _is_coco_pretrained:
             _class_id_to_name: dict[int, str] = {
                 coco_id: model_class_names[i] for i, coco_id in enumerate(COCO_CLASSES) if i < n
             }
-        elif _is_keypoint_model:
+        elif _is_legacy_bgfirst_keypoint:
             # Map foreground keypoint slots (slots where num_keypoints > 0) to class names.
             # Slot 0 is background and is skipped. Slot 1 → class_names[0], slot 2 → class_names[1], …
             # Note: slots where num_keypoints == 0 but slot != 0 (detect-only classes in a mixed schema
@@ -1773,7 +1785,7 @@ class RFDETR:
             # Sentinel for the no-object / background class differs by model type.
             # Legacy background-first keypoint models: slot 0 is background in the keypoint schema.
             # Detection/segmentation models: the no-object slot is at index num_logit_slots.
-            _bg_sentinel = 0 if _is_keypoint_model else num_logit_slots
+            _bg_sentinel = 0 if _is_legacy_bgfirst_keypoint else num_logit_slots
             truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != _bg_sentinel]
             if truly_oob:
                 logger.warning_once(

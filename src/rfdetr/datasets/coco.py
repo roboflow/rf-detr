@@ -58,9 +58,11 @@ def _build_keypoint_cat2label(coco: Any, num_keypoints_per_class: list[int] | No
     """Map COCO category ids onto model label slots that have keypoint capacity.
 
     RF-DETR keypoint schemas are indexed by model label. The preview person-keypoint schema is ``[17]``: label slot
-    ``0`` owns the 17 COCO person keypoints. Legacy checkpoints may still use a background-first ``[0, 17]`` schema.
-    This helper maps keypoint-bearing categories onto the non-zero schema slots, so both layouts keep supervision
-    aligned.
+    ``0`` owns the 17 COCO person keypoints. Legacy checkpoints may still use a background-first ``[0, 17]`` schema
+    where slot ``0`` is reserved (0 keypoints) and slot ``1`` is person. This helper maps keypoint-bearing categories
+    onto slots with a non-zero keypoint count (``count > 0``), so both layouts keep supervision aligned. For multi-class
+    keypoint training supply e.g. ``[17, 4]`` where each non-zero entry corresponds to a keypoint-bearing category in
+    ascending COCO category ID order.
     """
     schema = list(num_keypoints_per_class or [])
     active_slots = [idx for idx, count in enumerate(schema) if count > 0]
@@ -738,6 +740,9 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             include_masks=include_masks,
             include_keypoints=include_keypoints,
             num_keypoints_per_class=num_keypoints_per_class,
+            # NOTE: remap_category_ids and num_keypoints_per_class schema are coupled.
+            # Active-first [17] maps keypoint categories to slot 0; changing either without
+            # the other silently misaligns training supervision.
             remap_category_ids=include_keypoints,
         )
     else:
@@ -760,6 +765,9 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             include_masks=include_masks,
             include_keypoints=include_keypoints,
             num_keypoints_per_class=num_keypoints_per_class,
+            # NOTE: remap_category_ids and num_keypoints_per_class schema are coupled.
+            # Active-first [17] maps keypoint categories to slot 0; changing either without
+            # the other silently misaligns training supervision.
             remap_category_ids=include_keypoints,
         )
     return dataset

@@ -343,6 +343,14 @@ class TestRoboflowCocoKeypointFormat:
         assert dataset.label2cat == {0: 0}
         assert dataset.coco.label2cat == {0: 0}
 
+    def test_standard_coco_cat_id_maps_to_active_schema_slot(self, tmp_path: Path) -> None:
+        """Standard COCO person (cat_id=1) maps to slot 0 under the active-first [17] schema."""
+        _write_roboflow_keypoint_coco(tmp_path / "train" / "_annotations.coco.json", category_id=1)
+
+        dataset = build_roboflow_from_coco("train", self._make_args(tmp_path), resolution=64)
+
+        assert dataset.cat2label == {1: 0}
+
     def test_keypoint_coco_without_keypoint_schema_raises(self, tmp_path: Path) -> None:
         """Keypoint mode should fail clearly if a COCO dataset has no keypoint metadata or annotations."""
         _write_coco_json(
@@ -851,3 +859,37 @@ class TestBuildCocoKeypointMode:
         assert ann_file.name == "instances_train2017.json"
         assert kwargs["include_keypoints"] is False
         assert kwargs["remap_category_ids"] is False
+
+
+class TestBuildKeypointCat2Label:
+    """Unit tests for ``_build_keypoint_cat2label`` schema alignment."""
+
+    def _person_coco(self, cat_id: int = 1) -> types.SimpleNamespace:
+        """Return a minimal COCO-like object with a single keypoint-bearing person category."""
+        return types.SimpleNamespace(
+            cats={cat_id: {"name": "person", "keypoints": ["nose"] * 17}},
+            anns={},
+        )
+
+    def test_legacy_bgfirst_schema_maps_person_to_slot_1(self) -> None:
+        """Legacy [0, 17] schema maps person (cat_id=1) to slot 1, not slot 0."""
+        from rfdetr.datasets.coco import _build_keypoint_cat2label
+
+        result = _build_keypoint_cat2label(self._person_coco(cat_id=1), num_keypoints_per_class=[0, 17])
+
+        assert result == {1: 1}
+
+    def test_mixed_detection_and_keypoint_categories(self) -> None:
+        """Non-keypoint categories fill free slots after keypoint categories are assigned."""
+        from rfdetr.datasets.coco import _build_keypoint_cat2label
+
+        coco = types.SimpleNamespace(
+            cats={
+                1: {"name": "person", "keypoints": ["nose"] * 17},
+                3: {"name": "car"},
+            },
+            anns={},
+        )
+        result = _build_keypoint_cat2label(coco, num_keypoints_per_class=[17])
+
+        assert result == {1: 0, 3: 1}

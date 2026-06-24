@@ -49,6 +49,23 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     pip install "rfdetr==1.8.0" "pyDeprecate>=0.9,<0.10"
     ```
 
+!!! note "Keypoint preview: default schema changed to active-first `[17]`"
+
+    New checkpoints use `class_id=0` for person. Legacy `[0, 17]` checkpoints are still supported —
+    RF-DETR auto-detects the schema from the checkpoint at load time.
+
+    If your post-processing code offsets class IDs by 1 (common for background-first models), update it:
+
+    ```python
+    # Before (background-first [0, 17]: person was at class_id=1)
+    class_name = "person" if detection.class_id == 1 else "other"
+
+    # After (active-first [17]: person is at class_id=0)
+    class_name = "person" if detection.class_id == 0 else "other"
+    ```
+
+    Use `detection.data["class_name"]` for schema-agnostic name resolution.
+
 ---
 
 ## Upgrade 1.6 → 1.7
