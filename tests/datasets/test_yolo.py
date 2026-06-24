@@ -282,6 +282,18 @@ class TestYoloDetectionLazyMasks:
         assert dataset.coco.dataset["annotations"][0]["segmentation"] == []
         assert isinstance(dataset.coco, COCO)
 
+    def test_init_raises_when_masks_and_keypoints_both_enabled(self, tmp_path: Path) -> None:
+        """YoloDetection must reject include_masks=True + include_keypoints=True before any I/O."""
+        with pytest.raises(ValueError, match="at the same time"):
+            YoloDetection(
+                img_folder=str(tmp_path / "images"),
+                lb_folder=str(tmp_path / "labels"),
+                data_file=str(tmp_path / "data.yaml"),
+                transforms=None,
+                include_masks=True,
+                include_keypoints=True,
+            )
+
     def test_detection_init_exposes_real_coco_api_indexes(self, tmp_path: Path) -> None:
         """`dataset.coco` should be a real pycocotools.COCO object with working indexes."""
         image_dir = tmp_path / "images"
@@ -435,6 +447,42 @@ class TestYoloDetectionLazyMasks:
                 transforms=None,
                 include_keypoints=True,
                 num_keypoints_per_class=[2],
+            )
+
+    @pytest.mark.parametrize(
+        "bad_label, expected_match",
+        [
+            pytest.param(
+                "0 0.5 0.5 0.5 0.5 1.5 0.5 2.0 0.5 0.5 2.0\n",
+                "normalized to",
+                id="coord_out_of_range",
+            ),
+            pytest.param(
+                "0 0.5 0.5 0.5 0.5 0.5 0.5 3.0 0.5 0.5 2.0\n",
+                "visibility values must be",
+                id="visibility_out_of_range",
+            ),
+            pytest.param(
+                "0 0.5 0.5 0.5 0.5 nan 0.5 2.0 0.5 0.5 2.0\n",
+                "non-finite",
+                id="nan_keypoint",
+            ),
+        ],
+    )
+    def test_pose_malformed_label_value_raises_clear_error(
+        self, tmp_path: Path, bad_label: str, expected_match: str
+    ) -> None:
+        """Out-of-range coordinates, out-of-range visibility, or NaN keypoints raise ValueError."""
+        image_dir, label_dir, data_file = _write_yolo_pose_dataset(tmp_path, keypoint_dim=3)
+        (label_dir / "sample.txt").write_text(bad_label, encoding="utf-8")
+
+        with pytest.raises(ValueError, match=expected_match):
+            YoloDetection(
+                img_folder=str(image_dir),
+                lb_folder=str(label_dir),
+                data_file=str(data_file),
+                transforms=None,
+                include_keypoints=True,
             )
 
     def test_build_dataset_accepts_explicit_yolo_pose_file(self, tmp_path: Path) -> None:

@@ -246,3 +246,24 @@ def test_infer_yolo_keypoint_schema_rejects_invalid_kpt_shape(tmp_path: Path, kp
 
     with pytest.raises(ValueError, match="kpt_shape"):
         infer_yolo_keypoint_schema(data_file)
+
+
+@pytest.mark.parametrize(
+    "flip_idx_text, expected_match",
+    [
+        pytest.param("[0, 5]", "permutation", id="out_of_range"),
+        pytest.param("[0, 0]", "permutation", id="duplicate"),
+        pytest.param("[0]", "integer indexes", id="wrong_length"),
+    ],
+)
+def test_infer_yolo_keypoint_schema_rejects_invalid_flip_idx(
+    tmp_path: Path, flip_idx_text: str, expected_match: str
+) -> None:
+    """flip_idx must be a valid permutation of 0..N-1 matching kpt_shape count."""
+    data_file = tmp_path / "data.yaml"
+    data_file.write_text(
+        f"names:\n  0: person\nkpt_shape: [2, 3]\nflip_idx: {flip_idx_text}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=expected_match):
+        infer_yolo_keypoint_schema(data_file)
