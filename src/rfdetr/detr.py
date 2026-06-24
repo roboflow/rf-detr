@@ -30,9 +30,13 @@ from PIL import Image
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
-from rfdetr.datasets._keypoint_schema import active_keypoint_counts, infer_coco_keypoint_schema
+from rfdetr.datasets._keypoint_schema import (
+    active_keypoint_counts,
+    infer_coco_keypoint_schema,
+    infer_yolo_keypoint_schema,
+)
 from rfdetr.datasets.coco import is_valid_coco_dataset
-from rfdetr.datasets.yolo import is_valid_yolo_dataset
+from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.utilities.distributed import is_main_process
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
@@ -1319,6 +1323,44 @@ class RFDETR:
         annotation_path = Path(dataset_dir) / "train" / "_annotations.coco.json"
         return annotation_path if annotation_path.exists() else None
 
+    @staticmethod
+    def _yolo_data_file_path(dataset_dir: str) -> Path | None:
+        """Return the YOLO data file path when a dataset root has one.
+
+        Args:
+            dataset_dir: Path to the YOLO dataset root.
+
+        Returns:
+            Path to ``data.yaml`` or ``data.yml``, or ``None`` when neither exists.
+
+        Raises:
+            This helper does not raise.
+
+        Example:
+            >>> RFDETR._yolo_data_file_path("/missing") is None
+            True
+        """
+        root = Path(dataset_dir)
+        for filename in REQUIRED_YOLO_YAML_FILES:
+            data_file = root / filename
+            if data_file.exists():
+                return data_file
+        return None
+
+    @staticmethod
+    def _flip_idx_to_pairs(flip_idx: list[int]) -> list[int]:
+        """Convert Ultralytics ``flip_idx`` permutation metadata to flat swap pairs."""
+        pairs: list[int] = []
+        seen: set[int] = set()
+        for idx, mirror_idx in enumerate(flip_idx):
+            if idx in seen or mirror_idx in seen or idx == mirror_idx:
+                seen.add(idx)
+                continue
+            if mirror_idx < len(flip_idx) and flip_idx[mirror_idx] == idx:
+                pairs.extend([idx, mirror_idx])
+                seen.update({idx, mirror_idx})
+        return pairs
+
     def _align_keypoint_schema_from_dataset(self, config: TrainConfig) -> None:
         """Infer or validate keypoint schema from Roboflow COCO metadata.
 
@@ -1342,22 +1384,40 @@ class RFDETR:
 
         if not self.model_config.use_grouppose_keypoints:
             return
-        if getattr(config, "dataset_file", None) != "roboflow":
+        if getattr(config, "dataset_file", None) not in ("roboflow", "yolo"):
             return
         dataset_dir = getattr(config, "dataset_dir", None)
         if not dataset_dir:
             return
-        annotation_path = RFDETR._roboflow_keypoint_annotation_path(dataset_dir)
-        if annotation_path is None:
-            return
 
-        try:
-            inferred = infer_coco_keypoint_schema(annotation_path)
-        except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
-            logger.info("Could not infer keypoint schema from dataset '%s': %s", dataset_dir, exc)
-            return
+        if not hasattr(self, "_keypoint_schema_cache"):
+            self._keypoint_schema_cache: dict = {}
+
+        if dataset_dir in self._keypoint_schema_cache:
+            inferred, source_path, source_kind = self._keypoint_schema_cache[dataset_dir]
+        else:
+            annotation_path = RFDETR._roboflow_keypoint_annotation_path(dataset_dir)
+            source_path: Path | None = annotation_path
+            source_kind = "Roboflow COCO"
+
+            try:
+                if annotation_path is not None:
+                    inferred = infer_coco_keypoint_schema(annotation_path)
+                else:
+                    yolo_data_file = RFDETR._yolo_data_file_path(dataset_dir)
+                    if yolo_data_file is None:
+                        return
+                    source_path = yolo_data_file
+                    source_kind = "YOLO pose"
+                    inferred = infer_yolo_keypoint_schema(yolo_data_file)
+            except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
+                logger.info("Could not infer keypoint schema from dataset '%s': %s", dataset_dir, exc)
+                return
+            self._keypoint_schema_cache[dataset_dir] = (inferred, source_path, source_kind)
 
         inferred_schema = inferred.num_keypoints_per_class
+        if hasattr(inferred, "flip_idx") and not getattr(config, "keypoint_flip_pairs", []):
+            config.keypoint_flip_pairs = RFDETR._flip_idx_to_pairs(inferred.flip_idx)
         # Older configs may omit the schema; absence lets dataset inference populate it.
         current_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
         user_set_schema = "num_keypoints_per_class" in getattr(self.model_config, "model_fields_set", set())
@@ -1372,13 +1432,14 @@ class RFDETR:
                     "Using dataset metadata as the source of truth.",
                     current_schema,
                     inferred_schema,
-                    annotation_path,
+                    source_path,
                 )
             else:
                 logger.info(
-                    "Inferred num_keypoints_per_class=%s from Roboflow COCO keypoint metadata at '%s'.",
+                    "Inferred num_keypoints_per_class=%s from %s keypoint metadata at '%s'.",
                     inferred_schema,
-                    annotation_path,
+                    source_kind,
+                    source_path,
                 )
             self.model_config.num_keypoints_per_class = inferred_schema
             model_args = getattr(self.model, "args", None)

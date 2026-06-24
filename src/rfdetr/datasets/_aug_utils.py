@@ -20,11 +20,9 @@ CONTAINER_TRANSFORM_NAMES: frozenset[str] = frozenset({"OneOf", "SomeOf", "Seque
 def _warn_keypoint_hflip_disabled(aug_name: str, warn: Callable[..., None]) -> None:
     """Emit the standard warning for a disabled keypoint horizontal flip."""
     warn(
-        "Keypoint pipeline: '%s' performs a horizontal flip but flip-pair swapping "
-        "(swapping left/right joint labels after a horizontal flip) is not yet "
-        "implemented. The transform has been disabled to prevent incorrect keypoint "
-        "annotations. Remove '%s' from your augmentation config or wait for flip-pair "
-        "support in a future release.",
+        "Keypoint pipeline: '%s' performs a horizontal flip but no keypoint flip pairs "
+        "were configured. The transform has been disabled to prevent incorrect keypoint "
+        "annotations. Remove '%s' from your augmentation config or provide keypoint_flip_pairs.",
         aug_name,
         aug_name,
     )

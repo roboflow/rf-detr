@@ -378,9 +378,10 @@ class AlbumentationsWrapper:
     Args:
         transform: Albumentations transform to apply (e.g., alb.HorizontalFlip, alb.GaussianBlur).
         keypoint_flip_pairs: Joint index pairs for left/right swapping after a horizontal flip.
-            ``None`` (default) means a detection pipeline -- no keypoint handling. An empty list
-            ``[]`` marks a keypoint pipeline where flip-pair swapping is not yet implemented;
-            horizontal-flip transforms should have been stripped from config before this point.
+            ``None`` (default) means a detection pipeline -- no keypoint handling.
+            An empty list ``[]`` marks a keypoint pipeline without semantic flip
+            pairs, so horizontal-flip transforms should have been stripped from
+            config before this point.
 
     Examples:
         >>> from albumentations import GaussianBlur, HorizontalFlip
@@ -401,15 +402,7 @@ class AlbumentationsWrapper:
     def __init__(self, transform: alb.BasicTransform, keypoint_flip_pairs: list[int] | None = None) -> None:
         # Auto-detect if transform is geometric (recursively for containers)
         self._is_geometric = _is_geometric_transform(transform)
-        # Flip pair swapping is not yet implemented; pairs are reserved for a future release.
-        self._keypoint_flip_pairs: list[int] = []
-        if keypoint_flip_pairs:
-            logger.warning(
-                "AlbumentationsWrapper received keypoint_flip_pairs=%r, but flip-pair swapping is not yet "
-                "implemented and will be ignored. Semantic joint index swapping after horizontal flips is planned "
-                "for a future release.",
-                keypoint_flip_pairs,
-            )
+        self._keypoint_flip_pairs = list(keypoint_flip_pairs or [])
 
         if self._is_geometric:
             # Wrap geometric transform with bbox handling capabilities
@@ -580,34 +573,41 @@ class AlbumentationsWrapper:
         kept_position_by_idx = {int(original_idx): position for position, original_idx in enumerate(kept_idxs)}
         height, width = augmented["image"].shape[:2]
 
-        for point, instance_id, point_id, visible in zip(
-            augmented.get("keypoints", []),
-            augmented.get("keypoint_instance_ids", []),
-            augmented.get("keypoint_point_ids", []),
-            augmented.get("keypoint_visibility", []),
-        ):
-            original_idx = int(instance_id)
-            if original_idx not in kept_position_by_idx:
-                continue
-            point_idx = int(point_id)
-            if point_idx < 0 or point_idx >= num_keypoints:
-                continue
-
-            x, y = float(point[0]), float(point[1])
-            visibility = float(visible)
-            if visibility <= 0 or x < 0 or y < 0 or x >= width or y >= height:
-                x, y, visibility = 0.0, 0.0, 0.0
-            keypoints_out[kept_position_by_idx[original_idx], point_idx] = (x, y, visibility)
+        albu_kps = augmented.get("keypoints", [])
+        if albu_kps:
+            inst_ids = augmented.get("keypoint_instance_ids", [])
+            pt_ids = augmented.get("keypoint_point_ids", [])
+            visible = augmented.get("keypoint_visibility", [])
+            xy = np.asarray([(float(p[0]), float(p[1])) for p in albu_kps], dtype=np.float32)
+            inst = np.array([kept_position_by_idx.get(int(ii), -1) for ii in inst_ids], dtype=np.intp)
+            ptid = np.array([int(p) for p in pt_ids], dtype=np.intp)
+            vis = np.asarray([float(v) for v in visible], dtype=np.float32)
+            valid = (
+                (inst >= 0)
+                & (ptid >= 0)
+                & (ptid < num_keypoints)
+                & (vis > 0)
+                & (xy[:, 0] >= 0)
+                & (xy[:, 0] < width)
+                & (xy[:, 1] >= 0)
+                & (xy[:, 1] < height)
+            )
+            valid_idx = np.where(valid)[0]
+            if len(valid_idx) > 0:
+                keypoints_out[inst[valid_idx], ptid[valid_idx]] = np.column_stack([xy[valid_idx], vis[valid_idx]])
 
         result = torch.as_tensor(keypoints_out, dtype=torch.float32)
 
         if did_flip and flip_pairs:
+            # Build permutation index and apply in a single indexed gather (O(1) dispatch vs O(K) clones)
+            num_kpts = result.shape[1]
+            perm = torch.arange(num_kpts)
             for i in range(0, len(flip_pairs) - 1, 2):
                 ai, bi = flip_pairs[i], flip_pairs[i + 1]
-                if ai < result.shape[1] and bi < result.shape[1]:
-                    tmp = result[:, ai, :].clone()
-                    result[:, ai, :] = result[:, bi, :]
-                    result[:, bi, :] = tmp
+                if ai < num_kpts and bi < num_kpts:
+                    perm[ai] = bi
+                    perm[bi] = ai
+            result = result[:, perm, :]
 
         return result
 
@@ -948,7 +948,7 @@ class AlbumentationsWrapper:
         original_config_empty = isinstance(config_dict, (dict, list)) and len(config_dict) == 0
         config_dict = filter_keypoint_hflip_augmentations(
             config_dict,
-            include_keypoints=keypoint_flip_pairs is not None,
+            include_keypoints=keypoint_flip_pairs is not None and not keypoint_flip_pairs,
             warn=logger.warning,
         )
         if isinstance(config_dict, list):
