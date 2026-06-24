@@ -2679,20 +2679,7 @@ fine-tuning and can lock checkpoint selection to a transient peak.</p>
 <span class="normal"><a href="#__codelineno-0-925">925</a></span>
 <span class="normal"><a href="#__codelineno-0-926">926</a></span>
 <span class="normal"><a href="#__codelineno-0-927">927</a></span>
-<span class="normal"><a href="#__codelineno-0-928">928</a></span>
-<span class="normal"><a href="#__codelineno-0-929">929</a></span>
-<span class="normal"><a href="#__codelineno-0-930">930</a></span>
-<span class="normal"><a href="#__codelineno-0-931">931</a></span>
-<span class="normal"><a href="#__codelineno-0-932">932</a></span>
-<span class="normal"><a href="#__codelineno-0-933">933</a></span>
-<span class="normal"><a href="#__codelineno-0-934">934</a></span>
-<span class="normal"><a href="#__codelineno-0-935">935</a></span>
-<span class="normal"><a href="#__codelineno-0-936">936</a></span>
-<span class="normal"><a href="#__codelineno-0-937">937</a></span>
-<span class="normal"><a href="#__codelineno-0-938">938</a></span>
-<span class="normal"><a href="#__codelineno-0-939">939</a></span>
-<span class="normal"><a href="#__codelineno-0-940">940</a></span>
-<span class="normal"><a href="#__codelineno-0-941">941</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-897"><a id="__codelineno-0-897" name="__codelineno-0-897"></a><span class="k">class</span><span class="w"> </span><span class="nc">KeypointTrainConfig</span><span class="p">(</span><span class="n">TrainConfig</span><span class="p">):</span>
+<span class="normal"><a href="#__codelineno-0-928">928</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-897"><a id="__codelineno-0-897" name="__codelineno-0-897"></a><span class="k">class</span><span class="w"> </span><span class="nc">KeypointTrainConfig</span><span class="p">(</span><span class="n">TrainConfig</span><span class="p">):</span>
 </span><span id="__span-0-898"><a id="__codelineno-0-898" name="__codelineno-0-898"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Training configuration for keypoint detection models.</span>
 </span><span id="__span-0-899"><a id="__codelineno-0-899" name="__codelineno-0-899"></a>
 </span><span id="__span-0-900"><a id="__codelineno-0-900" name="__codelineno-0-900"></a><span class="sd">    Extends :class:`TrainConfig` with keypoint-specific loss coefficients and</span>
@@ -2724,19 +2711,6 @@ fine-tuning and can lock checkpoint selection to a transient peak.</p>
 </span><span id="__span-0-926"><a id="__codelineno-0-926" name="__codelineno-0-926"></a>    <span class="n">keypoint_nll_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span>
 </span><span id="__span-0-927"><a id="__codelineno-0-927" name="__codelineno-0-927"></a>    <span class="n">smooth_alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span>
 </span><span id="__span-0-928"><a id="__codelineno-0-928" name="__codelineno-0-928"></a>    <span class="n">skip_best_epochs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
-</span><span id="__span-0-929"><a id="__codelineno-0-929" name="__codelineno-0-929"></a>
-</span><span id="__span-0-930"><a id="__codelineno-0-930" name="__codelineno-0-930"></a>    <span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span><span class="p">)</span>
-</span><span id="__span-0-931"><a id="__codelineno-0-931" name="__codelineno-0-931"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_warn_keypoint_flip_pairs_not_yet_implemented</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;KeypointTrainConfig&quot;</span><span class="p">:</span>
-</span><span id="__span-0-932"><a id="__codelineno-0-932" name="__codelineno-0-932"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Emit a warning when keypoint_flip_pairs is set before the feature ships.&quot;&quot;&quot;</span>
-</span><span id="__span-0-933"><a id="__codelineno-0-933" name="__codelineno-0-933"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">keypoint_flip_pairs</span><span class="p">:</span>
-</span><span id="__span-0-934"><a id="__codelineno-0-934" name="__codelineno-0-934"></a>            <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
-</span><span id="__span-0-935"><a id="__codelineno-0-935" name="__codelineno-0-935"></a>                <span class="s2">&quot;keypoint_flip_pairs is accepted but not yet implemented and will be ignored. &quot;</span>
-</span><span id="__span-0-936"><a id="__codelineno-0-936" name="__codelineno-0-936"></a>                <span class="s2">&quot;Flip pair swapping (swapping left/right joint indices after a horizontal flip) &quot;</span>
-</span><span id="__span-0-937"><a id="__codelineno-0-937" name="__codelineno-0-937"></a>                <span class="s2">&quot;is planned for a future release. Training will proceed without semantic joint swapping.&quot;</span><span class="p">,</span>
-</span><span id="__span-0-938"><a id="__codelineno-0-938" name="__codelineno-0-938"></a>                <span class="ne">UserWarning</span><span class="p">,</span>
-</span><span id="__span-0-939"><a id="__codelineno-0-939" name="__codelineno-0-939"></a>                <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
-</span><span id="__span-0-940"><a id="__codelineno-0-940" name="__codelineno-0-940"></a>            <span class="p">)</span>
-</span><span id="__span-0-941"><a id="__codelineno-0-941" name="__codelineno-0-941"></a>        <span class="k">return</span> <span class="bp">self</span>
 </span></code></pre></div></td></tr></table></div>
               </details>
 

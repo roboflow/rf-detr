@@ -87,7 +87,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-06-22T09:40:03">
+  <meta property="article:modified_time" content="2026-06-24T15:19:04">
   
   <script type="application/ld+json">
   {
@@ -102,7 +102,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-06-22T09:40:03",
+    "dateModified": "2026-06-24T15:19:04",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3210,9 +3210,9 @@ optional uncertainty ellipses.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[train,visual]==1.8.1"</span> <span class="n">roboflow</span> <span class="n">pandas</span> <span class="n">seaborn</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[train,visual]==1.8.2"</span> <span class="n">roboflow</span> <span class="n">pandas</span> <span class="n">seaborn</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">!pip install -q "rfdetr[train,visual]==1.8.1" roboflow pandas seaborn</div>
+<div class="clipboard-copy-txt" id="cell-1">!pip install -q "rfdetr[train,visual]==1.8.2" roboflow pandas seaborn</div>
 </div>
 </div>
 </div>
@@ -3256,7 +3256,7 @@ optional uncertainty ellipses.</p>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRKeypointPreview</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">KeypointTrainConfig</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.datasets._keypoint_schema</span><span class="w"> </span><span class="kn">import</span> <span class="n">infer_coco_keypoint_schema</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.datasets._keypoint_schema</span><span class="w"> </span><span class="kn">import</span> <span class="n">infer_coco_keypoint_schema</span><span class="p">,</span> <span class="n">infer_yolo_keypoint_schema</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRDataModule</span><span class="p">,</span> <span class="n">RFDETRModelModule</span><span class="p">,</span> <span class="n">build_trainer</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training.callbacks.best_model</span><span class="w"> </span><span class="kn">import</span> <span class="n">BestModelCallback</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.utilities.reproducibility</span><span class="w"> </span><span class="kn">import</span> <span class="n">seed_all</span>
@@ -3282,7 +3282,7 @@ from roboflow import Roboflow
 
 from rfdetr import RFDETRKeypointPreview
 from rfdetr.config import KeypointTrainConfig
-from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema
+from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema, infer_yolo_keypoint_schema
 from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 from rfdetr.training.callbacks.best_model import BestModelCallback
 from rfdetr.utilities.reproducibility import seed_all
@@ -3338,6 +3338,7 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
         <span class="s2">"version"</span><span class="p">:</span> <span class="mi">65</span><span class="p">,</span>
         <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/poseestimation-wzidb/dataset-ridimensionato/dataset/65"</span><span class="p">,</span>
         <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"keypoint_dataset_ridimensionato_demo"</span><span class="p">,</span>
+        <span class="s2">"format"</span><span class="p">:</span> <span class="s2">"yolo"</span><span class="p">,</span>
         <span class="s2">"keypoint_flip_pairs"</span><span class="p">:</span> <span class="p">[],</span>
         <span class="c1"># 768 — body joints (wrists, ankles) require fine localisation across a range of</span>
         <span class="c1"># person scales; a larger canvas reduces positional error for distant people.</span>
@@ -3375,6 +3376,7 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
         <span class="s2">"version"</span><span class="p">:</span> <span class="mi">6</span><span class="p">,</span>
         <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/shj-pk1wt/tennis_court_keypoint"</span><span class="p">,</span>
         <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"keypoint_tennis_court_demo"</span><span class="p">,</span>
+        <span class="s2">"format"</span><span class="p">:</span> <span class="s2">"yolo"</span><span class="p">,</span>
         <span class="s2">"keypoint_flip_pairs"</span><span class="p">:</span> <span class="p">[],</span>
         <span class="c1"># 768 — a full court viewed from broadcast angles packs many line intersections</span>
         <span class="c1"># into a small pixel area; the higher resolution reduces confusion between</span>
@@ -3385,6 +3387,7 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
 
 <span class="n">DATASET_KEY</span> <span class="o">=</span> <span class="s2">"dart"</span>
 <span class="n">DATASET_INFO</span> <span class="o">=</span> <span class="n">DATASETS</span><span class="p">[</span><span class="n">DATASET_KEY</span><span class="p">]</span>
+<span class="n">DATASET_FORMAT</span> <span class="o">=</span> <span class="n">DATASET_INFO</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"format"</span><span class="p">,</span> <span class="s2">"coco"</span><span class="p">)</span>  <span class="c1"># "coco" or "yolo"</span>
 
 <span class="n">OUTPUT_DIR</span> <span class="o">=</span> <span class="n">PROJECT_ROOT</span> <span class="o">/</span> <span class="s2">"output"</span> <span class="o">/</span> <span class="nb">str</span><span class="p">(</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s2">"output_name"</span><span class="p">])</span>
 <span class="n">METRICS_CSV</span> <span class="o">=</span> <span class="n">OUTPUT_DIR</span> <span class="o">/</span> <span class="s2">"metrics.csv"</span>
@@ -3414,6 +3417,7 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
 
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"dataset_key=</span><span class="si">{</span><span class="n">DATASET_KEY</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"dataset=</span><span class="si">{</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s1">'name'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"dataset_format=</span><span class="si">{</span><span class="n">DATASET_FORMAT</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"source_url=</span><span class="si">{</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s1">'source_url'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"resolution=</span><span class="si">{</span><span class="n">RESOLUTION</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
@@ -3443,6 +3447,7 @@ DATASETS: dict[str, dict[str, Any]] = {
         "version": 65,
         "source_url": "https://universe.roboflow.com/poseestimation-wzidb/dataset-ridimensionato/dataset/65",
         "output_name": "keypoint_dataset_ridimensionato_demo",
+        "format": "yolo",
         "keypoint_flip_pairs": [],
         # 768 — body joints (wrists, ankles) require fine localisation across a range of
         # person scales; a larger canvas reduces positional error for distant people.
@@ -3480,6 +3485,7 @@ DATASETS: dict[str, dict[str, Any]] = {
         "version": 6,
         "source_url": "https://universe.roboflow.com/shj-pk1wt/tennis_court_keypoint",
         "output_name": "keypoint_tennis_court_demo",
+        "format": "yolo",
         "keypoint_flip_pairs": [],
         # 768 — a full court viewed from broadcast angles packs many line intersections
         # into a small pixel area; the higher resolution reduces confusion between
@@ -3490,6 +3496,7 @@ DATASETS: dict[str, dict[str, Any]] = {
 
 DATASET_KEY = "dart"
 DATASET_INFO = DATASETS[DATASET_KEY]
+DATASET_FORMAT = DATASET_INFO.get("format", "coco")  # "coco" or "yolo"
 
 OUTPUT_DIR = PROJECT_ROOT / "output" / str(DATASET_INFO["output_name"])
 METRICS_CSV = OUTPUT_DIR / "metrics.csv"
@@ -3519,6 +3526,7 @@ MAX_ELLIPSE_RADIUS = 36.0
 
 print(f"dataset_key={DATASET_KEY}")
 print(f"dataset={DATASET_INFO['name']}")
+print(f"dataset_format={DATASET_FORMAT}")
 print(f"source_url={DATASET_INFO['source_url']}")
 print(f"resolution={RESOLUTION}")</div>
 </div>
@@ -3636,14 +3644,16 @@ _enable_notebook_inline_matplotlib()</div>
     <span class="p">)</span>
 
 <span class="n">rf</span> <span class="o">=</span> <span class="n">Roboflow</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="n">ROBOFLOW_API_KEY</span><span class="p">)</span>
+<span class="n">_rf_format</span> <span class="o">=</span> <span class="s2">"yolov8"</span> <span class="k">if</span> <span class="n">DATASET_FORMAT</span> <span class="o">==</span> <span class="s2">"yolo"</span> <span class="k">else</span> <span class="s2">"coco"</span>
 <span class="n">dataset</span> <span class="o">=</span> <span class="p">(</span>
     <span class="n">rf</span><span class="o">.</span><span class="n">workspace</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s2">"workspace"</span><span class="p">]))</span>
     <span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s2">"project"</span><span class="p">]))</span>
     <span class="o">.</span><span class="n">version</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s2">"version"</span><span class="p">]))</span>
-    <span class="o">.</span><span class="n">download</span><span class="p">(</span><span class="s2">"coco"</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASETS_DIR</span> <span class="o">/</span> <span class="n">DATASET_KEY</span><span class="p">))</span>
+    <span class="o">.</span><span class="n">download</span><span class="p">(</span><span class="n">_rf_format</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASETS_DIR</span> <span class="o">/</span> <span class="n">DATASET_KEY</span><span class="p">))</span>
 <span class="p">)</span>
 <span class="n">DATASET_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">dataset</span><span class="o">.</span><span class="n">location</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"dataset_dir=</span><span class="si">{</span><span class="n">DATASET_DIR</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"rf_format=</span><span class="si">{</span><span class="n">_rf_format</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-5">try:
     from google.colab import userdata
@@ -3665,14 +3675,16 @@ if not ROBOFLOW_API_KEY:
     )
 
 rf = Roboflow(api_key=ROBOFLOW_API_KEY)
+_rf_format = "yolov8" if DATASET_FORMAT == "yolo" else "coco"
 dataset = (
     rf.workspace(str(DATASET_INFO["workspace"]))
     .project(str(DATASET_INFO["project"]))
     .version(int(DATASET_INFO["version"]))
-    .download("coco", location=str(DATASETS_DIR / DATASET_KEY))
+    .download(_rf_format, location=str(DATASETS_DIR / DATASET_KEY))
 )
 DATASET_DIR = Path(dataset.location)
-print(f"dataset_dir={DATASET_DIR}")</div>
+print(f"dataset_dir={DATASET_DIR}")
+print(f"rf_format={_rf_format}")</div>
 </div>
 </div>
 </div>
@@ -3708,15 +3720,30 @@ print(f"dataset_dir={DATASET_DIR}")</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">TRAIN_ANNOTATIONS</span> <span class="o">=</span> <span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"train"</span> <span class="o">/</span> <span class="s2">"_annotations.coco.json"</span>
-<span class="n">schema</span> <span class="o">=</span> <span class="n">infer_coco_keypoint_schema</span><span class="p">(</span><span class="n">TRAIN_ANNOTATIONS</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">if</span> <span class="n">DATASET_FORMAT</span> <span class="o">==</span> <span class="s2">"yolo"</span><span class="p">:</span>
+    <span class="n">schema</span> <span class="o">=</span> <span class="n">infer_yolo_keypoint_schema</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"data.yaml"</span><span class="p">)</span>
+    <span class="n">_flip_idx</span> <span class="o">=</span> <span class="n">schema</span><span class="o">.</span><span class="n">flip_idx</span>
+    <span class="n">_pairs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">_seen</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">_i</span><span class="p">,</span> <span class="n">_j</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">_flip_idx</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">_i</span> <span class="ow">in</span> <span class="n">_seen</span> <span class="ow">or</span> <span class="n">_j</span> <span class="ow">in</span> <span class="n">_seen</span> <span class="ow">or</span> <span class="n">_i</span> <span class="o">==</span> <span class="n">_j</span><span class="p">:</span>
+            <span class="n">_seen</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">_i</span><span class="p">)</span>
+            <span class="k">continue</span>
+        <span class="k">if</span> <span class="n">_j</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">_flip_idx</span><span class="p">)</span> <span class="ow">and</span> <span class="n">_flip_idx</span><span class="p">[</span><span class="n">_j</span><span class="p">]</span> <span class="o">==</span> <span class="n">_i</span><span class="p">:</span>
+            <span class="n">_pairs</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="n">_i</span><span class="p">,</span> <span class="n">_j</span><span class="p">])</span>
+            <span class="n">_seen</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="n">_i</span><span class="p">,</span> <span class="n">_j</span><span class="p">})</span>
+    <span class="n">KEYPOINT_FLIP_PAIRS</span> <span class="o">=</span> <span class="n">_pairs</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">TRAIN_ANNOTATIONS</span> <span class="o">=</span> <span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"train"</span> <span class="o">/</span> <span class="s2">"_annotations.coco.json"</span>
+    <span class="n">schema</span> <span class="o">=</span> <span class="n">infer_coco_keypoint_schema</span><span class="p">(</span><span class="n">TRAIN_ANNOTATIONS</span><span class="p">)</span>  <span class="c1"># type: ignore[assignment]</span>
+    <span class="n">KEYPOINT_FLIP_PAIRS</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">DATASET_INFO</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"keypoint_flip_pairs"</span><span class="p">,</span> <span class="p">[]))</span>
+
 <span class="n">CLASS_NAMES</span> <span class="o">=</span> <span class="n">schema</span><span class="o">.</span><span class="n">class_names</span>
 <span class="n">NUM_KEYPOINTS_PER_CLASS</span> <span class="o">=</span> <span class="n">schema</span><span class="o">.</span><span class="n">num_keypoints_per_class</span>
 <span class="n">NUM_CLASSES</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">CLASS_NAMES</span><span class="p">)</span>
 <span class="n">KEYPOINT_OKS_SIGMAS</span> <span class="o">=</span> <span class="n">schema</span><span class="o">.</span><span class="n">keypoint_oks_sigmas</span>
 <span class="n">ACTIVE_KEYPOINT_COUNTS</span> <span class="o">=</span> <span class="p">[</span><span class="n">count</span> <span class="k">for</span> <span class="n">count</span> <span class="ow">in</span> <span class="n">NUM_KEYPOINTS_PER_CLASS</span> <span class="k">if</span> <span class="n">count</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
 <span class="n">VALIDATE_KEYPOINT_METRICS</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">ACTIVE_KEYPOINT_COUNTS</span><span class="p">))</span> <span class="o">&lt;=</span> <span class="mi">1</span>
-<span class="n">KEYPOINT_FLIP_PAIRS</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">DATASET_INFO</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"keypoint_flip_pairs"</span><span class="p">,</span> <span class="p">[]))</span>
 
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"class_names=</span><span class="si">{</span><span class="n">CLASS_NAMES</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"num_keypoints_per_class=</span><span class="si">{</span><span class="n">NUM_KEYPOINTS_PER_CLASS</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
@@ -3727,15 +3754,30 @@ print(f"dataset_dir={DATASET_DIR}")</div>
 <span class="k">else</span><span class="p">:</span>
     <span class="nb">print</span><span class="p">(</span><span class="s2">"keypoint_oks_validation=skipped because COCO OKS requires one keypoint count across categories"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">TRAIN_ANNOTATIONS = DATASET_DIR / "train" / "_annotations.coco.json"
-schema = infer_coco_keypoint_schema(TRAIN_ANNOTATIONS)
+<div class="clipboard-copy-txt" id="cell-6">if DATASET_FORMAT == "yolo":
+    schema = infer_yolo_keypoint_schema(DATASET_DIR / "data.yaml")
+    _flip_idx = schema.flip_idx
+    _pairs: list[int] = []
+    _seen: set[int] = set()
+    for _i, _j in enumerate(_flip_idx):
+        if _i in _seen or _j in _seen or _i == _j:
+            _seen.add(_i)
+            continue
+        if _j &lt; len(_flip_idx) and _flip_idx[_j] == _i:
+            _pairs.extend([_i, _j])
+            _seen.update({_i, _j})
+    KEYPOINT_FLIP_PAIRS = _pairs
+else:
+    TRAIN_ANNOTATIONS = DATASET_DIR / "train" / "_annotations.coco.json"
+    schema = infer_coco_keypoint_schema(TRAIN_ANNOTATIONS)  # type: ignore[assignment]
+    KEYPOINT_FLIP_PAIRS = list(DATASET_INFO.get("keypoint_flip_pairs", []))
+
 CLASS_NAMES = schema.class_names
 NUM_KEYPOINTS_PER_CLASS = schema.num_keypoints_per_class
 NUM_CLASSES = len(CLASS_NAMES)
 KEYPOINT_OKS_SIGMAS = schema.keypoint_oks_sigmas
 ACTIVE_KEYPOINT_COUNTS = [count for count in NUM_KEYPOINTS_PER_CLASS if count &gt; 0]
 VALIDATE_KEYPOINT_METRICS = len(set(ACTIVE_KEYPOINT_COUNTS)) &lt;= 1
-KEYPOINT_FLIP_PAIRS = list(DATASET_INFO.get("keypoint_flip_pairs", []))
 
 print(f"class_names={CLASS_NAMES}")
 print(f"num_keypoints_per_class={NUM_KEYPOINTS_PER_CLASS}")
@@ -4075,7 +4117,7 @@ else:
 <span class="n">variant</span><span class="o">.</span><span class="n">model_config</span><span class="o">.</span><span class="n">model_name</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">variant</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span>
 
 <span class="n">train_config</span> <span class="o">=</span> <span class="n">KeypointTrainConfig</span><span class="p">(</span>
-    <span class="n">dataset_file</span><span class="o">=</span><span class="s2">"roboflow"</span><span class="p">,</span>
+    <span class="n">dataset_file</span><span class="o">=</span><span class="s2">"yolo"</span> <span class="k">if</span> <span class="n">DATASET_FORMAT</span> <span class="o">==</span> <span class="s2">"yolo"</span> <span class="k">else</span> <span class="s2">"roboflow"</span><span class="p">,</span>
     <span class="n">dataset_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASET_DIR</span><span class="p">),</span>
     <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">OUTPUT_DIR</span><span class="p">),</span>
     <span class="n">epochs</span><span class="o">=</span><span class="n">EPOCHS</span><span class="p">,</span>
@@ -4126,7 +4168,7 @@ variant = RFDETRKeypointPreview(  # type: ignore[no-untyped-call]
 variant.model_config.model_name = type(variant).__name__
 
 train_config = KeypointTrainConfig(
-    dataset_file="roboflow",
+    dataset_file="yolo" if DATASET_FORMAT == "yolo" else "roboflow",
     dataset_dir=str(DATASET_DIR),
     output_dir=str(OUTPUT_DIR),
     epochs=EPOCHS,
@@ -4518,7 +4560,8 @@ plt.close(map_figure)</div>
 <span class="k">def</span><span class="w"> </span><span class="nf">_find_images</span><span class="p">(</span><span class="n">directory</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]:</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">directory</span><span class="o">.</span><span class="n">is_dir</span><span class="p">():</span>
         <span class="k">return</span> <span class="p">[]</span>
-    <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">directory</span><span class="o">.</span><span class="n">iterdir</span><span class="p">()</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">is_file</span><span class="p">()</span> <span class="ow">and</span> <span class="n">p</span><span class="o">.</span><span class="n">suffix</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="n">_IMAGE_EXTS</span><span class="p">)</span>
+    <span class="c1"># Iterate through all subfolders to find images</span>
+    <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">directory</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"**/*"</span><span class="p">)</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">is_file</span><span class="p">()</span> <span class="ow">and</span> <span class="n">p</span><span class="o">.</span><span class="n">suffix</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="n">_IMAGE_EXTS</span><span class="p">)</span>
 
 
 <span class="n">validation_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"test"</span><span class="p">)</span>
@@ -4538,7 +4581,8 @@ plt.close(map_figure)</div>
 def _find_images(directory: Path) -&gt; list[Path]:
     if not directory.is_dir():
         return []
-    return sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in _IMAGE_EXTS)
+    # Iterate through all subfolders to find images
+    return sorted(p for p in directory.glob("**/*") if p.is_file() and p.suffix.lower() in _IMAGE_EXTS)
 
 
 validation_image_paths = _find_images(DATASET_DIR / "test")
@@ -4698,7 +4742,7 @@ if inference_grid_items:
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 22, 2026 09:40:03 UTC">2026-06-22 09:40:03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 24, 2026 15:19:04 UTC">2026-06-24 15:19:04</span>
   </span>
 
     
