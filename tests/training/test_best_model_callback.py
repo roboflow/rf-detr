@@ -1937,7 +1937,7 @@ class TestSerializeModelConfig:
             "num_classes": 90,
         }
         pl_module.model.state_dict.return_value = {
-            "class_embed.weight": torch.zeros(2, 256),
+            "class_embed.weight": torch.zeros(3, 256),
         }
 
         result = BestModelCallback._serialize_model_config(pl_module)

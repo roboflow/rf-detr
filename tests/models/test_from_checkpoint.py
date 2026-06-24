@@ -743,7 +743,7 @@ class TestFromCheckpointWeightInference:
             "args": {"pretrain_weights": "rf-detr-small.pth"},
             "model_name": "RFDETRSmall",
             "model_config": {"num_classes": 90},
-            "model": {"class_embed.weight": torch.zeros(2, 256)},
+            "model": {"class_embed.weight": torch.zeros(3, 256)},
         }
         _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRSmall")
 
@@ -754,7 +754,7 @@ class TestFromCheckpointWeightInference:
         ckpt = {
             "args": {"pretrain_weights": "rf-detr-small.pth"},
             "model_name": "RFDETRSmall",
-            "model": {"class_embed.weight": torch.zeros(2, 256)},
+            "model": {"class_embed.weight": torch.zeros(3, 256)},
         }
         _, mock_cls = _call_from_checkpoint(
             ckpt,
@@ -775,7 +775,7 @@ class TestFromCheckpointWeightInference:
             "model_name": "RFDETRKeypointPreview",
             "state_dict": {
                 "model._kp_active_mask": _make_kp_active_mask([0, 33]),
-                "model.class_embed.weight": torch.zeros(2, 256),
+                "model.class_embed.weight": torch.zeros(3, 256),
             },
         }
         _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint.ckpt", "rfdetr.variants.RFDETRKeypointPreview")
@@ -792,7 +792,7 @@ class TestFromCheckpointWeightInference:
             "model_config": {"num_keypoints_per_class": [0, 33], "num_classes": 2},
             "model": {
                 "_kp_active_mask": _make_kp_active_mask([0, 33]),
-                "class_embed.weight": torch.zeros(2, 256),
+                "class_embed.weight": torch.zeros(3, 256),
             },
         }
         _, mock_cls = _call_from_checkpoint(

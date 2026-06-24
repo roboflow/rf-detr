@@ -307,12 +307,23 @@ class RFDETR:
             path: Path to a checkpoint file (e.g. ``checkpoint_best_total.pth``).
             **kwargs: Additional keyword arguments forwarded to the model
                 constructor (e.g. ``accept_platform_model_license=True`` for XLarge / 2XLarge models).
-                If ``num_classes`` is not supplied here, the value stored in the checkpoint is
-                used when present; otherwise the constructor default applies.  In either case the
-                field is not recorded as a user-set override, so :meth:`train` can still adapt the
-                detection head to the training dataset's class count.  Pass an explicit
-                ``num_classes=N`` to pin the head and prevent adaptation, even when ``N`` equals
-                the class default (e.g. ``num_classes=90`` on a COCO-pretrained checkpoint).
+
+                ``num_classes`` is resolved in this priority order:
+
+                1. Explicit caller kwarg — always wins.
+                2. Weight inference from ``class_embed.weight`` shape in the checkpoint
+                   (``shape[0] - 1``, since the head includes a background class). This
+                   overrides a stale ``model_config`` value written before fine-tuning
+                   changed the class count.
+                3. ``saved_model_config["num_classes"]`` from the checkpoint's
+                   ``model_config`` entry — may be stale for older checkpoints.
+                4. Legacy ``args["num_classes"]`` dict entry.
+                5. Constructor default.
+
+                In cases 2–5 the field is not recorded as a user-set override, so
+                :meth:`train` can still adapt the detection head to the training
+                dataset's class count.  Pass an explicit ``num_classes=N`` to pin
+                the head and prevent adaptation.
 
         Returns:
             An instance of the appropriate :class:`RFDETR` subclass loaded from the checkpoint.
@@ -498,7 +509,14 @@ class RFDETR:
         _ckpt_weights: dict[str, Any] = ckpt.get("model") or {}
         if not _ckpt_weights and "state_dict" in ckpt:
             _pfx = "model."
-            _ckpt_weights = {k[len(_pfx) :]: v for k, v in ckpt["state_dict"].items() if k.startswith(_pfx)}
+            _ckpt_weights = {}
+            for k, v in ckpt["state_dict"].items():
+                if k.startswith(_pfx):
+                    key = k[len(_pfx) :]
+                    # Strip optional torch.compile() wrapper prefix
+                    if key.startswith("_orig_mod."):
+                        key = key[len("_orig_mod.") :]
+                    _ckpt_weights[key] = v
         if _ckpt_weights:
             # num_keypoints_per_class — inferred from _kp_active_mask (shape [num_classes, max_kp]).
             # Reflects what the model actually learned; saved model_config may carry the COCO default
@@ -522,7 +540,7 @@ class RFDETR:
             if "num_classes" not in kwargs:
                 _ce_weight = _ckpt_weights.get("class_embed.weight")
                 if isinstance(_ce_weight, torch.Tensor) and _ce_weight.ndim == 2:
-                    _inferred_nc = _ce_weight.shape[0]
+                    _inferred_nc = _ce_weight.shape[0] - 1  # shape[0] = num_classes + 1 (background)
                     _current_nc = constructor_kwargs.get("num_classes")
                     if _inferred_nc != _current_nc:
                         logger.debug(

@@ -220,12 +220,19 @@ class BestModelCallback(ModelCheckpoint):
         return raw.state_dict()
 
     @staticmethod
-    def _serialize_model_config(pl_module: LightningModule) -> dict[str, object] | None:
+    def _serialize_model_config(
+        pl_module: LightningModule, state_dict: dict[str, Any] | None = None
+    ) -> dict[str, object] | None:
         """Serialize the model architecture config when the module exposes one.
 
         Schema-critical fields (``num_keypoints_per_class``, ``num_classes``) are synced from live model weights so the
         saved config reflects what the model actually learned, not a stale constructor default (e.g. COCO ``[0, 17]``
         when the model was fine-tuned on ``[0, 33]``).
+
+        Args:
+            pl_module: The Lightning module whose model config will be serialized.
+            state_dict: Pre-computed model state dict. If ``None``, computed from the live model.
+                Pass the already-retrieved checkpoint state dict to avoid a redundant copy.
         """
         model_config = getattr(pl_module, "model_config", None)
         if model_config is None:
@@ -240,9 +247,10 @@ class BestModelCallback(ModelCheckpoint):
             return None
 
         # Sync schema-critical fields from live model weights.
-        _orig = getattr(pl_module.model, "_orig_mod", None)
-        raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
-        state_dict = raw.state_dict()
+        if state_dict is None:
+            _orig = getattr(pl_module.model, "_orig_mod", None)
+            raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
+            state_dict = raw.state_dict()
 
         _kp_mask = state_dict.get("_kp_active_mask")
         if isinstance(_kp_mask, torch.Tensor) and _kp_mask.ndim == 2 and "num_keypoints_per_class" in dumped:
@@ -250,7 +258,7 @@ class BestModelCallback(ModelCheckpoint):
 
         _ce_weight = state_dict.get("class_embed.weight")
         if isinstance(_ce_weight, torch.Tensor) and _ce_weight.ndim == 2 and "num_classes" in dumped:
-            dumped["num_classes"] = _ce_weight.shape[0]
+            dumped["num_classes"] = _ce_weight.shape[0] - 1  # shape[0] = num_classes + 1 (background)
 
         return dumped
 
@@ -361,7 +369,7 @@ class BestModelCallback(ModelCheckpoint):
             train_config = train_config.model_copy(update={"class_names": dataset_class_names})
         args_dict = train_config.model_dump() if hasattr(train_config, "model_dump") else train_config
         model_name = self._resolve_model_name(pl_module)
-        model_config_dict = self._serialize_model_config(pl_module)
+        model_config_dict = self._serialize_model_config(pl_module, model_state_dict)
         torch.save(
             self._build_checkpoint_payload(
                 model_state_dict,
@@ -463,7 +471,7 @@ class BestModelCallback(ModelCheckpoint):
                 ema_train_config.model_dump() if hasattr(ema_train_config, "model_dump") else ema_train_config
             )
             ema_model_name = self._resolve_model_name(pl_module)
-            ema_model_config_dict = self._serialize_model_config(pl_module)
+            ema_model_config_dict = self._serialize_model_config(pl_module, ema_state_dict)
             torch.save(
                 self._build_checkpoint_payload(
                     ema_state_dict,
