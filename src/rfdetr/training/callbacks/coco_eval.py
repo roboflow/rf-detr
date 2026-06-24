@@ -297,6 +297,10 @@ class COCOEvalCallback(Callback):
 
         preds: list[dict[str, torch.Tensor]] = self._convert_preds(outputs["results"])
         targets = self._convert_targets(outputs["targets"])
+        # In training mode pred_masks is a sparse dict, excluded from postprocess inputs, so
+        # preds have no masks key. torchmetrics requires it when iou_type includes "segm" → skip.
+        if self._use_segm_metrics and preds and "masks" not in preds[0]:
+            return
         self.map_metric_train.update(preds, targets)
 
         iou_type = "segm" if self._use_segm_metrics else "bbox"
