@@ -386,7 +386,9 @@ class RFDETRDataModule(LightningDataModule):
                 inches. When omitted, the size is derived from the grid shape.
 
         Returns:
-            Matplotlib figure containing the annotated sample grid.
+            Matplotlib figure containing the annotated sample grid. When the
+            dataset includes instance masks, they are rendered as coloured
+            overlays before bounding boxes and labels.
 
         Raises:
             ValueError: If ``count`` or ``columns`` is not positive.
