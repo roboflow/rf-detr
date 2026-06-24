@@ -724,7 +724,8 @@ class ConvertYolo:
         if self.include_keypoints:
             raw_keypoints = target.get("keypoints")
             if raw_keypoints is None:
-                keypoints = torch.zeros((classes.shape[0], self.num_keypoints, 3), dtype=torch.float32)
+                # Allocate with pre-filter size so `keep` indexing below is valid
+                keypoints = torch.zeros((keep.shape[0], self.num_keypoints, 3), dtype=torch.float32)
             else:
                 keypoints = torch.as_tensor(raw_keypoints, dtype=torch.float32).reshape(-1, self.num_keypoints, 3)
             target_out["keypoints"] = keypoints[keep]
@@ -769,6 +770,8 @@ class YoloDetection(VisionDataset):
         include_keypoints: bool = False,
         num_keypoints_per_class: list[int] | None = None,
     ):
+        if include_masks and include_keypoints:
+            raise ValueError("YOLO segmentation masks and keypoints cannot be loaded at the same time.")
         super(YoloDetection, self).__init__(img_folder)
         self._transforms = transforms
         self.include_masks = include_masks
@@ -782,9 +785,6 @@ class YoloDetection(VisionDataset):
             include_keypoints=include_keypoints,
             num_keypoints=self.num_keypoints,
         )
-
-        if include_masks and include_keypoints:
-            raise ValueError("YOLO segmentation masks and keypoints cannot be loaded at the same time.")
         if include_keypoints:
             if self.keypoint_schema is None:
                 raise ValueError(f"YOLO keypoint training requires kpt_shape metadata in {data_file!r}.")
