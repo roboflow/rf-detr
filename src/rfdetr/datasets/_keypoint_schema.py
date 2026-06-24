@@ -66,7 +66,7 @@ class YoloKeypointSchema:
         This value object does not raise.
 
     Example:
-        >>> YoloKeypointSchema(["person"], [17], [0.1] * 17, ["nose"], [0], 3).keypoint_dim
+        >>> YoloKeypointSchema(["person"], [1], [0.1], ["nose"], [], 3).keypoint_dim
         3
     """
 

@@ -385,6 +385,12 @@ def _build_yolo_samples(
         include_polygons: When ``True`` polygon coordinates are stored in each
             :class:`_LazyYoloSample` (segmentation path).  When ``False`` polygon coordinates returned by
             :func:`_parse_yolo_label_line` are discarded and ``polygons=()`` is stored instead (detection-only path).
+            Mutually exclusive with ``include_keypoints``.
+        include_keypoints: When ``True`` keypoint coordinates are stored in each :class:`_LazyYoloSample` (pose path).
+            Mutually exclusive with ``include_polygons``; raises :class:`ValueError` when both are ``True``.
+        keypoint_schema: Keypoint schema describing class names, per-class keypoint counts, OKS sigmas, keypoint names,
+            flip index, and keypoint dimensionality.  When ``None`` and ``include_keypoints=True`` the schema is
+            auto-inferred from ``data_file`` via :func:`infer_yolo_keypoint_schema`.
 
     Returns:
         A ``(classes, samples)`` tuple where ``classes`` is the ordered list of class names and ``samples`` is a list of
