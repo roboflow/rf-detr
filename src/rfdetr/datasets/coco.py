@@ -57,17 +57,17 @@ def _category_ids_with_keypoints(coco: Any) -> list[int]:
 def _build_keypoint_cat2label(coco: Any, num_keypoints_per_class: list[int] | None) -> dict[int, int]:
     """Map COCO category ids onto model label slots that have keypoint capacity.
 
-    RF-DETR keypoint schemas are indexed by model label. The preview person-keypoint schema is ``[0, 17]``: label slot
-    ``0`` has no keypoints while label slot ``1`` owns the 17 COCO person keypoints. Roboflow COCO exports often use
-    category id ``0`` for the only class, so standard contiguous remapping would silently place person into slot ``0``
-    and disable keypoint supervision. This helper maps keypoint-bearing categories onto the non-zero schema slots.
+    RF-DETR keypoint schemas are indexed by model label. The preview person-keypoint schema is ``[17]``: label slot
+    ``0`` owns the 17 COCO person keypoints. Legacy checkpoints may still use a background-first ``[0, 17]`` schema.
+    This helper maps keypoint-bearing categories onto the non-zero schema slots, so both layouts keep supervision
+    aligned.
     """
     schema = list(num_keypoints_per_class or [])
     active_slots = [idx for idx, count in enumerate(schema) if count > 0]
     if not active_slots:
         raise ValueError(
             "Keypoint COCO dataset requested, but num_keypoints_per_class has no active keypoint slots. "
-            "Provide a schema such as [0, 17] for the keypoint preview model."
+            "Provide a schema such as [17] for the keypoint preview model."
         )
 
     keypoint_cat_ids = _category_ids_with_keypoints(coco)
@@ -738,7 +738,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             include_masks=include_masks,
             include_keypoints=include_keypoints,
             num_keypoints_per_class=num_keypoints_per_class,
-            remap_category_ids=False,
+            remap_category_ids=include_keypoints,
         )
     else:
         logger.info(f"Building COCO {image_set} dataset at resolution {resolution}")
@@ -760,7 +760,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             include_masks=include_masks,
             include_keypoints=include_keypoints,
             num_keypoints_per_class=num_keypoints_per_class,
-            remap_category_ids=False,
+            remap_category_ids=include_keypoints,
         )
     return dataset
 

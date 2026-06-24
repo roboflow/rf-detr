@@ -195,9 +195,10 @@ The category should declare the keypoint schema:
 The `keypoints` array above is shortened for readability. In a valid COCO person-keypoint annotation it contains
 `17 * 3` values: `x`, `y`, and visibility for each keypoint.
 
-The keypoint preview model is pretrained on COCO person-style keypoints. Its default COCO schema is `[0, 17]`, so
-keypoint-bearing categories are mapped onto the active keypoint label slot during COCO loading. Custom keypoint training
-can also use YOLO pose labels, described below.
+The keypoint preview model is pretrained on COCO person-style keypoints. Its default COCO schema is `[17]`, so
+keypoint-bearing categories are mapped onto the active keypoint label slot during COCO loading. Legacy checkpoints may
+still report a background-first `[0, 17]` schema, which RF-DETR accepts for compatibility. Custom keypoint training can
+also use YOLO pose labels, described below.
 
 ---
 

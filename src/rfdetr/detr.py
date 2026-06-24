@@ -1564,12 +1564,9 @@ class RFDETR:
             (detected when ``model.args.num_classes > len(class_names)`` and ``class_names`` matches
             ``COCO_CLASS_NAMES``), raw COCO category IDs (1–90, sparse) are looked up by category ID rather than by
             position — so ``class_id=18`` yields ``"dog"``, not ``class_names[18]``. For fine-tuned detection and
-            segmentation models, ``class_id`` is a 0-based index into ``class_names``. For keypoint models
-            (detected when ``args.num_keypoints_per_class[0] == 0``), slot 0 is background and maps to
-            ``"__background__"``; foreground slots (those where ``num_keypoints_per_class[slot] > 0``) map to
-            ``class_names`` in order — so slot 1 → ``class_names[0]``, slot 2 → ``class_names[1]``, and so on.
-            The standard no-object sentinel used for detection models (``class_id == num_logit_slots``) does not apply
-            to keypoint models because slot 0 already occupies the background role.
+            segmentation models and active-first keypoint models, ``class_id`` is a 0-based index into ``class_names``.
+            Legacy keypoint checkpoints with ``args.num_keypoints_per_class[0] == 0`` use a background-first layout:
+            slot 0 maps to ``"__background__"`` and foreground slots map to ``class_names`` in order.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -1704,10 +1701,9 @@ class RFDETR:
             )
         num_logit_slots: int = getattr(_model_args, "num_classes", n)
         _is_coco_pretrained = num_logit_slots > n and model_class_names == list(COCO_CLASS_NAMES)
-        # Keypoint models use a shifted class scheme: slot 0 = background (0 keypoints),
-        # real classes start at slot 1. The standard no-object sentinel (class_id == num_logit_slots)
-        # therefore collides with the first real keypoint class (person=1 when num_logit_slots=1).
-        # Detect by checking for a non-empty keypoints-per-class schema with background-first layout.
+        # Legacy keypoint models may use a shifted class scheme: slot 0 = background
+        # (0 keypoints), real classes start at slot 1. Active-first schemas such as
+        # [17] use normal 0-based class IDs and fall through to the default mapping.
         _num_keypoints_per_class: list[int] = getattr(_model_args, "num_keypoints_per_class", []) or []
         _is_keypoint_model = bool(_num_keypoints_per_class) and _num_keypoints_per_class[0] == 0
         if _is_coco_pretrained:
@@ -1775,7 +1771,7 @@ class RFDETR:
             # string with a one-time warning.
             class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
             # Sentinel for the no-object / background class differs by model type.
-            # Keypoint models: slot 0 is background in the keypoint schema.
+            # Legacy background-first keypoint models: slot 0 is background in the keypoint schema.
             # Detection/segmentation models: the no-object slot is at index num_logit_slots.
             _bg_sentinel = 0 if _is_keypoint_model else num_logit_slots
             truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != _bg_sentinel]

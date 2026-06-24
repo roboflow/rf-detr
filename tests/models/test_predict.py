@@ -938,10 +938,9 @@ class TestPredictClassNameData:
 class TestPredictKeypointClassNameMapping:
     """class_name mapping for keypoint and detection models (issue #1150).
 
-    Keypoint models use a shifted class scheme: slot 0 = background (0 keypoints), real classes
-    start at slot 1.  After ``load_pretrain_weights`` auto-aligns to the 2-slot checkpoint head,
-    ``num_logit_slots`` becomes 1, which collides with person's class_id=1 and wrongly triggers the
-    ``__background__`` sentinel for every detection.
+    Active-first keypoint models use normal 0-based class IDs. Legacy background-first
+    checkpoints use slot 0 as background and start real classes at slot 1; that path
+    must keep class-name mapping compatible.
     """
 
     @pytest.mark.parametrize(
