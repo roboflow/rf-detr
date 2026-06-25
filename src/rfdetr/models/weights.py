@@ -484,7 +484,13 @@ def load_pretrain_weights(
         if isinstance(_early_kp_mask, torch.Tensor) and _early_kp_mask.ndim == 2:
             _ckpt_kp_schema = [int(n) for n in _early_kp_mask.sum(dim=1).tolist()]
             _cfg_kp_schema = list(getattr(mc, "num_keypoints_per_class", []) or [])
-            if _ckpt_kp_schema != _cfg_kp_schema:
+            if not any(n > 0 for n in _ckpt_kp_schema):
+                logger.warning(
+                    "load_pretrain_weights: _kp_active_mask in checkpoint has no active slots "
+                    "(schema=%s) — skipping auto-align to avoid overwriting config with empty schema.",
+                    _ckpt_kp_schema,
+                )
+            elif _ckpt_kp_schema != _cfg_kp_schema:
                 logger.debug(
                     "load_pretrain_weights: auto-aligning num_keypoints_per_class %s → %s "
                     "(inferred from checkpoint _kp_active_mask; user did not set explicitly).",
@@ -492,6 +498,12 @@ def load_pretrain_weights(
                     _ckpt_kp_schema,
                 )
                 mc.num_keypoints_per_class = _ckpt_kp_schema
+        elif isinstance(_early_kp_mask, torch.Tensor):
+            logger.warning(
+                "load_pretrain_weights: _kp_active_mask has unexpected shape %s (expected 2-D) "
+                "— skipping auto-align; schema mismatch may cause AP≈0 on keypoint models.",
+                tuple(_early_kp_mask.shape),
+            )
 
     # Detection checkpoints/configs may omit keypoint schema fields; absence means no keypoint reconciliation.
     configured_keypoint_schema = list(getattr(mc, "num_keypoints_per_class", []) or [])

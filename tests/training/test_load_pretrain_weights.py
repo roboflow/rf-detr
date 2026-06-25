@@ -819,3 +819,52 @@ class TestLoadPretrainWeightsKeypointSchemaAutoAlign:
         assert mc.num_keypoints_per_class == [0, 33], (
             "Explicit user schema must not be overridden by checkpoint auto-align."
         )
+
+    def test_1d_kp_active_mask_skips_auto_align_with_warning(self, monkeypatch):
+        """Malformed 1-D _kp_active_mask skips auto-align and emits a logger.warning."""
+        mc = RFDETRKeypointPreviewConfig(pretrain_weights="/fake/kp.pth", device="cpu")
+        assert mc.num_keypoints_per_class == [17], "Precondition: config default is active-first [17]."
+
+        checkpoint = _make_kp_checkpoint([0, 17])
+        # Replace the 2-D mask with a malformed 1-D tensor.
+        checkpoint["model"]["_kp_active_mask"] = torch.ones(17, dtype=torch.bool)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        fake_model = _make_kp_fake_model([17])
+        # The fake model's get_num_keypoints_per_class_from_checkpoint calls sum(dim=1),
+        # which raises IndexError on a 1-D tensor; return None to skip that code path.
+        fake_model.get_num_keypoints_per_class_from_checkpoint = lambda sd: None
+
+        warned: list[str] = []
+        monkeypatch.setattr("rfdetr.models.weights.logger.warning", lambda msg, *args: warned.append(msg % args))
+
+        load_pretrain_weights(fake_model, mc)
+
+        assert mc.num_keypoints_per_class == [17], (
+            "Auto-align must not fire for a 1-D _kp_active_mask; config default should be unchanged."
+        )
+        assert any("unexpected shape" in msg for msg in warned), (
+            f"Expected a warning mentioning 'unexpected shape'; got: {warned}"
+        )
+
+    def test_all_zero_kp_active_mask_skips_auto_align_with_warning(self, monkeypatch):
+        """All-zero 2-D _kp_active_mask (degenerate) skips auto-align and emits a logger.warning."""
+        mc = RFDETRKeypointPreviewConfig(pretrain_weights="/fake/kp.pth", device="cpu")
+        assert mc.num_keypoints_per_class == [17], "Precondition: config default is active-first [17]."
+
+        checkpoint = _make_kp_checkpoint([0, 17])
+        # Replace mask with a valid 2-D shape but all zeros (no active slots).
+        checkpoint["model"]["_kp_active_mask"] = torch.zeros(2, 17, dtype=torch.bool)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        fake_model = _make_kp_fake_model([17])
+
+        warned: list[str] = []
+        monkeypatch.setattr("rfdetr.models.weights.logger.warning", lambda msg, *args: warned.append(msg % args))
+
+        load_pretrain_weights(fake_model, mc)
+
+        assert mc.num_keypoints_per_class == [17], (
+            "Auto-align must not fire for an all-zero _kp_active_mask; config default should be unchanged."
+        )
+        assert any("no active slots" in msg for msg in warned), (
+            f"Expected a warning mentioning 'no active slots'; got: {warned}"
+        )

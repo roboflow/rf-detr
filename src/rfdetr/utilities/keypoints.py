@@ -46,13 +46,17 @@ def is_bg_first_schema(schema: list[int]) -> bool:
 def to_active_first(schema: list[int]) -> list[int]:
     """Strip the leading background slot from a bg-first schema.
 
-    A no-op when *schema* is already active-first or empty.
+    Always returns a new list. A no-op (copy) when *schema* is already
+    active-first or empty. Only the first leading zero slot is removed;
+    schemas with multiple leading zeros (e.g. ``[0, 0, 17]``) retain all
+    but the first.
 
     Args:
         schema: Keypoints-per-class list.
 
     Returns:
-        Schema with any leading zero-keypoint slot removed.
+        Schema with the leading zero-keypoint slot removed when bg-first,
+        or a copy of *schema* otherwise.
 
     Examples:
         >>> to_active_first([0, 17])
@@ -61,6 +65,8 @@ def to_active_first(schema: list[int]) -> list[int]:
         [17]
         >>> to_active_first([0, 17, 4])
         [17, 4]
+        >>> to_active_first([0])
+        []
     """
     if is_bg_first_schema(schema):
         return schema[1:]
@@ -106,6 +112,17 @@ def schemas_semantically_equal(a: list[int], b: list[int]) -> bool:
     Returns:
         ``True`` when both schemas reduce to the same active-first form.
 
+    Note:
+        A schema of ``[0]`` (one detection-only background slot) is semantically
+        equal to ``[]`` (no schema) because both reduce to an empty active-first
+        form.  Callers that need to distinguish "no schema" from "bg-first with no
+        active slots" should compare ``to_active_first(a)`` directly or check
+        ``bool(schema)`` before calling this function.
+
+        Use this function for user-facing validation where representational form
+        does not matter.  Use exact ``!=`` comparison when preserving
+        representational form is required (e.g. auto-align in checkpoint loading).
+
     Examples:
         >>> schemas_semantically_equal([0, 17], [17])
         True
@@ -113,6 +130,8 @@ def schemas_semantically_equal(a: list[int], b: list[int]) -> bool:
         True
         >>> schemas_semantically_equal([0, 17], [0, 33])
         False
+        >>> schemas_semantically_equal([0], [])
+        True
     """
     return to_active_first(a) == to_active_first(b)
 
