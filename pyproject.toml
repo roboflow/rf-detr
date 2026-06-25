@@ -105,6 +105,7 @@ plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
 #   Does not affect users installing rfdetr from PyPI.
 ci-gpu-pin = [
     "torch<2.11",
+    "torchvision<0.26",
 ]
 
 build = [
