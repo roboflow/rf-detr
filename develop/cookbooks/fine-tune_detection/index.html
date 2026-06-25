@@ -12,7 +12,7 @@
         <meta name="author" content="Roboflow">
       
       
-        <link rel="canonical" href="https://rfdetr.roboflow.com/develop/cookbooks/fine-tune_segmentation/">
+        <link rel="canonical" href="https://rfdetr.roboflow.com/develop/cookbooks/fine-tune_detection/">
       
       
       
@@ -27,7 +27,7 @@
   
     
       
-        <title>RF-DETR instance segmentation fine-tuning on Roboflow Universe datasets - RF-DETR</title>
+        <title>RF-DETR object detection fine-tuning on Roboflow Universe datasets - RF-DETR</title>
       
     
   
@@ -68,10 +68,10 @@
   
   
   
-  <meta property="og:title" content="RF-DETR instance segmentation fine-tuning on Roboflow Universe datasets - RF-DETR">
+  <meta property="og:title" content="RF-DETR object detection fine-tuning on Roboflow Universe datasets - RF-DETR">
   <meta property="og:description" content="Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10.">
   <meta property="og:type" content="article">
-  <meta property="og:url" content="https://rfdetr.roboflow.com/develop/cookbooks/fine-tune_segmentation/">
+  <meta property="og:url" content="https://rfdetr.roboflow.com/develop/cookbooks/fine-tune_detection/">
   <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
   <meta property="og:image:width" content="840">
   <meta property="og:image:height" content="630">
@@ -79,7 +79,7 @@
   
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@roboflow">
-  <meta name="twitter:title" content="RF-DETR instance segmentation fine-tuning on Roboflow Universe datasets - RF-DETR">
+  <meta name="twitter:title" content="RF-DETR object detection fine-tuning on Roboflow Universe datasets - RF-DETR">
   <meta name="twitter:description" content="Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10.">
   <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
 
@@ -93,9 +93,9 @@
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "RF-DETR instance segmentation fine-tuning on Roboflow Universe datasets",
+    "headline": "RF-DETR object detection fine-tuning on Roboflow Universe datasets",
     "description": "Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python \u22653.10.",
-    "url": "https://rfdetr.roboflow.com/develop/cookbooks/fine-tune_segmentation/",
+    "url": "https://rfdetr.roboflow.com/develop/cookbooks/fine-tune_detection/",
     "isPartOf": {"@id": "https://rfdetr.roboflow.com/develop#website"},
     "about": {"@id": "https://rfdetr.roboflow.com/develop#software"},
     "proficiencyLevel": "Beginner to advanced",
@@ -106,7 +106,7 @@
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
-    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/develop/cookbooks/fine-tune_segmentation/"},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/develop/cookbooks/fine-tune_detection/"},
     "speakable": {
       "@type": "SpeakableSpecification",
       "cssSelector": [".md-content h1", ".md-typeset > p:first-child"]
@@ -128,8 +128,8 @@
       {
         "@type": "ListItem",
         "position": 2,
-        "name": "RF-DETR instance segmentation fine-tuning on Roboflow Universe datasets",
-        "item": "https://rfdetr.roboflow.com/develop/cookbooks/fine-tune_segmentation/"
+        "name": "RF-DETR object detection fine-tuning on Roboflow Universe datasets",
+        "item": "https://rfdetr.roboflow.com/develop/cookbooks/fine-tune_detection/"
       }
       
     ]
@@ -150,7 +150,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rf-detr-instance-segmentation-fine-tuning-on-roboflow-universe-datasets" class="md-skip">
+        <a href="#rf-detr-object-detection-fine-tuning-on-roboflow-universe-datasets" class="md-skip">
           Skip to content
         </a>
       
@@ -218,7 +218,7 @@
 
             </a>
             
-              RF-DETR instance segmentation fine-tuning on Roboflow Universe datasets
+              RF-DETR object detection fine-tuning on Roboflow Universe datasets
             
           </span>
         </div>
@@ -2239,6 +2239,39 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#what-is-object-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is object detection?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-fine-tune-instead-of-train-from-scratch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why fine-tune instead of train from scratch?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dataset-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#setup" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3134,60 +3167,77 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </style>
 <!-- End of mermaid configuration --><div class="jupyter-wrapper">
 <div class="jp-Notebook" data-jp-theme-light="true" data-jp-theme-name="JupyterLab Light">
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e6fd4da4">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=920e5414">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h1 id="rf-detr-instance-segmentation-fine-tuning-on-roboflow-universe-datasets">RF-DETR instance segmentation fine-tuning on Roboflow Universe datasets<a class="anchor-link" href="#rf-detr-instance-segmentation-fine-tuning-on-roboflow-universe-datasets">¶</a></h1><p>Select one dataset with <code>DATASET_KEY</code>, then run the same fine-tuning, plotting, checkpoint loading, and inference cells.</p>
-<p>RF-DETR extends bounding-box detection with a sparse segmentation head that predicts per-object binary masks — useful
-for facade analysis, infrastructure damage inspection, vehicle part assessment, dental imaging, litter mapping, and
-any task where <em>what shape</em> matters as much as <em>what class</em>.</p>
-<p><strong>Datasets</strong> — set <code>DATASET_KEY</code> to one of:</p>
+<h1 id="rf-detr-object-detection-fine-tuning-on-roboflow-universe-datasets">RF-DETR object detection fine-tuning on Roboflow Universe datasets<a class="anchor-link" href="#rf-detr-object-detection-fine-tuning-on-roboflow-universe-datasets">¶</a></h1><p>Select one dataset with <code>DATASET_KEY</code>, then run the same fine-tuning, plotting, checkpoint loading, and inference cells.</p>
+<h2 id="what-is-object-detection">What is object detection?<a class="anchor-link" href="#what-is-object-detection">¶</a></h2><p>Object detection answers two questions simultaneously: <em>what</em> objects are in an image and <em>where</em> they are.
+Each detected object gets a <strong>bounding box</strong> (four coordinates) and a <strong>class label</strong> (e.g. "car", "person").
+This is the most common computer vision task — it powers traffic monitoring, safety compliance, retail analytics,
+medical imaging, environmental surveys, and virtually every real-time vision application.</p>
+<h2 id="why-fine-tune-instead-of-train-from-scratch">Why fine-tune instead of train from scratch?<a class="anchor-link" href="#why-fine-tune-instead-of-train-from-scratch">¶</a></h2><p>RF-DETR ships pre-trained on the COCO dataset (80 common object classes). Fine-tuning reuses the backbone's
+rich visual representations — edges, textures, object parts — learned from millions of images.
+Starting from these weights instead of random initialisation typically:</p>
+<ul>
+<li><strong>Reduces training time</strong> from days to minutes or hours</li>
+<li><strong>Requires far fewer labelled images</strong> (hundreds instead of tens of thousands)</li>
+<li><strong>Achieves higher accuracy</strong> than training from scratch on small datasets</li>
+</ul>
+<p>The process is straightforward: swap out the final classification head for your number of classes,
+then continue training with a small learning rate so the pre-trained features are preserved.</p>
+<h2 id="dataset-overview">Dataset overview<a class="anchor-link" href="#dataset-overview">¶</a></h2><p>Five datasets covering different domains are pre-configured. Set <code>DATASET_KEY</code> to one of:</p>
 <table>
 <thead>
 <tr>
 <th>Key</th>
 <th>Dataset</th>
+<th>Domain</th>
 <th>Classes</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>"building_facade"</code></td>
-<td>Building Facade Segmentation</td>
-<td>facade, window, street, vegetation, car, fence, ...</td>
+<td><code>"hard_hat_ppes"</code></td>
+<td>Hard Hat Worker Safety</td>
+<td>Construction / PPE</td>
+<td>hat, person, vest</td>
 </tr>
 <tr>
-<td><code>"spalling_rebar"</code></td>
-<td>Spalling and Exposed Rebar</td>
-<td>exposed_rebar, spalling</td>
+<td><code>"road_damage"</code></td>
+<td>Pavement Distress Detection</td>
+<td>Infrastructure Inspection</td>
+<td>pot_hole, cracking, ravelling, ...</td>
 </tr>
 <tr>
-<td><code>"car_damage_parts"</code></td>
-<td>Car Part Damage Segmentation</td>
-<td>bumper, wheel, door, headlight, dent, scratch, ...</td>
+<td><code>"traffic"</code></td>
+<td>Traffic Detection</td>
+<td>Autonomous Driving</td>
+<td>car, bus, truck, motorbike, bike, traffic lights</td>
 </tr>
 <tr>
-<td><code>"teeth_numbering"</code></td>
-<td>Teeth Numbering Segmentation</td>
-<td>tooth IDs 11-48</td>
+<td><code>"football"</code></td>
+<td>Football Player Detection</td>
+<td>Sports Analytics</td>
+<td>player, ball, goalkeeper, referee</td>
 </tr>
 <tr>
-<td><code>"taco_trash"</code></td>
-<td>TACO Trash</td>
-<td>bottle, can, carton, cup, lid, straw, wrapper, ...</td>
+<td><code>"brackish_underwater"</code></td>
+<td>Brackish Underwater</td>
+<td>Marine Wildlife</td>
+<td>fish, crab, jellyfish, shrimp, starfish, small_fish</td>
 </tr>
 </tbody>
 </table>
 <p>Every subsequent cell (fine-tuning, plotting, checkpoint loading, inference) adapts automatically.
-By the end you will have a fine-tuned model, training curves, and annotated inference images with segmentation masks.</p>
+By the end you will have a fine-tuned model, training curves, and annotated inference images with bounding boxes.</p>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=6eaacf22">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=b6eb7cd5">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3195,14 +3245,16 @@ By the end you will have a fine-tuned model, training curves, and annotated infe
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h2 id="setup">Setup<a class="anchor-link" href="#setup">¶</a></h2><p>Install <code>rfdetr</code> with the <code>train</code> and <code>visual</code> extras. The <code>train</code> extra pulls in the training loop dependencies
 (PyTorch Lightning, COCO evaluation tools, and data augmentation libraries), while <code>visual</code> adds the visualisation
-helpers used later in the notebook. The <code>roboflow</code> package handles dataset download; <code>pandas</code> and <code>seaborn</code> are needed
-for the metrics table and optional plot styling. If you hit an <code>ImportError</code> after running this cell, the most likely
-cause is a stale in-memory import — restart the Python runtime once and re-run from the top.</p>
+helpers used later in the notebook. The <code>roboflow</code> package handles dataset download; <code>pandas</code> and <code>seaborn</code> are
+needed for the metrics table and optional plot styling. If you hit an <code>ImportError</code> after running this cell,
+the most likely cause is a stale in-memory import — restart the Python runtime once and re-run from the top.</p>
+<p><strong>GPU recommended.</strong> Fine-tuning 50 epochs on a ~1,500-image dataset takes roughly 10–25 minutes on a modern GPU
+(RTX 3090, A10, T4). CPU-only is possible for a quick test but will be much slower.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=64736ca1">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e79facfd">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3220,16 +3272,16 @@ cause is a stale in-memory import — restart the Python runtime once and re-run
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[train,visual]&gt;=1.8.2"</span> <span class="n">roboflow</span> <span class="n">pandas</span> <span class="n">seaborn</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[train,visual]&gt;=1.8.0"</span> <span class="n">roboflow</span> <span class="n">pandas</span> <span class="n">seaborn</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">!pip install -q "rfdetr[train,visual]&gt;=1.8.2" roboflow pandas seaborn</div>
+<div class="clipboard-copy-txt" id="cell-1">!pip install -q "rfdetr[train,visual]&gt;=1.8.0" roboflow pandas seaborn</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=6b4797e9">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=62aff634">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3247,7 +3299,7 @@ cause is a stale in-memory import — restart the Python runtime once and re-run
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="sd">"""Shared RF-DETR instance segmentation fine-tuning demo for several Roboflow COCO segmentation exports."""</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="sd">"""Shared RF-DETR object detection fine-tuning demo for several Roboflow COCO detection exports."""</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
@@ -3264,14 +3316,14 @@ cause is a stale in-memory import — restart the Python runtime once and re-run
 <span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">roboflow</span><span class="w"> </span><span class="kn">import</span> <span class="n">Roboflow</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegSmall</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">SegmentationTrainConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">TrainConfig</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRDataModule</span><span class="p">,</span> <span class="n">RFDETRModelModule</span><span class="p">,</span> <span class="n">build_trainer</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training.callbacks.best_model</span><span class="w"> </span><span class="kn">import</span> <span class="n">BestModelCallback</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.utilities.reproducibility</span><span class="w"> </span><span class="kn">import</span> <span class="n">seed_all</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.visualize.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">plot_loss_metrics</span><span class="p">,</span> <span class="n">plot_map_metrics</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-2">"""Shared RF-DETR instance segmentation fine-tuning demo for several Roboflow COCO segmentation exports."""
+<div class="clipboard-copy-txt" id="cell-2">"""Shared RF-DETR object detection fine-tuning demo for several Roboflow COCO detection exports."""
 
 import json
 import os
@@ -3288,8 +3340,8 @@ from matplotlib.figure import Figure
 from PIL import Image
 from roboflow import Roboflow
 
-from rfdetr import RFDETRSegSmall
-from rfdetr.config import SegmentationTrainConfig
+from rfdetr import RFDETRSmall
+from rfdetr.config import TrainConfig
 from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 from rfdetr.training.callbacks.best_model import BestModelCallback
 from rfdetr.utilities.reproducibility import seed_all
@@ -3300,7 +3352,7 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=99f1f539">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c9c78daa">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3321,67 +3373,69 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">PROJECT_ROOT</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span><span class="o">.</span><span class="n">parent</span> <span class="k">if</span> <span class="s2">"__file__"</span> <span class="ow">in</span> <span class="nb">globals</span><span class="p">()</span> <span class="k">else</span> <span class="n">Path</span><span class="o">.</span><span class="n">cwd</span><span class="p">()</span>
 <span class="n">DATASETS_DIR</span> <span class="o">=</span> <span class="n">PROJECT_ROOT</span> <span class="o">/</span> <span class="s2">"datasets"</span>
 
-<span class="c1"># Resolution must be divisible by patch_size × num_windows (24 for RFDETRSegSmall).</span>
-<span class="c1"># Larger resolutions capture fine-grained mask boundaries at the cost of GPU memory and time.</span>
+<span class="c1"># Resolution must be divisible by patch_size × num_windows (32 for RFDETRSmall: patch_size=16, num_windows=2).</span>
+<span class="c1"># Higher resolution improves detection of small objects at the cost of GPU memory and training time.</span>
+<span class="c1"># Practical range: 384–640. The default 512 suits most fine-tuning runs.</span>
 <span class="n">DATASETS</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">"building_facade"</span><span class="p">:</span> <span class="p">{</span>
-        <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Building Facade Segmentation"</span><span class="p">,</span>
-        <span class="s2">"workspace"</span><span class="p">:</span> <span class="s2">"building-facade"</span><span class="p">,</span>
-        <span class="s2">"project"</span><span class="p">:</span> <span class="s2">"building-facade-segmentation-instance"</span><span class="p">,</span>
-        <span class="s2">"version"</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span>
-        <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/building-facade/building-facade-segmentation-instance"</span><span class="p">,</span>
-        <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"seg_building_facade"</span><span class="p">,</span>
-        <span class="c1"># 432 — structured street scenes with medium-to-large facade regions plus</span>
-        <span class="c1"># smaller windows, cars, vegetation, and infrastructure boundaries.</span>
-        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">432</span><span class="p">,</span>
+    <span class="s2">"hard_hat_ppes"</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Hard Hat Worker Safety"</span><span class="p">,</span>
+        <span class="s2">"workspace"</span><span class="p">:</span> <span class="s2">"safety-first"</span><span class="p">,</span>
+        <span class="s2">"project"</span><span class="p">:</span> <span class="s2">"hard-hat-worker-safety-equipments"</span><span class="p">,</span>
+        <span class="s2">"version"</span><span class="p">:</span> <span class="mi">9</span><span class="p">,</span>
+        <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/safety-first/hard-hat-worker-safety-equipments"</span><span class="p">,</span>
+        <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"det_hard_hat_ppes"</span><span class="p">,</span>
+        <span class="c1"># 512 — outdoor construction scenes; workers appear at medium scale so the</span>
+        <span class="c1"># default resolution is sufficient to distinguish helmet vs no-helmet.</span>
+        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">512</span><span class="p">,</span>
     <span class="p">},</span>
-    <span class="s2">"spalling_rebar"</span><span class="p">:</span> <span class="p">{</span>
-        <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Spalling and Exposed Rebar"</span><span class="p">,</span>
-        <span class="s2">"workspace"</span><span class="p">:</span> <span class="s2">"uni-of-birmingham"</span><span class="p">,</span>
-        <span class="s2">"project"</span><span class="p">:</span> <span class="s2">"spalling-and-exposed-rebar"</span><span class="p">,</span>
-        <span class="s2">"version"</span><span class="p">:</span> <span class="mi">7</span><span class="p">,</span>
-        <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/uni-of-birmingham/spalling-and-exposed-rebar"</span><span class="p">,</span>
-        <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"seg_spalling_rebar"</span><span class="p">,</span>
-        <span class="c1"># 432 — civil-infrastructure damage masks with irregular thin regions and</span>
-        <span class="c1"># exposed-rebar details that stress boundary quality.</span>
-        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">432</span><span class="p">,</span>
+    <span class="s2">"road_damage"</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Pavement Distress Detection"</span><span class="p">,</span>
+        <span class="s2">"workspace"</span><span class="p">:</span> <span class="s2">"pavement-distresses"</span><span class="p">,</span>
+        <span class="s2">"project"</span><span class="p">:</span> <span class="s2">"distress-detection"</span><span class="p">,</span>
+        <span class="s2">"version"</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+        <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/pavement-distresses/distress-detection"</span><span class="p">,</span>
+        <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"det_road_damage"</span><span class="p">,</span>
+        <span class="c1"># 544 — road-surface images captured from dashcams and drones; fine cracks</span>
+        <span class="c1"># and potholes are small relative to the frame, so the extra resolution</span>
+        <span class="c1"># helps the model distinguish closely spaced defect categories.</span>
+        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">544</span><span class="p">,</span>
     <span class="p">},</span>
-    <span class="s2">"car_damage_parts"</span><span class="p">:</span> <span class="p">{</span>
-        <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Car Part Damage Segmentation"</span><span class="p">,</span>
-        <span class="s2">"workspace"</span><span class="p">:</span> <span class="s2">"car-damaged-detection-e66m0"</span><span class="p">,</span>
-        <span class="s2">"project"</span><span class="p">:</span> <span class="s2">"car-part-detection-with-damage-part"</span><span class="p">,</span>
+    <span class="s2">"traffic"</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Traffic Detection"</span><span class="p">,</span>
+        <span class="s2">"workspace"</span><span class="p">:</span> <span class="s2">"redlightrunningdection"</span><span class="p">,</span>
+        <span class="s2">"project"</span><span class="p">:</span> <span class="s2">"traffic-detection-sutq6"</span><span class="p">,</span>
+        <span class="s2">"version"</span><span class="p">:</span> <span class="mi">36</span><span class="p">,</span>
+        <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/redlightrunningdection/traffic-detection-sutq6"</span><span class="p">,</span>
+        <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"det_traffic"</span><span class="p">,</span>
+        <span class="c1"># 512 — street-level traffic scenes; vehicles span a wide size range</span>
+        <span class="c1"># (large buses to distant motorbikes); 512 gives a good speed/accuracy trade-off.</span>
+        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">512</span><span class="p">,</span>
+    <span class="p">},</span>
+    <span class="s2">"football"</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Football Player Detection"</span><span class="p">,</span>
+        <span class="s2">"workspace"</span><span class="p">:</span> <span class="s2">"football-gozni"</span><span class="p">,</span>
+        <span class="s2">"project"</span><span class="p">:</span> <span class="s2">"football-player-detection-bfswn"</span><span class="p">,</span>
         <span class="s2">"version"</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
-        <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/car-damaged-detection-e66m0/car-part-detection-with-damage-part"</span><span class="p">,</span>
-        <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"seg_car_damage_parts"</span><span class="p">,</span>
-        <span class="c1"># 432 — fine-grained automotive part masks with many adjacent classes and</span>
-        <span class="c1"># damage regions, useful for checking class-specific mask boundaries.</span>
-        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">432</span><span class="p">,</span>
+        <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/football-gozni/football-player-detection-bfswn"</span><span class="p">,</span>
+        <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"det_football"</span><span class="p">,</span>
+        <span class="c1"># 544 — broadcast and stadium-angle shots; the ball is a tiny object relative</span>
+        <span class="c1"># to the field; the extra resolution meaningfully reduces false negatives.</span>
+        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">544</span><span class="p">,</span>
     <span class="p">},</span>
-    <span class="s2">"teeth_numbering"</span><span class="p">:</span> <span class="p">{</span>
-        <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Teeth Numbering Segmentation"</span><span class="p">,</span>
-        <span class="s2">"workspace"</span><span class="p">:</span> <span class="s2">"godento2"</span><span class="p">,</span>
-        <span class="s2">"project"</span><span class="p">:</span> <span class="s2">"teeth-seg-3537-iaky1"</span><span class="p">,</span>
-        <span class="s2">"version"</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
-        <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/godento2/teeth-seg-3537-iaky1"</span><span class="p">,</span>
-        <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"seg_teeth_numbering"</span><span class="p">,</span>
-        <span class="c1"># 432 — dental images with many repeated small instances whose labels are</span>
-        <span class="c1"># tied to position, stressing class confusion and small-mask quality.</span>
-        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">432</span><span class="p">,</span>
-    <span class="p">},</span>
-    <span class="s2">"taco_trash"</span><span class="p">:</span> <span class="p">{</span>
-        <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"TACO Trash"</span><span class="p">,</span>
-        <span class="s2">"workspace"</span><span class="p">:</span> <span class="s2">"mohamed-traore-2ekkp"</span><span class="p">,</span>
-        <span class="s2">"project"</span><span class="p">:</span> <span class="s2">"taco-trash-annotations-in-context"</span><span class="p">,</span>
-        <span class="s2">"version"</span><span class="p">:</span> <span class="mi">13</span><span class="p">,</span>
-        <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/mohamed-traore-2ekkp/taco-trash-annotations-in-context"</span><span class="p">,</span>
-        <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"seg_taco_trash"</span><span class="p">,</span>
-        <span class="c1"># 432 — long-tail litter segmentation with many small, cluttered object</span>
-        <span class="c1"># categories. Use as a harder stress test after the simpler datasets.</span>
-        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">432</span><span class="p">,</span>
+    <span class="s2">"brackish_underwater"</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Brackish Underwater"</span><span class="p">,</span>
+        <span class="s2">"workspace"</span><span class="p">:</span> <span class="s2">"brad-dwyer"</span><span class="p">,</span>
+        <span class="s2">"project"</span><span class="p">:</span> <span class="s2">"brackish-underwater"</span><span class="p">,</span>
+        <span class="s2">"version"</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+        <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/brad-dwyer/brackish-underwater"</span><span class="p">,</span>
+        <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"det_brackish_underwater"</span><span class="p">,</span>
+        <span class="c1"># 512 — sonar and underwater camera frames; marine creatures appear at</span>
+        <span class="c1"># medium-to-large scale; the default resolution captures enough detail.</span>
+        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">512</span><span class="p">,</span>
     <span class="p">},</span>
 <span class="p">}</span>
 
-<span class="n">DATASET_KEY</span> <span class="o">=</span> <span class="s2">"building_facade"</span>
+<span class="n">DATASET_KEY</span> <span class="o">=</span> <span class="s2">"hard_hat_ppes"</span>
 <span class="n">DATASET_INFO</span> <span class="o">=</span> <span class="n">DATASETS</span><span class="p">[</span><span class="n">DATASET_KEY</span><span class="p">]</span>
 
 <span class="n">OUTPUT_DIR</span> <span class="o">=</span> <span class="n">PROJECT_ROOT</span> <span class="o">/</span> <span class="s2">"output"</span> <span class="o">/</span> <span class="nb">str</span><span class="p">(</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s2">"output_name"</span><span class="p">])</span>
@@ -3414,67 +3468,69 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
 <div class="clipboard-copy-txt" id="cell-3">PROJECT_ROOT = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
 DATASETS_DIR = PROJECT_ROOT / "datasets"
 
-# Resolution must be divisible by patch_size × num_windows (24 for RFDETRSegSmall).
-# Larger resolutions capture fine-grained mask boundaries at the cost of GPU memory and time.
+# Resolution must be divisible by patch_size × num_windows (32 for RFDETRSmall: patch_size=16, num_windows=2).
+# Higher resolution improves detection of small objects at the cost of GPU memory and training time.
+# Practical range: 384–640. The default 512 suits most fine-tuning runs.
 DATASETS: dict[str, dict[str, Any]] = {
-    "building_facade": {
-        "name": "Building Facade Segmentation",
-        "workspace": "building-facade",
-        "project": "building-facade-segmentation-instance",
-        "version": 4,
-        "source_url": "https://universe.roboflow.com/building-facade/building-facade-segmentation-instance",
-        "output_name": "seg_building_facade",
-        # 432 — structured street scenes with medium-to-large facade regions plus
-        # smaller windows, cars, vegetation, and infrastructure boundaries.
-        "resolution": 432,
+    "hard_hat_ppes": {
+        "name": "Hard Hat Worker Safety",
+        "workspace": "safety-first",
+        "project": "hard-hat-worker-safety-equipments",
+        "version": 9,
+        "source_url": "https://universe.roboflow.com/safety-first/hard-hat-worker-safety-equipments",
+        "output_name": "det_hard_hat_ppes",
+        # 512 — outdoor construction scenes; workers appear at medium scale so the
+        # default resolution is sufficient to distinguish helmet vs no-helmet.
+        "resolution": 512,
     },
-    "spalling_rebar": {
-        "name": "Spalling and Exposed Rebar",
-        "workspace": "uni-of-birmingham",
-        "project": "spalling-and-exposed-rebar",
-        "version": 7,
-        "source_url": "https://universe.roboflow.com/uni-of-birmingham/spalling-and-exposed-rebar",
-        "output_name": "seg_spalling_rebar",
-        # 432 — civil-infrastructure damage masks with irregular thin regions and
-        # exposed-rebar details that stress boundary quality.
-        "resolution": 432,
+    "road_damage": {
+        "name": "Pavement Distress Detection",
+        "workspace": "pavement-distresses",
+        "project": "distress-detection",
+        "version": 2,
+        "source_url": "https://universe.roboflow.com/pavement-distresses/distress-detection",
+        "output_name": "det_road_damage",
+        # 544 — road-surface images captured from dashcams and drones; fine cracks
+        # and potholes are small relative to the frame, so the extra resolution
+        # helps the model distinguish closely spaced defect categories.
+        "resolution": 544,
     },
-    "car_damage_parts": {
-        "name": "Car Part Damage Segmentation",
-        "workspace": "car-damaged-detection-e66m0",
-        "project": "car-part-detection-with-damage-part",
+    "traffic": {
+        "name": "Traffic Detection",
+        "workspace": "redlightrunningdection",
+        "project": "traffic-detection-sutq6",
+        "version": 36,
+        "source_url": "https://universe.roboflow.com/redlightrunningdection/traffic-detection-sutq6",
+        "output_name": "det_traffic",
+        # 512 — street-level traffic scenes; vehicles span a wide size range
+        # (large buses to distant motorbikes); 512 gives a good speed/accuracy trade-off.
+        "resolution": 512,
+    },
+    "football": {
+        "name": "Football Player Detection",
+        "workspace": "football-gozni",
+        "project": "football-player-detection-bfswn",
         "version": 1,
-        "source_url": "https://universe.roboflow.com/car-damaged-detection-e66m0/car-part-detection-with-damage-part",
-        "output_name": "seg_car_damage_parts",
-        # 432 — fine-grained automotive part masks with many adjacent classes and
-        # damage regions, useful for checking class-specific mask boundaries.
-        "resolution": 432,
+        "source_url": "https://universe.roboflow.com/football-gozni/football-player-detection-bfswn",
+        "output_name": "det_football",
+        # 544 — broadcast and stadium-angle shots; the ball is a tiny object relative
+        # to the field; the extra resolution meaningfully reduces false negatives.
+        "resolution": 544,
     },
-    "teeth_numbering": {
-        "name": "Teeth Numbering Segmentation",
-        "workspace": "godento2",
-        "project": "teeth-seg-3537-iaky1",
-        "version": 1,
-        "source_url": "https://universe.roboflow.com/godento2/teeth-seg-3537-iaky1",
-        "output_name": "seg_teeth_numbering",
-        # 432 — dental images with many repeated small instances whose labels are
-        # tied to position, stressing class confusion and small-mask quality.
-        "resolution": 432,
-    },
-    "taco_trash": {
-        "name": "TACO Trash",
-        "workspace": "mohamed-traore-2ekkp",
-        "project": "taco-trash-annotations-in-context",
-        "version": 13,
-        "source_url": "https://universe.roboflow.com/mohamed-traore-2ekkp/taco-trash-annotations-in-context",
-        "output_name": "seg_taco_trash",
-        # 432 — long-tail litter segmentation with many small, cluttered object
-        # categories. Use as a harder stress test after the simpler datasets.
-        "resolution": 432,
+    "brackish_underwater": {
+        "name": "Brackish Underwater",
+        "workspace": "brad-dwyer",
+        "project": "brackish-underwater",
+        "version": 2,
+        "source_url": "https://universe.roboflow.com/brad-dwyer/brackish-underwater",
+        "output_name": "det_brackish_underwater",
+        # 512 — sonar and underwater camera frames; marine creatures appear at
+        # medium-to-large scale; the default resolution captures enough detail.
+        "resolution": 512,
     },
 }
 
-DATASET_KEY = "building_facade"
+DATASET_KEY = "hard_hat_ppes"
 DATASET_INFO = DATASETS[DATASET_KEY]
 
 OUTPUT_DIR = PROJECT_ROOT / "output" / str(DATASET_INFO["output_name"])
@@ -3509,7 +3565,7 @@ print(f"resolution={RESOLUTION}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=b60971f9">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=cdce84bd">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3522,7 +3578,7 @@ absence of an IPython kernel and exits silently, so it is always safe to call.</
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=1c40c67d">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=993a411e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3571,23 +3627,28 @@ _enable_notebook_inline_matplotlib()</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7f99c55d">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=9c7f944e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="1-download-dataset">1 - Download dataset<a class="anchor-link" href="#1-download-dataset">¶</a></h2><p>Roboflow exports instance segmentation datasets in COCO format: a JSON file where each annotation contains a
-<code>segmentation</code> field with polygon coordinates that trace the precise object boundary.  The download cell fetches the
-exact dataset version listed in <code>DATASETS</code> and places it under <code>datasets/&lt;DATASET_KEY&gt;/</code>. You need a Roboflow API key
-— get one for free at app.roboflow.com/settings/api and set it as the <code>ROBOFLOW_API_KEY</code> environment variable (or as
-a Colab secret with the same name). The download is idempotent: if the target directory already exists Roboflow skips
-the network transfer, so re-running this cell after a successful download is fast.</p>
+<h2 id="1-download-dataset">1 - Download dataset<a class="anchor-link" href="#1-download-dataset">¶</a></h2><p>Roboflow exports object detection datasets in <strong>COCO format</strong>: a JSON file containing image metadata and per-image
+annotations, each with a <code>bbox</code> field (x, y, width, height in pixels) and a <code>category_id</code> referencing the class.
+The download cell fetches the exact dataset version listed in <code>DATASETS</code> and places it under
+<code>datasets/&lt;DATASET_KEY&gt;/</code>. You need a Roboflow API key — get one for free at <code>app.roboflow.com/settings/api</code>
+and set it as the <code>ROBOFLOW_API_KEY</code> environment variable (or as a Colab secret with the same name).</p>
+<p>The download is <strong>idempotent</strong>: if the target directory already exists Roboflow skips the network transfer,
+so re-running this cell after a successful download is fast.</p>
+<blockquote>
+<p><strong>Tip:</strong> All five datasets in this notebook are open-access on Roboflow Universe. You can browse them in your
+browser to explore image samples and annotation statistics before downloading.</p>
+</blockquote>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ab8fdeb6">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=20fea837">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3670,20 +3731,21 @@ print(f"dataset_dir={DATASET_DIR}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e38db150">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=6516f6ee">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="2-infer-class-names">2 - Infer class names<a class="anchor-link" href="#2-infer-class-names">¶</a></h2><p>Read the class names directly from the COCO annotation file.  RF-DETR uses 0-based class indices internally; the
-<code>class_names</code> list maps each index to a human-readable label so the inference visualisation shows category names
-rather than numbers.  If your dataset has a single category the list will have one element — that is expected.</p>
+<h2 id="2-infer-class-names">2 - Infer class names<a class="anchor-link" href="#2-infer-class-names">¶</a></h2><p>The COCO annotation file defines a <code>categories</code> list mapping integer IDs to human-readable names. RF-DETR uses
+<strong>0-based class indices</strong> internally, so we sort the categories by their original <code>id</code> field and read names in order.
+The resulting <code>CLASS_NAMES</code> list maps each index back to a label, which is used during inference visualisation.</p>
+<p>If your own dataset has a single category, this list will have one element — that is expected and valid.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=2c6b8dc4">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=5ca32aa1">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3724,20 +3786,20 @@ print(f"num_classes={NUM_CLASSES}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=945822fa">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3e39e02e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <p><code>_save_final_checkpoint</code> writes a self-contained <code>.pth</code> file that bundles model weights with the full training and
-model config. This is separate from the PTL checkpoint because it can be loaded with a single <code>from_checkpoint</code> call
-on any machine, without reconstructing the original config.</p>
+model config. This is separate from the PTL checkpoint because it can be loaded with a single <code>from_checkpoint</code>
+call on any machine, without reconstructing the original config.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ed36df66">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=89450ec9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3758,7 +3820,7 @@ on any machine, without reconstructing the original config.</p>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">_save_final_checkpoint</span><span class="p">(</span>
     <span class="n">module</span><span class="p">:</span> <span class="n">RFDETRModelModule</span><span class="p">,</span>
     <span class="n">trainer</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
-    <span class="n">train_config</span><span class="p">:</span> <span class="n">SegmentationTrainConfig</span><span class="p">,</span>
+    <span class="n">train_config</span><span class="p">:</span> <span class="n">TrainConfig</span><span class="p">,</span>
     <span class="n">model_config</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="n">output_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
@@ -3770,7 +3832,7 @@ on any machine, without reconstructing the original config.</p>
             <span class="n">raw_model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span>
             <span class="n">train_config</span><span class="o">.</span><span class="n">model_dump</span><span class="p">(),</span>
             <span class="n">trainer</span><span class="p">,</span>
-            <span class="n">model_name</span><span class="o">=</span><span class="s2">"RFDETRSegSmall"</span><span class="p">,</span>
+            <span class="n">model_name</span><span class="o">=</span><span class="s2">"RFDETRSmall"</span><span class="p">,</span>
             <span class="n">model_config_dict</span><span class="o">=</span><span class="n">model_config</span><span class="o">.</span><span class="n">model_dump</span><span class="p">(),</span>
         <span class="p">),</span>
         <span class="n">output_path</span><span class="p">,</span>
@@ -3780,7 +3842,7 @@ on any machine, without reconstructing the original config.</p>
 <div class="clipboard-copy-txt" id="cell-7">def _save_final_checkpoint(
     module: RFDETRModelModule,
     trainer: Any,
-    train_config: SegmentationTrainConfig,
+    train_config: TrainConfig,
     model_config: Any,
     output_path: Path,
 ) -&gt; Path:
@@ -3792,7 +3854,7 @@ on any machine, without reconstructing the original config.</p>
             raw_model.state_dict(),
             train_config.model_dump(),
             trainer,
-            model_name="RFDETRSegSmall",
+            model_name="RFDETRSmall",
             model_config_dict=model_config.model_dump(),
         ),
         output_path,
@@ -3804,20 +3866,21 @@ on any machine, without reconstructing the original config.</p>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7000d9a4">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e0a0ad62">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p><code>_segmentation_grid_figure</code> arranges multiple annotated images into a fixed-column matplotlib grid.
-Masks are drawn with <code>sv.MaskAnnotator</code> (translucent colour fill) and bounding boxes with
-<code>sv.BoxAnnotator</code>.  Labels show the class name and confidence score.</p>
+<p><code>_detection_grid_figure</code> arranges multiple annotated images into a fixed-column matplotlib grid.
+Bounding boxes are drawn with <code>sv.BoxAnnotator</code> and labels with <code>sv.LabelAnnotator</code>, showing the class name and
+confidence score for each detection. Using a grid keeps the visual summary compact and makes it easy to compare
+predictions across images at a glance.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=477cd2f6">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=efae67bb">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3835,16 +3898,15 @@ Masks are drawn with <code>sv.MaskAnnotator</code> (translucent colour fill) and
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">_segmentation_grid_figure</span><span class="p">(</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">_detection_grid_figure</span><span class="p">(</span>
     <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">]],</span>
     <span class="n">columns</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
     <span class="n">class_names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Figure</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Render segmentation masks and bounding boxes in a fixed-column subplot grid."""</span>
+<span class="w">    </span><span class="sd">"""Render bounding box detections in a fixed-column subplot grid."""</span>
     <span class="k">if</span> <span class="n">columns</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"columns must be positive, got </span><span class="si">{</span><span class="n">columns</span><span class="si">}</span><span class="s2">."</span><span class="p">)</span>
 
-    <span class="n">mask_annotator</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">MaskAnnotator</span><span class="p">()</span>
     <span class="n">box_annotator</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">BoxAnnotator</span><span class="p">(</span><span class="n">thickness</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
     <span class="n">label_annotator</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">LabelAnnotator</span><span class="p">(</span><span class="n">text_scale</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">text_thickness</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">text_padding</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
 
@@ -3856,8 +3918,6 @@ Masks are drawn with <code>sv.MaskAnnotator</code> (translucent colour fill) and
 
     <span class="k">for</span> <span class="n">axis</span><span class="p">,</span> <span class="p">(</span><span class="n">title</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">detections</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">axes_array</span><span class="p">,</span> <span class="n">items</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
         <span class="n">scene</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
-        <span class="k">if</span> <span class="n">detections</span><span class="o">.</span><span class="n">mask</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">detections</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
-            <span class="n">scene</span> <span class="o">=</span> <span class="n">mask_annotator</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">scene</span><span class="o">=</span><span class="n">scene</span><span class="p">,</span> <span class="n">detections</span><span class="o">=</span><span class="n">detections</span><span class="p">)</span>
         <span class="n">scene</span> <span class="o">=</span> <span class="n">box_annotator</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">scene</span><span class="o">=</span><span class="n">scene</span><span class="p">,</span> <span class="n">detections</span><span class="o">=</span><span class="n">detections</span><span class="p">)</span>
         <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">detections</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">detections</span><span class="o">.</span><span class="n">class_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="n">conf_list</span> <span class="o">=</span> <span class="p">(</span>
@@ -3875,16 +3935,15 @@ Masks are drawn with <code>sv.MaskAnnotator</code> (translucent colour fill) and
     <span class="n">figure</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
     <span class="k">return</span> <span class="n">figure</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-8">def _segmentation_grid_figure(
+<div class="clipboard-copy-txt" id="cell-8">def _detection_grid_figure(
     items: list[tuple[str, np.ndarray, sv.Detections]],
     columns: int,
     class_names: list[str],
 ) -&gt; Figure:
-    """Render segmentation masks and bounding boxes in a fixed-column subplot grid."""
+    """Render bounding box detections in a fixed-column subplot grid."""
     if columns &lt;= 0:
         raise ValueError(f"columns must be positive, got {columns}.")
 
-    mask_annotator = sv.MaskAnnotator()
     box_annotator = sv.BoxAnnotator(thickness=2)
     label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_padding=4)
 
@@ -3896,8 +3955,6 @@ Masks are drawn with <code>sv.MaskAnnotator</code> (translucent colour fill) and
 
     for axis, (title, image, detections) in zip(axes_array, items, strict=False):
         scene = image.copy()
-        if detections.mask is not None and len(detections) &gt; 0:
-            scene = mask_annotator.annotate(scene=scene, detections=detections)
         scene = box_annotator.annotate(scene=scene, detections=detections)
         if len(detections) &gt; 0 and detections.class_id is not None:
             conf_list = (
@@ -3920,26 +3977,34 @@ Masks are drawn with <code>sv.MaskAnnotator</code> (translucent colour fill) and
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=8e53a5a5">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=38359554">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="3-configure-training">3 - Configure training<a class="anchor-link" href="#3-configure-training">¶</a></h2><p><code>SegmentationTrainConfig</code> centralises every hyperparameter the training loop needs, including mask-specific loss
-coefficients (<code>mask_ce_loss_coef</code> and <code>mask_dice_loss_coef</code>).  The defaults (5.0 each) work well for most datasets;
-if the segmentation head overfits early you can reduce them towards 2.0 while keeping <code>cls_loss_coef=5.0</code>.</p>
-<p><code>lr</code> and <code>lr_encoder</code> control the head and backbone learning rates respectively.  For fine-tuning both are usually
-set to the same value; if you notice the backbone overfitting early, halve <code>lr_encoder</code> to protect the pre-trained
-features.  <code>grad_accum_steps=2</code> doubles the effective batch size without extra GPU memory.</p>
-<p><code>multi_scale=False</code> and <code>expanded_scales=False</code> disable multi-resolution augmentation to shorten epoch time during
-fine-tuning — they rarely help on small custom datasets.  The <code>notes</code> dict is stored alongside the weights in the
-checkpoint, giving you a lightweight experiment log that travels with the model file.</p>
+<h2 id="3-configure-training">3 - Configure training<a class="anchor-link" href="#3-configure-training">¶</a></h2><p><code>TrainConfig</code> centralises every hyperparameter the training loop needs. The most important fields to understand
+before customising them for your own dataset:</p>
+<p><strong>Learning rates</strong> — <code>lr</code> and <code>lr_encoder</code> are both set to <code>1e-4</code> for fine-tuning. The <code>lr</code> controls the
+detection head and decoder; <code>lr_encoder</code> controls the vision backbone (DINOv2). For fine-tuning, both are usually
+equal. If you notice the backbone overfitting early — validation loss rising while training loss keeps falling —
+halve <code>lr_encoder</code> to protect the pre-trained features while the head continues to adapt.</p>
+<p><strong>Batch size and gradient accumulation</strong> — <code>batch_size=8</code> with <code>grad_accum_steps=2</code> gives an effective batch size
+of 16 without requiring extra GPU memory. Effective batch size affects how smoothly gradients are estimated each
+update; too small (&lt; 8) leads to noisy updates; too large (&gt; 64) may over-smooth and slow convergence.</p>
+<p><strong>EMA</strong> — <code>use_ema=False</code> keeps this demo fast. For a production run you can enable EMA
+(<code>use_ema=True</code>) to maintain an exponential moving average of the weights, which typically adds 0.5–1.0 mAP points
+on small datasets by reducing the impact of noisy late-epoch updates.</p>
+<p><strong>Multi-scale training</strong> — <code>multi_scale=False</code> and <code>expanded_scales=False</code> disable the multi-resolution
+augmentation used during pre-training. Turning them off shortens epoch time by up to 40 % and is fine for
+most fine-tuning runs on small custom datasets. Re-enable if your validation mAP plateaus early.</p>
+<p><strong>Notes dict</strong> — stored verbatim in the checkpoint file alongside the weights, giving you a lightweight experiment
+log that travels with the model file.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3e71bc58">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a8c0bbcf">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3958,13 +4023,13 @@ checkpoint, giving you a lightweight experiment log that travels with the model 
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">seed_all</span><span class="p">(</span><span class="n">SEED</span><span class="p">)</span>
-<span class="n">variant</span> <span class="o">=</span> <span class="n">RFDETRSegSmall</span><span class="p">(</span>  <span class="c1"># type: ignore[no-untyped-call]</span>
+<span class="n">variant</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span>  <span class="c1"># type: ignore[no-untyped-call]</span>
     <span class="n">num_classes</span><span class="o">=</span><span class="n">NUM_CLASSES</span><span class="p">,</span>
     <span class="n">resolution</span><span class="o">=</span><span class="n">RESOLUTION</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="n">variant</span><span class="o">.</span><span class="n">model_config</span><span class="o">.</span><span class="n">model_name</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">variant</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span>
 
-<span class="n">train_config</span> <span class="o">=</span> <span class="n">SegmentationTrainConfig</span><span class="p">(</span>
+<span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span>
     <span class="n">dataset_file</span><span class="o">=</span><span class="s2">"roboflow"</span><span class="p">,</span>
     <span class="n">dataset_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASET_DIR</span><span class="p">),</span>
     <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">OUTPUT_DIR</span><span class="p">),</span>
@@ -3987,7 +4052,7 @@ checkpoint, giving you a lightweight experiment log that travels with the model 
     <span class="n">clearml</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
     <span class="n">class_names</span><span class="o">=</span><span class="n">CLASS_NAMES</span><span class="p">,</span>
     <span class="n">notes</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">"demo"</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"segmentation PTL fine-tune on Roboflow Universe </span><span class="si">{</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s1">'project'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
+        <span class="s2">"demo"</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"detection PTL fine-tune on Roboflow Universe </span><span class="si">{</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s1">'project'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
         <span class="s2">"source_url"</span><span class="p">:</span> <span class="n">DATASET_INFO</span><span class="p">[</span><span class="s2">"source_url"</span><span class="p">],</span>
         <span class="s2">"roboflow_workspace"</span><span class="p">:</span> <span class="n">DATASET_INFO</span><span class="p">[</span><span class="s2">"workspace"</span><span class="p">],</span>
         <span class="s2">"roboflow_project"</span><span class="p">:</span> <span class="n">DATASET_INFO</span><span class="p">[</span><span class="s2">"project"</span><span class="p">],</span>
@@ -4003,13 +4068,13 @@ checkpoint, giving you a lightweight experiment log that travels with the model 
 <span class="n">trainer</span> <span class="o">=</span> <span class="n">build_trainer</span><span class="p">(</span><span class="n">train_config</span><span class="p">,</span> <span class="n">variant</span><span class="o">.</span><span class="n">model_config</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-9">seed_all(SEED)
-variant = RFDETRSegSmall(  # type: ignore[no-untyped-call]
+variant = RFDETRSmall(  # type: ignore[no-untyped-call]
     num_classes=NUM_CLASSES,
     resolution=RESOLUTION,
 )
 variant.model_config.model_name = type(variant).__name__
 
-train_config = SegmentationTrainConfig(
+train_config = TrainConfig(
     dataset_file="roboflow",
     dataset_dir=str(DATASET_DIR),
     output_dir=str(OUTPUT_DIR),
@@ -4032,7 +4097,7 @@ train_config = SegmentationTrainConfig(
     clearml=False,
     class_names=CLASS_NAMES,
     notes={
-        "demo": f"segmentation PTL fine-tune on Roboflow Universe {DATASET_INFO['project']}",
+        "demo": f"detection PTL fine-tune on Roboflow Universe {DATASET_INFO['project']}",
         "source_url": DATASET_INFO["source_url"],
         "roboflow_workspace": DATASET_INFO["workspace"],
         "roboflow_project": DATASET_INFO["project"],
@@ -4052,21 +4117,30 @@ trainer = build_trainer(train_config, variant.model_config)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5f0ccbd3">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=c1eaa77a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="4-preview-dataset-inputs">4 - Preview dataset inputs<a class="anchor-link" href="#4-preview-dataset-inputs">¶</a></h2><p>Always look at your data before you start a long training run. This cell renders a grid of annotated training images
-so you can confirm that segmentation masks align with objects, colour jitter and flips look reasonable, and there are
-no systematic labelling errors such as masks placed on the wrong object or masks that bleed outside the object
-boundary. Catching label noise here costs a few seconds; catching it after 50 epochs costs much more.</p>
+<h2 id="4-preview-dataset-inputs">4 - Preview dataset inputs<a class="anchor-link" href="#4-preview-dataset-inputs">¶</a></h2><p><strong>Always look at your data before starting a long training run.</strong> This cell renders a grid of annotated training
+images drawn from the augmented pipeline — the same view the model will see during training.</p>
+<p>What to check here:</p>
+<ul>
+<li><strong>Box alignment</strong> — do bounding boxes tightly surround the objects, or are they shifted or too large?</li>
+<li><strong>Class correctness</strong> — are labels correct for each box? Mixed-up classes are one of the most common
+annotation errors and are hard to recover from after training.</li>
+<li><strong>Augmentation sanity</strong> — horizontal flips, colour jitter, and random crops should look plausible;
+cropped boxes at image edges are normal.</li>
+<li><strong>Class imbalance</strong> — if one class dominates the preview, the model will likely be biased toward it;
+rebalancing or oversampling rare classes can help.</li>
+</ul>
+<p>Catching label noise here costs a few seconds; catching it after 50 epochs of training costs much more.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=71e1a7db">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a42a8135">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4107,23 +4181,30 @@ plt.close(sample_figure)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=993b1cd1">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=58343884">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="5-fine-tune">5 - Fine-tune<a class="anchor-link" href="#5-fine-tune">¶</a></h2><p><code>trainer.fit</code> hands control to PyTorch Lightning, which drives the full training loop: forward pass, loss
-computation (cross-entropy + Dice on sampled mask points), gradient accumulation, weight updates,
-learning-rate scheduling, and periodic validation with COCO mask mAP.  After each epoch the trainer appends a row to
-<code>metrics.csv</code> and, if validation mAP improves, saves a new best checkpoint via <code>BestModelCallback</code>. On a single
-consumer GPU (RTX 3090 or similar) 50 epochs on the crack dataset takes roughly 20–35 minutes depending on
-<code>BATCH_SIZE</code> and <code>NUM_WORKERS</code>.</p>
+<h2 id="5-fine-tune">5 - Fine-tune<a class="anchor-link" href="#5-fine-tune">¶</a></h2><p><code>trainer.fit</code> hands control to PyTorch Lightning, which drives the full training loop: forward pass, bipartite
+matching loss (classification + bounding-box L1 + GIoU), gradient accumulation, weight updates,
+learning-rate scheduling, and periodic validation with COCO bounding-box mAP.</p>
+<p>After each epoch the trainer appends a row to <code>metrics.csv</code> and, if validation mAP improves,
+saves a new best checkpoint via <code>BestModelCallback</code>.</p>
+<p><strong>Typical training times on a single GPU</strong> (RTX 3090 or similar):</p>
+<ul>
+<li>PPE / hard hat dataset (~2,600 images): ~20–30 min for 50 epochs</li>
+<li>Traffic dataset (~1,400 images): ~15–20 min for 50 epochs</li>
+<li>Underwater dataset (~12,000 images): ~60–90 min for 50 epochs</li>
+</ul>
+<p>To <strong>resume an interrupted run</strong>, set <code>train_config.resume</code> to the path of the last PTL checkpoint
+(e.g. <code>OUTPUT_DIR / "last.ckpt"</code>) before calling this cell again.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0564b2c6">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=8c78f17f">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4152,23 +4233,23 @@ print(f"output_dir={OUTPUT_DIR}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=c746e44d">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=92918976">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="6-save-checkpointmodel">6 - Save checkpoint/model<a class="anchor-link" href="#6-save-checkpointmodel">¶</a></h2><p>PTL saves its own checkpoints during training (optimizer state, scheduler state, epoch counter), but those files are
-not directly portable — they require the same class hierarchy to load.  The <code>.pth</code> file written here is a
-self-contained RF-DETR checkpoint: it bundles the model weights together with the full training and model configs,
-including the class names.  You can share the file with a colleague and they can run inference with a single
-<code>RFDETRSegSmall.from_checkpoint(path)</code> call.  For full reproducibility, keep this checkpoint alongside the dataset
-version number printed in section 1.</p>
+<h2 id="6-save-checkpointmodel">6 - Save checkpoint/model<a class="anchor-link" href="#6-save-checkpointmodel">¶</a></h2><p>PTL saves its own checkpoints during training (optimizer state, scheduler state, epoch counter), but those files
+are not directly portable — they require the same class hierarchy to load. The <code>.pth</code> file written here is a
+<strong>self-contained RF-DETR checkpoint</strong>: it bundles the model weights together with the full training and model
+configs, including the class names. You can share the file with a colleague and they can run inference with a
+single <code>RFDETRSmall.from_checkpoint(path)</code> call, with no need to reconstruct the original config.</p>
+<p>For full reproducibility, keep this checkpoint alongside the dataset version number printed in section 1.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=684059b3">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=47156e82">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4197,25 +4278,36 @@ print(f"saved_checkpoint={final_checkpoint}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=dadba8e3">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=9dbf2232">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="7-validate-metrics">7 - Validate metrics<a class="anchor-link" href="#7-validate-metrics">¶</a></h2><p>This cell runs a clean post-training validation with no augmentation, using the best checkpoint loaded from
-<code>checkpoint_best_total.pth</code> written by <code>BestModelCallback</code>, and serialises results to JSON. Two metrics are most
-important to inspect. <code>bbox/map</code> is the standard COCO bounding-box mAP at IoU 0.50:0.95. <code>segm/map</code> (when logged)
-is the mask mAP — it measures how precisely the predicted binary masks overlap with the annotated polygons. A model
-can have high <code>bbox/map</code> but low <code>segm/map</code> if the detector locates objects well but the mask boundaries are coarse;
-this usually improves with more training epochs or by increasing <code>resolution</code>.</p>
+<h2 id="7-validate-metrics">7 - Validate metrics<a class="anchor-link" href="#7-validate-metrics">¶</a></h2><p>This cell runs a clean post-training validation: no augmentation, the best checkpoint loaded from
+<code>checkpoint_best_total.pth</code> written by <code>BestModelCallback</code>, and results serialised to JSON for downstream
+comparison or reporting.</p>
+<p><strong>Key metrics to inspect:</strong></p>
+<ul>
+<li><strong><code>bbox/map</code></strong> — the primary metric: standard COCO bounding-box mAP averaged across IoU thresholds 0.50–0.95
+in steps of 0.05. A value of 0.50 means the model correctly localises and classifies 50 % of objects at strict
+IoU thresholds. This is the most commonly reported number in object detection benchmarks.</li>
+<li><strong><code>bbox/map_50</code></strong> — mAP at IoU ≥ 0.50 (a box is "correct" if it overlaps the ground-truth box by at least 50 %).
+Rises fastest and is the clearest early signal of whether the model is learning at all.</li>
+<li><strong><code>bbox/map_75</code></strong> — mAP at the stricter IoU ≥ 0.75 threshold. Reflects how precisely the model localises
+objects, not just whether it finds them.</li>
+</ul>
+<p>A model with high <code>bbox/map_50</code> but low <code>bbox/map_75</code> finds objects reliably but draws imprecise boxes.
+This usually improves with more training epochs or by increasing <code>RESOLUTION</code>.</p>
+<blockquote>
 <p><strong>Note:</strong> <code>checkpoint_best_total.pth</code> is written after the first completed validation epoch. If training was
 interrupted before any epoch finished, this file will not exist and the cell below will raise <code>FileNotFoundError</code>.</p>
+</blockquote>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ea69ee92">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b35e7f96">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4264,24 +4356,37 @@ print(f"validation_metrics_json={VALIDATION_METRICS_JSON}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e9b7a1cb">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=cbb8112e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="8-plot-csvlogger-metrics">8 - Plot CSVLogger metrics<a class="anchor-link" href="#8-plot-csvlogger-metrics">¶</a></h2><p>Reading loss curves is one of the fastest ways to diagnose training problems.  Healthy segmentation runs show the
-combined detection + mask loss decreasing together for train and val.  A loss that rises or plateaus from epoch 1 is
-usually a sign that the learning rate is too high or the dataset is too small for the chosen <code>BATCH_SIZE</code>.  For the
-mAP curves, <code>segm mAP 50</code> (mask IoU ≥ 0.50) rises fastest and is the clearest signal of whether the model is
-learning to segment objects; <code>segm mAP 50:95</code> (averaged across stricter thresholds) follows more slowly.
-Set <code>PLOT_LOSS_LOG_SCALE = True</code> if the loss drops by an order of magnitude in the first few epochs and the later,
+<h2 id="8-plot-csvlogger-metrics">8 - Plot CSVLogger metrics<a class="anchor-link" href="#8-plot-csvlogger-metrics">¶</a></h2><p>Reading loss and mAP curves is the fastest way to diagnose training problems.</p>
+<p><strong>Loss curves (first plot):</strong></p>
+<ul>
+<li>A healthy run shows both training loss and validation loss decreasing together.</li>
+<li>A <strong>growing gap</strong> between train and val loss is a classic overfitting signal — the model is memorising the
+training set. Add augmentation (<code>multi_scale=True</code>, or custom Albumentations), reduce learning rate, or collect
+more data.</li>
+<li>A <strong>flat or rising loss from epoch 1</strong> usually means the learning rate is too high. Try reducing <code>LR</code> to <code>5e-5</code>.</li>
+</ul>
+<p><strong>mAP curves (second plot):</strong></p>
+<ul>
+<li><code>bbox_map_50</code> (solid line) rises fastest and is the clearest signal of learning.</li>
+<li>On small datasets (a few hundred images) you typically see rapid improvement in epochs 1–20 followed by
+a plateau around epoch 30–50.</li>
+<li>If mAP is <strong>still rising at epoch 50</strong>, extend <code>EPOCHS</code> to 75 or 100.</li>
+<li>If mAP <strong>never rises above 0.05</strong>, check class names, annotation quality, and whether
+<code>RESOLUTION</code> is appropriate for the objects' scale in your dataset.</li>
+</ul>
+<p>Set <code>PLOT_LOSS_LOG_SCALE = True</code> if the loss drops by an order of magnitude in the first few epochs and the later,
 more meaningful portion of the curve gets compressed into a flat line.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=abab244f">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=278892c2">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4314,7 +4419,7 @@ plt.close(loss_figure)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c93477c9">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d0f5f468">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4345,21 +4450,23 @@ plt.close(map_figure)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e46c2424">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=550cf8f7">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="9-load-checkpointmodel">9 - Load checkpoint/model<a class="anchor-link" href="#9-load-checkpointmodel">¶</a></h2><p><code>from_checkpoint</code> is the standard entry point for loading a saved RF-DETR model.  It reads both the weights and the
+<h2 id="9-load-checkpointmodel">9 - Load checkpoint/model<a class="anchor-link" href="#9-load-checkpointmodel">¶</a></h2><p><code>from_checkpoint</code> is the standard entry point for loading a saved RF-DETR model. It reads both the weights and the
 stored config from the <code>.pth</code> file, so the reconstructed model has the correct number of classes and resolution
-without you having to pass them explicitly.  You can share this file with teammates and they can run inference
-immediately — the class names and architecture are all embedded alongside the weights.</p>
+without you having to pass them explicitly.</p>
+<p>This cell also confirms that the save–load round trip works before you proceed to inference, so any file corruption
+or version mismatch surfaces here rather than silently producing wrong predictions later.</p>
+<p>To deploy this model in a production pipeline, you only need to ship the <code>.pth</code> file and call <code>from_checkpoint</code>.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=58b00247">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=dd0a0623">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4377,31 +4484,32 @@ immediately — the class names and architecture are all embedded alongside the 
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">loaded_model</span> <span class="o">=</span> <span class="n">RFDETRSegSmall</span><span class="o">.</span><span class="n">from_checkpoint</span><span class="p">(</span><span class="n">FINAL_CHECKPOINT_PATH</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">loaded_model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="o">.</span><span class="n">from_checkpoint</span><span class="p">(</span><span class="n">FINAL_CHECKPOINT_PATH</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-16">loaded_model = RFDETRSegSmall.from_checkpoint(FINAL_CHECKPOINT_PATH)</div>
+<div class="clipboard-copy-txt" id="cell-16">loaded_model = RFDETRSmall.from_checkpoint(FINAL_CHECKPOINT_PATH)</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d2252a7a">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=929edc54">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="10-select-inference-images">10 - Select inference images<a class="anchor-link" href="#10-select-inference-images">¶</a></h2><p>This cell implements a fallback chain — test split first, then validation, then train — so the notebook always finds
-images to run inference on even when the dataset has no dedicated test split. Using images from the test set gives
-you an unbiased view of model performance because those images were never seen during training or used to pick the
-best checkpoint. Replace <code>inference_image_paths</code> with a list of <code>Path</code> objects pointing to your own files to run
-inference on custom images.</p>
+<h2 id="10-select-inference-images">10 - Select inference images<a class="anchor-link" href="#10-select-inference-images">¶</a></h2><p>This cell implements a fallback chain — test split first, then validation, then train — so the notebook always
+finds images to run inference on even when the dataset has no dedicated test split.</p>
+<p><strong>Using test images gives an unbiased view of model performance</strong> because those images were never seen during
+training or used to select the best checkpoint. If your deployment images look different from the training set
+(different lighting, camera angle, resolution), replace <code>inference_image_paths</code> with a list of <code>Path</code> objects
+pointing to your own files to assess real-world performance before shipping the model.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f03e8dcc">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=cc90e306">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4428,15 +4536,15 @@ inference on custom images.</p>
     <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">directory</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"**/*"</span><span class="p">)</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">is_file</span><span class="p">()</span> <span class="ow">and</span> <span class="n">p</span><span class="o">.</span><span class="n">suffix</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="n">_IMAGE_EXTS</span><span class="p">)</span>
 
 
-<span class="n">validation_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"test"</span><span class="p">)</span>
-<span class="k">if</span> <span class="ow">not</span> <span class="n">validation_image_paths</span><span class="p">:</span>
-    <span class="n">validation_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"valid"</span><span class="p">)</span>
-<span class="k">if</span> <span class="ow">not</span> <span class="n">validation_image_paths</span><span class="p">:</span>
-    <span class="n">validation_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"train"</span><span class="p">)</span>
-<span class="k">if</span> <span class="ow">not</span> <span class="n">validation_image_paths</span><span class="p">:</span>
+<span class="n">inference_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"test"</span><span class="p">)</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">inference_image_paths</span><span class="p">:</span>
+    <span class="n">inference_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"valid"</span><span class="p">)</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">inference_image_paths</span><span class="p">:</span>
+    <span class="n">inference_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"train"</span><span class="p">)</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">inference_image_paths</span><span class="p">:</span>
     <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"No images (</span><span class="si">{</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_IMAGE_EXTS</span><span class="p">))</span><span class="si">}</span><span class="s2">) found under </span><span class="si">{</span><span class="n">DATASET_DIR</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
-<span class="n">inference_image_paths</span> <span class="o">=</span> <span class="n">validation_image_paths</span><span class="p">[:</span><span class="n">INFERENCE_COUNT</span><span class="p">]</span>
+<span class="n">inference_image_paths</span> <span class="o">=</span> <span class="n">inference_image_paths</span><span class="p">[:</span><span class="n">INFERENCE_COUNT</span><span class="p">]</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"inference_images=</span><span class="si">{</span><span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">p</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">inference_image_paths</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-17">_IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
@@ -4448,15 +4556,15 @@ def _find_images(directory: Path) -&gt; list[Path]:
     return sorted(p for p in directory.glob("**/*") if p.is_file() and p.suffix.lower() in _IMAGE_EXTS)
 
 
-validation_image_paths = _find_images(DATASET_DIR / "test")
-if not validation_image_paths:
-    validation_image_paths = _find_images(DATASET_DIR / "valid")
-if not validation_image_paths:
-    validation_image_paths = _find_images(DATASET_DIR / "train")
-if not validation_image_paths:
+inference_image_paths = _find_images(DATASET_DIR / "test")
+if not inference_image_paths:
+    inference_image_paths = _find_images(DATASET_DIR / "valid")
+if not inference_image_paths:
+    inference_image_paths = _find_images(DATASET_DIR / "train")
+if not inference_image_paths:
     raise FileNotFoundError(f"No images ({', '.join(sorted(_IMAGE_EXTS))}) found under {DATASET_DIR}")
 
-inference_image_paths = validation_image_paths[:INFERENCE_COUNT]
+inference_image_paths = inference_image_paths[:INFERENCE_COUNT]
 print(f"inference_images={[str(p) for p in inference_image_paths]}")</div>
 </div>
 </div>
@@ -4464,23 +4572,27 @@ print(f"inference_images={[str(p) for p in inference_image_paths]}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=74116bbe">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=f49ac0a4">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="11-visualize-inference">11 - Visualize inference<a class="anchor-link" href="#11-visualize-inference">¶</a></h2><p><code>INFERENCE_THRESHOLD</code> is a detection confidence threshold: only detections whose bounding-box score exceeds this
-value are shown.  Raise it to suppress false positives; lower it to surface low-confidence detections.  Each accepted
-detection includes a binary mask resized to the original image dimensions — <code>sv.MaskAnnotator</code> renders it as a
-translucent colour overlay so you can see both the mask shape and the image beneath it.</p>
-<p>If the mask boundaries look jagged, consider increasing <code>RESOLUTION</code> (in multiples of 24) and retraining; higher
-resolution gives the segmentation head more spatial detail to work with.</p>
+<h2 id="11-visualize-inference">11 - Visualize inference<a class="anchor-link" href="#11-visualize-inference">¶</a></h2><p><code>INFERENCE_THRESHOLD</code> is a <strong>detection confidence threshold</strong>: only detections whose bounding-box score exceeds
+this value are shown. The default <code>0.3</code> is a reasonable starting point; adjust it based on what you see:</p>
+<ul>
+<li><strong>Too many false positives</strong> (boxes on background or wrong objects) → raise the threshold towards <code>0.5</code>–<code>0.7</code>.</li>
+<li><strong>Missing true objects</strong> (objects in the image not detected) → lower the threshold towards <code>0.1</code>–<code>0.2</code>.</li>
+<li><strong>Zero detections on most images</strong> → lower the threshold; the model may be well-calibrated to lower confidence
+scores on a custom dataset than the COCO-pretrained default.</li>
+</ul>
+<p>The confidence score reflects how certain the model is about each box. On a well-fine-tuned model you will
+typically see scores above 0.7 for clear, unoccluded objects of the target classes.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f3a68bfe">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4f7739a5">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4504,11 +4616,11 @@ resolution gives the segmentation head more spatial detail to work with.</p>
         <span class="n">image_rgb</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
     <span class="n">detections</span> <span class="o">=</span> <span class="n">loaded_model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image_rgb</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">INFERENCE_THRESHOLD</span><span class="p">)</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">detections</span><span class="p">,</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">):</span>
-        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Expected RFDETRSegSmall.predict() to return sv.Detections, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">detections</span><span class="p">)</span><span class="si">!r}</span><span class="s2">."</span><span class="p">)</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Expected RFDETRSmall.predict() to return sv.Detections, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">detections</span><span class="p">)</span><span class="si">!r}</span><span class="s2">."</span><span class="p">)</span>
     <span class="n">inference_grid_items</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">image_path</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image_rgb</span><span class="p">),</span> <span class="n">detections</span><span class="p">))</span>
 
 <span class="k">if</span> <span class="n">inference_grid_items</span><span class="p">:</span>
-    <span class="n">figure</span> <span class="o">=</span> <span class="n">_segmentation_grid_figure</span><span class="p">(</span><span class="n">inference_grid_items</span><span class="p">,</span> <span class="n">columns</span><span class="o">=</span><span class="n">INFERENCE_COLUMNS</span><span class="p">,</span> <span class="n">class_names</span><span class="o">=</span><span class="n">CLASS_NAMES</span><span class="p">)</span>
+    <span class="n">figure</span> <span class="o">=</span> <span class="n">_detection_grid_figure</span><span class="p">(</span><span class="n">inference_grid_items</span><span class="p">,</span> <span class="n">columns</span><span class="o">=</span><span class="n">INFERENCE_COLUMNS</span><span class="p">,</span> <span class="n">class_names</span><span class="o">=</span><span class="n">CLASS_NAMES</span><span class="p">)</span>
     <span class="n">display</span><span class="p">(</span><span class="n">figure</span><span class="p">)</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="n">figure</span><span class="p">)</span>
 </pre></div>
@@ -4518,11 +4630,11 @@ for image_path in inference_image_paths:
         image_rgb = image.convert("RGB")
     detections = loaded_model.predict(image_rgb, threshold=INFERENCE_THRESHOLD)
     if not isinstance(detections, sv.Detections):
-        raise RuntimeError(f"Expected RFDETRSegSmall.predict() to return sv.Detections, got {type(detections)!r}.")
+        raise RuntimeError(f"Expected RFDETRSmall.predict() to return sv.Detections, got {type(detections)!r}.")
     inference_grid_items.append((image_path.name, np.array(image_rgb), detections))
 
 if inference_grid_items:
-    figure = _segmentation_grid_figure(inference_grid_items, columns=INFERENCE_COLUMNS, class_names=CLASS_NAMES)
+    figure = _detection_grid_figure(inference_grid_items, columns=INFERENCE_COLUMNS, class_names=CLASS_NAMES)
     display(figure)
     plt.close(figure)</div>
 </div>
@@ -4531,21 +4643,27 @@ if inference_grid_items:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=63027bc2">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=40582975">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="12-detection-summary">12 - Detection summary<a class="anchor-link" href="#12-detection-summary">¶</a></h2><p>Print per-image detection counts and confidence scores as a quick sanity check.  If you see zero detections on most
-images, try lowering <code>INFERENCE_THRESHOLD</code> (towards 0.1) — the model may be calibrated to lower confidence scores
-on a custom dataset than the COCO-pretrained default.  If you see too many false positives, raise the threshold or
-add more negative examples to your training set.</p>
+<h2 id="12-detection-summary">12 - Detection summary<a class="anchor-link" href="#12-detection-summary">¶</a></h2><p>Print per-image detection counts and confidence scores as a quick sanity check. This table is useful for:</p>
+<ul>
+<li><strong>Spotting images with zero detections</strong> — if many images produce no detections at your chosen threshold,
+the model may be under-confident; try lowering <code>INFERENCE_THRESHOLD</code> first.</li>
+<li><strong>Checking average confidence</strong> — a well-calibrated fine-tuned model typically reports average confidence
+between 0.5 and 0.9 on in-distribution images. Scores consistently below 0.3 suggest the model is uncertain
+and may benefit from more training epochs or additional labelled data.</li>
+<li><strong>Class distribution</strong> — if certain classes never appear in inference results but were present in training data,
+they may be under-represented in the training set. Consider adding more examples for those classes.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d723ad36">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=aa58d24e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4566,16 +4684,20 @@ add more negative examples to your training set.</p>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">summary_rows</span> <span class="o">=</span> <span class="p">[]</span>
 <span class="k">for</span> <span class="n">image_path</span><span class="p">,</span> <span class="p">(</span><span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">detections</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">inference_image_paths</span><span class="p">,</span> <span class="n">inference_grid_items</span><span class="p">):</span>
     <span class="n">num_det</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">detections</span><span class="p">)</span>
-    <span class="n">has_masks</span> <span class="o">=</span> <span class="n">detections</span><span class="o">.</span><span class="n">mask</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">detections</span><span class="o">.</span><span class="n">mask</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span>
     <span class="n">avg_conf</span> <span class="o">=</span> <span class="p">(</span>
         <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">detections</span><span class="o">.</span><span class="n">confidence</span><span class="p">))</span> <span class="k">if</span> <span class="n">detections</span><span class="o">.</span><span class="n">confidence</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">num_det</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="nb">float</span><span class="p">(</span><span class="s2">"nan"</span><span class="p">)</span>
     <span class="p">)</span>
+    <span class="n">class_counts</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">if</span> <span class="n">num_det</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">detections</span><span class="o">.</span><span class="n">class_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">cid</span> <span class="ow">in</span> <span class="n">detections</span><span class="o">.</span><span class="n">class_id</span><span class="o">.</span><span class="n">tolist</span><span class="p">():</span>
+            <span class="n">label</span> <span class="o">=</span> <span class="n">CLASS_NAMES</span><span class="p">[</span><span class="n">cid</span><span class="p">]</span> <span class="k">if</span> <span class="n">cid</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">CLASS_NAMES</span><span class="p">)</span> <span class="k">else</span> <span class="nb">str</span><span class="p">(</span><span class="n">cid</span><span class="p">)</span>
+            <span class="n">class_counts</span><span class="p">[</span><span class="n">label</span><span class="p">]</span> <span class="o">=</span> <span class="n">class_counts</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">label</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
     <span class="n">summary_rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
         <span class="p">{</span>
             <span class="s2">"image"</span><span class="p">:</span> <span class="n">image_path</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
             <span class="s2">"detections"</span><span class="p">:</span> <span class="n">num_det</span><span class="p">,</span>
-            <span class="s2">"has_masks"</span><span class="p">:</span> <span class="n">has_masks</span><span class="p">,</span>
             <span class="s2">"avg_confidence"</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">avg_conf</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
+            <span class="s2">"classes"</span><span class="p">:</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">cls</span><span class="si">}</span><span class="s2">×</span><span class="si">{</span><span class="n">cnt</span><span class="si">}</span><span class="s2">"</span> <span class="k">for</span> <span class="bp">cls</span><span class="p">,</span> <span class="n">cnt</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">class_counts</span><span class="o">.</span><span class="n">items</span><span class="p">())),</span>
         <span class="p">}</span>
     <span class="p">)</span>
 
@@ -4585,16 +4707,20 @@ add more negative examples to your training set.</p>
 <div class="clipboard-copy-txt" id="cell-19">summary_rows = []
 for image_path, (_, _, detections) in zip(inference_image_paths, inference_grid_items):
     num_det = len(detections)
-    has_masks = detections.mask is not None and detections.mask.shape[0] &gt; 0
     avg_conf = (
         float(np.mean(detections.confidence)) if detections.confidence is not None and num_det &gt; 0 else float("nan")
     )
+    class_counts: dict[str, int] = {}
+    if num_det &gt; 0 and detections.class_id is not None:
+        for cid in detections.class_id.tolist():
+            label = CLASS_NAMES[cid] if cid &lt; len(CLASS_NAMES) else str(cid)
+            class_counts[label] = class_counts.get(label, 0) + 1
     summary_rows.append(
         {
             "image": image_path.name,
             "detections": num_det,
-            "has_masks": has_masks,
             "avg_confidence": round(avg_conf, 3),
+            "classes": ", ".join(f"{cls}×{cnt}" for cls, cnt in sorted(class_counts.items())),
         }
     )
 
