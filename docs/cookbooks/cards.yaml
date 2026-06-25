@@ -1,4 +1,10 @@
 cards:
+  - href: fine-tune_detection/
+    name: "Fine-Tune RF-DETR Object Detection"
+    labels: [TRAINING, PYTORCH LIGHTNING, INFERENCE]
+    version: v1.8.2
+    author: Borda
+    description: "Fine-tune RF-DETR object detection on any COCO detection dataset from Roboflow Universe — covers PPE safety, traffic, sports, infrastructure, and marine-wildlife use cases."
   - href: inference-latency-benchmark/
     name: "Inference Latency Benchmark"
     labels: [INFERENCE, ONNX, GPU]
