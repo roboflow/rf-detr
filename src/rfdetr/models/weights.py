@@ -467,6 +467,32 @@ def load_pretrain_weights(
                 checkpoint["model"][name] = tensor[: mc.num_queries * mc.group_detr]
 
     checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)
+
+    # Auto-align num_keypoints_per_class from checkpoint when the user did not explicitly set it.
+    # Without this, loading a bg-first checkpoint ([0, 17]) into a model configured with the
+    # active-first default ([17]) causes a semantic mismatch: the detection head is trimmed to 2
+    # rows but keeps background weights at row 0 — the slot active-first inference expects to be
+    # person — producing AP ≈ 0.0 on pretrained keypoint models.
+    # Mirrors the existing num_classes auto-align pattern (lines ~385-392).
+    _user_overrode_kp_schema = "num_keypoints_per_class" in getattr(mc, "model_fields_set", set())
+    if (
+        not _user_overrode_kp_schema
+        and getattr(mc, "use_grouppose_keypoints", False)
+        and hasattr(mc, "num_keypoints_per_class")
+    ):
+        _early_kp_mask = checkpoint["model"].get("_kp_active_mask")
+        if isinstance(_early_kp_mask, torch.Tensor) and _early_kp_mask.ndim == 2:
+            _ckpt_kp_schema = [int(n) for n in _early_kp_mask.sum(dim=1).tolist()]
+            _cfg_kp_schema = list(getattr(mc, "num_keypoints_per_class", []) or [])
+            if _ckpt_kp_schema != _cfg_kp_schema:
+                logger.debug(
+                    "load_pretrain_weights: auto-aligning num_keypoints_per_class %s → %s "
+                    "(inferred from checkpoint _kp_active_mask; user did not set explicitly).",
+                    _cfg_kp_schema,
+                    _ckpt_kp_schema,
+                )
+                mc.num_keypoints_per_class = _ckpt_kp_schema
+
     # Detection checkpoints/configs may omit keypoint schema fields; absence means no keypoint reconciliation.
     configured_keypoint_schema = list(getattr(mc, "num_keypoints_per_class", []) or [])
     checkpoint_keypoint_schema = None

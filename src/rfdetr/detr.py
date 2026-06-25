@@ -39,7 +39,7 @@ from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.utilities.distributed import is_main_process
-from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
+from rfdetr.utilities.keypoints import is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
@@ -1505,7 +1505,7 @@ class RFDETR:
                     source_path,
                 )
             else:
-                if current_schema and current_schema[0] == 0 and inferred_schema and inferred_schema[0] != 0:
+                if is_bg_first_schema(current_schema) and inferred_schema and not is_bg_first_schema(inferred_schema):
                     warnings.warn(
                         f"Loaded checkpoint uses a legacy background-first keypoint schema "
                         f"num_keypoints_per_class={current_schema!r}, but the dataset infers "
@@ -1786,7 +1786,7 @@ class RFDETR:
         # (0 keypoints), real classes start at slot 1. Active-first schemas such as
         # [17] use normal 0-based class IDs and fall through to the default mapping.
         _num_keypoints_per_class: list[int] = getattr(_model_args, "num_keypoints_per_class", []) or []
-        _is_legacy_bgfirst_keypoint = bool(_num_keypoints_per_class) and _num_keypoints_per_class[0] == 0
+        _is_legacy_bgfirst_keypoint = is_bg_first_schema(_num_keypoints_per_class)
         if _is_coco_pretrained:
             _class_id_to_name: dict[int, str] = {
                 coco_id: model_class_names[i] for i, coco_id in enumerate(COCO_CLASSES) if i < n
