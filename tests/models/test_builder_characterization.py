@@ -334,7 +334,7 @@ class TestBuildModelContextCharacterization:
 
         mc = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
         ctx = _build_model_context(mc)
-        assert ctx.postprocess.num_keypoints_per_class == [0, 17]
+        assert ctx.postprocess.num_keypoints_per_class == [17]
 
     def test_args_namespace_attached(self) -> None:
         from rfdetr.detr import _build_model_context

@@ -499,7 +499,7 @@ class TestKeypointAugmentationWarning:
     def _build_dm(self, tmp_path, *, use_grouppose_keypoints: bool, augmentation_backend: str = "cpu"):
         mc = _base_model_config(
             use_grouppose_keypoints=use_grouppose_keypoints,
-            num_keypoints_per_class=[0, 17] if use_grouppose_keypoints else [],
+            num_keypoints_per_class=[17] if use_grouppose_keypoints else [],
         )
         tc = _base_train_config(tmp_path, augmentation_backend=augmentation_backend)
         from rfdetr.training.module_data import RFDETRDataModule

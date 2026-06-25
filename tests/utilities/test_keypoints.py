@@ -6,8 +6,108 @@
 """Tests for keypoint utility functions in rfdetr.utilities.keypoints."""
 
 import numpy as np
+import pytest
 
-from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
+from rfdetr.utilities.keypoints import (
+    is_bg_first_schema,
+    precision_cholesky_to_pixel_covariance,
+    schemas_semantically_equal,
+    to_active_first,
+    to_bg_first,
+)
+
+
+class TestIsBgFirstSchema:
+    """Group: is_bg_first_schema — schema classification."""
+
+    @pytest.mark.parametrize(
+        ("schema", "expected"),
+        [
+            pytest.param([0, 17], True, id="bg-first-single-class"),
+            pytest.param([0, 17, 4], True, id="bg-first-multi-class"),
+            pytest.param([0], True, id="bg-only-slot"),
+            pytest.param([17], False, id="active-first-single"),
+            pytest.param([17, 4], False, id="active-first-multi"),
+            pytest.param([], False, id="empty-schema"),
+        ],
+    )
+    def test_classification(self, schema: list[int], expected: bool) -> None:
+        """is_bg_first_schema returns expected bool for each schema form."""
+        assert is_bg_first_schema(schema) == expected
+
+
+class TestToActiveFirst:
+    """Group: to_active_first — strip leading background slot."""
+
+    @pytest.mark.parametrize(
+        ("schema", "expected"),
+        [
+            pytest.param([0, 17], [17], id="bg-first-to-active"),
+            pytest.param([0, 17, 4], [17, 4], id="bg-first-multi-class"),
+            pytest.param([0], [], id="bg-only-to-empty"),
+            pytest.param([17], [17], id="already-active-first"),
+            pytest.param([17, 4], [17, 4], id="already-active-multi"),
+            pytest.param([], [], id="empty-schema"),
+            pytest.param([0, 0, 17], [0, 17], id="multi-leading-zero-strips-one"),
+        ],
+    )
+    def test_conversion(self, schema: list[int], expected: list[int]) -> None:
+        """to_active_first strips only the first leading zero slot."""
+        assert to_active_first(schema) == expected
+
+    def test_returns_new_list(self) -> None:
+        """to_active_first always returns a new list, never the input object."""
+        schema = [17]
+        result = to_active_first(schema)
+        assert result is not schema
+
+
+class TestToBgFirst:
+    """Group: to_bg_first — prepend background slot."""
+
+    @pytest.mark.parametrize(
+        ("schema", "expected"),
+        [
+            pytest.param([17], [0, 17], id="active-first-to-bg"),
+            pytest.param([17, 4], [0, 17, 4], id="active-first-multi"),
+            pytest.param([0, 17], [0, 17], id="already-bg-first-no-op"),
+            pytest.param([], [], id="empty-schema-no-op"),
+        ],
+    )
+    def test_conversion(self, schema: list[int], expected: list[int]) -> None:
+        """to_bg_first prepends 0 only when schema is active-first and non-empty."""
+        assert to_bg_first(schema) == expected
+
+    def test_returns_new_list(self) -> None:
+        """to_bg_first always returns a new list, never the input object."""
+        schema = [0, 17]
+        result = to_bg_first(schema)
+        assert result is not schema
+
+
+class TestSchemasSemanticallyEqual:
+    """Group: schemas_semantically_equal — cross-form equality."""
+
+    @pytest.mark.parametrize(
+        ("a", "b", "expected"),
+        [
+            pytest.param([0, 17], [17], True, id="bg-first-eq-active-first"),
+            pytest.param([17], [17], True, id="identical-active-first"),
+            pytest.param([0, 17], [0, 17], True, id="identical-bg-first"),
+            pytest.param([0, 17], [0, 33], False, id="different-keypoint-counts"),
+            pytest.param([17], [33], False, id="active-first-mismatch"),
+            pytest.param([0], [], True, id="bg-only-eq-empty"),
+            pytest.param([], [], True, id="empty-eq-empty"),
+            pytest.param([0, 17, 4], [17, 4], True, id="multi-class-cross-form"),
+        ],
+    )
+    def test_equality(self, a: list[int], b: list[int], expected: bool) -> None:
+        """schemas_semantically_equal returns expected result for each pair."""
+        assert schemas_semantically_equal(a, b) == expected
+
+    def test_symmetric(self) -> None:
+        """schemas_semantically_equal(a, b) == schemas_semantically_equal(b, a)."""
+        assert schemas_semantically_equal([0, 17], [17]) == schemas_semantically_equal([17], [0, 17])
 
 
 class TestPrecisionCholeskyToPixelCovariance:
