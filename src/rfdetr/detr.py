@@ -307,12 +307,23 @@ class RFDETR:
             path: Path to a checkpoint file (e.g. ``checkpoint_best_total.pth``).
             **kwargs: Additional keyword arguments forwarded to the model
                 constructor (e.g. ``accept_platform_model_license=True`` for XLarge / 2XLarge models).
-                If ``num_classes`` is not supplied here, the value stored in the checkpoint is
-                used when present; otherwise the constructor default applies.  In either case the
-                field is not recorded as a user-set override, so :meth:`train` can still adapt the
-                detection head to the training dataset's class count.  Pass an explicit
-                ``num_classes=N`` to pin the head and prevent adaptation, even when ``N`` equals
-                the class default (e.g. ``num_classes=90`` on a COCO-pretrained checkpoint).
+
+                ``num_classes`` is resolved in this priority order:
+
+                1. Explicit caller kwarg — always wins.
+                2. Weight inference from ``class_embed.weight`` shape in the checkpoint
+                   (``shape[0] - 1``, since the head includes a background class). This
+                   overrides a stale ``model_config`` value written before fine-tuning
+                   changed the class count.
+                3. ``saved_model_config["num_classes"]`` from the checkpoint's
+                   ``model_config`` entry — may be stale for older checkpoints.
+                4. Legacy ``args["num_classes"]`` dict entry.
+                5. Constructor default.
+
+                In cases 2–5 the field is not recorded as a user-set override, so
+                :meth:`train` can still adapt the detection head to the training
+                dataset's class count.  Pass an explicit ``num_classes=N`` to pin
+                the head and prevent adaptation.
 
         Returns:
             An instance of the appropriate :class:`RFDETR` subclass loaded from the checkpoint.
@@ -465,24 +476,82 @@ class RFDETR:
 
         constructor_kwargs: dict[str, Any] = {}
         checkpoint_config_keys: set[str] = set()  # keys injected from checkpoint, not from caller
+
+        # Resolve model config field set once — used for both saved_model_config parsing and
+        # weight-based schema inference guards (BaseConfig has extra="forbid"; unknown fields raise).
+        _model_config_class = getattr(model_cls, "_model_config_class", None)
+        _mc_fields: dict[str, Any] = {}
+        _mc_model_fields = getattr(_model_config_class, "model_fields", None)
+        if isinstance(_mc_model_fields, dict):
+            _mc_fields = _mc_model_fields
+        else:
+            _mc_legacy = getattr(_model_config_class, "__fields__", None)
+            if isinstance(_mc_legacy, dict):
+                _mc_fields = _mc_legacy
+
         saved_model_config = ckpt.get("model_config")
         if isinstance(saved_model_config, dict):
-            model_config_class = getattr(model_cls, "_model_config_class", None)
-            model_fields = getattr(model_config_class, "model_fields", None)
-            if not isinstance(model_fields, dict):
-                model_fields = getattr(model_config_class, "__fields__", None)
-            if not isinstance(model_fields, dict):
-                model_fields = {}
             for key, value in saved_model_config.items():
                 if key == "pretrain_weights":
                     continue
-                if not model_fields or key in model_fields:
+                if not _mc_fields or key in _mc_fields:
                     constructor_kwargs[key] = value
                     checkpoint_config_keys.add(key)
 
         if num_classes is not None and "num_classes" not in kwargs:
             constructor_kwargs["num_classes"] = num_classes
             checkpoint_config_keys.add("num_classes")
+
+        # Infer schema-critical fields from checkpoint weights — these are authoritative when
+        # ``model_config`` is absent or stale (saved before ``model_config`` persistence was added,
+        # or saved with default values before fine-tuning changed the trained schema).
+        # User-supplied ``kwargs`` take precedence and are applied in the ``update`` call below.
+        _ckpt_weights: dict[str, Any] = ckpt.get("model") or {}
+        if not _ckpt_weights and "state_dict" in ckpt:
+            _pfx = "model."
+            _ckpt_weights = {}
+            for k, v in ckpt["state_dict"].items():
+                if k.startswith(_pfx):
+                    key = k[len(_pfx) :]
+                    # Strip optional torch.compile() wrapper prefix
+                    if key.startswith("_orig_mod."):
+                        key = key[len("_orig_mod.") :]
+                    _ckpt_weights[key] = v
+        if _ckpt_weights:
+            # num_keypoints_per_class — inferred from _kp_active_mask (shape [num_classes, max_kp]).
+            # Reflects what the model actually learned; saved model_config may carry the COCO default
+            # [0, 17] even after fine-tuning on a different keypoint schema.
+            if "num_keypoints_per_class" not in kwargs and (not _mc_fields or "num_keypoints_per_class" in _mc_fields):
+                _kp_mask = _ckpt_weights.get("_kp_active_mask")
+                if isinstance(_kp_mask, torch.Tensor) and _kp_mask.ndim == 2:
+                    _inferred_kp = [int(n) for n in _kp_mask.sum(dim=1).tolist()]
+                    _current_kp = constructor_kwargs.get("num_keypoints_per_class")
+                    if _inferred_kp != _current_kp:
+                        logger.debug(
+                            "from_checkpoint: overriding num_keypoints_per_class %s → %s "
+                            "(inferred from _kp_active_mask; saved model_config may be stale).",
+                            _current_kp,
+                            _inferred_kp,
+                        )
+                    constructor_kwargs["num_keypoints_per_class"] = _inferred_kp
+                    checkpoint_config_keys.add("num_keypoints_per_class")
+            # num_classes — inferred from class_embed.weight shape.
+            # The head shape is ground truth for what num_classes the checkpoint uses.
+            if "num_classes" not in kwargs:
+                _ce_weight = _ckpt_weights.get("class_embed.weight")
+                if isinstance(_ce_weight, torch.Tensor) and _ce_weight.ndim == 2:
+                    _inferred_nc = _ce_weight.shape[0] - 1  # shape[0] = num_classes + 1 (background)
+                    _current_nc = constructor_kwargs.get("num_classes")
+                    if _inferred_nc != _current_nc:
+                        logger.debug(
+                            "from_checkpoint: overriding num_classes %s → %s "
+                            "(inferred from class_embed.weight; saved model_config may be stale).",
+                            _current_nc,
+                            _inferred_nc,
+                        )
+                    constructor_kwargs["num_classes"] = _inferred_nc
+                    checkpoint_config_keys.add("num_classes")
+
         constructor_kwargs.update(kwargs)
         # pretrain_weights is placed after **kwargs so it always wins even if
         # a caller accidentally passes pretrain_weights inside kwargs.
