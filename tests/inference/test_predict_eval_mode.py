@@ -12,7 +12,8 @@ import pytest
 import torch
 
 from rfdetr import detr as detr_module
-from tests.models.conftest import _BaseFakeRFDETR
+
+from .helpers import _BaseFakeRFDETR
 
 
 class _FakeModelWithDropout(torch.nn.Module):
