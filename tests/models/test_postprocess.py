@@ -14,8 +14,8 @@ class TestGatherAndScaleBoxes:
     """Tests for :meth:`PostProcess._gather_and_scale_boxes`."""
 
     def test_clamps_boxes_to_image_bounds(self):
-        """Boxes that extrapolate beyond [0, 1] in normalized space are
-        clamped to pixel-space image dimensions after scaling."""
+        """Boxes that extrapolate beyond [0, 1] in normalized space are clamped to pixel-space image dimensions after
+        scaling."""
         # Three synthetic boxes in cxcywh normalized coords:
         #   [0] cx=0.01, w=0.10 → x1 = (0.01 - 0.05) * 640 = -25.6  ← negative
         #   [1] cx=0.99, w=0.10 → x2 = (0.99 + 0.05) * 640 = 665.6  ← overflow
