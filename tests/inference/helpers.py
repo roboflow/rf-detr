@@ -41,13 +41,7 @@ class _BaseFakeRFDETR(RFDETR):
 
 
 class _DummyModel:
-    """Minimal model stub that returns deterministic postprocessed results.
-
-    Examples:
-        >>> m = _DummyModel(labels=[0, 1])
-        >>> len(m._labels)
-        2
-    """
+    """Minimal model stub that returns deterministic postprocessed results."""
 
     def __init__(
         self,
@@ -85,13 +79,7 @@ class _DummyModel:
 
 
 class _DummyRFDETR(RFDETR):
-    """Weight-free RFDETR that delegates to ``_DummyModel`` for all inference.
-
-    Examples:
-        >>> m = _DummyRFDETR()
-        >>> m.model is None
-        True
-    """
+    """Weight-free RFDETR that delegates to ``_DummyModel`` for all inference."""
 
     def maybe_download_pretrain_weights(self) -> None:
         """Skip weight download in tests."""
