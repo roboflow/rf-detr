@@ -178,10 +178,10 @@ class TestAlbumentationsWrapper:
     def test_horizontal_flip_with_keypoint_flip_pairs_handles_ndarray_bboxes(self, num_instances):
         """Regression test for #1125.
 
-        Albumentations 2.x returns ``bboxes`` as a NumPy ndarray of shape (N, 4); 1.x returned a list of tuples.
-        The horizontal-flip swap path used to inspect ``bboxes`` with list-style truthiness, which raised
-        ``ValueError: The truth value of an array with more than one element is ambiguous`` on any ndarray with more
-        than one element. This test exercises that path across multi/single/empty instance counts.
+        Albumentations 2.x returns ``bboxes`` as a NumPy ndarray of shape (N, 4); 1.x returned a list of tuples. The
+        horizontal-flip swap path used to inspect ``bboxes`` with list-style truthiness, which raised ``ValueError: The
+        truth value of an array with more than one element is ambiguous`` on any ndarray with more than one element.
+        This test exercises that path across multi/single/empty instance counts.
         """
         wrapper = AlbumentationsWrapper(
             alb.HorizontalFlip(p=1.0),
