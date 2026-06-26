@@ -5,12 +5,29 @@ All notable changes to RF-DETR are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.8.2] — 2026-06-25
+
+### Added
+
+- YOLO pose keypoint dataset support: load Ultralytics YOLO pose datasets (`.yaml` with `kpt_shape`) directly for keypoint fine-tuning. Schema is inferred automatically via `infer_yolo_keypoint_schema`. ([#1156](https://github.com/roboflow/rf-detr/pull/1156))
+- `is_bg_first_schema`, `to_active_first`, `to_bg_first`, `schemas_semantically_equal` utilities in `rfdetr.utilities.keypoints` (and re-exported from `rfdetr.utilities`) for schema-aware keypoint processing. ([#1160](https://github.com/roboflow/rf-detr/pull/1160))
+- `amp_dtype` field on `TrainConfig` (`"auto"` / `"bf16"` / `"fp16"`): pin the mixed-precision autocast dtype instead of relying on device-capability auto-detection. `"auto"` (default) preserves the historical behaviour — `bf16-mixed` on Ampere+ CUDA, `16-mixed` otherwise. Invalid values degrade gracefully to `"auto"` with a `UserWarning`. ([#1143](https://github.com/roboflow/rf-detr/pull/1143))
+- Instance segmentation fine-tuning cookbook (`docs/cookbooks/fine-tune_segmentation.ipynb`) — end-to-end walkthrough using `RFDETRSegSmall` across seven diverse segmentation datasets. ([#1159](https://github.com/roboflow/rf-detr/pull/1159))
+- Inference latency benchmark cookbook (`docs/cookbooks/inference-latency-benchmark.ipynb`) — benchmarks CPU/GPU throughput across model sizes with reproducible measurement methodology. ([#1152](https://github.com/roboflow/rf-detr/pull/1152))
+
+### Changed
+
+- Default `num_keypoints_per_class` in `RFDETRKeypointPreviewConfig` changed from `[0, 17]` (background-first) to `[17]` (active-first). Legacy bg-first checkpoints auto-align on load via `_kp_active_mask`. ([#1160](https://github.com/roboflow/rf-detr/pull/1160))
 
 ### Fixed
 
+- `RFDETR.from_checkpoint()` now correctly infers `num_classes` and `num_keypoints_per_class` from checkpoint weights (`class_embed.weight.shape[0] - 1` and `_kp_active_mask` respectively). Previously, `num_classes` was read as `shape[0]` (i.e. `num_classes + 1` including the background class), causing `load_state_dict` shape mismatches or a silent extra output class on every load. `BestModelCallback._serialize_model_config` is also fixed to persist the correct foreground-only `num_classes`. ([#1158](https://github.com/roboflow/rf-detr/pull/1158))
 - `HungarianMatcher.forward()` now uses the configured `focal_alpha` in the focal classification matching cost. Previously the value was hardcoded to `0.25`, silently ignoring any non-default `focal_alpha` passed to the constructor or `build_matcher`. This misaligned the bipartite matching cost with the focal classification loss in `criterion.py`, which correctly used `self.focal_alpha`. ([#1147](https://github.com/roboflow/rf-detr/pull/1147))
 - `spatial_shapes` in `Transformer.forward()` is now built from symbolic `Shape` ops (`torch.stack` of per-level `torch._shape_as_tensor` slices) instead of `torch.empty` + in-place index assignment. The previous pattern emitted a `ScatterND` feeding a shape tensor (`level_start_index`), which TensorRT rejected with "IScatterLayer cannot be used to compute a shape tensor". This fix is required to export any RF-DETR model to a TensorRT engine. ([#1155](https://github.com/roboflow/rf-detr/pull/1155))
+- Keypoint model inference now returns the correct `class_name` field in predictions. ([#1151](https://github.com/roboflow/rf-detr/pull/1151))
+- `predict()` now re-asserts eval mode before each call for unoptimized models, preventing silent train-mode inference after the first prediction. ([#1146](https://github.com/roboflow/rf-detr/pull/1146))
+- TFLite inference preprocessing and mask decoder aligned with PyTorch `predict()` behaviour. ([#1131](https://github.com/roboflow/rf-detr/pull/1131))
+- Python version mismatch in optional-dependency version overrides resolved. ([#1137](https://github.com/roboflow/rf-detr/pull/1137))
 
 ---
 

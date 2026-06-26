@@ -660,3 +660,145 @@ class TestFromCheckpointNumClassesProvenance:
         assert model.model.model.class_embed.bias.shape == original_bias_shape, (
             "Head must not be rebuilt when dataset class count matches checkpoint class count."
         )
+
+
+# ---------------------------------------------------------------------------
+# Weight-based schema inference
+# ---------------------------------------------------------------------------
+
+
+def _make_kp_active_mask(schema: list[int]) -> torch.Tensor:
+    """Build a bool _kp_active_mask tensor encoding *schema* (mirrors LwDetr._create_kp_active_mask).
+
+    Args:
+        schema: Keypoints-per-class list, e.g. ``[0, 33]`` for background + 33-kp class.
+
+    Returns:
+        Bool tensor of shape ``[len(schema), max(schema)]`` with True in active keypoint slots.
+    """
+    if not schema or max(schema) == 0:
+        return torch.zeros(0, 0, dtype=torch.bool)
+    max_kp = max(schema)
+    mask = torch.zeros(len(schema), max_kp, dtype=torch.bool)
+    for idx, n_kp in enumerate(schema):
+        mask[idx, :n_kp] = True
+    return mask
+
+
+class TestFromCheckpointWeightInference:
+    """from_checkpoint infers schema from checkpoint weights when model_config is absent or stale.
+
+    Regression tests for the bug where a fine-tuned 33-kp keypoint model loaded with the COCO default [0, 17] schema
+    because model_config["num_keypoints_per_class"] was never updated from the default before the checkpoint was saved.
+    The authoritative schema is embedded in the checkpoint weights via the _kp_active_mask buffer; from_checkpoint now
+    reads it directly.
+    """
+
+    def test_infers_keypoint_schema_from_kp_active_mask(self, tmp_path: Path) -> None:
+        """Stale model_config kp schema [0, 17] is overridden by weight-inferred [0, 33]."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "model_config": {"num_keypoints_per_class": [0, 17]},
+            "model": {"_kp_active_mask": _make_kp_active_mask([0, 33])},
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRKeypointPreview"
+        )
+
+        assert mock_cls.call_args.kwargs["num_keypoints_per_class"] == [0, 33]
+
+    def test_infers_keypoint_schema_when_model_config_absent(self, tmp_path: Path) -> None:
+        """num_keypoints_per_class is inferred from _kp_active_mask when model_config is missing."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "model": {"_kp_active_mask": _make_kp_active_mask([0, 33])},
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRKeypointPreview"
+        )
+
+        assert mock_cls.call_args.kwargs["num_keypoints_per_class"] == [0, 33]
+
+    def test_user_kwarg_wins_over_weight_inferred_keypoint_schema(self, tmp_path: Path) -> None:
+        """Explicit num_keypoints_per_class kwarg overrides weight-inferred [0, 33] schema."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "model": {"_kp_active_mask": _make_kp_active_mask([0, 33])},
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt,
+            tmp_path / "checkpoint_best_total.pth",
+            "rfdetr.variants.RFDETRKeypointPreview",
+            num_keypoints_per_class=[0, 17],
+        )
+
+        assert mock_cls.call_args.kwargs["num_keypoints_per_class"] == [0, 17]
+
+    def test_infers_num_classes_from_class_embed_weight(self, tmp_path: Path) -> None:
+        """Stale model_config num_classes=90 is overridden by class_embed.weight shape inference."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-small.pth"},
+            "model_name": "RFDETRSmall",
+            "model_config": {"num_classes": 90},
+            "model": {"class_embed.weight": torch.zeros(3, 256)},
+        }
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRSmall")
+
+        assert mock_cls.call_args.kwargs["num_classes"] == 2
+
+    def test_user_kwarg_wins_over_weight_inferred_num_classes(self, tmp_path: Path) -> None:
+        """Explicit num_classes kwarg overrides weight-inferred value from class_embed.weight."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-small.pth"},
+            "model_name": "RFDETRSmall",
+            "model": {"class_embed.weight": torch.zeros(3, 256)},
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt,
+            tmp_path / "checkpoint_best_total.pth",
+            "rfdetr.variants.RFDETRSmall",
+            num_classes=90,
+        )
+
+        assert mock_cls.call_args.kwargs["num_classes"] == 90
+
+    def test_infers_schema_from_ptl_ckpt_state_dict_format(self, tmp_path: Path) -> None:
+        """Weight inference works for PTL-native .ckpt format (state_dict with model.
+
+        prefix).
+        """
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "state_dict": {
+                "model._kp_active_mask": _make_kp_active_mask([0, 33]),
+                "model.class_embed.weight": torch.zeros(3, 256),
+            },
+        }
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint.ckpt", "rfdetr.variants.RFDETRKeypointPreview")
+
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["num_keypoints_per_class"] == [0, 33]
+        assert call_kwargs["num_classes"] == 2
+
+    def test_consistent_checkpoint_produces_no_override(self, tmp_path: Path) -> None:
+        """When model_config and weights agree, weight inference leaves constructor_kwargs unchanged."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "model_config": {"num_keypoints_per_class": [0, 33], "num_classes": 2},
+            "model": {
+                "_kp_active_mask": _make_kp_active_mask([0, 33]),
+                "class_embed.weight": torch.zeros(3, 256),
+            },
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRKeypointPreview"
+        )
+
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["num_keypoints_per_class"] == [0, 33]
+        assert call_kwargs["num_classes"] == 2

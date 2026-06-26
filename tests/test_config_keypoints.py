@@ -23,7 +23,7 @@ def test_keypoint_config_defaults() -> None:
     assert model.use_grouppose_keypoints is True
     assert model.dual_projector is True
     assert model.dual_projector_kp_only is True
-    assert model.num_keypoints_per_class == [0, 17]
+    assert model.num_keypoints_per_class == [17]
     assert model.positional_encoding_size == 576 // 12
 
     assert train.keypoint_l1_loss_coef == pytest.approx(1.0)
@@ -37,7 +37,7 @@ def test_keypoint_preview_config_person_schema() -> None:
     """Person-keypoint preview config must expose a person-only schema."""
     model = RFDETRKeypointPreviewConfig()
 
-    assert model.num_keypoints_per_class == [0, 17]
+    assert model.num_keypoints_per_class == [17]
     assert sum(model.num_keypoints_per_class) == 17
     assert model.out_feature_indexes == [3, 6, 9, 12]
     assert model.num_windows == 2
@@ -67,7 +67,7 @@ def test_keypoint_fields_propagate_to_namespace(tmp_path) -> None:
     assert namespace.grouppose_keypoint_dim_downscale == 1
     assert namespace.dual_projector is True
     assert namespace.dual_projector_kp_only is True
-    assert namespace.num_keypoints_per_class == [0, 17]
+    assert namespace.num_keypoints_per_class == [17]
     assert namespace.keypoint_flip_pairs == [0, 1, 2, 3]
     assert namespace.keypoint_l1_loss_coef == pytest.approx(1.5)
     assert namespace.keypoint_findable_loss_coef == pytest.approx(2.5)

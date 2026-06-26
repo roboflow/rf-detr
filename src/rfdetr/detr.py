@@ -30,12 +30,16 @@ from PIL import Image
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
-from rfdetr.datasets._keypoint_schema import active_keypoint_counts, infer_coco_keypoint_schema
+from rfdetr.datasets._keypoint_schema import (
+    active_keypoint_counts,
+    infer_coco_keypoint_schema,
+    infer_yolo_keypoint_schema,
+)
 from rfdetr.datasets.coco import is_valid_coco_dataset
-from rfdetr.datasets.yolo import is_valid_yolo_dataset
+from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.utilities.distributed import is_main_process
-from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
+from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
@@ -386,12 +390,23 @@ class RFDETR:
             path: Path to a checkpoint file (e.g. ``checkpoint_best_total.pth``).
             **kwargs: Additional keyword arguments forwarded to the model
                 constructor (e.g. ``accept_platform_model_license=True`` for XLarge / 2XLarge models).
-                If ``num_classes`` is not supplied here, the value stored in the checkpoint is
-                used when present; otherwise the constructor default applies.  In either case the
-                field is not recorded as a user-set override, so :meth:`train` can still adapt the
-                detection head to the training dataset's class count.  Pass an explicit
-                ``num_classes=N`` to pin the head and prevent adaptation, even when ``N`` equals
-                the class default (e.g. ``num_classes=90`` on a COCO-pretrained checkpoint).
+
+                ``num_classes`` is resolved in this priority order:
+
+                1. Explicit caller kwarg — always wins.
+                2. Weight inference from ``class_embed.weight`` shape in the checkpoint
+                   (``shape[0] - 1``, since the head includes a background class). This
+                   overrides a stale ``model_config`` value written before fine-tuning
+                   changed the class count.
+                3. ``saved_model_config["num_classes"]`` from the checkpoint's
+                   ``model_config`` entry — may be stale for older checkpoints.
+                4. Legacy ``args["num_classes"]`` dict entry.
+                5. Constructor default.
+
+                In cases 2–5 the field is not recorded as a user-set override, so
+                :meth:`train` can still adapt the detection head to the training
+                dataset's class count.  Pass an explicit ``num_classes=N`` to pin
+                the head and prevent adaptation.
 
         Returns:
             An instance of the appropriate :class:`RFDETR` subclass loaded from the checkpoint.
@@ -544,24 +559,82 @@ class RFDETR:
 
         constructor_kwargs: dict[str, Any] = {}
         checkpoint_config_keys: set[str] = set()  # keys injected from checkpoint, not from caller
+
+        # Resolve model config field set once — used for both saved_model_config parsing and
+        # weight-based schema inference guards (BaseConfig has extra="forbid"; unknown fields raise).
+        _model_config_class = getattr(model_cls, "_model_config_class", None)
+        _mc_fields: dict[str, Any] = {}
+        _mc_model_fields = getattr(_model_config_class, "model_fields", None)
+        if isinstance(_mc_model_fields, dict):
+            _mc_fields = _mc_model_fields
+        else:
+            _mc_legacy = getattr(_model_config_class, "__fields__", None)
+            if isinstance(_mc_legacy, dict):
+                _mc_fields = _mc_legacy
+
         saved_model_config = ckpt.get("model_config")
         if isinstance(saved_model_config, dict):
-            model_config_class = getattr(model_cls, "_model_config_class", None)
-            model_fields = getattr(model_config_class, "model_fields", None)
-            if not isinstance(model_fields, dict):
-                model_fields = getattr(model_config_class, "__fields__", None)
-            if not isinstance(model_fields, dict):
-                model_fields = {}
             for key, value in saved_model_config.items():
                 if key == "pretrain_weights":
                     continue
-                if not model_fields or key in model_fields:
+                if not _mc_fields or key in _mc_fields:
                     constructor_kwargs[key] = value
                     checkpoint_config_keys.add(key)
 
         if num_classes is not None and "num_classes" not in kwargs:
             constructor_kwargs["num_classes"] = num_classes
             checkpoint_config_keys.add("num_classes")
+
+        # Infer schema-critical fields from checkpoint weights — these are authoritative when
+        # ``model_config`` is absent or stale (saved before ``model_config`` persistence was added,
+        # or saved with default values before fine-tuning changed the trained schema).
+        # User-supplied ``kwargs`` take precedence and are applied in the ``update`` call below.
+        _ckpt_weights: dict[str, Any] = ckpt.get("model") or {}
+        if not _ckpt_weights and "state_dict" in ckpt:
+            _pfx = "model."
+            _ckpt_weights = {}
+            for k, v in ckpt["state_dict"].items():
+                if k.startswith(_pfx):
+                    key = k[len(_pfx) :]
+                    # Strip optional torch.compile() wrapper prefix
+                    if key.startswith("_orig_mod."):
+                        key = key[len("_orig_mod.") :]
+                    _ckpt_weights[key] = v
+        if _ckpt_weights:
+            # num_keypoints_per_class — inferred from _kp_active_mask (shape [num_classes, max_kp]).
+            # Reflects what the model actually learned; saved model_config may carry the COCO default
+            # [0, 17] even after fine-tuning on a different keypoint schema.
+            if "num_keypoints_per_class" not in kwargs and (not _mc_fields or "num_keypoints_per_class" in _mc_fields):
+                _kp_mask = _ckpt_weights.get("_kp_active_mask")
+                if isinstance(_kp_mask, torch.Tensor) and _kp_mask.ndim == 2:
+                    _inferred_kp = [int(n) for n in _kp_mask.sum(dim=1).tolist()]
+                    _current_kp = constructor_kwargs.get("num_keypoints_per_class")
+                    if _inferred_kp != _current_kp:
+                        logger.debug(
+                            "from_checkpoint: overriding num_keypoints_per_class %s → %s "
+                            "(inferred from _kp_active_mask; saved model_config may be stale).",
+                            _current_kp,
+                            _inferred_kp,
+                        )
+                    constructor_kwargs["num_keypoints_per_class"] = _inferred_kp
+                    checkpoint_config_keys.add("num_keypoints_per_class")
+            # num_classes — inferred from class_embed.weight shape.
+            # The head shape is ground truth for what num_classes the checkpoint uses.
+            if "num_classes" not in kwargs:
+                _ce_weight = _ckpt_weights.get("class_embed.weight")
+                if isinstance(_ce_weight, torch.Tensor) and _ce_weight.ndim == 2:
+                    _inferred_nc = _ce_weight.shape[0] - 1  # shape[0] = num_classes + 1 (background)
+                    _current_nc = constructor_kwargs.get("num_classes")
+                    if _inferred_nc != _current_nc:
+                        logger.debug(
+                            "from_checkpoint: overriding num_classes %s → %s "
+                            "(inferred from class_embed.weight; saved model_config may be stale).",
+                            _current_nc,
+                            _inferred_nc,
+                        )
+                    constructor_kwargs["num_classes"] = _inferred_nc
+                    checkpoint_config_keys.add("num_classes")
+
         constructor_kwargs.update(kwargs)
         # pretrain_weights is placed after **kwargs so it always wins even if
         # a caller accidentally passes pretrain_weights inside kwargs.
@@ -1333,8 +1406,9 @@ class RFDETR:
 
         For COCO-style datasets this counts all categories by ``id`` from ``train/_annotations.coco.json`` (matching the
         remapping based on ``coco.cats`` used by the training datamodule). In keypoint mode it instead counts the
-        inferred RF-DETR keypoint label slots, where slot ``0`` may be reserved for classes without keypoints. For YOLO-
-        style datasets it falls back to ``_load_classes``.
+        inferred RF-DETR keypoint label slots. In legacy background-first schemas (e.g. ``[0, 17]``) slot ``0`` is
+        reserved for classes without keypoints; active-first schemas (e.g. ``[17]``) use normal 0-based indices. For
+        YOLO-style datasets it falls back to ``_load_classes``.
         """
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
@@ -1467,6 +1541,44 @@ class RFDETR:
         annotation_path = Path(dataset_dir) / "train" / "_annotations.coco.json"
         return annotation_path if annotation_path.exists() else None
 
+    @staticmethod
+    def _yolo_data_file_path(dataset_dir: str) -> Path | None:
+        """Return the YOLO data file path when a dataset root has one.
+
+        Args:
+            dataset_dir: Path to the YOLO dataset root.
+
+        Returns:
+            Path to ``data.yaml`` or ``data.yml``, or ``None`` when neither exists.
+
+        Raises:
+            This helper does not raise.
+
+        Example:
+            >>> RFDETR._yolo_data_file_path("/missing") is None
+            True
+        """
+        root = Path(dataset_dir)
+        for filename in REQUIRED_YOLO_YAML_FILES:
+            data_file = root / filename
+            if data_file.exists():
+                return data_file
+        return None
+
+    @staticmethod
+    def _flip_idx_to_pairs(flip_idx: list[int]) -> list[int]:
+        """Convert Ultralytics ``flip_idx`` permutation metadata to flat swap pairs."""
+        pairs: list[int] = []
+        seen: set[int] = set()
+        for idx, mirror_idx in enumerate(flip_idx):
+            if idx in seen or mirror_idx in seen or idx == mirror_idx:
+                seen.add(idx)
+                continue
+            if mirror_idx < len(flip_idx) and flip_idx[mirror_idx] == idx:
+                pairs.extend([idx, mirror_idx])
+                seen.update({idx, mirror_idx})
+        return pairs
+
     def _align_keypoint_schema_from_dataset(self, config: TrainConfig) -> None:
         """Infer or validate keypoint schema from Roboflow COCO metadata.
 
@@ -1490,22 +1602,40 @@ class RFDETR:
 
         if not self.model_config.use_grouppose_keypoints:
             return
-        if getattr(config, "dataset_file", None) != "roboflow":
+        if getattr(config, "dataset_file", None) not in ("roboflow", "yolo"):
             return
         dataset_dir = getattr(config, "dataset_dir", None)
         if not dataset_dir:
             return
-        annotation_path = RFDETR._roboflow_keypoint_annotation_path(dataset_dir)
-        if annotation_path is None:
-            return
 
-        try:
-            inferred = infer_coco_keypoint_schema(annotation_path)
-        except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
-            logger.info("Could not infer keypoint schema from dataset '%s': %s", dataset_dir, exc)
-            return
+        if not hasattr(self, "_keypoint_schema_cache"):
+            self._keypoint_schema_cache: dict = {}
+
+        if dataset_dir in self._keypoint_schema_cache:
+            inferred, source_path, source_kind = self._keypoint_schema_cache[dataset_dir]
+        else:
+            annotation_path = RFDETR._roboflow_keypoint_annotation_path(dataset_dir)
+            source_path: Path | None = annotation_path
+            source_kind = "Roboflow COCO"
+
+            try:
+                if annotation_path is not None:
+                    inferred = infer_coco_keypoint_schema(annotation_path)
+                else:
+                    yolo_data_file = RFDETR._yolo_data_file_path(dataset_dir)
+                    if yolo_data_file is None:
+                        return
+                    source_path = yolo_data_file
+                    source_kind = "YOLO pose"
+                    inferred = infer_yolo_keypoint_schema(yolo_data_file)
+            except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
+                logger.info("Could not infer keypoint schema from dataset '%s': %s", dataset_dir, exc)
+                return
+            self._keypoint_schema_cache[dataset_dir] = (inferred, source_path, source_kind)
 
         inferred_schema = inferred.num_keypoints_per_class
+        if hasattr(inferred, "flip_idx") and not getattr(config, "keypoint_flip_pairs", []):
+            config.keypoint_flip_pairs = RFDETR._flip_idx_to_pairs(inferred.flip_idx)
         # Older configs may omit the schema; absence lets dataset inference populate it.
         current_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
         user_set_schema = "num_keypoints_per_class" in getattr(self.model_config, "model_fields_set", set())
@@ -1520,13 +1650,25 @@ class RFDETR:
                     "Using dataset metadata as the source of truth.",
                     current_schema,
                     inferred_schema,
-                    annotation_path,
+                    source_path,
                 )
             else:
+                if _is_bg_first_schema(current_schema) and inferred_schema and not _is_bg_first_schema(inferred_schema):
+                    warnings.warn(
+                        f"Loaded checkpoint uses a legacy background-first keypoint schema "
+                        f"num_keypoints_per_class={current_schema!r}, but the dataset infers "
+                        f"active-first {inferred_schema!r}. Training will shift person from slot 1 "
+                        f"to slot 0; checkpoint head weights are now misaligned. "
+                        f"Pass num_keypoints_per_class={current_schema!r} to train() to keep the "
+                        f"legacy schema.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
                 logger.info(
-                    "Inferred num_keypoints_per_class=%s from Roboflow COCO keypoint metadata at '%s'.",
+                    "Inferred num_keypoints_per_class=%s from %s keypoint metadata at '%s'.",
                     inferred_schema,
-                    annotation_path,
+                    source_kind,
+                    source_path,
                 )
             self.model_config.num_keypoints_per_class = inferred_schema
             model_args = getattr(self.model, "args", None)
@@ -1651,12 +1793,9 @@ class RFDETR:
             (detected when ``model.args.num_classes > len(class_names)`` and ``class_names`` matches
             ``COCO_CLASS_NAMES``), raw COCO category IDs (1–90, sparse) are looked up by category ID rather than by
             position — so ``class_id=18`` yields ``"dog"``, not ``class_names[18]``. For fine-tuned detection and
-            segmentation models, ``class_id`` is a 0-based index into ``class_names``. For keypoint models
-            (detected when ``args.num_keypoints_per_class[0] == 0``), slot 0 is background and maps to
-            ``"__background__"``; foreground slots (those where ``num_keypoints_per_class[slot] > 0``) map to
-            ``class_names`` in order — so slot 1 → ``class_names[0]``, slot 2 → ``class_names[1]``, and so on.
-            The standard no-object sentinel used for detection models (``class_id == num_logit_slots``) does not apply
-            to keypoint models because slot 0 already occupies the background role.
+            segmentation models and active-first keypoint models, ``class_id`` is a 0-based index into ``class_names``.
+            Legacy keypoint checkpoints with ``args.num_keypoints_per_class[0] == 0`` use a background-first layout:
+            slot 0 maps to ``"__background__"`` and foreground slots map to ``class_names`` in order.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -1791,17 +1930,16 @@ class RFDETR:
             )
         num_logit_slots: int = getattr(_model_args, "num_classes", n)
         _is_coco_pretrained = num_logit_slots > n and model_class_names == list(COCO_CLASS_NAMES)
-        # Keypoint models use a shifted class scheme: slot 0 = background (0 keypoints),
-        # real classes start at slot 1. The standard no-object sentinel (class_id == num_logit_slots)
-        # therefore collides with the first real keypoint class (person=1 when num_logit_slots=1).
-        # Detect by checking for a non-empty keypoints-per-class schema with background-first layout.
+        # Legacy keypoint models may use a shifted class scheme: slot 0 = background
+        # (0 keypoints), real classes start at slot 1. Active-first schemas such as
+        # [17] use normal 0-based class IDs and fall through to the default mapping.
         _num_keypoints_per_class: list[int] = getattr(_model_args, "num_keypoints_per_class", []) or []
-        _is_keypoint_model = bool(_num_keypoints_per_class) and _num_keypoints_per_class[0] == 0
+        _is_legacy_bgfirst_keypoint = _is_bg_first_schema(_num_keypoints_per_class)
         if _is_coco_pretrained:
             _class_id_to_name: dict[int, str] = {
                 coco_id: model_class_names[i] for i, coco_id in enumerate(COCO_CLASSES) if i < n
             }
-        elif _is_keypoint_model:
+        elif _is_legacy_bgfirst_keypoint:
             # Map foreground keypoint slots (slots where num_keypoints > 0) to class names.
             # Slot 0 is background and is skipped. Slot 1 → class_names[0], slot 2 → class_names[1], …
             # Note: slots where num_keypoints == 0 but slot != 0 (detect-only classes in a mixed schema
@@ -1862,9 +2000,9 @@ class RFDETR:
             # string with a one-time warning.
             class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
             # Sentinel for the no-object / background class differs by model type.
-            # Keypoint models: slot 0 is background in the keypoint schema.
+            # Legacy background-first keypoint models: slot 0 is background in the keypoint schema.
             # Detection/segmentation models: the no-object slot is at index num_logit_slots.
-            _bg_sentinel = 0 if _is_keypoint_model else num_logit_slots
+            _bg_sentinel = 0 if _is_legacy_bgfirst_keypoint else num_logit_slots
             truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != _bg_sentinel]
             if truly_oob:
                 logger.warning_once(

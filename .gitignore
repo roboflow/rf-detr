@@ -198,8 +198,7 @@ debugging/
 docs/versions.json
 
 # do not upload python version or notebooks
-notebooks/*.py
-notebooks/output/
+notebooks/
 
 # tracking work in progress
 .codex/logs

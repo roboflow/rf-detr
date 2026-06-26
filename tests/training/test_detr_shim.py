@@ -1842,8 +1842,8 @@ class TestRFDETRTrainNumClassesAutoDetect:
 
         assert mock_self.model_config.num_classes == 3
 
-    def test_keypoint_coco_auto_detect_uses_schema_label_slots(self, mock_self, patch_lit):
-        """Keypoint COCO class-count detection should count RF-DETR schema label slots."""
+    def test_keypoint_coco_auto_detect_uses_active_first_schema_slots(self, mock_self, patch_lit):
+        """Keypoint COCO class-count detection should count active-first RF-DETR schema slots."""
         mock_self.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
         dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
         self._write_coco_categories(
@@ -1862,8 +1862,8 @@ class TestRFDETRTrainNumClassesAutoDetect:
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
-        assert mock_self.model_config.num_classes == 2
-        assert mock_self.model.args.num_classes == 2
+        assert mock_self.model_config.num_classes == 1
+        assert mock_self.model.args.num_classes == 1
 
     def test_preserves_explicit_default_num_classes_when_dataset_differs(
         self,
@@ -1942,7 +1942,7 @@ class TestRFDETRTrainNumClassesAutoDetect:
     def test_keypoint_schema_inferred_when_not_explicitly_overridden(self, mock_self, patch_lit):
         """Roboflow keypoint metadata should populate model_config.num_keypoints_per_class."""
         mock_self.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
-        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[0, 17])
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[17])
         mock_self._align_keypoint_schema_from_dataset = lambda config: RFDETR._align_keypoint_schema_from_dataset(
             mock_self, config
         )
@@ -1962,9 +1962,9 @@ class TestRFDETRTrainNumClassesAutoDetect:
         mock_self.model_config = RFDETRKeypointPreviewConfig(
             pretrain_weights=None,
             device="cpu",
-            num_keypoints_per_class=[0, 17],
+            num_keypoints_per_class=[17],
         )
-        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[0, 17])
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[17])
         mock_self._align_keypoint_schema_from_dataset = lambda config: RFDETR._align_keypoint_schema_from_dataset(
             mock_self, config
         )
@@ -1984,7 +1984,7 @@ class TestRFDETRTrainNumClassesAutoDetect:
         assert mock_self.model.args.num_keypoints_per_class == [25]
         assert any(
             record.levelname == "WARNING"
-            and "Configured num_keypoints_per_class=[0, 17]" in record.message
+            and "Configured num_keypoints_per_class=[17]" in record.message
             and "dataset keypoint metadata [25]" in record.message
             for record in caplog.records
         )
@@ -2119,7 +2119,7 @@ class TestRFDETRTrainNumClassesAutoDetect:
             pretrain_weights=None,
             device="cpu",
         )
-        mock_self.model_config.num_keypoints_per_class = []  # override default [0, 17]
+        mock_self.model_config.num_keypoints_per_class = []  # override default [17]
         mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[])
 
         load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball", "referee"])

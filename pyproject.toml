@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.8.1"
+version = "1.8.2"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -108,6 +108,7 @@ plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
 #   Does not affect users installing rfdetr from PyPI.
 ci-gpu-pin = [
     "torch<2.11",
+    "torchvision<0.26",
 ]
 
 build = [

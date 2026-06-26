@@ -18,6 +18,41 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
 
 ---
 
+## Upgrade 1.8 → 1.9
+
+### Breaking changes
+
+!!! warning "Breaking: default keypoint schema changed to active-first `[17]`"
+
+    New checkpoints use `class_id=0` for person. Legacy `[0, 17]` checkpoints are still supported —
+    RF-DETR auto-detects the schema from the checkpoint at load time.
+
+    If your post-processing code offsets class IDs by 1 (common for background-first models), update it:
+
+    ```python
+    # Before (background-first [0, 17]: person was at class_id=1)
+    class_name = "person" if detection.class_id == 1 else "other"
+
+    # After (active-first [17]: person is at class_id=0)
+    class_name = "person" if detection.class_id == 0 else "other"
+    ```
+
+    Use `detection.data["class_name"]` for schema-agnostic name resolution.
+
+    !!! note "Preserving a legacy schema for fine-tuning"
+
+        Pass `num_keypoints_per_class` **at construction time** to keep the old schema:
+
+        ```python
+        config = RFDETRKeypointPreviewConfig(num_keypoints_per_class=[0, 17])
+        ```
+
+        Assigning the field after construction (`config.num_keypoints_per_class = [0, 17]`)
+        does **not** register the override and RF-DETR may still auto-align the schema from the
+        checkpoint. Always pass it to the constructor.
+
+---
+
 ## Upgrade 1.7 → 1.8
 
 ### Breaking changes

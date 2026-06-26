@@ -612,7 +612,7 @@ class RFDETRKeypointPreviewConfig(RFDETRBaseConfig):
     use_grouppose_keypoints: bool = True
     dual_projector: bool = True
     dual_projector_kp_only: bool = True
-    num_keypoints_per_class: List[int] = [0, 17]
+    num_keypoints_per_class: List[int] = [17]
     keypoint_cross_attn: bool = True
     inter_instance_kp_attn: bool = False
     grouppose_keypoint_dim_downscale: int = 1
@@ -685,6 +685,16 @@ class TrainConfig(BaseConfig):
     ema_update_interval: int = 1
     num_workers: int = 2
     weight_decay: float = 1e-4
+    amp_dtype: Literal["auto", "bf16", "fp16"] = Field(
+        default="auto",
+        description=(
+            "Mixed-precision autocast dtype. "
+            "'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
+            "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported). "
+            "'fp16' forces fp16. "
+            "Has no effect when model_config.amp=False or when training on CPU."
+        ),
+    )
     early_stopping: bool = False
     early_stopping_patience: int = 10
     early_stopping_min_delta: float = 0.001
@@ -751,6 +761,24 @@ class TrainConfig(BaseConfig):
         """
         if isinstance(value, bool):
             return "tqdm" if value else None
+        return value
+
+    @field_validator("amp_dtype", mode="before")
+    @classmethod
+    def _coerce_amp_dtype(cls, value: Any) -> Any:
+        """Fall back to ``'auto'`` (with a warning) for an unrecognised or wrong-typed ``amp_dtype``.
+
+        Mixed precision is a best-effort speed/memory optimisation, so an invalid request degrades to the auto-selected
+        dtype rather than failing the whole training run.
+        """
+        if value not in ("auto", "bf16", "fp16"):
+            # stacklevel=2 points into Pydantic internals; unavoidable with @field_validator in Pydantic v2.
+            warnings.warn(
+                f"Unknown amp_dtype={value!r}; expected one of 'auto', 'bf16', 'fp16'. Falling back to 'auto'.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return "auto"
         return value
 
     # Promoted from populate_args() — PTL migration (T4-2).
@@ -898,16 +926,3 @@ class KeypointTrainConfig(TrainConfig):
     keypoint_nll_loss_coef: float = 0.5
     smooth_alpha: float = 0.5
     skip_best_epochs: int = Field(default=10, ge=0)
-
-    @model_validator(mode="after")
-    def _warn_keypoint_flip_pairs_not_yet_implemented(self) -> "KeypointTrainConfig":
-        """Emit a warning when keypoint_flip_pairs is set before the feature ships."""
-        if self.keypoint_flip_pairs:
-            warnings.warn(
-                "keypoint_flip_pairs is accepted but not yet implemented and will be ignored. "
-                "Flip pair swapping (swapping left/right joint indices after a horizontal flip) "
-                "is planned for a future release. Training will proceed without semantic joint swapping.",
-                UserWarning,
-                stacklevel=2,
-            )
-        return self
