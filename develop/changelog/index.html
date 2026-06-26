@@ -2283,19 +2283,14 @@ Use the release feed to review versioned package changes, migration notes, and m
 <p>All notable changes to RF-DETR are documented here.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
-<h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h2 id="182-2026-06-25">[1.8.2] — 2026-06-25<a class="headerlink" href="#182-2026-06-25" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li>
-<p><code>is_bg_first_schema</code>, <code>to_active_first</code>, <code>to_bg_first</code>, <code>schemas_semantically_equal</code> utilities in <code>rfdetr.utilities.keypoints</code> (and re-exported from <code>rfdetr.utilities</code>) for schema-aware keypoint processing. (<a href="https://github.com/roboflow/rf-detr/pull/1160">#1160</a>)</p>
-</li>
-<li>
-<p><code>amp_dtype</code> field on <code>TrainConfig</code> (<code>"auto"</code> / <code>"bf16"</code> / <code>"fp16"</code>): pin the mixed-precision
-    autocast dtype instead of relying on device-capability auto-detection. <code>"auto"</code> (default)
-    preserves the historical behaviour — <code>bf16-mixed</code> on Ampere+ CUDA, <code>16-mixed</code> otherwise.
-    Invalid values degrade gracefully to <code>"auto"</code> with a <code>UserWarning</code>.
-    (<a href="https://github.com/roboflow/rf-detr/pull/1143">#1143</a>)</p>
-</li>
+<li>YOLO pose keypoint dataset support: load Ultralytics YOLO pose datasets (<code>.yaml</code> with <code>kpt_shape</code>) directly for keypoint fine-tuning. Schema is inferred automatically via <code>infer_yolo_keypoint_schema</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1156">#1156</a>)</li>
+<li><code>is_bg_first_schema</code>, <code>to_active_first</code>, <code>to_bg_first</code>, <code>schemas_semantically_equal</code> utilities in <code>rfdetr.utilities.keypoints</code> (and re-exported from <code>rfdetr.utilities</code>) for schema-aware keypoint processing. (<a href="https://github.com/roboflow/rf-detr/pull/1160">#1160</a>)</li>
+<li><code>amp_dtype</code> field on <code>TrainConfig</code> (<code>"auto"</code> / <code>"bf16"</code> / <code>"fp16"</code>): pin the mixed-precision autocast dtype instead of relying on device-capability auto-detection. <code>"auto"</code> (default) preserves the historical behaviour — <code>bf16-mixed</code> on Ampere+ CUDA, <code>16-mixed</code> otherwise. Invalid values degrade gracefully to <code>"auto"</code> with a <code>UserWarning</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1143">#1143</a>)</li>
+<li>Instance segmentation fine-tuning cookbook (<code>docs/cookbooks/fine-tune_segmentation.ipynb</code>) — end-to-end walkthrough using <code>RFDETRSegSmall</code> across seven diverse segmentation datasets. (<a href="https://github.com/roboflow/rf-detr/pull/1159">#1159</a>)</li>
+<li>Inference latency benchmark cookbook (<code>docs/cookbooks/inference-latency-benchmark.ipynb</code>) — benchmarks CPU/GPU throughput across model sizes with reproducible measurement methodology. (<a href="https://github.com/roboflow/rf-detr/pull/1152">#1152</a>)</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -2303,15 +2298,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>
-<p><code>RFDETR.from_checkpoint()</code> now correctly infers <code>num_classes</code> and <code>num_keypoints_per_class</code> from checkpoint weights (<code>class_embed.weight.shape[0] - 1</code> and <code>_kp_active_mask</code> respectively). Previously, <code>num_classes</code> was read as <code>shape[0]</code> (i.e. <code>num_classes + 1</code> including the background class), causing <code>load_state_dict</code> shape mismatches or a silent extra output class on every load. <code>BestModelCallback._serialize_model_config</code> is also fixed to persist the correct foreground-only <code>num_classes</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1158">#1158</a>)</p>
-</li>
-<li>
-<p><code>HungarianMatcher.forward()</code> now uses the configured <code>focal_alpha</code> in the focal classification matching cost. Previously the value was hardcoded to <code>0.25</code>, silently ignoring any non-default <code>focal_alpha</code> passed to the constructor or <code>build_matcher</code>. This misaligned the bipartite matching cost with the focal classification loss in <code>criterion.py</code>, which correctly used <code>self.focal_alpha</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1147">#1147</a>)</p>
-</li>
-<li>
-<p><code>spatial_shapes</code> in <code>Transformer.forward()</code> is now built from symbolic <code>Shape</code> ops (<code>torch.stack</code> of per-level <code>torch._shape_as_tensor</code> slices) instead of <code>torch.empty</code> + in-place index assignment. The previous pattern emitted a <code>ScatterND</code> feeding a shape tensor (<code>level_start_index</code>), which TensorRT rejected with "IScatterLayer cannot be used to compute a shape tensor". This fix is required to export any RF-DETR model to a TensorRT engine. (<a href="https://github.com/roboflow/rf-detr/pull/1155">#1155</a>)</p>
-</li>
+<li><code>RFDETR.from_checkpoint()</code> now correctly infers <code>num_classes</code> and <code>num_keypoints_per_class</code> from checkpoint weights (<code>class_embed.weight.shape[0] - 1</code> and <code>_kp_active_mask</code> respectively). Previously, <code>num_classes</code> was read as <code>shape[0]</code> (i.e. <code>num_classes + 1</code> including the background class), causing <code>load_state_dict</code> shape mismatches or a silent extra output class on every load. <code>BestModelCallback._serialize_model_config</code> is also fixed to persist the correct foreground-only <code>num_classes</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1158">#1158</a>)</li>
+<li><code>HungarianMatcher.forward()</code> now uses the configured <code>focal_alpha</code> in the focal classification matching cost. Previously the value was hardcoded to <code>0.25</code>, silently ignoring any non-default <code>focal_alpha</code> passed to the constructor or <code>build_matcher</code>. This misaligned the bipartite matching cost with the focal classification loss in <code>criterion.py</code>, which correctly used <code>self.focal_alpha</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1147">#1147</a>)</li>
+<li><code>spatial_shapes</code> in <code>Transformer.forward()</code> is now built from symbolic <code>Shape</code> ops (<code>torch.stack</code> of per-level <code>torch._shape_as_tensor</code> slices) instead of <code>torch.empty</code> + in-place index assignment. The previous pattern emitted a <code>ScatterND</code> feeding a shape tensor (<code>level_start_index</code>), which TensorRT rejected with "IScatterLayer cannot be used to compute a shape tensor". This fix is required to export any RF-DETR model to a TensorRT engine. (<a href="https://github.com/roboflow/rf-detr/pull/1155">#1155</a>)</li>
+<li>Keypoint model inference now returns the correct <code>class_name</code> field in predictions. (<a href="https://github.com/roboflow/rf-detr/pull/1151">#1151</a>)</li>
+<li><code>predict()</code> now re-asserts eval mode before each call for unoptimized models, preventing silent train-mode inference after the first prediction. (<a href="https://github.com/roboflow/rf-detr/pull/1146">#1146</a>)</li>
+<li>TFLite inference preprocessing and mask decoder aligned with PyTorch <code>predict()</code> behaviour. (<a href="https://github.com/roboflow/rf-detr/pull/1131">#1131</a>)</li>
+<li>Python version mismatch in optional-dependency version overrides resolved. (<a href="https://github.com/roboflow/rf-detr/pull/1137">#1137</a>)</li>
 </ul>
 <hr />
 <h2 id="181-2026-06-19">[1.8.1] — 2026-06-19<a class="headerlink" href="#181-2026-06-19" title="Permanent link">&para;</a></h2>
