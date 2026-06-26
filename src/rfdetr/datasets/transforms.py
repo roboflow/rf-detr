@@ -407,7 +407,13 @@ class AlbumentationsWrapper:
         if self._is_geometric:
             # Wrap geometric transform with bbox handling capabilities
             # bbox_params configure how Albumentations should transform bounding boxes:
-            compose_cls = alb.ReplayCompose if hasattr(alb, "ReplayCompose") else alb.Compose
+            needs_replay = bool(self._keypoint_flip_pairs)
+            if needs_replay and not hasattr(alb, "ReplayCompose"):
+                logger.warning(
+                    "albumentations.ReplayCompose not available; horizontal-flip keypoint "
+                    "slot swapping is disabled. Upgrade albumentations to >=1.3."
+                )
+            compose_cls = alb.ReplayCompose if (needs_replay and hasattr(alb, "ReplayCompose")) else alb.Compose
             self.transform = compose_cls(
                 [transform],
                 bbox_params=alb.BboxParams(
@@ -533,6 +539,9 @@ class AlbumentationsWrapper:
         transform_name = str(replay.get("__class_fullname__", "")).rsplit(".", 1)[-1]
         if transform_name == "HorizontalFlip":
             return True
+        if transform_name == "Flip":
+            params = replay.get("params") or {}
+            return int(params.get("axis", -1)) == 1
         if transform_name in {"D4", "SquareSymmetry"}:
             params = replay.get("params") or {}
             return str(params.get("group_element")) == "h"

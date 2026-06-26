@@ -32,7 +32,8 @@
 # Install `rfdetr` with the `train` and `visual` extras. The `train` extra pulls in the training loop dependencies (PyTorch Lightning, COCO evaluation tools, and data augmentation libraries), while `visual` adds the visualisation helpers used later in the notebook. The `roboflow` package handles dataset download; `pandas` and `seaborn` are needed for the metrics table and optional plot styling. If you hit an `ImportError` after running this cell, the most likely cause is a stale in-memory import — restart the Python runtime once and re-run from the top.
 
 # %% [bash]
-# !pip install -q "rfdetr[train,visual]==1.8.2" roboflow pandas seaborn
+# NOTE: keypoint_flip_pairs inference requires rfdetr >=1.8.3.
+# !pip install -q "rfdetr[train,visual]>=1.8.3" roboflow pandas seaborn
 
 # %%
 """Shared RF-DETR keypoint fine-tuning demo for several Roboflow COCO keypoint exports."""
@@ -54,11 +55,11 @@ from roboflow import Roboflow
 
 from rfdetr import RFDETRKeypointPreview
 from rfdetr.config import KeypointTrainConfig
-from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema, infer_yolo_keypoint_schema
+from rfdetr.datasets import infer_coco_keypoint_schema, infer_yolo_keypoint_schema
 from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 from rfdetr.training.callbacks.best_model import BestModelCallback
 from rfdetr.utilities.reproducibility import seed_all
-from rfdetr.visualize.keypoints import _key_points_for_display, _keypoint_prediction_records
+from rfdetr.visualize.keypoints import key_points_for_display, keypoint_prediction_records
 from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics
 
 # %%
@@ -567,8 +568,8 @@ for image_path in inference_image_paths:
             f"Expected RFDETRKeypointPreview.predict() to return sv.KeyPoints, got {type(key_points_raw)!r}."
         )
 
-    key_points = _key_points_for_display(key_points_raw, keypoint_threshold=KEYPOINT_THRESHOLD)
-    rows = _keypoint_prediction_records(key_points, image=image_path, keypoint_threshold=KEYPOINT_THRESHOLD)
+    key_points = key_points_for_display(key_points_raw, keypoint_threshold=KEYPOINT_THRESHOLD)
+    rows = keypoint_prediction_records(key_points, image=image_path, keypoint_threshold=KEYPOINT_THRESHOLD)
     inference_grid_items.append((image_path.name, np.array(image), key_points))
     keypoint_rows.extend(rows)
 

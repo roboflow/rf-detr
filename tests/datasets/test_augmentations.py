@@ -2113,3 +2113,114 @@ class TestNormalize:
         target = {"boxes": boxes_original.clone()}
         normalize(image, target)
         torch.testing.assert_close(target["boxes"], boxes_original, rtol=0.0, atol=0.0)
+
+
+class TestReplayContainsHorizontalFlip:
+    """Unit tests for AlbumentationsWrapper._replay_contains_horizontal_flip using fixture dicts."""
+
+    @pytest.mark.parametrize(
+        "replay,expected",
+        [
+            pytest.param(
+                {"__class_fullname__": "HorizontalFlip", "applied": True, "params": {}},
+                True,
+                id="horizontal-flip-applied",
+            ),
+            pytest.param(
+                {"__class_fullname__": "HorizontalFlip", "applied": False, "params": {}},
+                False,
+                id="horizontal-flip-not-applied",
+            ),
+            pytest.param(
+                {"__class_fullname__": "Flip", "applied": True, "params": {"axis": 1}},
+                True,
+                id="flip-horizontal-axis",
+            ),
+            pytest.param(
+                {"__class_fullname__": "Flip", "applied": True, "params": {"axis": 0}},
+                False,
+                id="flip-vertical-axis",
+            ),
+            pytest.param(
+                {"__class_fullname__": "Flip", "applied": False, "params": {"axis": 1}},
+                False,
+                id="flip-not-applied",
+            ),
+            pytest.param(
+                {
+                    "__class_fullname__": "D4",
+                    "applied": True,
+                    "params": {"group_element": "h"},
+                },
+                True,
+                id="d4-horizontal-element",
+            ),
+            pytest.param(
+                {
+                    "__class_fullname__": "D4",
+                    "applied": True,
+                    "params": {"group_element": "r90"},
+                },
+                False,
+                id="d4-rotation-element",
+            ),
+            pytest.param(
+                {
+                    "__class_fullname__": "D4",
+                    "applied": False,
+                    "params": {"group_element": "h"},
+                },
+                False,
+                id="d4-not-applied",
+            ),
+            pytest.param(
+                {
+                    "__class_fullname__": "SquareSymmetry",
+                    "applied": True,
+                    "params": {"group_element": "h"},
+                },
+                True,
+                id="square-symmetry-horizontal",
+            ),
+            pytest.param(
+                {
+                    "__class_fullname__": "SquareSymmetry",
+                    "applied": True,
+                    "params": {"group_element": "r90"},
+                },
+                False,
+                id="square-symmetry-rotation",
+            ),
+            pytest.param(
+                None,
+                False,
+                id="none-replay",
+            ),
+            pytest.param(
+                "not-a-dict",
+                False,
+                id="non-dict-replay",
+            ),
+            pytest.param(
+                {
+                    "transforms": [
+                        {"__class_fullname__": "HorizontalFlip", "applied": True, "params": {}},
+                    ]
+                },
+                True,
+                id="nested-horizontal-flip",
+            ),
+            pytest.param(
+                {
+                    "transforms": [
+                        {"__class_fullname__": "HorizontalFlip", "applied": False, "params": {}},
+                    ]
+                },
+                False,
+                id="nested-horizontal-flip-not-applied",
+            ),
+        ],
+    )
+    def test_replay_contains_horizontal_flip(self, replay: object, expected: bool) -> None:
+        """Fixture replay dicts should be correctly classified as horizontal flip or not."""
+        assert AlbumentationsWrapper._replay_contains_horizontal_flip(replay) == expected

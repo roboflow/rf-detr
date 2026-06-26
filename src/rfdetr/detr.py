@@ -1523,10 +1523,7 @@ class RFDETR:
 
         inferred_schema = inferred.num_keypoints_per_class
         if not getattr(config, "keypoint_flip_pairs", []):
-            if hasattr(inferred, "keypoint_flip_pairs"):
-                config.keypoint_flip_pairs = list(inferred.keypoint_flip_pairs)
-            elif hasattr(inferred, "flip_idx"):
-                config.keypoint_flip_pairs = RFDETR._flip_idx_to_pairs(inferred.flip_idx)
+            config.keypoint_flip_pairs = list(inferred.keypoint_flip_pairs)
         # Older configs may omit the schema; absence lets dataset inference populate it.
         current_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
         user_set_schema = "num_keypoints_per_class" in getattr(self.model_config, "model_fields_set", set())

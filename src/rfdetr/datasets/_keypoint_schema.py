@@ -13,6 +13,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
+
 __all__ = [
     "CocoKeypointSchema",
     "KeypointSchema",
@@ -79,6 +83,7 @@ class YoloKeypointSchema:
     keypoint_names: list[str]
     flip_idx: list[int]
     keypoint_dim: int
+    keypoint_flip_pairs: list[int] = field(default_factory=list)
 
 
 # Public union alias covering both concrete schema types.
@@ -192,6 +197,31 @@ def _extract_yolo_flip_idx(data: dict[str, Any], num_keypoints: int) -> list[int
     return flip_idx
 
 
+def _flip_idx_to_pairs(flip_idx: list[int]) -> list[int]:
+    """Convert a YOLO flip_idx permutation to flat swap pairs.
+
+    Args:
+        flip_idx: Full permutation where ``flip_idx[i]`` is the horizontal mirror of joint ``i``.
+
+    Returns:
+        Flat list ``[a0, b0, a1, b1, ...]`` of left/right joint index pairs.
+
+    Example:
+        >>> _flip_idx_to_pairs([0, 2, 1])
+        [1, 2]
+    """
+    pairs: list[int] = []
+    seen: set[int] = set()
+    for idx, mirror_idx in enumerate(flip_idx):
+        if idx in seen or mirror_idx in seen or idx == mirror_idx:
+            seen.add(idx)
+            continue
+        if mirror_idx < len(flip_idx) and flip_idx[mirror_idx] == idx:
+            pairs.extend([idx, mirror_idx])
+            seen.update({idx, mirror_idx})
+    return pairs
+
+
 def _normalize_keypoint_name(name: Any) -> str:
     """Normalize a keypoint name for symmetry matching."""
     return re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower()).strip("_")
@@ -231,6 +261,14 @@ def _infer_keypoint_flip_pairs_from_names(keypoint_names: list[Any]) -> list[int
             continue
         pairs.extend([idx, mirror_idx])
         seen.update({idx, mirror_idx})
+    if not pairs and keypoint_names:
+        logger.info(
+            "Inferred 0 flip pairs from %d keypoint names %s. "
+            "Automatic horizontal-flip slot swapping is disabled for this category. "
+            "Provide keypoint_flip_pairs explicitly if your keypoints have left/right symmetry.",
+            len(keypoint_names),
+            keypoint_names[:4],
+        )
     return pairs
 
 
@@ -461,6 +499,7 @@ def infer_yolo_keypoint_schema(
         keypoint_names=keypoint_names,
         flip_idx=flip_idx,
         keypoint_dim=keypoint_dim,
+        keypoint_flip_pairs=_flip_idx_to_pairs(flip_idx),
     )
 
 
