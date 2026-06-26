@@ -1394,6 +1394,26 @@ class RFDETR:
         return annotation_path if annotation_path.exists() else None
 
     @staticmethod
+    def _coco_keypoint_annotation_path(dataset_dir: str) -> Path | None:
+        """Return the native COCO train keypoint annotation path when it exists.
+
+        Args:
+            dataset_dir: Path to the COCO dataset root.
+
+        Returns:
+            Path to ``annotations/person_keypoints_train2017.json``, or ``None`` when it is absent.
+
+        Raises:
+            This helper does not raise.
+
+        Example:
+            >>> RFDETR._coco_keypoint_annotation_path("/missing") is None
+            True
+        """
+        annotation_path = Path(dataset_dir) / "annotations" / "person_keypoints_train2017.json"
+        return annotation_path if annotation_path.exists() else None
+
+    @staticmethod
     def _yolo_data_file_path(dataset_dir: str) -> Path | None:
         """Return the YOLO data file path when a dataset root has one.
 
@@ -1432,7 +1452,7 @@ class RFDETR:
         return pairs
 
     def _align_keypoint_schema_from_dataset(self, config: TrainConfig) -> None:
-        """Infer or validate keypoint schema from Roboflow COCO metadata.
+        """Infer or validate keypoint schema from COCO, Roboflow COCO, or YOLO pose metadata.
 
         Args:
             config: Training configuration containing dataset location and format.
@@ -1454,7 +1474,8 @@ class RFDETR:
 
         if not self.model_config.use_grouppose_keypoints:
             return
-        if getattr(config, "dataset_file", None) not in ("roboflow", "yolo"):
+        dataset_file = getattr(config, "dataset_file", None)
+        if dataset_file not in ("coco", "roboflow", "yolo"):
             return
         dataset_dir = getattr(config, "dataset_dir", None)
         if not dataset_dir:
@@ -1463,16 +1484,31 @@ class RFDETR:
         if not hasattr(self, "_keypoint_schema_cache"):
             self._keypoint_schema_cache: dict = {}
 
-        if dataset_dir in self._keypoint_schema_cache:
-            inferred, source_path, source_kind = self._keypoint_schema_cache[dataset_dir]
+        cache_key = (dataset_file, dataset_dir)
+        if cache_key in self._keypoint_schema_cache:
+            inferred, source_path, source_kind = self._keypoint_schema_cache[cache_key]
         else:
-            annotation_path = RFDETR._roboflow_keypoint_annotation_path(dataset_dir)
-            source_path: Path | None = annotation_path
-            source_kind = "Roboflow COCO"
-
             try:
-                if annotation_path is not None:
+                if dataset_file == "coco":
+                    annotation_path = RFDETR._coco_keypoint_annotation_path(dataset_dir)
+                    if annotation_path is None:
+                        return
+                    source_path = annotation_path
+                    source_kind = "COCO"
                     inferred = infer_coco_keypoint_schema(annotation_path)
+                elif dataset_file == "roboflow":
+                    annotation_path = RFDETR._roboflow_keypoint_annotation_path(dataset_dir)
+                    if annotation_path is not None:
+                        source_path = annotation_path
+                        source_kind = "Roboflow COCO"
+                        inferred = infer_coco_keypoint_schema(annotation_path)
+                    else:
+                        yolo_data_file = RFDETR._yolo_data_file_path(dataset_dir)
+                        if yolo_data_file is None:
+                            return
+                        source_path = yolo_data_file
+                        source_kind = "YOLO pose"
+                        inferred = infer_yolo_keypoint_schema(yolo_data_file)
                 else:
                     yolo_data_file = RFDETR._yolo_data_file_path(dataset_dir)
                     if yolo_data_file is None:
@@ -1483,11 +1519,11 @@ class RFDETR:
             except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
                 logger.info("Could not infer keypoint schema from dataset '%s': %s", dataset_dir, exc)
                 return
-            self._keypoint_schema_cache[dataset_dir] = (inferred, source_path, source_kind)
+            self._keypoint_schema_cache[cache_key] = (inferred, source_path, source_kind)
 
         inferred_schema = inferred.num_keypoints_per_class
-        if hasattr(inferred, "flip_idx") and not getattr(config, "keypoint_flip_pairs", []):
-            config.keypoint_flip_pairs = RFDETR._flip_idx_to_pairs(inferred.flip_idx)
+        if not getattr(config, "keypoint_flip_pairs", []):
+            config.keypoint_flip_pairs = list(inferred.keypoint_flip_pairs)
         # Older configs may omit the schema; absence lets dataset inference populate it.
         current_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
         user_set_schema = "num_keypoints_per_class" in getattr(self.model_config, "model_fields_set", set())

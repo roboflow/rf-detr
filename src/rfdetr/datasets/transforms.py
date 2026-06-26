@@ -407,7 +407,14 @@ class AlbumentationsWrapper:
         if self._is_geometric:
             # Wrap geometric transform with bbox handling capabilities
             # bbox_params configure how Albumentations should transform bounding boxes:
-            self.transform = alb.Compose(
+            needs_replay = bool(self._keypoint_flip_pairs)
+            if needs_replay and not hasattr(alb, "ReplayCompose"):
+                logger.warning(
+                    "albumentations.ReplayCompose not available; horizontal-flip keypoint "
+                    "slot swapping is disabled. Upgrade albumentations to >=1.3."
+                )
+            compose_cls = alb.ReplayCompose if (needs_replay and hasattr(alb, "ReplayCompose")) else alb.Compose
+            self.transform = compose_cls(
                 [transform],
                 bbox_params=alb.BboxParams(
                     format="pascal_voc",  # Boxes are in (x1, y1, x2, y2) format
@@ -510,40 +517,35 @@ class AlbumentationsWrapper:
         }
 
     @staticmethod
-    def _detect_horizontal_flip(
-        boxes_np: np.ndarray,
-        idxs: list[int],
-        bboxes_aug: list[Any],
-        kept_idxs: list[int],
-        aug_width: int,
-    ) -> bool:
-        """Return True when a horizontal flip is detected via bbox center-X mirroring.
-
-        After a pure HorizontalFlip, every box satisfies: center_x_orig + center_x_aug == image_width.
-        Uses the first surviving box as probe; returns False when no boxes are available.
+    def _replay_contains_horizontal_flip(replay: Any) -> bool:
+        """Return whether Albumentations replay metadata applied a horizontal flip.
 
         Args:
-            boxes_np: Original (valid) bounding boxes before the transform, shape (N, 4) pascal_voc.
-            idxs: Original instance indices corresponding to rows of ``boxes_np``.
-            bboxes_aug: Augmented bounding boxes in pascal_voc format.
-            kept_idxs: Original instance indices of boxes that survived the transform.
-            aug_width: Width of the augmented image in pixels.
+            replay: ``ReplayCompose`` metadata from an Albumentations call.
 
         Returns:
-            True if a horizontal flip was applied, False otherwise.
+            ``True`` only when a horizontal mirror transform was actually applied.
         """
-        if len(bboxes_aug) == 0 or len(kept_idxs) == 0 or boxes_np.shape[0] == 0:
+        if not isinstance(replay, dict):
             return False
-        first_kept_orig_idx = kept_idxs[0]
-        try:
-            pos = idxs.index(first_kept_orig_idx)
-        except ValueError:
+
+        transforms = replay.get("transforms")
+        if isinstance(transforms, list):
+            return any(AlbumentationsWrapper._replay_contains_horizontal_flip(transform) for transform in transforms)
+
+        if not replay.get("applied", False):
             return False
-        orig_box = boxes_np[pos]
-        aug_box = bboxes_aug[0]
-        orig_cx = (float(orig_box[0]) + float(orig_box[2])) / 2.0
-        aug_cx = (float(aug_box[0]) + float(aug_box[2])) / 2.0
-        return abs(orig_cx + aug_cx - aug_width) < max(1.0, aug_width * 0.02)
+
+        transform_name = str(replay.get("__class_fullname__", "")).rsplit(".", 1)[-1]
+        if transform_name == "HorizontalFlip":
+            return True
+        if transform_name == "Flip":
+            params = replay.get("params") or {}
+            return int(params.get("axis", -1)) == 1
+        if transform_name in {"D4", "SquareSymmetry"}:
+            params = replay.get("params") or {}
+            return str(params.get("group_element")) == "h"
+        return False
 
     @staticmethod
     def _rebuild_keypoints_from_albu(
@@ -754,7 +756,7 @@ class AlbumentationsWrapper:
                 target_out["area"] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
             if keypoints_np is not None:
                 did_flip = (
-                    self._detect_horizontal_flip(boxes_np, idxs, bboxes_aug, kept_idxs, augmented["image"].shape[1])
+                    self._replay_contains_horizontal_flip(augmented.get("replay"))
                     if self._keypoint_flip_pairs
                     else False
                 )
