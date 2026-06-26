@@ -923,6 +923,6 @@ class KeypointTrainConfig(TrainConfig):
     keypoint_l1_loss_coef: float = 1
     keypoint_findable_loss_coef: float = 1
     keypoint_visible_loss_coef: float = 1
-    keypoint_nll_loss_coef: float = 0.5
+    keypoint_nll_loss_coef: float = 1
     smooth_alpha: float = 0.5
     skip_best_epochs: int = Field(default=10, ge=0)
