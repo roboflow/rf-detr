@@ -179,10 +179,9 @@ class TestAlbumentationsWrapper:
         """Regression test for #1125.
 
         Albumentations 2.x returns ``bboxes`` as a NumPy ndarray of shape (N, 4); 1.x returned a list of tuples.
-        ``_detect_horizontal_flip`` previously used ``not bboxes_aug`` as an empty-check, which raises ``ValueError: The
-        truth value of an array with more than one element is ambiguous`` on any ndarray with more than one element —
-        i.e. any sample with N >= 1 under Albumentations 2.x. The call is reached only when ``keypoint_flip_pairs`` is
-        configured, so this test exercises that path across multi/single/empty instance counts.
+        The horizontal-flip swap path used to inspect ``bboxes`` with list-style truthiness, which raised
+        ``ValueError: The truth value of an array with more than one element is ambiguous`` on any ndarray with more
+        than one element. This test exercises that path across multi/single/empty instance counts.
         """
         wrapper = AlbumentationsWrapper(
             alb.HorizontalFlip(p=1.0),
@@ -238,6 +237,75 @@ class TestAlbumentationsWrapper:
         # slot1 gets kp0's flipped x=89. Without swap the ordering would be inverted (89 > 19).
         torch.testing.assert_close(kp[0, 0], torch.tensor(19.0), rtol=1e-4, atol=1e-6)
         torch.testing.assert_close(kp[1, 0], torch.tensor(89.0), rtol=1e-4, atol=1e-6)
+
+    def test_nested_horizontal_flip_swaps_slots_after_all_geometry(self):
+        """Nested HFlip+VFlip should mirror coordinates once, then swap only the left/right slots."""
+        wrapper = AlbumentationsWrapper(
+            alb.Sequential([alb.HorizontalFlip(p=1.0), alb.VerticalFlip(p=1.0)], p=1.0),
+            keypoint_flip_pairs=[0, 1],
+        )
+        image = Image.new("RGB", (100, 50))
+        target = {
+            "boxes": torch.tensor([[5.0, 5.0, 95.0, 45.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor(
+                [
+                    [
+                        [10.0, 10.0, 2.0],
+                        [80.0, 30.0, 2.0],
+                        [50.0, 20.0, 1.0],
+                    ]
+                ]
+            ),
+        }
+
+        _, transformed = wrapper(image, target)
+
+        torch.testing.assert_close(
+            transformed["keypoints"],
+            torch.tensor([[[19.0, 19.0, 2.0], [89.0, 39.0, 2.0], [49.0, 29.0, 1.0]]]),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+
+    @pytest.mark.parametrize(
+        "transform,expected_keypoints",
+        [
+            pytest.param(
+                alb.HorizontalFlip(p=0.0),
+                torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 2.0]]]),
+                id="disabled-horizontal-flip",
+            ),
+            pytest.param(
+                alb.VerticalFlip(p=1.0),
+                torch.tensor([[[10.0, 39.0, 2.0], [80.0, 19.0, 2.0]]]),
+                id="vertical-flip",
+            ),
+            pytest.param(
+                alb.Resize(height=50, width=100, p=1.0),
+                torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 2.0]]]),
+                id="resize",
+            ),
+            pytest.param(
+                alb.Crop(x_min=0, y_min=0, x_max=100, y_max=50, p=1.0),
+                torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 2.0]]]),
+                id="full-image-crop",
+            ),
+        ],
+    )
+    def test_non_horizontal_geometry_does_not_swap_paired_keypoints(self, transform, expected_keypoints):
+        """Configured HFlip pairs should not swap slots when no horizontal flip applied."""
+        wrapper = AlbumentationsWrapper(transform, keypoint_flip_pairs=[0, 1])
+        image = Image.new("RGB", (100, 50))
+        target = {
+            "boxes": torch.tensor([[5.0, 5.0, 95.0, 45.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 2.0]]]),
+        }
+
+        _, transformed = wrapper(image, target)
+
+        torch.testing.assert_close(transformed["keypoints"], expected_keypoints, rtol=1e-4, atol=1e-6)
 
     def test_crop_filters_keypoints_with_removed_boxes(self):
         """When a crop removes a box, its keypoints are removed with the same instance."""

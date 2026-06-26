@@ -70,6 +70,74 @@ def test_infer_coco_keypoint_schema_uses_declared_category_keypoints(tmp_path: P
     )
 
 
+def test_infer_coco_keypoint_schema_infers_left_right_flip_pairs(tmp_path: Path) -> None:
+    """COCO category keypoint names should infer horizontal flip pairs when unambiguous."""
+    annotation_path = tmp_path / "annotations.json"
+    _write_coco_annotations(
+        annotation_path,
+        categories=[
+            {
+                "id": 0,
+                "name": "person",
+                "keypoints": ["nose", "left_eye", "right_eye", "left_wrist", "right_wrist"],
+                "skeleton": [],
+            }
+        ],
+    )
+
+    schema = infer_coco_keypoint_schema(annotation_path)
+
+    assert schema.keypoint_flip_pairs == [1, 2, 3, 4]
+
+
+def test_infer_coco_keypoint_schema_does_not_invent_missing_mirror_pairs(tmp_path: Path) -> None:
+    """A left/right token without its counterpart should keep the keypoint slots unswapped."""
+    annotation_path = tmp_path / "annotations.json"
+    _write_coco_annotations(
+        annotation_path,
+        categories=[
+            {
+                "id": 0,
+                "name": "person",
+                "keypoints": ["nose", "left_eye", "left_wrist"],
+                "skeleton": [],
+            }
+        ],
+    )
+
+    schema = infer_coco_keypoint_schema(annotation_path)
+
+    assert schema.num_keypoints_per_class == [3]
+    assert schema.keypoint_flip_pairs == []
+
+
+def test_infer_coco_keypoint_schema_drops_pairs_when_keypoint_categories_disagree(tmp_path: Path) -> None:
+    """A global flip-pair list is unsafe when keypoint classes use different slot layouts."""
+    annotation_path = tmp_path / "annotations.json"
+    _write_coco_annotations(
+        annotation_path,
+        categories=[
+            {
+                "id": 0,
+                "name": "standing_person",
+                "keypoints": ["left_eye", "right_eye", "nose"],
+                "skeleton": [],
+            },
+            {
+                "id": 1,
+                "name": "seated_person",
+                "keypoints": ["nose", "left_eye", "right_eye"],
+                "skeleton": [],
+            },
+        ],
+    )
+
+    schema = infer_coco_keypoint_schema(annotation_path)
+
+    assert schema.num_keypoints_per_class == [3, 3]
+    assert schema.keypoint_flip_pairs == []
+
+
 def test_infer_coco_keypoint_schema_uses_annotation_keypoints_when_category_metadata_is_missing(
     tmp_path: Path,
 ) -> None:

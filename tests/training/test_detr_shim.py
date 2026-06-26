@@ -1957,6 +1957,109 @@ class TestRFDETRTrainNumClassesAutoDetect:
         assert mock_self.model.args.num_keypoints_per_class == [25]
         assert mock_self.model_config.num_classes == 1
 
+    def test_keypoint_flip_pairs_inferred_from_roboflow_coco_metadata(self, mock_self, patch_lit):
+        """Roboflow COCO keypoint names should populate train_config.keypoint_flip_pairs."""
+        mock_self.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[17])
+        mock_self._align_keypoint_schema_from_dataset = lambda config: RFDETR._align_keypoint_schema_from_dataset(
+            mock_self, config
+        )
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_coco_categories(
+            dataset_dir,
+            categories=[
+                {
+                    "id": 0,
+                    "name": "person",
+                    "supercategory": "none",
+                    "keypoints": ["nose", "left_eye", "right_eye"],
+                    "skeleton": [],
+                }
+            ],
+        )
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.get_train_config.return_value.keypoint_flip_pairs == [1, 2]
+
+    def test_keypoint_schema_and_flip_pairs_inferred_from_native_coco_metadata(self, tmp_path: Path) -> None:
+        """Native COCO person-keypoint annotations should use the same symmetry inference as Roboflow COCO."""
+        annotation_dir = tmp_path / "annotations"
+        annotation_dir.mkdir(parents=True)
+        annotation_path = annotation_dir / "person_keypoints_train2017.json"
+        annotation_path.write_text(
+            json.dumps(
+                {
+                    "images": [],
+                    "annotations": [],
+                    "categories": [
+                        {
+                            "id": 1,
+                            "name": "person",
+                            "supercategory": "person",
+                            "keypoints": ["nose", "left_eye", "right_eye"],
+                            "skeleton": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        from rfdetr.config import KeypointTrainConfig
+
+        model = object.__new__(RFDETR)
+        model.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        model.model = SimpleNamespace(args=SimpleNamespace(num_classes=90, num_keypoints_per_class=[17]))
+        train_config = KeypointTrainConfig(dataset_dir=str(tmp_path), dataset_file="coco", tensorboard=False)
+
+        model._align_keypoint_schema_from_dataset(train_config)
+
+        assert model.model_config.num_keypoints_per_class == [3]
+        assert model.model.args.num_keypoints_per_class == [3]
+        assert train_config.keypoint_flip_pairs == [1, 2]
+
+    def test_explicit_keypoint_flip_pairs_are_preserved_when_dataset_metadata_has_pairs(self, tmp_path: Path) -> None:
+        """Dataset-inferred pairs must not override an explicit user mapping."""
+        annotation_path = tmp_path / "train" / "_annotations.coco.json"
+        annotation_path.parent.mkdir(parents=True)
+        annotation_path.write_text(
+            json.dumps(
+                {
+                    "images": [],
+                    "annotations": [],
+                    "categories": [
+                        {
+                            "id": 0,
+                            "name": "person",
+                            "supercategory": "person",
+                            "keypoints": ["nose", "left_eye", "right_eye"],
+                            "skeleton": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        from rfdetr.config import KeypointTrainConfig
+
+        model = object.__new__(RFDETR)
+        model.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        model.model = SimpleNamespace(args=SimpleNamespace(num_classes=90, num_keypoints_per_class=[17]))
+        train_config = KeypointTrainConfig(
+            dataset_dir=str(tmp_path),
+            dataset_file="roboflow",
+            tensorboard=False,
+            keypoint_flip_pairs=[2, 0],
+        )
+
+        model._align_keypoint_schema_from_dataset(train_config)
+
+        assert model.model_config.num_keypoints_per_class == [3]
+        assert model.model.args.num_keypoints_per_class == [3]
+        assert train_config.keypoint_flip_pairs == [2, 0]
+
     def test_explicit_keypoint_schema_mismatch_warns_and_uses_dataset(self, mock_self, patch_lit, caplog):
         """Explicit num_keypoints_per_class mismatches should warn and use dataset metadata."""
         mock_self.model_config = RFDETRKeypointPreviewConfig(
