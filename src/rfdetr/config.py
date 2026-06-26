@@ -890,7 +890,7 @@ class SegmentationTrainConfig(TrainConfig):
     mask_point_sample_ratio: int = 16
     mask_ce_loss_coef: float = 5.0
     mask_dice_loss_coef: float = 5.0
-    cls_loss_coef: float = 5.0
+    cls_loss_coef: float = 1.0
     segmentation_head: bool = True
 
 
