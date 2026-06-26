@@ -132,7 +132,9 @@ class PostProcess(nn.Module):
         boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1, 1, 4))
         img_h, img_w = target_sizes.unbind(1)
         scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
-        return boxes * scale_fct[:, None, :]
+        boxes = boxes * scale_fct[:, None, :]
+        boxes = boxes.clamp(min=torch.zeros_like(scale_fct[:, None, :]), max=scale_fct[:, None, :])
+        return boxes
 
     @staticmethod
     def _postprocess_masks(
