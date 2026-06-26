@@ -487,19 +487,6 @@ class RFDETRLargeConfig(ModelConfig):
     num_select: int = 300
 
 
-class RFDETRSegPreviewConfig(RFDETRBaseConfig):
-    segmentation_head: bool = True
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
-    num_windows: int = 2
-    dec_layers: int = 4
-    patch_size: int = 12
-    resolution: int = 432
-    positional_encoding_size: int = 36
-    num_queries: int = 200
-    num_select: int = 200
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-preview.pt"
-    num_classes: int = 90
-
 
 class RFDETRSegNanoConfig(RFDETRBaseConfig):
     segmentation_head: bool = True

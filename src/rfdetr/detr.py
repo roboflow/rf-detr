@@ -52,10 +52,8 @@ _R = TypeVar("_R")
 
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
 _VARIANT_EXPORTS = (
-    "RFDETRBase",
     "RFDETRKeypointPreview",
     "RFDETRLarge",
-    "RFDETRLargeDeprecated",
     "RFDETRMedium",
     "RFDETRNano",
     "RFDETRSeg",
@@ -63,14 +61,13 @@ _VARIANT_EXPORTS = (
     "RFDETRSegLarge",
     "RFDETRSegMedium",
     "RFDETRSegNano",
-    "RFDETRSegPreview",
     "RFDETRSegSmall",
     "RFDETRSegXLarge",
     "RFDETRSmall",
 )
 __all__ = ["RFDETR", "ModelContext", *_VARIANT_EXPORTS]
 
-_CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS = frozenset({"RFDETRLargeDeprecated", "RFDETRSeg"})
+_CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS = frozenset({"RFDETRSeg"})
 _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = tuple(
     class_symbol for class_symbol in _VARIANT_EXPORTS if class_symbol not in _CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS
 )
@@ -84,12 +81,10 @@ _CHECKPOINT_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
     ("seg-medium", "RFDETRSegMedium"),
     ("seg-small", "RFDETRSegSmall"),
     ("seg-nano", "RFDETRSegNano"),
-    ("seg-preview", "RFDETRSegPreview"),
     ("large", "RFDETRLarge"),
     ("medium", "RFDETRMedium"),
     ("small", "RFDETRSmall"),
     ("nano", "RFDETRNano"),
-    ("base", "RFDETRBase"),
 )
 _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
     ("2xlarge", "RFDETR2XLarge"),

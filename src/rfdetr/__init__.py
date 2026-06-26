@@ -43,17 +43,14 @@ if _IS_NUMPY_INSTALLED and not hasattr(numpy, "complex_"):
 from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext
 from rfdetr.variants import (
-    RFDETRBase,  # DEPRECATED # noqa: F401
     RFDETRKeypointPreview,
     RFDETRLarge,
-    RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
     RFDETRMedium,
     RFDETRNano,
     RFDETRSeg2XLarge,
     RFDETRSegLarge,
     RFDETRSegMedium,
     RFDETRSegNano,
-    RFDETRSegPreview,  # DEPRECATED # noqa: F401
     RFDETRSegSmall,
     RFDETRSegXLarge,
     RFDETRSmall,
@@ -89,6 +86,13 @@ _PLUS_EXPORTS = frozenset({"RFDETR2XLarge", "RFDETRXLarge"})
 _REMOVE_IN_VERSION_1_9 = {
     "util": "rfdetr.util will be removed in v1.9.0. Use rfdetr.utilities instead.",
     "deploy": "rfdetr.deploy will be removed in v1.9.0. Use rfdetr.export instead.",
+}
+
+# Class names removed in v2.0.0 — raise AttributeError with migration hint.
+_REMOVE_IN_VERSION_2_0_CLASSES = {
+    "RFDETRBase": "RFDETRBase was removed in v2.0.0. Use RFDETRNano/Small/Medium/Large instead.",
+    "RFDETRLargeDeprecated": "RFDETRLargeDeprecated was removed in v2.0.0. Use RFDETRLarge instead.",
+    "RFDETRSegPreview": "RFDETRSegPreview was removed in v2.0.0. Use RFDETRSegNano/Small/Medium/Large instead.",
 }
 
 
@@ -182,5 +186,8 @@ def __getattr__(name: str):
             return value
 
         raise ImportError(_INSTALL_MSG.format(name="platform model downloads"))
+
+    if name in _REMOVE_IN_VERSION_2_0_CLASSES:
+        raise AttributeError(_REMOVE_IN_VERSION_2_0_CLASSES[name])
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

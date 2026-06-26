@@ -5,7 +5,6 @@
 # ------------------------------------------------------------------------
 """Video inference pipeline."""
 
-from rfdetr_demo.cli.run_video import main, parse_args
 from rfdetr_demo.inference.overlays.detection import render_tune_cache_sequence
 from rfdetr_demo.inference.overlays.keypoint import KeypointOverlaySettings, render_keypoint_overlay
 from rfdetr_demo.inference.runner import run_demo
@@ -24,8 +23,6 @@ __all__ = [
     "TaskName",
     "VideoProcessingCancelledError",
     "default_output_path",
-    "main",
-    "parse_args",
     "render_keypoint_overlay",
     "render_tune_cache_sequence",
     "resolve_default_source",

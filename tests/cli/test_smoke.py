@@ -52,7 +52,7 @@ def _run_cli(*args: str) -> int:
 
 
 def _load(name: str) -> dict:
-    return yaml.safe_load((CONFIGS_DIR / f"{name}.yaml").read_text())
+    return yaml.safe_load((CONFIGS_DIR / f"{name}.yaml").read_text(encoding="utf-8"))
 
 
 def _instantiate(class_path: str, init_args: dict) -> object:

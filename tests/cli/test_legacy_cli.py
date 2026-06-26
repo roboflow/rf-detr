@@ -15,7 +15,7 @@ class TestEntryPoint:
     def _read_entry_point(self) -> str:
         """Return the rfdetr console_scripts value from pyproject.toml."""
         root = pathlib.Path(__file__).parent.parent.parent
-        content = (root / "pyproject.toml").read_text()
+        content = (root / "pyproject.toml").read_text(encoding="utf-8")
         m = re.search(r"\[project\.scripts\].*?rfdetr\s*=\s*\"([^\"]+)\"", content, re.DOTALL)
         assert m, "rfdetr entry not found in [project.scripts]"
         return m.group(1)

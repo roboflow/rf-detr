@@ -73,14 +73,12 @@ class TestFromCheckpointNamespaceArgs:
             ("rf-detr-medium.pth", "RFDETRMedium"),
             ("rf-detr-large.pth", "RFDETRLarge"),
             ("rf-detr-keypoint-preview-xlarge.pth", "RFDETRKeypointPreview"),
-            ("rf-detr-base.pth", "RFDETRBase"),
             ("rf-detr-seg-nano.pt", "RFDETRSegNano"),
             ("rf-detr-seg-small.pt", "RFDETRSegSmall"),
             ("rf-detr-seg-medium.pt", "RFDETRSegMedium"),
             ("rf-detr-seg-large.pt", "RFDETRSegLarge"),
             ("rf-detr-seg-xlarge.pt", "RFDETRSegXLarge"),
             ("rf-detr-seg-xxlarge.pt", "RFDETRSeg2XLarge"),
-            ("rf-detr-seg-preview.pt", "RFDETRSegPreview"),
         ],
     )
     def test_characterization_infers_correct_class_namespace(
@@ -134,7 +132,6 @@ class TestFromCheckpointDictArgs:
         ("pretrain_weights, patch_target"),
         [
             ("rf-detr-small.pth", "RFDETRSmall"),
-            ("rf-detr-base.pth", "RFDETRBase"),
         ],
     )
     def test_characterization_infers_correct_class_dict(
@@ -284,42 +281,37 @@ class TestFromCheckpointEdgeCases:
 # ---------------------------------------------------------------------------
 
 
-class TestDeprecatedClassInstantiation:
-    """Deprecated model classes emit deprecation warnings on instantiation."""
+class TestRemovedClassAccess:
+    """Removed model classes (v2.0.0) raise AttributeError with a descriptive message."""
 
     @pytest.mark.parametrize(
-        ("cls_name, import_path"),
+        "cls_name",
         [
-            ("RFDETRBase", "rfdetr.variants.RFDETRBase"),
-            ("RFDETRLargeDeprecated", "rfdetr.variants.RFDETRLargeDeprecated"),
-            ("RFDETRSegPreview", "rfdetr.variants.RFDETRSegPreview"),
+            pytest.param("RFDETRBase", id="RFDETRBase"),
+            pytest.param("RFDETRLargeDeprecated", id="RFDETRLargeDeprecated"),
+            pytest.param("RFDETRSegPreview", id="RFDETRSegPreview"),
         ],
     )
-    def test_direct_instantiation_is_allowed(self, cls_name: str, import_path: str) -> None:
-        """Direct instantiation of a deprecated class does not raise RuntimeError."""
-        import importlib
+    def test_access_raises_attribute_error(self, cls_name: str) -> None:
+        """Accessing a removed class via rfdetr raises AttributeError."""
+        import rfdetr
 
-        module_path, attr = import_path.rsplit(".", 1)
-        module = importlib.import_module(module_path)
-        cls = getattr(module, attr)
-        with patch("rfdetr.detr.RFDETR.__init__", return_value=None):
-            model = cls()
-        assert model.__class__.__name__ == cls_name
+        with pytest.raises(AttributeError, match="removed in v2.0.0"):
+            getattr(rfdetr, cls_name)
 
     @pytest.mark.parametrize("pretrain_weights", ["rf-detr-base.pth", "rf-detr-seg-preview.pt"])
-    def test_from_checkpoint_resolves_deprecated_class(
+    def test_from_checkpoint_raises_for_removed_class_weights(
         self,
         tmp_path: Path,
         pretrain_weights: str,
     ) -> None:
-        """from_checkpoint still resolves deprecated classes without KeyError on minimal mocked checkpoints."""
+        """from_checkpoint raises ValueError for checkpoint filenames matching removed classes."""
         ckpt = _ns(pretrain_weights)
         with (
             patch("rfdetr.detr.torch.load", return_value=ckpt),
-            patch("rfdetr.detr.RFDETR.__init__", return_value=None),
         ):
-            model = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
-        assert model.__class__.__name__ in {"RFDETRBase", "RFDETRSegPreview"}
+            with pytest.raises(ValueError, match="Could not infer model class"):
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
 
 # ---------------------------------------------------------------------------
@@ -346,9 +338,7 @@ class TestFromCheckpointModelName:
             ("RFDETRMedium", "RFDETRMedium"),
             ("RFDETRLarge", "RFDETRLarge"),
             ("RFDETRKeypointPreview", "RFDETRKeypointPreview"),
-            ("RFDETRBase", "RFDETRBase"),
             ("RFDETRSegNano", "RFDETRSegNano"),
-            ("RFDETRSegPreview", "RFDETRSegPreview"),
             ("RFDETRSegSmall", "RFDETRSegSmall"),
             ("RFDETRSegMedium", "RFDETRSegMedium"),
             ("RFDETRSegLarge", "RFDETRSegLarge"),
@@ -417,23 +407,25 @@ class TestFromCheckpointModelName:
         mock_cls.assert_called_once()
 
     @pytest.mark.parametrize(
-        "model_name, expected_class",
+        "model_name",
         [
-            ("RFDETRBase", "RFDETRBase"),
-            ("RFDETRSegPreview", "RFDETRSegPreview"),
+            pytest.param("RFDETRBase", id="RFDETRBase"),
+            pytest.param("RFDETRSegPreview", id="RFDETRSegPreview"),
         ],
     )
-    def test_model_name_deprecated_class_resolves_and_instantiates(
-        self, tmp_path: Path, model_name: str, expected_class: str
+    def test_model_name_removed_class_falls_back_to_pretrain_weights(
+        self, tmp_path: Path, model_name: str
     ) -> None:
-        """from_checkpoint resolves deprecated model_name values and instantiates the resolved class."""
+        """from_checkpoint falls back to pretrain_weights when model_name is a removed class."""
         ckpt = _ckpt_with_model_name(model_name)
         with (
             patch("rfdetr.detr.torch.load", return_value=ckpt),
-            patch("rfdetr.detr.RFDETR.__init__", return_value=None),
+            patch("rfdetr.variants.RFDETRSmall") as mock_cls,
         ):
-            model = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
-        assert model.__class__.__name__ == expected_class
+            mock_cls.return_value = MagicMock()
+            result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mock_cls.assert_called_once()
+        assert result is mock_cls.return_value
 
     @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
     @pytest.mark.parametrize("model_name", ["RFDETRXLarge", "RFDETR2XLarge"])

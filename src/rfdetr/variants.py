@@ -13,15 +13,12 @@ depends on a fragile eager ``detr -> variants`` import sequence.
 from __future__ import annotations
 
 __all__ = [
-    "RFDETRBase",
     "RFDETRKeypointPreview",
     "RFDETRNano",
     "RFDETRSmall",
     "RFDETRMedium",
     "RFDETRLarge",
-    "RFDETRLargeDeprecated",
     "RFDETRSeg",
-    "RFDETRSegPreview",
     "RFDETRSegNano",
     "RFDETRSegSmall",
     "RFDETRSegMedium",
@@ -30,12 +27,9 @@ __all__ = [
     "RFDETRSeg2XLarge",
 ]
 
-from deprecate import deprecated_class
-
 from rfdetr.config import (
     KeypointTrainConfig,
     ModelConfig,
-    RFDETRBaseConfig,
     RFDETRKeypointPreviewConfig,
     RFDETRLargeConfig,
     RFDETRLargeDeprecatedConfig,
@@ -45,7 +39,6 @@ from rfdetr.config import (
     RFDETRSegLargeConfig,
     RFDETRSegMediumConfig,
     RFDETRSegNanoConfig,
-    RFDETRSegPreviewConfig,
     RFDETRSegSmallConfig,
     RFDETRSegXLargeConfig,
     RFDETRSmallConfig,
@@ -55,22 +48,6 @@ from rfdetr.detr import RFDETR
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
-
-
-@deprecated_class(
-    target=None,
-    deprecated_in="1.7.0",
-    remove_in="2.0.0",
-)
-class RFDETRBase(RFDETR):
-    """Train an RF-DETR Base model.
-
-    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
-    num_windows``.
-    """
-
-    size = "rfdetr-base"
-    _model_config_class = RFDETRBaseConfig
 
 
 class RFDETRNano(RFDETR):
@@ -116,22 +93,6 @@ class RFDETRMedium(RFDETR):
 
     size = "rfdetr-medium"
     _model_config_class = RFDETRMediumConfig
-
-
-@deprecated_class(
-    target=None,
-    deprecated_in="1.7.0",
-    remove_in="2.0.0",
-)
-class RFDETRLargeDeprecated(RFDETR):
-    """Train an RF-DETR Large model using the legacy config.
-
-    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
-    num_windows``.
-    """
-
-    size = "rfdetr-large"
-    _model_config_class = RFDETRLargeDeprecatedConfig
 
 
 class RFDETRLarge(RFDETR):
@@ -225,22 +186,6 @@ class RFDETRSeg(RFDETR):
     """
 
     _train_config_class = SegmentationTrainConfig
-
-
-@deprecated_class(
-    target=None,
-    deprecated_in="1.7.0",
-    remove_in="2.0.0",
-)
-class RFDETRSegPreview(RFDETRSeg):
-    """Train an RF-DETR Segmentation Preview model.
-
-    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
-    num_windows``. Deprecated in v1.7.0, scheduled for removal in v2.0.0.
-    """
-
-    size = "rfdetr-seg-preview"
-    _model_config_class = RFDETRSegPreviewConfig
 
 
 class RFDETRSegNano(RFDETRSeg):

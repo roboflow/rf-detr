@@ -57,7 +57,7 @@ EXPECTED_MODEL_CLASS = {
 
 def _load(name: str) -> dict:
     """Parse a config file by stem name and return its dict."""
-    return yaml.safe_load((CONFIGS_DIR / f"{name}.yaml").read_text())
+    return yaml.safe_load((CONFIGS_DIR / f"{name}.yaml").read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------

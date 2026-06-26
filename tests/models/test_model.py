@@ -7,7 +7,7 @@
 import pytest
 import torch
 
-from rfdetr import RFDETRBase, RFDETRLarge
+from rfdetr import RFDETRLarge, RFDETRNano
 
 
 def _get_patch_embed_projection(model) -> torch.nn.Conv2d:
@@ -17,7 +17,7 @@ def _get_patch_embed_projection(model) -> torch.nn.Conv2d:
     named_modules() on that object.
 
     Args:
-        model: Instantiated RF-DETR wrapper (RFDETRBase / RFDETRLarge).
+        model: Instantiated RF-DETR wrapper (RFDETRNano / RFDETRLarge).
 
     Returns:
         The convolution used to project image channels into patch embeddings.
@@ -40,7 +40,7 @@ def _get_patch_embed_projection(model) -> torch.nn.Conv2d:
     raise AssertionError(msg)
 
 
-@pytest.mark.parametrize("model_class", [RFDETRBase, RFDETRLarge])
+@pytest.mark.parametrize("model_class", [RFDETRNano, RFDETRLarge])
 @pytest.mark.parametrize("channels", [1, 4])
 def test_multispectral_support(model_class, channels: int) -> None:
     model = model_class(
