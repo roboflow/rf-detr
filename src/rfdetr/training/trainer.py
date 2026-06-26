@@ -381,7 +381,7 @@ def build_trainer(
 
         # --- Build loggers ---
         # Each logger is guarded by a try/except because tensorboard, wandb, and mlflow
-        # are optional dependencies (installed via the [metrics] extra).  A missing dep
+        # are optional dependencies (installed via the [loggers] extra).  A missing dep
         # emits a UserWarning instead of crashing.
         # CSVLogger is always enabled — no extra package required.
         # Produces metrics.csv in output_dir so there is always a log file.
