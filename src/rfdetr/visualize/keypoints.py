@@ -128,8 +128,3 @@ def _keypoint_prediction_records(
                 }
             )
     return records
-
-
-# Public re-exports — callers should use these names.
-key_points_for_display = _key_points_for_display
-keypoint_prediction_records = _keypoint_prediction_records
