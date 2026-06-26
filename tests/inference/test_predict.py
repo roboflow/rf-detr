@@ -5,7 +5,6 @@
 # ------------------------------------------------------------------------
 import socket
 from types import SimpleNamespace
-from typing import Any
 
 import numpy as np
 import PIL.Image
@@ -14,8 +13,9 @@ import supervision as sv
 import torch
 
 from rfdetr import RFDETRNano, RFDETRSegNano
-from rfdetr.detr import RFDETR
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
+
+from .helpers import _DummyModel, _DummyRFDETR
 
 _HTTP_IMAGE_URL = "http://images.cocodataset.org/val2017/000000397133.jpg"
 _HTTP_HOST = "images.cocodataset.org"
@@ -28,51 +28,6 @@ def _is_online(host: str, port: int, timeout_s: float = 3.0) -> bool:
             return True
     except OSError:
         return False
-
-
-class _DummyModel:
-    def __init__(
-        self,
-        class_names: list[str] | None = None,
-        labels: list[int] | None = None,
-        include_keypoints: bool = False,
-        num_keypoints: int = 17,
-    ) -> None:
-        self.device = torch.device("cpu")
-        self.resolution = 28
-        self.model = torch.nn.Identity()
-        self.class_names = class_names
-        self._labels = labels if labels is not None else [1]
-        self._include_keypoints = include_keypoints
-        self._num_keypoints = num_keypoints
-
-    def postprocess(self, predictions: Any, target_sizes: torch.Tensor) -> list[dict[str, torch.Tensor]]:
-        batch = target_sizes.shape[0]
-        results = []
-        for _ in range(batch):
-            result: dict[str, torch.Tensor] = {
-                "scores": torch.tensor([0.9] * len(self._labels)),
-                "labels": torch.tensor(self._labels),
-                "boxes": torch.tensor([[0.0, 0.0, 1.0, 1.0]] * len(self._labels)),
-            }
-            if self._include_keypoints:
-                result["keypoints"] = torch.full((len(self._labels), self._num_keypoints, 3), 0.5, dtype=torch.float32)
-                result["keypoint_precision_cholesky"] = torch.full(
-                    (len(self._labels), self._num_keypoints, 3), 0.25, dtype=torch.float32
-                )
-            results.append(result)
-        return results
-
-
-class _DummyRFDETR(RFDETR):
-    def maybe_download_pretrain_weights(self) -> None:
-        return None
-
-    def get_model_config(self, **kwargs) -> SimpleNamespace:
-        return SimpleNamespace(num_channels=3)
-
-    def get_model(self, config: SimpleNamespace) -> _DummyModel:
-        return _DummyModel()
 
 
 class TestPredictReturnTypes:
