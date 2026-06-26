@@ -274,6 +274,137 @@ class RFDETR:
         return self._model_config_class(**kwargs)
 
     @classmethod
+    def _resolve_model_class_from_checkpoint(
+        cls,
+        ckpt: dict[str, Any],
+        args: Any,
+        path: str | os.PathLike[str],
+        rfdetr_variants: Any,
+        plus_entries: list[tuple[str, type[RFDETR]]],
+        plus_available: bool,
+        plus_symbols: dict[str, type[RFDETR]],
+    ) -> type[RFDETR]:
+        """Infer and return the correct RFDETR subclass for a given checkpoint.
+
+        Tries in order: ``model_name`` key (new format), ``pretrain_weights`` field in ``args``
+        (legacy), and finally the checkpoint filename as a last resort.
+
+        Args:
+            ckpt: Loaded checkpoint dict.
+            args: ``args`` value from the checkpoint (``argparse.Namespace`` or ``dict``).
+            path: Path to the checkpoint file — used in error messages and filename fallback.
+            rfdetr_variants: The ``rfdetr.variants`` module (passed in to avoid circular imports).
+            plus_entries: Plus-model ``(name_token, class)`` pairs; empty when rfdetr_plus is absent.
+            plus_available: Whether rfdetr_plus is installed.
+            plus_symbols: Plus model class objects; empty when rfdetr_plus is absent.
+
+        Returns:
+            The resolved RFDETR subclass.
+
+        Raises:
+            ImportError: When the checkpoint requires rfdetr_plus and it is not installed.
+            ValueError: When no model class can be inferred from the checkpoint.
+        """
+        _variant_name_to_class: dict[str, type[RFDETR]] = {
+            getattr(variant_obj, "__name__", symbol): variant_obj
+            for symbol in dir(rfdetr_variants)
+            if symbol.startswith("RFDETR")
+            for variant_obj in [getattr(rfdetr_variants, symbol)]
+        }
+        _variant_symbols: dict[str, type[RFDETR]] = {
+            class_symbol: _variant_name_to_class[class_symbol] for class_symbol in _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS
+        }
+        # Build in three explicit segments: seg-* entries, then plus-model entries
+        # (xlarge/2xlarge), then base entries — order determines lookup priority.
+        _seg_map: list[tuple[str, type[RFDETR]]] = [
+            (name, _variant_symbols[class_symbol])
+            for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
+            if name.startswith("seg-")
+        ]
+        _keypoint_map: list[tuple[str, type[RFDETR]]] = [
+            (name, _variant_symbols[class_symbol])
+            for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
+            if "keypoint" in name
+        ]
+        _base_map: list[tuple[str, type[RFDETR]]] = [
+            (name, _variant_symbols[class_symbol])
+            for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
+            if not name.startswith("seg-") and "keypoint" not in name
+        ]
+        _model_map: list[tuple[str, type[RFDETR]]] = _seg_map + _keypoint_map + plus_entries + _base_map
+
+        # New checkpoints store model_name directly — use it when available.
+        _name_map: dict[str, type[RFDETR]] = dict(_variant_symbols)
+        # Plus-model classes are resolved only when rfdetr_plus is installed.
+        if plus_available:
+            _name_map.update(plus_symbols)
+        saved_model_name = ckpt.get("model_name")
+        model_cls: type[RFDETR] | None = None
+        if isinstance(saved_model_name, str):
+            normalized_name = saved_model_name.strip()
+            if normalized_name:
+                model_cls = _name_map.get(normalized_name)
+        else:
+            normalized_name = ""
+
+        # Fall back to pretrain_weights (legacy) or, when unset-like, the checkpoint filename.
+        if isinstance(args, dict):
+            weights_name = str(args.get("pretrain_weights", "")).strip().lower()
+        else:
+            weights_name = str(getattr(args, "pretrain_weights", "")).strip().lower()
+        # The sentinel set {"", "none", "null"} covers unset-like checkpoint values:
+        #   ""     — pretrain_weights key absent entirely
+        #   "none" — checkpoint value was None or the literal string "none";
+        #            after str(...).strip().lower() both normalize to the same sentinel.
+        #            This is NOT an intentional "no pretraining" flag (see
+        #            test_pretrain_weights_none_warns, which operates at the config
+        #            level, not the checkpoint level)
+        #   "null" — checkpoint stored the literal string "null" (for example from a
+        #            YAML-originated value), which is also treated as unset-like here
+        _filename_fallback = False
+        if weights_name in {"", "none", "null"}:
+            weights_name = os.path.basename(os.fspath(path)).lower()
+            _filename_fallback = True
+
+        if model_cls is None:
+            # Guard: plus-only checkpoints should raise an actionable install error
+            # when rfdetr_plus is missing, regardless of whether class inference
+            # relies on model_name (new format) or pretrain_weights (legacy format).
+            plus_by_model_name = normalized_name in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
+            plus_by_weights_name = (
+                "xlarge" in weights_name and "seg-" not in weights_name and "keypoint-preview" not in weights_name
+            )
+            if not plus_available and (plus_by_model_name or plus_by_weights_name):
+                from rfdetr.platform import _INSTALL_MSG
+
+                raise ImportError(
+                    f"Checkpoint model_name={saved_model_name!r}, pretrain_weights={weights_name!r} requires the "
+                    f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
+                )
+
+            for name, klass in _model_map:
+                if name in weights_name:
+                    model_cls = klass
+                    break
+
+            if _filename_fallback and model_cls is not None:
+                logger.info(
+                    "pretrain_weights unset in checkpoint %r; inferred model class %s from filename %r",
+                    path,
+                    getattr(model_cls, "__name__", repr(model_cls)),
+                    weights_name,
+                )
+
+        if model_cls is None:
+            raise ValueError(
+                f"Could not infer model class from checkpoint at {path!r} "
+                f"(model_name={saved_model_name!r}, pretrain_weights={weights_name!r}). "
+                f"Please instantiate the model class directly."
+            )
+
+        return model_cls
+
+    @classmethod
     def from_checkpoint(cls, path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
         """Load an RF-DETR model from a training checkpoint, automatically inferring the model class.
 
@@ -352,102 +483,15 @@ class RFDETR:
         ckpt: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=False)
         args = ckpt["args"]
 
-        _variant_name_to_class: dict[str, type[RFDETR]] = {
-            getattr(variant_obj, "__name__", symbol): variant_obj
-            for symbol in dir(rfdetr_variants)
-            if symbol.startswith("RFDETR")
-            for variant_obj in [getattr(rfdetr_variants, symbol)]
-        }
-        _variant_symbols: dict[str, type[RFDETR]] = {
-            class_symbol: _variant_name_to_class[class_symbol] for class_symbol in _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS
-        }
-        # Build in three explicit segments: seg-* entries, then plus-model entries
-        # (xlarge/2xlarge), then base entries — order determines lookup priority.
-        _seg_map: list[tuple[str, type[RFDETR]]] = [
-            (name, _variant_symbols[class_symbol])
-            for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
-            if name.startswith("seg-")
-        ]
-        _keypoint_map: list[tuple[str, type[RFDETR]]] = [
-            (name, _variant_symbols[class_symbol])
-            for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
-            if "keypoint" in name
-        ]
-        _base_map: list[tuple[str, type[RFDETR]]] = [
-            (name, _variant_symbols[class_symbol])
-            for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
-            if not name.startswith("seg-") and "keypoint" not in name
-        ]
-        _model_map: list[tuple[str, type[RFDETR]]] = _seg_map + _keypoint_map + _plus_entries + _base_map
-
-        # New checkpoints store model_name directly — use it when available.
-        _name_map: dict[str, type[RFDETR]] = dict(_variant_symbols)
-        # Plus-model classes are resolved only when rfdetr_plus is installed.
-        if _plus_available:
-            _name_map.update(_plus_symbols)
-        saved_model_name = ckpt.get("model_name")
-        model_cls: type[RFDETR] | None = None
-        if isinstance(saved_model_name, str):
-            normalized_name = saved_model_name.strip()
-            if normalized_name:
-                model_cls = _name_map.get(normalized_name)
-        else:
-            normalized_name = ""
-
-        # Fall back to pretrain_weights (legacy) or, when unset-like, the checkpoint filename.
-        if isinstance(args, dict):
-            weights_name = str(args.get("pretrain_weights", "")).strip().lower()
-        else:
-            weights_name = str(getattr(args, "pretrain_weights", "")).strip().lower()
-        # The sentinel set {"", "none", "null"} covers unset-like checkpoint values:
-        #   ""     — pretrain_weights key absent entirely
-        #   "none" — checkpoint value was None or the literal string "none";
-        #            after str(...).strip().lower() both normalize to the same sentinel.
-        #            This is NOT an intentional "no pretraining" flag (see
-        #            test_pretrain_weights_none_warns, which operates at the config
-        #            level, not the checkpoint level)
-        #   "null" — checkpoint stored the literal string "null" (for example from a
-        #            YAML-originated value), which is also treated as unset-like here
-        _filename_fallback = False
-        if weights_name in {"", "none", "null"}:
-            weights_name = os.path.basename(os.fspath(path)).lower()
-            _filename_fallback = True
-
-        if model_cls is None:
-            # Guard: plus-only checkpoints should raise an actionable install error
-            # when rfdetr_plus is missing, regardless of whether class inference
-            # relies on model_name (new format) or pretrain_weights (legacy format).
-            plus_by_model_name = normalized_name in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
-            plus_by_weights_name = (
-                "xlarge" in weights_name and "seg-" not in weights_name and "keypoint-preview" not in weights_name
-            )
-            if not _plus_available and (plus_by_model_name or plus_by_weights_name):
-                from rfdetr.platform import _INSTALL_MSG
-
-                raise ImportError(
-                    f"Checkpoint model_name={saved_model_name!r}, pretrain_weights={weights_name!r} requires the "
-                    f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
-                )
-
-            for name, klass in _model_map:
-                if name in weights_name:
-                    model_cls = klass
-                    break
-
-            if _filename_fallback and model_cls is not None:
-                logger.info(
-                    "pretrain_weights unset in checkpoint %r; inferred model class %s from filename %r",
-                    path,
-                    getattr(model_cls, "__name__", repr(model_cls)),
-                    weights_name,
-                )
-
-        if model_cls is None:
-            raise ValueError(
-                f"Could not infer model class from checkpoint at {path!r} "
-                f"(model_name={saved_model_name!r}, pretrain_weights={weights_name!r}). "
-                f"Please instantiate the model class directly."
-            )
+        model_cls = cls._resolve_model_class_from_checkpoint(
+            ckpt=ckpt,
+            args=args,
+            path=path,
+            rfdetr_variants=rfdetr_variants,
+            plus_entries=_plus_entries,
+            plus_available=_plus_available,
+            plus_symbols=_plus_symbols,
+        )
 
         if isinstance(args, dict):
             num_classes: int | None = args.get("num_classes")
@@ -1374,6 +1418,177 @@ class RFDETR:
 
         return list(COCO_CLASS_NAMES)
 
+    def _preprocess_images(
+        self,
+        images: list[str | Image.Image | np.ndarray | torch.Tensor],
+        include_source_image: bool,
+        shape: tuple[int, int] | None,
+    ) -> tuple[list[torch.Tensor], list[tuple[int, int]], list[np.ndarray] | None]:
+        """Preprocess a list of images for model inference.
+
+        Args:
+            images: Raw images (already normalised to a list by the caller).
+            include_source_image: Whether to collect source images.
+            shape: Optional ``(height, width)`` target resolution override.
+
+        Returns:
+            Tuple of ``(processed_images, orig_sizes, source_images)``.
+            ``source_images`` is ``None`` when *include_source_image* is ``False``.
+        """
+        orig_sizes: list[tuple[int, int]] = []
+        processed_images: list[torch.Tensor] = []
+        source_images: list[np.ndarray] | None = [] if include_source_image else None
+
+        for img in images:
+            if isinstance(img, str):
+                if img.startswith("http"):
+                    img = requests.get(img, stream=True).raw
+                img = Image.open(img)
+
+            if not isinstance(img, torch.Tensor):
+                if include_source_image:
+                    src = np.array(img)
+                    if src.dtype != np.uint8:
+                        src = (src * 255).clip(0, 255).astype(np.uint8)
+                    source_images.append(src)  # type: ignore[union-attr]
+                img = F.to_tensor(img)
+            elif include_source_image:
+                source_images.append((img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))  # type: ignore[union-attr]
+
+            if (img > 1).any():
+                raise ValueError(
+                    "Image has pixel values above 1. Please ensure the image is normalized (scaled to [0, 1]).",
+                )
+            if (img < 0).any():
+                raise ValueError(
+                    "Image has pixel values below 0. Please ensure the image is normalized (scaled to [0, 1]).",
+                )
+            if img.shape[0] != self.model_config.num_channels:
+                raise ValueError(
+                    "Invalid tensor image shape. Tensor inputs to `predict()` must be in (C, H, W) format "
+                    f"with C matching the model configuration ({self.model_config.num_channels} channels). "
+                    f"Received tensor with shape {tuple(img.shape)}."
+                )
+
+            h, w = img.shape[1:]
+            orig_sizes.append((h, w))
+
+            img_tensor = img.to(self.model.device)
+            resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
+            img_tensor = F.resize(img_tensor, resize_to)
+            img_tensor = F.normalize(img_tensor, self.means, self.stds)
+            processed_images.append(img_tensor)
+
+        return processed_images, orig_sizes, source_images
+
+    @staticmethod
+    def _build_single_prediction(
+        result: dict[str, Any],
+        orig_size: tuple[int, int],
+        source_image: np.ndarray | None,
+        threshold: float,
+        class_id_to_name: dict[int, str],
+        is_coco_pretrained: bool,
+        num_logit_slots: int,
+    ) -> Detections | KeyPoints:
+        """Convert one postprocessed model output dict into a Supervision prediction object.
+
+        Args:
+            result: Single-image postprocessor output with keys ``scores``, ``labels``, ``boxes``,
+                and optionally ``keypoints``, ``masks``, ``keypoint_precision_cholesky``.
+            orig_size: Original ``(height, width)`` of the source image.
+            source_image: Source image array, or ``None`` when *include_source_image* is ``False``.
+            threshold: Minimum confidence score to keep a detection.
+            class_id_to_name: Mapping from integer class ID to class name string.
+            is_coco_pretrained: Whether the model uses sparse COCO category IDs.
+            num_logit_slots: Number of logit output slots (used to identify the background class).
+
+        Returns:
+            A Supervision :class:`~supervision.Detections` or :class:`~supervision.KeyPoints`
+            object for this image.
+        """
+        from supervision import Detections, KeyPoints
+
+        scores = result["scores"]
+        labels = result["labels"]
+        boxes = result["boxes"]
+
+        keep = scores > threshold
+        scores = scores[keep]
+        labels = labels[keep]
+        boxes = boxes[keep]
+        keypoints_array = None
+        if "keypoints" in result:
+            keypoints = result["keypoints"][keep]
+            keypoints_array = keypoints.float().cpu().numpy()
+        has_keypoints = keypoints_array is not None
+
+        if "masks" in result:
+            masks = result["masks"][keep]
+            detections = Detections(
+                xyxy=boxes.float().cpu().numpy(),
+                confidence=scores.float().cpu().numpy(),
+                class_id=labels.cpu().numpy(),
+                mask=masks.squeeze(1).cpu().numpy(),
+            )
+        else:
+            detections = Detections(
+                xyxy=boxes.float().cpu().numpy(),
+                confidence=scores.float().cpu().numpy(),
+                class_id=labels.cpu().numpy(),
+            )
+        if "keypoint_precision_cholesky" in result:
+            keypoint_precision = result["keypoint_precision_cholesky"][keep]
+            detections.data["keypoint_precision_cholesky"] = keypoint_precision.float().cpu().numpy()
+
+        if source_image is not None:
+            detections.metadata["source_image"] = source_image
+        detections.data["source_shape"] = np.tile(np.array(orig_size, dtype=np.int64), (len(detections), 1))
+
+        class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
+        truly_oob = [cid for cid in class_ids if cid not in class_id_to_name and cid != num_logit_slots]
+        if truly_oob:
+            logger.warning_once(
+                "predict() encountered unmapped class_id(s): %s — mapping to empty string",
+                truly_oob[:5],
+            )
+        if is_coco_pretrained:
+            class_names = [class_id_to_name.get(cid, "") for cid in class_ids]
+        else:
+            class_names = [
+                "__background__" if cid == num_logit_slots else class_id_to_name.get(cid, "") for cid in class_ids
+            ]
+        detections.data["class_name"] = np.array(class_names, dtype=object)
+
+        if has_keypoints and keypoints_array is not None:
+            keypoint_data = dict(detections.data)
+            keypoint_data["xyxy"] = detections.xyxy.astype(np.float32)
+            if source_image is not None:
+                keypoint_data["source_image"] = [source_image for _ in range(len(detections))]
+            raw_precision = keypoint_data.get("keypoint_precision_cholesky")
+            raw_source_shape = keypoint_data.get("source_shape")
+            if raw_precision is not None and raw_source_shape is not None and len(detections) > 0:
+                precision = np.asarray(raw_precision, dtype=np.float32)
+                source_shape = np.asarray(raw_source_shape, dtype=np.float32)
+                if precision.shape[:2] == keypoints_array.shape[:2] and source_shape.shape == (len(detections), 2):
+                    keypoint_data["covariance"] = precision_cholesky_to_pixel_covariance(
+                        precision_cholesky=precision, source_shape=source_shape
+                    )
+            keypoints_array = keypoints_array.astype(np.float32, copy=False)
+            keypoint_confidence = keypoints_array[:, :, 2]
+            key_points = KeyPoints(
+                xy=keypoints_array[:, :, :2],
+                keypoint_confidence=keypoint_confidence,
+                detection_confidence=detections.confidence.astype(np.float32)
+                if detections.confidence is not None
+                else None,
+                class_id=detections.class_id.astype(int) if detections.class_id is not None else None,
+                visible=keypoint_confidence > 0,
+                data=keypoint_data,
+            )
+            return key_points
+        return detections
+
     @torch.no_grad()
     @_ensure_model_on_device
     def predict(
@@ -1450,8 +1665,6 @@ class RFDETR:
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, or if ``patch_size`` is not a positive integer.
         """
-        from supervision import Detections, KeyPoints
-
         patch_size = _resolve_patch_size(patch_size, self.model_config, "predict")
         num_windows = getattr(self.model_config, "num_windows", 1)
         if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
@@ -1481,52 +1694,7 @@ class RFDETR:
         if not isinstance(images, list):
             images = [images]
 
-        orig_sizes = []
-        processed_images = []
-        source_images = [] if include_source_image else None
-
-        for img in images:
-            if isinstance(img, str):
-                if img.startswith("http"):
-                    img = requests.get(img, stream=True).raw
-                img = Image.open(img)
-
-            if not isinstance(img, torch.Tensor):
-                if include_source_image:
-                    src = np.array(img)
-                    if src.dtype != np.uint8:
-                        src = (src * 255).clip(0, 255).astype(np.uint8)
-                    source_images.append(src)
-                img = F.to_tensor(img)
-            elif include_source_image:
-                source_images.append((img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
-
-            if (img > 1).any():
-                raise ValueError(
-                    "Image has pixel values above 1. Please ensure the image is normalized (scaled to [0, 1]).",
-                )
-            if (img < 0).any():
-                raise ValueError(
-                    "Image has pixel values below 0. Please ensure the image is normalized (scaled to [0, 1]).",
-                )
-            if img.shape[0] != self.model_config.num_channels:
-                raise ValueError(
-                    "Invalid tensor image shape. Tensor inputs to `predict()` must be in (C, H, W) format "
-                    f"with C matching the model configuration ({self.model_config.num_channels} channels). "
-                    f"Received tensor with shape {tuple(img.shape)}."
-                )
-            img_tensor = img
-
-            h, w = img_tensor.shape[1:]
-            orig_sizes.append((h, w))
-
-            img_tensor = img_tensor.to(self.model.device)
-            resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
-            img_tensor = F.resize(img_tensor, resize_to)
-            img_tensor = F.normalize(img_tensor, self.means, self.stds)
-
-            processed_images.append(img_tensor)
-
+        processed_images, orig_sizes, source_images = self._preprocess_images(images, include_source_image, shape)
         batch_tensor = torch.stack(processed_images)
 
         if self._is_optimized_for_inference:
@@ -1593,99 +1761,19 @@ class RFDETR:
             }
         else:
             _class_id_to_name = dict(enumerate(model_class_names))
-        predictions_list: list[Detections | KeyPoints] = []
-        for i, result in enumerate(results):
-            scores = result["scores"]
-            labels = result["labels"]
-            boxes = result["boxes"]
 
-            keep = scores > threshold
-            scores = scores[keep]
-            labels = labels[keep]
-            boxes = boxes[keep]
-            keypoints_array = None
-            if "keypoints" in result:
-                keypoints = result["keypoints"][keep]
-                keypoints_array = keypoints.float().cpu().numpy()
-            has_keypoints = keypoints_array is not None
-
-            if "masks" in result:
-                masks = result["masks"]
-                masks = masks[keep]
-
-                detections = Detections(
-                    xyxy=boxes.float().cpu().numpy(),
-                    confidence=scores.float().cpu().numpy(),
-                    class_id=labels.cpu().numpy(),
-                    mask=masks.squeeze(1).cpu().numpy(),
-                )
-            else:
-                detections = Detections(
-                    xyxy=boxes.float().cpu().numpy(),
-                    confidence=scores.float().cpu().numpy(),
-                    class_id=labels.cpu().numpy(),
-                )
-            if "keypoint_precision_cholesky" in result:
-                keypoint_precision = result["keypoint_precision_cholesky"][keep]
-                detections.data["keypoint_precision_cholesky"] = keypoint_precision.float().cpu().numpy()
-
-            if include_source_image:
-                detections.metadata["source_image"] = source_images[i]
-            detections.data["source_shape"] = np.tile(np.array(orig_sizes[i], dtype=np.int64), (len(detections), 1))
-
-            # Attach class names so callers can map class_id → name without a
-            # separate lookup. Always set data["class_name"] for a consistent interface.
-            #
-            # For fine-tuned models, logit index num_logit_slots is the no-object slot —
-            # map it to "__background__" without warning. For COCO-pretrained models,
-            # background is implicit (filtered by threshold); class ID 90 is "toothbrush".
-            # IDs not in _class_id_to_name are genuinely unexpected and produce an empty
-            # string with a one-time warning.
-            class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
-            truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != num_logit_slots]
-            if truly_oob:
-                logger.warning_once(
-                    "predict() encountered unmapped class_id(s): %s — mapping to empty string",
-                    truly_oob[:5],
-                )
-            if _is_coco_pretrained:
-                class_names = [_class_id_to_name.get(cid, "") for cid in class_ids]
-            else:
-                class_names = [
-                    "__background__" if cid == num_logit_slots else _class_id_to_name.get(cid, "") for cid in class_ids
-                ]
-            detections.data["class_name"] = np.array(class_names, dtype=object)
-
-            if has_keypoints and keypoints_array is not None:
-                keypoint_data = dict(detections.data)
-                keypoint_data["xyxy"] = detections.xyxy.astype(np.float32)
-                if include_source_image:
-                    keypoint_data["source_image"] = [source_images[i] for _ in range(len(detections))]
-                raw_precision = keypoint_data.get("keypoint_precision_cholesky")
-                raw_source_shape = keypoint_data.get("source_shape")
-                if raw_precision is not None and raw_source_shape is not None and len(detections) > 0:
-                    precision = np.asarray(raw_precision, dtype=np.float32)
-                    source_shape = np.asarray(raw_source_shape, dtype=np.float32)
-                    if precision.shape[:2] == keypoints_array.shape[:2] and source_shape.shape == (len(detections), 2):
-                        keypoint_data["covariance"] = precision_cholesky_to_pixel_covariance(
-                            precision_cholesky=precision, source_shape=source_shape
-                        )
-                keypoints_array = keypoints_array.astype(np.float32, copy=False)
-                keypoint_confidence = keypoints_array[:, :, 2]
-                key_points = KeyPoints(
-                    xy=keypoints_array[:, :, :2],
-                    keypoint_confidence=keypoint_confidence,
-                    detection_confidence=detections.confidence.astype(np.float32)
-                    if detections.confidence is not None
-                    else None,
-                    class_id=detections.class_id.astype(int) if detections.class_id is not None else None,
-                    visible=keypoint_confidence > 0,
-                    data=keypoint_data,
-                )
-                predictions_list.append(key_points)
-            else:
-                predictions_list.append(detections)
-
+        predictions_list: list[Detections | KeyPoints] = [
+            self._build_single_prediction(
+                result=result,
+                orig_size=orig_sizes[i],
+                source_image=source_images[i] if source_images is not None else None,
+                threshold=threshold,
+                class_id_to_name=_class_id_to_name,
+                is_coco_pretrained=_is_coco_pretrained,
+                num_logit_slots=num_logit_slots,
+            )
+            for i, result in enumerate(results)
+        ]
         return predictions_list if len(predictions_list) > 1 else predictions_list[0]
 
     def deploy_to_roboflow(
