@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+
+{% block htmltitle %}
+  {% if page and page.is_homepage %}
+    <title>RF-DETR &mdash; Real-Time Object Detection &amp; Segmentation by Roboflow</title>
+  {% else %}
+    {{ super() }}
+  {% endif %}
+{% endblock %}
+
+{% block extrahead %}
+  {{ super() }}
+  <link rel="preconnect" href="https://storage.googleapis.com">
+
+  {% if page %}
+  {% set og_image_url = page.meta.image | default(config.extra.og_image | default('')) %}
+  {# Open Graph — all pages #}
+  <meta property="og:title" content="{% if page.is_homepage %}RF-DETR &mdash; Real-Time Object Detection &amp; Segmentation by Roboflow{% else %}{{ page.title }} - {{ config.site_name }}{% endif %}">
+  <meta property="og:description" content="{{ page.meta.description | default(config.site_description) }}">
+  <meta property="og:type" content="{% if page.is_homepage %}website{% else %}article{% endif %}">
+  <meta property="og:url" content="{{ page.canonical_url }}">
+  {% if og_image_url %}<meta property="og:image" content="{{ og_image_url }}">
+  {% if og_image_url == config.extra.og_image %}<meta property="og:image:width" content="840">
+  <meta property="og:image:height" content="630">{% endif %}{% endif %}
+
+  {# Twitter Card — all pages #}
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@roboflow">
+  <meta name="twitter:title" content="{% if page.is_homepage %}RF-DETR &mdash; Real-Time Object Detection &amp; Segmentation by Roboflow{% else %}{{ page.title }} - {{ config.site_name }}{% endif %}">
+  <meta name="twitter:description" content="{{ page.meta.description | default(config.site_description) }}">
+  {% if og_image_url %}<meta name="twitter:image" content="{{ og_image_url }}">{% endif %}
+
+  {# JSON-LD: Organization + SoftwareApplication + WebSite — homepage only #}
+  {% if page.is_homepage %}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://roboflow.com/#organization",
+        "name": "Roboflow",
+        "url": "https://roboflow.com",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://rfdetr.roboflow.com/latest/assets/roboflow-logo.svg",
+          "width": 400,
+          "height": 400
+        },
+        "description": "Roboflow is a computer vision platform for dataset management, model training, and deployment. Creator of RF-DETR, Supervision, and Roboflow Inference.",
+        "sameAs": [
+          "https://github.com/roboflow",
+          "https://www.linkedin.com/company/roboflow-ai/",
+          "https://twitter.com/roboflow",
+          "https://www.youtube.com/@Roboflow",
+          "https://en.wikipedia.org/wiki/Roboflow",
+          "https://huggingface.co/roboflow",
+          "https://www.crunchbase.com/organization/roboflow"
+        ]
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "{{ config.site_url }}#software",
+        "name": "RF-DETR",
+        "alternateName": "rfdetr",
+        "applicationCategory": "DeveloperApplication",
+        "applicationSubCategory": "Computer vision model",
+        "operatingSystem": "Linux, macOS, Windows",
+        "url": "{{ config.site_url }}",
+        "downloadUrl": "https://pypi.org/project/rfdetr/",
+        "softwareVersion": {{ config.extra.software_version | tojson }},
+        "softwareRequirements": "Python >=3.10; torch >=2.2.0; torchvision >=0.17.0; transformers >=5.1.0,<6.0.0",
+        "identifier": [
+          {"@type": "PropertyValue", "propertyID": "Python package", "value": "rfdetr"},
+          {"@type": "PropertyValue", "propertyID": "GitHub repository", "value": "roboflow/rf-detr"},
+          {"@type": "PropertyValue", "propertyID": "arXiv", "value": "2511.09554"}
+        ],
+        "releaseNotes": "https://github.com/roboflow/rf-detr/blob/main/CHANGELOG.md",
+        "description": "RF-DETR is a real-time transformer architecture for object detection and instance segmentation by Roboflow. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). ICLR 2026. Apache 2.0.",
+        "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, real-time detection transformer, DINOv2, COCO, RF100-VL, ONNX, TensorRT",
+        "featureList": [
+          "Real-time object detection",
+          "Instance segmentation",
+          "DINOv2 vision transformer backbone",
+          "ONNX and TensorRT FP16/INT8 export",
+          "Fine-tuning on custom COCO and YOLO datasets",
+          "Multi-GPU distributed training",
+          "EMA model averaging"
+        ],
+        "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+        "license": "https://www.apache.org/licenses/LICENSE-2.0",
+        "codeRepository": "https://github.com/roboflow/rf-detr",
+        "programmingLanguage": "Python",
+        "runtimePlatform": "Python 3.10+",
+        "isAccessibleForFree": true,
+        "citation": "https://arxiv.org/abs/2511.09554",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD",
+          "availability": "https://schema.org/InStock",
+          "url": "https://pypi.org/project/rfdetr/"
+        },
+        "sameAs": [
+          "https://github.com/roboflow/rf-detr",
+          "https://pypi.org/project/rfdetr/",
+          "https://arxiv.org/abs/2511.09554"
+        ]
+      },
+      {
+        "@type": "WebSite",
+        "@id": "{{ config.site_url }}#website",
+        "name": "RF-DETR Documentation",
+        "url": "{{ config.site_url }}",
+        "description": {{ config.site_description | tojson }},
+        "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+        "potentialAction": {
+          "@type": "SearchAction",
+          "target": {
+            "@type": "EntryPoint",
+            "urlTemplate": "https://rfdetr.roboflow.com/latest/?q={search_term_string}"
+          },
+          "query-input": "required name=search_term_string"
+        }
+      }
+    ]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is RF-DETR?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "RF-DETR (Roboflow Detection Transformer) is a real-time object detection and instance segmentation model from Roboflow, accepted at ICLR 2026. It uses a DINOv2 vision transformer backbone and achieves state-of-the-art accuracy\u2013latency trade-offs on COCO (60.1 AP50:95 for RF-DETR-2XL) and RF100-VL."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How does RF-DETR compare to YOLOv11?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "RF-DETR-L achieves 56.5 AP50:95 on COCO at 6.8\u00a0ms latency on an NVIDIA T4, outperforming YOLOv11x (54.7 AP) at lower latency. The DINOv2 backbone gives RF-DETR stronger performance on domain-shift benchmarks such as RF100-VL."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What GPU is required to train RF-DETR?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "A CUDA-capable GPU with at least 8\u00a0GB VRAM is recommended for fine-tuning. Smaller models (RF-DETR-N and RF-DETR-S) can fit in 6\u00a0GB VRAM with a reduced batch size. CPU inference is supported for evaluation."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Which dataset formats does RF-DETR support?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "RF-DETR supports COCO JSON and YOLO-format datasets. Roboflow datasets export directly to both formats. Detection and segmentation datasets use the same format \u2014 the model variant determines the task."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can RF-DETR run in real time?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. RF-DETR-N runs at 2.3\u00a0ms per frame on a T4 GPU (TensorRT FP16, batch 1), and RF-DETR-L at 6.8\u00a0ms \u2014 both well within real-time thresholds. ONNX and TFLite exports are available for edge deployment."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What is the difference between RF-DETR detection and segmentation models?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Detection models output bounding boxes. Segmentation models additionally output instance masks. Both share the same backbone and training API; segmentation adds a mask head and requires COCO-format segmentation annotations."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Is RF-DETR open source?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. XLarge and 2XLarge models require the rfdetr[plus] package (PML 1.0 license)."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How do I fine-tune RF-DETR on a custom dataset?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Instantiate a model and call model.train(...) with your dataset directory in COCO JSON or YOLO format. Example: model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4). The model downloads pretrained weights automatically and resumes from the best checkpoint."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How do I export RF-DETR to ONNX or TensorRT?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Call model.export(format='onnx') after training or loading a checkpoint. ONNX export works on CPU and produces a single .onnx file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, first export to ONNX and then convert the .onnx model with TensorRT tooling such as trtexec; this requires TensorRT and a CUDA GPU."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Which RF-DETR model size should I use?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "RF-DETR-Nano (2.3\u00a0ms, 67.6\u00a0AP50 on COCO) is best for edge and real-time applications. RF-DETR-Large (6.8\u00a0ms, 56.5\u00a0AP50:95) offers the best accuracy-latency trade-off for server deployment. RF-DETR-2XLarge (17.2\u00a0ms, 60.1\u00a0AP50:95) maximizes accuracy when latency allows."
+        }
+      }
+    ]
+  }
+  </script>
+  {% else %}
+  {# article:modified_time — content pages only; emit only when a full ISO-8601 date-time is available #}
+  {# striptags: plugin may return a <time> HTML element (Markup-safe); strip tags before embedding in content attr #}
+  {% if page.meta.git_revision_date_localized %}<meta property="article:modified_time" content="{{ page.meta.git_revision_date_localized | string | striptags | replace(' ', 'T') | e }}">{% endif %}
+  {# JSON-LD: TechArticle — content pages #}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": {{ page.title | tojson }},
+    "description": {{ (page.meta.description | default(config.site_description)) | tojson }},
+    "url": "{{ page.canonical_url }}",
+    "isPartOf": {"@id": "{{ config.site_url }}#website"},
+    "about": {"@id": "{{ config.site_url }}#software"},
+    "proficiencyLevel": "Beginner to advanced",
+    "inLanguage": "en",
+    "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
+    "datePublished": "2025-03-01",
+    {% if page.meta.git_revision_date_localized %}"dateModified": {{ page.meta.git_revision_date_localized | string | striptags | replace(' ', 'T') | tojson }},
+    {% endif %}"image": {{ (page.meta.image | default(config.extra.og_image | default('https://rfdetr.roboflow.com/latest/assets/roboflow-logo.svg'))) | tojson }},
+    "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "{{ page.canonical_url }}"},
+    "speakable": {
+      "@type": "SpeakableSpecification",
+      "cssSelector": [".md-content h1", ".md-typeset > p:first-child"]
+    }
+  }
+  </script>
+  {# JSON-LD: BreadcrumbList — content pages; 3-level for pages inside a section #}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "RF-DETR",
+        "item": "{{ config.site_url }}"
+      }{% if page.parent %},
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": {{ page.parent.title | tojson }},
+        "item": "{% if page.parent.children and page.parent.children[0].canonical_url %}{{ page.parent.children[0].canonical_url }}{% else %}{{ config.site_url }}{% endif %}"
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": {{ page.title | tojson }},
+        "item": "{{ page.canonical_url }}"
+      }
+      {% else %},
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": {{ page.title | tojson }},
+        "item": "{{ page.canonical_url }}"
+      }
+      {% endif %}
+    ]
+  }
+  </script>
+  {% endif %}
+  {% endif %}
+{% endblock %}

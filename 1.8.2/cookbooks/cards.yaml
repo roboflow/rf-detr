@@ -1,0 +1,37 @@
+cards:
+  - href: fine-tune_detection/
+    name: "Fine-Tune RF-DETR Object Detection"
+    labels: [TRAINING, PYTORCH LIGHTNING, INFERENCE]
+    version: v1.8.2
+    author: Borda
+    description: "Fine-tune RF-DETR object detection on any COCO detection dataset from Roboflow Universe — covers PPE safety, traffic, sports, infrastructure, and marine-wildlife use cases."
+  - href: inference-latency-benchmark/
+    name: "Inference Latency Benchmark"
+    labels: [INFERENCE, ONNX, GPU]
+    version: v1.8.1
+    author: Borda
+    description: "Benchmark detection, segmentation, and keypoint models across FP32, FP16+JIT, and ONNX Runtime — measures latency and FPS on GPU using CUDA events."
+  - href: fine-tune_segmentation/
+    name: "Fine-Tune RF-DETR Instance Segmentation"
+    labels: [TRAINING, PYTORCH LIGHTNING, SEGMENTATION, INFERENCE]
+    version: v1.8.1
+    author: Borda
+    description: "Fine-tune RF-DETR instance segmentation on any COCO segmentation dataset from Roboflow Universe — covers training, mask loss metrics, and inference with mask overlays."
+  - href: fine-tune_keypoints/
+    name: "Fine-Tune RF-DETR Keypoint Detection"
+    labels: [TRAINING, PYTORCH LIGHTNING, INFERENCE]
+    version: v1.8.0
+    author: Borda
+    description: "Fine-tune RF-DETR keypoint detection on any COCO keypoint dataset from Roboflow Universe — covers training, metrics, and inference with uncertainty ellipses."
+  - href: custom-augmentations/
+    name: "Custom Augmentations and Live Training Progress"
+    labels: [TRAINING, AUGMENTATION]
+    version: v1.5.0
+    author: Borda
+    description: "Add custom Albumentations augmentations and monitor training metrics in real time."
+  - href: pytorch-lightning/
+    name: "Training with PyTorch Lightning"
+    labels: [TRAINING, PYTORCH LIGHTNING]
+    version: v1.6.0
+    author: Borda
+    description: "Train RF-DETR with PyTorch Lightning — callbacks, checkpointing, and the LightningModule API."
