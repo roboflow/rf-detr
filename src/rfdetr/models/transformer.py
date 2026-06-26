@@ -312,9 +312,18 @@ class Transformer(nn.Module):
         # time), but that Constant is accepted by TensorRT as a valid shape tensor source —
         # unlike ScatterND. torch._shape_as_tensor(t) is a private ATen op that returns a
         # 1-D int64 tensor of t's dimension sizes; [2:4] extracts (H, W) from NCHW.
-        spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
-            device=srcs[0].device, dtype=torch.long
-        )
+        # torch.export (ExecuTorch) cannot trace torch._shape_as_tensor — it raises "the tensor has
+        # a non-zero number of elements, but its data is not allocated yet". Under that trace build
+        # spatial_shapes directly from the concrete Python-int (H, W) pairs instead; ExecuTorch uses
+        # static shapes, so the baked constant is exact. This branch is taken only under
+        # torch.export, leaving the eager and TorchScript-ONNX/TensorRT (#1155) paths untouched.
+        # getattr guards torch<2.6, which lacks is_exporting() and never runs ExecuTorch export.
+        if getattr(torch.compiler, "is_exporting", lambda: False)():
+            spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
+        else:
+            spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
+                device=srcs[0].device, dtype=torch.long
+            )
         level_start_index = torch.cat((spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
 
         # Flatten optional dual-projector features for keypoint-specific cross-attention.
