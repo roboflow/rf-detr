@@ -24,12 +24,20 @@ def _prewarm_dinov2_cache() -> None:
     Examples:
         This fixture is autouse — no explicit reference needed in tests.
     """
+    import os
+
+    if os.environ.get("RFDETR_SKIP_DINOV2_PREWARM") == "1":
+        return
+
     from huggingface_hub import snapshot_download
 
-    snapshot_download(
-        "facebook/dinov2-with-registers-base",
-        ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"],
-    )
+    try:
+        snapshot_download(
+            "facebook/dinov2-with-registers-base",
+            ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"],
+        )
+    except Exception as exc:
+        pytest.skip(f"Skipping DINOv2 cache prewarm (snapshot_download failed): {exc}")
 
 
 @pytest.fixture(autouse=True)
