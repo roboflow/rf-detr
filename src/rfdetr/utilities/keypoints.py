@@ -10,15 +10,12 @@ from __future__ import annotations
 import numpy as np
 
 __all__ = [
-    "is_bg_first_schema",
-    "to_active_first",
-    "to_bg_first",
     "schemas_semantically_equal",
     "precision_cholesky_to_pixel_covariance",
 ]
 
 
-def is_bg_first_schema(schema: list[int]) -> bool:
+def _is_bg_first_schema(schema: list[int]) -> bool:
     """Return True if *schema* uses a background-first layout.
 
     A background-first schema has a leading slot with zero keypoints that
@@ -33,17 +30,17 @@ def is_bg_first_schema(schema: list[int]) -> bool:
         ``True`` when ``schema`` is non-empty and its first element is zero.
 
     Examples:
-        >>> is_bg_first_schema([0, 17])
+        >>> _is_bg_first_schema([0, 17])
         True
-        >>> is_bg_first_schema([17])
+        >>> _is_bg_first_schema([17])
         False
-        >>> is_bg_first_schema([])
+        >>> _is_bg_first_schema([])
         False
     """
     return bool(schema) and schema[0] == 0
 
 
-def to_active_first(schema: list[int]) -> list[int]:
+def _to_active_first(schema: list[int]) -> list[int]:
     """Strip the leading background slot from a bg-first schema.
 
     Always returns a new list. A no-op (copy) when *schema* is already
@@ -59,21 +56,21 @@ def to_active_first(schema: list[int]) -> list[int]:
         or a copy of *schema* otherwise.
 
     Examples:
-        >>> to_active_first([0, 17])
+        >>> _to_active_first([0, 17])
         [17]
-        >>> to_active_first([17])
+        >>> _to_active_first([17])
         [17]
-        >>> to_active_first([0, 17, 4])
+        >>> _to_active_first([0, 17, 4])
         [17, 4]
-        >>> to_active_first([0])
+        >>> _to_active_first([0])
         []
     """
-    if is_bg_first_schema(schema):
+    if _is_bg_first_schema(schema):
         return schema[1:]
     return list(schema)
 
 
-def to_bg_first(schema: list[int]) -> list[int]:
+def _to_bg_first(schema: list[int]) -> list[int]:
     """Prepend a background slot to an active-first schema.
 
     A no-op when *schema* already starts with a zero-keypoint slot or is empty.
@@ -85,14 +82,14 @@ def to_bg_first(schema: list[int]) -> list[int]:
         Schema with a leading ``0`` prepended when not already bg-first.
 
     Examples:
-        >>> to_bg_first([17])
+        >>> _to_bg_first([17])
         [0, 17]
-        >>> to_bg_first([0, 17])
+        >>> _to_bg_first([0, 17])
         [0, 17]
-        >>> to_bg_first([17, 4])
+        >>> _to_bg_first([17, 4])
         [0, 17, 4]
     """
-    if is_bg_first_schema(schema) or not schema:
+    if _is_bg_first_schema(schema) or not schema:
         return list(schema)
     return [0] + list(schema)
 
@@ -133,7 +130,7 @@ def schemas_semantically_equal(a: list[int], b: list[int]) -> bool:
         >>> schemas_semantically_equal([0], [])
         True
     """
-    return to_active_first(a) == to_active_first(b)
+    return _to_active_first(a) == _to_active_first(b)
 
 
 def precision_cholesky_to_pixel_covariance(

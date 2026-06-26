@@ -9,11 +9,11 @@ import numpy as np
 import pytest
 
 from rfdetr.utilities.keypoints import (
-    is_bg_first_schema,
+    _is_bg_first_schema,
+    _to_active_first,
+    _to_bg_first,
     precision_cholesky_to_pixel_covariance,
     schemas_semantically_equal,
-    to_active_first,
-    to_bg_first,
 )
 
 
@@ -33,7 +33,7 @@ class TestIsBgFirstSchema:
     )
     def test_classification(self, schema: list[int], expected: bool) -> None:
         """is_bg_first_schema returns expected bool for each schema form."""
-        assert is_bg_first_schema(schema) == expected
+        assert _is_bg_first_schema(schema) == expected
 
 
 class TestToActiveFirst:
@@ -53,12 +53,12 @@ class TestToActiveFirst:
     )
     def test_conversion(self, schema: list[int], expected: list[int]) -> None:
         """to_active_first strips only the first leading zero slot."""
-        assert to_active_first(schema) == expected
+        assert _to_active_first(schema) == expected
 
     def test_returns_new_list(self) -> None:
         """to_active_first always returns a new list, never the input object."""
         schema = [17]
-        result = to_active_first(schema)
+        result = _to_active_first(schema)
         assert result is not schema
 
 
@@ -76,12 +76,12 @@ class TestToBgFirst:
     )
     def test_conversion(self, schema: list[int], expected: list[int]) -> None:
         """to_bg_first prepends 0 only when schema is active-first and non-empty."""
-        assert to_bg_first(schema) == expected
+        assert _to_bg_first(schema) == expected
 
     def test_returns_new_list(self) -> None:
         """to_bg_first always returns a new list, never the input object."""
         schema = [0, 17]
-        result = to_bg_first(schema)
+        result = _to_bg_first(schema)
         assert result is not schema
 
 
