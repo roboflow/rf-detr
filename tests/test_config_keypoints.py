@@ -12,6 +12,7 @@ from rfdetr.config import (
     KeypointTrainConfig,
     RFDETRBaseConfig,
     RFDETRKeypointPreviewConfig,
+    SegmentationTrainConfig,
 )
 
 
@@ -29,7 +30,7 @@ def test_keypoint_config_defaults() -> None:
     assert train.keypoint_l1_loss_coef == pytest.approx(1.0)
     assert train.keypoint_findable_loss_coef == pytest.approx(1.0)
     assert train.keypoint_visible_loss_coef == pytest.approx(1.0)
-    assert train.keypoint_nll_loss_coef == pytest.approx(0.5)
+    assert train.keypoint_nll_loss_coef == pytest.approx(1.0)
     assert train.cls_loss_coef == pytest.approx(2.0)
 
 
@@ -73,6 +74,27 @@ def test_keypoint_fields_propagate_to_namespace(tmp_path) -> None:
     assert namespace.keypoint_findable_loss_coef == pytest.approx(2.5)
     assert namespace.keypoint_visible_loss_coef == pytest.approx(3.5)
     assert namespace.keypoint_nll_loss_coef == pytest.approx(4.5)
+
+
+def test_keypoint_nll_loss_coef_default_restored_to_1_0() -> None:
+    """keypoint_nll_loss_coef must default to 1.0 after the 0.5 revert.
+
+    The 0.5 default was introduced to dampen OKS@75 oscillation.  It was later reverted to 1.0 to align with all other
+    keypoint loss terms (l1, findable, visible).  This test guards against silent regressions.
+    """
+    train = KeypointTrainConfig(dataset_dir="/tmp")
+    assert train.keypoint_nll_loss_coef == pytest.approx(1.0)
+
+
+def test_segmentation_train_config_cls_loss_coef_default() -> None:
+    """SegmentationTrainConfig.cls_loss_coef must default to 1.0, not the erroneous 5.0.
+
+    The 5.0 value was always present in SegmentationTrainConfig but was dead code pre-v1.7 (namespace builder read from
+    ModelConfig=1.0).  The v1.7 TrainConfig ownership migration silently activated it.  This test guards against re-
+    introducing that regression.
+    """
+    tc = SegmentationTrainConfig(dataset_dir="/tmp")
+    assert tc.cls_loss_coef == pytest.approx(1.0)
 
 
 def test_unknown_keypoint_fields_are_not_public_config_fields() -> None:

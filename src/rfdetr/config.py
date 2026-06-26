@@ -886,11 +886,30 @@ class TrainConfig(BaseConfig):
 
 
 class SegmentationTrainConfig(TrainConfig):
+    """Training configuration for instance segmentation models.
+
+    Extends :class:`TrainConfig` with segmentation-specific loss coefficients.
+
+    Attributes:
+        num_select: Maximum number of predictions to keep per image. ``None`` uses
+            the model default.
+        mask_point_sample_ratio: Number of points sampled per mask for point-based
+            mask loss computation.
+        mask_ce_loss_coef: Cross-entropy loss weight for mask prediction.
+        mask_dice_loss_coef: Dice loss weight for mask prediction.
+        cls_loss_coef: Classification loss weight. Defaults to ``1.0`` to match the
+            effective pre-v1.7 value (the v1.7 TrainConfig ownership migration
+            silently activated a dormant ``5.0``; this field restores the correct
+            weight). To reproduce pre-fix segmentation behaviour pass
+            ``cls_loss_coef=5.0`` explicitly.
+        segmentation_head: Whether to attach the segmentation head.
+    """
+
     num_select: Optional[int] = None
     mask_point_sample_ratio: int = 16
     mask_ce_loss_coef: float = 5.0
     mask_dice_loss_coef: float = 5.0
-    cls_loss_coef: float = 5.0
+    cls_loss_coef: float = 1.0
     segmentation_head: bool = True
 
 
@@ -906,9 +925,11 @@ class KeypointTrainConfig(TrainConfig):
         keypoint_l1_loss_coef: L1 regression loss weight for keypoint coordinates.
         keypoint_findable_loss_coef: Loss weight for the keypoint visibility head.
         keypoint_visible_loss_coef: Loss weight for the keypoint visibility score.
-        keypoint_nll_loss_coef: NLL-Cholesky loss weight. Reduced from 1.0 to 0.5
-            to dampen OKS@75 oscillation caused by precision-coupling in the
-            Cholesky parameterisation.
+        keypoint_nll_loss_coef: NLL-Cholesky loss weight. Restored to ``1.0`` to
+            align with the other keypoint loss terms (``keypoint_l1_loss_coef``,
+            ``keypoint_findable_loss_coef``, ``keypoint_visible_loss_coef``).
+            Previously set to ``0.5`` to dampen OKS@75 oscillation; reverted as
+            the under-weighting was not beneficial in practice.
         smooth_alpha: EMA smoothing factor for :class:`BestModelCallback` metric
             comparison. Overrides the :class:`TrainConfig` default of ``0.0``
             (disabled) to ``0.5``, which balances responsiveness and noise
@@ -923,6 +944,6 @@ class KeypointTrainConfig(TrainConfig):
     keypoint_l1_loss_coef: float = 1
     keypoint_findable_loss_coef: float = 1
     keypoint_visible_loss_coef: float = 1
-    keypoint_nll_loss_coef: float = 0.5
+    keypoint_nll_loss_coef: float = 1.0
     smooth_alpha: float = 0.5
     skip_best_epochs: int = Field(default=10, ge=0)
