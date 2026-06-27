@@ -46,9 +46,9 @@ class PostProcess(nn.Module):
                 original image size so normalized boxes and keypoints are returned in source-image pixel coordinates.
 
         Returns:
-            One dictionary per image. Every dictionary contains ``scores``, ``labels``, and ``boxes``. Segmentation
-            outputs also contain ``masks``. Keypoint outputs also contain ``keypoints`` and
-            ``keypoint_precision_cholesky``.
+            One dictionary per image. Every dictionary contains ``scores``, ``labels``, and ``boxes`` in absolute
+            pixel coordinates clamped to the respective image dimensions. Segmentation outputs also contain
+            ``masks``. Keypoint outputs also contain ``keypoints`` and ``keypoint_precision_cholesky``.
         """
         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
         out_masks = outputs.get("pred_masks", None)
@@ -126,13 +126,17 @@ class PostProcess(nn.Module):
             target_sizes: Per-image ``(height, width)`` tensor.
 
         Returns:
-            Absolute ``xyxy`` boxes with shape ``(B, K, 4)`` in pixel units.
+            Absolute ``xyxy`` boxes with shape ``(B, K, 4)`` in pixel units,
+            clamped to ``[0, width]`` for x-coordinates and ``[0, height]`` for y-coordinates.
         """
         boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
         boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1, 1, 4))
         img_h, img_w = target_sizes.unbind(1)
-        scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
-        return boxes * scale_fct[:, None, :]
+        scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1).to(boxes.dtype)
+        boxes = boxes * scale_fct[:, None, :]
+        # Model regression is unbounded; clamp to valid pixel range before returning.
+        boxes = boxes.clamp_min(0.0).clamp(max=scale_fct[:, None, :])
+        return boxes
 
     @staticmethod
     def _postprocess_masks(

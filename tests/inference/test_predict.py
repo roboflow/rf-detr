@@ -39,7 +39,7 @@ class TestPredictReturnTypes:
     def test_detection_returns_sv_detections(self) -> None:
         """Detection model returns a list of ``sv.Detections``."""
         img = PIL.Image.new("RGB", (640, 640), color=(128, 128, 128))
-        model = RFDETRNano()
+        model = RFDETRNano(pretrain_weights=None)
         detections = model.predict([img, img], threshold=0.3)
         assert isinstance(detections, list), "predict() must return a list for multiple inputs"
         assert all(isinstance(d, sv.Detections) for d in detections), "Each result must be sv.Detections"
@@ -47,7 +47,7 @@ class TestPredictReturnTypes:
     def test_segmentation_returns_sv_detections_with_masks(self) -> None:
         """Segmentation model returns ``sv.Detections`` with the mask field always set."""
         img = PIL.Image.new("RGB", (640, 640), color=(128, 128, 128))
-        model = RFDETRSegNano()
+        model = RFDETRSegNano(pretrain_weights=None)
         detections = model.predict([img, img], threshold=0.3)
         assert isinstance(detections, list), "predict() must return a list for multiple inputs"
         assert all(isinstance(d, sv.Detections) for d in detections), "Each result must be sv.Detections"
