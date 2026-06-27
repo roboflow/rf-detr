@@ -313,20 +313,43 @@ class TestOptimizeForInferenceInplace:
         assert rfdetr._is_optimized_for_inference is True
         assert rfdetr._optimized_inplace is True
 
-    def test_remove_optimized_model_after_inplace_raises_runtime_error(self) -> None:
-        """Successful in-place optimization cannot restore the original module."""
+    def test_remove_optimized_model_after_inplace_warns_and_preserves_state(self) -> None:
+        """remove_optimized_model() after inplace optimization issues UserWarning and no-ops."""
         rfdetr = _FakeRFDETR()
         original_model = rfdetr.model.model
 
         rfdetr.optimize_for_inference(compile=False, inplace=True)
 
-        with pytest.raises(RuntimeError, match="original model cannot be restored"):
+        with pytest.warns(UserWarning, match="no effect after inplace optimization"):
             rfdetr.remove_optimized_model()
 
         assert rfdetr.model.model is None
         assert rfdetr.model.inference_model is original_model
         assert rfdetr._is_optimized_for_inference is True
         assert rfdetr._optimized_inplace is True
+
+    def test_second_optimize_after_inplace_raises_runtime_error(self) -> None:
+        """Calling optimize_for_inference() again after inplace=True raises RuntimeError."""
+        rfdetr = _FakeRFDETR()
+
+        rfdetr.optimize_for_inference(compile=False, inplace=True)
+
+        with pytest.raises(RuntimeError, match="base model has been cleared"):
+            rfdetr.optimize_for_inference(compile=False)
+
+    def test_inplace_true_default_dtype_float32_does_not_cast(self) -> None:
+        """Inplace=True with default dtype (float32) leaves weights unchanged — no casting occurs."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+        original_dtype = original_model.linear.weight.dtype
+
+        rfdetr.optimize_for_inference(compile=False, inplace=True)
+
+        assert rfdetr.model.inference_model is original_model
+        assert original_model.linear.weight.dtype == original_dtype
+        assert rfdetr._optimized_dtype == torch.float32
+        assert rfdetr._optimized_has_been_compiled is False
+        assert rfdetr._optimized_batch_size is None
 
     @pytest.mark.parametrize(
         "dtype",
@@ -475,3 +498,30 @@ class TestOptimizeForInferenceExceptionRecovery:
 
         assert rfdetr._is_optimized_for_inference is False
         assert rfdetr.model.inference_model is None
+
+    def test_inplace_export_failure_module_mutations_are_not_undone(self) -> None:
+        """RFDETR resets flags on export failure but cannot undo module-level mutations.
+
+        Production export() may mutate the module (e.g. forward->forward_export) before raising; those changes are not
+        reversed by the exception-recovery path.
+        """
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+        mutated: dict[str, bool] = {"happened": False}
+
+        def _mutating_export() -> None:
+            mutated["happened"] = True
+            raise RuntimeError("export failed mid-mutation")
+
+        with (
+            patch("rfdetr.detr.deepcopy"),
+            patch.object(original_model, "export", side_effect=_mutating_export),
+            pytest.raises(RuntimeError, match="export failed mid-mutation"),
+        ):
+            rfdetr.optimize_for_inference(compile=False, inplace=True)
+
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr._optimized_inplace is False
+        assert rfdetr.model.model is original_model
+        # The mutation happened and cannot be undone by RFDETR's recovery path
+        assert mutated["happened"] is True
