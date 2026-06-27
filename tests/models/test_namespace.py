@@ -96,10 +96,17 @@ class TestNamespaceFieldOwnership:
         ns = _namespace_from_configs(mc, tc)
         assert ns.cls_loss_coef == pytest.approx(2.5)
 
-    def test_cls_loss_coef_segmentation_uses_train_config_value(self) -> None:
-        """SegmentationTrainConfig.cls_loss_coef=5.0 must propagate to namespace."""
+    def test_cls_loss_coef_segmentation_default_matches_pre_1_7_effective_value(self) -> None:
+        """SegmentationTrainConfig default must preserve the pre-1.7 effective loss_ce weight."""
         mc = RFDETRSegNanoConfig()
-        tc = SegmentationTrainConfig(dataset_dir="/tmp")  # cls_loss_coef=5.0
+        tc = SegmentationTrainConfig(dataset_dir="/tmp")
+        ns = _namespace_from_configs(mc, tc)
+        assert ns.cls_loss_coef == pytest.approx(1.0)
+
+    def test_cls_loss_coef_segmentation_explicit_train_config_value_wins(self) -> None:
+        """Explicit SegmentationTrainConfig.cls_loss_coef values must propagate to namespace."""
+        mc = RFDETRSegNanoConfig()
+        tc = SegmentationTrainConfig(dataset_dir="/tmp", cls_loss_coef=5.0)
         ns = _namespace_from_configs(mc, tc)
         assert ns.cls_loss_coef == pytest.approx(5.0)
 

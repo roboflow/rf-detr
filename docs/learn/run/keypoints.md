@@ -1,5 +1,5 @@
 ---
-description: Run RF-DETR keypoint detection on images, video, and streams. COCO-pretrained preview model predicts 17 person keypoints with 71.9 AP at 9.8 ms on NVIDIA T4.
+description: Run RF-DETR keypoint detection on images, video, and streams. COCO-pretrained preview model predicts 17 person keypoints with 71.8 AP at 9.7 ms on NVIDIA T4.
 ---
 
 # Run an RF-DETR Keypoint Model
@@ -18,9 +18,9 @@ RF-DETR Keypoint outperforms YOLO26-pose X and YOLO11-pose X at comparable laten
 
 ![RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO](../../assets/keypoints/kp-map-latency.png){ width=560 }
 
-|     Size     |  RF-DETR package class  | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
-| :----------: | :---------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
-| XL (Preview) | `RFDETRKeypointPreview` |          71.9           |     9.8      |   126.4    |  576x576   | Apache 2.0 |
+|       Model        |  RF-DETR package class  | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
+| :----------------: | :---------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
+| Keypoint (Preview) | `RFDETRKeypointPreview` |          71.8           |     9.7      |   126.4    |  576x576   | Apache 2.0 |
 
 > The keypoint model is available in the `rfdetr` package only. It is not yet available via the `inference` package.
 
@@ -52,15 +52,15 @@ Perform inference on an image using the `rfdetr` package. `model.predict()` retu
 
 `model.predict()` returns an `sv.KeyPoints` object. The fields most commonly used downstream:
 
-| Field                             | Shape          | Description                                                                                                                                    |
-| --------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `key_points.xy`                   | `(N, K, 2)`    | Pixel coordinates of each keypoint per detected instance                                                                                       |
-| `key_points.keypoint_confidence`  | `(N, K)`       | Per-keypoint findability score; use to filter low-confidence points                                                                            |
-| `key_points.detection_confidence` | `(N,)`         | Per-instance detection score; this is what `threshold` filters on                                                                              |
-| `key_points.class_id`             | `(N,)`         | Model label ID for each detection. COCO-pretrained checkpoints use sparse COCO category IDs; fine-tuned checkpoints use 0-based class indices. |
-| `key_points.data["class_name"]`   | `(N,)`         | Class names resolved from `class_id`; prefer this over indexing a class-name list directly.                                                    |
-| `key_points.data["xyxy"]`         | `(N, 4)`       | Bounding box for each detected instance in `[x1, y1, x2, y2]` format                                                                           |
-| `key_points.data["source_image"]` | list of arrays | Source frame stored once per detection; all N entries are the same array — use `[0]` to access it                                              |
+| Field                             | Shape          | Description                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `key_points.xy`                   | `(N, K, 2)`    | Pixel coordinates of each keypoint per detected instance                                                                                                                                                                                                                                                                                                                                                         |
+| `key_points.keypoint_confidence`  | `(N, K)`       | Per-keypoint findability score; use to filter low-confidence points                                                                                                                                                                                                                                                                                                                                              |
+| `key_points.detection_confidence` | `(N,)`         | Per-instance detection score; this is what `threshold` filters on                                                                                                                                                                                                                                                                                                                                                |
+| `key_points.class_id`             | `(N,)`         | Model label ID for each detection. COCO-pretrained checkpoints use sparse COCO category IDs (1–90). Fine-tuned active-first keypoint checkpoints use normal 0-based class IDs; legacy background-first keypoint checkpoints use slot 0 as `"__background__"` and start foreground classes at slot 1. Use `key_points.data["class_name"]` for name resolution rather than indexing your class list by `class_id`. |
+| `key_points.data["class_name"]`   | `(N,)`         | Class names resolved from `class_id`; prefer this over indexing a class-name list directly.                                                                                                                                                                                                                                                                                                                      |
+| `key_points.data["xyxy"]`         | `(N, 4)`       | Bounding box for each detected instance in `[x1, y1, x2, y2]` format                                                                                                                                                                                                                                                                                                                                             |
+| `key_points.data["source_image"]` | list of arrays | Source frame stored once per detection; all N entries are the same array — use `[0]` to access it                                                                                                                                                                                                                                                                                                                |
 
 `K=17` for the pretrained COCO person-keypoint preview checkpoint. Fine-tuned checkpoints use the keypoint count from their dataset schema, so custom keypoint datasets can return any `K` supported by their COCO keypoint annotations.
 

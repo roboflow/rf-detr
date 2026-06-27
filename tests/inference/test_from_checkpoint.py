@@ -581,15 +581,19 @@ class TestFromCheckpointNumClassesProvenance:
             "otherwise train() refuses to adapt the head to a new dataset's class count."
         )
 
-    def test_explicit_default_num_classes_does_not_block_alignment(
-        self, two_class_checkpoint: Path, monkeypatch: pytest.MonkeyPatch
+    def test_explicit_default_num_classes_pins_head(
+        self,
+        two_class_checkpoint: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Passing num_classes equal to the ModelConfig default does not pin the detection head.
+        """Passing num_classes equal to the ModelConfig default still pins the detection head.
 
-        _align_num_classes_from_dataset checks user_overrode = user_set AND value != default;
-        when the caller passes the class default explicitly, user_overrode is False and
-        adaptation still proceeds.  This documents the intended semantics and guards against
-        accidental removal of the ``value != default`` guard.
+        An explicit num_classes is honored regardless of whether it equals the class default:
+        ``_align_num_classes_from_dataset`` keys off whether the field was set, not whether the
+        value differs from the default, so the dataset count cannot silently override it.  This
+        guards against re-introducing the ``value != default`` clause, whose asymmetric behavior
+        (default silently aligned, non-default preserved) was the bug this test now pins.
         """
         model = RFDETR.from_checkpoint(two_class_checkpoint)
         default_nc = type(model.model_config).model_fields["num_classes"].default
@@ -599,12 +603,48 @@ class TestFromCheckpointNumClassesProvenance:
 
         assert "num_classes" in model.model_config.model_fields_set
         monkeypatch.setattr(RFDETR, "_detect_num_classes_for_training", staticmethod(lambda *a, **k: 5))
-        model._align_num_classes_from_dataset("<five-class-dataset>")
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            model._align_num_classes_from_dataset("<five-class-dataset>")
 
-        assert model.model_config.num_classes == 5, (
-            "Passing the ModelConfig default for num_classes explicitly must not pin the head; "
-            "_align_num_classes_from_dataset must still adapt to the dataset class count."
+        assert model.model_config.num_classes == default_nc, (
+            "Explicitly passing the ModelConfig default for num_classes must pin the head; "
+            "the dataset class count must not silently override an explicit user setting."
         )
+        assert any("Using the model's configured value" in record.message for record in caplog.records)
+
+    def test_explicit_default_num_classes_via_from_checkpoint_integrated(
+        self,
+        two_class_checkpoint: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """from_checkpoint(path, num_classes=<default>) pins head via the integrated code path.
+
+        Unlike test_explicit_default_num_classes_pins_head which simulates the explicit-default scenario via post-
+        construction assignment, this test calls from_checkpoint directly with num_classes=default_nc.  A regression in
+        how from_checkpoint passes num_classes into the constructor would be caught here but not by the proxy-based
+        test.
+        """
+        default_nc = RFDETRSmall._model_config_class.model_fields["num_classes"].default
+        model = RFDETR.from_checkpoint(two_class_checkpoint, num_classes=default_nc)
+
+        assert model.model_config.num_classes == default_nc
+        assert "num_classes" in model.model_config.model_fields_set, (
+            "from_checkpoint with explicit num_classes must keep it in model_fields_set; "
+            "only checkpoint-derived num_classes should be cleared."
+        )
+
+        monkeypatch.setattr(RFDETR, "_detect_num_classes_for_training", staticmethod(lambda *a, **k: 5))
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            model._align_num_classes_from_dataset("<five-class-dataset>")
+
+        assert model.model_config.num_classes == default_nc, (
+            "Head must remain pinned at default_nc after alignment; "
+            "from_checkpoint-supplied num_classes must not be silently overridden."
+        )
+        assert any("Using the model's configured value" in record.message for record in caplog.records)
 
     def test_equal_class_count_does_not_rebuild_head(
         self, two_class_checkpoint: Path, monkeypatch: pytest.MonkeyPatch
@@ -620,3 +660,145 @@ class TestFromCheckpointNumClassesProvenance:
         assert model.model.model.class_embed.bias.shape == original_bias_shape, (
             "Head must not be rebuilt when dataset class count matches checkpoint class count."
         )
+
+
+# ---------------------------------------------------------------------------
+# Weight-based schema inference
+# ---------------------------------------------------------------------------
+
+
+def _make_kp_active_mask(schema: list[int]) -> torch.Tensor:
+    """Build a bool _kp_active_mask tensor encoding *schema* (mirrors LwDetr._create_kp_active_mask).
+
+    Args:
+        schema: Keypoints-per-class list, e.g. ``[0, 33]`` for background + 33-kp class.
+
+    Returns:
+        Bool tensor of shape ``[len(schema), max(schema)]`` with True in active keypoint slots.
+    """
+    if not schema or max(schema) == 0:
+        return torch.zeros(0, 0, dtype=torch.bool)
+    max_kp = max(schema)
+    mask = torch.zeros(len(schema), max_kp, dtype=torch.bool)
+    for idx, n_kp in enumerate(schema):
+        mask[idx, :n_kp] = True
+    return mask
+
+
+class TestFromCheckpointWeightInference:
+    """from_checkpoint infers schema from checkpoint weights when model_config is absent or stale.
+
+    Regression tests for the bug where a fine-tuned 33-kp keypoint model loaded with the COCO default [0, 17] schema
+    because model_config["num_keypoints_per_class"] was never updated from the default before the checkpoint was saved.
+    The authoritative schema is embedded in the checkpoint weights via the _kp_active_mask buffer; from_checkpoint now
+    reads it directly.
+    """
+
+    def test_infers_keypoint_schema_from_kp_active_mask(self, tmp_path: Path) -> None:
+        """Stale model_config kp schema [0, 17] is overridden by weight-inferred [0, 33]."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "model_config": {"num_keypoints_per_class": [0, 17]},
+            "model": {"_kp_active_mask": _make_kp_active_mask([0, 33])},
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRKeypointPreview"
+        )
+
+        assert mock_cls.call_args.kwargs["num_keypoints_per_class"] == [0, 33]
+
+    def test_infers_keypoint_schema_when_model_config_absent(self, tmp_path: Path) -> None:
+        """num_keypoints_per_class is inferred from _kp_active_mask when model_config is missing."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "model": {"_kp_active_mask": _make_kp_active_mask([0, 33])},
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRKeypointPreview"
+        )
+
+        assert mock_cls.call_args.kwargs["num_keypoints_per_class"] == [0, 33]
+
+    def test_user_kwarg_wins_over_weight_inferred_keypoint_schema(self, tmp_path: Path) -> None:
+        """Explicit num_keypoints_per_class kwarg overrides weight-inferred [0, 33] schema."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "model": {"_kp_active_mask": _make_kp_active_mask([0, 33])},
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt,
+            tmp_path / "checkpoint_best_total.pth",
+            "rfdetr.variants.RFDETRKeypointPreview",
+            num_keypoints_per_class=[0, 17],
+        )
+
+        assert mock_cls.call_args.kwargs["num_keypoints_per_class"] == [0, 17]
+
+    def test_infers_num_classes_from_class_embed_weight(self, tmp_path: Path) -> None:
+        """Stale model_config num_classes=90 is overridden by class_embed.weight shape inference."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-small.pth"},
+            "model_name": "RFDETRSmall",
+            "model_config": {"num_classes": 90},
+            "model": {"class_embed.weight": torch.zeros(3, 256)},
+        }
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRSmall")
+
+        assert mock_cls.call_args.kwargs["num_classes"] == 2
+
+    def test_user_kwarg_wins_over_weight_inferred_num_classes(self, tmp_path: Path) -> None:
+        """Explicit num_classes kwarg overrides weight-inferred value from class_embed.weight."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-small.pth"},
+            "model_name": "RFDETRSmall",
+            "model": {"class_embed.weight": torch.zeros(3, 256)},
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt,
+            tmp_path / "checkpoint_best_total.pth",
+            "rfdetr.variants.RFDETRSmall",
+            num_classes=90,
+        )
+
+        assert mock_cls.call_args.kwargs["num_classes"] == 90
+
+    def test_infers_schema_from_ptl_ckpt_state_dict_format(self, tmp_path: Path) -> None:
+        """Weight inference works for PTL-native .ckpt format (state_dict with model.
+
+        prefix).
+        """
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "state_dict": {
+                "model._kp_active_mask": _make_kp_active_mask([0, 33]),
+                "model.class_embed.weight": torch.zeros(3, 256),
+            },
+        }
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint.ckpt", "rfdetr.variants.RFDETRKeypointPreview")
+
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["num_keypoints_per_class"] == [0, 33]
+        assert call_kwargs["num_classes"] == 2
+
+    def test_consistent_checkpoint_produces_no_override(self, tmp_path: Path) -> None:
+        """When model_config and weights agree, weight inference leaves constructor_kwargs unchanged."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "model_config": {"num_keypoints_per_class": [0, 33], "num_classes": 2},
+            "model": {
+                "_kp_active_mask": _make_kp_active_mask([0, 33]),
+                "class_embed.weight": torch.zeros(3, 256),
+            },
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRKeypointPreview"
+        )
+
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["num_keypoints_per_class"] == [0, 33]
+        assert call_kwargs["num_classes"] == 2

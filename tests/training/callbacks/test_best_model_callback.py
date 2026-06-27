@@ -146,6 +146,25 @@ class TestBestModelCallback:
 
         assert payload["model_config"] == {"num_keypoints_per_class": [0, 17], "use_grouppose_keypoints": True}
 
+    def test_checkpoint_payload_loops_include_validate_and_test_stubs(self) -> None:
+        """Checkpoint loops dict must include validate_loop and test_loop stubs.
+
+        trainer.validate(ckpt_path=...) and trainer.test(ckpt_path=...) call restore_loops() which does
+        checkpoint["loops"]["validate_loop"] / checkpoint["loops"]["test_loop"] — KeyError if absent.
+        """
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        payload = BestModelCallback._build_checkpoint_payload(
+            {"w": torch.zeros(1)},
+            {"num_classes": 1},
+            trainer,
+        )
+
+        loops = payload["loops"]
+        assert "validate_loop" in loops, "validate_loop missing — trainer.validate(ckpt_path=...) will KeyError"
+        assert "test_loop" in loops, "test_loop missing — trainer.test(ckpt_path=...) will KeyError"
+        assert "state_dict" in loops["validate_loop"]
+        assert "state_dict" in loops["test_loop"]
+
     @pytest.mark.parametrize(
         "monitor_ema, metrics, checkpoint_file",
         [
@@ -1525,6 +1544,38 @@ class TestBestEmaStatePersistence:
 
         assert cb._best_ema == 0.0
 
+    def test_state_dict_round_trip_preserves_all_three_smooth_fields(self, tmp_path: Path) -> None:
+        """state_dict/load_state_dict round-trip preserves _best_ema, _smoothed_regular, and _best_raw_regular.
+
+        Scenario: user trains with smooth_alpha=0.5, two validation epochs advance all three accumulators,
+        then a fresh callback is restored from the persisted state — all three fields must survive unchanged.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", smooth_alpha=0.5)
+        pl_module = _make_pl_module()
+
+        # Epoch 0: raw=0.6 → smoothed=0.3, EMA=0.5 (saves EMA checkpoint)
+        trainer0 = _make_trainer({"val/mAP_50_95": 0.6, "val/ema_mAP_50_95": 0.5}, current_epoch=0)
+        trainer0.global_step = 1
+        cb.on_validation_end(trainer0, pl_module)
+
+        # Epoch 1: raw=0.4 → smoothed=0.35, EMA=0.7 > 0.5 (saves new EMA checkpoint); raw at smoothed-best=0.4
+        trainer1 = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.7}, current_epoch=1)
+        trainer1.global_step = 2
+        cb.on_validation_end(trainer1, pl_module)
+
+        state = cb.state_dict()
+
+        cb_resumed = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", smooth_alpha=0.5)
+        cb_resumed.load_state_dict(state)
+
+        assert cb_resumed._best_ema == pytest.approx(cb._best_ema), "_best_ema must survive round-trip"
+        assert cb_resumed._smoothed_regular == pytest.approx(cb._smoothed_regular), (
+            "_smoothed_regular must survive round-trip"
+        )
+        assert cb_resumed._best_raw_regular == pytest.approx(cb._best_raw_regular), (
+            "_best_raw_regular must survive round-trip"
+        )
+
     def test_load_state_dict_does_not_mutate_caller_dict(self, tmp_path: Path) -> None:
         """load_state_dict must not pop or mutate the caller-supplied dict."""
         cb1 = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
@@ -1553,6 +1604,212 @@ class TestBestEmaStatePersistence:
 
 
 # ---------------------------------------------------------------------------
+# TestBestModelSmoothAlpha
+# ---------------------------------------------------------------------------
+
+
+class TestBestModelSmoothAlpha:
+    """Verify ``smooth_alpha`` smooths the monitored metric before checkpoint comparison.
+
+    Without smoothing, a single noisy spike (e.g. 0.9 surrounded by 0.3-0.4 values) locks the best checkpoint to that
+    spike epoch.  With ``smooth_alpha=0.5`` the EMA of the metric is what the parent ModelCheckpoint compares, so the
+    later, steadily-improving epochs can overtake the early spike.
+    """
+
+    @pytest.mark.parametrize(
+        ("invalid_value", "exc_type"),
+        [
+            pytest.param(True, TypeError, id="bool_true"),
+            pytest.param("0.5", TypeError, id="string"),
+            pytest.param(-0.1, ValueError, id="negative"),
+            pytest.param(1.0, ValueError, id="exactly_one"),
+            pytest.param(1.5, ValueError, id="greater_than_one"),
+            pytest.param(float("nan"), ValueError, id="nan"),
+            pytest.param(float("inf"), ValueError, id="inf"),
+        ],
+    )
+    def test_invalid_smooth_alpha_raises(
+        self, tmp_path: Path, invalid_value: object, exc_type: type[Exception]
+    ) -> None:
+        """BestModelCallback raises TypeError for non-numeric and ValueError for out-of-range smooth_alpha."""
+        with pytest.raises(exc_type):
+            BestModelCallback(output_dir=str(tmp_path), smooth_alpha=invalid_value)  # type: ignore[arg-type]
+
+    def test_smoothing_disabled_when_alpha_zero(self, tmp_path: Path) -> None:
+        """With smooth_alpha=0.0 (default), the raw metric drives checkpoint selection unchanged."""
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.0)
+        pl_module = _make_pl_module()
+
+        trainer = _make_trainer({"val/mAP_50_95": 0.42}, current_epoch=0)
+        cb.on_validation_end(trainer, pl_module)
+
+        # best_model_score reflects the raw value because no smoothing was applied.
+        assert cb.best_model_score is not None
+        assert cb.best_model_score.item() == pytest.approx(0.42)
+        # The smoothing accumulator must stay at its zero default when smoothing is disabled.
+        assert cb._smoothed_regular == 0.0
+
+    def test_smoothing_uses_ema_of_raw_metric(self, tmp_path: Path) -> None:
+        """With smooth_alpha=0.5, best_model_score reflects the smoothed EMA, not the raw value."""
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        pl_module = _make_pl_module()
+
+        trainer = _make_trainer({"val/mAP_50_95": 0.8}, current_epoch=0)
+        cb.on_validation_end(trainer, pl_module)
+
+        # EMA: 0.5 * 0.0 + 0.5 * 0.8 = 0.4 — the smoothed value, not the raw 0.8.
+        assert cb._smoothed_regular == pytest.approx(0.4)
+        assert cb.best_model_score is not None
+        assert cb.best_model_score.item() == pytest.approx(0.4)
+
+    def test_smoothing_prefers_steady_improvement_over_early_spike(self, tmp_path: Path) -> None:
+        """A late, smoothed run that beats the smoothed early spike wins the best checkpoint."""
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        pl_module = _make_pl_module()
+
+        # Epoch 0: raw=0.8 → smoothed=0.4
+        # Epoch 1: raw=0.3 → smoothed=0.35
+        # Epoch 2: raw=0.4 → smoothed=0.375
+        # Epoch 3: raw=0.6 → smoothed=0.4875  (overtakes the early spike's smoothed 0.4)
+        raw_per_epoch = [0.8, 0.3, 0.4, 0.6]
+        for epoch, value in enumerate(raw_per_epoch):
+            trainer = _make_trainer({"val/mAP_50_95": value}, current_epoch=epoch)
+            # Distinct global_step per epoch so ModelCheckpoint does not skip saves on
+            # the second-and-later calls due to its same-step guard.
+            trainer.global_step = epoch + 1
+            cb.on_validation_end(trainer, pl_module)
+
+        # The best smoothed value should be epoch-3's 0.4875, not epoch-0's 0.4.
+        assert cb._smoothed_regular == pytest.approx(0.4875)
+        assert cb.best_model_score is not None
+        assert cb.best_model_score.item() == pytest.approx(0.4875)
+
+    def test_callback_metrics_restored_after_super_call(self, tmp_path: Path) -> None:
+        """trainer.callback_metrics[monitor] must hold the original raw tensor after on_validation_end returns."""
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        pl_module = _make_pl_module()
+        trainer = _make_trainer({"val/mAP_50_95": 0.8}, current_epoch=0)
+        raw_tensor = trainer.callback_metrics["val/mAP_50_95"]
+
+        cb.on_validation_end(trainer, pl_module)
+
+        # The original tensor (raw value 0.8) must be back in callback_metrics so other
+        # callbacks and metrics.csv see the unsmoothed value.
+        assert trainer.callback_metrics["val/mAP_50_95"] is raw_tensor
+        assert trainer.callback_metrics["val/mAP_50_95"].item() == pytest.approx(0.8)
+
+    def test_state_dict_includes_smoothed_regular(self, tmp_path: Path) -> None:
+        """state_dict() must include _smoothed_regular so resumed training continues from the correct EMA value."""
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        pl_module = _make_pl_module()
+        trainer = _make_trainer({"val/mAP_50_95": 0.8}, current_epoch=0)
+        cb.on_validation_end(trainer, pl_module)
+
+        state = cb.state_dict()
+
+        assert "_smoothed_regular" in state
+        assert state["_smoothed_regular"] == pytest.approx(0.4)
+
+    def test_load_state_dict_restores_smoothed_regular(self, tmp_path: Path) -> None:
+        """load_state_dict() must restore _smoothed_regular so the EMA continues from the persisted value."""
+        cb_first = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        pl_module = _make_pl_module()
+        trainer = _make_trainer({"val/mAP_50_95": 0.8}, current_epoch=0)
+        cb_first.on_validation_end(trainer, pl_module)
+        saved_state = cb_first.state_dict()
+
+        cb_resumed = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        cb_resumed.load_state_dict(saved_state)
+
+        assert cb_resumed._smoothed_regular == pytest.approx(0.4)
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [
+            pytest.param(float("nan"), id="nan"),
+            pytest.param(float("inf"), id="inf"),
+            pytest.param(float("-inf"), id="neg_inf"),
+        ],
+    )
+    def test_load_state_dict_non_finite_smoothed_regular_resets_to_zero(self, tmp_path: Path, bad_value: float) -> None:
+        """load_state_dict() resets non-finite persisted _smoothed_regular values to 0.0."""
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        state = cb.state_dict()
+        state["_smoothed_regular"] = bad_value
+
+        cb.load_state_dict(state)
+
+        assert cb._smoothed_regular == 0.0
+
+    def test_load_state_dict_smoothed_regular_missing_key_defaults_to_zero(self, tmp_path: Path) -> None:
+        """load_state_dict() defaults _smoothed_regular to 0.0 when key is absent (backward compat)."""
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        cb._smoothed_regular = 0.42
+        state = cb.state_dict()
+        state.pop("_smoothed_regular")
+
+        cb.load_state_dict(state)
+
+        assert cb._smoothed_regular == 0.0
+
+    @pytest.mark.parametrize(
+        "skip_epochs",
+        [
+            pytest.param(2, id="skip_two"),
+        ],
+    )
+    def test_ema_accumulator_warms_up_during_skip_window(self, tmp_path: Path, skip_epochs: int) -> None:
+        """_smoothed_regular is pre-warmed by skip-window epochs so epoch 2 starts from a non-zero EMA.
+
+        Scenario: skip_best_epochs=2, smooth_alpha=0.5, metric=0.5 each epoch.
+        The EMA accumulator must update on epochs 0 and 1 (skip window) so that by epoch 2 it
+        is already non-zero.  No checkpoint file should be written during the skip window.
+        """
+        cb = BestModelCallback(
+            output_dir=str(tmp_path), monitor_regular="val/mAP_50_95", smooth_alpha=0.5, skip_best_epochs=skip_epochs
+        )
+        pl_module = _make_pl_module()
+
+        # Epochs 0 and 1 are inside the skip window.
+        for epoch in range(skip_epochs):
+            trainer_skip = _make_trainer({"val/mAP_50_95": 0.5}, current_epoch=epoch)
+            trainer_skip.global_step = epoch + 1
+            cb.on_validation_end(trainer_skip, pl_module)
+
+        # No checkpoint must have been written during the skip window.
+        assert not (tmp_path / "checkpoint_best_regular.pth").exists(), (
+            "checkpoint must not be written during the skip window (epochs 0 and 1)"
+        )
+
+        # Epoch 2 is the first eligible epoch — accumulator must be pre-warmed.
+        trainer_eligible = _make_trainer({"val/mAP_50_95": 0.5}, current_epoch=skip_epochs)
+        trainer_eligible.global_step = skip_epochs + 1
+        cb.on_validation_end(trainer_eligible, pl_module)
+
+        assert cb._smoothed_regular > 0.0, (
+            "_smoothed_regular must be > 0.0 at epoch 2 because the skip-window epochs warmed the EMA"
+        )
+
+    def test_callback_metrics_restored_when_super_raises(self, tmp_path: Path) -> None:
+        """trainer.callback_metrics[monitor] is restored in the finally block even when super() raises."""
+        from unittest.mock import patch
+
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
+        pl_module = _make_pl_module()
+        trainer = _make_trainer({"val/mAP_50_95": 0.8}, current_epoch=0)
+        raw_tensor = trainer.callback_metrics["val/mAP_50_95"]
+
+        with patch(
+            "rfdetr.training.callbacks.best_model.ModelCheckpoint.on_validation_end",
+            side_effect=RuntimeError("simulated failure"),
+        ):
+            with pytest.raises(RuntimeError, match="simulated failure"):
+                cb.on_validation_end(trainer, pl_module)
+
+        assert trainer.callback_metrics["val/mAP_50_95"] is raw_tensor
+
+
+# ---------------------------------------------------------------------------
 # TestCheckpointNotes
 # ---------------------------------------------------------------------------
 
@@ -1573,26 +1830,6 @@ class TestCheckpointNotes:
         """Notes supplied via TrainConfig are accessible under checkpoint['args']['notes']."""
         from rfdetr.config import TrainConfig
 
-        cb = BestModelCallback(output_dir=str(tmp_path))
-        trainer = _make_trainer({"val/mAP_50_95": 0.5})
-
-        pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, notes=notes)
-
-        cb.on_validation_end(trainer, pl_module)
-
-        checkpoint = torch.load(
-            tmp_path / "checkpoint_best_regular.pth",
-            map_location="cpu",
-            weights_only=False,
-        )
-        assert checkpoint["args"]["notes"] == notes
-
-    def test_notes_also_preserved_in_args_dict(self, tmp_path: Path) -> None:
-        """Notes are also accessible inside checkpoint['args']['notes'] via TrainConfig dump."""
-        from rfdetr.config import TrainConfig
-
-        notes = {"project": "ceramics", "batch": 7}
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
 
@@ -1655,3 +1892,103 @@ class TestCheckpointNotes:
             weights_only=False,
         )
         assert checkpoint["args"]["notes"] == notes
+
+
+# ---------------------------------------------------------------------------
+# _serialize_model_config — schema sync from live weights
+# ---------------------------------------------------------------------------
+
+
+def _make_kp_active_mask(schema: list[int]) -> torch.Tensor:
+    """Build a bool _kp_active_mask tensor from a keypoints-per-class schema list."""
+    max_kp = max(schema) if schema else 0
+    mask = torch.zeros(len(schema), max_kp, dtype=torch.bool)
+    for cls_idx, n in enumerate(schema):
+        mask[cls_idx, :n] = True
+    return mask
+
+
+class TestSerializeModelConfig:
+    """Verify _serialize_model_config syncs schema-critical fields from live model weights."""
+
+    def test_syncs_keypoint_schema_from_kp_active_mask(self) -> None:
+        """Stale num_keypoints_per_class in model_config is overridden by _kp_active_mask from weights."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = MagicMock()
+        pl_module.model_config.model_dump.return_value = {
+            "num_keypoints_per_class": [0, 17],
+            "num_classes": 2,
+        }
+        pl_module.model.state_dict.return_value = {
+            "_kp_active_mask": _make_kp_active_mask([0, 33]),
+        }
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is not None
+        assert result["num_keypoints_per_class"] == [0, 33]
+
+    def test_syncs_num_classes_from_class_embed_weight(self) -> None:
+        """Stale num_classes in model_config is overridden by class_embed.weight.shape[0] from weights."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = MagicMock()
+        pl_module.model_config.model_dump.return_value = {
+            "num_keypoints_per_class": [0, 33],
+            "num_classes": 90,
+        }
+        pl_module.model.state_dict.return_value = {
+            "class_embed.weight": torch.zeros(3, 256),
+        }
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is not None
+        assert result["num_classes"] == 2
+
+    def test_no_sync_when_kp_mask_absent(self) -> None:
+        """num_keypoints_per_class is left unchanged when model has no _kp_active_mask."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = MagicMock()
+        pl_module.model_config.model_dump.return_value = {
+            "num_keypoints_per_class": [0, 17],
+            "num_classes": 2,
+        }
+        pl_module.model.state_dict.return_value = {"w": torch.zeros(1)}
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is not None
+        assert result["num_keypoints_per_class"] == [0, 17]
+
+    def test_no_sync_when_field_absent_from_dumped_config(self) -> None:
+        """_kp_active_mask in weights does not insert num_keypoints_per_class when key absent from config."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = MagicMock()
+        pl_module.model_config.model_dump.return_value = {"num_classes": 2}
+        pl_module.model.state_dict.return_value = {
+            "_kp_active_mask": _make_kp_active_mask([0, 33]),
+        }
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is not None
+        assert "num_keypoints_per_class" not in result
+
+    def test_returns_none_when_model_config_absent(self) -> None:
+        """Returns None when pl_module exposes no model_config."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = None
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is None
+
+    def test_returns_dict_directly_for_dict_model_config(self) -> None:
+        """Returns a dict model_config as-is without any weight-based sync."""
+        pl_module = _make_pl_module()
+        raw = {"num_classes": 3, "num_keypoints_per_class": [0, 5]}
+        pl_module.model_config = raw
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is raw

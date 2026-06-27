@@ -386,7 +386,9 @@ class RFDETRDataModule(LightningDataModule):
                 inches. When omitted, the size is derived from the grid shape.
 
         Returns:
-            Matplotlib figure containing the annotated sample grid.
+            Matplotlib figure containing the annotated sample grid. When the
+            dataset includes instance masks, they are rendered as coloured
+            overlays before bounding boxes and labels.
 
         Raises:
             ValueError: If ``count`` or ``columns`` is not positive.
@@ -452,11 +454,19 @@ class RFDETRDataModule(LightningDataModule):
                 scale = torch.tensor([width, height, width, height], dtype=torch.float32)
                 xyxy = box_cxcywh_to_xyxy(boxes.detach().cpu()) * scale
                 class_ids = labels.detach().cpu().numpy().astype(int)
-                detections = sv.Detections(xyxy=xyxy.numpy().astype(np.float32), class_id=class_ids)
+                masks_tensor = target.get("masks")
+                mask_array = (
+                    masks_tensor.detach().cpu().numpy()
+                    if masks_tensor is not None and masks_tensor.numel() > 0
+                    else None
+                )
+                detections = sv.Detections(xyxy=xyxy.numpy().astype(np.float32), class_id=class_ids, mask=mask_array)
                 labels_text = [
                     class_names[class_id] if class_names is not None and class_id < len(class_names) else str(class_id)
                     for class_id in class_ids
                 ]
+                if mask_array is not None:
+                    scene = sv.MaskAnnotator().annotate(scene=scene, detections=detections)
                 scene = sv.BoxAnnotator(thickness=1).annotate(scene=scene, detections=detections)
                 scene = sv.LabelAnnotator(text_scale=0.4, text_padding=2).annotate(
                     scene=scene,

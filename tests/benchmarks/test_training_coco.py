@@ -16,7 +16,7 @@ import torch
 from torch.utils.data import Subset
 
 from rfdetr import RFDETRKeypointPreview
-from rfdetr.config import TrainConfig
+from rfdetr.config import KeypointTrainConfig
 from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 from rfdetr.utilities.reproducibility import seed_all
 
@@ -101,7 +101,7 @@ def _build_coco_keypoint_subset_from_val(
 
 def _build_subset_datamodule(
     model: RFDETRKeypointPreview,
-    train_config: TrainConfig,
+    train_config: KeypointTrainConfig,
     train_subset_size: int = 8,
     val_subset_size: int = 4,
 ) -> RFDETRDataModule:
@@ -134,7 +134,7 @@ def test_keypoint_training_subset_reports_loss_and_metric(
         train_images=64,
         val_images=16,
     )
-    train_config = TrainConfig(
+    train_config = KeypointTrainConfig(
         dataset_file="coco",
         dataset_dir=str(subset_root),
         output_dir=str(tmp_path / "train_output"),
@@ -205,7 +205,7 @@ def test_keypoint_training_full_coco_release_qualification(
         train_images=8,
         val_images=4,
     )
-    train_config = TrainConfig(
+    train_config = KeypointTrainConfig(
         dataset_file="coco",
         dataset_dir=str(subset_root),
         output_dir=str(tmp_path / "full_coco_keypoint_train"),

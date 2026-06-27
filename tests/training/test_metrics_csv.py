@@ -10,7 +10,8 @@ required.  After training, reads the CSVLogger output and asserts that every met
 is present and has at least one non-NaN value.
 
 Also verifies that ``train/loss`` is logged at the same scale as ``val/loss`` (i.e. NOT divided by ``grad_accum_steps``
-before logging)."""
+before logging).
+"""
 
 from __future__ import annotations
 
@@ -133,10 +134,15 @@ class TestDetectionMetricsCSV:
         class _FixedCriterion:
             weight_dict = {"loss_ce": 1.0}
 
-            def __call__(self, outputs, targets):
+            def num_boxes_for_targets(self, outputs, targets):
+                dummy = outputs.get("dummy", torch.zeros(1))
+                return torch.ones((), dtype=dummy.dtype, device=dummy.device)
+
+            def __call__(self, outputs, targets, num_boxes=None):
                 # Loss is always fixed_loss_value, connected to model params for gradient.
                 dummy = outputs.get("dummy", torch.zeros(1))
-                return {"loss_ce": dummy.mean() * 0 + fixed_loss_value}
+                denominator = self.num_boxes_for_targets(outputs, targets) if num_boxes is None else num_boxes
+                return {"loss_ce": (dummy.mean() * 0 + fixed_loss_value) / denominator}
 
         mc = base_model_config()
         tc = base_train_config(use_ema=False, run_test=False, grad_accum_steps=grad_accum_steps)

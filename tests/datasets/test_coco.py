@@ -239,6 +239,7 @@ class TestLoadClassesHierarchy:
     def test_category_named_none_does_not_empty_list(self, tmp_path: Path) -> None:
         """If a category is literally named 'none' and all supercategories are placeholders, the loader must return all
         class names instead of []."""
+
         categories = [
             {"id": 1, "name": "none", "supercategory": "none"},
             {"id": 2, "name": "dog", "supercategory": "none"},
@@ -249,8 +250,9 @@ class TestLoadClassesHierarchy:
         assert result == ["none", "dog", "cat"]
 
     def test_mixed_hierarchy_leaf_and_standalone_forwarding(self, tmp_path: Path) -> None:
-        """Mixed hierarchy: only leaf classes + standalone top-level categories
-        should be forwarded. Parent/grouping nodes are dropped.
+        """Mixed hierarchy: only leaf classes + standalone top-level categories should be forwarded.
+
+        Parent/grouping nodes are dropped.
         """
         categories = [
             {"id": 1, "name": "animals", "supercategory": "none"},
@@ -323,23 +325,31 @@ class TestRoboflowCocoKeypointFormat:
             patch_size=16,
             num_windows=4,
             use_grouppose_keypoints=True,
-            num_keypoints_per_class=[0, 17],
+            num_keypoints_per_class=[17],
             aug_config={},
             augmentation_backend="cpu",
         )
 
     def test_keypoint_category_maps_to_active_schema_slot(self, tmp_path: Path) -> None:
-        """A one-class Roboflow keypoint dataset maps person to label 1 for the `[0, 17]` preview schema."""
+        """A one-class Roboflow keypoint dataset maps person to label 0 for the `[17]` preview schema."""
         _write_roboflow_keypoint_coco(tmp_path / "train" / "_annotations.coco.json", category_id=0)
 
         dataset = build_roboflow_from_coco("train", self._make_args(tmp_path), resolution=64)
         _, target = dataset[0]
 
-        assert target["labels"].tolist() == [1]
+        assert target["labels"].tolist() == [0]
         assert target["keypoints"].shape == (1, 17, 3)
-        assert dataset.cat2label == {0: 1}
-        assert dataset.label2cat == {1: 0}
-        assert dataset.coco.label2cat == {1: 0}
+        assert dataset.cat2label == {0: 0}
+        assert dataset.label2cat == {0: 0}
+        assert dataset.coco.label2cat == {0: 0}
+
+    def test_standard_coco_cat_id_maps_to_active_schema_slot(self, tmp_path: Path) -> None:
+        """Standard COCO person (cat_id=1) maps to slot 0 under the active-first [17] schema."""
+        _write_roboflow_keypoint_coco(tmp_path / "train" / "_annotations.coco.json", category_id=1)
+
+        dataset = build_roboflow_from_coco("train", self._make_args(tmp_path), resolution=64)
+
+        assert dataset.cat2label == {1: 0}
 
     def test_keypoint_coco_without_keypoint_schema_raises(self, tmp_path: Path) -> None:
         """Keypoint mode should fail clearly if a COCO dataset has no keypoint metadata or annotations."""
@@ -699,10 +709,12 @@ def _make_coco_builder_args(tmp_path: Path, *, use_grouppose_keypoints: bool) ->
         do_random_resize_via_padding=False,
         patch_size=16,
         num_windows=4,
-        aug_config=None,
+        # Empty aug_config disables augmentation — these tests verify annotation routing, not aug.
+        aug_config={},
         augmentation_backend="cpu",
         use_grouppose_keypoints=use_grouppose_keypoints,
-        num_keypoints_per_class=[0, 17] if use_grouppose_keypoints else [],
+        num_keypoints_per_class=[17] if use_grouppose_keypoints else [],
+        keypoint_flip_pairs=[],
     )
 
 
@@ -715,7 +727,7 @@ class TestConvertCocoKeypoints:
             include_masks=False,
             include_keypoints=True,
             cat2label=None,
-            num_keypoints_per_class=[0, 17],
+            num_keypoints_per_class=[17],
         )
 
         _, target = converter(
@@ -728,12 +740,12 @@ class TestConvertCocoKeypoints:
         assert target["labels"].tolist() == [1]
 
     def test_person_category_stays_raw_coco_id(self) -> None:
-        """COCO person category ``1`` should stay aligned with keypoint schema slot ``1``."""
+        """COCO person category ``1`` remains raw when no category remapping is supplied."""
         converter = ConvertCoco(
             include_masks=False,
             include_keypoints=True,
             cat2label=None,
-            num_keypoints_per_class=[0, 17],
+            num_keypoints_per_class=[17],
         )
         _, target = converter(
             _IMAGE,
@@ -749,7 +761,7 @@ class TestConvertCocoKeypoints:
             include_masks=False,
             include_keypoints=True,
             cat2label=None,
-            num_keypoints_per_class=[0, 17],
+            num_keypoints_per_class=[17],
         )
         _, target = converter(
             _IMAGE,
@@ -828,7 +840,7 @@ class TestBuildCocoKeypointMode:
         assert ann_file.parent.name == "annotations"
         assert ann_file.name == "person_keypoints_train2017.json"
         assert kwargs["include_keypoints"] is True
-        assert kwargs["remap_category_ids"] is False
+        assert kwargs["remap_category_ids"] is True
 
     def test_default_mode_uses_instances_annotations_with_raw_coco_ids(self, tmp_path: Path) -> None:
         """Default COCO detection mode should keep raw sparse category IDs for pretrained checkpoints."""
@@ -847,3 +859,37 @@ class TestBuildCocoKeypointMode:
         assert ann_file.name == "instances_train2017.json"
         assert kwargs["include_keypoints"] is False
         assert kwargs["remap_category_ids"] is False
+
+
+class TestBuildKeypointCat2Label:
+    """Unit tests for ``_build_keypoint_cat2label`` schema alignment."""
+
+    def _person_coco(self, cat_id: int = 1) -> types.SimpleNamespace:
+        """Return a minimal COCO-like object with a single keypoint-bearing person category."""
+        return types.SimpleNamespace(
+            cats={cat_id: {"name": "person", "keypoints": ["nose"] * 17}},
+            anns={},
+        )
+
+    def test_legacy_bgfirst_schema_maps_person_to_slot_1(self) -> None:
+        """Legacy [0, 17] schema maps person (cat_id=1) to slot 1, not slot 0."""
+        from rfdetr.datasets.coco import _build_keypoint_cat2label
+
+        result = _build_keypoint_cat2label(self._person_coco(cat_id=1), num_keypoints_per_class=[0, 17])
+
+        assert result == {1: 1}
+
+    def test_mixed_detection_and_keypoint_categories(self) -> None:
+        """Non-keypoint categories fill free slots after keypoint categories are assigned."""
+        from rfdetr.datasets.coco import _build_keypoint_cat2label
+
+        coco = types.SimpleNamespace(
+            cats={
+                1: {"name": "person", "keypoints": ["nose"] * 17},
+                3: {"name": "car"},
+            },
+            anns={},
+        )
+        result = _build_keypoint_cat2label(coco, num_keypoints_per_class=[17])
+
+        assert result == {1: 0, 3: 1}

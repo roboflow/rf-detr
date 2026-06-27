@@ -7,19 +7,20 @@
 #
 """Synthetic dataset generation with COCO formatting."""
 
+from __future__ import annotations
+
 import json
 import logging
 import math
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import Literal
 
 import numpy as np
 from PIL import Image
 from supervision import Color, Detections, box_iou_batch, draw_filled_polygon
 from tqdm.auto import tqdm
-from typing_extensions import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class DatasetSplitRatios:
         if not 0.99 <= total <= 1.01:
             raise ValueError(f"Split ratios must sum to 1.0, got {total}")
 
-    def to_dict(self) -> Dict[str, float]:
+    def to_dict(self) -> dict[str, float]:
         """Convert to dictionary, filtering out zero ratios."""
         return {k: v for k, v in {"train": self.train, "val": self.val, "test": self.test}.items() if v > 0}
 
@@ -61,10 +62,10 @@ DEFAULT_SPLIT_RATIOS = DatasetSplitRatios()  # 70/20/10 split
 
 
 # Type alias for split ratios parameter
-SplitRatiosType = Union[DatasetSplitRatios, Tuple[float, ...], Dict[str, float]]
+SplitRatiosType = DatasetSplitRatios | tuple[float, ...] | dict[str, float]
 
 
-def _normalize_split_ratios(split_ratios: SplitRatiosType) -> Dict[str, float]:
+def _normalize_split_ratios(split_ratios: SplitRatiosType) -> dict[str, float]:
     """Normalize split ratios parameter to a dictionary.
 
     Args:
@@ -117,8 +118,8 @@ SYNTHETIC_COLORS = {"red": Color.RED, "green": Color.GREEN, "blue": Color.BLUE}
 
 
 def draw_synthetic_shape(
-    img: np.ndarray, shape: str, color: Color, center: Tuple[int, int], size: int
-) -> Tuple[np.ndarray, List[float]]:
+    img: np.ndarray, shape: str, color: Color, center: tuple[int, int], size: int
+) -> tuple[np.ndarray, list[float]]:
     """Draw a geometric shape on an image and return its COCO polygon.
 
     The polygon is computed first, then used for both rendering and annotation, so the two are always identical.
@@ -199,7 +200,7 @@ def generate_synthetic_sample(
     min_size_ratio: float = 0.1,
     max_size_ratio: float = 0.3,
     overlap_threshold: float = 0.1,
-) -> Tuple[np.ndarray, Detections]:
+) -> tuple[np.ndarray, Detections]:
     """Generate a single synthetic image and its detections.
 
     Args:
@@ -224,7 +225,7 @@ def generate_synthetic_sample(
 
     xyxys = []
     class_ids = []
-    polygons: List[List[float]] = []
+    polygons: list[list[float]] = []
     failed_attempts = 0
     max_failed_attempts = 3  # Allow some failures before reducing target count
 
@@ -294,7 +295,7 @@ def generate_synthetic_sample(
     return img, detections
 
 
-def _calculate_polygon_area(polygon: List[float]) -> float:
+def _calculate_polygon_area(polygon: list[float]) -> float:
     """Calculate polygon area from COCO-style flat coordinates."""
     if len(polygon) < 6 or len(polygon) % 2 != 0:
         return 0.0
@@ -307,9 +308,9 @@ def _calculate_polygon_area(polygon: List[float]) -> float:
 
 def _write_coco_json(
     annotations_path: Path,
-    classes: List[str],
-    file_paths: List[str],
-    detections_list: List[Detections],
+    classes: list[str],
+    file_paths: list[str],
+    detections_list: list[Detections],
     img_size: int,
     with_segmentation: bool = False,
 ) -> None:
@@ -484,8 +485,8 @@ def generate_coco_dataset(
         split_dir.mkdir(parents=True, exist_ok=True)
         annotations_path = split_dir / "_annotations.coco.json"
 
-        file_paths_ordered: List[str] = []
-        detections_ordered: List[Detections] = []
+        file_paths_ordered: list[str] = []
+        detections_ordered: list[Detections] = []
 
         logger.info(f"Generating {split} split with {len(split_indices)} images...")
         for i in tqdm(split_indices, desc=f"Generating {split} split"):
