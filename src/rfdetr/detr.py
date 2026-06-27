@@ -253,6 +253,7 @@ class RFDETR:
         self._optimized_batch_size = None
         self._optimized_resolution = None
         self._optimized_dtype = None
+        self._optimized_inplace = False
 
     def maybe_download_pretrain_weights(self):
         """Download pre-trained weights if they are not already downloaded.
@@ -853,13 +854,28 @@ class RFDETR:
 
     @_ensure_model_on_device
     def optimize_for_inference(
-        self, compile: bool = True, batch_size: int = 1, dtype: torch.dtype | str = torch.float32
+        self,
+        compile: bool = True,
+        batch_size: int = 1,
+        dtype: torch.dtype | str = torch.float32,
+        *,
+        inplace: bool = False,
     ) -> None:
         """Optimize the model for inference with optional JIT compilation and dtype casting.
 
         Operations are wrapped in the correct CUDA device context to prevent context leaks on multi-GPU setups. When
         ``compile=True`` the model is traced with ``torch.jit.trace`` using a dummy input of ``batch_size`` images at
-        the model's current resolution.
+        the model's current resolution. By default, optimization deep-copies the loaded model before exporting it so the
+        original module remains available. Set ``inplace=True`` for memory-constrained inference-only deployments; this
+        exports the loaded module itself, may cast it to ``dtype``, and clears ``model.model`` after optimization
+        succeeds. In-place optimization is destructive: :meth:`remove_optimized_model` becomes a no-op (issues
+        :class:`UserWarning`), and :meth:`export` raises :class:`RuntimeError`. Create or reload a new ``RFDETR``
+        instance to recover the original model.
+
+        If ``inplace=True`` and the underlying ``export()`` call mutates the module before raising (e.g. setting
+        internal flags and swapping ``forward``), the exception handler resets RFDETR wrapper flags to the unoptimized
+        state but cannot undo changes made inside ``export()``. Create a new RFDETR instance for reliable inference
+        after such a failure.
 
         Args:
             compile: If ``True``, trace the model with ``torch.jit.trace`` to obtain
@@ -868,11 +884,20 @@ class RFDETR:
             batch_size: Number of images the traced model will be optimized for. Ignored when ``compile=False``.
             dtype: Target floating-point dtype for the inference model. Accepts a
                 ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name (e.g. ``"float16"``). Defaults to
-                ``torch.float32``.
+                ``torch.float32``. When ``dtype`` differs from the model's current dtype, ``to()`` transiently
+                allocates both old and new parameter tensors simultaneously; peak memory during optimization is
+                approximately 1.5× the model weight size rather than 1×.
+            inplace: If ``True``, optimize ``model.model`` directly instead of deep-copying it. This is a destructive,
+                inference-only path because ``export()`` mutates the module and dtype casting mutates its parameters.
+                Requires ``compile=False``. With the default ``dtype=torch.float32``, the dtype cast is a no-op, so
+                memory savings come only from clearing the base model reference rather than from dtype reduction.
 
         Raises:
             TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
                 string that does not correspond to a valid ``torch.dtype`` attribute.
+            ValueError: If ``dtype`` is not a floating-point dtype, or if ``inplace=True`` is used with
+                ``compile=True``.
+            RuntimeError: If the base model has already been cleared by a previous inplace optimization.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -900,11 +925,24 @@ class RFDETR:
             >>> model._optimized_batch_size = None
             >>> model._optimized_resolution = None
             >>> model._optimized_dtype = None
-            >>> model.optimize_for_inference(compile=False, dtype="float16")
+            >>> model._optimized_inplace = False
+            >>> # Standard (non-inplace) optimization — reversible:
+            >>> model.optimize_for_inference(compile=False)
+            >>> model._is_optimized_for_inference
+            True
+            >>> model._optimized_inplace
+            False
+            >>> model.remove_optimized_model()
+            >>> model._is_optimized_for_inference
+            False
+            >>> # Inplace optimization — destructive, cannot be reversed:
+            >>> model.optimize_for_inference(compile=False, dtype="float16", inplace=True)
             >>> model._is_optimized_for_inference
             True
             >>> model._optimized_dtype
             torch.float16
+            >>> model._optimized_inplace
+            True
         """
         if isinstance(dtype, str):
             try:
@@ -913,24 +951,39 @@ class RFDETR:
                 raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {dtype!r}") from None
         if not isinstance(dtype, torch.dtype):
             raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
+        if not dtype.is_floating_point:
+            raise ValueError(f"dtype must be a floating-point torch.dtype or string name of one, got {dtype}")
+        if inplace and compile:
+            raise ValueError(
+                "optimize_for_inference(inplace=True) requires compile=False. "
+                "torch.jit.trace retains references to the original parameter storage in the returned "
+                "ScriptModule, so setting model.model=None would not free the weight tensors and "
+                "inplace=True would not reduce memory usage."
+            )
 
         # Clear any previously optimized state before starting a new optimization run.
         self.remove_optimized_model()
+
+        if self.model.model is None:
+            raise RuntimeError(
+                "Cannot optimize: the base model has been cleared by a previous inplace optimization. "
+                "Create or reload a new RFDETR instance."
+            )
 
         device = self.model.device
         cuda_ctx = torch.cuda.device(device) if device.type == "cuda" else contextlib.nullcontext()
 
         try:
             with cuda_ctx:
-                self.model.inference_model = deepcopy(self.model.model)
-                self.model.inference_model.eval()
-                self.model.inference_model.export()
+                inference_model = self.model.model if inplace else deepcopy(self.model.model)
+                inference_model.eval()
+                inference_model.export()
 
-                self.model.inference_model = self.model.inference_model.to(dtype=dtype)
+                inference_model = inference_model.to(dtype=dtype)
 
                 if compile:
-                    self.model.inference_model = torch.jit.trace(
-                        self.model.inference_model,
+                    inference_model = torch.jit.trace(
+                        inference_model,
                         torch.randn(
                             batch_size,
                             self.model_config.num_channels,
@@ -944,6 +997,14 @@ class RFDETR:
                     self._optimized_batch_size = batch_size
 
                 # Set success flags only after all operations complete.
+                self.model.inference_model = inference_model
+                # _optimized_inplace must be set before the destructive clear so the cleanup
+                # guard in remove_optimized_model() sees the correct state if an exception fires
+                # between this assignment and the None clear (extremely unlikely in normal Python
+                # but eliminates a theoretical zombie-state window).
+                self._optimized_inplace = inplace
+                if inplace:
+                    self.model.model = None
                 self._optimized_resolution = self.model.resolution
                 self._is_optimized_for_inference = True
                 self._optimized_dtype = dtype
@@ -957,7 +1018,9 @@ class RFDETR:
         """Remove the optimized inference model and reset all optimization flags.
 
         Clears ``model.inference_model`` and resets all internal state set by :meth:`optimize_for_inference`. Safe to
-        call even if the model has not been optimized.
+        call even if the model has not been optimized. When the model was optimized with ``inplace=True``, this method
+        issues a :class:`UserWarning` and returns without modifying state — the original module cannot be restored
+        because ``export()`` and dtype casting mutate it; create or reload a new ``RFDETR`` instance instead.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -985,17 +1048,70 @@ class RFDETR:
             >>> model._optimized_batch_size = None
             >>> model._optimized_resolution = None
             >>> model._optimized_dtype = None
+            >>> model._optimized_inplace = False
             >>> model.optimize_for_inference(compile=False)
             >>> model.remove_optimized_model()
             >>> model._is_optimized_for_inference
             False
         """
+        if getattr(self, "_optimized_inplace", False):
+            warnings.warn(
+                "remove_optimized_model() has no effect after inplace optimization — the original model "
+                "cannot be restored because export() and dtype casting mutate it. "
+                "Create or reload a new RFDETR instance instead.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
         self.model.inference_model = None
         self._is_optimized_for_inference = False
         self._optimized_has_been_compiled = False
         self._optimized_batch_size = None
         self._optimized_resolution = None
         self._optimized_dtype = None
+        self._optimized_inplace = False
+
+    @property
+    def is_optimized_inplace(self) -> bool:
+        """Whether the model was optimized with ``inplace=True``.
+
+        Returns ``True`` after a successful :meth:`optimize_for_inference` call with ``inplace=True``,
+        meaning the base model has been cleared and :meth:`remove_optimized_model` is a no-op.
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> import torch
+            >>> class _TinyModel(torch.nn.Module):
+            ...     def __init__(self):
+            ...         super().__init__()
+            ...         self.linear = torch.nn.Linear(1, 1)
+            ...     def forward(self, x):
+            ...         return {"pred_boxes": self.linear(x[:, :1, :1, :1].squeeze(-1).squeeze(-1))}
+            ...     def export(self):
+            ...         return None
+            >>> class _TinyContext:
+            ...     def __init__(self):
+            ...         self.device = torch.device("cpu")
+            ...         self.resolution = 28
+            ...         self.model = _TinyModel()
+            ...         self.inference_model = None
+            >>> model = object.__new__(RFDETR)
+            >>> model.model_config = SimpleNamespace(num_channels=3)
+            >>> model.model = _TinyContext()
+            >>> model._is_optimized_for_inference = False
+            >>> model._has_warned_about_not_being_optimized_for_inference = False
+            >>> model._optimized_has_been_compiled = False
+            >>> model._optimized_batch_size = None
+            >>> model._optimized_resolution = None
+            >>> model._optimized_dtype = None
+            >>> model._optimized_inplace = False
+            >>> model.is_optimized_inplace
+            False
+            >>> model.optimize_for_inference(compile=False, inplace=True)
+            >>> model.is_optimized_inplace
+            True
+        """
+        return getattr(self, "_optimized_inplace", False)
 
     def export(
         self,
@@ -1081,6 +1197,13 @@ class RFDETR:
             raise
 
         device = self.model.device
+
+        if getattr(self, "_optimized_inplace", False) or self.model.model is None:
+            raise RuntimeError(
+                "RFDETR.export() is not available after inplace optimization. "
+                "The original model has been cleared. Create a new RFDETR instance."
+            )
+
         # Move the live model to CPU before deepcopying and keep it there during export. ``nn.Module.to(...)`` mutates
         # in place, so this frees GPU memory for the local export copy, ONNX tracing, TFLite conversion, and any
         # calibration tensors. The ``finally`` block restores the live model even if export or conversion raises.
@@ -1767,21 +1890,31 @@ class RFDETR:
             ):
                 # this could happen if someone manually changes self.model.resolution after optimizing the model,
                 # or if predict(shape=...) is used with a shape that doesn't match the compiled square resolution.
+                _restore_hint = (
+                    " Create a new RFDETR instance to use a different resolution."
+                    if getattr(self, "_optimized_inplace", False)
+                    else " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
+                )
                 raise ValueError(
                     f"Resolution mismatch. "
                     f"Model was optimized for resolution {self._optimized_resolution}x{self._optimized_resolution}, "
-                    f"but got {batch_tensor.shape[2]}x{batch_tensor.shape[3]}."
-                    " You can explicitly remove the optimized model by calling model.remove_optimized_model().",
+                    f"but got {batch_tensor.shape[2]}x{batch_tensor.shape[3]}." + _restore_hint,
                 )
             if self._optimized_has_been_compiled:
                 if self._optimized_batch_size != batch_tensor.shape[0]:
+                    _restore_hint = (
+                        " Create a new RFDETR instance to recompile for a different batch size."
+                        if getattr(self, "_optimized_inplace", False)
+                        else (
+                            " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
+                            " Alternatively, you can recompile the optimized model for a different batch size"
+                            " by calling model.optimize_for_inference(batch_size=<new_batch_size>)."
+                        )
+                    )
                     raise ValueError(
                         f"Batch size mismatch. "
                         f"Optimized model was compiled for batch size {self._optimized_batch_size}, "
-                        f"but got {batch_tensor.shape[0]}."
-                        " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
-                        " Alternatively, you can recompile the optimized model for a different batch size"
-                        " by calling model.optimize_for_inference(batch_size=<new_batch_size>).",
+                        f"but got {batch_tensor.shape[0]}." + _restore_hint,
                     )
 
         if self._is_optimized_for_inference:

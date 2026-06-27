@@ -278,6 +278,164 @@ class TestOptimizeForInferenceState:
         assert rfdetr._optimized_resolution is None
         assert rfdetr._optimized_has_been_compiled is False
         assert rfdetr._optimized_batch_size is None
+        assert rfdetr._optimized_inplace is False
+
+
+class TestOptimizeForInferenceInplace:
+    """Tests for the low-memory in-place optimization path."""
+
+    def test_inplace_false_keeps_deepcopy_behavior(self) -> None:
+        """The default path should still deep-copy the loaded module."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+        copied_model = _FakeModel()
+
+        with patch("rfdetr.detr.deepcopy", return_value=copied_model) as mock_deepcopy:
+            rfdetr.optimize_for_inference(compile=False)
+
+        mock_deepcopy.assert_called_once_with(original_model)
+        assert rfdetr.model.model is original_model
+        assert rfdetr.model.inference_model is copied_model
+        assert rfdetr._is_optimized_for_inference is True
+        assert rfdetr._optimized_inplace is False
+
+    def test_inplace_true_compile_false_does_not_deepcopy(self) -> None:
+        """Inplace=True with compile=False should use the loaded module directly."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+
+        with patch("rfdetr.detr.deepcopy") as mock_deepcopy:
+            rfdetr.optimize_for_inference(compile=False, inplace=True)
+
+        mock_deepcopy.assert_not_called()
+        assert rfdetr.model.model is None
+        assert rfdetr.model.inference_model is original_model
+        assert rfdetr._is_optimized_for_inference is True
+        assert rfdetr._optimized_inplace is True
+
+    def test_remove_optimized_model_after_inplace_warns_and_preserves_state(self) -> None:
+        """remove_optimized_model() after inplace optimization issues UserWarning and no-ops."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+
+        rfdetr.optimize_for_inference(compile=False, inplace=True)
+
+        with pytest.warns(UserWarning, match="no effect after inplace optimization"):
+            rfdetr.remove_optimized_model()
+
+        assert rfdetr.model.model is None
+        assert rfdetr.model.inference_model is original_model
+        assert rfdetr._is_optimized_for_inference is True
+        assert rfdetr._optimized_inplace is True
+
+    def test_second_optimize_after_inplace_raises_runtime_error(self) -> None:
+        """Calling optimize_for_inference() again after inplace=True raises RuntimeError."""
+        rfdetr = _FakeRFDETR()
+
+        rfdetr.optimize_for_inference(compile=False, inplace=True)
+
+        with pytest.raises(RuntimeError, match="base model has been cleared"):
+            rfdetr.optimize_for_inference(compile=False)
+
+    def test_inplace_true_default_dtype_float32_does_not_cast(self) -> None:
+        """Inplace=True with default dtype (float32) leaves weights unchanged — no casting occurs."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+        original_dtype = original_model.linear.weight.dtype
+
+        rfdetr.optimize_for_inference(compile=False, inplace=True)
+
+        assert rfdetr.model.inference_model is original_model
+        assert original_model.linear.weight.dtype == original_dtype
+        assert rfdetr._optimized_dtype == torch.float32
+        assert rfdetr._optimized_has_been_compiled is False
+        assert rfdetr._optimized_batch_size is None
+
+    @pytest.mark.parametrize(
+        "dtype",
+        [
+            pytest.param(torch.float16, id="float16"),
+            pytest.param(torch.bfloat16, id="bfloat16"),
+        ],
+    )
+    def test_inplace_true_allows_destructive_dtype_casting(self, dtype: torch.dtype) -> None:
+        """In-place optimization may cast the original module to the target dtype."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+
+        rfdetr.optimize_for_inference(compile=False, dtype=dtype, inplace=True)
+
+        assert rfdetr.model.model is None
+        assert rfdetr.model.inference_model is original_model
+        assert original_model.linear.weight.dtype == dtype
+        assert rfdetr._optimized_dtype == dtype
+
+    def test_inplace_export_failure_keeps_base_model(self) -> None:
+        """Export failure in the in-place path should not clear model.model."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+
+        with (
+            patch("rfdetr.detr.deepcopy") as mock_deepcopy,
+            patch.object(original_model, "export", side_effect=RuntimeError("export failed")),
+            pytest.raises(RuntimeError, match="export failed"),
+        ):
+            rfdetr.optimize_for_inference(compile=False, inplace=True)
+
+        mock_deepcopy.assert_not_called()
+        assert rfdetr.model.model is original_model
+        assert rfdetr.model.inference_model is None
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr._optimized_inplace is False
+
+    @pytest.mark.parametrize(
+        "dtype",
+        [
+            pytest.param(torch.int8, id="torch-int8"),
+            pytest.param("int8", id="string-int8"),
+        ],
+    )
+    def test_inplace_non_floating_dtype_raises_before_export(self, dtype: torch.dtype | str) -> None:
+        """In-place optimization rejects non-floating dtypes before mutating the base model."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+
+        with (
+            patch("rfdetr.detr.deepcopy") as mock_deepcopy,
+            patch.object(original_model, "export") as mock_export,
+            pytest.raises(ValueError, match="floating-point torch.dtype"),
+        ):
+            rfdetr.optimize_for_inference(compile=False, dtype=dtype, inplace=True)
+
+        mock_deepcopy.assert_not_called()
+        mock_export.assert_not_called()
+        assert rfdetr.model.model is original_model
+        assert rfdetr.model.inference_model is None
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr._optimized_inplace is False
+
+    def test_inplace_compile_true_raises_before_export_or_trace(self) -> None:
+        """In-place optimization rejects compile=True before mutating the base model."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+
+        with (
+            patch("rfdetr.detr.deepcopy") as mock_deepcopy,
+            patch.object(original_model, "export") as mock_export,
+            patch("torch.jit.trace") as mock_trace,
+            pytest.raises(ValueError, match="inplace=True.*compile=False"),
+        ):
+            rfdetr.optimize_for_inference(compile=True, inplace=True)
+
+        mock_deepcopy.assert_not_called()
+        mock_export.assert_not_called()
+        mock_trace.assert_not_called()
+        assert rfdetr.model.model is original_model
+        assert rfdetr.model.inference_model is None
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr._optimized_has_been_compiled is False
+        assert rfdetr._optimized_batch_size is None
+        assert rfdetr._optimized_inplace is False
 
 
 class TestOptimizeForInferenceExceptionRecovery:
@@ -340,3 +498,30 @@ class TestOptimizeForInferenceExceptionRecovery:
 
         assert rfdetr._is_optimized_for_inference is False
         assert rfdetr.model.inference_model is None
+
+    def test_inplace_export_failure_module_mutations_are_not_undone(self) -> None:
+        """RFDETR resets flags on export failure but cannot undo module-level mutations.
+
+        Production export() may mutate the module (e.g. forward->forward_export) before raising; those changes are not
+        reversed by the exception-recovery path.
+        """
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+        mutated: dict[str, bool] = {"happened": False}
+
+        def _mutating_export() -> None:
+            mutated["happened"] = True
+            raise RuntimeError("export failed mid-mutation")
+
+        with (
+            patch("rfdetr.detr.deepcopy"),
+            patch.object(original_model, "export", side_effect=_mutating_export),
+            pytest.raises(RuntimeError, match="export failed mid-mutation"),
+        ):
+            rfdetr.optimize_for_inference(compile=False, inplace=True)
+
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr._optimized_inplace is False
+        assert rfdetr.model.model is original_model
+        # The mutation happened and cannot be undone by RFDETR's recovery path
+        assert mutated["happened"] is True
