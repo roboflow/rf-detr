@@ -310,7 +310,6 @@ overrides = [
     "rfdetr.models.heads.detection",
     "rfdetr.models.heads.segmentation",
     "rfdetr.models.lwdetr",
-    "rfdetr.models.math",
     "rfdetr.models.matcher",
     "rfdetr.models.ops.functions.ms_deform_attn_func",
     "rfdetr.models.ops.modules.ms_deform_attn",
