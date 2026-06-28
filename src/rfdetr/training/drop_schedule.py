@@ -43,23 +43,21 @@ def drop_scheduler(
         One-dimensional array of length ``epochs * niter_per_ep`` containing the drop rate per iteration.
     """
     assert mode in ["standard", "early", "late"]
+    total_iters = epochs * niter_per_ep
     if mode == "standard":
-        return np.full(epochs * niter_per_ep, drop_rate)
+        return np.full(total_iters, drop_rate)
 
     early_iters = cutoff_epoch * niter_per_ep
-    late_iters = (epochs - cutoff_epoch) * niter_per_ep
+    result = np.zeros(total_iters, dtype=np.float64)
 
     if mode == "early":
         assert schedule in ["constant", "linear"]
         if schedule == "constant":
-            early_schedule = np.full(early_iters, drop_rate)
-        elif schedule == "linear":
-            early_schedule = np.linspace(drop_rate, 0, early_iters)
-        final_schedule = np.concatenate((early_schedule, np.full(late_iters, 0)))
+            result[:early_iters] = drop_rate
+        else:
+            result[:early_iters] = np.linspace(drop_rate, 0, early_iters)
     elif mode == "late":
         assert schedule in ["constant"]
-        early_schedule = np.full(early_iters, 0)
-        final_schedule = np.concatenate((early_schedule, np.full(late_iters, drop_rate)))
+        result[early_iters:] = drop_rate
 
-    assert len(final_schedule) == epochs * niter_per_ep
-    return final_schedule
+    return result
