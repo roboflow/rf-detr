@@ -5,10 +5,23 @@ All notable changes to RF-DETR are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.8.3] — 2026-06-27
+
+### Added
+
+- `optimize_for_inference(inplace=True)` — new keyword-only argument on `RFDETR.optimize_for_inference()`; skips the deep-copy of the base model for memory-constrained inference-only deployments (~0.5× model-weight peak memory reduction). Requires `compile=False`. After inplace optimization, `export()` raises `RuntimeError` and `remove_optimized_model()` issues a `UserWarning` and returns cleanly instead of silently clearing state. New `RFDETR.is_optimized_inplace` property returns `True` after a successful inplace optimization. ([#1089](https://github.com/roboflow/rf-detr/pull/1089))
+- `CocoKeypointSchema.keypoint_flip_pairs` and `YoloKeypointSchema.keypoint_flip_pairs` fields — horizontal-flip swap pairs inferred automatically from keypoint names (left/right naming convention) for COCO schemas, and from `flip_idx` permutation for YOLO schemas. Auto-populated by `infer_coco_keypoint_schema` and `infer_yolo_keypoint_schema` respectively. ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
+- `infer_coco_keypoint_schema` and `infer_yolo_keypoint_schema` re-exported from `rfdetr.datasets` (previously only accessible from `rfdetr.datasets._keypoint_schema`). ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
+
+### Changed
+
+- Horizontal flip detection in `AlbumentationsWrapper` now uses Albumentations `ReplayCompose` replay metadata instead of heuristic bbox-center mirroring; eliminates false positives on non-flip transforms that shift box centers. Falls back to `alb.Compose` with a `UserWarning` when `albumentations <1.3` is detected. ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
+- Keypoint schema inference now supports native COCO format (`dataset_file="coco"`) in addition to `"roboflow"` and `"yolo"`. ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
+- `_keypoint_schema_cache` key changed from `dataset_dir` (string) to `(dataset_file, dataset_dir)` tuple to prevent cross-format cache collisions when the same directory is used with different dataset formats. ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
 
 ### Fixed
 
+- Predicted bounding boxes are now clamped to image bounds `[0, width] × [0, height]` in `PostProcess._postprocess_boxes()`; model regression is unbounded and could previously produce negative or out-of-frame coordinates. `scale_fct` is also cast to `boxes.dtype` before multiplication to prevent dtype mismatch when boxes are `float16`. ([#1168](https://github.com/roboflow/rf-detr/pull/1168))
 - `SegmentationTrainConfig.cls_loss_coef` default corrected from `5.0` to `1.0` to restore the pre-v1.7 effective classification loss weight. The `5.0` value was present in `SegmentationTrainConfig` since v1.6 but was dead code until the v1.7 TrainConfig ownership migration activated it, silently over-penalising classification relative to mask losses during segmentation fine-tuning. To reproduce pre-fix behaviour, pass `cls_loss_coef=5.0` explicitly. ([#1165](https://github.com/roboflow/rf-detr/pull/1165))
 - `KeypointTrainConfig.keypoint_nll_loss_coef` default restored to `1.0` to align with the other keypoint loss terms (`keypoint_l1_loss_coef`, `keypoint_findable_loss_coef`, `keypoint_visible_loss_coef`). The previous default of `0.5` was set to dampen OKS@75 oscillation but under-weighted the NLL loss relative to other terms in practice. ([#1165](https://github.com/roboflow/rf-detr/pull/1165))
 
