@@ -159,10 +159,10 @@
         });
       }
       labelCurrentVersion();
-      new MutationObserver(labelCurrentVersion).observe(document.body, {
-        childList: true,
-        subtree: true,
-      });
+      const versionMenu = document.querySelector('.md-version');
+      if (versionMenu) {
+        new MutationObserver(labelCurrentVersion).observe(versionMenu, { childList: true, subtree: true });
+      }
     </script>
   </nav>
 

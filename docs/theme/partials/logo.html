@@ -1,5 +1,5 @@
 {% if config.theme.logo %}
-  <img src="{{ config.theme.logo | url }}" alt="logo" width="24" height="24">
+  <img src="{{ config.theme.logo | url }}" alt="{{ config.site_name }}" width="24" height="24">
 {% else %}
   {% set icon = config.theme.icon.logo or "material/library" %}
   {% include ".icons/" ~ icon ~ ".svg" %}
