@@ -33,7 +33,7 @@ def drop_scheduler(
         drop_rate: Target drop probability.
         epochs: Total number of training epochs.
         niter_per_ep: Number of optimizer steps per epoch.
-        cutoff_epoch: Number of epochs in the initial schedule phase. Phases split at cutoff_epoch * niter_per_ep steps
+        cutoff_epoch: Number of epochs in the initial schedule phase. Phases split at cutoff_epoch * niter_per_ep steps.
             Ignored when ``mode`` is ``"standard"``.
         mode: Scheduling strategy: ``"standard"``, ``"early"``, or ``"late"``.
         schedule: Shape of the initial schedule phase in ``"early"`` mode: ``"constant"`` or ``"linear"``.
@@ -46,7 +46,8 @@ def drop_scheduler(
     total_iters = epochs * niter_per_ep
     if mode == "standard":
         return np.full(total_iters, drop_rate)
-
+    if not 0 <= cutoff_epoch <= epochs:
+        raise ValueError(f"cutoff_epoch must be in [0, {epochs}], but got {cutoff_epoch}")
     early_iters = cutoff_epoch * niter_per_ep
     result = np.zeros(total_iters, dtype=np.float64)
 

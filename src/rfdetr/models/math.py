@@ -23,6 +23,7 @@ if float(torchvision.__version__.split(".")[1]) < 7.0:
 
 def accuracy(output: torch.Tensor, target: torch.Tensor, topk: tuple[int, ...] = (1,)) -> list[torch.Tensor]:
     """Computes the precision@k for the specified values of k."""
+    # Context manager avoids mypy untyped-decorator on @torch.no_grad()
     with torch.no_grad():
         if target.numel() == 0:
             return [torch.zeros([], device=output.device)]
