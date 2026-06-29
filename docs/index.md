@@ -28,10 +28,10 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
 !!! example "Installation"
 
-    [![version](https://badge.fury.io/py/rfdetr.svg){ width="125" height="20" }](https://badge.fury.io/py/rfdetr)
-    [![python-version](https://img.shields.io/pypi/pyversions/rfdetr){ width="198" height="20" }](https://badge.fury.io/py/rfdetr)
-    [![license](https://img.shields.io/pypi/l/rfdetr){ width="164" height="20" }](https://github.com/roboflow/rfdetr/blob/main/LICENSE)
-    [![downloads](https://img.shields.io/pypi/dm/rfdetr){ width="258" height="20" }](https://pypistats.org/packages/rfdetr)
+    <a href="https://badge.fury.io/py/rfdetr"><img alt="version" src="https://badge.fury.io/py/rfdetr.svg" width="125" height="20" /></a>
+    <a href="https://badge.fury.io/py/rfdetr"><img alt="python-version" src="https://img.shields.io/pypi/pyversions/rfdetr" width="198" height="20" /></a>
+    <a href="https://github.com/roboflow/rfdetr/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/pypi/l/rfdetr" width="164" height="20" /></a>
+    <a href="https://pypistats.org/packages/rfdetr"><img alt="downloads" src="https://img.shields.io/pypi/dm/rfdetr" width="258" height="20" /></a>
 
     === "pip"
 
