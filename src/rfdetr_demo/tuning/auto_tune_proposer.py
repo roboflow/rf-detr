@@ -14,6 +14,8 @@ from rfdetr_demo.inference.temporal_filter import KeypointTemporalFilter, Motion
 from rfdetr_demo.inference.tune_cache import TunePreviewCache, deserialize_key_points
 from rfdetr_demo.tracking.keypoints_ops import attach_track_ids
 from rfdetr_demo.tracking.person_associator import PersonAssociator
+from rfdetr_demo.tracking.pipeline import PersonTrackPipeline
+from rfdetr_demo.tracking.types import PersonTrackSettings
 from rfdetr_demo.tuning.auto_tune_metrics import count_persons
 from rfdetr_demo.tuning.auto_tune_types import (
     AutoTuneEffectiveness,
@@ -81,10 +83,27 @@ def propose_parameters(
                 " -> 閾値 +0.05",
             )
         else:
-            reasons.append(
-                f"人数変動 ({metrics.person_count_min}-{metrics.person_count_max})"
-                " -> 検出安定化レイヤを優先（閾値維持）",
-            )
+            if (
+                metrics.stabilized_person_count_std < metrics.person_count_std * 0.7
+                and metrics.stabilized_person_count_std <= 0.8
+            ):
+                reasons.append(
+                    f"人数変動 ({metrics.person_count_min}-{metrics.person_count_max})"
+                    f" は安定化で吸収 (σ {metrics.person_count_std:.2f}"
+                    f"→{metrics.stabilized_person_count_std:.2f}) — 閾値維持",
+                )
+            else:
+                reasons.append(
+                    f"人数変動 ({metrics.person_count_min}-{metrics.person_count_max})"
+                    " -> 検出安定化レイヤを優先（閾値維持）",
+                )
+
+    if anomalies.high_track_break_rate:
+        threshold = clamp(threshold - 0.03, 0.45, 0.85)
+        reasons.append(
+            f"トラック途切れ率高 ({metrics.track_break_rate:.0%})"
+            " -> 閾値 -0.03（代替: RFDETR_MAX_MISSED を増やす）",
+        )
 
     if anomalies.high_low_confidence_ratio or anomalies.low_mean_confidence:
         target = clamp(0.15 + metrics.low_confidence_ratio * 0.5, 0.15, 0.45)
@@ -155,8 +174,14 @@ def simulate_rejection_rate(
         frame_stride=cache.frame_stride,
     )
     associator = PersonAssociator()
+    track_pipeline = PersonTrackPipeline(
+        settings=PersonTrackSettings(),
+        frame_width=frame_width,
+        frame_height=frame_height,
+    )
 
     person_counts: list[int] = []
+    stabilized_counts: list[int] = []
     total_joints = 0
 
     for entry in cache.entries:
@@ -164,6 +189,10 @@ def simulate_rejection_rate(
             continue
         raw = deserialize_key_points(entry.key_points_payload)
         person_counts.append(count_persons(raw, threshold))
+        track_result = track_pipeline.apply(raw, entry.frame_index)
+        stabilized_counts.append(
+            track_result.stats.active_track_count - track_result.stats.ghost_count,
+        )
         display = key_points_for_display(raw, keypoint_threshold=keypoint_threshold)
         for det_index in range(len(display)):
             visible = display.visible
@@ -178,7 +207,9 @@ def simulate_rejection_rate(
             entry.frame_index,
         )
 
-    person_std = float(np.std(person_counts)) if person_counts else 0.0
+    person_std = float(np.std(stabilized_counts)) if stabilized_counts else 0.0
+    if not stabilized_counts:
+        person_std = float(np.std(person_counts)) if person_counts else 0.0
     rejection_rate = temporal_filter.stats.speed_rejections / max(total_joints, 1)
     return rejection_rate, person_std
 

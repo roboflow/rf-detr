@@ -116,6 +116,88 @@ class TrackStore:
             return self.settings.sticky_max_missed
         return self.settings.max_missed
 
+    def _expected_count(self) -> int:
+        return max(0, self.settings.expected_person_count)
+
+    def _hold_limit_for(self, track: TrackSnapshot, current_output_count: int) -> int:
+        """Extend hold when output is below the expected person count."""
+        base = self._max_missed_for(track)
+        expected = self._expected_count()
+        if (
+            expected > 0
+            and self.settings.fill_below_expected
+            and current_output_count < expected
+        ):
+            return base + self.settings.fill_extra_missed
+        return base
+
+    def _cap_output(
+        self,
+        output_parts: list[sv.KeyPoints],
+        ghost_flags: list[bool],
+        track_ids: list[int],
+        diagnostics: list[TrackDiagnostic],
+    ) -> tuple[list[sv.KeyPoints], list[bool], list[int], list[TrackDiagnostic]]:
+        """Drop lowest-priority tracks when count exceeds ``expected_person_count``."""
+        expected = self._expected_count()
+        if expected <= 0 or len(output_parts) <= expected:
+            return output_parts, ghost_flags, track_ids, diagnostics
+
+        scored: list[tuple[int, int, float]] = []
+        for index, (key_points, is_ghost) in enumerate(zip(output_parts, ghost_flags, strict=True)):
+            scored.append(
+                (
+                    index,
+                    0 if is_ghost else 1,
+                    detection_confidence(key_points, 0),
+                ),
+            )
+        scored.sort(key=lambda row: (row[1], row[2]), reverse=True)
+        keep = {row[0] for row in scored[:expected]}
+        dropped_ids = {track_ids[index] for index in range(len(track_ids)) if index not in keep}
+        if dropped_ids:
+            self._tracks = [track for track in self._tracks if track.track_id not in dropped_ids]
+
+        trimmed_parts: list[sv.KeyPoints] = []
+        trimmed_flags: list[bool] = []
+        trimmed_ids: list[int] = []
+        trimmed_diagnostics: list[TrackDiagnostic] = []
+        for index in sorted(keep):
+            trimmed_parts.append(output_parts[index])
+            trimmed_flags.append(ghost_flags[index])
+            trimmed_ids.append(track_ids[index])
+            trimmed_diagnostics.append(diagnostics[index])
+        return trimmed_parts, trimmed_flags, trimmed_ids, trimmed_diagnostics
+
+    def _finalize_output(
+        self,
+        output_parts: list[sv.KeyPoints],
+        ghost_flags: list[bool],
+        track_ids: list[int],
+        diagnostics: list[TrackDiagnostic],
+        *,
+        raw_count: int,
+        nms_count: int,
+    ) -> TrackPipelineResult:
+        output_parts, ghost_flags, track_ids, diagnostics = self._cap_output(
+            output_parts,
+            ghost_flags,
+            track_ids,
+            diagnostics,
+        )
+        ghost_count = sum(1 for is_ghost in ghost_flags if is_ghost)
+        stabilized = merge_key_points(output_parts, ghost_flags=ghost_flags, track_ids=track_ids)
+        return TrackPipelineResult(
+            key_points=stabilized,
+            stats=TrackPipelineStats(
+                raw_count=raw_count,
+                nms_count=nms_count,
+                active_track_count=len(stabilized),
+                ghost_count=ghost_count,
+            ),
+            diagnostics=diagnostics,
+        )
+
     def _maybe_mark_sticky(self, track: TrackSnapshot) -> None:
         if not self.settings.sticky_center_track:
             return
@@ -186,7 +268,6 @@ class TrackStore:
         ghost_flags: list[bool] = []
         track_ids: list[int] = []
         diagnostics: list[TrackDiagnostic] = []
-        ghost_count = 0
 
         for track_index, detection_index in matched:
             track = self._tracks[track_index]
@@ -203,6 +284,10 @@ class TrackStore:
         for detection_index in sorted(unmatched_detections):
             if len(self._tracks) >= self.settings.max_tracks:
                 break
+            if self.settings.hysteresis_enabled:
+                confidence = detection_confidence(nms_key_points, detection_index)
+                if confidence < self.settings.new_track_min_confidence:
+                    continue
             snapshot = single_detection_key_points(nms_key_points, detection_index)
             track = TrackSnapshot(
                 track_id=self._next_track_id,
@@ -222,29 +307,26 @@ class TrackStore:
         for track_index in sorted(unmatched_tracks):
             track = self._tracks[track_index]
             track.missed += 1
-            if track.missed <= self._max_missed_for(track):
+            if track.missed <= self._hold_limit_for(track, len(output_parts)):
                 output_parts.append(track.key_points)
                 ghost_flags.append(True)
                 track_ids.append(track.track_id)
-                ghost_count += 1
                 diagnostics.append(_track_diagnostic(track, is_ghost=True, matched_this_frame=False))
 
         self._tracks = [
             track
             for track_index, track in enumerate(self._tracks)
-            if track_index in matched_track_indices or track.missed <= self._max_missed_for(track)
+            if track_index in matched_track_indices
+            or track.missed <= self._hold_limit_for(track, len(output_parts))
         ]
 
-        stabilized = merge_key_points(output_parts, ghost_flags=ghost_flags, track_ids=track_ids)
-        return TrackPipelineResult(
-            key_points=stabilized,
-            stats=TrackPipelineStats(
-                raw_count=raw_count,
-                nms_count=nms_count,
-                active_track_count=len(stabilized),
-                ghost_count=ghost_count,
-            ),
-            diagnostics=diagnostics,
+        return self._finalize_output(
+            output_parts,
+            ghost_flags,
+            track_ids,
+            diagnostics,
+            raw_count=raw_count,
+            nms_count=nms_count,
         )
 
     def _apply_empty_frame(self, raw_count: int) -> TrackPipelineResult:
@@ -252,26 +334,21 @@ class TrackStore:
         ghost_flags: list[bool] = []
         track_ids: list[int] = []
         diagnostics: list[TrackDiagnostic] = []
-        ghost_count = 0
         surviving_tracks: list[TrackSnapshot] = []
         for track in self._tracks:
             track.missed += 1
-            if track.missed <= self._max_missed_for(track):
+            if track.missed <= self._hold_limit_for(track, len(ghost_parts)):
                 ghost_parts.append(track.key_points)
                 ghost_flags.append(True)
                 track_ids.append(track.track_id)
-                ghost_count += 1
                 surviving_tracks.append(track)
                 diagnostics.append(_track_diagnostic(track, is_ghost=True, matched_this_frame=False))
         self._tracks = surviving_tracks
-        stabilized = merge_key_points(ghost_parts, ghost_flags=ghost_flags, track_ids=track_ids)
-        return TrackPipelineResult(
-            key_points=stabilized,
-            stats=TrackPipelineStats(
-                raw_count=raw_count,
-                nms_count=0,
-                active_track_count=len(stabilized),
-                ghost_count=ghost_count,
-            ),
-            diagnostics=diagnostics,
+        return self._finalize_output(
+            ghost_parts,
+            ghost_flags,
+            track_ids,
+            diagnostics,
+            raw_count=raw_count,
+            nms_count=0,
         )

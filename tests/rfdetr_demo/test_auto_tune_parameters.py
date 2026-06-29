@@ -52,6 +52,39 @@ def test_propose_lowers_threshold_for_under_count_instability() -> None:
     assert any("不足側" in reason for reason in proposed.reasons)
 
 
+def test_analyze_tune_cache_includes_stabilized_metrics() -> None:
+    cache = TunePreviewCache(task="keypoint", fps=30.0, frame_stride=1)
+    populate_tune_cache(cache, person_counts=[2, 2, 1, 2, 2])
+    metrics = analyze_tune_cache(cache, current=DEFAULT_PARAMETERS)
+    assert metrics.frames == 5
+    assert metrics.stabilized_person_count_std >= 0.0
+    assert 0.0 <= metrics.track_break_rate <= 1.0
+
+
+def test_propose_lowers_threshold_for_high_track_break_rate() -> None:
+    from rfdetr_demo.tuning.auto_tune_types import AnomalyFlags, CacheQualityMetrics
+
+    metrics = CacheQualityMetrics(
+        frames=10,
+        avg_persons=4.5,
+        person_count_std=0.5,
+        person_count_min=4,
+        person_count_max=5,
+        low_confidence_ratio=0.05,
+        mean_joint_confidence=0.8,
+        motion_speed_rejections=0,
+        motion_oscillation_corrections=0,
+        rejection_rate_per_joint=0.0,
+        centroid_jump_rate=0.0,
+        covariance_spread_ratio=1.0,
+        track_break_rate=0.45,
+        anomalies=AnomalyFlags(high_track_break_rate=True),
+    )
+    proposed = propose_parameters(metrics, current=DEFAULT_PARAMETERS)
+    assert proposed.threshold < DEFAULT_PARAMETERS.threshold
+    assert any("トラック途切れ" in reason for reason in proposed.reasons)
+
+
 def test_auto_tune_recommends_when_rejection_high() -> None:
     cache = TunePreviewCache(task="keypoint", fps=60.0, frame_stride=1)
     counts = [5, 7, 4, 6, 5, 7, 6, 5, 6, 4] * 3

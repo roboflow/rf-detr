@@ -38,6 +38,7 @@ class AnomalyFlags:
     high_motion_rejection_rate: bool = False
     high_centroid_jump_rate: bool = False
     high_covariance_spread: bool = False
+    high_track_break_rate: bool = False
 
 
 @dataclass
@@ -56,6 +57,10 @@ class CacheQualityMetrics:
     rejection_rate_per_joint: float
     centroid_jump_rate: float
     covariance_spread_ratio: float
+    stabilized_person_count_std: float = 0.0
+    stabilized_person_count_min: int = 0
+    stabilized_person_count_max: int = 0
+    track_break_rate: float = 0.0
     anomalies: AnomalyFlags = field(default_factory=AnomalyFlags)
 
 

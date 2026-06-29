@@ -88,6 +88,29 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     parser.add_argument("--nms-iou", type=float, default=0.50, help="IoU threshold for NMS")
     parser.add_argument("--max-missed", type=int, default=2, help="Track hold frames")
     parser.add_argument(
+        "--no-hysteresis",
+        action="store_true",
+        help="Disable new-track confidence gate (default: hysteresis on at 0.65)",
+    )
+    parser.add_argument(
+        "--new-track-min-confidence",
+        type=float,
+        default=0.65,
+        help="Minimum confidence to spawn a new track when hysteresis is enabled",
+    )
+    parser.add_argument(
+        "--expected-person-count",
+        type=int,
+        default=0,
+        help="Cap/fill to this person count (0=disabled, e.g. 5 for dance demos)",
+    )
+    parser.add_argument(
+        "--fill-extra-missed",
+        type=int,
+        default=3,
+        help="Extra hold frames when live count is below --expected-person-count",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=REPO_ROOT / "artifacts" / "person_count_probe.json",
@@ -99,14 +122,29 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
 def run(args: argparse.Namespace) -> int:
     """Execute probe-count and write JSON summary."""
     source = args.source if args.source is not None else resolve_default_source()
+    if not source.is_file():
+        print(f"Error: video not found: {source}")
+        print("Place mn1-2.mov under rf-detr/confidential/media/input/ or pass --source")
+        return 1
+
     capture = cv2.VideoCapture(str(source))
+    if not capture.isOpened():
+        print(f"Error: cannot open video: {source}")
+        return 1
+
+    frame_width = max(1, int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)))
     model = build_keypoint_model()
     stabilizer = DetectionStabilizer(
         settings=PersonTrackSettings(
             enabled=True,
             nms_iou_threshold=args.nms_iou,
             max_missed=args.max_missed,
+            hysteresis_enabled=not args.no_hysteresis,
+            new_track_min_confidence=args.new_track_min_confidence,
+            expected_person_count=args.expected_person_count,
+            fill_extra_missed=args.fill_extra_missed,
         ),
+        frame_width=frame_width,
     )
     rows: list[dict[str, object]] = []
 
@@ -142,7 +180,7 @@ def run(args: argparse.Namespace) -> int:
 
     capture.release()
 
-    summary = {
+    summary: dict[str, object] = {
         "source": str(source),
         "mode": args.mode,
         "threshold": args.threshold,
@@ -151,6 +189,13 @@ def run(args: argparse.Namespace) -> int:
         "n_max": max(int(row["n"]) for row in rows) if rows else 0,
         "n_values": [int(row["n"]) for row in rows],
     }
+    if args.expected_person_count > 0:
+        target = args.expected_person_count
+        at_target = sum(1 for row in rows if int(row["n"]) == target)
+        summary["expected_person_count"] = target
+        summary["at_target_pct"] = round(100.0 * at_target / max(len(rows), 1), 1)
+        summary["below_target_frames"] = sum(1 for row in rows if int(row["n"]) < target)
+        summary["above_target_frames"] = sum(1 for row in rows if int(row["n"]) > target)
     payload = {"summary": summary, "frames": rows}
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

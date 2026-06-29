@@ -15,6 +15,8 @@ from rfdetr_demo.inference.temporal_filter import KeypointTemporalFilter, Motion
 from rfdetr_demo.inference.tune_cache import TunePreviewCache, deserialize_key_points
 from rfdetr_demo.tracking.keypoints_ops import attach_track_ids
 from rfdetr_demo.tracking.person_associator import PersonAssociator
+from rfdetr_demo.tracking.pipeline import PersonTrackPipeline
+from rfdetr_demo.tracking.types import PersonTrackSettings
 from rfdetr_demo.tuning.auto_tune_types import (
     AnomalyFlags,
     CacheQualityMetrics,
@@ -129,8 +131,15 @@ def analyze_tune_cache(
         frame_stride=cache.frame_stride,
     )
     associator = PersonAssociator()
+    track_pipeline = PersonTrackPipeline(
+        settings=PersonTrackSettings(),
+        frame_width=frame_width,
+        frame_height=frame_height,
+    )
 
     person_counts: list[int] = []
+    stabilized_person_counts: list[int] = []
+    ghost_frames = 0
     confidences: list[float] = []
     low_conf = 0
     total_joints = 0
@@ -147,6 +156,11 @@ def analyze_tune_cache(
             continue
         raw = deserialize_key_points(entry.key_points_payload)
         person_counts.append(count_persons(raw, current.threshold))
+        track_result = track_pipeline.apply(raw, entry.frame_index)
+        live_count = track_result.stats.active_track_count - track_result.stats.ghost_count
+        stabilized_person_counts.append(live_count)
+        if track_result.stats.ghost_count > 0:
+            ghost_frames += 1
         cov_spreads.append(covariance_spread_ratio(raw))
 
         for confidence in joint_confidences(raw, current.keypoint_threshold):
@@ -169,6 +183,8 @@ def analyze_tune_cache(
         )
 
     person_std = float(np.std(person_counts)) if person_counts else 0.0
+    stabilized_std = float(np.std(stabilized_person_counts)) if stabilized_person_counts else 0.0
+    track_break_rate = ghost_frames / max(len(stabilized_person_counts), 1)
     avg_persons = float(np.mean(person_counts)) if person_counts else 0.0
     low_conf_ratio = low_conf / max(total_joints, 1)
     mean_conf = float(np.mean(confidences)) if confidences else 0.0
@@ -177,12 +193,13 @@ def analyze_tune_cache(
 
     anomalies = AnomalyFlags(
         excess_person_detections=avg_persons > 2.5,
-        unstable_person_count=person_std > 0.8,
+        unstable_person_count=stabilized_std > 0.8 if stabilized_person_counts else person_std > 0.8,
         high_low_confidence_ratio=low_conf_ratio > 0.12,
         low_mean_confidence=mean_conf < 0.55 and total_joints > 0,
         high_motion_rejection_rate=rejection_rate > 0.08,
         high_centroid_jump_rate=centroid_jump_rate > 0.15,
         high_covariance_spread=float(np.median(cov_spreads)) > 6.0 if cov_spreads else False,
+        high_track_break_rate=track_break_rate > 0.30,
     )
 
     return CacheQualityMetrics(
@@ -198,5 +215,9 @@ def analyze_tune_cache(
         rejection_rate_per_joint=rejection_rate,
         centroid_jump_rate=centroid_jump_rate,
         covariance_spread_ratio=float(np.median(cov_spreads)) if cov_spreads else 1.0,
+        stabilized_person_count_std=stabilized_std,
+        stabilized_person_count_min=min(stabilized_person_counts) if stabilized_person_counts else 0,
+        stabilized_person_count_max=max(stabilized_person_counts) if stabilized_person_counts else 0,
+        track_break_rate=track_break_rate,
         anomalies=anomalies,
     )

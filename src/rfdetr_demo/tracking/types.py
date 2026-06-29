@@ -25,9 +25,14 @@ class PersonTrackSettings:
     match_iou_threshold: float = 0.15
     max_missed: int = 2
     max_tracks: int = 32
+    hysteresis_enabled: bool = True
+    new_track_min_confidence: float = 0.65
     sticky_center_track: bool = False
     sticky_max_missed: int = 4
     center_x_fraction: tuple[float, float] = (0.28, 0.48)
+    expected_person_count: int = 0
+    fill_below_expected: bool = True
+    fill_extra_missed: int = 3
 
 
 @dataclass
@@ -96,17 +101,36 @@ def person_track_settings_from_env(
     """Build settings from environment overrides."""
     settings = base or PersonTrackSettings()
     max_missed_raw = os.environ.get("RFDETR_MAX_MISSED")
+    hysteresis_raw = os.environ.get("RFDETR_TRACK_HYSTERESIS", "").strip().lower()
+    new_track_conf_raw = os.environ.get("RFDETR_NEW_TRACK_MIN_CONFIDENCE")
     sticky_raw = os.environ.get("RFDETR_STICKY_CENTER_TRACK", "").strip().lower()
     sticky_max_raw = os.environ.get("RFDETR_STICKY_MAX_MISSED")
+    expected_raw = os.environ.get("RFDETR_EXPECTED_PERSON_COUNT")
+    fill_extra_raw = os.environ.get("RFDETR_FILL_EXTRA_MISSED")
+    fill_below_raw = os.environ.get("RFDETR_FILL_BELOW_EXPECTED", "").strip().lower()
     kwargs: dict[str, object] = {}
     if max_missed_raw is not None:
         kwargs["max_missed"] = max(0, int(max_missed_raw))
+    if hysteresis_raw in {"1", "true", "yes", "on"}:
+        kwargs["hysteresis_enabled"] = True
+    elif hysteresis_raw in {"0", "false", "no", "off"}:
+        kwargs["hysteresis_enabled"] = False
+    if new_track_conf_raw is not None:
+        kwargs["new_track_min_confidence"] = max(0.0, min(1.0, float(new_track_conf_raw)))
     if sticky_raw in {"1", "true", "yes", "on"}:
         kwargs["sticky_center_track"] = True
     elif sticky_raw in {"0", "false", "no", "off"}:
         kwargs["sticky_center_track"] = False
     if sticky_max_raw is not None:
         kwargs["sticky_max_missed"] = max(1, int(sticky_max_raw))
+    if expected_raw is not None:
+        kwargs["expected_person_count"] = max(0, int(expected_raw))
+    if fill_extra_raw is not None:
+        kwargs["fill_extra_missed"] = max(0, int(fill_extra_raw))
+    if fill_below_raw in {"1", "true", "yes", "on"}:
+        kwargs["fill_below_expected"] = True
+    elif fill_below_raw in {"0", "false", "no", "off"}:
+        kwargs["fill_below_expected"] = False
     if not kwargs:
         return settings
     from dataclasses import replace

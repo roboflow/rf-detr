@@ -85,3 +85,26 @@ def test_sticky_center_extends_hold() -> None:
     assert result1.stats.ghost_count == 1
     result2 = pipeline.apply(_box_key_points(boxes=[side_box], confidences=[0.9]), 2)
     assert result2.stats.ghost_count == 1
+
+
+def test_hysteresis_blocks_low_confidence_new_track() -> None:
+    pipeline = PersonTrackPipeline(
+        settings=PersonTrackSettings(
+            max_missed=2,
+            hysteresis_enabled=True,
+            new_track_min_confidence=0.65,
+        ),
+        frame_width=1280,
+    )
+    pipeline.apply(
+        _box_key_points(boxes=[(100.0, 100.0, 200.0, 300.0)], confidences=[0.90]),
+        0,
+    )
+    result = pipeline.apply(
+        _box_key_points(
+            boxes=[(100.0, 100.0, 200.0, 300.0), (400.0, 100.0, 500.0, 300.0)],
+            confidences=[0.90, 0.58],
+        ),
+        1,
+    )
+    assert result.stats.active_track_count == 1
