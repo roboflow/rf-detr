@@ -28,10 +28,10 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
 !!! example "Installation"
 
-    [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
-    [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
-    [![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE)
-    [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
+    [![version](https://badge.fury.io/py/rfdetr.svg){ width="125" height="20" }](https://badge.fury.io/py/rfdetr)
+    [![python-version](https://img.shields.io/pypi/pyversions/rfdetr){ width="198" height="20" }](https://badge.fury.io/py/rfdetr)
+    [![license](https://img.shields.io/pypi/l/rfdetr){ width="164" height="20" }](https://github.com/roboflow/rfdetr/blob/main/LICENSE)
+    [![downloads](https://img.shields.io/pypi/dm/rfdetr){ width="258" height="20" }](https://pypistats.org/packages/rfdetr)
 
     === "pip"
 
