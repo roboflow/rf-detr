@@ -21,28 +21,28 @@ class TestRFDETRCliStructure:
     """RFDETRCli is correctly structured and importable."""
 
     def test_cli_module_importable(self):
-        """rfdetr.training.cli imports without error."""
-        import rfdetr.training.cli  # noqa: F401
+        """rfdetr.cli.train imports without error."""
+        import rfdetr.cli.train  # noqa: F401
 
     def test_rfdetr_cli_importable(self):
-        """RFDETRCli can be imported from rfdetr.training.cli."""
-        from rfdetr.training.cli import RFDETRCli  # noqa: F401
+        """RFDETRCli can be imported from rfdetr.cli.train."""
+        from rfdetr.cli.train import RFDETRCli  # noqa: F401
 
     def test_main_importable(self):
-        """Main() can be imported from rfdetr.training.cli."""
-        from rfdetr.training.cli import main  # noqa: F401
+        """Main() can be imported from rfdetr.cli.train."""
+        from rfdetr.cli.train import main  # noqa: F401
 
     def test_rfdetr_cli_is_lightning_cli_subclass(self):
         """RFDETRCli must subclass pytorch_lightning LightningCLI."""
         from pytorch_lightning.cli import LightningCLI
 
-        from rfdetr.training.cli import RFDETRCli
+        from rfdetr.cli.train import RFDETRCli
 
         assert issubclass(RFDETRCli, LightningCLI)
 
     def test_main_is_callable(self):
         """Main must be a callable (function, not e.g. a string)."""
-        from rfdetr.training.cli import main
+        from rfdetr.cli.train import main
 
         assert callable(main)
 
@@ -50,7 +50,7 @@ class TestRFDETRCliStructure:
         """RFDETRCli overrides add_arguments_to_parser from LightningCLI."""
         from pytorch_lightning.cli import LightningCLI
 
-        from rfdetr.training.cli import RFDETRCli
+        from rfdetr.cli.train import RFDETRCli
 
         assert RFDETRCli.add_arguments_to_parser is not LightningCLI.add_arguments_to_parser
 
@@ -74,7 +74,7 @@ class TestRFDETRCliArgumentLinking:
         """Instantiate a minimal parser and collect registered link sources."""
         import unittest.mock as mock
 
-        from rfdetr.training.cli import RFDETRCli
+        from rfdetr.cli.train import RFDETRCli
 
         captured = []
 

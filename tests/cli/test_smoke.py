@@ -42,7 +42,7 @@ ALL_CONFIGS = [
 
 def _run_cli(*args: str) -> int:
     """Run RFDETRCli in-process with the given args; return the SystemExit code."""
-    from rfdetr.training.cli import RFDETRCli
+    from rfdetr.cli.train import RFDETRCli
     from rfdetr.training.module_data import RFDETRDataModule
     from rfdetr.training.module_model import RFDETRModelModule
 
