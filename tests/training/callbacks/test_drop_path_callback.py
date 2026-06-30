@@ -193,3 +193,101 @@ class TestOnTrainBatchStart:
 
         assert cb._dp_schedule is not None
         pl_module.model.update_drop_path.assert_called_once_with(cb._dp_schedule[step], 6)
+
+
+# ---------------------------------------------------------------------------
+# TestDropSchedulerValidation
+# ---------------------------------------------------------------------------
+
+
+class TestDropSchedulerValidation:
+    """Verify drop_scheduler raises for invalid inputs."""
+
+    @pytest.mark.parametrize(
+        "cutoff_epoch",
+        [
+            pytest.param(6, id="above_epochs"),
+            pytest.param(-1, id="negative"),
+        ],
+    )
+    def test_raises_for_invalid_cutoff_epoch(self, cutoff_epoch: int) -> None:
+        """drop_scheduler raises ValueError when cutoff_epoch is outside [0, epochs]."""
+        with pytest.raises(ValueError, match="cutoff_epoch must be in"):
+            drop_scheduler(0.3, 5, 10, cutoff_epoch=cutoff_epoch, mode="early")
+
+    @pytest.mark.parametrize(
+        ("epochs", "niter_per_ep", "match"),
+        [
+            pytest.param(0, 10, "epochs must be >= 1", id="epochs_zero"),
+            pytest.param(5, 0, "niter_per_ep must be >= 1", id="niter_per_ep_zero"),
+        ],
+    )
+    def test_raises_for_invalid_epoch_counts(self, epochs: int, niter_per_ep: int, match: str) -> None:
+        """drop_scheduler raises ValueError when epochs or niter_per_ep is less than 1."""
+        with pytest.raises(ValueError, match=match):
+            drop_scheduler(0.3, epochs, niter_per_ep)
+
+
+# ---------------------------------------------------------------------------
+# TestDropSchedulerBoundary
+# ---------------------------------------------------------------------------
+
+
+class TestDropSchedulerBoundary:
+    """Verify drop_scheduler with cutoff_epoch at the inclusive boundaries 0 and epochs."""
+
+    @pytest.mark.parametrize(
+        ("cutoff_epoch", "mode", "expected_first", "expected_last"),
+        [
+            pytest.param(0, "early", 0.0, 0.0, id="early_cutoff_zero_all_zeros"),
+            pytest.param(5, "early", 0.3, 0.3, id="early_cutoff_full_all_rate"),
+            pytest.param(0, "late", 0.3, 0.3, id="late_cutoff_zero_all_rate"),
+            pytest.param(5, "late", 0.0, 0.0, id="late_cutoff_full_all_zeros"),
+        ],
+    )
+    def test_boundary_cutoff_epoch(
+        self,
+        cutoff_epoch: int,
+        mode: str,
+        expected_first: float,
+        expected_last: float,
+    ) -> None:
+        """Boundary cutoff_epoch values (0 and epochs) produce correct first and last rates."""
+        schedule = drop_scheduler(0.3, 5, 10, cutoff_epoch=cutoff_epoch, mode=mode)
+        assert schedule[0] == expected_first
+        assert schedule[-1] == expected_last
+
+
+# ---------------------------------------------------------------------------
+# TestDropSchedulerLinear
+# ---------------------------------------------------------------------------
+
+
+class TestDropSchedulerLinear:
+    """Verify drop_scheduler with schedule='linear' in early mode."""
+
+    def test_linear_early_starts_at_drop_rate(self) -> None:
+        """Linear early schedule first value equals drop_rate."""
+        schedule = drop_scheduler(0.3, 5, 10, cutoff_epoch=2, mode="early", schedule="linear")
+        assert schedule[0] == pytest.approx(0.3, abs=1e-9)
+
+    def test_linear_early_ends_early_phase_at_zero(self) -> None:
+        """Linear early schedule last value of the early phase equals 0."""
+        schedule = drop_scheduler(0.3, 5, 10, cutoff_epoch=2, mode="early", schedule="linear")
+        assert schedule[19] == pytest.approx(0.0, abs=1e-9)
+
+    def test_linear_early_late_phase_is_zero(self) -> None:
+        """Linear early schedule: all values after cutoff_epoch are zero."""
+        schedule = drop_scheduler(0.3, 5, 10, cutoff_epoch=2, mode="early", schedule="linear")
+        np.testing.assert_array_equal(schedule[20:], 0.0)
+
+    def test_linear_early_decreases_monotonically(self) -> None:
+        """Linear early schedule values decrease monotonically during the early phase."""
+        schedule = drop_scheduler(0.3, 5, 10, cutoff_epoch=2, mode="early", schedule="linear")
+        assert np.all(np.diff(schedule[:20]) <= 0)
+
+    def test_linear_same_shape_as_constant(self) -> None:
+        """Schedule='linear' output has the same length as schedule='constant'."""
+        linear = drop_scheduler(0.3, 5, 10, cutoff_epoch=2, mode="early", schedule="linear")
+        constant = drop_scheduler(0.3, 5, 10, cutoff_epoch=2, mode="early", schedule="constant")
+        assert linear.shape == constant.shape
