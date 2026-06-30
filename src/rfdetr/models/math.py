@@ -52,7 +52,7 @@ def interpolate(
     """Equivalent to nn.functional.interpolate, but with support for empty batch sizes."""
     if float(torchvision.__version__.split(".")[1]) < 7.0:
         if input.numel() > 0:
-            return cast(Tensor, torch.nn.functional.interpolate(input, size, scale_factor, mode, align_corners))
+            return torch.nn.functional.interpolate(input, size, scale_factor, mode, align_corners)
 
         output_shape = _output_size(2, input, size, scale_factor)
         output_shape = list(input.shape[:-2]) + list(output_shape)
