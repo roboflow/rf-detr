@@ -9,8 +9,6 @@
 # ------------------------------------------------------------------------
 """Mathematical building blocks: MLP, inverse_sigmoid, accuracy, interpolate."""
 
-from typing import cast
-
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
@@ -52,13 +50,16 @@ def interpolate(
     """Equivalent to nn.functional.interpolate, but with support for empty batch sizes."""
     if float(torchvision.__version__.split(".")[1]) < 7.0:
         if input.numel() > 0:
-            return torch.nn.functional.interpolate(input, size, scale_factor, mode, align_corners)
+            interpolated: Tensor = torch.nn.functional.interpolate(input, size, scale_factor, mode, align_corners)
+            return interpolated
 
         output_shape = _output_size(2, input, size, scale_factor)
         output_shape = list(input.shape[:-2]) + list(output_shape)
-        return cast(Tensor, _new_empty_tensor(input, output_shape))
+        empty_output: Tensor = _new_empty_tensor(input, output_shape)
+        return empty_output
     else:
-        return cast(Tensor, torchvision.ops.misc.interpolate(input, size, scale_factor, mode, align_corners))
+        torchvision_output: Tensor = torchvision.ops.misc.interpolate(input, size, scale_factor, mode, align_corners)
+        return torchvision_output
 
 
 def inverse_sigmoid(x: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
