@@ -557,62 +557,56 @@ def make_coco_transforms(
 ) -> Compose:
     """Build the standard COCO transform pipeline for a given dataset split.
 
-        Returns a composed transform that resizes images to the target ``resolution``
-        (with optional multi-scale jitter), applies Albumentations-based augmentations
-        during training, and normalises pixel values with ImageNet statistics.
+    Returns a composed transform that resizes images to the target ``resolution``
+    (with optional multi-scale jitter), applies Albumentations-based augmentations
+    during training, and normalises pixel values with ImageNet statistics.
 
-        For the ``"train"`` split the pipeline uses a two-branch ``OneOf`` between a direct resize and a resize →
-        random-crop → resize sequence (built via :func:`_build_train_resize_config`), followed by the
-        augmentation stack and normalisation.  For ``"val"``, ``"test"``, and ``"val_speed"`` only resize
-        and normalisation are applied — no augmentation.
+    For the ``"train"`` split the pipeline uses a two-branch ``OneOf`` between a direct resize and a resize →
+    random-crop → resize sequence (built via :func:`_build_train_resize_config`), followed by the
+    augmentation stack and normalisation.  For ``"val"``, ``"test"``, and ``"val_speed"`` only resize
+    and normalisation are applied — no augmentation.
 
-        When *gpu_postprocess* is ``True``, both the Albumentations augmentation wrappers and the ``Normalize`` step are
-        omitted from the ``"train"`` pipeline. The ``RFDETRDataModule`` then applies
-        augmentation and normalization on the device in ``on_after_batch_transfer`` instead.
+    When *gpu_postprocess* is ``True``, both the Albumentations augmentation wrappers and the ``Normalize`` step are
+    omitted from the ``"train"`` pipeline. The ``RFDETRDataModule`` then applies
+    augmentation and normalization on the device in ``on_after_batch_transfer`` instead.
 
-        Args:
-            image_set: Dataset split identifier — ``"train"``, ``"val"``, ``"test"``,
-                or ``"val_speed"``.
-            resolution: Target short-side resolution in pixels.  During validation the
-                longest side is capped at 1333 px to preserve aspect ratio.
-            multi_scale: If ``True``, sample the resize target from a range of scales
-                computed by :func:`compute_multi_scale_scales` instead of using a single fixed size.
-            expanded_scales: Passed to :func:`compute_multi_scale_scales`; broadens the
-                scale range when ``multi_scale=True``.
-            skip_random_resize: When ``multi_scale=True``, use only the largest scale
-                and skip random selection among multiple scales.
-            patch_size: Model patch size used by :func:`compute_multi_scale_scales` to
-                ensure all candidate resolutions are compatible with the backbone.
-            num_windows: Number of attention windows; used by
-                :func:`compute_multi_scale_scales` to derive candidate resolutions.
-            aug_config: Albumentations augmentation config dict passed to
-                :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`.  Falls back to the default
-    <<<<<<< HEAD
-                :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` when ``None``.  Controls only the
-                augmentation stack — not the resize pipeline.
-            scale_jitter: If ``True`` (default), the training resize pipeline randomly picks between
-                a direct resize (Option A) and a resize-crop-resize sequence (Option B) for scale
-                variation.  Set to ``False`` to use Option A only.
-    =======
-                :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` when ``None``.
-    >>>>>>> origin/develop
-            gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
-                ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
-                normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
+    Args:
+        image_set: Dataset split identifier — ``"train"``, ``"val"``, ``"test"``,
+            or ``"val_speed"``.
+        resolution: Target short-side resolution in pixels.  During validation the
+            longest side is capped at 1333 px to preserve aspect ratio.
+        multi_scale: If ``True``, sample the resize target from a range of scales
+            computed by :func:`compute_multi_scale_scales` instead of using a single fixed size.
+        expanded_scales: Passed to :func:`compute_multi_scale_scales`; broadens the
+            scale range when ``multi_scale=True``.
+        skip_random_resize: When ``multi_scale=True``, use only the largest scale
+            and skip random selection among multiple scales.
+        patch_size: Model patch size used by :func:`compute_multi_scale_scales` to
+            ensure all candidate resolutions are compatible with the backbone.
+        num_windows: Number of attention windows; used by
+            :func:`compute_multi_scale_scales` to derive candidate resolutions.
+        aug_config: Albumentations augmentation config dict passed to
+            :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`.  Falls back to the default
+            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` when ``None``.  Passing an
+            empty dict (``aug_config={}``) disables augmentation **and** the resize → crop → resize
+            branch (Option B); pass ``None`` to keep the default stack with the crop branch active.
+        gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
+            ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
+            normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
 
-        Returns:
-            A :class:`torchvision.transforms.v2.Compose` pipeline ready to be passed to :class:`CocoDetection`.
+    Returns:
+        A :class:`torchvision.transforms.v2.Compose` pipeline ready to be passed to :class:`CocoDetection`.
 
-            .. note::
-                This pipeline does **not** guarantee that output ``H`` and ``W`` are divisible by ``patch_size *
-                num_windows``.  Divisibility is enforced at the batch level by the DataLoader collate function.  If you
-                apply these transforms outside of :class:`~rfdetr.training.module_data.RFDETRDataModule`,
-                pass the result
-                through :func:`~rfdetr.utilities.tensors.nested_tensor_from_tensor_list` with ``block_size=patch_size *
-                num_windows``, or use :func:`~rfdetr.utilities.tensors.make_collate_fn` with that value.
+        .. note::
+            This pipeline does **not** guarantee that output ``H`` and ``W`` are divisible by ``patch_size *
+            num_windows``.  Divisibility is enforced at the batch level by the DataLoader collate function.  If you
+            apply these transforms outside of :class:`~rfdetr.training.module_data.RFDETRDataModule`,
+            pass the result
+            through :func:`~rfdetr.utilities.tensors.nested_tensor_from_tensor_list` with ``block_size=patch_size *
+            num_windows``, or use :func:`~rfdetr.utilities.tensors.make_collate_fn` with that value.
 
-        Raises:
-            ValueError: If ``image_set`` is not one of the recognised split names.
+    Raises:
+        ValueError: If ``image_set`` is not one of the recognised split names.
     """
     to_image = ToImage()
     to_float = ToDtype(torch.float32, scale=True)
@@ -676,47 +670,41 @@ def make_coco_transforms_square_div_64(
 ) -> Compose:
     """Create COCO transforms with square resizing where the output size is divisible by 64.
 
-        This function builds a torchvision-style transform pipeline for COCO images that resizes them to square shapes
-        suitable for models that require spatial dimensions divisible by 64. It supports
-        multi-scale training and optional random resizing and cropping for the training split.
+    This function builds a torchvision-style transform pipeline for COCO images that resizes them to square shapes
+    suitable for models that require spatial dimensions divisible by 64. It supports
+    multi-scale training and optional random resizing and cropping for the training split.
 
-        When *gpu_postprocess* is ``True``, both the Albumentations augmentation wrappers and the ``Normalize`` step are
-        omitted from the ``"train"`` pipeline. The ``RFDETRDataModule`` then applies
-        augmentation and normalization on the device in ``on_after_batch_transfer`` instead.
+    When *gpu_postprocess* is ``True``, both the Albumentations augmentation wrappers and the ``Normalize`` step are
+    omitted from the ``"train"`` pipeline. The ``RFDETRDataModule`` then applies
+    augmentation and normalization on the device in ``on_after_batch_transfer`` instead.
 
-        Args:
-            image_set: Dataset split identifier. Expected values are "train", "val",
-                "test", or "val_speed". Each split uses a slightly different transform pipeline suited for training or
-                evaluation.
-            resolution: Base square resolution (in pixels) to which images are resized.
-            multi_scale: If True, enable multi-scale training by sampling from a set of
-                square resolutions instead of a single fixed size.
-            expanded_scales: If True, expand the range of scales used during
-                multi-scale training. Passed through to ``compute_multi_scale_scales``.
-            skip_random_resize: If True and ``multi_scale`` is enabled, use only the
-                largest scale returned by ``compute_multi_scale_scales`` and skip
-                random selection among multiple scales.
-            patch_size: Patch size used by ``compute_multi_scale_scales`` when
-                determining valid square resolutions (typically related to the model's patch embedding or stride).
-            num_windows: Number of windows used by ``compute_multi_scale_scales`` to
-                derive the list of candidate square resolutions.
-            aug_config: Augmentation configuration dictionary compatible with
-                :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`. If ``None``, the default
-    <<<<<<< HEAD
-                :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` is used.  Controls only the augmentation
-                stack — not the resize pipeline.
-            scale_jitter: If ``True`` (default), the training resize pipeline randomly picks between
-                a direct resize (Option A) and a resize-crop-resize sequence (Option B) for scale
-                variation.  Set to ``False`` to use Option A only.
-    =======
-                :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` is used.
-    >>>>>>> origin/develop
-            gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
-                ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
-                normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
+    Args:
+        image_set: Dataset split identifier. Expected values are "train", "val",
+            "test", or "val_speed". Each split uses a slightly different transform pipeline suited for training or
+            evaluation.
+        resolution: Base square resolution (in pixels) to which images are resized.
+        multi_scale: If True, enable multi-scale training by sampling from a set of
+            square resolutions instead of a single fixed size.
+        expanded_scales: If True, expand the range of scales used during
+            multi-scale training. Passed through to ``compute_multi_scale_scales``.
+        skip_random_resize: If True and ``multi_scale`` is enabled, use only the
+            largest scale returned by ``compute_multi_scale_scales`` and skip
+            random selection among multiple scales.
+        patch_size: Patch size used by ``compute_multi_scale_scales`` when
+            determining valid square resolutions (typically related to the model's patch embedding or stride).
+        num_windows: Number of windows used by ``compute_multi_scale_scales`` to
+            derive the list of candidate square resolutions.
+        aug_config: Augmentation configuration dictionary compatible with
+            :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`. If ``None``, the default
+            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` is used.  Passing an empty
+            dict (``aug_config={}``) disables augmentation **and** the resize → crop → resize
+            branch (Option B); pass ``None`` to keep the default stack with the crop branch active.
+        gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
+            ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
+            normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
 
-        Returns:
-            A ``Compose`` object containing the composed image transforms appropriate for the specified ``image_set``.
+    Returns:
+        A ``Compose`` object containing the composed image transforms appropriate for the specified ``image_set``.
     """
     to_image = ToImage()
     to_float = ToDtype(torch.float32, scale=True)
