@@ -37,12 +37,24 @@ def drop_scheduler(
             Ignored when ``mode`` is ``"standard"``.
         mode: Scheduling strategy: ``"standard"``, ``"early"``, or ``"late"``.
         schedule: Shape of the initial schedule phase in ``"early"`` mode: ``"constant"`` or ``"linear"``.
-            Ignored when ``mode`` is ``"standard"`` or ``"late"``.
+            Ignored when ``mode`` is ``"standard"``; only ``"constant"`` is accepted for ``"late"`` mode.
 
     Returns:
         One-dimensional array of length ``epochs * niter_per_ep`` containing the drop rate per iteration.
+
+    Raises:
+        ValueError: If ``mode`` is not ``"standard"``, ``"early"``, or ``"late"``.
+        ValueError: If ``epochs`` or ``niter_per_ep`` is less than ``1``.
+        ValueError: If ``cutoff_epoch`` is not in the range ``[0, epochs]``.
+        ValueError: If ``schedule`` is not ``"constant"`` or ``"linear"`` in ``"early"`` mode.
+        NotImplementedError: If ``schedule`` is not ``"constant"`` in ``"late"`` mode.
     """
-    assert mode in ["standard", "early", "late"]
+    if mode not in ("standard", "early", "late"):
+        raise ValueError(f"mode must be 'standard', 'early', or 'late', got {mode!r}")
+    if epochs < 1:
+        raise ValueError(f"epochs must be >= 1, got {epochs}")
+    if niter_per_ep < 1:
+        raise ValueError(f"niter_per_ep must be >= 1, got {niter_per_ep}")
     total_iters = epochs * niter_per_ep
     if mode == "standard":
         return np.full(total_iters, drop_rate)
@@ -52,13 +64,17 @@ def drop_scheduler(
     result = np.zeros(total_iters, dtype=np.float64)
 
     if mode == "early":
-        assert schedule in ["constant", "linear"]
+        if schedule not in ("constant", "linear"):
+            raise ValueError(f"schedule must be 'constant' or 'linear', got {schedule!r}")
         if schedule == "constant":
             result[:early_iters] = drop_rate
         else:
             result[:early_iters] = np.linspace(drop_rate, 0, early_iters)
     elif mode == "late":
-        assert schedule in ["constant"]
+        if schedule != "constant":
+            raise NotImplementedError(
+                f"schedule={schedule!r} is not supported for mode='late'; only 'constant' is implemented"
+            )
         result[early_iters:] = drop_rate
 
     return result
