@@ -9,8 +9,8 @@ Provides the canonical implementations of pretrained checkpoint loading and LoRA
 inference facade (``rfdetr.detr``) and the L2 LightningModule (``rfdetr.training.module_model``).
 
 The weight-loading logic is taken from ``RFDETRModelModule._load_pretrain_weights`` in ``module_model.py`` (more
-complete: Pydantic-aware user-override detection, auto-alignment for fine-tuned checkpoints) and augmented with
-class-name extraction from ``detr.py:_load_pretrain_weights_into``.
+complete: Pydantic-aware user-override detection, auto-alignment for fine-tuned checkpoints) and augmented with class-
+name extraction from ``detr.py:_load_pretrain_weights_into``.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from rfdetr.assets.model_weights import download_pretrain_weights, validate_pret
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.utilities.decorators import deprecated
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.state_dict import _ckpt_args_get, validate_checkpoint_compatibility
+from rfdetr.utilities.state_dict import _ckpt_args_get, remap_projector_to_cross_attn, validate_checkpoint_compatibility
 
 logger = get_logger()
 
@@ -268,12 +268,11 @@ def load_pretrain_weights(
 
     Uses the Pydantic-aware logic from ``module_model.py``:
 
-    - When the user did **not** explicitly override ``num_classes`` (left at the
-      ModelConfig default), the checkpoint class count is treated as authoritative and the model head is auto-aligned to
-      it.
-    - When the user **did** explicitly override ``num_classes`` to a value larger
-      than the checkpoint provides, the head is temporarily aligned to the checkpoint for loading, then expanded back to
-      the configured size.
+    - When the user did **not** explicitly set ``num_classes`` (it is left unset),
+      the checkpoint class count is treated as authoritative and the model head is auto-aligned to it.
+    - When the user **did** explicitly set ``num_classes`` (to any value, including the
+      class default) larger than the checkpoint provides, the head is temporarily aligned to the checkpoint for
+      loading, then expanded back to the configured size.
     - When the checkpoint has more classes than configured (backbone-pretrain
       scenario), both reinitializations are applied: expand to checkpoint size for loading, then trim to configured
       size.
@@ -369,15 +368,15 @@ def load_pretrain_weights(
 
     validate_checkpoint_compatibility(checkpoint, mc)
 
-    # Determine whether the user explicitly set num_classes on the ModelConfig,
-    # and whether that explicit value differs from the model default.
-    user_set_num_classes = False
-    if hasattr(mc, "model_fields_set"):
-        user_set_num_classes = "num_classes" in getattr(mc, "model_fields_set", set())
-    default_num_classes = type(mc).model_fields["num_classes"].default
+    # Determine whether the user explicitly set num_classes on the ModelConfig.
+    # "num_classes" in model_fields_set is True only when the field was explicitly provided
+    # (or assigned afterwards, e.g. by dataset alignment); an explicit value is honored
+    # regardless of whether it equals the class default, so an intentional num_classes always
+    # wins over the checkpoint's class count.
+    # Capture BEFORE any mc.num_classes assignment below — those re-add "num_classes" to
+    # model_fields_set, which would falsely appear as user-set to the second guard (~line 524).
+    user_overrode = "num_classes" in getattr(mc, "model_fields_set", set())
     num_classes = mc.num_classes
-    # True only when the user explicitly set num_classes to a non-default value.
-    user_overrode_default_num_classes = user_set_num_classes and num_classes != default_num_classes
 
     checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
     configured_num_classes_plus_bg = num_classes + 1
@@ -385,10 +384,9 @@ def load_pretrain_weights(
         # Align model head size before loading checkpoint weights.
         if checkpoint_num_classes < configured_num_classes_plus_bg:
             # Checkpoint has FEWER classes than configured.
-            if not user_overrode_default_num_classes:
-                # Auto-align to the checkpoint when the user did NOT provide a
-                # non-default override for num_classes (i.e., left it at the
-                # ModelConfig default): treat the checkpoint as authoritative.
+            if not user_overrode:
+                # Auto-align to the checkpoint when the user did NOT explicitly set
+                # num_classes (i.e., left it unset): treat the checkpoint as authoritative.
                 num_classes = checkpoint_num_classes - 1
                 configured_num_classes_plus_bg = checkpoint_num_classes
                 mc.num_classes = num_classes
@@ -468,13 +466,100 @@ def load_pretrain_weights(
                 # multi-group training, so in practice they are all group_detr == 1.
                 checkpoint["model"][name] = tensor[: mc.num_queries * mc.group_detr]
 
+    checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)
+
+    # Auto-align num_keypoints_per_class from checkpoint when the user did not explicitly set it.
+    # Without this, loading a bg-first checkpoint ([0, 17]) into a model configured with the
+    # active-first default ([17]) causes a semantic mismatch: the detection head is trimmed to 2
+    # rows but keeps background weights at row 0 — the slot active-first inference expects to be
+    # person — producing AP ≈ 0.0 on pretrained keypoint models.
+    # Mirrors the existing num_classes auto-align pattern (lines ~385-392).
+    _user_overrode_kp_schema = "num_keypoints_per_class" in getattr(mc, "model_fields_set", set())
+    if (
+        not _user_overrode_kp_schema
+        and getattr(mc, "use_grouppose_keypoints", False)
+        and hasattr(mc, "num_keypoints_per_class")
+    ):
+        _early_kp_mask = checkpoint["model"].get("_kp_active_mask")
+        if isinstance(_early_kp_mask, torch.Tensor) and _early_kp_mask.ndim == 2:
+            _ckpt_kp_schema = [int(n) for n in _early_kp_mask.sum(dim=1).tolist()]
+            _cfg_kp_schema = list(getattr(mc, "num_keypoints_per_class", []) or [])
+            if not any(n > 0 for n in _ckpt_kp_schema):
+                logger.warning(
+                    "load_pretrain_weights: _kp_active_mask in checkpoint has no active slots "
+                    "(schema=%s) — skipping auto-align to avoid overwriting config with empty schema.",
+                    _ckpt_kp_schema,
+                )
+            elif _ckpt_kp_schema != _cfg_kp_schema:
+                logger.debug(
+                    "load_pretrain_weights: auto-aligning num_keypoints_per_class %s → %s "
+                    "(inferred from checkpoint _kp_active_mask; user did not set explicitly).",
+                    _cfg_kp_schema,
+                    _ckpt_kp_schema,
+                )
+                mc.num_keypoints_per_class = _ckpt_kp_schema
+        elif isinstance(_early_kp_mask, torch.Tensor):
+            logger.warning(
+                "load_pretrain_weights: _kp_active_mask has unexpected shape %s (expected 2-D) "
+                "— skipping auto-align; schema mismatch may cause AP≈0 on keypoint models.",
+                tuple(_early_kp_mask.shape),
+            )
+
+    # Detection checkpoints/configs may omit keypoint schema fields; absence means no keypoint reconciliation.
+    configured_keypoint_schema = list(getattr(mc, "num_keypoints_per_class", []) or [])
+    checkpoint_keypoint_schema = None
+    should_restore_config_keypoint_schema = False
+    if getattr(mc, "use_grouppose_keypoints", False) and hasattr(
+        nn_model, "get_num_keypoints_per_class_from_checkpoint"
+    ):
+        checkpoint_keypoint_schema = nn_model.get_num_keypoints_per_class_from_checkpoint(checkpoint["model"])
+        if checkpoint_keypoint_schema:
+            get_model_schema = getattr(nn_model, "get_num_keypoints_per_class", None)
+            model_keypoint_schema = get_model_schema() if callable(get_model_schema) else configured_keypoint_schema
+            if checkpoint_keypoint_schema != model_keypoint_schema and hasattr(nn_model, "reinitialize_keypoint_head"):
+                logger.warning(
+                    "load_pretrain_weights: temporarily resizing keypoint schema from %s to checkpoint schema %s.",
+                    model_keypoint_schema,
+                    checkpoint_keypoint_schema,
+                )
+                nn_model.reinitialize_keypoint_head(checkpoint_keypoint_schema)
+                should_restore_config_keypoint_schema = checkpoint_keypoint_schema != configured_keypoint_schema
+
+    # `_kp_active_mask` is a deterministic buffer derived from
+    # `num_keypoints_per_class` in the current config. Some checkpoints store a
+    # shape that reflects an earlier schema (for example [2, 17] vs [1, 17]).
+    # Dropping only this key avoids hard load failures while preserving all
+    # learned weights.
+    ckpt_kp_active_mask = checkpoint["model"].get("_kp_active_mask")
+    model_state_dict = nn_model.state_dict() if hasattr(nn_model, "state_dict") else {}
+    model_kp_active_mask = model_state_dict.get("_kp_active_mask") if isinstance(model_state_dict, dict) else None
+    if (
+        isinstance(ckpt_kp_active_mask, torch.Tensor)
+        and isinstance(model_kp_active_mask, torch.Tensor)
+        and ckpt_kp_active_mask.shape != model_kp_active_mask.shape
+        and not should_restore_config_keypoint_schema
+    ):
+        logger.warning(
+            "load_pretrain_weights: dropping checkpoint _kp_active_mask with shape %s "
+            "because current model expects %s (derived from current keypoint schema).",
+            tuple(ckpt_kp_active_mask.shape),
+            tuple(model_kp_active_mask.shape),
+        )
+        checkpoint["model"].pop("_kp_active_mask", None)
     interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
     incompatible = nn_model.load_state_dict(checkpoint["model"], strict=False)
     _warn_on_partial_load(incompatible, pretrain_weights)
 
+    if should_restore_config_keypoint_schema and hasattr(nn_model, "reinitialize_keypoint_head"):
+        logger.warning(
+            "load_pretrain_weights: restoring configured keypoint schema %s after checkpoint load.",
+            configured_keypoint_schema,
+        )
+        nn_model.reinitialize_keypoint_head(configured_keypoint_schema)
+
     # If the user explicitly set a class count larger than the checkpoint,
     # expand/reinitialize the head back to the configured size after load.
-    if checkpoint_num_classes < configured_num_classes_plus_bg and user_overrode_default_num_classes:
+    if checkpoint_num_classes < configured_num_classes_plus_bg and user_overrode:
         nn_model.reinitialize_detection_head(configured_num_classes_plus_bg)
 
     # Only trim back down when loading a larger pretrain checkpoint into a

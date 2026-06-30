@@ -107,6 +107,22 @@ class TestNamespaceFromConfigs:
         assert args.mask_ce_loss_coef == pytest.approx(5.0)
         assert args.mask_dice_loss_coef == pytest.approx(5.0)
 
+    def test_segmentation_cls_loss_default_matches_pre_1_7_effective_weight(self, base_model_config, seg_train_config):
+        """Default segmentation classification loss weight must stay at the pre-1.7 effective value."""
+        mc = base_model_config(segmentation_head=True)
+        tc = seg_train_config()
+        args = _namespace_from_configs(mc, tc)
+
+        assert args.cls_loss_coef == pytest.approx(1.0)
+
+    def test_segmentation_cls_loss_explicit_override_is_forwarded(self, base_model_config, seg_train_config):
+        """Explicit segmentation classification loss weight overrides are preserved."""
+        mc = base_model_config(segmentation_head=True)
+        tc = seg_train_config(cls_loss_coef=5.0)
+        args = _namespace_from_configs(mc, tc)
+
+        assert args.cls_loss_coef == pytest.approx(5.0)
+
     def test_segmentation_num_select_none_falls_back_to_model_config(self, base_model_config, seg_train_config) -> None:
         """SegmentationTrainConfig(num_select=None) must not overwrite ModelConfig.num_select."""
         mc = base_model_config(segmentation_head=True, num_select=200)

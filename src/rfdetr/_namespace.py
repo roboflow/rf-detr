@@ -6,7 +6,8 @@
 """Package-private helper: build a self-contained namespace from Pydantic configs.
 
 Replaces the previous shim in ``_args.py`` that called the deprecated ``populate_args()`` function from ``main.py``.
-This module has zero dependency on ``main.py`` and can survive its deletion."""
+This module has zero dependency on ``main.py`` and can survive its deletion.
+"""
 
 import dataclasses
 import types
@@ -48,6 +49,15 @@ _MC_NAMESPACE_FIELDS = {
     "resolution",
     "sa_nheads",
     "segmentation_head",
+    "use_grouppose_keypoints",
+    "keypoint_cross_attn",
+    "inter_instance_kp_attn",
+    "grouppose_keypoint_dim_downscale",
+    "dual_projector",
+    "dual_projector_kp_only",
+    "num_keypoints_per_class",
+    "num_decoder_registers",
+    "postprocess_trace_alpha",
     "two_stage",
 }
 
@@ -87,6 +97,7 @@ _TC_NON_NAMESPACE_FIELDS = {
     "auto_batch_ema_headroom",
     # PTL-only Trainer / DataModule / LR-scheduler knobs.
     "progress_bar",
+    "compute_train_metrics",
     "run_test",
     "dont_save_weights",
     "pin_memory",

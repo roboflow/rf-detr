@@ -4,7 +4,9 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import os
 import warnings
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,6 +14,7 @@ import torch
 from pydantic import ValidationError
 
 from rfdetr.config import (
+    KeypointTrainConfig,
     ModelConfig,
     PretrainWeightsCompatibilityWarning,
     RFDETRBaseConfig,
@@ -95,6 +98,72 @@ class TestModelConfigValidation:
         """ModelConfig raises ValidationError for encoder strings outside the Literal."""
         with pytest.raises(ValidationError):
             ModelConfig(**{**sample_model_config, "encoder": "dinov2_invalid_backbone"})
+
+    def test_rejects_negative_postprocess_trace_alpha(self, sample_model_config) -> None:
+        """ModelConfig rejects negative uncertainty score-fusion exponents."""
+        with pytest.raises(ValidationError):
+            ModelConfig(**sample_model_config, postprocess_trace_alpha=-0.1)
+
+    def test_postprocess_trace_alpha_defaults_to_keypoint_fusion_value(self, sample_model_config) -> None:
+        """ModelConfig defaults to the keypoint uncertainty score-fusion exponent."""
+        config = ModelConfig(**sample_model_config)
+
+        assert config.postprocess_trace_alpha == 0.2
+
+    def test_pretrain_weights_absolute_path_realpath_normalised(self, tmp_path) -> None:
+        """An absolute pathlib.Path for pretrain_weights is stored as the realpath-normalised string."""
+        weights_path = tmp_path / "weights.pth"
+
+        config = RFDETRBaseConfig(pretrain_weights=weights_path)
+
+        assert config.pretrain_weights == os.path.realpath(os.fspath(weights_path))
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            pytest.param("dataset_dir", id="dataset_dir"),
+            pytest.param("output_dir", id="output_dir"),
+        ],
+    )
+    def test_train_dir_fields_accept_path(self, tmp_path, field: str) -> None:
+        """TrainConfig dataset/output dir fields accept pathlib.Path and store the realpath-normalised string."""
+        path = tmp_path / "artifact"
+        kwargs = {"dataset_dir": str(tmp_path)}
+        kwargs[field] = path
+
+        config = TrainConfig(**kwargs)
+
+        assert getattr(config, field) == os.path.realpath(os.fspath(path))
+
+    def test_accepts_bare_path_object_for_pretrain_weights(self) -> None:
+        """Bare pretrained weight Path values resolve the same as bare strings."""
+        path_config = RFDETRBaseConfig(pretrain_weights=Path("rf-detr-base.pth"))
+        string_config = RFDETRBaseConfig(pretrain_weights="rf-detr-base.pth")
+
+        assert path_config.pretrain_weights == string_config.pretrain_weights
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            # PTL trainer.fit(ckpt_path=...) sentinels — must pass through verbatim.
+            pytest.param("best", id="sentinel_best"),
+            pytest.param("last", id="sentinel_last"),
+            pytest.param("hpc", id="sentinel_hpc"),
+            pytest.param("registry:model-name", id="sentinel_registry"),
+            # A relative Path proves os.fspath coercion without realpath resolution.
+            pytest.param(Path("checkpoints/last.ckpt"), id="path_object"),
+        ],
+    )
+    def test_resume_coerced_via_fspath_without_realpath(self, value) -> None:
+        """``resume`` accepts pathlib.Path and is coerced to ``str`` via ``os.fspath`` only.
+
+        Unlike ``dataset_dir``/``output_dir``, ``resume`` is forwarded verbatim to PyTorch Lightning's
+        ``trainer.fit(ckpt_path=...)``, which also accepts sentinels such as ``"last"``. Realpath-normalising it would
+        rewrite those sentinels (and relative paths) into spurious absolute paths, so the value must be preserved.
+        """
+        config = TrainConfig(dataset_dir="/tmp", resume=value)
+
+        assert config.resume == os.fspath(value)
 
 
 class TestRFDETRBaseConfigEncoder:
@@ -305,6 +374,19 @@ class TestBuildTrainerUsesRealFields:
         defaults.update(kwargs)
         return TrainConfig(**defaults)
 
+    def _kp_tc(self, tmp_path, **kwargs):
+        defaults = dict(
+            dataset_dir=str(tmp_path),
+            output_dir=str(tmp_path),
+            tensorboard=False,
+            wandb=False,
+            mlflow=False,
+            clearml=False,
+            use_ema=False,
+        )
+        defaults.update(kwargs)
+        return KeypointTrainConfig(**defaults)
+
     def _mc(self, **kwargs):
         from rfdetr.config import RFDETRBaseConfig
 
@@ -312,12 +394,24 @@ class TestBuildTrainerUsesRealFields:
         defaults.update(kwargs)
         return RFDETRBaseConfig(**defaults)
 
-    def test_clip_max_norm_forwarded_to_trainer(self, tmp_path):
-        """gradient_clip_val on the Trainer matches TrainConfig.clip_max_norm."""
+    def test_clip_max_norm_forwarded_to_trainer_for_detection(self, tmp_path):
+        """Detection models use Lightning's automatic optimization, so ``gradient_clip_val`` flows through to the
+        Trainer from ``TrainConfig.clip_max_norm`` unchanged."""
         from rfdetr.training import build_trainer
 
         trainer = build_trainer(self._tc(tmp_path, clip_max_norm=0.25), self._mc())
         assert trainer.gradient_clip_val == pytest.approx(0.25)
+
+    def test_clip_max_norm_owned_by_model_module_for_keypoints(self, tmp_path):
+        """Keypoint models use manual optimization; trainer-owned clipping is disabled and ``clip_max_norm`` is applied
+        inside ``RFDETRModelModule._step_optimizer`` instead."""
+        from rfdetr.training import build_trainer
+
+        trainer = build_trainer(
+            self._kp_tc(tmp_path, clip_max_norm=0.25),
+            self._mc(use_grouppose_keypoints=True),
+        )
+        assert trainer.gradient_clip_val is None
 
     def test_seed_not_applied_in_build_trainer_factory(self, tmp_path):
         """Seeding is deferred to RFDETRModule.on_fit_start, not build_trainer()."""
@@ -486,6 +580,72 @@ class TestDetectDevice:
         mock_torch.accelerator = MagicMock(spec=[])  # no current_accelerator → fallback branch
         mock_torch.cuda.is_available.return_value = False
         mock_torch.backends.mps.is_available.return_value = False
+        assert _detect_device() == "cpu"
+
+    @patch("rfdetr.config.torch")
+    def test_returns_cpu_when_accelerator_compiled_in_but_unavailable(self, mock_torch: MagicMock) -> None:
+        """Returns 'cpu' when torch was compiled with CUDA but no driver is present at runtime.
+
+        Without ``check_available=True``, ``current_accelerator()`` reports the compile-time accelerator, so the default
+        CUDA wheel on a driverless machine yields ``device("cuda")`` and every model build crashes with "Found no NVIDIA
+        driver". The runtime availability check must win.
+        """
+
+        def fake_current_accelerator(check_available: bool = False) -> "torch.device | None":
+            return None if check_available else torch.device("cuda")
+
+        mock_torch.accelerator.current_accelerator = fake_current_accelerator
+        assert _detect_device() == "cpu"
+
+    @patch("rfdetr.config.torch")
+    def test_returns_accelerator_when_runtime_available(self, mock_torch: MagicMock) -> None:
+        """Returns the accelerator when it passes the runtime availability check."""
+
+        def fake_current_accelerator(check_available: bool = False) -> "torch.device | None":
+            return torch.device("cuda") if check_available else None
+
+        mock_torch.accelerator.current_accelerator = fake_current_accelerator
+        assert _detect_device() == "cuda"
+
+    @patch("rfdetr.config.torch")
+    def test_legacy_signature_unavailable_accelerator_returns_cpu(self, mock_torch: MagicMock) -> None:
+        """Falls back to ``is_available()`` when ``current_accelerator`` lacks ``check_available`` (PyTorch < 2.7)."""
+
+        def legacy_current_accelerator() -> "torch.device":
+            return torch.device("cuda")
+
+        mock_torch.accelerator.current_accelerator = legacy_current_accelerator
+        mock_torch.accelerator.is_available.return_value = False
+        assert _detect_device() == "cpu"
+
+    @patch("rfdetr.config.torch")
+    def test_legacy_signature_available_accelerator_is_kept(self, mock_torch: MagicMock) -> None:
+        """Keeps the accelerator on pre-``check_available`` builds when ``is_available()`` confirms it."""
+
+        def legacy_current_accelerator() -> "torch.device":
+            return torch.device("cuda")
+
+        mock_torch.accelerator.current_accelerator = legacy_current_accelerator
+        mock_torch.accelerator.is_available.return_value = True
+        assert _detect_device() == "cuda"
+
+    @patch("rfdetr.config.torch")
+    def test_legacy_signature_runtime_error_on_fallback_returns_cpu(self, mock_torch: MagicMock) -> None:
+        """Outer RuntimeError handler catches error from legacy fallback call.
+
+        Control-flow: ``current_accelerator(check_available=True)`` raises ``TypeError`` (inner except),
+        then ``current_accelerator()`` raises ``RuntimeError`` (outer except catches) → ``"cpu"``.
+        """
+        call_count = 0
+
+        def raises_on_fallback(**kwargs: object) -> "torch.device":
+            nonlocal call_count
+            call_count += 1
+            if "check_available" in kwargs:
+                raise TypeError("unexpected keyword argument 'check_available'")
+            raise RuntimeError("NVML error on legacy fallback")
+
+        mock_torch.accelerator.current_accelerator = raises_on_fallback
         assert _detect_device() == "cpu"
 
 

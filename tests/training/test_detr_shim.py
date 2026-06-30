@@ -29,7 +29,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from rfdetr.config import RFDETRBaseConfig, RFDETRSmallConfig, TrainConfig
+from rfdetr.config import RFDETRBaseConfig, RFDETRKeypointPreviewConfig, RFDETRSmallConfig, TrainConfig
 from rfdetr.detr import RFDETR, RFDETRLarge
 from rfdetr.detr import logger as detr_logger
 from rfdetr.training.auto_batch import AutoBatchResult
@@ -1788,6 +1788,22 @@ class TestRFDETRTrainNumClassesAutoDetect:
         with (dataset_dir / "train" / "_annotations.coco.json").open("w", encoding="utf-8") as f:
             json.dump({"images": [], "annotations": [], "categories": categories}, f)
 
+    def _write_roboflow_keypoint_categories(self, dataset_dir: Path, keypoint_count: int) -> None:
+        """Write a minimal Roboflow COCO keypoint annotation file."""
+        keypoint_names = [f"kp_{idx}" for idx in range(keypoint_count)]
+        self._write_coco_categories(
+            dataset_dir,
+            categories=[
+                {
+                    "id": 0,
+                    "name": "person",
+                    "supercategory": "none",
+                    "keypoints": keypoint_names,
+                    "skeleton": [],
+                }
+            ],
+        )
+
     def test_auto_adjusts_num_classes_when_not_overridden(self, mock_self, patch_lit):
         """When user did not set num_classes, auto-adjust to the dataset class count.
 
@@ -1826,29 +1842,69 @@ class TestRFDETRTrainNumClassesAutoDetect:
 
         assert mock_self.model_config.num_classes == 3
 
-    def test_auto_adjusts_when_default_explicitly_passed(self, mock_self, patch_lit):
-        """Passing num_classes=<default> is treated the same as not setting it.
+    def test_keypoint_coco_auto_detect_uses_active_first_schema_slots(self, mock_self, patch_lit):
+        """Keypoint COCO class-count detection should count active-first RF-DETR schema slots."""
+        mock_self.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_coco_categories(
+            dataset_dir,
+            categories=[
+                {
+                    "id": 0,
+                    "name": "person",
+                    "keypoints": ["nose", "left_eye"],
+                    "skeleton": [],
+                },
+            ],
+        )
 
-        Scenario: user passes num_classes=90 (the ModelConfig default) explicitly.
-        Dataset has 4 classes.  Expected: model_config.num_classes becomes 4.
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 1
+        assert mock_self.model.args.num_classes == 1
+
+    def test_preserves_explicit_default_num_classes_when_dataset_differs(
+        self,
+        caplog,
+        mock_self,
+        monkeypatch,
+        patch_lit,
+    ):
+        """An explicitly-passed num_classes is preserved even when it equals the default.
+
+        Scenario: user passes num_classes=90 (the ModelConfig default) explicitly.  Dataset has
+        4 classes.  Expected: model_config.num_classes stays at 90 and a warning is logged —
+        identical to the non-default case below, so an explicit setting always wins regardless of
+        whether it happens to equal the class default.
         """
-        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=90)
+        default_nc = RFDETRBaseConfig.model_fields["num_classes"].default
+        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=default_nc)
         mock_self.model_config = mc
-        # num_classes is in model_fields_set, but equals the class default (90).
+        # num_classes equals the class default but was set explicitly.
         assert "num_classes" in mock_self.model_config.model_fields_set
+        dataset_dir = mock_self.get_train_config.return_value.dataset_dir
 
         p_mod, p_dm, p_bt, *_ = patch_lit
         load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES)
+        monkeypatch.setattr(detr_logger, "propagate", True)
         with p_mod, p_dm, p_bt, load_classes_patch:
-            RFDETR.train(mock_self)
+            with caplog.at_level("WARNING", logger="rf-detr"):
+                RFDETR.train(mock_self)
 
-        assert mock_self.model_config.num_classes == 4
+        assert mock_self.model_config.num_classes == default_nc
+        expected_fragment = (
+            f"Dataset '{dataset_dir}' has 4 classes but model was initialized with num_classes={default_nc}"
+        )
+        assert any(record.levelname == "WARNING" and expected_fragment in record.message for record in caplog.records)
 
     def test_preserves_explicit_non_default_num_classes_when_dataset_differs(
         self,
         tmp_path,
         caplog,
         mock_self,
+        monkeypatch,
         patch_lit,
     ):
         """When user explicitly set a non-default num_classes, it is preserved.
@@ -1862,22 +1918,14 @@ class TestRFDETRTrainNumClassesAutoDetect:
 
         p_mod, p_dm, p_bt, *_ = patch_lit
         load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES)
+        monkeypatch.setattr(detr_logger, "propagate", True)
         with p_mod, p_dm, p_bt, load_classes_patch:
-            previous_propagate = detr_logger.propagate
-            detr_logger.propagate = True
-            try:
-                with caplog.at_level("WARNING", logger="rf-detr"):
-                    RFDETR.train(mock_self)
-            finally:
-                detr_logger.propagate = previous_propagate
+            with caplog.at_level("WARNING", logger="rf-detr"):
+                RFDETR.train(mock_self)
 
         assert mock_self.model_config.num_classes == 10
-        assert any(
-            record.levelname == "WARNING"
-            and f"Dataset '{dataset_dir}' has 4 classes" in record.message
-            and "num_classes=10" in record.message
-            for record in caplog.records
-        )
+        expected_fragment = f"Dataset '{dataset_dir}' has 4 classes but model was initialized with num_classes=10"
+        assert any(record.levelname == "WARNING" and expected_fragment in record.message for record in caplog.records)
 
     def test_auto_adjust_syncs_model_args_num_classes(self, mock_self, patch_lit):
         """When auto-adjusting, keep ModelContext args.num_classes in sync."""
@@ -1890,6 +1938,159 @@ class TestRFDETRTrainNumClassesAutoDetect:
 
         assert mock_self.model_config.num_classes == 4
         assert mock_self.model.args.num_classes == 4
+
+    def test_keypoint_schema_inferred_when_not_explicitly_overridden(self, mock_self, patch_lit):
+        """Roboflow keypoint metadata should populate model_config.num_keypoints_per_class."""
+        mock_self.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[17])
+        mock_self._align_keypoint_schema_from_dataset = lambda config: RFDETR._align_keypoint_schema_from_dataset(
+            mock_self, config
+        )
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_roboflow_keypoint_categories(dataset_dir, keypoint_count=25)
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_keypoints_per_class == [25]
+        assert mock_self.model.args.num_keypoints_per_class == [25]
+        assert mock_self.model_config.num_classes == 1
+
+    def test_keypoint_flip_pairs_inferred_from_roboflow_coco_metadata(self, mock_self, patch_lit):
+        """Roboflow COCO keypoint names should populate train_config.keypoint_flip_pairs."""
+        mock_self.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[17])
+        mock_self._align_keypoint_schema_from_dataset = lambda config: RFDETR._align_keypoint_schema_from_dataset(
+            mock_self, config
+        )
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_coco_categories(
+            dataset_dir,
+            categories=[
+                {
+                    "id": 0,
+                    "name": "person",
+                    "supercategory": "none",
+                    "keypoints": ["nose", "left_eye", "right_eye"],
+                    "skeleton": [],
+                }
+            ],
+        )
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.get_train_config.return_value.keypoint_flip_pairs == [1, 2]
+
+    def test_keypoint_schema_and_flip_pairs_inferred_from_native_coco_metadata(self, tmp_path: Path) -> None:
+        """Native COCO person-keypoint annotations should use the same symmetry inference as Roboflow COCO."""
+        annotation_dir = tmp_path / "annotations"
+        annotation_dir.mkdir(parents=True)
+        annotation_path = annotation_dir / "person_keypoints_train2017.json"
+        annotation_path.write_text(
+            json.dumps(
+                {
+                    "images": [],
+                    "annotations": [],
+                    "categories": [
+                        {
+                            "id": 1,
+                            "name": "person",
+                            "supercategory": "person",
+                            "keypoints": ["nose", "left_eye", "right_eye"],
+                            "skeleton": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        from rfdetr.config import KeypointTrainConfig
+
+        model = object.__new__(RFDETR)
+        model.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        model.model = SimpleNamespace(args=SimpleNamespace(num_classes=90, num_keypoints_per_class=[17]))
+        train_config = KeypointTrainConfig(dataset_dir=str(tmp_path), dataset_file="coco", tensorboard=False)
+
+        model._align_keypoint_schema_from_dataset(train_config)
+
+        assert model.model_config.num_keypoints_per_class == [3]
+        assert model.model.args.num_keypoints_per_class == [3]
+        assert train_config.keypoint_flip_pairs == [1, 2]
+
+    def test_explicit_keypoint_flip_pairs_are_preserved_when_dataset_metadata_has_pairs(self, tmp_path: Path) -> None:
+        """Dataset-inferred pairs must not override an explicit user mapping."""
+        annotation_path = tmp_path / "train" / "_annotations.coco.json"
+        annotation_path.parent.mkdir(parents=True)
+        annotation_path.write_text(
+            json.dumps(
+                {
+                    "images": [],
+                    "annotations": [],
+                    "categories": [
+                        {
+                            "id": 0,
+                            "name": "person",
+                            "supercategory": "person",
+                            "keypoints": ["nose", "left_eye", "right_eye"],
+                            "skeleton": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        from rfdetr.config import KeypointTrainConfig
+
+        model = object.__new__(RFDETR)
+        model.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        model.model = SimpleNamespace(args=SimpleNamespace(num_classes=90, num_keypoints_per_class=[17]))
+        train_config = KeypointTrainConfig(
+            dataset_dir=str(tmp_path),
+            dataset_file="roboflow",
+            tensorboard=False,
+            keypoint_flip_pairs=[2, 0],
+        )
+
+        model._align_keypoint_schema_from_dataset(train_config)
+
+        assert model.model_config.num_keypoints_per_class == [3]
+        assert model.model.args.num_keypoints_per_class == [3]
+        assert train_config.keypoint_flip_pairs == [2, 0]
+
+    def test_explicit_keypoint_schema_mismatch_warns_and_uses_dataset(self, mock_self, patch_lit, caplog):
+        """Explicit num_keypoints_per_class mismatches should warn and use dataset metadata."""
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+            num_keypoints_per_class=[17],
+        )
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[17])
+        mock_self._align_keypoint_schema_from_dataset = lambda config: RFDETR._align_keypoint_schema_from_dataset(
+            mock_self, config
+        )
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_roboflow_keypoint_categories(dataset_dir, keypoint_count=25)
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        previous_propagate = detr_logger.propagate
+        detr_logger.propagate = True
+        try:
+            with p_mod, p_dm, p_bt, caplog.at_level("WARNING", logger="rf-detr"):
+                RFDETR.train(mock_self)
+        finally:
+            detr_logger.propagate = previous_propagate
+
+        assert mock_self.model_config.num_keypoints_per_class == [25]
+        assert mock_self.model.args.num_keypoints_per_class == [25]
+        assert any(
+            record.levelname == "WARNING"
+            and "Configured num_keypoints_per_class=[17]" in record.message
+            and "dataset keypoint metadata [25]" in record.message
+            for record in caplog.records
+        )
 
     def test_no_adjustment_when_num_classes_already_matches_dataset(self, mock_self, patch_lit):
         """No adjustment when the model's num_classes already equals the dataset count.
@@ -1932,8 +2133,102 @@ class TestRFDETRTrainNumClassesAutoDetect:
         Guards against AttributeError if getattr returns None.
         """
         # Override dataset_dir to None on the train config mock.
-        mock_self.get_train_config.return_value.dataset_dir = None
+        object.__setattr__(mock_self.get_train_config.return_value, "dataset_dir", None)
 
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)  # must not raise
+
+    def test_keypoint_schema_padded_when_num_classes_bumped_for_custom_dataset(self, mock_self, patch_lit):
+        """num_keypoints_per_class is zero-padded when auto-adjust bumps num_classes beyond schema length.
+
+        Regression test for the warning "Keypoint class-logit boost has N classes but detection head has M" on custom
+        (non-Roboflow) datasets.  Root cause: _align_num_classes_from_dataset bumped num_classes but did not pad the
+        keypoint schema.  After the fix the schema length equals num_classes and _aggregate_keypoint_class_logits no
+        longer fires the mismatch warning.
+        """
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+            num_keypoints_per_class=[17, 0],
+        )
+        mock_self.model.args = SimpleNamespace(num_classes=2, num_keypoints_per_class=[17, 0])
+
+        # Dataset has 3 classes; schema covers 2 → triggers the padding path.
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball", "referee"])
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3
+        assert mock_self.model_config.num_keypoints_per_class == [17, 0, 0]
+        assert mock_self.model.args.num_keypoints_per_class == [17, 0, 0]
+
+    def test_keypoint_schema_not_padded_when_already_covers_all_classes(self, mock_self, patch_lit):
+        """Schema is left untouched when it already spans all detection classes.
+
+        Scenario: schema [17, 0, 14] (len=3), dataset has 2 classes.  The schema expansion at
+        max(2, len(schema))=3 sets dataset_num_classes=3, auto-adjust fires (90→3), then the
+        padding guard len(3)<3 evaluates False and the schema is preserved unchanged.
+        Using a 2-class dataset (not 3) ensures the guard is actually reached and evaluated
+        rather than being vacuously bypassed by an early return.
+        """
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+            num_keypoints_per_class=[17, 0, 14],
+        )
+        mock_self.model.args = SimpleNamespace(num_classes=3, num_keypoints_per_class=[17, 0, 14])
+
+        # 2-class dataset so max(2, 3)=3; auto-adjust fires (90→3); guard 3<3=False (no padding).
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball"])
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3
+        assert mock_self.model_config.num_keypoints_per_class == [17, 0, 14]
+        assert mock_self.model.args.num_keypoints_per_class == [17, 0, 14]
+
+    def test_keypoint_schema_padded_when_model_args_absent(self, mock_self, patch_lit):
+        """model_config schema is padded even when model.args is absent (model_args=None path).
+
+        Scenario: schema [17, 0], 3-class dataset, model has no args attribute.
+        Expected: model_config.num_keypoints_per_class padded to [17, 0, 0]; no AttributeError.
+        """
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+            num_keypoints_per_class=[17, 0],
+        )
+        mock_self.model = MagicMock(spec=[])  # no 'args' attr → getattr(model, "args", None) = None
+
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball", "referee"])
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3
+        assert mock_self.model_config.num_keypoints_per_class == [17, 0, 0]
+
+    def test_keypoint_schema_not_padded_when_schema_empty(self, mock_self, patch_lit):
+        """Padding is skipped when num_keypoints_per_class is an empty list.
+
+        Scenario: use_grouppose_keypoints=True but schema is [], 3-class dataset.
+        Expected: auto-adjust fires (90→3) but schema stays [] — the truthiness guard
+        ``if keypoint_schema and ...`` short-circuits before evaluating the length check.
+        """
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+        )
+        mock_self.model_config.num_keypoints_per_class = []  # override default [17]
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[])
+
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball", "referee"])
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3  # auto-adjust still fires
+        assert mock_self.model_config.num_keypoints_per_class == []  # empty schema not padded

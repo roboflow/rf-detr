@@ -15,10 +15,16 @@ import numpy as np
 import torch
 
 if TYPE_CHECKING:
-    import supervision as sv
+    from supervision import Detections
 from PIL import Image, ImageDraw
 from torchvision.datasets import VisionDataset
 
+from rfdetr.datasets._keypoint_schema import (
+    YoloKeypointSchema,
+    _extract_yolo_class_names_from_data,
+    _load_yaml_mapping,
+    infer_yolo_keypoint_schema,
+)
 from rfdetr.datasets.coco import (
     _resolve_runtime_augmentation_backend,
     make_coco_transforms,
@@ -94,53 +100,9 @@ def _list_yolo_image_paths(images_directory_path: str) -> list[str]:
 
 def _extract_yolo_class_names(data_file: str) -> list[str]:
     """Read class names from a YOLO ``data.yaml`` file."""
-    import yaml
-
-    with Path(data_file).open(encoding="utf-8") as handle:
-        data = yaml.safe_load(handle)
-    if not isinstance(data, dict):
-        raise ValueError(f"Expected mapping in data file {data_file!r}, got {type(data).__name__}.")
-    names = data.get("names")
-    if isinstance(names, dict):
-        # YOLO label files use integer class IDs. When ``names`` is a mapping, we
-        # only support the standard numeric-keyed form where keys are a contiguous
-        # 0-based range: {0: "cat", 1: "dog", ...}. This keeps class IDs consistent
-        # with range checks downstream that assume valid IDs are 0..N-1.
-        numeric_keys: list[int] = []
-        non_numeric_keys: list[Any] = []
-        for key in names.keys():
-            key_str = str(key)
-            if key_str.isdigit():
-                numeric_keys.append(int(key_str))
-            else:
-                non_numeric_keys.append(key)
-
-        if not numeric_keys:
-            raise ValueError(
-                "Unsupported 'names' mapping in data file "
-                f"{data_file!r}: expected integer keys 0..N-1 when 'names' is a dict, "
-                f"got only non-numeric keys {list(names.keys())!r}. "
-                "Please provide 'names' as a list or as a dict with 0-based contiguous "
-                "integer keys."
-            )
-
-        unique_sorted_keys = sorted(set(numeric_keys))
-        expected_keys = list(range(len(unique_sorted_keys)))
-        if unique_sorted_keys != expected_keys or non_numeric_keys:
-            raise ValueError(
-                "Unsupported 'names' mapping in data file "
-                f"{data_file!r}: expected integer keys 0..N-1 with no gaps, "
-                f"got numeric keys {unique_sorted_keys!r} and "
-                f"non-numeric keys {non_numeric_keys!r}. "
-                "This loader assumes class IDs are contiguous 0..N-1; please remap "
-                "the 'names' keys or use the list form."
-            )
-
-        # At this point, keys are exactly 0..N-1; order them by numeric ID.
-        return [str(names[idx]) for idx in unique_sorted_keys]
-    if isinstance(names, list):
-        return [str(name) for name in names]
-    raise ValueError(f"Expected 'names' to be a list or dict in {data_file!r}, got {type(names).__name__}.")
+    path = Path(data_file)
+    data = _load_yaml_mapping(path)
+    return _extract_yolo_class_names_from_data(data, path)
 
 
 @dataclass(frozen=True)
@@ -158,25 +120,26 @@ class _LazyYoloSample:
     xyxy: np.ndarray
     class_id: np.ndarray
     polygons: tuple[np.ndarray, ...]
+    keypoints: np.ndarray
 
-    def to_detections(self) -> "sv.Detections":
+    def to_detections(self) -> "Detections":
         """Materialize the current sample as a supervision ``Detections`` object."""
-        import supervision as sv
+        from supervision import Detections
 
         if len(self.class_id) == 0:
-            return sv.Detections.empty()
+            return Detections.empty()
         if len(self.polygons) == 0:
             # Detection-only path: no masks were computed, return bare boxes.
-            return sv.Detections(class_id=self.class_id, xyxy=self.xyxy)
+            return Detections(class_id=self.class_id, xyxy=self.xyxy)
         # TODO: once supervision v0.28 ships CompactMask, wrap the dense result:
         #   compact = sv.CompactMask.from_dense(mask, self.xyxy, (self.height, self.width))
-        #   return sv.Detections(..., mask=compact)
+        #   return Detections(..., mask=compact)
         # CompactMask stores crop-RLE instead of a full H×W bool array, reducing memory
         # at the detections level for large images with sparse objects.
         # Note: _polygon_to_mask / _polygons_to_masks remain required as the intermediate
         # rasterization step until supervision provides a direct from_polygon factory.
         mask = _polygons_to_masks(self.polygons, (self.width, self.height))
-        return sv.Detections(class_id=self.class_id, xyxy=self.xyxy, mask=mask)
+        return Detections(class_id=self.class_id, xyxy=self.xyxy, mask=mask)
 
 
 class _LazyYoloDetectionDataset:
@@ -189,14 +152,14 @@ class _LazyYoloDetectionDataset:
     def __len__(self) -> int:
         return len(self._samples)
 
-    def __getitem__(self, idx: int) -> tuple[str, np.ndarray, "sv.Detections"]:
-        import cv2
-
+    def __getitem__(self, idx: int) -> tuple[str, np.ndarray, "Detections"]:
         sample = self._samples[idx]
-        image = cv2.imread(sample.image_path)
-        if image is None:
-            raise ValueError(f"Could not read image from path: {sample.image_path}")
-        return sample.image_path, image, sample.to_detections()
+        try:
+            with Image.open(sample.image_path) as image:
+                rgb_image = np.array(image.convert("RGB"))
+        except (FileNotFoundError, OSError, Image.UnidentifiedImageError) as exc:
+            raise ValueError(f"Could not read image from path: {sample.image_path}") from exc
+        return sample.image_path, rgb_image, sample.to_detections()
 
     def get_image_info(self, idx: int) -> _LazyYoloSample:
         """Return lightweight metadata without loading pixels or dense masks."""
@@ -294,8 +257,93 @@ def _parse_yolo_label_line(
     return cid, xyxy_px, polygon_px.astype(np.float32)
 
 
+def _parse_yolo_pose_label_line(
+    values: list[str],
+    line_num: int,
+    label_path: Path,
+    num_classes: int,
+    width: int,
+    height: int,
+    *,
+    num_keypoints: int,
+    keypoint_dim: int,
+) -> tuple[int, np.ndarray, np.ndarray]:
+    """Parse one Ultralytics YOLO pose row into pixel boxes and COCO-style keypoints."""
+    expected_fields = 5 + num_keypoints * keypoint_dim
+    if len(values) != expected_fields:
+        hint = (
+            " This looks like a detection-only label row (5 fields). "
+            "Check whether the dataset mixes detection and pose annotations "
+            "or whether the kpt_shape in data.yaml is correct."
+            if len(values) == 5 and num_keypoints > 0
+            else ""
+        )
+        raise ValueError(
+            f"Malformed YOLO pose label in {str(label_path)!r} at line {line_num}: "
+            f"expected {expected_fields} fields from kpt_shape=[{num_keypoints}, {keypoint_dim}], "
+            f"got {len(values)}.{hint}"
+        )
+
+    cid, xyxy_px, _ = _parse_yolo_label_line(
+        values[:5],
+        line_num,
+        label_path,
+        num_classes,
+        width,
+        height,
+        parse_polygons=False,
+    )
+    try:
+        raw_keypoints = np.asarray(values[5:], dtype=np.float32).reshape(num_keypoints, keypoint_dim)
+    except ValueError as exc:
+        raise ValueError(
+            f"Malformed YOLO pose label in {str(label_path)!r} at line {line_num}: "
+            "could not parse keypoint values as floats."
+        ) from exc
+
+    if not np.isfinite(raw_keypoints).all():
+        raise ValueError(f"Malformed YOLO pose label in {str(label_path)!r} at line {line_num}: non-finite keypoint.")
+    xy = raw_keypoints[:, :2]
+
+    keypoints = np.zeros((num_keypoints, 3), dtype=np.float32)
+    if keypoint_dim == 3:
+        # v is authoritative for absent/present; clamp OOB coords to image edge.
+        visibility = raw_keypoints[:, 2]
+        if np.any((visibility < 0.0) | (visibility > 2.0)):
+            raise ValueError(
+                f"Malformed YOLO pose label in {str(label_path)!r} at line {line_num}: "
+                "keypoint visibility values must be in [0, 2]."
+            )
+        np.clip(xy, 0.0, 1.0, out=xy)
+        keypoints[:, 2] = visibility
+    else:
+        # Ultralytics dim-2 format: absent keypoints are marked with negative
+        # coordinates (any coord < 0 → absent).  Detect BEFORE clamping so that
+        # a keypoint like (-0.1, 0.5) is not clamped to (0.0, 0.5) and
+        # mistakenly treated as a present keypoint at the left image edge.
+        absent_2d = (xy[:, 0] < 0.0) | (xy[:, 1] < 0.0)
+        np.clip(xy, 0.0, 1.0, out=xy)
+        # Zero coords for absent keypoints so the (0, 0) absent sentinel is set.
+        xy[absent_2d, :] = 0.0
+        present = ~((xy[:, 0] == 0.0) & (xy[:, 1] == 0.0))
+        keypoints[present, 2] = 2.0
+
+    keypoints[:, 0] = xy[:, 0] * float(width)
+    keypoints[:, 1] = xy[:, 1] * float(height)
+
+    absent = keypoints[:, 2] <= 0.0
+    keypoints[absent, :2] = 0.0
+    return cid, xyxy_px, keypoints
+
+
 def _build_yolo_samples(
-    img_folder: str, lb_folder: str, data_file: str, *, include_polygons: bool
+    img_folder: str,
+    lb_folder: str,
+    data_file: str,
+    *,
+    include_polygons: bool,
+    include_keypoints: bool = False,
+    keypoint_schema: YoloKeypointSchema | None = None,
 ) -> tuple[list[str], list[_LazyYoloSample]]:
     """Build the class list and sample list shared by both YOLO builder functions.
 
@@ -310,6 +358,12 @@ def _build_yolo_samples(
         include_polygons: When ``True`` polygon coordinates are stored in each
             :class:`_LazyYoloSample` (segmentation path).  When ``False`` polygon coordinates returned by
             :func:`_parse_yolo_label_line` are discarded and ``polygons=()`` is stored instead (detection-only path).
+            Mutually exclusive with ``include_keypoints``.
+        include_keypoints: When ``True`` keypoint coordinates are stored in each :class:`_LazyYoloSample` (pose path).
+            Mutually exclusive with ``include_polygons``; raises :class:`ValueError` when both are ``True``.
+        keypoint_schema: Keypoint schema describing class names, per-class keypoint counts, OKS sigmas, keypoint names,
+            flip index, and keypoint dimensionality.  When ``None`` and ``include_keypoints=True`` the schema is
+            auto-inferred from ``data_file`` via :func:`infer_yolo_keypoint_schema`.
 
     Returns:
         A ``(classes, samples)`` tuple where ``classes`` is the ordered list of class names and ``samples`` is a list of
@@ -320,7 +374,17 @@ def _build_yolo_samples(
         >>> # _build_lazy_yolo_segmentation_dataset — not part of the public API.
         >>> pass
     """
-    classes = _extract_yolo_class_names(data_file)
+    if include_polygons and include_keypoints:
+        raise ValueError("YOLO segmentation masks and keypoints cannot be loaded at the same time.")
+    if include_keypoints:
+        keypoint_schema = keypoint_schema or infer_yolo_keypoint_schema(data_file)
+        classes = keypoint_schema.class_names
+        num_keypoints = max(keypoint_schema.num_keypoints_per_class, default=0)
+        keypoint_dim = keypoint_schema.keypoint_dim
+    else:
+        classes = _extract_yolo_class_names(data_file)
+        num_keypoints = 0
+        keypoint_dim = 0
     samples: list[_LazyYoloSample] = []
 
     for image_path in _list_yolo_image_paths(img_folder):
@@ -331,19 +395,35 @@ def _build_yolo_samples(
         xyxy: list[np.ndarray] = []
         class_id: list[int] = []
         polygons: list[np.ndarray] = []
+        keypoints: list[np.ndarray] = []
         if label_path.exists():
             with label_path.open(encoding="utf-8") as handle:
                 lines = [line.strip() for line in handle if line.strip()]
             for i, line in enumerate(lines):
-                cid, xyxy_px, polygon_px = _parse_yolo_label_line(
-                    line.split(),
-                    i + 1,
-                    label_path,
-                    len(classes),
-                    width,
-                    height,
-                    parse_polygons=include_polygons,
-                )
+                values = line.split()
+                if include_keypoints:
+                    cid, xyxy_px, keypoints_px = _parse_yolo_pose_label_line(
+                        values,
+                        i + 1,
+                        label_path,
+                        len(classes),
+                        width,
+                        height,
+                        num_keypoints=num_keypoints,
+                        keypoint_dim=keypoint_dim,
+                    )
+                    polygon_px = None
+                    keypoints.append(keypoints_px)
+                else:
+                    cid, xyxy_px, polygon_px = _parse_yolo_label_line(
+                        values,
+                        i + 1,
+                        label_path,
+                        len(classes),
+                        width,
+                        height,
+                        parse_polygons=include_polygons,
+                    )
                 class_id.append(cid)
                 xyxy.append(xyxy_px)
                 if include_polygons and polygon_px is not None:
@@ -357,6 +437,11 @@ def _build_yolo_samples(
                 xyxy=np.array(xyxy, dtype=np.float32).reshape(-1, 4),
                 class_id=np.array(class_id, dtype=np.int64),
                 polygons=tuple(polygons),
+                keypoints=(
+                    np.stack(keypoints).astype(np.float32, copy=False)
+                    if keypoints
+                    else np.zeros((0, num_keypoints, 3), dtype=np.float32)
+                ),
             )
         )
 
@@ -401,7 +486,29 @@ def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_
     return _LazyYoloDetectionDataset(classes=classes, samples=samples)
 
 
-def _build_coco_api_from_samples(classes: list[str], dataset: Any) -> Any:
+def _build_lazy_yolo_keypoint_dataset(
+    img_folder: str,
+    lb_folder: str,
+    data_file: str,
+    keypoint_schema: YoloKeypointSchema,
+) -> _LazyYoloDetectionDataset:
+    """Build a YOLO pose dataset that stores keypoints without dense masks."""
+    classes, samples = _build_yolo_samples(
+        img_folder,
+        lb_folder,
+        data_file,
+        include_polygons=False,
+        include_keypoints=True,
+        keypoint_schema=keypoint_schema,
+    )
+    return _LazyYoloDetectionDataset(classes=classes, samples=samples)
+
+
+def _build_coco_api_from_samples(
+    classes: list[str],
+    dataset: Any,
+    keypoint_schema: YoloKeypointSchema | None = None,
+) -> Any:
     """Build an in-memory ``pycocotools.COCO`` object from YOLO lazy samples.
 
     Args:
@@ -415,9 +522,13 @@ def _build_coco_api_from_samples(classes: list[str], dataset: Any) -> Any:
 
     images: list[dict[str, Any]] = []
     annotations: list[dict[str, Any]] = []
-    categories: list[dict[str, Any]] = [
-        {"id": idx, "name": class_name, "supercategory": "none"} for idx, class_name in enumerate(classes)
-    ]
+    categories: list[dict[str, Any]] = []
+    for idx, class_name in enumerate(classes):
+        category = {"id": idx, "name": class_name, "supercategory": "none"}
+        if keypoint_schema is not None:
+            category["keypoints"] = list(keypoint_schema.keypoint_names)
+            category["skeleton"] = []
+        categories.append(category)
 
     use_lazy_path = hasattr(dataset, "get_image_info")
     ann_id = 0
@@ -429,12 +540,14 @@ def _build_coco_api_from_samples(classes: list[str], dataset: Any) -> Any:
             xyxy = sample.xyxy
             class_id = sample.class_id
             has_masks = len(sample.polygons) > 0
+            keypoints = sample.keypoints
         else:
-            image_path, cv2_image, detections = dataset[img_id]
-            height, width = cv2_image.shape[:2]
+            image_path, image_array, detections = dataset[img_id]
+            height, width = image_array.shape[:2]
             xyxy = detections.xyxy
             class_id = detections.class_id
             has_masks = detections.mask is not None
+            keypoints = np.zeros((len(xyxy), 0, 3), dtype=np.float32)
 
         images.append({"id": img_id, "file_name": str(image_path), "height": int(height), "width": int(width)})
 
@@ -453,6 +566,10 @@ def _build_coco_api_from_samples(classes: list[str], dataset: Any) -> Any:
             if has_masks:
                 # Keep bbox evaluation compatible without eager mask encoding at init.
                 ann["segmentation"] = []
+            if keypoint_schema is not None:
+                keypoints_i = keypoints[i] if i < len(keypoints) else np.zeros((0, 3), dtype=np.float32)
+                ann["keypoints"] = keypoints_i.reshape(-1).astype(float).tolist()
+                ann["num_keypoints"] = int(np.count_nonzero(keypoints_i[:, 2] > 0))
             annotations.append(ann)
             ann_id += 1
 
@@ -496,15 +613,17 @@ class ConvertYolo:
     """Converts supervision Detections to the target dict format expected by RF-DETR.
 
     Args:
-        include_masks: whether to include segmentation masks
+        include_masks: whether to include segmentation masks.
+        include_keypoints: whether to include pose keypoints.
+        num_keypoints: Number of keypoints per instance when keypoints are enabled.
 
     Examples:
         >>> import numpy as np
-        >>> import supervision as sv
+        >>> from supervision import Detections
         >>> from PIL import Image
         >>> # Create a sample image and target
         >>> image = Image.new("RGB", (100, 100))
-        >>> detections = sv.Detections(
+        >>> detections = Detections(
         ...     xyxy=np.array([[10, 20, 30, 40]]),
         ...     class_id=np.array([0])
         ... )
@@ -523,15 +642,17 @@ class ConvertYolo:
         [0]
     """
 
-    def __init__(self, include_masks: bool = False):
+    def __init__(self, include_masks: bool = False, include_keypoints: bool = False, num_keypoints: int = 0):
         self.include_masks = include_masks
+        self.include_keypoints = include_keypoints
+        self.num_keypoints = num_keypoints
 
     def __call__(self, image: Image.Image, target: dict) -> tuple:
         """Convert image and YOLO detections to RF-DETR format.
 
         Args:
             image: PIL Image
-            target: dict with 'image_id' and 'detections' (sv.Detections)
+            target: dict with 'image_id' and 'detections'
 
         Returns:
             tuple of (image, target_dict)
@@ -579,6 +700,15 @@ class ConvertYolo:
 
             target_out["masks"] = target_out["masks"].bool()
 
+        if self.include_keypoints:
+            raw_keypoints = target.get("keypoints")
+            if raw_keypoints is None:
+                # Allocate with pre-filter size so `keep` indexing below is valid
+                keypoints = torch.zeros((keep.shape[0], self.num_keypoints, 3), dtype=torch.float32)
+            else:
+                keypoints = torch.as_tensor(raw_keypoints, dtype=torch.float32).reshape(-1, self.num_keypoints, 3)
+            target_out["keypoints"] = keypoints[keep]
+
         target_out["orig_size"] = torch.as_tensor([int(h), int(w)])
         target_out["size"] = torch.as_tensor([int(h), int(w)])
 
@@ -605,6 +735,8 @@ class YoloDetection(VisionDataset):
         transforms: Optional transforms to apply to images and targets
         include_masks: Whether to load segmentation masks (for YOLO segmentation format).
             When True polygons are parsed and rasterized on demand; when False only bounding-box coordinates are stored.
+        include_keypoints: Whether to load Ultralytics YOLO pose keypoints.
+        num_keypoints_per_class: Optional keypoint schema used by RF-DETR.
     """
 
     def __init__(
@@ -614,13 +746,38 @@ class YoloDetection(VisionDataset):
         data_file: str,
         transforms=None,
         include_masks: bool = False,
+        include_keypoints: bool = False,
+        num_keypoints_per_class: list[int] | None = None,
     ):
+        if include_masks and include_keypoints:
+            raise ValueError("YOLO segmentation masks and keypoints cannot be loaded at the same time.")
         super(YoloDetection, self).__init__(img_folder)
         self._transforms = transforms
         self.include_masks = include_masks
-        self.prepare = ConvertYolo(include_masks=include_masks)
-
-        if include_masks:
+        self.include_keypoints = include_keypoints
+        if include_keypoints:
+            try:
+                self.keypoint_schema = infer_yolo_keypoint_schema(data_file)
+            except (FileNotFoundError, ValueError, OSError) as exc:
+                raise ValueError(f"YOLO keypoint training requires kpt_shape metadata in {data_file!r}.") from exc
+        else:
+            self.keypoint_schema = None
+        self.num_keypoints = max(num_keypoints_per_class or [], default=0)
+        if self.keypoint_schema is not None:
+            self.num_keypoints = max(self.keypoint_schema.num_keypoints_per_class, default=self.num_keypoints)
+        self.prepare = ConvertYolo(
+            include_masks=include_masks,
+            include_keypoints=include_keypoints,
+            num_keypoints=self.num_keypoints,
+        )
+        if include_keypoints:
+            self.sv_dataset = _build_lazy_yolo_keypoint_dataset(
+                img_folder,
+                lb_folder,
+                data_file,
+                self.keypoint_schema,
+            )
+        elif include_masks:
             self.sv_dataset = _build_lazy_yolo_segmentation_dataset(img_folder, lb_folder, data_file)
         else:
             self.sv_dataset = _build_lazy_yolo_detection_dataset(img_folder, lb_folder, data_file)
@@ -629,20 +786,20 @@ class YoloDetection(VisionDataset):
         self.ids = list(range(len(self.sv_dataset)))
 
         # Create COCO-compatible API for evaluation
-        self.coco = _build_coco_api_from_samples(self.classes, self.sv_dataset)
+        self.coco = _build_coco_api_from_samples(self.classes, self.sv_dataset, self.keypoint_schema)
 
     def __len__(self) -> int:
         return len(self.sv_dataset)
 
     def __getitem__(self, idx: int):
         image_id = self.ids[idx]
-        image_path, cv2_image, detections = self.sv_dataset[idx]
+        image_path, rgb_image, detections = self.sv_dataset[idx]
 
-        # Convert BGR (OpenCV) to RGB (PIL)
-        rgb_image = cv2_image[:, :, ::-1]
         img = Image.fromarray(rgb_image)
 
         target = {"image_id": image_id, "detections": detections}
+        if self.include_keypoints:
+            target["keypoints"] = self.sv_dataset.get_image_info(idx).keypoints
         img, target = self.prepare(img, target)
 
         if self._transforms is not None:
@@ -691,9 +848,21 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     patch_size = getattr(args, "patch_size", None)
     num_windows = getattr(args, "num_windows", None)
     aug_config = getattr(args, "aug_config", None)
-    scale_jitter = getattr(args, "scale_jitter", True)
+    include_keypoints = getattr(args, "use_grouppose_keypoints", False)
+    num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
+    keypoint_flip_pairs: list[int] | None = (
+        (getattr(args, "keypoint_flip_pairs", []) or []) if include_keypoints else None
+    )
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
     gpu_postprocess = resolved_augmentation_backend != "cpu"
+
+    if include_keypoints:
+        try:
+            infer_yolo_keypoint_schema(data_file)
+        except (FileNotFoundError, ValueError, OSError) as exc:
+            raise ValueError(
+                "YOLO keypoint training requires an Ultralytics pose data.yaml/data.yml with valid kpt_shape metadata."
+            ) from exc
 
     if square_resize_div_64:
         dataset = YoloDetection(
@@ -709,10 +878,12 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
-                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
+                keypoint_flip_pairs=keypoint_flip_pairs,
             ),
             include_masks=include_masks,
+            include_keypoints=include_keypoints,
+            num_keypoints_per_class=num_keypoints_per_class,
         )
     else:
         dataset = YoloDetection(
@@ -728,9 +899,11 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
-                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
+                keypoint_flip_pairs=keypoint_flip_pairs,
             ),
             include_masks=include_masks,
+            include_keypoints=include_keypoints,
+            num_keypoints_per_class=num_keypoints_per_class,
         )
     return dataset

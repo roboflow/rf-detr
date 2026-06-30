@@ -12,7 +12,6 @@ Pass `aug_config` to your training call. Import one of the built-in presets:
 
 ```python
 from rfdetr import RFDETRSmall
-
 from rfdetr.datasets.aug_configs import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
 
 model = RFDETRSmall()
@@ -33,7 +32,7 @@ model.train(
 )
 ```
 
-To disable augmentations: `aug_config={}`. To disable the resize-and-crop scale jitter branch independently, pass `scale_jitter=False`. The two are separate controls: `aug_config` governs colour/geometric augmentations; `scale_jitter` governs whether the training resize pipeline uses a resize → crop → resize branch for scale variation.
+To disable all augmentations: `aug_config={}`. This also disables the resize-and-crop branch (Option B) in the training resize pipeline — no spatial clipping will occur and annotations near image borders will stay intact.
 
 ## Built-in Presets
 

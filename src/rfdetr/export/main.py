@@ -113,8 +113,15 @@ def main(args):
     n_transformer_parameters = sum(p.numel() for p in model.transformer.parameters())
     logger.info(f"number of transformer parameters: {n_transformer_parameters}")
     if args.resume:
-        checkpoint = torch.load(args.resume, map_location="cpu")
-        model.load_state_dict(checkpoint["model"], strict=True)
+        # weights_only=False: legacy checkpoints may contain non-tensor objects (argparse.Namespace).
+        checkpoint = torch.load(args.resume, map_location="cpu", weights_only=False)
+        result = model.load_state_dict(checkpoint["model"], strict=False)
+        if result.missing_keys or result.unexpected_keys:
+            logger.warning(
+                "load_state_dict strict=False: missing=%s unexpected=%s",
+                result.missing_keys[:5],
+                result.unexpected_keys[:5],
+            )
         logger.info(f"load checkpoints {args.resume}")
 
     if args.layer_norm:
@@ -180,11 +187,6 @@ def main(args):
         opset_version=args.opset_version,
         variant_name=getattr(args, "variant_name", None),
     )
-
-    if args.simplify:
-        logger.warning(
-            "The simplify flag is deprecated and ignored. RF-DETR no longer runs ONNX simplification automatically."
-        )
 
     onnx_path = output_file  # preserve ONNX path before any post-processing step overwrites it
 

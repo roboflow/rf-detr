@@ -8,8 +8,7 @@
 The ``BuilderArgs`` protocol documents the minimum attribute set consumed by ``build_model()``, ``build_backbone()``,
 ``build_transformer()``, and ``build_criterion_and_postprocessors()``.  It is satisfied structurally by any object that
 exposes the required attributes — including the ``SimpleNamespace`` produced by
-:func:`rfdetr._namespace.build_namespace` and, after Item #1 is complete, by
-``ModelConfig``/``TrainConfig`` directly.
+:func:`rfdetr._namespace.build_namespace` and, after Item #1 is complete, by ``ModelConfig``/``TrainConfig`` directly.
 """
 
 from __future__ import annotations
@@ -38,6 +37,14 @@ class BuilderArgs(Protocol):
     freeze_encoder: bool
     backbone_lora: bool
     two_stage: bool
+    use_grouppose_keypoints: bool
+    keypoint_cross_attn: bool
+    inter_instance_kp_attn: bool
+    grouppose_keypoint_dim_downscale: int
+    dual_projector: bool
+    dual_projector_kp_only: bool
+    num_keypoints_per_class: List[int]
+    num_decoder_registers: int
     projector_scale: List[str]
     hidden_dim: int
     patch_size: int
@@ -90,6 +97,10 @@ class BuilderArgs(Protocol):
     use_varifocal_loss: bool
     use_position_supervised_loss: bool
     sum_group_losses: bool
+    keypoint_l1_loss_coef: float
+    keypoint_findable_loss_coef: float
+    keypoint_visible_loss_coef: float
+    keypoint_nll_loss_coef: float
     mask_ce_loss_coef: float
     mask_dice_loss_coef: float
     mask_point_sample_ratio: int

@@ -15,9 +15,10 @@ import os
 import shutil
 import time
 import zipfile
+from collections.abc import Generator
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generator, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.request import urlretrieve
 
 import numpy as np
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     import torch
 
 _COCO_URLS = {
+    "train2017": "http://images.cocodataset.org/zips/train2017.zip",
     "val2017": "http://images.cocodataset.org/zips/val2017.zip",
     "annotations": "http://images.cocodataset.org/annotations/annotations_trainval2017.zip",
 }
@@ -95,6 +97,11 @@ def _nonempty_file_exists(path: Path) -> bool:
         return False
 
 
+def get_coco_download_url(asset: Literal["train2017", "val2017", "annotations"]) -> str:
+    """Return the official COCO 2017 download URL for the requested asset."""
+    return _COCO_URLS[asset]
+
+
 class _SimpleDataset:
     """Simple synthetic dataset for testing augmentations and training loops.
 
@@ -120,14 +127,14 @@ class _SimpleDataset:
         >>> image, target = dataset[0]
     """
 
-    def __init__(self, num_samples: int = 10, transforms: Optional[Any] = None) -> None:
+    def __init__(self, num_samples: int = 10, transforms: Any | None = None) -> None:
         self.num_samples = num_samples
         self.transforms = transforms
 
     def __len__(self) -> int:
         return self.num_samples
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, dict]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, dict[str, Any]]:
         # Create synthetic image
         image = Image.new("RGB", (640, 480))
 
@@ -209,6 +216,12 @@ def _download_lock(lock_path: Path, timeout_s: float = 600.0, poll_s: float = 0.
 
     Raises:
         TimeoutError: If the lock cannot be acquired within the timeout.
+
+    Note:
+        Lock identity is file existence (``O_CREAT | O_EXCL``), not a held file descriptor.
+        A SIGKILL-terminated process will leak the lock file until ``timeout_s`` expires.
+        If all worker processes have exited but the lock persists, remove it manually:
+        ``rm <lock_path>``.
     """
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     start = time.time()

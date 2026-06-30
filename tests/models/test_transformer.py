@@ -13,7 +13,7 @@ import torch
 
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
-from rfdetr.models.transformer import gen_encoder_output_proposals
+from rfdetr.models.transformer import gen_encoder_output_proposals, gen_sineembed_for_position
 
 
 @pytest.fixture(autouse=True)
@@ -86,6 +86,26 @@ def test_gen_encoder_output_proposals_passes_ij_indexing_to_meshgrid(monkeypatch
     )
 
     assert call_count == 1
+
+
+def test_gen_sineembed_for_position_keeps_box_dimensions_in_sin_cos_order() -> None:
+    """4D box positional embeddings must use the pretrained sin/cos order for all dimensions."""
+    pos_tensor = torch.tensor([[[0.125, 0.25, 0.5, 0.75]]], dtype=torch.float32)
+    dim = 4
+    scale = 2 * torch.pi
+    dim_t = torch.arange(dim, dtype=pos_tensor.dtype)
+    dim_t = 10000 ** (2 * (dim_t // 2) / dim)
+
+    expected_parts = []
+    for coord_idx in (1, 0, 2, 3):
+        coord = pos_tensor[:, :, coord_idx] * scale
+        encoded = coord[:, :, None] / dim_t
+        expected_parts.append(torch.stack((encoded[:, :, 0::2].sin(), encoded[:, :, 1::2].cos()), dim=3).flatten(2))
+    expected = torch.cat(expected_parts, dim=2)
+
+    actual = gen_sineembed_for_position(pos_tensor, dim=dim)
+
+    torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
 
 
 def test_gen_encoder_output_proposals_rejects_non_square_ij_indexing(monkeypatch) -> None:
@@ -397,7 +417,6 @@ class TestGenEncoderOutputProposalsDynamicBatch:
         Regression for issue #949: exporting with a fixed trace batch baked `Reshape([8,...])` as a constant ONNX node,
         causing TRT engines to fail at inference for any batch != 8. Skipped when onnx or onnxruntime is not installed.
         """
-
         pytest.importorskip("onnx")
         onnxruntime = pytest.importorskip("onnxruntime")
 

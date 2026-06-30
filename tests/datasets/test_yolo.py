@@ -22,6 +22,16 @@ from rfdetr.datasets.yolo import (
 )
 
 
+def _write_minimal_roboflow_yolo_dataset(tmp_path: Path) -> None:
+    """Create a minimal Roboflow YOLO dataset root."""
+    (tmp_path / "data.yaml").write_text("names:\n  - person\n", encoding="utf-8")
+    for split in ("train", "valid"):
+        (tmp_path / split / "images").mkdir(parents=True)
+        (tmp_path / split / "labels").mkdir(parents=True)
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(tmp_path / split / "images" / "sample.png")
+        (tmp_path / split / "labels" / "sample.txt").write_text("0 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+
+
 def _write_yolo_segmentation_dataset(tmp_path: Path) -> tuple[Path, Path, Path]:
     """Create a minimal YOLO segmentation dataset on disk."""
     image_dir = tmp_path / "images"
@@ -34,6 +44,39 @@ def _write_yolo_segmentation_dataset(tmp_path: Path) -> tuple[Path, Path, Path]:
     (label_dir / "sample.txt").write_text("0 0.25 0.25 0.75 0.25 0.75 0.75 0.25 0.75\n", encoding="utf-8")
     data_file = tmp_path / "data.yaml"
     data_file.write_text("names:\n  0: carton\n", encoding="utf-8")
+    return image_dir, label_dir, data_file
+
+
+def _write_yolo_pose_dataset(tmp_path: Path, *, keypoint_dim: int = 3) -> tuple[Path, Path, Path]:
+    """Create a minimal YOLO pose dataset on disk."""
+    image_dir = tmp_path / "images"
+    label_dir = tmp_path / "labels"
+    image_dir.mkdir()
+    label_dir.mkdir()
+
+    Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "sample.png")
+    if keypoint_dim == 3:
+        label = "0 0.5 0.5 0.5 0.5 0.25 0.25 2 0 0 0\n"
+        yaml_text = """
+names:
+  0: person
+kpt_shape: [2, 3]
+kpt_names:
+  0: [left_eye, right_eye]
+flip_idx: [1, 0]
+"""
+    else:
+        label = "0 0.5 0.5 0.5 0.5 0.25 0.25 0 0\n"
+        yaml_text = """
+names:
+  0: person
+kpt_shape: [2, 2]
+kpt_names:
+  0: [left_eye, right_eye]
+"""
+    (label_dir / "sample.txt").write_text(label, encoding="utf-8")
+    data_file = tmp_path / "data.yaml"
+    data_file.write_text(yaml_text, encoding="utf-8")
     return image_dir, label_dir, data_file
 
 
@@ -132,6 +175,42 @@ class TestBuildRoboflowFromYoloAugConfig:
         _, kwargs = mock_transform.call_args
         assert kwargs["gpu_postprocess"] is False
 
+    def test_keypoint_mode_rejects_detection_only_yolo_format(self, tmp_path: Path) -> None:
+        """Keypoint preview training should fail clearly for YOLO datasets without pose metadata."""
+        _write_minimal_roboflow_yolo_dataset(tmp_path)
+        args = self._make_args(square_resize_div_64=False, aug_config=None)
+        args.dataset_dir = str(tmp_path)
+        args.use_grouppose_keypoints = True
+
+        from rfdetr.datasets import build_roboflow
+
+        with pytest.raises(ValueError, match="YOLO keypoint"):
+            build_roboflow("train", args, resolution=64)
+
+    def test_keypoint_mode_accepts_yolo_pose_format(self, tmp_path: Path) -> None:
+        """Keypoint preview training should build YOLO pose datasets when kpt_shape is present."""
+        _write_minimal_roboflow_yolo_dataset(tmp_path)
+        (tmp_path / "data.yaml").write_text(
+            "names:\n  - person\nkpt_shape: [1, 3]\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "train" / "labels" / "sample.txt").write_text(
+            "0 0.5 0.5 0.5 0.5 0.5 0.5 2\n",
+            encoding="utf-8",
+        )
+        args = self._make_args(square_resize_div_64=False, aug_config=None)
+        args.dataset_dir = str(tmp_path)
+        args.use_grouppose_keypoints = True
+        args.num_keypoints_per_class = [1]
+
+        from rfdetr.datasets import build_roboflow
+
+        dataset = build_roboflow("train", args, resolution=64)
+
+        _, target = dataset[0]
+        assert target["keypoints"].shape == (1, 1, 3)
+        assert target["keypoints"][0, 0, 2].item() == pytest.approx(2.0)
+
 
 class TestIsValidYoloDataset:
     """Tests for the is_valid_yolo_dataset function."""
@@ -172,11 +251,18 @@ class TestIsValidYoloDataset:
 class TestYoloDetectionLazyMasks:
     """Segmentation masks should stay lightweight until a sample is fetched."""
 
-    def test_segmentation_init_builds_coco_metadata_without_cv2_loading(self, tmp_path: Path) -> None:
-        """Dataset construction should not call cv2.imread for every image."""
+    def test_segmentation_init_builds_coco_metadata_without_pixel_loading(self, tmp_path: Path) -> None:
+        """Dataset construction must not decode pixel data for every image (only metadata is needed at init)."""
         image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(tmp_path)
 
-        with patch("cv2.imread", side_effect=AssertionError("cv2.imread should not run during init")):
+        # ``Image.open`` is allowed during init to read header metadata (``image.size``),
+        # but ``Image.Image.convert`` decodes the full pixel buffer and must not run until
+        # ``__getitem__`` is invoked on the lazy dataset.
+        with patch.object(
+            Image.Image,
+            "convert",
+            side_effect=AssertionError("Image.convert should not run during init"),
+        ):
             dataset = YoloDetection(
                 img_folder=str(image_dir),
                 lb_folder=str(label_dir),
@@ -195,6 +281,18 @@ class TestYoloDetectionLazyMasks:
         ]
         assert dataset.coco.dataset["annotations"][0]["segmentation"] == []
         assert isinstance(dataset.coco, COCO)
+
+    def test_init_raises_when_masks_and_keypoints_both_enabled(self, tmp_path: Path) -> None:
+        """YoloDetection must reject include_masks=True + include_keypoints=True before any I/O."""
+        with pytest.raises(ValueError, match="at the same time"):
+            YoloDetection(
+                img_folder=str(tmp_path / "images"),
+                lb_folder=str(tmp_path / "labels"),
+                data_file=str(tmp_path / "data.yaml"),
+                transforms=None,
+                include_masks=True,
+                include_keypoints=True,
+            )
 
     def test_detection_init_exposes_real_coco_api_indexes(self, tmp_path: Path) -> None:
         """`dataset.coco` should be a real pycocotools.COCO object with working indexes."""
@@ -219,6 +317,283 @@ class TestYoloDetectionLazyMasks:
         assert dataset.coco.getCatIds() == [0]
         assert dataset.coco.getImgIds() == [0]
         assert dataset.coco.getAnnIds(imgIds=[0], catIds=[0]) == [0]
+
+    def test_pose_init_exposes_keypoint_coco_metadata_without_pixel_loading(self, tmp_path: Path) -> None:
+        """YOLO pose construction should synthesize COCO keypoint metadata lazily."""
+        image_dir, label_dir, data_file = _write_yolo_pose_dataset(tmp_path, keypoint_dim=3)
+
+        with patch.object(
+            Image.Image,
+            "convert",
+            side_effect=AssertionError("Image.convert should not run during init"),
+        ):
+            dataset = YoloDetection(
+                img_folder=str(image_dir),
+                lb_folder=str(label_dir),
+                data_file=str(data_file),
+                transforms=None,
+                include_keypoints=True,
+                num_keypoints_per_class=[2],
+            )
+
+        sample = dataset.sv_dataset.get_image_info(0)
+        assert sample.keypoints.shape == (1, 2, 3)
+        assert dataset.coco.dataset["categories"] == [
+            {
+                "id": 0,
+                "name": "person",
+                "supercategory": "none",
+                "keypoints": ["left_eye", "right_eye"],
+                "skeleton": [],
+            }
+        ]
+        assert dataset.coco.dataset["annotations"][0]["num_keypoints"] == 1
+        assert dataset.coco.dataset["annotations"][0]["keypoints"] == pytest.approx([2.0, 1.5, 2.0, 0.0, 0.0, 0.0])
+
+    def test_pose_getitem_returns_keypoint_targets_with_visibility(self, tmp_path: Path) -> None:
+        """YOLO pose labels with visibility should become RF-DETR keypoint targets."""
+        image_dir, label_dir, data_file = _write_yolo_pose_dataset(tmp_path, keypoint_dim=3)
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_keypoints=True,
+            num_keypoints_per_class=[2],
+        )
+
+        _, target = dataset[0]
+
+        assert target["boxes"][0].tolist() == pytest.approx([2.0, 1.5, 6.0, 4.5])
+        assert target["labels"].tolist() == [0]
+        assert target["keypoints"].shape == (1, 2, 3)
+        torch.testing.assert_close(
+            target["keypoints"][0],
+            torch.tensor([[2.0, 1.5, 2.0], [0.0, 0.0, 0.0]], dtype=torch.float32),
+        )
+        assert "masks" not in target
+
+    def test_pose_2d_keypoints_synthesize_visibility(self, tmp_path: Path) -> None:
+        """YOLO pose labels without visibility should mark nonzero points visible and zero points absent."""
+        image_dir, label_dir, data_file = _write_yolo_pose_dataset(tmp_path, keypoint_dim=2)
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_keypoints=True,
+            num_keypoints_per_class=[2],
+        )
+
+        _, target = dataset[0]
+
+        torch.testing.assert_close(
+            target["keypoints"][0],
+            torch.tensor([[2.0, 1.5, 2.0], [0.0, 0.0, 0.0]], dtype=torch.float32),
+        )
+
+    def test_pose_background_image_has_empty_keypoint_tensor(self, tmp_path: Path) -> None:
+        """YOLO pose background images should keep an empty keypoint tensor with the schema width."""
+        image_dir, label_dir, data_file = _write_yolo_pose_dataset(tmp_path, keypoint_dim=3)
+        (label_dir / "sample.txt").unlink()
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_keypoints=True,
+            num_keypoints_per_class=[2],
+        )
+
+        _, target = dataset[0]
+
+        assert target["boxes"].shape == (0, 4)
+        assert target["labels"].shape == (0,)
+        assert target["keypoints"].shape == (0, 2, 3)
+
+    def test_pose_multi_instance_keypoints_stack_correctly(self, tmp_path: Path) -> None:
+        """Multiple YOLO pose rows should stack boxes, labels, and keypoints per instance."""
+        image_dir, label_dir, data_file = _write_yolo_pose_dataset(tmp_path, keypoint_dim=3)
+        (label_dir / "sample.txt").write_text(
+            "0 0.5 0.5 0.5 0.5 0.25 0.25 2 0 0 0\n0 0.25 0.25 0.25 0.25 0.5 0.5 1 0.75 0.75 2\n",
+            encoding="utf-8",
+        )
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_keypoints=True,
+            num_keypoints_per_class=[2],
+        )
+
+        _, target = dataset[0]
+
+        assert target["boxes"].shape == (2, 4)
+        assert target["labels"].tolist() == [0, 0]
+        assert target["keypoints"].shape == (2, 2, 3)
+        torch.testing.assert_close(target["keypoints"][1, :, 2], torch.tensor([1.0, 2.0]))
+
+    def test_pose_malformed_keypoint_count_raises_clear_error(self, tmp_path: Path) -> None:
+        """YOLO pose rows must match kpt_shape exactly."""
+        image_dir, label_dir, data_file = _write_yolo_pose_dataset(tmp_path, keypoint_dim=3)
+        (label_dir / "sample.txt").write_text("0 0.5 0.5 0.5 0.5 0.25 0.25\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="kpt_shape"):
+            YoloDetection(
+                img_folder=str(image_dir),
+                lb_folder=str(label_dir),
+                data_file=str(data_file),
+                transforms=None,
+                include_keypoints=True,
+                num_keypoints_per_class=[2],
+            )
+
+    @pytest.mark.parametrize(
+        "bad_label, expected_match",
+        [
+            pytest.param(
+                "0 0.5 0.5 0.5 0.5 0.5 0.5 3.0 0.5 0.5 2.0\n",
+                "visibility values must be",
+                id="visibility_out_of_range",
+            ),
+            pytest.param(
+                "0 0.5 0.5 0.5 0.5 nan 0.5 2.0 0.5 0.5 2.0\n",
+                "non-finite",
+                id="nan_keypoint",
+            ),
+        ],
+    )
+    def test_pose_malformed_label_value_raises_clear_error(
+        self, tmp_path: Path, bad_label: str, expected_match: str
+    ) -> None:
+        """Out-of-range visibility or NaN keypoints raise ValueError."""
+        image_dir, label_dir, data_file = _write_yolo_pose_dataset(tmp_path, keypoint_dim=3)
+        (label_dir / "sample.txt").write_text(bad_label, encoding="utf-8")
+
+        with pytest.raises(ValueError, match=expected_match):
+            YoloDetection(
+                img_folder=str(image_dir),
+                lb_folder=str(label_dir),
+                data_file=str(data_file),
+                transforms=None,
+                include_keypoints=True,
+            )
+
+    def test_pose_dim3_out_of_bounds_coord_clamped_to_image_edge(self, tmp_path: Path) -> None:
+        """Dim-3: OOB keypoint coords are clamped to [0, 1]; visibility flag unchanged.
+
+        Roboflow exports sometimes annotate keypoints slightly outside the image frame. Clamping maps them to the
+        nearest edge so training proceeds without crashing. Image fixture is 8 × 6 px.
+        """
+        image_dir, label_dir, data_file = _write_yolo_pose_dataset(tmp_path, keypoint_dim=3)
+        # kpt0: x=1.5 (OOB right), y=0.5, v=2 → clamp x to 1.0 → pixel x = 8.0
+        # kpt1: x=-0.1 (OOB left), y=0.5, v=1 → clamp x to 0.0 → pixel x = 0.0; v=1 preserved
+        (label_dir / "sample.txt").write_text("0 0.5 0.5 0.5 0.5 1.5 0.5 2.0 -0.1 0.5 1.0\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_keypoints=True,
+            num_keypoints_per_class=[2],
+        )
+
+        _, target = dataset[0]
+        kpts = target["keypoints"]
+        assert kpts.shape == (1, 2, 3)
+        assert kpts[0, 0, 0].item() == pytest.approx(8.0)
+        assert kpts[0, 0, 2].item() == pytest.approx(2.0)
+        assert kpts[0, 1, 0].item() == pytest.approx(0.0)
+        assert kpts[0, 1, 2].item() == pytest.approx(1.0)
+
+    def test_pose_dim2_negative_coord_treated_as_absent(self, tmp_path: Path) -> None:
+        """Dim-2: negative coordinate is the Ultralytics absent-keypoint sentinel.
+
+        Per the YOLO pose spec, a negative x or y signals the keypoint is not labeled.  The parser must detect absence
+        BEFORE clamping so that a keypoint like (-0.1, 0.5) is not clamped to (0.0, 0.5) and mistaken for a present
+        keypoint at the left image edge. Image fixture is 8 × 6 px.
+        """
+        image_dir, label_dir, data_file = _write_yolo_pose_dataset(tmp_path, keypoint_dim=2)
+        # kpt0: x=1.5 (OOB, positive) → clamp to 1.0 → pixel x=8; present → v=2
+        # kpt1: x=-0.1 (negative absent signal), y=0.5 → absent → coords zeroed, v=0
+        (label_dir / "sample.txt").write_text("0 0.5 0.5 0.5 0.5 1.5 0.5 -0.1 0.5\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_keypoints=True,
+            num_keypoints_per_class=[2],
+        )
+
+        _, target = dataset[0]
+        kpts = target["keypoints"]
+        assert kpts.shape == (1, 2, 3)
+        # kpt0: present, clamped to right edge
+        assert kpts[0, 0, 0].item() == pytest.approx(8.0)
+        assert kpts[0, 0, 2].item() == pytest.approx(2.0)
+        # kpt1: absent — coords zeroed, visibility 0
+        assert kpts[0, 1, 0].item() == pytest.approx(0.0)
+        assert kpts[0, 1, 1].item() == pytest.approx(0.0)
+        assert kpts[0, 1, 2].item() == pytest.approx(0.0)
+
+    def test_build_dataset_accepts_explicit_yolo_pose_file(self, tmp_path: Path) -> None:
+        """dataset_file='yolo' should use the same pose path as Roboflow auto-detection."""
+        root = tmp_path / "dataset"
+        root.mkdir()
+        _write_minimal_roboflow_yolo_dataset(root)
+        (root / "data.yaml").write_text("names:\n  - person\nkpt_shape: [1, 3]\n", encoding="utf-8")
+        (root / "train" / "labels" / "sample.txt").write_text("0 0.5 0.5 0.5 0.5 0.5 0.5 2\n", encoding="utf-8")
+        args = types.SimpleNamespace(
+            dataset_dir=str(root),
+            dataset_file="yolo",
+            square_resize_div_64=False,
+            segmentation_head=False,
+            multi_scale=False,
+            expanded_scales=False,
+            do_random_resize_via_padding=False,
+            patch_size=16,
+            num_windows=4,
+            aug_config={},
+            augmentation_backend="cpu",
+            use_grouppose_keypoints=True,
+            num_keypoints_per_class=[1],
+            keypoint_flip_pairs=[],
+        )
+
+        from rfdetr.datasets import build_dataset
+
+        dataset = build_dataset("train", args, resolution=64)
+
+        _, target = dataset[0]
+        assert target["keypoints"].shape == (1, 1, 3)
+
+    def test_rfdetr_aligns_keypoint_schema_from_yolo_pose_yaml(self, tmp_path: Path) -> None:
+        """Training setup should infer RF-DETR keypoint schema and flip pairs from YOLO pose metadata."""
+        root = tmp_path / "dataset"
+        root.mkdir()
+        _write_minimal_roboflow_yolo_dataset(root)
+        (root / "data.yaml").write_text(
+            "names:\n  - person\nkpt_shape: [2, 3]\nflip_idx: [1, 0]\n",
+            encoding="utf-8",
+        )
+
+        from rfdetr.config import KeypointTrainConfig, RFDETRKeypointPreviewConfig
+        from rfdetr.detr import RFDETR
+
+        model = object.__new__(RFDETR)
+        model.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None)
+        model.model = types.SimpleNamespace(args=types.SimpleNamespace(num_keypoints_per_class=[]))
+        train_config = KeypointTrainConfig(dataset_dir=str(root), dataset_file="yolo", tensorboard=False)
+
+        model._align_keypoint_schema_from_dataset(train_config)
+
+        assert model.model_config.num_keypoints_per_class == [2]
+        assert model.model.args.num_keypoints_per_class == [2]
+        assert train_config.keypoint_flip_pairs == [0, 1]
 
     def test_segmentation_masks_are_materialized_per_sample_fetch(self, tmp_path: Path) -> None:
         """Fetching a sample should create the dense boolean mask tensor expected downstream."""
@@ -493,8 +868,8 @@ class TestYoloDetectionLazyMasks:
         assert target["boxes"].shape == (2, 4), f"Expected (2, 4), got {target['boxes'].shape}"
         assert set(target["labels"].tolist()) == {0, 1}
 
-    def test_lazy_getitem_cv2_returns_none_raises_value_error(self, tmp_path: Path) -> None:
-        """Lazy mask loading should raise ValueError when cv2.imread cannot read the image."""
+    def test_lazy_getitem_unreadable_image_raises_value_error(self, tmp_path: Path) -> None:
+        """Lazy mask loading should raise ValueError when PIL cannot decode the image."""
         image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(tmp_path)
         dataset = YoloDetection(
             img_folder=str(image_dir),
@@ -504,9 +879,12 @@ class TestYoloDetectionLazyMasks:
             include_masks=True,
         )
 
-        with patch("cv2.imread", return_value=None):
-            with pytest.raises(ValueError, match="Could not read image"):
-                dataset[0]
+        # Replace the on-disk image with non-decodable bytes after dataset init has
+        # already captured width/height from the original PNG header.
+        (image_dir / "sample.png").write_bytes(b"not a valid image file")
+
+        with pytest.raises(ValueError, match="Could not read image"):
+            dataset[0]
 
     def test_non_integer_class_id_in_label_raises_value_error(self, tmp_path: Path) -> None:
         """A label line with a non-integer class ID must raise ValueError during init."""
@@ -581,5 +959,5 @@ class TestExtractYoloClassNames:
         """
         data_file = tmp_path / "data.yaml"
         data_file.write_text(yaml_content, encoding="utf-8")
-        with pytest.raises(ValueError, match="contiguous"):
+        with pytest.raises(ValueError, match="0..N-1"):
             _extract_yolo_class_names(str(data_file))

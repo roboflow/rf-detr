@@ -14,33 +14,36 @@ import os
 import tempfile
 import warnings
 from collections import defaultdict
+from collections.abc import Callable
 from copy import copy, deepcopy
+from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 import requests
 import torch
-
-if TYPE_CHECKING:
-    import supervision as sv
-
 import torchvision.transforms.functional as F  # noqa: N812
 import yaml
 from PIL import Image
 
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
-from rfdetr.config import (
-    ModelConfig,
-    TrainConfig,
+from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.datasets._keypoint_schema import (
+    active_keypoint_counts,
+    infer_coco_keypoint_schema,
+    infer_yolo_keypoint_schema,
 )
 from rfdetr.datasets.coco import is_valid_coco_dataset
-from rfdetr.datasets.yolo import is_valid_yolo_dataset
+from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
-from rfdetr.utilities.decorators import deprecated
 from rfdetr.utilities.distributed import is_main_process
+from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
+
+if TYPE_CHECKING:
+    from supervision import Detections, KeyPoints
 
 try:
     torch.set_float32_matmul_precision("high")
@@ -48,10 +51,13 @@ except Exception:
     pass
 
 logger = get_logger()
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
 _VARIANT_EXPORTS = (
     "RFDETRBase",
+    "RFDETRKeypointPreview",
     "RFDETRLarge",
     "RFDETRLargeDeprecated",
     "RFDETRMedium",
@@ -74,6 +80,7 @@ _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = tuple(
 )
 _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = ("RFDETRXLarge", "RFDETR2XLarge")
 _CHECKPOINT_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
+    ("keypoint-preview", "RFDETRKeypointPreview"),
     ("seg-2xlarge", "RFDETRSeg2XLarge"),
     ("seg-xxlarge", "RFDETRSeg2XLarge"),
     ("seg-xlarge", "RFDETRSegXLarge"),
@@ -178,7 +185,7 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     return patch_size
 
 
-def _ensure_model_on_device(model_ctx: Any) -> None:
+def _move_model_context_to_device(model_ctx: Any) -> None:
     """Move model weights to the target device recorded in *model_ctx*.
 
     ``_build_model_context`` intentionally keeps the ``nn.Module`` on CPU so that ``RFDETR.__init__`` does not
@@ -197,6 +204,23 @@ def _ensure_model_on_device(model_ctx: Any) -> None:
     first_param = next(inner.parameters(), None)
     if first_param is not None and first_param.device != target:
         model_ctx.model = inner.to(target)
+
+
+def _ensure_model_on_device(method: Callable[Concatenate[Any, _P], _R]) -> Callable[Concatenate[Any, _P], _R]:
+    """Decorate RF-DETR instance methods that require lazy model device placement.
+
+    The wrapped method receives the same arguments and return value as the original method. Before calling it, the
+    decorator moves ``self.model.model`` to ``self.model.device`` if the model context is available and the weights are
+    still on a different device. This keeps public inference methods clean while preserving deferred CUDA initialization
+    during ``RFDETR.__init__``.
+    """
+
+    @wraps(method)
+    def wrapper(self: Any, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        _move_model_context_to_device(getattr(self, "model", None))
+        return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 class RFDETR:
@@ -229,6 +253,7 @@ class RFDETR:
         self._optimized_batch_size = None
         self._optimized_resolution = None
         self._optimized_dtype = None
+        self._optimized_inplace = False
 
     def maybe_download_pretrain_weights(self):
         """Download pre-trained weights if they are not already downloaded.
@@ -283,6 +308,23 @@ class RFDETR:
             path: Path to a checkpoint file (e.g. ``checkpoint_best_total.pth``).
             **kwargs: Additional keyword arguments forwarded to the model
                 constructor (e.g. ``accept_platform_model_license=True`` for XLarge / 2XLarge models).
+
+                ``num_classes`` is resolved in this priority order:
+
+                1. Explicit caller kwarg — always wins.
+                2. Weight inference from ``class_embed.weight`` shape in the checkpoint
+                   (``shape[0] - 1``, since the head includes a background class). This
+                   overrides a stale ``model_config`` value written before fine-tuning
+                   changed the class count.
+                3. ``saved_model_config["num_classes"]`` from the checkpoint's
+                   ``model_config`` entry — may be stale for older checkpoints.
+                4. Legacy ``args["num_classes"]`` dict entry.
+                5. Constructor default.
+
+                In cases 2–5 the field is not recorded as a user-set override, so
+                :meth:`train` can still adapt the detection head to the training
+                dataset's class count.  Pass an explicit ``num_classes=N`` to pin
+                the head and prevent adaptation.
 
         Returns:
             An instance of the appropriate :class:`RFDETR` subclass loaded from the checkpoint.
@@ -347,12 +389,17 @@ class RFDETR:
             for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
             if name.startswith("seg-")
         ]
+        _keypoint_map: list[tuple[str, type[RFDETR]]] = [
+            (name, _variant_symbols[class_symbol])
+            for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
+            if "keypoint" in name
+        ]
         _base_map: list[tuple[str, type[RFDETR]]] = [
             (name, _variant_symbols[class_symbol])
             for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
-            if not name.startswith("seg-")
+            if not name.startswith("seg-") and "keypoint" not in name
         ]
-        _model_map: list[tuple[str, type[RFDETR]]] = _seg_map + _plus_entries + _base_map
+        _model_map: list[tuple[str, type[RFDETR]]] = _seg_map + _keypoint_map + _plus_entries + _base_map
 
         # New checkpoints store model_name directly — use it when available.
         _name_map: dict[str, type[RFDETR]] = dict(_variant_symbols)
@@ -392,7 +439,9 @@ class RFDETR:
             # when rfdetr_plus is missing, regardless of whether class inference
             # relies on model_name (new format) or pretrain_weights (legacy format).
             plus_by_model_name = normalized_name in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
-            plus_by_weights_name = "xlarge" in weights_name and "seg-" not in weights_name
+            plus_by_weights_name = (
+                "xlarge" in weights_name and "seg-" not in weights_name and "keypoint-preview" not in weights_name
+            )
             if not _plus_available and (plus_by_model_name or plus_by_weights_name):
                 from rfdetr.platform import _INSTALL_MSG
 
@@ -426,13 +475,119 @@ class RFDETR:
         else:
             num_classes = getattr(args, "num_classes", None)
 
-        # pretrain_weights is placed after **kwargs so it always wins even if
-        # a caller accidentally passes pretrain_weights inside kwargs.
-        constructor_kwargs: dict[str, Any] = {**kwargs, "pretrain_weights": str(path)}
+        constructor_kwargs: dict[str, Any] = {}
+        checkpoint_config_keys: set[str] = set()  # keys injected from checkpoint, not from caller
+
+        # Resolve model config field set once — used for both saved_model_config parsing and
+        # weight-based schema inference guards (BaseConfig has extra="forbid"; unknown fields raise).
+        _model_config_class = getattr(model_cls, "_model_config_class", None)
+        _mc_fields: dict[str, Any] = {}
+        _mc_model_fields = getattr(_model_config_class, "model_fields", None)
+        if isinstance(_mc_model_fields, dict):
+            _mc_fields = _mc_model_fields
+        else:
+            _mc_legacy = getattr(_model_config_class, "__fields__", None)
+            if isinstance(_mc_legacy, dict):
+                _mc_fields = _mc_legacy
+
+        saved_model_config = ckpt.get("model_config")
+        if isinstance(saved_model_config, dict):
+            for key, value in saved_model_config.items():
+                if key == "pretrain_weights":
+                    continue
+                if not _mc_fields or key in _mc_fields:
+                    constructor_kwargs[key] = value
+                    checkpoint_config_keys.add(key)
+
         if num_classes is not None and "num_classes" not in kwargs:
             constructor_kwargs["num_classes"] = num_classes
+            checkpoint_config_keys.add("num_classes")
 
-        return model_cls(**constructor_kwargs)
+        # Infer schema-critical fields from checkpoint weights — these are authoritative when
+        # ``model_config`` is absent or stale (saved before ``model_config`` persistence was added,
+        # or saved with default values before fine-tuning changed the trained schema).
+        # User-supplied ``kwargs`` take precedence and are applied in the ``update`` call below.
+        _ckpt_weights: dict[str, Any] = ckpt.get("model") or {}
+        if not _ckpt_weights and "state_dict" in ckpt:
+            _pfx = "model."
+            _ckpt_weights = {}
+            for k, v in ckpt["state_dict"].items():
+                if k.startswith(_pfx):
+                    key = k[len(_pfx) :]
+                    # Strip optional torch.compile() wrapper prefix
+                    if key.startswith("_orig_mod."):
+                        key = key[len("_orig_mod.") :]
+                    _ckpt_weights[key] = v
+        if _ckpt_weights:
+            # num_keypoints_per_class — inferred from _kp_active_mask (shape [num_classes, max_kp]).
+            # Reflects what the model actually learned; saved model_config may carry the COCO default
+            # [0, 17] even after fine-tuning on a different keypoint schema.
+            if "num_keypoints_per_class" not in kwargs and (not _mc_fields or "num_keypoints_per_class" in _mc_fields):
+                _kp_mask = _ckpt_weights.get("_kp_active_mask")
+                if isinstance(_kp_mask, torch.Tensor) and _kp_mask.ndim == 2:
+                    _inferred_kp = [int(n) for n in _kp_mask.sum(dim=1).tolist()]
+                    _current_kp = constructor_kwargs.get("num_keypoints_per_class")
+                    if _inferred_kp != _current_kp:
+                        logger.debug(
+                            "from_checkpoint: overriding num_keypoints_per_class %s → %s "
+                            "(inferred from _kp_active_mask; saved model_config may be stale).",
+                            _current_kp,
+                            _inferred_kp,
+                        )
+                    constructor_kwargs["num_keypoints_per_class"] = _inferred_kp
+                    checkpoint_config_keys.add("num_keypoints_per_class")
+            # num_classes — inferred from class_embed.weight shape.
+            # The head shape is ground truth for what num_classes the checkpoint uses.
+            if "num_classes" not in kwargs:
+                _ce_weight = _ckpt_weights.get("class_embed.weight")
+                if isinstance(_ce_weight, torch.Tensor) and _ce_weight.ndim == 2:
+                    _inferred_nc = _ce_weight.shape[0] - 1  # shape[0] = num_classes + 1 (background)
+                    _current_nc = constructor_kwargs.get("num_classes")
+                    if _inferred_nc != _current_nc:
+                        logger.debug(
+                            "from_checkpoint: overriding num_classes %s → %s "
+                            "(inferred from class_embed.weight; saved model_config may be stale).",
+                            _current_nc,
+                            _inferred_nc,
+                        )
+                    constructor_kwargs["num_classes"] = _inferred_nc
+                    checkpoint_config_keys.add("num_classes")
+
+        constructor_kwargs.update(kwargs)
+        # pretrain_weights is placed after **kwargs so it always wins even if
+        # a caller accidentally passes pretrain_weights inside kwargs.
+        constructor_kwargs["pretrain_weights"] = str(path)
+
+        # Fields injected from the checkpoint but not supplied by the caller must not be
+        # treated as explicit user overrides in Pydantic's model_fields_set.  Downstream
+        # alignment guards (e.g. _align_num_classes_from_dataset,
+        # _align_keypoint_schema_from_dataset, load_pretrain_weights) all read
+        # model_fields_set to decide whether to adapt model internals to the training
+        # dataset — leaving checkpoint-derived fields marked as user-set breaks them.
+        checkpoint_derived_keys = checkpoint_config_keys - set(kwargs)
+
+        model = model_cls(**constructor_kwargs)
+
+        if checkpoint_derived_keys:
+            loaded_config = getattr(model, "model_config", None)
+            # model_fields_set is the public API and returns the live backing set
+            # in Pydantic v2; fall back to the private attribute only if that changes.
+            fields_set = getattr(loaded_config, "model_fields_set", None)
+            if fields_set is None:
+                fields_set = getattr(loaded_config, "__pydantic_fields_set__", None)
+            if fields_set is not None:
+                fields_set.difference_update(checkpoint_derived_keys)
+            # Verify num_classes specifically — if Pydantic ever returns a snapshot instead
+            # of the live backing set, this assertion will catch the silent regression before
+            # it causes a training-time head-adaptation failure.
+            if "num_classes" in checkpoint_derived_keys:
+                assert "num_classes" not in getattr(loaded_config, "model_fields_set", set()), (
+                    "num_classes still in model_fields_set after checkpoint load; "
+                    "Pydantic may return a snapshot rather than the live backing set — "
+                    "switch to model_construct(_fields_set=...) for Pydantic v3 compatibility."
+                )
+
+        return model
 
     @staticmethod
     def _resolve_trainer_device_kwargs(device: Any) -> tuple[str | None, list[int] | None]:
@@ -615,7 +770,7 @@ class RFDETR:
             # Auto-batch probing runs forward/backward on the actual model, which
             # must be on the target device (typically CUDA).  Lazy placement keeps
             # the model on CPU until first use — move it now.
-            _ensure_model_on_device(self.model)
+            _move_model_context_to_device(self.model)
             auto_batch = resolve_auto_batch_config(
                 model_context=self.model,
                 model_config=self.model_config,
@@ -636,6 +791,7 @@ class RFDETR:
         # inside the module uses the correct (dataset-derived) class count.
         dataset_dir = getattr(config, "dataset_dir", None)
         if dataset_dir:
+            self._align_keypoint_schema_from_dataset(config)
             self._align_num_classes_from_dataset(dataset_dir)
 
         module = RFDETRModelModule(self.model_config, config)
@@ -667,6 +823,9 @@ class RFDETR:
 
         # Sync the trained weights back so predict() / export() see the updated model.
         self.model.model = module.model
+        # Invalidate any compiled inference snapshot: it was built from the pre-training
+        # weights and must not survive the model reassignment above.
+        self.remove_optimized_model()
         # Sync class names: prefer explicit config.class_names, otherwise fall back to dataset (#509).
         config_class_names = getattr(config, "class_names", None)
         if config_class_names is not None:
@@ -693,14 +852,30 @@ class RFDETR:
             except OSError as exc:
                 logger.warning("Could not save training_config.json to %s: %s", config.output_dir, exc)
 
+    @_ensure_model_on_device
     def optimize_for_inference(
-        self, compile: bool = True, batch_size: int = 1, dtype: torch.dtype | str = torch.float32
+        self,
+        compile: bool = True,
+        batch_size: int = 1,
+        dtype: torch.dtype | str = torch.float32,
+        *,
+        inplace: bool = False,
     ) -> None:
         """Optimize the model for inference with optional JIT compilation and dtype casting.
 
         Operations are wrapped in the correct CUDA device context to prevent context leaks on multi-GPU setups. When
         ``compile=True`` the model is traced with ``torch.jit.trace`` using a dummy input of ``batch_size`` images at
-        the model's current resolution.
+        the model's current resolution. By default, optimization deep-copies the loaded model before exporting it so the
+        original module remains available. Set ``inplace=True`` for memory-constrained inference-only deployments; this
+        exports the loaded module itself, may cast it to ``dtype``, and clears ``model.model`` after optimization
+        succeeds. In-place optimization is destructive: :meth:`remove_optimized_model` becomes a no-op (issues
+        :class:`UserWarning`), and :meth:`export` raises :class:`RuntimeError`. Create or reload a new ``RFDETR``
+        instance to recover the original model.
+
+        If ``inplace=True`` and the underlying ``export()`` call mutates the module before raising (e.g. setting
+        internal flags and swapping ``forward``), the exception handler resets RFDETR wrapper flags to the unoptimized
+        state but cannot undo changes made inside ``export()``. Create a new RFDETR instance for reliable inference
+        after such a failure.
 
         Args:
             compile: If ``True``, trace the model with ``torch.jit.trace`` to obtain
@@ -709,11 +884,20 @@ class RFDETR:
             batch_size: Number of images the traced model will be optimized for. Ignored when ``compile=False``.
             dtype: Target floating-point dtype for the inference model. Accepts a
                 ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name (e.g. ``"float16"``). Defaults to
-                ``torch.float32``.
+                ``torch.float32``. When ``dtype`` differs from the model's current dtype, ``to()`` transiently
+                allocates both old and new parameter tensors simultaneously; peak memory during optimization is
+                approximately 1.5× the model weight size rather than 1×.
+            inplace: If ``True``, optimize ``model.model`` directly instead of deep-copying it. This is a destructive,
+                inference-only path because ``export()`` mutates the module and dtype casting mutates its parameters.
+                Requires ``compile=False``. With the default ``dtype=torch.float32``, the dtype cast is a no-op, so
+                memory savings come only from clearing the base model reference rather than from dtype reduction.
 
         Raises:
             TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
                 string that does not correspond to a valid ``torch.dtype`` attribute.
+            ValueError: If ``dtype`` is not a floating-point dtype, or if ``inplace=True`` is used with
+                ``compile=True``.
+            RuntimeError: If the base model has already been cleared by a previous inplace optimization.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -741,11 +925,24 @@ class RFDETR:
             >>> model._optimized_batch_size = None
             >>> model._optimized_resolution = None
             >>> model._optimized_dtype = None
-            >>> model.optimize_for_inference(compile=False, dtype="float16")
+            >>> model._optimized_inplace = False
+            >>> # Standard (non-inplace) optimization — reversible:
+            >>> model.optimize_for_inference(compile=False)
+            >>> model._is_optimized_for_inference
+            True
+            >>> model._optimized_inplace
+            False
+            >>> model.remove_optimized_model()
+            >>> model._is_optimized_for_inference
+            False
+            >>> # Inplace optimization — destructive, cannot be reversed:
+            >>> model.optimize_for_inference(compile=False, dtype="float16", inplace=True)
             >>> model._is_optimized_for_inference
             True
             >>> model._optimized_dtype
             torch.float16
+            >>> model._optimized_inplace
+            True
         """
         if isinstance(dtype, str):
             try:
@@ -754,25 +951,39 @@ class RFDETR:
                 raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {dtype!r}") from None
         if not isinstance(dtype, torch.dtype):
             raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
+        if not dtype.is_floating_point:
+            raise ValueError(f"dtype must be a floating-point torch.dtype or string name of one, got {dtype}")
+        if inplace and compile:
+            raise ValueError(
+                "optimize_for_inference(inplace=True) requires compile=False. "
+                "torch.jit.trace retains references to the original parameter storage in the returned "
+                "ScriptModule, so setting model.model=None would not free the weight tensors and "
+                "inplace=True would not reduce memory usage."
+            )
 
         # Clear any previously optimized state before starting a new optimization run.
         self.remove_optimized_model()
 
-        _ensure_model_on_device(self.model)
+        if self.model.model is None:
+            raise RuntimeError(
+                "Cannot optimize: the base model has been cleared by a previous inplace optimization. "
+                "Create or reload a new RFDETR instance."
+            )
+
         device = self.model.device
         cuda_ctx = torch.cuda.device(device) if device.type == "cuda" else contextlib.nullcontext()
 
         try:
             with cuda_ctx:
-                self.model.inference_model = deepcopy(self.model.model)
-                self.model.inference_model.eval()
-                self.model.inference_model.export()
+                inference_model = self.model.model if inplace else deepcopy(self.model.model)
+                inference_model.eval()
+                inference_model.export()
 
-                self.model.inference_model = self.model.inference_model.to(dtype=dtype)
+                inference_model = inference_model.to(dtype=dtype)
 
                 if compile:
-                    self.model.inference_model = torch.jit.trace(
-                        self.model.inference_model,
+                    inference_model = torch.jit.trace(
+                        inference_model,
                         torch.randn(
                             batch_size,
                             self.model_config.num_channels,
@@ -786,6 +997,14 @@ class RFDETR:
                     self._optimized_batch_size = batch_size
 
                 # Set success flags only after all operations complete.
+                self.model.inference_model = inference_model
+                # _optimized_inplace must be set before the destructive clear so the cleanup
+                # guard in remove_optimized_model() sees the correct state if an exception fires
+                # between this assignment and the None clear (extremely unlikely in normal Python
+                # but eliminates a theoretical zombie-state window).
+                self._optimized_inplace = inplace
+                if inplace:
+                    self.model.model = None
                 self._optimized_resolution = self.model.resolution
                 self._is_optimized_for_inference = True
                 self._optimized_dtype = dtype
@@ -799,7 +1018,9 @@ class RFDETR:
         """Remove the optimized inference model and reset all optimization flags.
 
         Clears ``model.inference_model`` and resets all internal state set by :meth:`optimize_for_inference`. Safe to
-        call even if the model has not been optimized.
+        call even if the model has not been optimized. When the model was optimized with ``inplace=True``, this method
+        issues a :class:`UserWarning` and returns without modifying state — the original module cannot be restored
+        because ``export()`` and dtype casting mutate it; create or reload a new ``RFDETR`` instance instead.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -827,35 +1048,78 @@ class RFDETR:
             >>> model._optimized_batch_size = None
             >>> model._optimized_resolution = None
             >>> model._optimized_dtype = None
+            >>> model._optimized_inplace = False
             >>> model.optimize_for_inference(compile=False)
             >>> model.remove_optimized_model()
             >>> model._is_optimized_for_inference
             False
         """
+        if getattr(self, "_optimized_inplace", False):
+            warnings.warn(
+                "remove_optimized_model() has no effect after inplace optimization — the original model "
+                "cannot be restored because export() and dtype casting mutate it. "
+                "Create or reload a new RFDETR instance instead.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
         self.model.inference_model = None
         self._is_optimized_for_inference = False
         self._optimized_has_been_compiled = False
         self._optimized_batch_size = None
         self._optimized_resolution = None
         self._optimized_dtype = None
+        self._optimized_inplace = False
 
-    @deprecated(
-        target=True,
-        # `simplify` / `force` are retained for API compatibility and treated as no-op.
-        args_mapping={"simplify": None, "force": None},
-        deprecated_in="1.6.0",
-        remove_in="1.8.0",
-        num_warns=1,
-    )
+    @property
+    def is_optimized_inplace(self) -> bool:
+        """Whether the model was optimized with ``inplace=True``.
+
+        Returns ``True`` after a successful :meth:`optimize_for_inference` call with ``inplace=True``,
+        meaning the base model has been cleared and :meth:`remove_optimized_model` is a no-op.
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> import torch
+            >>> class _TinyModel(torch.nn.Module):
+            ...     def __init__(self):
+            ...         super().__init__()
+            ...         self.linear = torch.nn.Linear(1, 1)
+            ...     def forward(self, x):
+            ...         return {"pred_boxes": self.linear(x[:, :1, :1, :1].squeeze(-1).squeeze(-1))}
+            ...     def export(self):
+            ...         return None
+            >>> class _TinyContext:
+            ...     def __init__(self):
+            ...         self.device = torch.device("cpu")
+            ...         self.resolution = 28
+            ...         self.model = _TinyModel()
+            ...         self.inference_model = None
+            >>> model = object.__new__(RFDETR)
+            >>> model.model_config = SimpleNamespace(num_channels=3)
+            >>> model.model = _TinyContext()
+            >>> model._is_optimized_for_inference = False
+            >>> model._has_warned_about_not_being_optimized_for_inference = False
+            >>> model._optimized_has_been_compiled = False
+            >>> model._optimized_batch_size = None
+            >>> model._optimized_resolution = None
+            >>> model._optimized_dtype = None
+            >>> model._optimized_inplace = False
+            >>> model.is_optimized_inplace
+            False
+            >>> model.optimize_for_inference(compile=False, inplace=True)
+            >>> model.is_optimized_inplace
+            True
+        """
+        return getattr(self, "_optimized_inplace", False)
+
     def export(
         self,
         output_dir: str = "output",
-        infer_dir: str = None,
-        simplify: Optional[bool] = None,
+        infer_dir: str | None = None,
         backbone_only: bool = False,
         opset_version: int = 17,
         verbose: bool = True,
-        force: Optional[bool] = None,
         shape: tuple[int, int] | None = None,
         batch_size: int = 1,
         dynamic_batch: bool = False,
@@ -874,11 +1138,9 @@ class RFDETR:
         Args:
             output_dir: Directory to write the exported model to.
             infer_dir: Optional directory of sample images for dynamic-axes inference.
-            simplify: Deprecated and ignored. Simplification is no longer run.
             backbone_only: Export only the backbone (feature extractor).
             opset_version: ONNX opset version to target.
             verbose: Print export progress information.
-            force: Deprecated and ignored.
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
                 Both dimensions must be divisible by ``patch_size * num_windows``.
             batch_size: Static batch size to bake into the ONNX graph.
@@ -935,11 +1197,18 @@ class RFDETR:
             raise
 
         device = self.model.device
-        # deepcopy(self.model.model.to("cpu")) moves the live model to CPU as a
-        # side-effect before copying.  The finally block guarantees the original
-        # model is restored to its original device even if export or conversion
-        # raises an exception (review H1).
-        model = deepcopy(self.model.model.to("cpu"))
+
+        if getattr(self, "_optimized_inplace", False) or self.model.model is None:
+            raise RuntimeError(
+                "RFDETR.export() is not available after inplace optimization. "
+                "The original model has been cleared. Create a new RFDETR instance."
+            )
+
+        # Move the live model to CPU before deepcopying and keep it there during export. ``nn.Module.to(...)`` mutates
+        # in place, so this frees GPU memory for the local export copy, ONNX tracing, TFLite conversion, and any
+        # calibration tensors. The ``finally`` block restores the live model even if export or conversion raises.
+        self.model.model = self.model.model.to("cpu")
+        model = deepcopy(self.model.model)
         model.to(device)
         try:
             os.makedirs(output_dir, exist_ok=True)
@@ -968,6 +1237,8 @@ class RFDETR:
                 output_names = ["features"]
             elif self.model_config.segmentation_head:
                 output_names = ["dets", "labels", "masks"]
+            elif self.model_config.use_grouppose_keypoints:
+                output_names = ["dets", "labels", "keypoints"]
             else:
                 output_names = ["dets", "labels"]
 
@@ -992,6 +1263,15 @@ class RFDETR:
                         )
                     else:
                         logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
+                elif self.model_config.use_grouppose_keypoints:
+                    outputs = model(input_tensors)
+                    dets = outputs["pred_boxes"]
+                    labels = outputs["pred_logits"]
+                    keypoints = outputs["pred_keypoints"]
+                    logger.debug(
+                        f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, "
+                        f"Keypoints: {keypoints.shape}",
+                    )
                 else:
                     outputs = model(input_tensors)
                     dets = outputs["pred_boxes"]
@@ -1096,15 +1376,19 @@ class RFDETR:
         )
 
     @staticmethod
-    def _detect_num_classes_for_training(dataset_dir: str) -> int:
+    def _detect_num_classes_for_training(dataset_dir: str, *, use_grouppose_keypoints: bool = False) -> int:
         """Detect the class count using the same category basis as training labels.
 
         For COCO-style datasets this counts all categories by ``id`` from ``train/_annotations.coco.json`` (matching the
-        remapping based on ``coco.cats`` used by the training datamodule). For YOLO-style datasets it falls back to
-        ``_load_classes``.
+        remapping based on ``coco.cats`` used by the training datamodule). In keypoint mode it instead counts the
+        inferred RF-DETR keypoint label slots. In legacy background-first schemas (e.g. ``[0, 17]``) slot ``0`` is
+        reserved for classes without keypoints; active-first schemas (e.g. ``[17]``) use normal 0-based indices. For
+        YOLO-style datasets it falls back to ``_load_classes``.
         """
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
+            if use_grouppose_keypoints:
+                return len(infer_coco_keypoint_schema(coco_path).class_names)
             with open(coco_path, encoding="utf-8") as f:
                 anns = json.load(f)
             categories = anns["categories"]
@@ -1119,36 +1403,54 @@ class RFDETR:
         Must be called before ``RFDETRModelModule`` is constructed so that weight loading inside the module uses the
         correct (dataset-derived) class count.
 
-        When the user did **not** explicitly override ``num_classes`` (or passed the class-config default),
-        ``model_config.num_classes`` and ``self.model.args.num_classes`` are updated to match the dataset.  When the
-        user *did* set a non-default value that differs from the dataset, the configured value is preserved and a
-        warning is emitted.
+        When the user did **not** explicitly set ``num_classes`` (it is left unset, e.g. inferred from a
+        checkpoint), ``model_config.num_classes`` and ``self.model.args.num_classes`` are updated to match the dataset.
+        When the user *did* set ``num_classes`` explicitly — to any value, including the class default — and it differs
+        from the dataset, the configured value is preserved and a warning is emitted.
 
         Failures from ``_detect_num_classes_for_training`` are caught and logged at DEBUG level so that training is
         never blocked by detection errors.
+
+        When ``model_config.use_grouppose_keypoints`` is True and
+        ``model_config.num_keypoints_per_class`` is shorter than the adjusted
+        ``num_classes``, the schema is zero-padded in-place so that
+        ``len(num_keypoints_per_class) == num_classes``.  Both ``model_config``
+        and ``model.args`` (if present) are updated.  Appended classes receive
+        zero keypoints and contribute no class-logit boost.
 
         Args:
             dataset_dir: Path to the training dataset root directory.
         """
         try:
-            dataset_num_classes = RFDETR._detect_num_classes_for_training(dataset_dir)
+            dataset_num_classes = RFDETR._detect_num_classes_for_training(
+                dataset_dir,
+                use_grouppose_keypoints=self.model_config.use_grouppose_keypoints,
+            )
         except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
             # Best-effort only; do not block training if detection fails.
             logger.debug("Could not auto-detect num_classes from dataset '%s': %s", dataset_dir, exc)
             return
+
+        # Hoist so both branches below can reference the schema without re-fetching.
+        keypoint_schema: list[int] = []
+        if self.model_config.use_grouppose_keypoints:
+            # Older configs may omit the schema; absence means no schema-based class-count expansion.
+            keypoint_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
+            if keypoint_schema:
+                dataset_num_classes = max(dataset_num_classes, len(keypoint_schema))
 
         model_num_classes = self.model_config.num_classes
 
         if dataset_num_classes == model_num_classes:
             return
 
-        # Determine whether the user explicitly overrode num_classes to a non-default value.
-        # "num_classes" in model_fields_set is True when the field was explicitly set at
-        # construction time; comparing against the class default filters out cases where the
-        # user passed the default value explicitly (treat those like "not set").
-        user_set = "num_classes" in getattr(self.model_config, "model_fields_set", set())
-        default_nc = type(self.model_config).model_fields["num_classes"].default
-        user_overrode = user_set and model_num_classes != default_nc
+        # Determine whether the user explicitly set num_classes.  "num_classes" in
+        # model_fields_set is True only when the field was explicitly provided at construction
+        # (or assigned afterwards); an explicit value is honored regardless of whether it equals
+        # the class default, so an intentional num_classes is never silently overridden by the
+        # dataset count.  A checkpoint-derived num_classes is cleared from model_fields_set by
+        # ``from_checkpoint`` (see PR #1106 / issue #1092), so it correctly counts as "not set" here.
+        user_overrode = "num_classes" in getattr(self.model_config, "model_fields_set", set())
 
         if not user_overrode:
             logger.debug(
@@ -1163,6 +1465,15 @@ class RFDETR:
             model_args = getattr(self.model, "args", None)
             if model_args is not None:
                 model_args.num_classes = dataset_num_classes
+            # Pad keypoint schema with zeros so len(num_keypoints_per_class) == num_classes.
+            # Without this, _aggregate_keypoint_class_logits emits a one-time mismatch
+            # warning per model instance and the config state is inconsistent with the
+            # detection head width.
+            if keypoint_schema and len(keypoint_schema) < dataset_num_classes:
+                padded_schema = keypoint_schema + [0] * (dataset_num_classes - len(keypoint_schema))
+                self.model_config.num_keypoints_per_class = padded_schema
+                if model_args is not None:
+                    model_args.num_keypoints_per_class = padded_schema
         else:
             logger.warning(
                 "Dataset '%s' has %d classes but model was initialized with num_classes=%d. "
@@ -1174,6 +1485,206 @@ class RFDETR:
                 model_num_classes,
                 dataset_num_classes,
             )
+            # Also pad schema when the user-configured num_classes exceeds the schema length,
+            # to prevent the _aggregate_keypoint_class_logits mismatch warning in this path too.
+            if keypoint_schema and len(keypoint_schema) < model_num_classes:
+                padded_schema = keypoint_schema + [0] * (model_num_classes - len(keypoint_schema))
+                self.model_config.num_keypoints_per_class = padded_schema
+                model_args = getattr(self.model, "args", None)
+                if model_args is not None:
+                    model_args.num_keypoints_per_class = padded_schema
+
+    @staticmethod
+    def _roboflow_keypoint_annotation_path(dataset_dir: str) -> Path | None:
+        """Return the Roboflow COCO train annotation path when it exists.
+
+        Args:
+            dataset_dir: Path to the Roboflow dataset root.
+
+        Returns:
+            Train split annotation path, or ``None`` when the dataset is not Roboflow COCO style.
+
+        Raises:
+            This helper does not raise.
+
+        Example:
+            >>> RFDETR._roboflow_keypoint_annotation_path("/missing") is None
+            True
+        """
+        if not is_valid_coco_dataset(dataset_dir):
+            return None
+        annotation_path = Path(dataset_dir) / "train" / "_annotations.coco.json"
+        return annotation_path if annotation_path.exists() else None
+
+    @staticmethod
+    def _coco_keypoint_annotation_path(dataset_dir: str) -> Path | None:
+        """Return the native COCO train keypoint annotation path when it exists.
+
+        Args:
+            dataset_dir: Path to the COCO dataset root.
+
+        Returns:
+            Path to ``annotations/person_keypoints_train2017.json``, or ``None`` when it is absent.
+
+        Raises:
+            This helper does not raise.
+
+        Example:
+            >>> RFDETR._coco_keypoint_annotation_path("/missing") is None
+            True
+        """
+        annotation_path = Path(dataset_dir) / "annotations" / "person_keypoints_train2017.json"
+        return annotation_path if annotation_path.exists() else None
+
+    @staticmethod
+    def _yolo_data_file_path(dataset_dir: str) -> Path | None:
+        """Return the YOLO data file path when a dataset root has one.
+
+        Args:
+            dataset_dir: Path to the YOLO dataset root.
+
+        Returns:
+            Path to ``data.yaml`` or ``data.yml``, or ``None`` when neither exists.
+
+        Raises:
+            This helper does not raise.
+
+        Example:
+            >>> RFDETR._yolo_data_file_path("/missing") is None
+            True
+        """
+        root = Path(dataset_dir)
+        for filename in REQUIRED_YOLO_YAML_FILES:
+            data_file = root / filename
+            if data_file.exists():
+                return data_file
+        return None
+
+    @staticmethod
+    def _flip_idx_to_pairs(flip_idx: list[int]) -> list[int]:
+        """Convert Ultralytics ``flip_idx`` permutation metadata to flat swap pairs."""
+        pairs: list[int] = []
+        seen: set[int] = set()
+        for idx, mirror_idx in enumerate(flip_idx):
+            if idx in seen or mirror_idx in seen or idx == mirror_idx:
+                seen.add(idx)
+                continue
+            if mirror_idx < len(flip_idx) and flip_idx[mirror_idx] == idx:
+                pairs.extend([idx, mirror_idx])
+                seen.update({idx, mirror_idx})
+        return pairs
+
+    def _align_keypoint_schema_from_dataset(self, config: TrainConfig) -> None:
+        """Infer or validate keypoint schema from COCO, Roboflow COCO, or YOLO pose metadata.
+
+        Args:
+            config: Training configuration containing dataset location and format.
+
+        Returns:
+            ``None``. The model config is updated in-place when dataset metadata is available.
+
+        Raises:
+            This method does not raise for missing or malformed metadata; later dataset construction still validates
+            keypoint-mode requirements.
+
+        Example:
+            >>> from rfdetr.config import RFDETRKeypointPreviewConfig, TrainConfig
+            >>> model = object.__new__(RFDETR)
+            >>> model.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None)
+            >>> model.model = type("Context", (), {"args": None})()
+            >>> model._align_keypoint_schema_from_dataset(TrainConfig(dataset_dir="/missing", tensorboard=False))
+        """
+
+        if not self.model_config.use_grouppose_keypoints:
+            return
+        dataset_file = getattr(config, "dataset_file", None)
+        if dataset_file not in ("coco", "roboflow", "yolo"):
+            return
+        dataset_dir = getattr(config, "dataset_dir", None)
+        if not dataset_dir:
+            return
+
+        if not hasattr(self, "_keypoint_schema_cache"):
+            self._keypoint_schema_cache: dict = {}
+
+        cache_key = (dataset_file, dataset_dir)
+        if cache_key in self._keypoint_schema_cache:
+            inferred, source_path, source_kind = self._keypoint_schema_cache[cache_key]
+        else:
+            try:
+                if dataset_file == "coco":
+                    annotation_path = RFDETR._coco_keypoint_annotation_path(dataset_dir)
+                    if annotation_path is None:
+                        return
+                    source_path = annotation_path
+                    source_kind = "COCO"
+                    inferred = infer_coco_keypoint_schema(annotation_path)
+                elif dataset_file == "roboflow":
+                    annotation_path = RFDETR._roboflow_keypoint_annotation_path(dataset_dir)
+                    if annotation_path is not None:
+                        source_path = annotation_path
+                        source_kind = "Roboflow COCO"
+                        inferred = infer_coco_keypoint_schema(annotation_path)
+                    else:
+                        yolo_data_file = RFDETR._yolo_data_file_path(dataset_dir)
+                        if yolo_data_file is None:
+                            return
+                        source_path = yolo_data_file
+                        source_kind = "YOLO pose"
+                        inferred = infer_yolo_keypoint_schema(yolo_data_file)
+                else:
+                    yolo_data_file = RFDETR._yolo_data_file_path(dataset_dir)
+                    if yolo_data_file is None:
+                        return
+                    source_path = yolo_data_file
+                    source_kind = "YOLO pose"
+                    inferred = infer_yolo_keypoint_schema(yolo_data_file)
+            except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
+                logger.info("Could not infer keypoint schema from dataset '%s': %s", dataset_dir, exc)
+                return
+            self._keypoint_schema_cache[cache_key] = (inferred, source_path, source_kind)
+
+        inferred_schema = inferred.num_keypoints_per_class
+        if not getattr(config, "keypoint_flip_pairs", []):
+            config.keypoint_flip_pairs = list(inferred.keypoint_flip_pairs)
+        # Older configs may omit the schema; absence lets dataset inference populate it.
+        current_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
+        user_set_schema = "num_keypoints_per_class" in getattr(self.model_config, "model_fields_set", set())
+
+        if user_set_schema and active_keypoint_counts(current_schema) == active_keypoint_counts(inferred_schema):
+            return
+
+        if current_schema != inferred_schema:
+            if user_set_schema:
+                logger.warning(
+                    "Configured num_keypoints_per_class=%s does not match dataset keypoint metadata %s from '%s'. "
+                    "Using dataset metadata as the source of truth.",
+                    current_schema,
+                    inferred_schema,
+                    source_path,
+                )
+            else:
+                if _is_bg_first_schema(current_schema) and inferred_schema and not _is_bg_first_schema(inferred_schema):
+                    warnings.warn(
+                        f"Loaded checkpoint uses a legacy background-first keypoint schema "
+                        f"num_keypoints_per_class={current_schema!r}, but the dataset infers "
+                        f"active-first {inferred_schema!r}. Training will shift person from slot 1 "
+                        f"to slot 0; checkpoint head weights are now misaligned. "
+                        f"Pass num_keypoints_per_class={current_schema!r} to train() to keep the "
+                        f"legacy schema.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                logger.info(
+                    "Inferred num_keypoints_per_class=%s from %s keypoint metadata at '%s'.",
+                    inferred_schema,
+                    source_kind,
+                    source_path,
+                )
+            self.model_config.num_keypoints_per_class = inferred_schema
+            model_args = getattr(self.model, "args", None)
+            if model_args is not None:
+                model_args.num_keypoints_per_class = inferred_schema
 
     def get_train_config(self, **kwargs) -> TrainConfig:
         """Retrieve the configuration parameters that will be used for training."""
@@ -1203,6 +1714,30 @@ class RFDETR:
 
         return list(COCO_CLASS_NAMES)
 
+    def _ensure_eval_mode_for_unoptimized_inference(self) -> None:
+        """Put the underlying module in eval mode before unoptimized inference.
+
+        Inference must never run with dropout / batch-norm in training mode. The warning that the model is not optimized
+        is emitted at most once, but eval mode is (re)asserted on every call: ``train()`` reassigns ``self.model.model``
+        to a module that PyTorch Lightning leaves in training mode (see ``train()``), so gating ``eval()`` behind the
+        once-only warning would let a later ``predict()`` silently run with dropout active.
+
+        When ``_is_optimized_for_inference`` is ``True``, the method returns immediately — the compiled
+        ``inference_model`` snapshot is already in eval mode and ``self.model.model`` is not used for inference.
+        """
+        if self._is_optimized_for_inference:
+            return
+        if not self._has_warned_about_not_being_optimized_for_inference:
+            logger.warning(
+                "Model is not optimized for inference. Latency may be higher than expected."
+                " For full GPU throughput (e.g. ~8x on T4 via FP16 Tensor Cores),"
+                " call model.optimize_for_inference(dtype=torch.float16).",
+            )
+            self._has_warned_about_not_being_optimized_for_inference = True
+        self.model.model.eval()
+
+    @torch.inference_mode()
+    @_ensure_model_on_device
     def predict(
         self,
         images: str | Image.Image | np.ndarray | torch.Tensor | list[str | np.ndarray | Image.Image | torch.Tensor],
@@ -1211,8 +1746,8 @@ class RFDETR:
         patch_size: int | None = None,
         include_source_image: bool = True,
         **kwargs: Any,
-    ) -> sv.Detections | list[sv.Detections]:
-        """Performs object detection on the input images and returns bounding box predictions.
+    ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
+        """Performs model inference on the input images.
 
         This method accepts a single image or a list of images in various formats (file path, image url, PIL Image,
         NumPy array, or torch.Tensor). The images should be in RGB channel order. If a torch.Tensor is provided, it must
@@ -1234,30 +1769,44 @@ class RFDETR:
                 (typically 14 for large models, 16 for smaller ones). Divisibility is checked against ``patch_size *
                 num_windows``.
             include_source_image:
-                Whether to attach the original image as ``source_image`` in ``detections.metadata``. Defaults to
-                ``True``.  Set to ``False`` to reduce memory use when source images are not needed.
+                Whether to attach the original image to the returned prediction. Detection and segmentation outputs use
+                ``detections.metadata["source_image"]``. Keypoint outputs use per-object
+                ``key_points.data["source_image"]`` because Supervision ``KeyPoints`` currently has no collection-level
+                metadata field. Defaults to ``True``. Set to ``False`` to reduce memory use when source images are not
+                needed.
             **kwargs:
                 Additional keyword arguments.
 
         Returns:
-            A single or multiple Detections objects, each containing bounding box coordinates, confidence scores, and
-            class IDs. The ``data`` dict of each :class:`~supervision.Detections` object contains ``class_name`` as a
-            string array corresponding to each detection and ``source_shape`` as an ``int64`` array of shape ``(N, 2)``
-            with ``[height, width]`` rows. ``source_shape`` is stored per detection so supervision indexing works
-            correctly. It was previously a ``(height, width)`` Python ``tuple``; callers using ``isinstance(v, tuple)``
-            or ``v == (H, W)`` must be updated. The ``metadata`` dict contains ``source_image`` as the original
-            ``uint8`` image array of shape ``(H, W, 3)`` when ``include_source_image=True``.
+            A single or multiple Supervision prediction objects. Detection and segmentation models return
+            :class:`~supervision.Detections`. Keypoint models return :class:`~supervision.KeyPoints`, with keypoint
+            coordinates in ``xy``. Keypoint predictions preserve the detection-level fields produced by RF-DETR:
+            ``key_points.detection_confidence`` is the per-object score used by ``threshold``. For keypoint models this
+            is the postprocessed detection score and, by default, includes keypoint uncertainty fusion controlled by
+            ``model_config.postprocess_trace_alpha``. ``key_points.keypoint_confidence`` is separate: it is a
+            ``(num_detections, num_keypoints)`` array of per-keypoint findability scores decoded from the keypoint head,
+            not a repeated copy of the detection score. When RF-DETR emits keypoint precision parameters,
+            ``key_points.data["covariance"]`` stores per-keypoint pixel-space covariance matrices with shape
+            ``(num_detections, num_keypoints, 2, 2)``. ``key_points.data["xyxy"]`` stores the corresponding detection
+            boxes as a ``(num_detections, 4)`` array in the same row order as ``key_points.xy`` because Supervision
+            ``KeyPoints`` does not have a native bounding-box field. The ``data`` dict also contains ``class_name`` and
+            ``source_shape`` as per-object arrays. When ``include_source_image=True`` for keypoint models,
+            ``source_image`` is stored as per-object data until Supervision exposes collection-level metadata for
+            ``KeyPoints``.
 
         Note:
-            ``source_image`` moved from ``detections.data`` to ``detections.metadata``. Update callers reading
-            ``detections.data["source_image"]`` to use ``detections.metadata["source_image"]``.
+            For ``Detections`` outputs, ``source_image`` moved from ``detections.data`` to ``detections.metadata``.
+            Update detection callers reading ``detections.data["source_image"]`` to use
+            ``detections.metadata["source_image"]``.
 
         Note:
-            ``class_name`` mapping uses one of two modes depending on the checkpoint. For pretrained COCO checkpoints
+            ``class_name`` mapping uses one of three modes depending on the checkpoint. For pretrained COCO checkpoints
             (detected when ``model.args.num_classes > len(class_names)`` and ``class_names`` matches
             ``COCO_CLASS_NAMES``), raw COCO category IDs (1–90, sparse) are looked up by category ID rather than by
-            position — so ``class_id=18`` yields ``"dog"``, not ``class_names[18]``. For fine-tuned models, ``class_id``
-            is a 0-based index into ``class_names``.
+            position — so ``class_id=18`` yields ``"dog"``, not ``class_names[18]``. For fine-tuned detection and
+            segmentation models and active-first keypoint models, ``class_id`` is a 0-based index into ``class_names``.
+            Legacy keypoint checkpoints with ``args.num_keypoints_per_class[0] == 0`` use a background-first layout:
+            slot 0 maps to ``"__background__"`` and foreground slots map to ``class_names`` in order.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -1265,9 +1814,7 @@ class RFDETR:
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, or if ``patch_size`` is not a positive integer.
         """
-        import supervision as sv
-
-        _ensure_model_on_device(self.model)
+        from supervision import Detections, KeyPoints
 
         patch_size = _resolve_patch_size(patch_size, self.model_config, "predict")
         num_windows = getattr(self.model_config, "num_windows", 1)
@@ -1286,14 +1833,7 @@ class RFDETR:
         else:
             shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
 
-        if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
-            logger.warning(
-                "Model is not optimized for inference. Latency may be higher than expected."
-                " You can optimize the model for inference by calling model.optimize_for_inference().",
-            )
-            self._has_warned_about_not_being_optimized_for_inference = True
-
-            self.model.model.eval()
+        self._ensure_eval_mode_for_unoptimized_inference()
 
         if not isinstance(images, list):
             images = [images]
@@ -1337,14 +1877,11 @@ class RFDETR:
             h, w = img_tensor.shape[1:]
             orig_sizes.append((h, w))
 
-            img_tensor = img_tensor.to(self.model.device)
-            resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
-            img_tensor = F.resize(img_tensor, resize_to)
-            img_tensor = F.normalize(img_tensor, self.means, self.stds)
+            processed_images.append(img_tensor.to(self.model.device))
 
-            processed_images.append(img_tensor)
-
-        batch_tensor = torch.stack(processed_images)
+        resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
+        batch_tensor = torch.stack([F.resize(t, resize_to) for t in processed_images])
+        batch_tensor = F.normalize(batch_tensor, self.means, self.stds)
 
         if self._is_optimized_for_inference:
             if (
@@ -1353,38 +1890,51 @@ class RFDETR:
             ):
                 # this could happen if someone manually changes self.model.resolution after optimizing the model,
                 # or if predict(shape=...) is used with a shape that doesn't match the compiled square resolution.
+                _restore_hint = (
+                    " Create a new RFDETR instance to use a different resolution."
+                    if getattr(self, "_optimized_inplace", False)
+                    else " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
+                )
                 raise ValueError(
                     f"Resolution mismatch. "
                     f"Model was optimized for resolution {self._optimized_resolution}x{self._optimized_resolution}, "
-                    f"but got {batch_tensor.shape[2]}x{batch_tensor.shape[3]}."
-                    " You can explicitly remove the optimized model by calling model.remove_optimized_model().",
+                    f"but got {batch_tensor.shape[2]}x{batch_tensor.shape[3]}." + _restore_hint,
                 )
             if self._optimized_has_been_compiled:
                 if self._optimized_batch_size != batch_tensor.shape[0]:
+                    _restore_hint = (
+                        " Create a new RFDETR instance to recompile for a different batch size."
+                        if getattr(self, "_optimized_inplace", False)
+                        else (
+                            " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
+                            " Alternatively, you can recompile the optimized model for a different batch size"
+                            " by calling model.optimize_for_inference(batch_size=<new_batch_size>)."
+                        )
+                    )
                     raise ValueError(
                         f"Batch size mismatch. "
                         f"Optimized model was compiled for batch size {self._optimized_batch_size}, "
-                        f"but got {batch_tensor.shape[0]}."
-                        " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
-                        " Alternatively, you can recompile the optimized model for a different batch size"
-                        " by calling model.optimize_for_inference(batch_size=<new_batch_size>).",
+                        f"but got {batch_tensor.shape[0]}." + _restore_hint,
                     )
 
-        with torch.no_grad():
-            if self._is_optimized_for_inference:
-                predictions = self.model.inference_model(batch_tensor.to(dtype=self._optimized_dtype))
-            else:
-                predictions = self.model.model(batch_tensor)
-            if isinstance(predictions, tuple):
-                return_predictions = {
-                    "pred_logits": predictions[1],
-                    "pred_boxes": predictions[0],
-                }
-                if len(predictions) == 3:
+        if self._is_optimized_for_inference:
+            predictions = self.model.inference_model(batch_tensor.to(dtype=self._optimized_dtype))
+        else:
+            predictions = self.model.model(batch_tensor)
+        if isinstance(predictions, tuple):
+            return_predictions = {
+                "pred_logits": predictions[1],
+                "pred_boxes": predictions[0],
+            }
+            if len(predictions) == 3:
+                # Distinguish optional keypoint vs mask tuple output for legacy compiled/export shims.
+                if getattr(getattr(self.model, "model_config", None), "use_grouppose_keypoints", False):
+                    return_predictions["pred_keypoints"] = predictions[2]
+                else:
                     return_predictions["pred_masks"] = predictions[2]
-                predictions = return_predictions
-            target_sizes = torch.tensor(orig_sizes, device=self.model.device)
-            results = self.model.postprocess(predictions, target_sizes=target_sizes)
+            predictions = return_predictions
+        target_sizes = torch.tensor(orig_sizes, device=self.model.device)
+        results = self.model.postprocess(predictions, target_sizes=target_sizes)
 
         model_class_names = self.class_names
         n = len(model_class_names)
@@ -1401,13 +1951,27 @@ class RFDETR:
             )
         num_logit_slots: int = getattr(_model_args, "num_classes", n)
         _is_coco_pretrained = num_logit_slots > n and model_class_names == list(COCO_CLASS_NAMES)
+        # Legacy keypoint models may use a shifted class scheme: slot 0 = background
+        # (0 keypoints), real classes start at slot 1. Active-first schemas such as
+        # [17] use normal 0-based class IDs and fall through to the default mapping.
+        _num_keypoints_per_class: list[int] = getattr(_model_args, "num_keypoints_per_class", []) or []
+        _is_legacy_bgfirst_keypoint = _is_bg_first_schema(_num_keypoints_per_class)
         if _is_coco_pretrained:
             _class_id_to_name: dict[int, str] = {
                 coco_id: model_class_names[i] for i, coco_id in enumerate(COCO_CLASSES) if i < n
             }
+        elif _is_legacy_bgfirst_keypoint:
+            # Map foreground keypoint slots (slots where num_keypoints > 0) to class names.
+            # Slot 0 is background and is skipped. Slot 1 → class_names[0], slot 2 → class_names[1], …
+            # Note: slots where num_keypoints == 0 but slot != 0 (detect-only classes in a mixed schema
+            # such as [0, 17, 0, 4]) are not present in _kp_foreground_slots and will map to an empty
+            # string with a one-time warning. Mixed keypoint+detection schemas are not a supported
+            # configuration for the shipped models.
+            _kp_foreground_slots = [idx for idx, k in enumerate(_num_keypoints_per_class) if k > 0]
+            _class_id_to_name = {slot: model_class_names[i] for i, slot in enumerate(_kp_foreground_slots) if i < n}
         else:
             _class_id_to_name = dict(enumerate(model_class_names))
-        detections_list = []
+        predictions_list: list[Detections | KeyPoints] = []
         for i, result in enumerate(results):
             scores = result["scores"]
             labels = result["labels"]
@@ -1417,23 +1981,31 @@ class RFDETR:
             scores = scores[keep]
             labels = labels[keep]
             boxes = boxes[keep]
+            keypoints_array = None
+            if "keypoints" in result:
+                keypoints = result["keypoints"][keep]
+                keypoints_array = keypoints.float().cpu().numpy()
+            has_keypoints = keypoints_array is not None
 
             if "masks" in result:
                 masks = result["masks"]
                 masks = masks[keep]
 
-                detections = sv.Detections(
+                detections = Detections(
                     xyxy=boxes.float().cpu().numpy(),
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
                     mask=masks.squeeze(1).cpu().numpy(),
                 )
             else:
-                detections = sv.Detections(
+                detections = Detections(
                     xyxy=boxes.float().cpu().numpy(),
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
                 )
+            if "keypoint_precision_cholesky" in result:
+                keypoint_precision = result["keypoint_precision_cholesky"][keep]
+                detections.data["keypoint_precision_cholesky"] = keypoint_precision.float().cpu().numpy()
 
             if include_source_image:
                 detections.metadata["source_image"] = source_images[i]
@@ -1448,7 +2020,11 @@ class RFDETR:
             # IDs not in _class_id_to_name are genuinely unexpected and produce an empty
             # string with a one-time warning.
             class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
-            truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != num_logit_slots]
+            # Sentinel for the no-object / background class differs by model type.
+            # Legacy background-first keypoint models: slot 0 is background in the keypoint schema.
+            # Detection/segmentation models: the no-object slot is at index num_logit_slots.
+            _bg_sentinel = 0 if _is_legacy_bgfirst_keypoint else num_logit_slots
+            truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != _bg_sentinel]
             if truly_oob:
                 logger.warning_once(
                     "predict() encountered unmapped class_id(s): %s — mapping to empty string",
@@ -1458,13 +2034,41 @@ class RFDETR:
                 class_names = [_class_id_to_name.get(cid, "") for cid in class_ids]
             else:
                 class_names = [
-                    "__background__" if cid == num_logit_slots else _class_id_to_name.get(cid, "") for cid in class_ids
+                    "__background__" if cid == _bg_sentinel else _class_id_to_name.get(cid, "") for cid in class_ids
                 ]
             detections.data["class_name"] = np.array(class_names, dtype=object)
 
-            detections_list.append(detections)
+            if has_keypoints and keypoints_array is not None:
+                keypoint_data = dict(detections.data)
+                keypoint_data["xyxy"] = detections.xyxy.astype(np.float32)
+                if include_source_image:
+                    keypoint_data["source_image"] = [source_images[i] for _ in range(len(detections))]
+                raw_precision = keypoint_data.get("keypoint_precision_cholesky")
+                raw_source_shape = keypoint_data.get("source_shape")
+                if raw_precision is not None and raw_source_shape is not None and len(detections) > 0:
+                    precision = np.asarray(raw_precision, dtype=np.float32)
+                    source_shape = np.asarray(raw_source_shape, dtype=np.float32)
+                    if precision.shape[:2] == keypoints_array.shape[:2] and source_shape.shape == (len(detections), 2):
+                        keypoint_data["covariance"] = precision_cholesky_to_pixel_covariance(
+                            precision_cholesky=precision, source_shape=source_shape
+                        )
+                keypoints_array = keypoints_array.astype(np.float32, copy=False)
+                keypoint_confidence = keypoints_array[:, :, 2]
+                key_points = KeyPoints(
+                    xy=keypoints_array[:, :, :2],
+                    keypoint_confidence=keypoint_confidence,
+                    detection_confidence=detections.confidence.astype(np.float32)
+                    if detections.confidence is not None
+                    else None,
+                    class_id=detections.class_id.astype(int) if detections.class_id is not None else None,
+                    visible=keypoint_confidence > 0,
+                    data=keypoint_data,
+                )
+                predictions_list.append(key_points)
+            else:
+                predictions_list.append(detections)
 
-        return detections_list if len(detections_list) > 1 else detections_list[0]
+        return predictions_list if len(predictions_list) > 1 else predictions_list[0]
 
     def deploy_to_roboflow(
         self,

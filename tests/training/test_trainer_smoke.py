@@ -9,7 +9,8 @@ Verifies that the PTL training loop runs end-to-end without error for both detec
 All heavy operations (build_model, build_criterion_and_postprocessors, build_dataset, get_param_dict) are patched so no
 real dataset or GPU is required.
 
-Chapter 1 gate: these must pass before Chapter 2 begins."""
+Chapter 1 gate: these must pass before Chapter 2 begins.
+"""
 
 import sys
 from unittest.mock import MagicMock, patch
@@ -168,14 +169,16 @@ class TestDetectionSmoke:
 
         losses = []
 
-        def _recording_criterion(outputs, targets):
+        def _recording_criterion(outputs, targets, num_boxes=None):
             dummy = outputs.get("dummy", torch.zeros(1))
-            loss = dummy.mean()
+            denominator = fake_criterion.num_boxes_for_targets(outputs, targets) if num_boxes is None else num_boxes
+            loss = dummy.mean() / denominator
             losses.append(loss.detach().item())
             return {"loss_ce": loss}
 
         fake_criterion = MagicMock(side_effect=_recording_criterion)
         fake_criterion.weight_dict = {"loss_ce": 1.0}
+        fake_criterion.num_boxes_for_targets.return_value = torch.tensor(1.0)
 
         with (
             patch("rfdetr.training.module_model.build_model_from_config", return_value=tiny_model),

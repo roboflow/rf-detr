@@ -7,6 +7,7 @@
 
 import os
 import warnings
+from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Literal, Mapping, Optional, TypeAlias, Union
 
 import torch
@@ -14,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from pydantic_core import PydanticUndefined
 
 EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
+PathLikeStr: TypeAlias = str | Path
 
 
 class PretrainWeightsCompatibilityWarning(UserWarning):
@@ -30,12 +32,23 @@ def _detect_device() -> str:
 
     We defer to :func:`torch.accelerator.current_accelerator` (PyTorch ≥ 2.4) when available — it queries the driver
     through NVML without creating a primary context.  On older builds we fall back to ``torch.cuda.is_available()``.
+
+    ``check_available=True`` is required: without it ``current_accelerator()`` only reports the *compile-time*
+    accelerator, so the default CUDA wheel on a machine without an NVIDIA driver yields ``"cuda"`` and every model build
+    crashes with "Found no NVIDIA driver".  The runtime check is NVML-backed and still avoids creating a CUDA context.
+    Builds whose ``current_accelerator`` predates the ``check_available`` kwarg get the same runtime verification via
+    ``torch.accelerator.is_available``.
     """
     accelerator = getattr(torch, "accelerator", None)
     current_accelerator = getattr(accelerator, "current_accelerator", None)
     if current_accelerator is not None:
         try:
-            accel = current_accelerator()
+            try:
+                accel = current_accelerator(check_available=True)
+            except TypeError:
+                accel = current_accelerator()
+                if accel is not None and not accelerator.is_available():
+                    accel = None
             if accel is not None:
                 return str(accel)
             return "cpu"
@@ -64,6 +77,8 @@ class BaseConfig(BaseModel):
     @classmethod
     def catch_typo_kwargs(cls, values: Any) -> Any:
         if not isinstance(values, Mapping):
+            return values
+        if cls.model_config.get("extra") != "forbid":
             return values
         allowed_params = set(cls.model_fields.keys())
         provided_params = set(values)
@@ -100,13 +115,14 @@ class ModelConfig(BaseConfig):
     # - ModelConfig is the authoritative source of `num_select` for PTL/inference; it is read via `build_namespace`.
     # - Any `num_select` field on TrainConfig / SegmentationTrainConfig is deprecated and ignored by PTL/inference.
     num_select: int = 300
+    postprocess_trace_alpha: float = Field(default=0.2, ge=0.0)
     bbox_reparam: bool = True
     lite_refpoint_refine: bool = True
     layer_norm: bool = True
     amp: bool = True
     num_channels: int = Field(default=3, ge=1)
     num_classes: int = 90
-    pretrain_weights: Optional[str] = None
+    pretrain_weights: Optional[PathLikeStr] = None
     # torch.device values are accepted at validation time and normalized to string.
     device: str = DEVICE
     resolution: int
@@ -118,6 +134,14 @@ class ModelConfig(BaseConfig):
     ia_bce_loss: bool = True
     cls_loss_coef: float = 1.0
     segmentation_head: bool = False
+    use_grouppose_keypoints: bool = False
+    keypoint_cross_attn: bool = True
+    inter_instance_kp_attn: bool = False
+    grouppose_keypoint_dim_downscale: int = 1
+    dual_projector: bool = False
+    dual_projector_kp_only: bool = False
+    num_keypoints_per_class: List[int] = Field(default_factory=list)
+    num_decoder_registers: int = 0
     mask_downsample_ratio: int = 4
     backbone_lora: bool = False
     freeze_encoder: bool = False
@@ -344,9 +368,9 @@ class ModelConfig(BaseConfig):
 
         return self
 
-    @field_validator("pretrain_weights", mode="after")
+    @field_validator("pretrain_weights", mode="before")
     @classmethod
-    def expand_path(cls, v: Optional[str]) -> Optional[str]:
+    def expand_path(cls, v: PathLikeStr | None) -> str | None:
         """Expand and resolve the pretrain_weights path.
 
         Bare filenames (no directory component, e.g. ``rf-detr-base.pth``) are resolved to the model cache directory so
@@ -358,7 +382,7 @@ class ModelConfig(BaseConfig):
         """
         if v is None:
             return v
-        expanded = os.path.expanduser(v)
+        expanded = os.path.expanduser(os.fspath(v))
         if not os.path.dirname(expanded):
             # Bare filename → use model cache dir so weights don't land in CWD.
             from rfdetr.assets.model_weights import get_model_cache_dir
@@ -407,7 +431,7 @@ class RFDETRBaseConfig(ModelConfig):
     num_select: int = 300
     projector_scale: List[Literal["P3", "P4", "P5"]] = ["P4"]
     out_feature_indexes: List[int] = [2, 5, 8, 11]
-    pretrain_weights: Optional[str] = "rf-detr-base.pth"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-base.pth"
     resolution: int = 560
     positional_encoding_size: int = 37
 
@@ -421,7 +445,7 @@ class RFDETRLargeDeprecatedConfig(RFDETRBaseConfig):
     ca_nheads: int = 24
     dec_n_points: int = 4
     projector_scale: List[Literal["P3", "P4", "P5"]] = ["P3", "P5"]
-    pretrain_weights: Optional[str] = "rf-detr-large.pth"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-large.pth"
 
 
 class RFDETRNanoConfig(RFDETRBaseConfig):
@@ -433,7 +457,7 @@ class RFDETRNanoConfig(RFDETRBaseConfig):
     patch_size: int = 16
     resolution: int = 384
     positional_encoding_size: int = 24
-    pretrain_weights: Optional[str] = "rf-detr-nano.pth"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-nano.pth"
 
 
 class RFDETRSmallConfig(RFDETRBaseConfig):
@@ -445,7 +469,7 @@ class RFDETRSmallConfig(RFDETRBaseConfig):
     patch_size: int = 16
     resolution: int = 512
     positional_encoding_size: int = 32
-    pretrain_weights: Optional[str] = "rf-detr-small.pth"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-small.pth"
 
 
 class RFDETRMediumConfig(RFDETRBaseConfig):
@@ -457,7 +481,7 @@ class RFDETRMediumConfig(RFDETRBaseConfig):
     patch_size: int = 16
     resolution: int = 576
     positional_encoding_size: int = 36
-    pretrain_weights: Optional[str] = "rf-detr-medium.pth"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-medium.pth"
 
 
 # res 704, ps 16, 2 windows, 4 dec layers, 300 queries, ViT-S basis
@@ -474,7 +498,7 @@ class RFDETRLargeConfig(ModelConfig):
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_classes: int = 90
     positional_encoding_size: int = 704 // 16
-    pretrain_weights: Optional[str] = "rf-detr-large-2026.pth"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-large-2026.pth"
     resolution: int = 704
     # Explicit so populate_args and _build_args_from_configs agree.
     # ModelConfig does not define these fields; without them the legacy path
@@ -494,7 +518,7 @@ class RFDETRSegPreviewConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 36
     num_queries: int = 200
     num_select: int = 200
-    pretrain_weights: Optional[str] = "rf-detr-seg-preview.pt"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-preview.pt"
     num_classes: int = 90
 
 
@@ -508,7 +532,7 @@ class RFDETRSegNanoConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 312 // 12
     num_queries: int = 100
     num_select: int = 100
-    pretrain_weights: Optional[str] = "rf-detr-seg-nano.pt"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-nano.pt"
     num_classes: int = 90
 
 
@@ -522,7 +546,7 @@ class RFDETRSegSmallConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 384 // 12
     num_queries: int = 100
     num_select: int = 100
-    pretrain_weights: Optional[str] = "rf-detr-seg-small.pt"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-small.pt"
     num_classes: int = 90
 
 
@@ -536,7 +560,7 @@ class RFDETRSegMediumConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 432 // 12
     num_queries: int = 200
     num_select: int = 200
-    pretrain_weights: Optional[str] = "rf-detr-seg-medium.pt"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-medium.pt"
     num_classes: int = 90
 
 
@@ -550,7 +574,7 @@ class RFDETRSegLargeConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 504 // 12
     num_queries: int = 200
     num_select: int = 200
-    pretrain_weights: Optional[str] = "rf-detr-seg-large.pt"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-large.pt"
     num_classes: int = 90
 
 
@@ -564,7 +588,7 @@ class RFDETRSegXLargeConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 624 // 12
     num_queries: int = 300
     num_select: int = 300
-    pretrain_weights: Optional[str] = "rf-detr-seg-xlarge.pt"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-xlarge.pt"
     num_classes: int = 90
 
 
@@ -578,11 +602,33 @@ class RFDETRSeg2XLargeConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 768 // 12
     num_queries: int = 300
     num_select: int = 300
-    pretrain_weights: Optional[str] = "rf-detr-seg-xxlarge.pt"
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-xxlarge.pt"
     num_classes: int = 90
 
 
-class TrainConfig(BaseModel):
+class RFDETRKeypointPreviewConfig(RFDETRBaseConfig):
+    """Configuration for the preview keypoint model."""
+
+    use_grouppose_keypoints: bool = True
+    dual_projector: bool = True
+    dual_projector_kp_only: bool = True
+    num_keypoints_per_class: List[int] = [17]
+    keypoint_cross_attn: bool = True
+    inter_instance_kp_attn: bool = False
+    grouppose_keypoint_dim_downscale: int = 1
+    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    num_windows: int = 2
+    dec_layers: int = 4
+    patch_size: int = 12
+    resolution: int = 576
+    positional_encoding_size: int = 576 // 12
+    num_queries: int = 100
+    num_select: int = 100
+    pretrain_weights: Optional[PathLikeStr] = "rf-detr-keypoint-preview-xlarge.pth"
+    num_classes: int = 90
+
+
+class TrainConfig(BaseConfig):
     """Training hyperparameters and auto-batching configuration.
 
     Notes:
@@ -596,6 +642,8 @@ class TrainConfig(BaseModel):
           This avoids silently changing behavior when scaling from single-GPU to multi-GPU training.
     """
 
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore", validate_assignment=True)
+
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
     batch_size: int | Literal["auto"] = 4
@@ -605,12 +653,13 @@ class TrainConfig(BaseModel):
     auto_batch_max_targets_per_image: int = 100
     auto_batch_ema_headroom: float = 0.7  # scale safe batch by this when use_ema=True (EMA uses extra memory)
     epochs: int = 100
-    resume: Optional[str] = None
+    resume: Optional[PathLikeStr] = None
     ema_decay: float = 0.993
     ema_tau: int = 100
     lr_drop: int = 100
     checkpoint_interval: int = Field(default=10, ge=1)
     skip_best_epochs: int = Field(default=0, ge=0)
+    smooth_alpha: float = 0.0
     warmup_epochs: float = 0.0
     lr_vit_layer_decay: float = 0.8
     lr_component_decay: float = 0.7
@@ -619,10 +668,16 @@ class TrainConfig(BaseModel):
     ia_bce_loss: bool = True
     cls_loss_coef: float = 1.0
     num_select: int = 300
+    keypoint_flip_pairs: List[int] = Field(default_factory=list)
+    keypoint_l1_loss_coef: float = 0
+    keypoint_findable_loss_coef: float = 0
+    keypoint_visible_loss_coef: float = 0
+    keypoint_nll_loss_coef: float = 0
+    keypoint_oks_sigmas: List[float] | None = None
     dataset_file: Literal["coco", "o365", "roboflow", "yolo"] = "roboflow"
     square_resize_div_64: bool = True
-    dataset_dir: str
-    output_dir: str = "output"
+    dataset_dir: Optional[PathLikeStr]
+    output_dir: PathLikeStr = "output"
     multi_scale: bool = True
     expanded_scales: bool = True
     do_random_resize_via_padding: bool = False
@@ -630,6 +685,16 @@ class TrainConfig(BaseModel):
     ema_update_interval: int = 1
     num_workers: int = 2
     weight_decay: float = 1e-4
+    amp_dtype: Literal["auto", "bf16", "fp16"] = Field(
+        default="auto",
+        description=(
+            "Mixed-precision autocast dtype. "
+            "'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
+            "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported). "
+            "'fp16' forces fp16. "
+            "Has no effect when model_config.amp=False or when training on CPU."
+        ),
+    )
     early_stopping: bool = False
     early_stopping_patience: int = 10
     early_stopping_min_delta: float = 0.001
@@ -648,7 +713,6 @@ class TrainConfig(BaseModel):
     eval_interval: int = 1
     log_per_class_metrics: bool = True
     aug_config: Optional[Dict[str, Any]] = None
-    scale_jitter: bool = True
     augmentation_backend: Literal["cpu", "auto", "gpu"] = "cpu"
     save_dataset_grids: bool = False
     notes: Optional[Any] = Field(
@@ -699,6 +763,24 @@ class TrainConfig(BaseModel):
             return "tqdm" if value else None
         return value
 
+    @field_validator("amp_dtype", mode="before")
+    @classmethod
+    def _coerce_amp_dtype(cls, value: Any) -> Any:
+        """Fall back to ``'auto'`` (with a warning) for an unrecognised or wrong-typed ``amp_dtype``.
+
+        Mixed precision is a best-effort speed/memory optimisation, so an invalid request degrades to the auto-selected
+        dtype rather than failing the whole training run.
+        """
+        if value not in ("auto", "bf16", "fp16"):
+            # stacklevel=2 points into Pydantic internals; unavoidable with @field_validator in Pydantic v2.
+            warnings.warn(
+                f"Unknown amp_dtype={value!r}; expected one of 'auto', 'bf16', 'fp16'. Falling back to 'auto'.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return "auto"
+        return value
+
     # Promoted from populate_args() — PTL migration (T4-2).
     # device is intentionally absent: PTL auto-detects accelerator via Trainer(accelerator="auto").
     accelerator: str = "auto"
@@ -719,6 +801,7 @@ class TrainConfig(BaseModel):
     # PTL runtime/perf tuning knobs.
     train_log_sync_dist: bool = False
     train_log_on_step: bool = False
+    compute_train_metrics: bool = False
     compute_val_loss: bool = True
     compute_test_loss: bool = True
     pin_memory: Optional[bool] = None
@@ -755,6 +838,14 @@ class TrainConfig(BaseModel):
             raise ValueError("auto_batch_ema_headroom must be in (0, 1].")
         return v
 
+    @field_validator("smooth_alpha", mode="after")
+    @classmethod
+    def validate_smooth_alpha(cls, v: float) -> float:
+        """Validate smooth_alpha is in [0.0, 1.0)."""
+        if not (0.0 <= v < 1.0):
+            raise ValueError("smooth_alpha must be in [0.0, 1.0).")
+        return v
+
     @field_validator("ema_update_interval", "eval_interval", mode="after")
     @classmethod
     def validate_positive_intervals(cls, v: int) -> int:
@@ -771,20 +862,88 @@ class TrainConfig(BaseModel):
             raise ValueError("prefetch_factor must be >= 1 when provided.")
         return v
 
-    @field_validator("dataset_dir", "output_dir", mode="after")
+    @field_validator("dataset_dir", "output_dir", mode="before")
     @classmethod
-    def expand_paths(cls, v: str) -> str:
-        """Expand user paths (e.g., '~' or paths with separators) but leave simple filenames (like 'rf-detr-base.pth')
-        unchanged so they can match hosted model keys."""
+    def expand_paths(cls, v: PathLikeStr | None) -> str | None:
+        """Expand and normalize dataset/output directory paths via ``os.fspath`` → ``expanduser`` → ``realpath``."""
         if v is None:
             return v
-        return os.path.realpath(os.path.expanduser(v))
+        return os.path.realpath(os.path.expanduser(os.fspath(v)))
+
+    @field_validator("resume", mode="before")
+    @classmethod
+    def _coerce_resume_path(cls, v: PathLikeStr | None) -> str | None:
+        """Normalise the resume checkpoint value to ``str`` without resolving it.
+
+        Unlike ``dataset_dir``/``output_dir``, ``resume`` is forwarded verbatim to PyTorch Lightning's
+        ``trainer.fit(ckpt_path=...)``, which also accepts sentinel values such as ``"last"``. Running
+        ``os.path.realpath`` would rewrite those sentinels into spurious absolute paths, so this validator only coerces
+        the type (``Path`` -> ``str``) and leaves the value untouched.
+        """
+        if v is None:
+            return v
+        return os.fspath(v)
 
 
 class SegmentationTrainConfig(TrainConfig):
+    """Training configuration for instance segmentation models.
+
+    Extends :class:`TrainConfig` with segmentation-specific loss coefficients.
+
+    Attributes:
+        num_select: Maximum number of predictions to keep per image. ``None`` uses
+            the model default.
+        mask_point_sample_ratio: Number of points sampled per mask for point-based
+            mask loss computation.
+        mask_ce_loss_coef: Cross-entropy loss weight for mask prediction.
+        mask_dice_loss_coef: Dice loss weight for mask prediction.
+        cls_loss_coef: Classification loss weight. Defaults to ``1.0`` to match the
+            effective pre-v1.7 value (the v1.7 TrainConfig ownership migration
+            silently activated a dormant ``5.0``; this field restores the correct
+            weight). To reproduce pre-fix segmentation behaviour pass
+            ``cls_loss_coef=5.0`` explicitly.
+        segmentation_head: Whether to attach the segmentation head.
+    """
+
     num_select: Optional[int] = None
     mask_point_sample_ratio: int = 16
     mask_ce_loss_coef: float = 5.0
     mask_dice_loss_coef: float = 5.0
-    cls_loss_coef: float = 5.0
+    cls_loss_coef: float = 1.0
     segmentation_head: bool = True
+
+
+class KeypointTrainConfig(TrainConfig):
+    """Training configuration for keypoint detection models.
+
+    Extends :class:`TrainConfig` with keypoint-specific loss coefficients and
+    metric-smoothing defaults tuned for the NLL-Cholesky keypoint head, which
+    produces noisy per-epoch OKS metrics during early fine-tuning.
+
+    Attributes:
+        cls_loss_coef: Classification loss weight.
+        keypoint_l1_loss_coef: L1 regression loss weight for keypoint coordinates.
+        keypoint_findable_loss_coef: Loss weight for the keypoint visibility head.
+        keypoint_visible_loss_coef: Loss weight for the keypoint visibility score.
+        keypoint_nll_loss_coef: NLL-Cholesky loss weight. Restored to ``1.0`` to
+            align with the other keypoint loss terms (``keypoint_l1_loss_coef``,
+            ``keypoint_findable_loss_coef``, ``keypoint_visible_loss_coef``).
+            Previously set to ``0.5`` to dampen OKS@75 oscillation; reverted as
+            the under-weighting was not beneficial in practice.
+        smooth_alpha: EMA smoothing factor for :class:`BestModelCallback` metric
+            comparison. Overrides the :class:`TrainConfig` default of ``0.0``
+            (disabled) to ``0.5``, which balances responsiveness and noise
+            suppression for noisy keypoint mAP curves.
+        skip_best_epochs: Number of epochs to skip before checkpoint selection begins.
+            Overrides the :class:`TrainConfig` default of ``0`` to ``10`` because
+            ``val/keypoint_map_50_95`` under the NLL-Cholesky loss is noisy in early
+            fine-tuning and can lock checkpoint selection to a transient peak.
+    """
+
+    cls_loss_coef: float = 2.0  # TODO: verify empirically before final release; ported as-is from internal recipe.
+    keypoint_l1_loss_coef: float = 1
+    keypoint_findable_loss_coef: float = 1
+    keypoint_visible_loss_coef: float = 1
+    keypoint_nll_loss_coef: float = 1.0
+    smooth_alpha: float = 0.5
+    skip_best_epochs: int = Field(default=10, ge=0)

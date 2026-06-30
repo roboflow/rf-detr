@@ -2,7 +2,7 @@ name: CPU tests Workflow
 
 on:
   push:
-    branches: ["main", "release/*", "develop"]
+    branches: ["main", "release/*", "develop", "feat/*"]
   pull_request:
 
 permissions:
@@ -58,7 +58,7 @@ jobs:
         run: |
           uv run --no-sync pytest src/ tests/ \
             -n 2 -m "not gpu" \
-            --ignore=tests/try_instantiate_all_models.py \
+            --ignore=tests/run_smoke_all_models.py \
             --cov=rfdetr --cov-report=xml \
             --timeout=420 \
             --durations=50

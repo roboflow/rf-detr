@@ -5,27 +5,104 @@ All notable changes to RF-DETR are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.8.3] — 2026-06-27
 
 ### Added
 
-- `RFDETR.export_for_roboflow(output_dir)` — writes a Roboflow upload bundle (`weights.pt` + `class_names.txt`) without a network call; extracted from `deploy_to_roboflow`, which now uses it ([#1086](https://github.com/roboflow/rf-detr/pull/1086))
+- `optimize_for_inference(inplace=True)` — new keyword-only argument on `RFDETR.optimize_for_inference()`; skips the deep-copy of the base model for memory-constrained inference-only deployments (~0.5× model-weight peak memory reduction). Requires `compile=False`. After inplace optimization, `export()` raises `RuntimeError` and `remove_optimized_model()` issues a `UserWarning` and returns cleanly instead of silently clearing state. New `RFDETR.is_optimized_inplace` property returns `True` after a successful inplace optimization. ([#1089](https://github.com/roboflow/rf-detr/pull/1089))
+- `CocoKeypointSchema.keypoint_flip_pairs` and `YoloKeypointSchema.keypoint_flip_pairs` fields — horizontal-flip swap pairs inferred automatically from keypoint names (left/right naming convention) for COCO schemas, and from `flip_idx` permutation for YOLO schemas. Auto-populated by `infer_coco_keypoint_schema` and `infer_yolo_keypoint_schema` respectively. ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
+- `infer_coco_keypoint_schema` and `infer_yolo_keypoint_schema` re-exported from `rfdetr.datasets` (previously only accessible from `rfdetr.datasets._keypoint_schema`). ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
 
 ### Changed
 
--
-
-### Deprecated
-
--
+- Horizontal flip detection in `AlbumentationsWrapper` now uses Albumentations `ReplayCompose` replay metadata instead of heuristic bbox-center mirroring; eliminates false positives on non-flip transforms that shift box centers. Falls back to `alb.Compose` with a `UserWarning` when `albumentations <1.3` is detected. ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
+- Keypoint schema inference now supports native COCO format (`dataset_file="coco"`) in addition to `"roboflow"` and `"yolo"`. ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
+- `_keypoint_schema_cache` key changed from `dataset_dir` (string) to `(dataset_file, dataset_dir)` tuple to prevent cross-format cache collisions when the same directory is used with different dataset formats. ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
 
 ### Fixed
 
-- Fixed `import rfdetr` failing on NumPy 2.x when a transitive dependency references the removed `np.complex_` alias ([#1064](https://github.com/roboflow/rf-detr/pull/1064))
+- Predicted bounding boxes are now clamped to image bounds `[0, width] × [0, height]` in `PostProcess._postprocess_boxes()`; model regression is unbounded and could previously produce negative or out-of-frame coordinates. `scale_fct` is also cast to `boxes.dtype` before multiplication to prevent dtype mismatch when boxes are `float16`. ([#1168](https://github.com/roboflow/rf-detr/pull/1168))
+- `SegmentationTrainConfig.cls_loss_coef` default corrected from `5.0` to `1.0` to restore the pre-v1.7 effective classification loss weight. The `5.0` value was present in `SegmentationTrainConfig` since v1.6 but was dead code until the v1.7 TrainConfig ownership migration activated it, silently over-penalising classification relative to mask losses during segmentation fine-tuning. To reproduce pre-fix behaviour, pass `cls_loss_coef=5.0` explicitly. ([#1165](https://github.com/roboflow/rf-detr/pull/1165))
+- `KeypointTrainConfig.keypoint_nll_loss_coef` default restored to `1.0` to align with the other keypoint loss terms (`keypoint_l1_loss_coef`, `keypoint_findable_loss_coef`, `keypoint_visible_loss_coef`). The previous default of `0.5` was set to dampen OKS@75 oscillation but under-weighted the NLL loss relative to other terms in practice. ([#1165](https://github.com/roboflow/rf-detr/pull/1165))
 
-### Security
+---
 
--
+## [1.8.2] — 2026-06-25
+
+### Added
+
+- YOLO pose keypoint dataset support: load Ultralytics YOLO pose datasets (`.yaml` with `kpt_shape`) directly for keypoint fine-tuning. Schema is inferred automatically via `infer_yolo_keypoint_schema`. ([#1156](https://github.com/roboflow/rf-detr/pull/1156))
+- `is_bg_first_schema`, `to_active_first`, `to_bg_first`, `schemas_semantically_equal` utilities in `rfdetr.utilities.keypoints` (and re-exported from `rfdetr.utilities`) for schema-aware keypoint processing. ([#1160](https://github.com/roboflow/rf-detr/pull/1160))
+- `amp_dtype` field on `TrainConfig` (`"auto"` / `"bf16"` / `"fp16"`): pin the mixed-precision autocast dtype instead of relying on device-capability auto-detection. `"auto"` (default) preserves the historical behaviour — `bf16-mixed` on Ampere+ CUDA, `16-mixed` otherwise. Invalid values degrade gracefully to `"auto"` with a `UserWarning`. ([#1143](https://github.com/roboflow/rf-detr/pull/1143))
+- Instance segmentation fine-tuning cookbook (`docs/cookbooks/fine-tune_segmentation.ipynb`) — end-to-end walkthrough using `RFDETRSegSmall` across seven diverse segmentation datasets. ([#1159](https://github.com/roboflow/rf-detr/pull/1159))
+- Inference latency benchmark cookbook (`docs/cookbooks/inference-latency-benchmark.ipynb`) — benchmarks CPU/GPU throughput across model sizes with reproducible measurement methodology. ([#1152](https://github.com/roboflow/rf-detr/pull/1152))
+
+### Changed
+
+- Default `num_keypoints_per_class` in `RFDETRKeypointPreviewConfig` changed from `[0, 17]` (background-first) to `[17]` (active-first). Legacy bg-first checkpoints auto-align on load via `_kp_active_mask`. ([#1160](https://github.com/roboflow/rf-detr/pull/1160))
+
+### Fixed
+
+- `RFDETR.from_checkpoint()` now correctly infers `num_classes` and `num_keypoints_per_class` from checkpoint weights (`class_embed.weight.shape[0] - 1` and `_kp_active_mask` respectively). Previously, `num_classes` was read as `shape[0]` (i.e. `num_classes + 1` including the background class), causing `load_state_dict` shape mismatches or a silent extra output class on every load. `BestModelCallback._serialize_model_config` is also fixed to persist the correct foreground-only `num_classes`. ([#1158](https://github.com/roboflow/rf-detr/pull/1158))
+- `HungarianMatcher.forward()` now uses the configured `focal_alpha` in the focal classification matching cost. Previously the value was hardcoded to `0.25`, silently ignoring any non-default `focal_alpha` passed to the constructor or `build_matcher`. This misaligned the bipartite matching cost with the focal classification loss in `criterion.py`, which correctly used `self.focal_alpha`. ([#1147](https://github.com/roboflow/rf-detr/pull/1147))
+- `spatial_shapes` in `Transformer.forward()` is now built from symbolic `Shape` ops (`torch.stack` of per-level `torch._shape_as_tensor` slices) instead of `torch.empty` + in-place index assignment. The previous pattern emitted a `ScatterND` feeding a shape tensor (`level_start_index`), which TensorRT rejected with "IScatterLayer cannot be used to compute a shape tensor". This fix is required to export any RF-DETR model to a TensorRT engine. ([#1155](https://github.com/roboflow/rf-detr/pull/1155))
+- Keypoint model inference now returns the correct `class_name` field in predictions. ([#1151](https://github.com/roboflow/rf-detr/pull/1151))
+- `predict()` now re-asserts eval mode before each call for unoptimized models, preventing silent train-mode inference after the first prediction. ([#1146](https://github.com/roboflow/rf-detr/pull/1146))
+- TFLite inference preprocessing and mask decoder aligned with PyTorch `predict()` behaviour. ([#1131](https://github.com/roboflow/rf-detr/pull/1131))
+- Python version mismatch in optional-dependency version overrides resolved. ([#1137](https://github.com/roboflow/rf-detr/pull/1137))
+
+---
+
+## [1.8.1] — 2026-06-19
+
+### Changed
+
+- Config path parameters (e.g. `dataset_dir`, `output_dir`, `pretrain_weights`) now accept `pathlib.Path` objects in addition to strings. Paths are coerced to `str` automatically via the `expand_paths` validator. No API changes required; existing string usage unaffected. ([#1124](https://github.com/roboflow/rf-detr/pull/1124))
+- Keypoint training now disables horizontal flip augmentation until keypoint flip-pair swapping is implemented. Previously, flipping was applied without reordering keypoint pairs, producing incorrect labels. ([#1122](https://github.com/roboflow/rf-detr/pull/1122))
+- Training metric plots improved with optional seaborn error bands, AP@0.75 metric grouping, and custom AP metric group configuration. ([#1122](https://github.com/roboflow/rf-detr/pull/1122))
+
+### Fixed
+
+- Keypoint encoder in eval mode now routes all queries through head 0 instead of splitting across group heads. Previously, `group_detr = len(self.enc_out_keypoint_embed)` caused the encoder keypoint path to split `num_queries` queries across all group heads in eval; now uses `if self.training else 1` guard. ([#1135](https://github.com/roboflow/rf-detr/pull/1135))
+- `config.use_return_dict` (deprecated in `transformers`) replaced with `config.return_dict` in DINOv2 windowed attention backbone. ([#1135](https://github.com/roboflow/rf-detr/pull/1135))
+- Epoch metric tables now display correctly when a Rich progress bar callback is active. Tables are printed through the progress bar's owned Rich console, preventing cursor conflicts with active live displays. ([#1128](https://github.com/roboflow/rf-detr/pull/1128))
+- Keypoint fine-tuning checkpoint selection stabilised with smoothed (EMA) best-metric comparison to avoid spurious checkpoint switches on noisy OKS metrics. Smoothing state is correctly restored on training resume. ([#1122](https://github.com/roboflow/rf-detr/pull/1122))
+- Group DETR train-time metric evaluation now evaluates only the primary query group, preventing crashes on non-tensor mask outputs from auxiliary decoder layers. ([#1122](https://github.com/roboflow/rf-detr/pull/1122))
+- `_detect_horizontal_flip` in Albumentations transform pipeline now uses `len(bboxes) == 0` instead of `not bboxes` to correctly handle Albumentations 2.x where bboxes is a NumPy array (falsy even when non-empty). ([#1126](https://github.com/roboflow/rf-detr/pull/1126))
+- TensorBoard logger is now disabled gracefully when `tensorboard` is installed alongside a NumPy-2.0-incompatible `tensorflow`. Training degrades to CSV-only logging with a clear warning instead of crashing inside `_log_hyperparams`. ([#1123](https://github.com/roboflow/rf-detr/pull/1123))
+
+---
+
+## [1.8.0] — 2026-06-13
+
+### Added
+
+- `RFDETRKeypointPreview` — keypoint detection model variant with GroupPose-style head, covariance-based uncertainty (precision-Cholesky parameterization), and COCO keypoint AP evaluation. Public config classes: `KeypointTrainConfig`, `RFDETRKeypointPreviewConfig` (from `rfdetr.config`). Utility: `precision_cholesky_to_pixel_covariance` (from `rfdetr.utilities`). Schema helpers `infer_coco_keypoint_schema`, `CocoKeypointSchema`, `active_keypoint_counts` accessible via `rfdetr.datasets._keypoint_schema`. ([#1099](https://github.com/roboflow/rf-detr/pull/1099))
+- `RFDETR.export_for_roboflow(output_dir)` — writes a Roboflow upload bundle (`weights.pt` + `class_names.txt`) without a network call; extracted from `deploy_to_roboflow`, which now delegates to it. ([#1086](https://github.com/roboflow/rf-detr/pull/1086))
+- Keypoint fine-tuning cookbook (`docs/cookbooks/fine-tune_keypoints.ipynb`) — end-to-end walkthrough: dataset download, schema inference, `KeypointTrainConfig`, training metrics, and inference with covariance uncertainty. ([#1104](https://github.com/roboflow/rf-detr/pull/1104))
+- `MetricKeypointOKS` — reusable OKS metric facade over `CocoEvaluator`, exported from `rfdetr.evaluation`. Supports arbitrary keypoint counts, per-category OKS sigma values, DDP-safe evaluation with first-rank-wins deduplication, and an `OKSKey` enum (`mAP`, `mAP@50`, `mAP@75`, `mAR`) for standardised metric keys. ([#1107](https://github.com/roboflow/rf-detr/pull/1107))
+
+### Changed
+
+- DDP strategy now enables `find_unused_parameters=True` for all detection, keypoint, and segmentation models when running under `strategy='ddp'` or `strategy='auto'` with a distributed launcher. Previously only enabled for segmentation. Opt out via `trainer_kwargs={"strategy": DDPStrategy(find_unused_parameters=False)}`. ([#1094](https://github.com/roboflow/rf-detr/pull/1094))
+- `rfdetr.datasets.aug_config` module renamed to `rfdetr.datasets.aug_configs` (plural). Direct imports from `rfdetr.datasets.aug_config` must be updated to `rfdetr.datasets.aug_configs`; the augmentation preset constants (`AUG_AGGRESSIVE`, etc.) are unchanged. ([#1103](https://github.com/roboflow/rf-detr/pull/1103))
+
+### Removed
+
+- `RFDETR.export(simplify=..., force=...)` — both kwargs removed from the signature. Deprecated since v1.6.0 with `remove_in="1.8.0"`; both were no-ops during the deprecation window. Callers passing these args must remove them before upgrading. ([#1102](https://github.com/roboflow/rf-detr/pull/1102))
+
+### Fixed
+
+- `RFDETR.from_checkpoint()` no longer treats `num_classes` loaded from the checkpoint as a user-supplied override. Previously, fine-tuning a checkpoint model on a dataset with a different class count was silently refused — the head refused to re-initialise and trained against the stale class count. An explicit `num_classes` kwarg from the caller still wins over both the checkpoint value and the dataset. ([#1106](https://github.com/roboflow/rf-detr/pull/1106))
+- Scale jitter restored in non-square training crop. `RandomCrop` in the `option_b` branch replaced with `RandomSizedCrop`, restoring the scale-augmentation behaviour lost during the Albumentations migration. ([#1088](https://github.com/roboflow/rf-detr/pull/1088))
+- Multi-GPU validation deadlock in COCO mAP synchronization prevented. `_merge_metric_state_across_ranks` now safe across zero-batch ranks. ([#1085](https://github.com/roboflow/rf-detr/pull/1085))
+- `import rfdetr` no longer fails on NumPy 2.x when a transitive dependency references the removed `np.complex_` alias. ([#1064](https://github.com/roboflow/rf-detr/pull/1064))
+- `rfdetr_plus` module availability check corrected; false-positive hit when the package was partially installed. ([#1083](https://github.com/roboflow/rf-detr/pull/1083))
+- Fixed spurious "Keypoint class-logit boost has N classes but detection head has M" warning on custom (non-Roboflow) keypoint datasets: `_align_num_classes_from_dataset` now zero-pads `num_keypoints_per_class` when auto-adjusting `num_classes` beyond the schema length ([#1113](https://github.com/roboflow/rf-detr/pull/1113))
+- Loss scaling corrected for keypoint training under gradient accumulation (`accumulate_grad_batches > 1`). Keypoint models now use manual optimization to normalize losses by the accumulated box count across the effective batch; detection and segmentation remain on Lightning's automatic-optimization path. Optimizer-step scheduling, LR warmup/decay, and epoch-boundary flushing are correctly handled in both paths. ([#1117](https://github.com/roboflow/rf-detr/pull/1117))
+- Device auto-detection now verifies accelerator runtime availability before selecting a device (PyTorch ≥ 2.4: `torch.accelerator.current_accelerator`; older builds: `torch.cuda.is_available()`). Previously, a machine with CUDA headers but no GPU driver could be assigned a CUDA device that fails at first use. ([#1111](https://github.com/roboflow/rf-detr/pull/1111))
+- `RFDETR.from_checkpoint()` and related APIs now honor an explicit `num_classes` argument even when its value equals the model default. Previously, passing `num_classes=N` where `N` is the default (e.g. 80 for COCO) was silently treated as unset, causing fine-tuning on a different class count to be refused. ([#1109](https://github.com/roboflow/rf-detr/pull/1109))
+- `RFDETR.from_checkpoint()` correctly infers the model variant from the checkpoint filename when `pretrain_weights` is absent or unset-like (empty string, `None`, whitespace). Previously, starter-like checkpoints without an explicit `pretrain_weights` entry raised an error or silently loaded the wrong model class. ([#1065](https://github.com/roboflow/rf-detr/pull/1065))
 
 ---
 

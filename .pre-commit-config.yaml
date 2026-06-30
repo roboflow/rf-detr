@@ -34,7 +34,7 @@ repos:
         args: ["--print-width=120"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.12
+    rev: v0.15.15
     hooks:
       - id: ruff-check
         args: ["--exit-non-zero-on-fix"]
@@ -43,7 +43,7 @@ repos:
         exclude: ^notebooks/.*\.py$
 
   - repo: https://github.com/PyCQA/docformatter
-    rev: v1.7.7
+    rev: v1.7.8
     hooks:
       - id: docformatter
         language_version: python3.10
@@ -51,12 +51,11 @@ repos:
         args: ["--in-place"]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.20.2
+    rev: v2.1.0
     hooks:
       - id: mypy
-        # The hook runs in an isolated env without torch/torchvision/etc.
-        # Full strict checking (matching pyproject.toml) runs in CI via ci-typing.yml.
-        args: ["--ignore-missing-imports"]
+        # The isolated hook has no torch; CI runs strict mypy with project deps.
+        args: ["--ignore-missing-imports", "--allow-subclassing-any"]
         exclude: ^docs/(hooks|scripts)/.*\.py$
         additional_dependencies:
           - "types-PyYAML"

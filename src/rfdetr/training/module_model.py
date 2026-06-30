@@ -26,6 +26,18 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+_TRAIN_PROGRESS_LOSS_ALIASES: dict[str, str] = {
+    "loss_ce": "loss_cls",
+    "loss_bbox": "loss_box",
+    "loss_giou": "loss_giou",
+    "loss_mask_ce": "mask_ce",
+    "loss_mask_dice": "mask_dice",
+    "loss_keypoints_l1": "kp_l1",
+    "loss_keypoints_findable": "kp_find",
+    "loss_keypoints_visible": "kp_vis",
+    "loss_keypoints_nll": "kp_nll",
+}
+
 
 class RFDETRModelModule(LightningModule):
     """LightningModule wrapping the RF-DETR model and training loop.
@@ -39,6 +51,14 @@ class RFDETRModelModule(LightningModule):
         super().__init__()
         self.model_config = model_config
         self.train_config = train_config
+        # Manual optimization is enabled only for keypoint models so that the box-count
+        # normalizer can be accumulated across grad-accum microbatches. Detection and
+        # segmentation use Lightning's automatic optimization (PTL handles accumulation,
+        # AMP, and gradient clipping), which keeps their step semantics unchanged from
+        # the pre-fix/scaling behaviour.
+        self._use_manual_optimization: bool = bool(getattr(model_config, "use_grouppose_keypoints", False))
+        self.automatic_optimization = not self._use_manual_optimization
+        self._accumulated_box_normalizer: torch.Tensor | None = None
         # Allow partial state-dict loading when resuming from a .pth checkpoint
         # (which contains only model weights, not criterion/postprocess state).
         self.strict_loading = False
@@ -50,6 +70,14 @@ class RFDETRModelModule(LightningModule):
             # per-group query slicing, class-name extraction, partial-load warnings,
             # and writes any auto-aligned ``num_classes`` back onto ``model_config``.
             load_pretrain_weights(self.model, self.model_config)
+            if model_config.use_grouppose_keypoints:
+                # Older model shims may omit the keypoint reset hook; call it only when implemented.
+                reset_keypoint_gaussian_parameters = getattr(self.model, "reset_keypoint_gaussian_parameters", None)
+                if callable(reset_keypoint_gaussian_parameters):
+                    reset_keypoint_gaussian_parameters()
+                    logger.info(
+                        "Reset keypoint Gaussian precision outputs to unit values after pretrained weight load."
+                    )
         if model_config.backbone_lora:
             apply_lora(self.model)
 
@@ -122,34 +150,65 @@ class RFDETRModelModule(LightningModule):
                     F.interpolate(samples.mask.unsqueeze(1).float(), size=scale, mode="nearest").squeeze(1).bool()
                 )
 
-    def training_step(self, batch: Tuple, batch_idx: int) -> torch.Tensor:
+    def on_train_epoch_start(self) -> None:
+        """Reset the accumulated box normalizer at the start of every training epoch.
+
+        Lightning may reuse the module across epochs without calling ``_step_optimizer`` at the boundary (for example
+        when an epoch ends mid-accumulation window with a non-divisible batch count). Clearing the accumulator here
+        guarantees the manual-optimization path always starts each epoch from a known state, so the first microbatch's
+        gradients are scaled by its own box count and not by a stale previous-epoch denominator.
+
+        This is a no-op for non-keypoint models because they use Lightning's automatic optimization path and never
+        populate ``self._accumulated_box_normalizer``.
+
+        Note: on finite datasets the final-batch fallback in ``_should_step_optimizer`` always flushes a partial
+        trailing window, so this reset is the only change needed.  On IterableDatasets (infinite
+        ``num_training_batches``) a partial window may survive epoch end with un-stepped gradients; those are
+        discarded here and the optimizer is zeroed so the first microbatch of the new epoch starts from a clean state.
+        """
+        if self._accumulated_box_normalizer is not None:
+            # Discard any partial accumulation window that survived the epoch boundary
+            # (only possible for IterableDatasets where num_training_batches is infinite).
+            try:
+                opts = self.optimizers()
+                for opt in opts if isinstance(opts, list) else [opts]:
+                    opt.zero_grad()
+            except RuntimeError:
+                pass  # Not attached to Trainer (unit-test context); nothing to zero.
+        self._accumulated_box_normalizer = None
+
+    def training_step(self, batch: Tuple, batch_idx: int) -> torch.Tensor | dict[str, Any]:
         """Compute loss for one training step and log metrics.
 
-        PTL handles gradient accumulation (``accumulate_grad_batches``), AMP (``precision``), and gradient clipping
-        (``gradient_clip_val``) — no manual ``GradScaler`` or loss scaling here.  The loss is divided by
-        ``trainer.accumulate_grad_batches`` so that the accumulated gradient magnitude matches the legacy engine (which
-        scales each sub-batch by ``1/grad_accum_steps`` before calling ``backward()``).
+        PTL handles AMP (``precision``) without a manual ``GradScaler``. Keypoint models perform manual optimization so
+        box-count loss normalization is based on the full accumulated effective batch rather than each microbatch
+        independently; detection and segmentation models keep Lightning's automatic optimization path.
 
         Args:
             batch: Tuple of (NestedTensor samples, list of target dicts).
             batch_idx: Batch index within the epoch.
 
         Returns:
-            Scalar loss tensor.
+            Scalar loss tensor by default. When ``compute_train_metrics=True``,
+            returns a Lightning-compatible dict containing ``loss`` plus
+            detached postprocessed predictions for train mAP logging.
         """
         samples, targets = batch
         batch_size = len(targets)
         outputs = self.model(samples, targets)
-        loss_dict = self.criterion(outputs, targets)
+        if self._use_manual_optimization:
+            loss_dict, raw_loss, normalizer = self._compute_train_losses(outputs, targets)
+            loss_for_backward = self._scale_loss_for_accumulation(raw_loss, normalizer)
+        else:
+            loss_dict = self.criterion(outputs, targets)
+            loss_for_backward = None
         weight_dict = self.criterion.weight_dict
         loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
-        # Normalise by grad-accum steps so the accumulated gradient matches the
-        # legacy engine, which scales each sub-batch by 1/grad_accum_steps before
-        # backward().  PTL accumulates full-scale gradients by default; dividing
-        # here keeps the effective LR identical to the non-PTL training path.
-        # We return the scaled loss to PTL but log the unscaled value so that
-        # train/loss and val/loss are on the same scale.
-        loss_scaled = loss / self.trainer.accumulate_grad_batches
+        # Automatic optimization path: divide by accumulate_grad_batches so the accumulated
+        # gradient matches a single large batch, matching the legacy engine.  PTL accumulates
+        # full-scale gradients by default; dividing here keeps the effective LR identical.
+        accumulate_grad_batches = max(1, int(self.trainer.accumulate_grad_batches))
+        loss_for_return = loss if self._use_manual_optimization else loss / accumulate_grad_batches
         train_log_sync_dist = bool(self.train_config.train_log_sync_dist)
         train_log_on_step = bool(self.train_config.train_log_on_step)
         self.log_dict(
@@ -162,12 +221,13 @@ class RFDETRModelModule(LightningModule):
         self.log(
             "train/loss",
             loss,
-            prog_bar=True,
+            prog_bar=False,
             on_step=train_log_on_step,
             on_epoch=True,
             sync_dist=train_log_sync_dist,
             batch_size=batch_size,
         )
+        self._log_train_progress_metrics(loss, loss_dict, batch_size=batch_size)
         optimizer = self.optimizers()
         if isinstance(optimizer, list):
             optimizer = optimizer[0]
@@ -179,10 +239,251 @@ class RFDETRModelModule(LightningModule):
             base_lr = group_lrs[0]
             min_lr = min(group_lrs)
             max_lr = max(group_lrs)
-            self.log("train/lr", base_lr, prog_bar=True, on_step=True, on_epoch=False)
-            self.log("train/lr_min", min_lr, prog_bar=True, on_step=True, on_epoch=False)
-            self.log("train/lr_max", max_lr, prog_bar=True, on_step=True, on_epoch=False)
-        return loss_scaled
+            self.log("train/lr", base_lr, prog_bar=False, on_step=True, on_epoch=False)
+            self.log("train/lr_min", min_lr, prog_bar=False, on_step=True, on_epoch=False)
+            self.log("train/lr_max", max_lr, prog_bar=False, on_step=True, on_epoch=False)
+        if self._use_manual_optimization:
+            self.manual_backward(loss_for_backward)
+            if self._should_step_optimizer(batch_idx):
+                self._step_optimizer(optimizer)
+        if self.train_config.compute_train_metrics:
+            with torch.no_grad():
+                orig_sizes = torch.stack([t["orig_size"] for t in targets])
+                # Slice to group-0 queries only — mirrors the eval-mode path in
+                # lwdetr.py that trims refpoint_embed to [:num_queries]. Without
+                # this, training mode emits group_detr×num_queries queries (e.g.
+                # 13×300=3900) and postprocess top-k selection draws from all
+                # groups, producing OKS/mAP values ~50× below true accuracy.
+                nq = self.model_config.num_queries
+                # Only include tensor-valued keys — pred_masks is a dict in
+                # train mode (sparse_forward) and postprocess cannot handle it.
+                inference_outputs = {
+                    k: v[:, :nq] if v.ndim >= 2 else v
+                    for k, v in outputs.items()
+                    if k in ("pred_logits", "pred_boxes", "pred_masks", "pred_keypoints")
+                    and isinstance(v, torch.Tensor)
+                }
+                results = self.postprocess(inference_outputs, orig_sizes)
+            return {
+                "loss": loss_for_return.detach() if self._use_manual_optimization else loss_for_return,
+                "results": self._detach_results(results),
+                "targets": targets,
+            }
+        return loss_for_return.detach() if self._use_manual_optimization else loss_for_return
+
+    def _compute_train_losses(
+        self,
+        outputs: dict[str, torch.Tensor],
+        targets: list[dict[str, torch.Tensor]],
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+        """Compute normalized losses for logging and raw weighted loss for backward.
+
+        Args:
+            outputs: Model output dictionary.
+            targets: Target dictionaries for the current batch.
+
+        Returns:
+            A tuple of normalized loss dictionary, unnormalized weighted loss numerator, and box normalizer.
+        """
+        weight_dict = self.criterion.weight_dict
+        if not getattr(self.criterion, "supports_loss_normalizer_override", False):
+            raise ValueError(
+                f"{type(self.criterion).__name__}.supports_loss_normalizer_override is False; "
+                "manual optimization (keypoint models) requires a criterion that accepts a "
+                "num_boxes keyword argument. Set supports_loss_normalizer_override = True on "
+                "your criterion subclass and implement the num_boxes parameter in forward()."
+            )
+        normalizer = self.criterion.num_boxes_for_targets(outputs, targets)
+        numerator_loss_dict = self.criterion(outputs, targets, num_boxes=torch.ones_like(normalizer))
+        # Keys in weight_dict are loss terms whose criterion implementation divides by num_boxes
+        # (so passing num_boxes=1.0 yields raw numerators that we divide by normalizer here).
+        # Keys outside weight_dict (e.g. "class_error", "cardinality_error") are diagnostics
+        # that do NOT divide by num_boxes internally — they are passed through unchanged.
+        # If a future loss term divides by num_boxes AND is omitted from weight_dict, its
+        # logged value will be on a different scale than the keypoint path; verify when adding
+        # new criterion terms.
+        loss_dict = {
+            key: value / normalizer if key in weight_dict else value for key, value in numerator_loss_dict.items()
+        }
+        raw_loss = sum(numerator_loss_dict[k] * weight_dict[k] for k in numerator_loss_dict if k in weight_dict)
+        return loss_dict, raw_loss, normalizer
+
+    def _scale_loss_for_accumulation(
+        self,
+        raw_loss: torch.Tensor,
+        normalizer: torch.Tensor,
+    ) -> torch.Tensor:
+        """Scale the current numerator loss by the accumulated box denominator.
+
+        Args:
+            raw_loss: Current microbatch weighted loss numerator.
+            normalizer: Current microbatch box denominator.
+
+        Returns:
+            Loss scalar to pass to ``manual_backward``.
+        """
+        normalizer = normalizer.detach()
+        previous_normalizer = self._accumulated_box_normalizer
+        accumulated_normalizer = normalizer if previous_normalizer is None else previous_normalizer + normalizer
+        if previous_normalizer is not None:
+            self._rescale_accumulated_gradients(previous_normalizer / accumulated_normalizer)
+        self._accumulated_box_normalizer = accumulated_normalizer.detach()
+        return raw_loss / accumulated_normalizer
+
+    def _rescale_accumulated_gradients(self, scale: torch.Tensor) -> None:
+        """Rescale gradients already accumulated in the current optimizer window.
+
+        Args:
+            scale: Multiplicative factor that converts previous gradients from the old denominator to the new one.
+        """
+        for parameter in self.parameters():
+            if parameter.grad is not None:
+                parameter.grad.mul_(scale.to(device=parameter.grad.device, dtype=parameter.grad.dtype))
+
+    def _should_step_optimizer(self, batch_idx: int) -> bool:
+        """Return whether the current batch closes an optimizer accumulation window.
+
+        The optimizer steps when either:
+
+        - The current batch closes a complete ``grad_accum_steps`` window
+          (``(batch_idx + 1) % grad_accum_steps == 0``), or
+        - This is the final batch of the epoch and a partial accumulation window
+          is still open, so the trailing microbatches are not silently dropped.
+
+        Lightning's ``Trainer.num_training_batches`` may be reported as ``float('inf')``
+        for iterable / streaming datasets where the epoch length is unknown. In that case
+        only the modulo path can ever close the window — the final-batch fallback is
+        skipped because ``batch_idx + 1`` can never reach infinity.
+
+        Args:
+            batch_idx: Batch index within the epoch.
+
+        Returns:
+            ``True`` when the optimizer should step after this batch.
+        """
+        accum_steps = max(1, int(self.train_config.grad_accum_steps))
+        if (batch_idx + 1) % accum_steps == 0:
+            return True
+        num_training_batches = getattr(self.trainer, "num_training_batches", None)
+        return (
+            isinstance(num_training_batches, (int, float))
+            and math.isfinite(num_training_batches)
+            and batch_idx + 1 >= num_training_batches
+        )
+
+    def _step_optimizer(self, optimizer: torch.optim.Optimizer) -> None:
+        """Clip gradients, step optimizer and scheduler, then reset accumulation state.
+
+        Args:
+            optimizer: Optimizer returned by Lightning.
+        """
+        trainer_gradient_clip_val = getattr(self.trainer, "gradient_clip_val", None)
+        if trainer_gradient_clip_val is None:
+            gradient_clip_val = self.train_config.clip_max_norm
+        elif isinstance(trainer_gradient_clip_val, (int, float)):
+            gradient_clip_val = trainer_gradient_clip_val
+        else:
+            gradient_clip_val = None
+        gradient_clip_algorithm = getattr(self.trainer, "gradient_clip_algorithm", None)
+        if not isinstance(gradient_clip_algorithm, str):
+            gradient_clip_algorithm = None
+        if gradient_clip_val is not None and gradient_clip_val > 0:
+            self.clip_gradients(
+                optimizer,
+                gradient_clip_val=gradient_clip_val,
+                gradient_clip_algorithm=gradient_clip_algorithm,
+            )
+        optimizer.step()
+        optimizer.zero_grad()
+        self._step_lr_scheduler()
+        self._accumulated_box_normalizer = None
+
+    def _step_lr_scheduler(self) -> None:
+        """Step Lightning's scheduler object when one is configured."""
+        try:
+            scheduler = self.lr_schedulers()
+        except (AttributeError, RuntimeError):
+            return
+        if scheduler is None:
+            return
+        schedulers = scheduler if isinstance(scheduler, list) else [scheduler]
+        for scheduler_item in schedulers:
+            scheduler_item.step()
+
+    @staticmethod
+    def _detach_results(results: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:
+        """Detach postprocessed result tensors before handing them to callbacks.
+
+        Args:
+            results: Per-image postprocessed prediction dictionaries.
+
+        Returns:
+            Per-image dictionaries with tensor values detached from the graph.
+        """
+        return [
+            {key: value.detach() if torch.is_tensor(value) else value for key, value in result.items()}
+            for result in results
+        ]
+
+    def _log_train_progress_metrics(
+        self,
+        loss: torch.Tensor,
+        loss_dict: dict[str, torch.Tensor],
+        *,
+        batch_size: int,
+    ) -> None:
+        """Log compact per-step convergence metrics for the progress bar only.
+
+        Args:
+            loss: Unscaled aggregate training loss.
+            loss_dict: Raw criterion loss dictionary.
+            batch_size: Current batch size used by Lightning for metric reduction metadata.
+        """
+        self.log(
+            "loss",
+            loss,
+            prog_bar=True,
+            logger=False,
+            on_step=True,
+            on_epoch=False,
+            batch_size=batch_size,
+        )
+        for loss_name, progress_name in _TRAIN_PROGRESS_LOSS_ALIASES.items():
+            value = loss_dict.get(loss_name)
+            if value is None:
+                continue
+            self.log(
+                progress_name,
+                value,
+                prog_bar=True,
+                logger=False,
+                on_step=True,
+                on_epoch=False,
+                batch_size=batch_size,
+            )
+
+    def _log_val_loss_metrics(
+        self,
+        loss: torch.Tensor,
+        loss_dict: dict[str, torch.Tensor],
+        *,
+        batch_size: int,
+    ) -> None:
+        """Log aggregate and component validation losses.
+
+        Args:
+            loss: Aggregate weighted validation loss.
+            loss_dict: Raw criterion loss dictionary.
+            batch_size: Current batch size used by Lightning for metric reduction metadata.
+        """
+        self.log_dict(
+            {f"val/{k}": v for k, v in loss_dict.items()},
+            on_step=False,
+            on_epoch=True,
+            sync_dist=True,
+            batch_size=batch_size,
+        )
+        self.log("val/loss", loss, prog_bar=True, on_epoch=True, sync_dist=True, batch_size=batch_size)
 
     def validation_step(self, batch: Tuple, batch_idx: int) -> Dict[str, Any]:
         """Run forward pass and postprocess for one validation step.
@@ -203,7 +504,7 @@ class RFDETRModelModule(LightningModule):
             loss_dict = self.criterion(outputs, targets)
             weight_dict = self.criterion.weight_dict
             loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
-            self.log("val/loss", loss, prog_bar=True, on_epoch=True, sync_dist=True, batch_size=len(targets))
+            self._log_val_loss_metrics(loss, loss_dict, batch_size=len(targets))
 
         orig_sizes = torch.stack([t["orig_size"] for t in targets])
         results = self.postprocess(outputs, orig_sizes)
@@ -262,7 +563,24 @@ class RFDETRModelModule(LightningModule):
             fused=self._use_fused_optimizer,
         )
 
-        total_steps = int(self.trainer.estimated_stepping_batches)
+        # ``trainer.estimated_stepping_batches`` is reported in *microbatch* units when
+        # the keypoint path runs with ``Trainer(accumulate_grad_batches=1)`` and manages
+        # accumulation manually. ``LambdaLR.step()`` is called once per optimizer-step
+        # (i.e. every ``grad_accum_steps`` microbatches), so the schedule must be sized
+        # in optimizer-step units rather than microbatches; otherwise warmup and cosine
+        # decay finish ``grad_accum_steps``× too early. Detection / segmentation models
+        # still rely on Lightning's automatic optimization, where PTL already accounts
+        # for ``accumulate_grad_batches`` inside ``estimated_stepping_batches`` and the
+        # division below is a no-op (``grad_accum_steps`` would be 1 in that path).
+        grad_accum_steps = max(1, int(tc.grad_accum_steps))
+        microbatches = int(self.trainer.estimated_stepping_batches)
+        # _should_step_optimizer steps the final partial window at epoch end, so the true
+        # number of optimizer steps is ceil(microbatches / grad_accum_steps).  Using floor
+        # would undercount when the epoch is not evenly divisible, causing warmup / cosine
+        # schedules to finish one step earlier than the last actual step fires.
+        total_steps = (
+            max(1, math.ceil(microbatches / grad_accum_steps)) if self._use_manual_optimization else microbatches
+        )
         steps_per_epoch = max(1, total_steps // tc.epochs)
         warmup_steps = int(steps_per_epoch * tc.warmup_epochs)
 

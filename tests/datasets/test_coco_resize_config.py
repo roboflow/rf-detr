@@ -253,26 +253,30 @@ class TestBuildTrainResizeConfigNonSquareScaleJitter:
             assert entry["RandomSizedCrop"]["min_max_height"] == [384, 600]
 
 
-class TestBuildTrainResizeConfigScaleJitter:
-    """disable_scale_jitter=True drops Option B so only the direct-resize branch (Option A) runs."""
+class TestBuildTrainResizeConfigCropBranch:
+    """include_crop_branch=False drops Option B so only the direct-resize branch (Option A) runs."""
 
     @pytest.mark.parametrize(
         "square",
         [pytest.param(True, id="square"), pytest.param(False, id="nonsquare")],
     )
-    def test_disable_scale_jitter_drops_crop_branch(self, square):
-        """No RandomSizedCrop in output when scale jitter is disabled."""
-        result = _build_train_resize_config([480, 640], square=square, disable_scale_jitter=True)
+    def test_include_crop_branch_false_drops_crop_branch(self, square):
+        """No RandomSizedCrop anywhere in result when crop branch is disabled."""
+        import json
+
+        result = _build_train_resize_config([480, 640], square=square, include_crop_branch=False)
         assert len(result) == 1
-        assert "RandomSizedCrop" not in str(result)
+        assert "RandomSizedCrop" not in json.dumps(result)
 
     @pytest.mark.parametrize(
         "square",
         [pytest.param(True, id="square"), pytest.param(False, id="nonsquare")],
     )
-    def test_scale_jitter_enabled_produces_one_of_with_crop(self, square):
-        """Default (disable_scale_jitter=False) produces a two-branch OneOf containing RandomSizedCrop."""
-        result = _build_train_resize_config([480, 640], square=square, disable_scale_jitter=False)
+    def test_include_crop_branch_true_produces_one_of_with_crop(self, square):
+        """Default (include_crop_branch=True) outer entry is a two-branch OneOf wrapping option_b with crop."""
+        import json
+
+        result = _build_train_resize_config([480, 640], square=square, include_crop_branch=True)
         assert len(result) == 1
         assert "OneOf" in result[0]
-        assert "RandomSizedCrop" in str(result)
+        assert "RandomSizedCrop" in json.dumps(result)

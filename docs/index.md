@@ -1,14 +1,14 @@
 ---
-description: RF-DETR is a real-time transformer for object detection and instance segmentation by Roboflow. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0.
+description: RF-DETR is a real-time transformer for object detection, instance segmentation, and keypoint detection (preview) by Roboflow. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0.
 hide:
   - navigation
 ---
 
-# RF-DETR: Real-Time SOTA Detection and Segmentation Model
+# RF-DETR: Real-Time SOTA Object Detection, Instance Segmentation, and Keypoint Detection
 
-RF-DETR is a real-time transformer architecture for object detection and instance segmentation developed by Roboflow. Built on a DINOv2 vision transformer backbone, RF-DETR achieves state-of-the-art accuracy–latency trade-offs: RF-DETR-L reaches 56.5 AP50:95 on COCO at 6.8 ms (NVIDIA T4, TensorRT FP16), and RF-DETR-2XL achieves 60.1 AP50:95 — the first real-time model to exceed 60 AP on COCO. Accepted at [ICLR 2026](https://arxiv.org/abs/2511.09554).
+RF-DETR is a real-time transformer architecture for object detection, instance segmentation, and keypoint detection (preview) developed by Roboflow. Built on a DINOv2 vision transformer backbone, RF-DETR achieves state-of-the-art accuracy–latency trade-offs: RF-DETR-L reaches 56.5 AP50:95 on COCO at 6.8 ms (NVIDIA T4, TensorRT FP16), and RF-DETR-2XL achieves 60.1 AP50:95 — the first real-time model to exceed 60 AP on COCO. Accepted at [ICLR 2026](https://arxiv.org/abs/2511.09554).
 
-RF-DETR uses a DINOv2 vision transformer backbone and supports both detection and instance segmentation in a single, consistent API. Core models (Nano through Large) and all code are released under the Apache 2.0 license; XL and 2XLarge detection models require `rfdetr[plus]` and are provided under PML 1.0.
+RF-DETR uses a DINOv2 vision transformer backbone and supports object detection, instance segmentation, and keypoint detection (preview) in a single, consistent API. Core models (Nano through Large) and all code are released under the Apache 2.0 license; XL and 2XLarge detection models require `rfdetr[plus]` and are provided under PML 1.0.
 
 Developed by Isaac Robinson, Peter Robicheaux, Fedor Popov, Deva Ramanan (CMU), and Neehar Peri (CMU) at [Roboflow](https://roboflow.com). If you use RF-DETR in your research, please cite:
 
@@ -28,10 +28,10 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
 !!! example "Installation"
 
-    [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
-    [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
-    [![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE)
-    [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
+    <a href="https://badge.fury.io/py/rfdetr"><img alt="version" src="https://badge.fury.io/py/rfdetr.svg" width="125" height="20" /></a>
+    <a href="https://badge.fury.io/py/rfdetr"><img alt="python-version" src="https://img.shields.io/pypi/pyversions/rfdetr" width="198" height="20" /></a>
+    <a href="https://github.com/roboflow/rfdetr/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/pypi/l/rfdetr" width="164" height="20" /></a>
+    <a href="https://pypistats.org/packages/rfdetr"><img alt="downloads" src="https://img.shields.io/pypi/dm/rfdetr" width="258" height="20" /></a>
 
     === "pip"
 
@@ -119,7 +119,7 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
 ## Benchmarks
 
-RF-DETR achieves the best accuracy–latency trade-off among real-time object detection and instance segmentation models — both on COCO and on the more demanding RF100-VL benchmark (domain adaptability). For detailed benchmark tables and methodology, check out our [benchmarks](learn/benchmarks.md) page.
+RF-DETR achieves the best accuracy–latency trade-off among real-time object detection and instance segmentation models. It also provides keypoint detection (preview) on COCO person keypoints. For detailed benchmark tables and methodology, check out our [benchmarks](learn/benchmarks.md) page.
 
 ### Detection
 
@@ -147,6 +147,17 @@ RF-DETR achieves the best accuracy–latency trade-off among real-time object de
 | RF-DETR-Seg-XL  | 72.2                 | 48.8                    | 13.5         | 38.1       | 624×624    |
 | RF-DETR-Seg-2XL | 73.1                 | 49.9                    | 21.8         | 38.6       | 768×768    |
 
+### Keypoints
+
+<img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="assets/keypoints/kp-map-latency.png" width="840" height="630" style="max-width: 840px; height: auto;" />
+
+| Architecture               | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
+| -------------------------- | ----------------------- | ------------ | ---------- | ---------- |
+| RF-DETR Keypoint (Preview) | 71.8                    | 9.7          | 126.4      | 576×576    |
+
+> Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric.
+> For the full competitor comparison (YOLO11-pose, YOLO26-pose), see the [Benchmarks](learn/benchmarks.md#keypoints) page.
+
 ## Frequently Asked Questions
 
 **What is RF-DETR?**
@@ -166,6 +177,9 @@ Yes. RF-DETR-N runs at 2.3 ms per frame on a T4 GPU (TensorRT FP16, batch 1), an
 
 **What is the difference between RF-DETR detection and segmentation models?**
 Detection models (e.g., `RFDETRLarge`) output bounding boxes. Segmentation models (e.g., `RFDETRSegLarge`) additionally output instance masks. Both share the same backbone and training API; segmentation adds a mask head and requires COCO-format segmentation annotations.
+
+**Does RF-DETR support keypoint detection?**
+RF-DETR Keypoint (Preview) detects 17 body keypoints per person on COCO, achieving 71.8 AP50:95 at 9.7 ms on NVIDIA T4. It is available in the `rfdetr` package as `RFDETRKeypointPreview`. See [Run Keypoint Models](learn/run/keypoints.md) for usage.
 
 **Is RF-DETR open source?**
 Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. XLarge and 2XLarge models require the `rfdetr[plus]` package (PML 1.0 license).

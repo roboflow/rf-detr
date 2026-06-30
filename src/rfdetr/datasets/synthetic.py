@@ -7,19 +7,20 @@
 #
 """Synthetic dataset generation with COCO formatting."""
 
+from __future__ import annotations
+
 import json
 import logging
 import math
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import Literal
 
-import cv2
 import numpy as np
-import supervision as sv
+from PIL import Image
+from supervision import Color, Detections, box_iou_batch, draw_filled_polygon
 from tqdm.auto import tqdm
-from typing_extensions import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class DatasetSplitRatios:
         if not 0.99 <= total <= 1.01:
             raise ValueError(f"Split ratios must sum to 1.0, got {total}")
 
-    def to_dict(self) -> Dict[str, float]:
+    def to_dict(self) -> dict[str, float]:
         """Convert to dictionary, filtering out zero ratios."""
         return {k: v for k, v in {"train": self.train, "val": self.val, "test": self.test}.items() if v > 0}
 
@@ -61,10 +62,10 @@ DEFAULT_SPLIT_RATIOS = DatasetSplitRatios()  # 70/20/10 split
 
 
 # Type alias for split ratios parameter
-SplitRatiosType = Union[DatasetSplitRatios, Tuple[float, ...], Dict[str, float]]
+SplitRatiosType = DatasetSplitRatios | tuple[float, ...] | dict[str, float]
 
 
-def _normalize_split_ratios(split_ratios: SplitRatiosType) -> Dict[str, float]:
+def _normalize_split_ratios(split_ratios: SplitRatiosType) -> dict[str, float]:
     """Normalize split ratios parameter to a dictionary.
 
     Args:
@@ -113,12 +114,12 @@ def _normalize_split_ratios(split_ratios: SplitRatiosType) -> Dict[str, float]:
 # Available shapes for synthetic dataset generation
 SYNTHETIC_SHAPES = ["square", "triangle", "circle"]
 # Available colors for synthetic dataset generation (RGB format)
-SYNTHETIC_COLORS = {"red": sv.Color.RED, "green": sv.Color.GREEN, "blue": sv.Color.BLUE}
+SYNTHETIC_COLORS = {"red": Color.RED, "green": Color.GREEN, "blue": Color.BLUE}
 
 
 def draw_synthetic_shape(
-    img: np.ndarray, shape: str, color: sv.Color, center: Tuple[int, int], size: int
-) -> Tuple[np.ndarray, List[float]]:
+    img: np.ndarray, shape: str, color: Color, center: tuple[int, int], size: int
+) -> tuple[np.ndarray, list[float]]:
     """Draw a geometric shape on an image and return its COCO polygon.
 
     The polygon is computed first, then used for both rendering and annotation, so the two are always identical.
@@ -159,7 +160,7 @@ def draw_synthetic_shape(
     else:
         return img, []
 
-    img = sv.draw_filled_polygon(scene=img, polygon=np.array(pts, dtype=np.int32), color=color)
+    img = draw_filled_polygon(scene=img, polygon=np.array(pts, dtype=np.int32), color=color)
     polygon = [float(v) for pt in pts for v in pt]
     return img, polygon
 
@@ -199,7 +200,7 @@ def generate_synthetic_sample(
     min_size_ratio: float = 0.1,
     max_size_ratio: float = 0.3,
     overlap_threshold: float = 0.1,
-) -> Tuple[np.ndarray, sv.Detections]:
+) -> tuple[np.ndarray, Detections]:
     """Generate a single synthetic image and its detections.
 
     Args:
@@ -215,7 +216,7 @@ def generate_synthetic_sample(
 
     Returns:
         Tuple of ``(image, detections)`` where ``image`` is an ``(img_size, img_size, 3)`` uint8 array and
-        ``detections`` is an :class:`sv.Detections` instance whose ``data["polygons"]`` field contains one flat ``[x1,
+        ``detections`` is an :class:`Detections` instance whose ``data["polygons"]`` field contains one flat ``[x1,
         y1, x2, y2, …]`` polygon list per detection, matching the geometry returned by :func:`draw_synthetic_shape`.
     """
     img = np.ones((img_size, img_size, 3), dtype=np.uint8) * 128
@@ -224,7 +225,7 @@ def generate_synthetic_sample(
 
     xyxys = []
     class_ids = []
-    polygons: List[List[float]] = []
+    polygons: list[list[float]] = []
     failed_attempts = 0
     max_failed_attempts = 3  # Allow some failures before reducing target count
 
@@ -256,7 +257,7 @@ def generate_synthetic_sample(
                 continue
 
             if len(xyxys) > 0:
-                ious = sv.box_iou_batch(np.array([bbox]), np.array(xyxys))[0]
+                ious = box_iou_batch(np.array([bbox]), np.array(xyxys))[0]
                 if np.any(ious > overlap_threshold):
                     continue
 
@@ -286,7 +287,7 @@ def generate_synthetic_sample(
     for i, poly in enumerate(polygons):
         polygon_data[i] = poly
 
-    detections = sv.Detections(
+    detections = Detections(
         xyxy=np.array(xyxys) if xyxys else np.empty((0, 4)),
         class_id=np.array(class_ids) if class_ids else np.empty((0,), dtype=int),
         data={"polygons": polygon_data},
@@ -294,7 +295,7 @@ def generate_synthetic_sample(
     return img, detections
 
 
-def _calculate_polygon_area(polygon: List[float]) -> float:
+def _calculate_polygon_area(polygon: list[float]) -> float:
     """Calculate polygon area from COCO-style flat coordinates."""
     if len(polygon) < 6 or len(polygon) % 2 != 0:
         return 0.0
@@ -307,9 +308,9 @@ def _calculate_polygon_area(polygon: List[float]) -> float:
 
 def _write_coco_json(
     annotations_path: Path,
-    classes: List[str],
-    file_paths: List[str],
-    detections_list: List[sv.Detections],
+    classes: list[str],
+    file_paths: list[str],
+    detections_list: list[Detections],
     img_size: int,
     with_segmentation: bool = False,
 ) -> None:
@@ -484,8 +485,8 @@ def generate_coco_dataset(
         split_dir.mkdir(parents=True, exist_ok=True)
         annotations_path = split_dir / "_annotations.coco.json"
 
-        file_paths_ordered: List[str] = []
-        detections_ordered: List[sv.Detections] = []
+        file_paths_ordered: list[str] = []
+        detections_ordered: list[Detections] = []
 
         logger.info(f"Generating {split} split with {len(split_indices)} images...")
         for i in tqdm(split_indices, desc=f"Generating {split} split"):
@@ -498,7 +499,9 @@ def generate_coco_dataset(
 
             file_name = f"{i:06d}.jpg"
             file_path = str(split_dir / file_name)
-            cv2.imwrite(file_path, img)
+            # ``supervision.draw_filled_polygon`` paints colors in BGR order (via ``cv2.fillPoly``);
+            # flip the last axis so PIL writes a true RGB JPEG that downstream loaders read correctly.
+            Image.fromarray(img[..., ::-1]).save(file_path)
 
             file_paths_ordered.append(file_path)
             detections_ordered.append(detections)
