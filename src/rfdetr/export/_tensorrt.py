@@ -12,7 +12,6 @@ import argparse
 import os
 import re
 import subprocess
-from typing import Any
 
 from rfdetr.utilities.logger import get_logger
 
@@ -21,6 +20,9 @@ logger = get_logger()
 
 def run_command_shell(command: list[str], dry_run: bool = False) -> "subprocess.CompletedProcess[str]":
     """Run *command* as a subprocess, optionally in dry-run mode.
+
+    Note: Despite the legacy name, this function always uses ``shell=False`` —
+    command must be an argv list, never a shell string.
 
     Args:
         command: Argument list (``argv``).  Must be a list — never a shell
@@ -60,6 +62,10 @@ def trtexec(onnx_dir: str, args: argparse.Namespace) -> str:
 
     Returns:
         Path to the generated ``.engine`` file.
+
+    Raises:
+        subprocess.CalledProcessError: If ``trtexec`` (or ``nsys profile``) exits
+            with a non-zero return code.
     """
     engine_dir = onnx_dir.replace(".onnx", ".engine")
 
@@ -100,14 +106,15 @@ def trtexec(onnx_dir: str, args: argparse.Namespace) -> str:
     return engine_dir
 
 
-def parse_trtexec_output(output_text: str) -> dict[str, Any]:
+def parse_trtexec_output(output_text: str) -> dict[str, float]:
     """Parse latency / throughput statistics from ``trtexec`` stdout.
 
     Args:
         output_text: Raw stdout from a ``trtexec`` run.
 
     Returns:
-        Dictionary with timing statistics extracted from the output.
+        Dictionary mapping statistic names to float values. Empty dict if no
+        patterns matched.
     """
     logger.info(output_text)
     # Common patterns in trtexec output
@@ -119,7 +126,7 @@ def parse_trtexec_output(output_text: str) -> dict[str, Any]:
     latency_pattern = r"Latency: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
     throughput_pattern = r"Throughput: (\d+\.\d+) qps"
 
-    stats: dict[str, Any] = {}
+    stats: dict[str, float] = {}
 
     # Extract compute times
     if match := re.search(gpu_compute_pattern, output_text):
