@@ -13,7 +13,6 @@
 
 from typing import Callable, Optional, Sequence, Union
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
@@ -268,12 +267,14 @@ class MultiScaleProjector(nn.Module):
         """
         num_features = len(x)
         if self.survival_prob < 1.0 and self.training:
+            x = list(x)  # copy before mutating so the caller's list is untouched
             final_drop_prob = 1 - self.survival_prob
-            drop_p = np.random.uniform()
+            # torch RNG (not numpy) so the draw honours per-rank seeding under DDP.
+            drop_p = torch.rand(()).item()
             for i in range(1, num_features):
                 critical_drop_prob = i * (final_drop_prob / (num_features - 1))
                 if drop_p < critical_drop_prob:
-                    x[i][:] = 0
+                    x[i] = torch.zeros_like(x[i])
         elif self.force_drop_last_n_features > 0:
             for i in range(self.force_drop_last_n_features):
                 # don't do it inplace to ensure the compiler can optimize out the backbone layers

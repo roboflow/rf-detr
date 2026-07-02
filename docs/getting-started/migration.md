@@ -51,11 +51,75 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
         does **not** register the override and RF-DETR may still auto-align the schema from the
         checkpoint. Always pass it to the constructor.
 
+### Removed in v1.9
+
+The following APIs were deprecated in earlier releases and have been removed in v1.9:
+
+!!! danger "Removed: `rfdetr.util.*` and `rfdetr.deploy.*` import paths"
+
+    Deprecated since v1.6. Use the canonical replacements listed in the [Upgrade 1.5 → 1.6](#upgrade-15--16) section.
+
+    ```python
+    # These imports now raise ImportError
+    from rfdetr.util.coco_classes import COCO_CLASSES  # → rfdetr.assets.coco_classes
+    from rfdetr.util.misc import get_rank  # → rfdetr.utilities
+    from rfdetr.deploy import export_onnx  # → rfdetr.export.main
+    ```
+
+!!! danger "Removed: `build_namespace(model_config, train_config)`"
+
+    Deprecated since v1.7. Use `build_model_from_config` and `build_criterion_from_config` instead.
+
+!!! danger "Removed: `load_pretrain_weights(nn_model, model_config, train_config)` with `train_config`"
+
+    Deprecated since v1.7. Drop the `train_config` positional argument.
+
+!!! danger "Removed: `start_epoch` kwarg in `train()`"
+
+    Deprecated since v1.7. PyTorch Lightning resumes automatically via `resume=`.
+
+!!! danger "Removed: `do_benchmark` kwarg in `train()`"
+
+    Deprecated since v1.7.
+
+!!! danger "Removed: `callbacks` dict kwarg in `train()`"
+
+    Deprecated since v1.7. Pass PTL `Callback` objects directly via the Lightning API instead.
+
+!!! danger "Removed: misplaced config fields"
+
+    The following `TrainConfig` and `ModelConfig` fields moved to their correct config class in v1.7 and the deprecated compatibility shims are now removed. Update any direct references:
+
+    | Field               | Removed from  | Use in        |
+    | ------------------- | ------------- | ------------- |
+    | `group_detr`        | `TrainConfig` | `ModelConfig` |
+    | `ia_bce_loss`       | `TrainConfig` | `ModelConfig` |
+    | `segmentation_head` | `TrainConfig` | `ModelConfig` |
+    | `num_select`        | `TrainConfig` | `ModelConfig` |
+    | `cls_loss_coef`     | `ModelConfig` | `TrainConfig` |
+
 ---
 
 ## Upgrade 1.7 → 1.8
 
 ### Breaking changes
+
+!!! note "Breaking in v1.8.2: default keypoint schema changed to active-first `[17]`"
+
+    New checkpoints created from v1.8.2 onwards use `class_id=0` for person. Legacy `[0, 17]` checkpoints
+    are still supported — RF-DETR auto-detects the schema from the checkpoint at load time.
+
+    If your post-processing code offsets class IDs by 1 (common for background-first models), update it:
+
+    ```python
+    # Before (background-first [0, 17]: person was at class_id=1)
+    class_name = "person" if detection.class_id == 1 else "other"
+
+    # After (active-first [17]: person is at class_id=0)
+    class_name = "person" if detection.class_id == 0 else "other"
+    ```
+
+    Use `detection.data["class_name"]` for schema-agnostic name resolution.
 
 !!! warning "Breaking: `rfdetr.datasets.aug_config` renamed to `rfdetr.datasets.aug_configs`"
 
@@ -203,23 +267,21 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
 
 !!! note "Deprecated: `RFDETRSegPreview` replaced by size-specific segmentation classes"
 
-````
-**`RFDETRSegPreview`** defaulted to the small variant and is replaced by size-specific
-segmentation classes. If you used `RFDETRSegPreview()` without arguments, switch to
-`RFDETRSegSmall()`.
+    **`RFDETRSegPreview`** defaulted to the small variant and is replaced by size-specific
+    segmentation classes. If you used `RFDETRSegPreview()` without arguments, switch to
+    `RFDETRSegSmall()`.
 
-```python
-# Before (deprecated)
-from rfdetr import RFDETRSegPreview
+    ```python
+    # Before (deprecated)
+    from rfdetr import RFDETRSegPreview
 
-model = RFDETRSegPreview()
+    model = RFDETRSegPreview()
 
-# After — pick one
-from rfdetr import RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, RFDETRSegLarge
+    # After — pick one
+    from rfdetr import RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, RFDETRSegLarge
 
-model = RFDETRSegSmall()
-```
-````
+    model = RFDETRSegSmall()
+    ```
 
 ---
 
@@ -369,5 +431,5 @@ model = RFDETRSegSmall()
     from rfdetr import OPEN_SOURCE_MODELS
 
     # After
-    from rfdetr import ModelWeights
+    from rfdetr.assets.model_weights import ModelWeights
     ```

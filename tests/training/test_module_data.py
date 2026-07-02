@@ -1477,3 +1477,57 @@ class TestKorniaSetupDoneSentinel:
             dm.setup("fit")
 
         assert call_count == 1, f"_setup_kornia_pipeline called {call_count} times; expected exactly 1"
+
+
+class TestWorkerInitFn:
+    """DataLoaders seed NumPy/random per worker so augmentation streams are not duplicated across workers."""
+
+    def test_worker_init_fn_seeds_from_torch_initial_seed(self, monkeypatch):
+        """_worker_init_fn derives a reproducible NumPy/random seed from ``torch.initial_seed``."""
+        import random as py_random
+
+        import numpy as np
+
+        from rfdetr.training.module_data import _worker_init_fn
+
+        monkeypatch.setattr(torch, "initial_seed", lambda: 12345)
+        _worker_init_fn(0)
+        first = (float(np.random.rand()), py_random.random())
+
+        # worker_id is irrelevant; the seed is derived from torch's per-worker seed.
+        monkeypatch.setattr(torch, "initial_seed", lambda: 12345)
+        _worker_init_fn(3)
+        second = (float(np.random.rand()), py_random.random())
+
+        assert first == second
+
+    @pytest.mark.parametrize(
+        "loader_name",
+        [
+            pytest.param("val_dataloader", id="val"),
+            pytest.param("test_dataloader", id="test"),
+            pytest.param("predict_dataloader", id="predict"),
+        ],
+    )
+    def test_eval_dataloaders_set_worker_init_fn(self, build_datamodule, loader_name):
+        """Validation/test/predict DataLoaders wire the module-level worker seeding hook."""
+        from rfdetr.training.module_data import _worker_init_fn
+
+        dm = build_datamodule()
+        dm._dataset_val = _fake_dataset()
+        dm._dataset_test = _fake_dataset()
+
+        loader = getattr(dm, loader_name)()
+
+        assert loader.worker_init_fn is _worker_init_fn
+
+    def test_train_dataloader_sets_worker_init_fn(self, build_datamodule):
+        """The training DataLoader wires the module-level worker seeding hook."""
+        from rfdetr.training.module_data import _worker_init_fn
+
+        dm = build_datamodule()
+        dm._dataset_train = _fake_dataset()
+
+        loader = dm.train_dataloader()
+
+        assert loader.worker_init_fn is _worker_init_fn

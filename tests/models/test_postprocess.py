@@ -147,3 +147,24 @@ class TestPostProcessForward:
         assert (boxes[..., 2] <= 640).all(), "x2 exceeds img_w (640)"
         assert (boxes[..., 1] <= 480).all(), "y1 exceeds img_h (480)"
         assert (boxes[..., 3] <= 480).all(), "y2 exceeds img_h (480)"
+
+
+class TestPostProcessMasks:
+    """Tests for :meth:`PostProcess._postprocess_masks` mask resizing."""
+
+    def test_chunked_upsample_preserves_shape_for_large_k(self):
+        """Chunked upsampling of K=64 masks returns full-resolution boolean masks of shape [K, 1, H, W]."""
+        batch, num_queries, mask_h, mask_w = 1, 64, 16, 16
+        num_select, img_h, img_w = 64, 512, 512
+        out_masks = torch.randn(batch, num_queries, mask_h, mask_w)
+        scores = torch.rand(batch, num_select)
+        labels = torch.zeros(batch, num_select, dtype=torch.long)
+        boxes = torch.zeros(batch, num_select, 4)
+        topk_boxes = torch.arange(num_select).unsqueeze(0)
+        target_sizes = torch.tensor([[img_h, img_w]])
+
+        results = PostProcess._postprocess_masks(out_masks, scores, labels, boxes, topk_boxes, target_sizes)
+
+        masks = results[0]["masks"]
+        assert masks.shape == (num_select, 1, img_h, img_w)
+        assert masks.dtype == torch.bool

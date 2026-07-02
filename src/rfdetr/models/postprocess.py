@@ -15,6 +15,10 @@ from torch import nn
 
 from rfdetr.utilities import box_ops
 
+# Number of masks upsampled per interpolation call. Bounds peak memory when many masks are
+# resized to full image resolution (e.g. K=300 at 1080p would otherwise allocate gigabytes).
+_MASK_CHUNK = 32
+
 
 class PostProcess(nn.Module):
     """Convert raw RF-DETR model outputs into per-image prediction tensors.
@@ -172,9 +176,18 @@ class PostProcess(nn.Module):
                 k_idx.unsqueeze(-1).unsqueeze(-1).repeat(1, out_masks.shape[-2], out_masks.shape[-1]),
             )  # [K, Hm, Wm]
             h, w = target_sizes[i].tolist()
-            masks_i = F.interpolate(
-                masks_i.unsqueeze(1), size=(int(h), int(w)), mode="bilinear", align_corners=False
-            )  # [K,1,H,W]
+            # Upsample in chunks to bound peak memory; interpolating all K masks at full image
+            # resolution at once can allocate gigabytes for large K and high-resolution targets.
+            chunks = [
+                F.interpolate(
+                    masks_i[start : start + _MASK_CHUNK].unsqueeze(1),
+                    size=(int(h), int(w)),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                for start in range(0, masks_i.shape[0], _MASK_CHUNK)
+            ]
+            masks_i = torch.cat(chunks, dim=0) if chunks else masks_i.new_zeros((0, 1, int(h), int(w)))  # [K,1,H,W]
             res_i["masks"] = masks_i > 0.0
             results.append(res_i)
         return results
