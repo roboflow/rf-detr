@@ -45,7 +45,7 @@ def convert_legacy_checkpoint(old_path: str, new_path: str) -> None:
         new_path: Destination path for the converted ``.ckpt`` file.
     """
     # trust=True: this function converts internally-produced legacy .pth files;
-    # they may contain argparse.Namespace objects not covered by safe globals.
+    # allow pickle fallback if safe deserialization fails due to non-tensor/custom objects.
     from rfdetr.util.io import _safe_torch_load
 
     old: dict[str, Any] = _safe_torch_load(old_path, trust=True)
