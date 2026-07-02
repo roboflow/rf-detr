@@ -548,6 +548,7 @@ class BestModelCallback(ModelCheckpoint):
                 # Load best weights before test — mirrors legacy main.py:602-609.
                 # trust=True: checkpoint_best_total.pth is produced locally; allow pickle fallback if needed.
                 from rfdetr.util.io import _safe_torch_load
+
                 ckpt = _safe_torch_load(total_path, trust=True)
                 # Checkpoints always store plain keys; load into the unwrapped module
                 # so compiled (OptimizedModule) and non-compiled models both work.
