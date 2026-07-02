@@ -426,11 +426,13 @@ class RFDETR:
         # are reloaded with the correct class instead of falling through to the
         # substring matcher (which would wrongly pick RFDETRLarge and fail with a
         # pydantic literal_error on encoder / projector_scale fields).
-        # Reference the class symbol directly (rfdetr_variants is imported above)
-        # rather than a string key: if RFDETRLargeDeprecated is ever renamed, this
-        # raises AttributeError loudly instead of silently dropping the mapping.
-        _large_deprecated_cls = rfdetr_variants.RFDETRLargeDeprecated
-        _name_map[_large_deprecated_cls.__name__] = _large_deprecated_cls
+        # Note: RFDETRLargeDeprecated is a _DeprecatedProxy (pyDeprecate) and has no
+        # __name__; look it up by the string key it was registered under, then inject
+        # into _name_map so checkpoint matching resolves directly without the substring
+        # fallback.  Tests assert this mapping exists (see tests/inference/test_from_checkpoint.py).
+        _large_deprecated_cls = _variant_name_to_class.get("RFDETRLargeDeprecated")
+        if _large_deprecated_cls is not None:
+            _name_map["RFDETRLargeDeprecated"] = _large_deprecated_cls
         saved_model_name = ckpt.get("model_name")
         model_cls: type[RFDETR] | None = None
         if isinstance(saved_model_name, str):
