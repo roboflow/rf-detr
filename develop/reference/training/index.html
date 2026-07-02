@@ -6162,6 +6162,34 @@ effective decay ramps from 0 towards <em>decay</em> following <code>decay * (1 -
     </table>
 
 
+<p><span class="doc-section-title">Attributes:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td><code><span title="rfdetr.training.callbacks.ema.RFDETREMACallback.suppress_test_swap">suppress_test_swap</span></code></td>
+            <td>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>When <code>True</code> the test-epoch hooks skip the EMA weight swap.  Set (and restored) by
+:class:<code>~rfdetr.training.callbacks.best_model.BestModelCallback</code> around its fit-end <code>trainer.test()</code>
+run, which has already loaded the best checkpoint weights into the module — swapping in the final EMA
+weights there would make the reported <code>test/*</code> metrics reflect the wrong model.  Standalone
+<code>trainer.test()</code> runs keep the default <code>False</code> and evaluate EMA weights as before.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
 
 
 
