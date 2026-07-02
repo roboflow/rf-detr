@@ -149,6 +149,14 @@ class TestSafeTorchLoadTrustGate:
         with pytest.raises(RuntimeError, match="trust_checkpoint=True"):
             _safe_torch_load(ckpt_path, trust=False)
 
+    def test_arbitrary_pickle_raises_by_default(self, tmp_path: Path) -> None:
+        """Checkpoint with unknown Python object raises RuntimeError when trust omitted (default=False)."""
+        ckpt_path = tmp_path / "ckpt.pth"
+        _write_arbitrary_pickle_checkpoint(ckpt_path)
+
+        with pytest.raises(RuntimeError, match="trust_checkpoint=True"):
+            _safe_torch_load(ckpt_path)
+
     def test_arbitrary_pickle_succeeds_with_trust(self, tmp_path: Path) -> None:
         """Checkpoint with unknown Python object loads when trust=True."""
         ckpt_path = tmp_path / "ckpt.pth"

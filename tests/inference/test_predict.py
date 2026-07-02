@@ -974,6 +974,7 @@ class TestPredictNonRGBAutoConvert:
             pytest.param("LA", id="grayscale-with-alpha-LA"),
             pytest.param("RGBA", id="rgba"),
             pytest.param("P", id="palette-P"),
+            pytest.param("CMYK", id="cmyk"),
         ],
     )
     def test_non_rgb_pil_image_succeeds(self, pil_mode: str) -> None:

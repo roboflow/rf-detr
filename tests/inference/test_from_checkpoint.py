@@ -25,6 +25,14 @@ from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 from rfdetr.variants import RFDETRSmall
 
 
+class _CustomObj:
+    """Module-level class that weights_only=True rejects (not in safe globals).
+
+    Must be at module scope so pickle can resolve the fully-qualified name during torch.save.  Local/nested classes
+    cannot be pickled.
+    """
+
+
 def _ns(pretrain_weights: str, num_classes: int = 80) -> dict:
     """Fake legacy checkpoint with argparse.Namespace args."""
     return {"args": argparse.Namespace(pretrain_weights=pretrain_weights, num_classes=num_classes)}
@@ -277,6 +285,18 @@ class TestFromCheckpointEdgeCases:
             with patch("rfdetr.detr.torch.load", return_value=ckpt):
                 with pytest.raises(ImportError):
                     RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+    def test_trust_gate_rejects_custom_class_by_default(self, tmp_path: Path) -> None:
+        """from_checkpoint raises RuntimeError for custom-class checkpoints without trust_checkpoint=True.
+
+        Scenario: user calls from_checkpoint on a file containing an unrecognised Python class.
+        The default trust_checkpoint=False must reject it to prevent arbitrary code execution.
+        """
+        ckpt_path = tmp_path / "custom_obj.pth"
+        torch.save({"model": {}, "args": _CustomObj(), "model_name": "RFDETRSmall"}, ckpt_path)
+
+        with pytest.raises(RuntimeError, match="trust_checkpoint=True"):
+            RFDETR.from_checkpoint(ckpt_path)
 
 
 # ---------------------------------------------------------------------------
