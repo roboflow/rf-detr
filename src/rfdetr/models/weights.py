@@ -300,22 +300,24 @@ def load_pretrain_weights(
         return []
     class_names: List[str] = []
 
+    from rfdetr.util.io import _safe_torch_load
+
     # Download first (no-op if already present and hash is valid).
     download_pretrain_weights(pretrain_weights)
     # If the first download attempt didn't produce the file (e.g. stale MD5
-    # caused an earlier ValueError that was silently swallowed), retry with
-    # MD5 validation disabled so a stale registry hash can't block training.
+    # caused an earlier ValueError that was silently swallowed), retry once.
+    # MD5 validation is kept on the retry — if it fails again the error is real.
     if not os.path.isfile(pretrain_weights):
-        logger.warning("Pretrain weights not found after initial download; retrying without MD5 validation.")
-        download_pretrain_weights(pretrain_weights, redownload=True, validate_md5=False)
+        logger.warning("Pretrain weights not found after initial download; retrying.")
+        download_pretrain_weights(pretrain_weights, redownload=True)
     validate_pretrain_weights(pretrain_weights, strict=False)
 
     try:
-        checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
+        checkpoint = _safe_torch_load(pretrain_weights)
     except Exception:
         logger.info("Failed to load pretrain weights, re-downloading")
-        download_pretrain_weights(pretrain_weights, redownload=True, validate_md5=False)
-        checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
+        download_pretrain_weights(pretrain_weights, redownload=True)
+        checkpoint = _safe_torch_load(pretrain_weights)
 
     # Normalize PyTorch Lightning native .ckpt format to the expected {"model": {...}}
     # structure.  PTL stores model weights in "state_dict" with keys prefixed by

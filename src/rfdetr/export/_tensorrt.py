@@ -19,11 +19,30 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
-def run_command_shell(command: str, dry_run: bool = False) -> "subprocess.CompletedProcess[str]":
+def run_command_shell(command: list[str], dry_run: bool = False) -> "subprocess.CompletedProcess[str]":
+    """Run *command* as a subprocess, optionally in dry-run mode.
+
+    Args:
+        command: Argument list (``argv``).  Must be a list — never a shell
+            string — so that paths containing spaces or shell metacharacters
+            are passed verbatim to the OS without interpretation.
+        dry_run: When ``True``, log the command that *would* run and return a
+            synthetic :class:`subprocess.CompletedProcess` with ``returncode=0``
+            without actually executing anything.
+
+    Returns:
+        A :class:`subprocess.CompletedProcess` instance.
+
+    Raises:
+        subprocess.CalledProcessError: If the command exits with a non-zero
+            return code (``check=True``).
+    """
     if dry_run:
-        logger.info(f"\nCUDA_VISIBLE_DEVICES={os.getenv('CUDA_VISIBLE_DEVICES', '')} {command}\n")
+        display = " ".join(command)
+        logger.info(f"\nCUDA_VISIBLE_DEVICES={os.getenv('CUDA_VISIBLE_DEVICES', '')} {display}\n")
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
     try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, check=True)
+        result = subprocess.run(command, shell=False, capture_output=True, text=True, check=True)
         return result
     except subprocess.CalledProcessError as e:
         logger.error(f"Command failed with exit code {e.returncode}")
@@ -31,36 +50,65 @@ def run_command_shell(command: str, dry_run: bool = False) -> "subprocess.Comple
         raise
 
 
-def trtexec(onnx_dir: str, args: argparse.Namespace) -> None:
+def trtexec(onnx_dir: str, args: argparse.Namespace) -> str:
+    """Convert an ONNX model to a TensorRT engine using ``trtexec``.
+
+    Args:
+        onnx_dir: Path to the source ``.onnx`` file.
+        args: Parsed CLI arguments.  Consumed attributes: ``profile``,
+            ``verbose``, ``dry_run``.
+
+    Returns:
+        Path to the generated ``.engine`` file.
+    """
     engine_dir = onnx_dir.replace(".onnx", ".engine")
 
-    # Base trtexec command
-    trt_command = " ".join(
-        [
-            "trtexec",
-            f"--onnx={onnx_dir}",
-            f"--saveEngine={engine_dir}",
-            "--memPoolSize=workspace:4096 --fp16",
-            "--useCudaGraph --useSpinWait --warmUp=500 --avgRuns=1000 --duration=10",
-            f"{'--verbose' if args.verbose else ''}",
-        ]
-    )
+    # Build trtexec argv — list form prevents shell-injection via paths.
+    trt_argv: list[str] = [
+        "trtexec",
+        f"--onnx={onnx_dir}",
+        f"--saveEngine={engine_dir}",
+        "--memPoolSize=workspace:4096",
+        "--fp16",
+        "--useCudaGraph",
+        "--useSpinWait",
+        "--warmUp=500",
+        "--avgRuns=1000",
+        "--duration=10",
+    ]
+    if args.verbose:
+        trt_argv.append("--verbose")
 
     if args.profile:
         profile_dir = onnx_dir.replace(".onnx", ".nsys-rep")
-        # Wrap with nsys profile command
-        command = " ".join(
-            ["nsys profile", f"--output={profile_dir}", "--trace=cuda,nvtx", "--force-overwrite true", trt_command]
-        )
+        # Wrap with nsys profile — also argv, not a shell string.
+        argv: list[str] = [
+            "nsys",
+            "profile",
+            f"--output={profile_dir}",
+            "--trace=cuda,nvtx",
+            "--force-overwrite",
+            "true",
+            *trt_argv,
+        ]
         logger.info(f"Profile data will be saved to: {profile_dir}")
     else:
-        command = trt_command
+        argv = trt_argv
 
-    output = run_command_shell(command, args.dry_run)
+    output = run_command_shell(argv, args.dry_run)
     parse_trtexec_output(output.stdout)
+    return engine_dir
 
 
 def parse_trtexec_output(output_text: str) -> dict[str, Any]:
+    """Parse latency / throughput statistics from ``trtexec`` stdout.
+
+    Args:
+        output_text: Raw stdout from a ``trtexec`` run.
+
+    Returns:
+        Dictionary with timing statistics extracted from the output.
+    """
     logger.info(output_text)
     # Common patterns in trtexec output
     gpu_compute_pattern = (

@@ -48,18 +48,24 @@ class TestDownloadPretrainWeights:
 
     @pytest.mark.skipif(not _IS_RFDETR_PLUS_AVAILABLE, reason="rf-detr-plus not installed - skip priority test")
     def test_download_from_rfdetr_plus_when_available(self, mock_file_operations):
-        """Test that rf-detr-plus models are prioritized when available.
+        """Test that rf-detr-plus URL is used for models absent from local ModelWeights.
 
-        Note: This test only runs if rf-detr-plus is actually installed.
-        The priority logic is also tested in the fallback test.
+        Verifies the priority contract: a model not registered in local ModelWeights but
+        present in rf-detr-plus triggers _download_file with the plus URL, not a fallback
+        or silent no-op.
         """
-        # This test validates the real rf-detr-plus integration
-        # If rf-detr-plus is installed, verify it's checked first
-        download_pretrain_weights("some-model.pth")
+        plus_url = "https://plus.example.com/plus-only-model.pth"
+        plus_asset = ModelWeightAsset(filename="plus-only-model.pth", url=plus_url, md5_hash=None)
 
-        # Should attempt download (whether from plus or local)
-        # The important part is that the function doesn't crash
-        assert mock_file_operations["download"].called or not mock_file_operations["exists"].return_value
+        with (
+            patch("rfdetr.assets.model_weights.ModelWeights.from_filename", return_value=None),
+            patch("rfdetr_plus.assets.ModelWeights.from_filename", return_value=plus_asset),
+        ):
+            download_pretrain_weights("plus-only-model.pth")
+
+        mock_file_operations["download"].assert_called_once()
+        call_kwargs = mock_file_operations["download"].call_args[1]
+        assert call_kwargs["url"] == plus_url
 
     def test_download_from_platform_models_fallback(self, mock_file_operations):
         """Test falling back to PLATFORM_MODELS when model not in ModelWeights."""

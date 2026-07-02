@@ -435,6 +435,25 @@ class TestFromCheckpointModelName:
             model = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
         assert model.__class__.__name__ == expected_class
 
+    def test_large_deprecated_model_name_resolves_to_deprecated_class(self, tmp_path: Path) -> None:
+        """Checkpoints saved with model_name='RFDETRLargeDeprecated' must load as RFDETRLargeDeprecated.
+
+        Before the fix, RFDETRLargeDeprecated was absent from _name_map; the substring matcher would pick RFDETRLarge,
+        which fails with a pydantic literal_error when the saved model_config carries encoder='dinov2_windowed_base'
+        (only valid for the deprecated Large configuration).
+        """
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-large.pth", "num_classes": 80},
+            "model_name": "RFDETRLargeDeprecated",
+            "model_config": {
+                "encoder": "dinov2_windowed_base",
+                "projector_scale": "P4",
+            },
+        }
+        result, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRLargeDeprecated")
+        mock_cls.assert_called_once()
+        assert result is mock_cls.return_value
+
     @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
     @pytest.mark.parametrize("model_name", ["RFDETRXLarge", "RFDETR2XLarge"])
     def test_plus_model_name_without_plus_raises_import_error(self, tmp_path: Path, model_name: str) -> None:

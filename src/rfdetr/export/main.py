@@ -113,8 +113,12 @@ def main(args):
     n_transformer_parameters = sum(p.numel() for p in model.transformer.parameters())
     logger.info(f"number of transformer parameters: {n_transformer_parameters}")
     if args.resume:
-        # weights_only=False: legacy checkpoints may contain non-tensor objects (argparse.Namespace).
-        checkpoint = torch.load(args.resume, map_location="cpu", weights_only=False)
+        # trust=True: --resume is a developer/ops flag pointing at RF-DETR-produced
+        # checkpoints that may contain argparse.Namespace objects.  Users loading
+        # third-party checkpoints via this flag accept the associated risk.
+        from rfdetr.util.io import _safe_torch_load
+
+        checkpoint = _safe_torch_load(args.resume, trust=True)
         result = model.load_state_dict(checkpoint["model"], strict=False)
         if result.missing_keys or result.unexpected_keys:
             logger.warning(
@@ -141,9 +145,16 @@ def main(args):
         dynamic_axes = {name: {0: "batch"} for name in input_names + output_names}
     else:
         dynamic_axes = None
-    # Run model inference in pytorch mode
-    model.eval().to("cuda")
-    input_tensors = input_tensors.to("cuda")
+    # Run model inference in pytorch mode.
+    # Use the export device (args.device) — not a hard-coded "cuda" — so that
+    # CPU-only export paths work correctly.  Fall back to CPU when CUDA was
+    # requested but is not available (e.g. in a CPU-only CI environment).
+    run_device = torch.device(args.device)
+    if run_device.type == "cuda" and not torch.cuda.is_available():
+        logger.warning("CUDA requested but not available; falling back to CPU for sanity forward pass.")
+        run_device = torch.device("cpu")
+    model.eval().to(run_device)
+    input_tensors = input_tensors.to(run_device)
     with torch.no_grad():
         if args.backbone_only:
             features = model(input_tensors)

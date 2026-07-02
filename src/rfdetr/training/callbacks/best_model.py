@@ -546,7 +546,9 @@ class BestModelCallback(ModelCheckpoint):
                     )
                     return
                 # Load best weights before test — mirrors legacy main.py:602-609.
-                ckpt = torch.load(total_path, map_location="cpu", weights_only=False)
+                # weights_only=True is safe: best-checkpoint files are produced by
+                # BestModelCallback and contain only a plain {"model": state_dict}.
+                ckpt = torch.load(total_path, map_location="cpu", weights_only=True)
                 # Checkpoints always store plain keys; load into the unwrapped module
                 # so compiled (OptimizedModule) and non-compiled models both work.
                 _orig = getattr(pl_module.model, "_orig_mod", None)

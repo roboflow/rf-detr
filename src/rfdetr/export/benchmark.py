@@ -25,7 +25,7 @@ from PIL import Image
 from tqdm.auto import tqdm
 
 try:
-    import _tensorrt as trt
+    import tensorrt as trt
 except ImportError:
     trt = None
 
