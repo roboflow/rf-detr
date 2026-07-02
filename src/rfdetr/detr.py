@@ -2129,7 +2129,7 @@ class RFDETR:
                 stacklevel=2,
             )
         # Explicit user argument wins; fall back to the trained model's size (documented behaviour).
-        size = size or self.size
+        size = self.size if size is None else size
         with tempfile.TemporaryDirectory(prefix="roboflow_upload_") as tmp_out_dir:
             self.export_for_roboflow(tmp_out_dir)
             project = workspace.project(project_id)
