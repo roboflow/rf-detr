@@ -208,6 +208,42 @@ class TestSegmentationTrainConfigNumSelect:
         assert config_class().num_select == expected_num_select
 
 
+class TestTrainConfigRejectsUnknownKwargs:
+    """TrainConfig must raise on unknown/typo'd kwargs instead of silently ignoring them (extra='forbid')."""
+
+    def test_typo_kwarg_raises_with_helpful_message(self, tmp_path) -> None:
+        """A typo'd kwarg (epoch instead of epochs) raises listing the unknown and available parameters."""
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'epoch'"):
+            TrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+    def test_typo_error_lists_available_parameters(self, tmp_path) -> None:
+        """The rejection message includes the available parameter list so the typo is easy to fix."""
+        with pytest.raises(ValidationError, match=r"Available parameter\(s\):.*epochs"):
+            TrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+    @pytest.mark.parametrize(
+        "config_class",
+        [
+            pytest.param(SegmentationTrainConfig, id="segmentation"),
+            pytest.param(KeypointTrainConfig, id="keypoint"),
+        ],
+    )
+    def test_subclasses_reject_unknown_kwargs(self, tmp_path, config_class) -> None:
+        """TrainConfig subclasses inherit the forbid behaviour."""
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'epoch'"):
+            config_class(dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+    def test_get_train_config_raises_for_typo_kwarg(self, tmp_path) -> None:
+        """The public RFDETR.get_train_config path surfaces the typo instead of swallowing it."""
+        from types import SimpleNamespace
+
+        from rfdetr.detr import RFDETR
+
+        stub = SimpleNamespace(_train_config_class=TrainConfig)
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'epoch'"):
+            RFDETR.get_train_config(stub, dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+
 class TestTrainConfigT42PromotedFields:
     """T4-2: Promoted fields exist with correct defaults; device field is absent."""
 
@@ -222,11 +258,10 @@ class TestTrainConfigT42PromotedFields:
         """Device must not appear in TrainConfig.model_fields (PTL auto-detects accelerator)."""
         assert "device" not in TrainConfig.model_fields
 
-    def test_device_kwarg_silently_ignored(self, tmp_path):
-        """Passing device= to TrainConfig is silently ignored (extra='ignore'); PTL absorbs it."""
-        # TrainConfig uses Pydantic default extra='ignore', so unknown kwargs don't raise.
-        tc = self._tc(tmp_path, device="cpu")
-        assert not hasattr(tc, "device")  # field not set on the instance
+    def test_device_kwarg_rejected(self, tmp_path):
+        """Passing device= directly to TrainConfig raises (extra='forbid'); RFDETR.train() pops it beforehand."""
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'device'"):
+            self._tc(tmp_path, device="cpu")
 
     # --- promoted fields: defaults ---
 

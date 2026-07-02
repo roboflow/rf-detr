@@ -642,7 +642,10 @@ class TrainConfig(BaseConfig):
           This avoids silently changing behavior when scaling from single-GPU to multi-GPU training.
     """
 
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore", validate_assignment=True)
+    # extra="forbid" arms BaseConfig.catch_typo_kwargs so typo'd train() kwargs (e.g. ``epoch`` instead of
+    # ``epochs``) raise with a helpful message instead of being silently ignored.  Legacy kwargs handled by
+    # RFDETR.train() (resolution/device/callbacks/start_epoch/do_benchmark) are popped before construction.
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", validate_assignment=True)
 
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
