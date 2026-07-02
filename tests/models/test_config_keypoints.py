@@ -102,12 +102,11 @@ def test_unknown_keypoint_fields_are_not_public_config_fields() -> None:
     with pytest.raises(ValueError, match="Unknown parameter"):
         RFDETRBaseConfig(num_classes=1, keypoint_private_hidden_dim=256)
 
-    # KeypointTrainConfig (a TrainConfig subclass) uses extra="ignore" for Lightning
-    # compatibility, so unknown kwargs are silently dropped rather than raising.
-    kc = KeypointTrainConfig(
-        dataset_dir="/tmp",
-        keypoint_private_hidden_dim=256,
-        keypoint_private_loss_coef=1.0,
-    )
-    assert not hasattr(kc, "keypoint_private_hidden_dim")
-    assert not hasattr(kc, "keypoint_private_loss_coef")
+    # KeypointTrainConfig (a TrainConfig subclass) uses extra="forbid", so unknown
+    # kwargs raise with a helpful message rather than being silently dropped.
+    with pytest.raises(ValueError, match="Unknown parameter"):
+        KeypointTrainConfig(
+            dataset_dir="/tmp",
+            keypoint_private_hidden_dim=256,
+            keypoint_private_loss_coef=1.0,
+        )

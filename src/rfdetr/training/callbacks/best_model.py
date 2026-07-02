@@ -20,6 +20,7 @@ from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning import __version__ as ptl_version
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
+from rfdetr.training.callbacks.ema import RFDETREMACallback
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_version
 from rfdetr.utilities.state_dict import _make_fit_loop_state, strip_checkpoint
@@ -552,7 +553,17 @@ class BestModelCallback(ModelCheckpoint):
                 raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
                 raw.load_state_dict(ckpt["model"], strict=True)
                 logger.info("Loaded best weights from %s for test evaluation.", total_path)
-                trainer.test(pl_module, datamodule=trainer.datamodule, verbose=False)
+                # The EMA callback swaps final-EMA weights in for test epochs, which would silently overwrite the
+                # just-loaded best weights — suppress its swap for this run only, restoring the default afterwards
+                # so standalone trainer.test() calls keep evaluating EMA weights.
+                ema_callbacks = [cb for cb in trainer.callbacks if isinstance(cb, RFDETREMACallback)]
+                for ema_callback in ema_callbacks:
+                    ema_callback.suppress_test_swap = True
+                try:
+                    trainer.test(pl_module, datamodule=trainer.datamodule, verbose=False)
+                finally:
+                    for ema_callback in ema_callbacks:
+                        ema_callback.suppress_test_swap = False
 
 
 class RFDETREarlyStopping(EarlyStopping):

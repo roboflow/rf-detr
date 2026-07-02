@@ -31,6 +31,13 @@ class RFDETREMACallback(Callback):
             ``TrainConfig.ema_tau``.
         use_buffers: Whether buffers are averaged in addition to parameters.
         update_interval_steps: Update EMA every N optimizer steps.
+
+    Attributes:
+        suppress_test_swap: When ``True`` the test-epoch hooks skip the EMA weight swap.  Set (and restored) by
+            :class:`~rfdetr.training.callbacks.best_model.BestModelCallback` around its fit-end ``trainer.test()``
+            run, which has already loaded the best checkpoint weights into the module — swapping in the final EMA
+            weights there would make the reported ``test/*`` metrics reflect the wrong model.  Standalone
+            ``trainer.test()`` runs keep the default ``False`` and evaluate EMA weights as before.
     """
 
     def __init__(
@@ -45,6 +52,7 @@ class RFDETREMACallback(Callback):
         self._tau = tau
         self._use_buffers = use_buffers
         self._update_interval_steps = max(1, int(update_interval_steps))
+        self.suppress_test_swap = False
 
         self._average_model: Optional[AveragedModel] = None
         self._latest_update_step = 0
@@ -177,11 +185,15 @@ class RFDETREMACallback(Callback):
             self._latest_update_epoch = trainer.current_epoch
 
     def on_test_epoch_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        """Evaluate tests using averaged EMA weights."""
+        """Evaluate tests using averaged EMA weights unless the swap is suppressed."""
+        if self.suppress_test_swap:
+            return
         self._swap_models(pl_module)
 
     def on_test_epoch_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        """Restore live weights after test evaluation."""
+        """Restore live weights after test evaluation unless the swap is suppressed."""
+        if self.suppress_test_swap:
+            return
         self._swap_models(pl_module)
 
     def on_train_end(self, trainer: Trainer, pl_module: LightningModule) -> None:

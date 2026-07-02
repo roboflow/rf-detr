@@ -1681,6 +1681,58 @@ class TestDeployToRoboflow:
         assert not deployed_paths[0].exists(), "Temporary upload dir must be removed even after a failed deploy"
         assert not (tmp_path / ".roboflow_temp_upload").exists(), "Fixed-name temp dir must not be created"
 
+    @staticmethod
+    def _deploy(mock_self, size=None):
+        """Call deploy_to_roboflow with a mocked Roboflow client; return the captured deploy mock."""
+        mock_rf = MagicMock()
+        deploy_mock = mock_rf.workspace.return_value.project.return_value.version.return_value.deploy
+        kwargs = {} if size is None else {"size": size}
+        with patch("roboflow.Roboflow", return_value=mock_rf):
+            RFDETR.deploy_to_roboflow(
+                mock_self,
+                workspace="test-workspace",
+                project_id="test-project",
+                version=1,
+                api_key="dummy-key",
+                **kwargs,
+            )
+        return deploy_mock
+
+    def test_explicit_size_overrides_model_size(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """An explicitly passed size must win over self.size (documented precedence).
+
+        Regression: ``size = self.size or size`` inverted the precedence, silently ignoring the user's argument.
+        """
+        monkeypatch.chdir(tmp_path)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            deploy_mock = self._deploy(mock_self, size="rfdetr-medium")
+
+        assert deploy_mock.call_args.kwargs["model_type"] == "rfdetr-medium"
+
+    def test_size_defaults_to_model_size_when_not_provided(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """Without an explicit size the model's own size is deployed."""
+        monkeypatch.chdir(tmp_path)
+        deploy_mock = self._deploy(mock_self)
+
+        assert deploy_mock.call_args.kwargs["model_type"] == "rfdetr-small"
+
+    def test_warns_when_explicit_size_differs_from_model_size(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """A UserWarning is emitted when the explicit size conflicts with the model's own size."""
+        monkeypatch.chdir(tmp_path)
+        with pytest.warns(UserWarning, match="rfdetr-medium.*rfdetr-small"):
+            self._deploy(mock_self, size="rfdetr-medium")
+
+    def test_no_warning_when_explicit_size_matches_model_size(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """No size-conflict warning is emitted when the explicit size equals the model's own size."""
+        monkeypatch.chdir(tmp_path)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            self._deploy(mock_self, size="rfdetr-small")
+
+        conflict_warnings = [w for w in caught if "deploy_to_roboflow" in str(w.message)]
+        assert not conflict_warnings
+
 
 # ---------------------------------------------------------------------------
 # TestSaveTrainingConfig

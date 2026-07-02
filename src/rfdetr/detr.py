@@ -203,7 +203,13 @@ def _move_model_context_to_device(model_ctx: Any) -> None:
         target = torch.device(target)
     first_param = next(inner.parameters(), None)
     if first_param is not None and first_param.device != target:
-        model_ctx.model = inner.to(target)
+        # ``predict()`` stacks ``@torch.inference_mode()`` on top of ``@_ensure_model_on_device``, so the deferred
+        # move can run while inference mode is active.  Tensors materialised by ``.to()`` under inference mode become
+        # *inference tensors*: they can never require gradients, so a later ``train()`` or auto-batch probe would
+        # silently produce no gradients.  Disable inference mode for the move so deferred device placement is safe
+        # regardless of decorator order.
+        with torch.inference_mode(False):
+            model_ctx.model = inner.to(target)
 
 
 def _ensure_model_on_device(method: Callable[Concatenate[Any, _P], _R]) -> Callable[Concatenate[Any, _P], _R]:
@@ -1670,8 +1676,8 @@ class RFDETR:
                         f"num_keypoints_per_class={current_schema!r}, but the dataset infers "
                         f"active-first {inferred_schema!r}. Training will shift person from slot 1 "
                         f"to slot 0; checkpoint head weights are now misaligned. "
-                        f"Pass num_keypoints_per_class={current_schema!r} to train() to keep the "
-                        f"legacy schema.",
+                        f"Pass num_keypoints_per_class={current_schema!r} to the model constructor "
+                        f"to keep the legacy schema.",
                         UserWarning,
                         stacklevel=2,
                     )
@@ -2115,7 +2121,15 @@ class RFDETR:
         if self.size is None and size is None:
             raise ValueError("Must set size for custom architectures")
 
-        size = self.size or size
+        if size is not None and self.size is not None and size != self.size:
+            warnings.warn(
+                f"deploy_to_roboflow(size={size!r}) overrides this model's own size {self.size!r}; "
+                f"deploying as {size!r}. Omit size to deploy with the model's own size.",
+                UserWarning,
+                stacklevel=2,
+            )
+        # Explicit user argument wins; fall back to the trained model's size (documented behaviour).
+        size = size or self.size
         with tempfile.TemporaryDirectory(prefix="roboflow_upload_") as tmp_out_dir:
             self.export_for_roboflow(tmp_out_dir)
             project = workspace.project(project_id)
