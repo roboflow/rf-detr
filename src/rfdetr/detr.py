@@ -290,7 +290,7 @@ class RFDETR:
         return self._model_config_class(**kwargs)
 
     @classmethod
-    def from_checkpoint(cls, path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
+    def from_checkpoint(cls, path: str | os.PathLike[str], *, trust_checkpoint: bool = False, **kwargs: Any) -> RFDETR:
         """Load an RF-DETR model from a training checkpoint, automatically inferring the model class.
 
         The correct subclass is resolved in order of preference:
@@ -312,6 +312,10 @@ class RFDETR:
 
         Args:
             path: Path to a checkpoint file (e.g. ``checkpoint_best_total.pth``).
+            trust_checkpoint: When ``True``, fall back to ``weights_only=False``
+                (full pickle) if safe deserialization fails.  Only set this for
+                checkpoints from fully trusted sources; the default ``False``
+                keeps the safe loading path and raises if it cannot succeed.
             **kwargs: Additional keyword arguments forwarded to the model
                 constructor (e.g. ``accept_platform_model_license=True`` for XLarge / 2XLarge models).
 
@@ -336,8 +340,10 @@ class RFDETR:
             An instance of the appropriate :class:`RFDETR` subclass loaded from the checkpoint.
 
         Warning:
-            This method calls ``torch.load`` with ``weights_only=False``, which
-            unpickles arbitrary Python objects. Only load checkpoints from trusted sources.
+            By default this method attempts safe deserialization
+            (``weights_only=True``).  Pass ``trust_checkpoint=True`` only for
+            checkpoints from fully trusted sources, as it enables full pickle
+            deserialization which can execute arbitrary code.
 
         Raises:
             FileNotFoundError: If *path* does not exist.
@@ -373,10 +379,12 @@ class RFDETR:
                 if ex.name not in {"rfdetr_plus", "rfdetr_plus.models"}:
                     raise
 
-        # weights_only=False is required because legacy checkpoints embed
-        # argparse.Namespace objects that cannot be deserialised with
-        # weights_only=True.
-        ckpt: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=False)
+        # Use the safe-load helper which tries weights_only=True first (with
+        # legacy argparse.Namespace safe globals), falling back to full pickle
+        # only when the caller explicitly passes trust_checkpoint=True.
+        from rfdetr.util.io import _safe_torch_load
+
+        ckpt: dict[str, Any] = _safe_torch_load(path, trust=trust_checkpoint)
         args = ckpt["args"]
 
         _variant_name_to_class: dict[str, type[RFDETR]] = {
@@ -412,6 +420,19 @@ class RFDETR:
         # Plus-model classes are resolved only when rfdetr_plus is installed.
         if _plus_available:
             _name_map.update(_plus_symbols)
+        # RFDETRLargeDeprecated is excluded from _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS
+        # (so forward name-map lookups always reach RFDETRLarge), but it must be
+        # in _name_map so that checkpoints carrying model_name="RFDETRLargeDeprecated"
+        # are reloaded with the correct class instead of falling through to the
+        # substring matcher (which would wrongly pick RFDETRLarge and fail with a
+        # pydantic literal_error on encoder / projector_scale fields).
+        # Note: RFDETRLargeDeprecated is a _DeprecatedProxy (pyDeprecate) and has no
+        # __name__; look it up by the string key it was registered under, then inject
+        # into _name_map so checkpoint matching resolves directly without the substring
+        # fallback.  Tests assert this mapping exists (see tests/inference/test_from_checkpoint.py).
+        _large_deprecated_cls = _variant_name_to_class.get("RFDETRLargeDeprecated")
+        if _large_deprecated_cls is not None:
+            _name_map["RFDETRLargeDeprecated"] = _large_deprecated_cls
         saved_model_name = ckpt.get("model_name")
         model_cls: type[RFDETR] | None = None
         if isinstance(saved_model_name, str):
@@ -1855,6 +1876,13 @@ class RFDETR:
                 img = Image.open(img)
 
             if not isinstance(img, torch.Tensor):
+                # Auto-convert PIL images from any colour mode (L, LA, RGBA, P,
+                # etc.) to RGB before converting to tensor.  This matches the
+                # standard detector API contract: callers passing a file path or
+                # a PIL image should not have to pre-convert; for tensor inputs
+                # the channel dimension is the caller's responsibility.
+                if isinstance(img, Image.Image) and img.mode != "RGB":
+                    img = img.convert("RGB")
                 if include_source_image:
                     src = np.array(img)
                     if src.dtype != np.uint8:
@@ -1876,7 +1904,8 @@ class RFDETR:
                 raise ValueError(
                     "Invalid tensor image shape. Tensor inputs to `predict()` must be in (C, H, W) format "
                     f"with C matching the model configuration ({self.model_config.num_channels} channels). "
-                    f"Received tensor with shape {tuple(img.shape)}."
+                    f"Received tensor with shape {tuple(img.shape)}. "
+                    "For automatic RGB conversion, pass a PIL Image or a file path instead of a tensor."
                 )
             img_tensor = img
 

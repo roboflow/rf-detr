@@ -396,19 +396,21 @@ class TestLoadPretrainWeights:
 
         load_calls = [0]
 
-        def fake_torch_load(*args, **kwargs):
+        def fake_safe_load(*args, **kwargs):
             load_calls[0] += 1
             if load_calls[0] == 1:
                 raise RuntimeError("corrupted file")
             return checkpoint
 
-        with patch("rfdetr.models.weights.torch.load", side_effect=fake_torch_load):
+        # Patch at the definition site in util.io (_safe_torch_load is a deferred import in
+        # weights.py so it is not a module-level name there). MD5 validation is intentionally
+        # kept on the retry (validate_md5=False was removed in favour of rejecting
+        # hash-mismatched files rather than silently accepting them).
+        with patch("rfdetr.util.io._safe_torch_load", side_effect=fake_safe_load):
             load_pretrain_weights(module.model, module.model_config)
 
-        # Verify a redownload with validate_md5=False was triggered after load failure.
         redownload_calls = [c for c in mock_download.call_args_list if c.kwargs.get("redownload") is True]
         assert len(redownload_calls) >= 1
-        assert all(c.kwargs.get("validate_md5") is False for c in redownload_calls)
         assert load_calls[0] == 2
 
     @patch("rfdetr.models.weights.os.path.isfile", return_value=False)

@@ -952,3 +952,56 @@ class TestPredictKeypointClassNameMapping:
         assert detections.data["class_name"][0] == "cat", (
             f"Detection model: class_id=0 must map to 'cat', got '{detections.data['class_name'][0]}'"
         )
+
+
+# ---------------------------------------------------------------------------
+# Fix F — non-RGB PIL / file-path inputs are auto-converted to RGB
+# ---------------------------------------------------------------------------
+
+
+class TestPredictNonRGBAutoConvert:
+    """Predict() must silently convert non-RGB PIL images and file paths to RGB.
+
+    Standard detector contract: callers pass images in any PIL mode (L, LA,
+    RGBA, P …) and expect detection results, not opaque tensor-shape errors.
+    Tensor inputs with wrong channel count are still the caller's error.
+    """
+
+    @pytest.mark.parametrize(
+        "pil_mode",
+        [
+            pytest.param("L", id="grayscale-L"),
+            pytest.param("LA", id="grayscale-with-alpha-LA"),
+            pytest.param("RGBA", id="rgba"),
+            pytest.param("P", id="palette-P"),
+            pytest.param("CMYK", id="cmyk"),
+        ],
+    )
+    def test_non_rgb_pil_image_succeeds(self, pil_mode: str) -> None:
+        """PIL images in any mode are auto-converted to RGB and return sv.Detections."""
+        import supervision as sv
+
+        img = PIL.Image.new(pil_mode, (28, 28))
+        model = _DummyRFDETR()
+        detections = model.predict(img)
+        assert isinstance(detections, sv.Detections)
+
+    def test_grayscale_file_path_succeeds(self, tmp_path) -> None:
+        """Grayscale image opened from a file path is auto-converted and returns sv.Detections."""
+        import supervision as sv
+
+        img_path = tmp_path / "gray.png"
+        PIL.Image.new("L", (28, 28)).save(str(img_path))
+        model = _DummyRFDETR()
+        detections = model.predict(str(img_path))
+        assert isinstance(detections, sv.Detections)
+
+    def test_wrong_channel_tensor_still_raises(self) -> None:
+        """Tensor inputs with wrong channel count must still raise ValueError with helpful message."""
+        import torch
+
+        # 1-channel tensor — caller is responsible for correct shape
+        tensor = torch.rand(1, 28, 28)
+        model = _DummyRFDETR()
+        with pytest.raises(ValueError, match="PIL Image or a file path"):
+            model.predict(tensor)

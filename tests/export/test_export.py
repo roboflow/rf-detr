@@ -473,6 +473,70 @@ class TestCliExportMain:
             f"expected keys {expected_names}, got {set(dynamic_axes.keys())}"
         )
 
+    @pytest.mark.parametrize(
+        "device",
+        [
+            pytest.param("cpu", id="cpu"),
+            pytest.param("cuda", id="cuda"),
+        ],
+    )
+    def test_model_moved_to_correct_device(self, output_dir: str, device: str, monkeypatch) -> None:
+        """model.to() and input_tensors.to() must use args.device, not a hard-coded 'cuda'.
+
+        Before the fix, export/main.py line 145 called model.eval().to('cuda') unconditionally, which crashed when
+        CUDA_VISIBLE_DEVICES was blank (CPU export).
+        """
+        import torch
+
+        to_calls = []
+
+        mock_model = MagicMock()
+        mock_model.parameters.return_value = []
+        mock_model.backbone.parameters.return_value = []
+        mock_model.backbone.__getitem__.return_value.projector.parameters.return_value = []
+        mock_model.backbone.__getitem__.return_value.encoder.parameters.return_value = []
+        mock_model.transformer.parameters.return_value = []
+
+        # Capture .to() calls
+        def _record_to(dev):
+            to_calls.append(str(dev))
+            return mock_model
+
+        mock_model.to.side_effect = _record_to
+        mock_model.cpu.return_value = mock_model
+        mock_model.eval.return_value = mock_model
+        mock_model.return_value = {"pred_boxes": torch.zeros(1, 300, 4), "pred_logits": torch.zeros(1, 300, 90)}
+
+        mock_tensor = MagicMock()
+        tensor_to_calls = []
+
+        def _tensor_to(dev):
+            tensor_to_calls.append(str(dev))
+            return mock_tensor
+
+        mock_tensor.to.side_effect = _tensor_to
+        mock_tensor.cpu.return_value = mock_tensor
+
+        # When testing "cuda" path, pretend CUDA is not available so the
+        # fallback-to-cpu branch fires and we can verify the warning without
+        # needing a GPU in CI.
+        monkeypatch.setattr(torch, "cuda", MagicMock(is_available=MagicMock(return_value=False)))
+
+        args = self._make_args(output_dir=output_dir)
+        args.device = device
+
+        with (
+            patch.object(_cli_export_module, "build_model", return_value=(mock_model, MagicMock(), MagicMock())),
+            patch.object(_cli_export_module, "make_infer_image", return_value=mock_tensor),
+            patch.object(_cli_export_module, "export_onnx", return_value=str(output_dir) + "/m.onnx"),
+            patch.object(_cli_export_module, "get_rank", return_value=0),
+        ):
+            _cli_export_module.main(args)
+
+        # The model must NOT have been moved to a hard-coded "cuda" device when
+        # device="cpu" — verify the fallback CPU path was taken.
+        assert "cuda" not in to_calls, f"model was moved to 'cuda' unexpectedly: {to_calls}"
+
 
 class TestExportPatchSize:
     """RFDETR.export() patch_size validation and shape-divisibility tests."""

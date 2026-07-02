@@ -25,6 +25,14 @@ from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 from rfdetr.variants import RFDETRSmall
 
 
+class _CustomObj:
+    """Module-level class that weights_only=True rejects (not in safe globals).
+
+    Must be at module scope so pickle can resolve the fully-qualified name during torch.save.  Local/nested classes
+    cannot be pickled.
+    """
+
+
 def _ns(pretrain_weights: str, num_classes: int = 80) -> dict:
     """Fake legacy checkpoint with argparse.Namespace args."""
     return {"args": argparse.Namespace(pretrain_weights=pretrain_weights, num_classes=num_classes)}
@@ -278,6 +286,18 @@ class TestFromCheckpointEdgeCases:
                 with pytest.raises(ImportError):
                     RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
+    def test_trust_gate_rejects_custom_class_by_default(self, tmp_path: Path) -> None:
+        """from_checkpoint raises RuntimeError for custom-class checkpoints without trust_checkpoint=True.
+
+        Scenario: user calls from_checkpoint on a file containing an unrecognised Python class.
+        The default trust_checkpoint=False must reject it to prevent arbitrary code execution.
+        """
+        ckpt_path = tmp_path / "custom_obj.pth"
+        torch.save({"model": {}, "args": _CustomObj(), "model_name": "RFDETRSmall"}, ckpt_path)
+
+        with pytest.raises(RuntimeError, match="trust_checkpoint=True"):
+            RFDETR.from_checkpoint(ckpt_path)
+
 
 # ---------------------------------------------------------------------------
 # Deprecated class instantiation
@@ -434,6 +454,25 @@ class TestFromCheckpointModelName:
         ):
             model = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
         assert model.__class__.__name__ == expected_class
+
+    def test_large_deprecated_model_name_resolves_to_deprecated_class(self, tmp_path: Path) -> None:
+        """Checkpoints saved with model_name='RFDETRLargeDeprecated' must load as RFDETRLargeDeprecated.
+
+        Before the fix, RFDETRLargeDeprecated was absent from _name_map; the substring matcher would pick RFDETRLarge,
+        which fails with a pydantic literal_error when the saved model_config carries encoder='dinov2_windowed_base'
+        (only valid for the deprecated Large configuration).
+        """
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-large.pth", "num_classes": 80},
+            "model_name": "RFDETRLargeDeprecated",
+            "model_config": {
+                "encoder": "dinov2_windowed_base",
+                "projector_scale": "P4",
+            },
+        }
+        result, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRLargeDeprecated")
+        mock_cls.assert_called_once()
+        assert result is mock_cls.return_value
 
     @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
     @pytest.mark.parametrize("model_name", ["RFDETRXLarge", "RFDETR2XLarge"])
