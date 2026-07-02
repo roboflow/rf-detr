@@ -10,6 +10,7 @@
 
 import os
 import random
+import warnings
 
 import numpy as np
 import torch
@@ -113,12 +114,28 @@ def main(args):
     n_transformer_parameters = sum(p.numel() for p in model.transformer.parameters())
     logger.info(f"number of transformer parameters: {n_transformer_parameters}")
     if args.resume:
-        # trust=True: --resume is a developer/ops flag pointing at RF-DETR-produced
-        # checkpoints that may contain argparse.Namespace objects.  Users loading
-        # third-party checkpoints via this flag accept the associated risk.
+        # --resume points at RF-DETR-produced checkpoints that may embed
+        # argparse.Namespace objects requiring full-pickle deserialization.
+        # Mirror RFDETR.from_checkpoint(trust_checkpoint=...): honour an optional
+        # `trust_checkpoint` attribute on args (default True for backward
+        # compatibility, since --resume is a developer/ops flag).  Setting
+        # args.trust_checkpoint=False enforces safe-tensors-only loading and
+        # raises if the checkpoint needs pickle.
         from rfdetr.util.io import _safe_torch_load
 
-        checkpoint = _safe_torch_load(args.resume, trust=True)
+        trust_checkpoint = getattr(args, "trust_checkpoint", True)
+        if trust_checkpoint:
+            # Explicit pre-load warning: --resume has no CLI opt-in gate, so make
+            # the pickle-deserialization risk (CWE-502) visible before loading.
+            warnings.warn(
+                f"Loading --resume checkpoint {args.resume!r} with full pickle "
+                "deserialization (weights_only=False fallback). This can execute "
+                "arbitrary code if the checkpoint comes from an untrusted source. "
+                "Set args.trust_checkpoint=False to require safe-tensors-only loading.",
+                UserWarning,
+                stacklevel=2,
+            )
+        checkpoint = _safe_torch_load(args.resume, trust=trust_checkpoint)
         result = model.load_state_dict(checkpoint["model"], strict=False)
         if result.missing_keys or result.unexpected_keys:
             logger.warning(

@@ -426,9 +426,11 @@ class RFDETR:
         # are reloaded with the correct class instead of falling through to the
         # substring matcher (which would wrongly pick RFDETRLarge and fail with a
         # pydantic literal_error on encoder / projector_scale fields).
-        _large_deprecated_cls = _variant_name_to_class.get("RFDETRLargeDeprecated")
-        if _large_deprecated_cls is not None:
-            _name_map["RFDETRLargeDeprecated"] = _large_deprecated_cls
+        # Reference the class symbol directly (rfdetr_variants is imported above)
+        # rather than a string key: if RFDETRLargeDeprecated is ever renamed, this
+        # raises AttributeError loudly instead of silently dropping the mapping.
+        _large_deprecated_cls = rfdetr_variants.RFDETRLargeDeprecated
+        _name_map[_large_deprecated_cls.__name__] = _large_deprecated_cls
         saved_model_name = ckpt.get("model_name")
         model_cls: type[RFDETR] | None = None
         if isinstance(saved_model_name, str):
@@ -1877,7 +1879,7 @@ class RFDETR:
                 # standard detector API contract: callers passing a file path or
                 # a PIL image should not have to pre-convert; for tensor inputs
                 # the channel dimension is the caller's responsibility.
-                if isinstance(img, Image.Image):
+                if isinstance(img, Image.Image) and img.mode != "RGB":
                     img = img.convert("RGB")
                 if include_source_image:
                     src = np.array(img)

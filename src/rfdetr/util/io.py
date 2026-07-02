@@ -20,7 +20,9 @@ from typing import Any
 
 import torch
 
-__all__ = ["_safe_torch_load"]
+# No public API: _safe_torch_load is an underscore-private, security-sensitive
+# helper imported directly by trusted internal callers, not for ad-hoc external use.
+__all__: list[str] = []
 
 
 def _safe_torch_load(path: str | Path, *, trust: bool = False) -> Any:
@@ -31,9 +33,11 @@ def _safe_torch_load(path: str | Path, *, trust: bool = False) -> Any:
     1. ``weights_only=True`` (strict — only tensors and a small set of
        built-in scalars).
     2. Same as 1, but with ``argparse.Namespace`` and
-       ``types.SimpleNamespace`` registered as safe globals so that legacy
+       ``types.SimpleNamespace`` temporarily allowed via the
+       :func:`torch.serialization.safe_globals` context manager so that legacy
        RF-DETR checkpoints that embed an ``args`` namespace can be loaded
-       without falling back to pickle.
+       without falling back to pickle.  The allow-list is scoped to this call
+       and does **not** permanently mutate global deserialization state.
     3. ``weights_only=False`` (full pickle) — allowed **only** when
        ``trust=True``, with a loud :class:`UserWarning`.  Never used for
        checkpoints received from external sources.
@@ -51,9 +55,9 @@ def _safe_torch_load(path: str | Path, *, trust: bool = False) -> Any:
 
     Raises:
         RuntimeError: When all safe loading strategies fail and
-            ``trust=False``.  The error message suggests passing
-            ``trust_checkpoint=True`` so the caller can make an informed
-            decision.
+            ``trust=False``.  The error message suggests passing ``trust=True``
+            (or ``trust_checkpoint=True`` at the ``RFDETR.from_checkpoint()``
+            level) so the caller can make an informed decision.
 
     Examples:
         >>> import torch, tempfile, os
@@ -71,13 +75,16 @@ def _safe_torch_load(path: str | Path, *, trust: bool = False) -> Any:
     except (RuntimeError, pickle.UnpicklingError):
         pass
 
-    # ── Attempt 2: add well-known legacy safe globals ─────────────────────
+    # ── Attempt 2: scoped safe globals (no permanent process-global mutation) ─
     # argparse.Namespace and types.SimpleNamespace appear in RF-DETR checkpoints
-    # saved by the pre-PTL engine.py training loop.  Registering them as safe
-    # globals is semantically safe because they contain only primitive values.
+    # saved by the pre-PTL engine.py training loop.  Allowing them is semantically
+    # safe because they contain only primitive values.  Using the
+    # ``safe_globals`` context manager scopes the allow-list to this single load
+    # (instead of the process-global ``add_safe_globals``) and folds the retry
+    # into one ``torch.load`` call rather than a separate double-load.
     try:
-        torch.serialization.add_safe_globals([argparse.Namespace, types.SimpleNamespace])
-        return torch.load(path, map_location="cpu", weights_only=True)
+        with torch.serialization.safe_globals([argparse.Namespace, types.SimpleNamespace]):
+            return torch.load(path, map_location="cpu", weights_only=True)
     except (RuntimeError, pickle.UnpicklingError):
         pass
 
@@ -98,6 +105,6 @@ def _safe_torch_load(path: str | Path, *, trust: bool = False) -> Any:
         f"Failed to safely load checkpoint {str(path)!r}. "
         "The file likely contains custom Python objects that cannot be "
         "deserialized with weights_only=True. "
-        "If you fully trust this checkpoint source, pass trust_checkpoint=True "
-        "to the loading function."
+        "If you fully trust this checkpoint source, pass trust=True to "
+        "_safe_torch_load() or trust_checkpoint=True to RFDETR.from_checkpoint()."
     )
