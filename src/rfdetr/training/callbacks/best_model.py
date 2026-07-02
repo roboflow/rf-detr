@@ -557,13 +557,14 @@ class BestModelCallback(ModelCheckpoint):
                 # just-loaded best weights — suppress its swap for this run only, restoring the default afterwards
                 # so standalone trainer.test() calls keep evaluating EMA weights.
                 ema_callbacks = [cb for cb in trainer.callbacks if isinstance(cb, RFDETREMACallback)]
+                prior_flags = [cb.suppress_test_swap for cb in ema_callbacks]
                 for ema_callback in ema_callbacks:
                     ema_callback.suppress_test_swap = True
                 try:
                     trainer.test(pl_module, datamodule=trainer.datamodule, verbose=False)
                 finally:
-                    for ema_callback in ema_callbacks:
-                        ema_callback.suppress_test_swap = False
+                    for ema_callback, prior in zip(ema_callbacks, prior_flags):
+                        ema_callback.suppress_test_swap = prior
 
 
 class RFDETREarlyStopping(EarlyStopping):
