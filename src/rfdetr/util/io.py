@@ -68,7 +68,7 @@ def _safe_torch_load(path: str | Path, *, trust: bool = False) -> Any:
     # ── Attempt 1: strict safe load ──────────────────────────────────────
     try:
         return torch.load(path, map_location="cpu", weights_only=True)
-    except (RuntimeError, pickle.UnpicklingError, Exception):
+    except (RuntimeError, pickle.UnpicklingError):
         pass
 
     # ── Attempt 2: add well-known legacy safe globals ─────────────────────
@@ -78,7 +78,7 @@ def _safe_torch_load(path: str | Path, *, trust: bool = False) -> Any:
     try:
         torch.serialization.add_safe_globals([argparse.Namespace, types.SimpleNamespace])
         return torch.load(path, map_location="cpu", weights_only=True)
-    except (RuntimeError, pickle.UnpicklingError, Exception):
+    except (RuntimeError, pickle.UnpicklingError):
         pass
 
     # ── Attempt 3 (opt-in): full pickle ───────────────────────────────────
