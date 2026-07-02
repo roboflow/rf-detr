@@ -546,9 +546,9 @@ class BestModelCallback(ModelCheckpoint):
                     )
                     return
                 # Load best weights before test — mirrors legacy main.py:602-609.
-                # weights_only=True is safe: best-checkpoint files are produced by
-                # BestModelCallback and contain only a plain {"model": state_dict}.
-                ckpt = torch.load(total_path, map_location="cpu", weights_only=True)
+                # trust=True: checkpoint_best_total.pth is produced locally; allow pickle fallback if needed.
+                from rfdetr.util.io import _safe_torch_load
+                ckpt = _safe_torch_load(total_path, trust=True)
                 # Checkpoints always store plain keys; load into the unwrapped module
                 # so compiled (OptimizedModule) and non-compiled models both work.
                 _orig = getattr(pl_module.model, "_orig_mod", None)
