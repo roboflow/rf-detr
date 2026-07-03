@@ -632,6 +632,62 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
     return contains_required_yolo_yaml and contains_required_split_dirs and contains_required_data_subdirs
 
 
+def _parse_yaml_split_dirs(root: Path, data_file: Path, split: str) -> tuple[Path, Path] | None:
+    """Parse ``data_file`` and resolve image/label dirs for ``split``.
+
+    Returns ``None`` when the YAML declares no usable path for the requested
+    split, the resolved path does not exist on disk, or a path traversal is
+    detected.
+
+    Raises:
+        OSError: File I/O failure reading ``data_file``.
+        ValueError: Unexpected value type inside the YAML mapping.
+        TypeError: Unexpected type inside the YAML mapping.
+        yaml.YAMLError: Malformed YAML content.
+
+    Args:
+        root: Dataset root directory.
+        data_file: Path to ``data.yaml`` or ``data.yml``.
+        split: One of ``"train"``, ``"val"``, or ``"test"``.
+
+    Returns:
+        ``(images_dir, labels_dir)`` on success, or ``None`` to signal fallback.
+    """
+    data = _load_yaml_mapping(data_file)
+    yaml_base = Path(data.get("path", "")) if data.get("path") else root
+    if not yaml_base.is_absolute():
+        yaml_base = root / yaml_base
+
+    raw_path: str | None = data.get(split)
+    if raw_path is None and split == "val":
+        raw_path = data.get("valid")
+
+    if raw_path is None:
+        return None
+
+    split_images = yaml_base / raw_path
+    # Path traversal guard: reject yaml-declared paths that escape
+    # the dataset root (e.g. "../../other_project/val/images").
+    try:
+        split_images.resolve().relative_to(root.resolve())
+    except ValueError:
+        return None  # traversal detected; signal fallback
+
+    parts = split_images.parts
+    is_dir = split_images.is_dir()
+    if is_dir and "images" in parts:
+        idx = parts.index("images")
+        split_labels = Path(*parts[:idx], "labels", *parts[idx + 1 :])
+        if split_labels.is_dir():
+            return split_images, split_labels
+    elif is_dir:
+        sub_images = split_images / "images"
+        sub_labels = split_images / "labels"
+        if sub_images.is_dir() and sub_labels.is_dir():
+            return sub_images, sub_labels
+    return None
+
+
 def _resolve_split_from_yaml(root: Path, data_file: Path, split: str) -> tuple[Path, Path] | None:
     """Try to resolve image and label dirs for ``split`` from ``data_file``.
 
@@ -649,35 +705,7 @@ def _resolve_split_from_yaml(root: Path, data_file: Path, split: str) -> tuple[P
     if not data_file.exists():
         return None
     try:
-        data = _load_yaml_mapping(data_file)
-        yaml_base = Path(data.get("path", "")) if data.get("path") else root
-        if not yaml_base.is_absolute():
-            yaml_base = root / yaml_base
-
-        raw_path: str | None = data.get(split)
-        if raw_path is None and split == "val":
-            raw_path = data.get("valid")
-
-        if raw_path is not None:
-            split_images = yaml_base / raw_path
-            # Path traversal guard: reject yaml-declared paths that escape
-            # the dataset root (e.g. "../../other_project/val/images").
-            try:
-                split_images.resolve().relative_to(root.resolve())
-            except ValueError:
-                return None  # traversal detected; signal fallback
-            parts = split_images.parts
-            is_dir = split_images.is_dir()
-            if is_dir and "images" in parts:
-                idx = parts.index("images")
-                split_labels = Path(*parts[:idx], "labels", *parts[idx + 1 :])
-                if split_labels.is_dir():
-                    return split_images, split_labels
-            elif is_dir:
-                sub_images = split_images / "images"
-                sub_labels = split_images / "labels"
-                if sub_images.is_dir() and sub_labels.is_dir():
-                    return sub_images, sub_labels
+        return _parse_yaml_split_dirs(root, data_file, split)
     except OSError:
         pass
     except (ValueError, TypeError) as exc:
