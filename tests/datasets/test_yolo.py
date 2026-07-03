@@ -1038,7 +1038,7 @@ class TestBuildRoboflowFromYoloUltralytics:
         )
 
     def test_ultralytics_val_split_resolves_correctly(self, tmp_path: Path) -> None:
-        """val split on Ultralytics layout (val/, yaml paths) should not raise."""
+        """Val split on Ultralytics layout (val/, yaml paths) should not raise."""
         _write_ultralytics_yolo_dataset(tmp_path)
         args = self._make_args(str(tmp_path))
 
