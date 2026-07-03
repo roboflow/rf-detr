@@ -114,13 +114,12 @@ def _match_single_class(
         if best_nc_iou >= iou_threshold:
             pred_match[i] = 1
             gt_matched[best_nc_idx] = True
-        else:
-            # A detection matched to a crowd GT is ignored (not a false positive).
-            if gt_crowd.any():
-                crowd_ious = ious.clone()
-                crowd_ious[~gt_crowd] = -1.0
-                if crowd_ious.max() >= iou_threshold:
-                    pred_ignore[i] = True
+        # A detection matched to a crowd GT is ignored (not a false positive).
+        elif gt_crowd.any():
+            crowd_ious = ious.clone()
+            crowd_ious[~gt_crowd] = -1.0
+            if crowd_ious.max() >= iou_threshold:
+                pred_ignore[i] = True
             # else: false positive — pred_match stays 0
 
     total_gt = int((~gt_crowd).sum().item())
@@ -214,9 +213,9 @@ def build_matching_data(
                 # TODO: support bfloat16 natively once numpy adds bf16 dtype
                 sc = np.asarray(p_scores.float().cpu().numpy(), dtype=np.float32)  # pyright: ignore[reportUnknownMemberType]
                 order = np.argsort(-sc)
-                cast("list[Any]", entry["scores"]).extend(sc[order].tolist())
-                cast("list[Any]", entry["matches"]).extend([0] * n_pred)
-                cast("list[Any]", entry["ignore"]).extend([False] * n_pred)
+                cast("list[float]", entry["scores"]).extend(sc[order].tolist())
+                cast("list[int]", entry["matches"]).extend([0] * n_pred)
+                cast("list[bool]", entry["ignore"]).extend([False] * n_pred)
                 continue
 
             if iou_type == "bbox":
@@ -232,9 +231,9 @@ def build_matching_data(
                 p_scores, p_items, gt_items, gt_crowd_c, iou_threshold, iou_type
             )
 
-            cast("list[Any]", entry["scores"]).extend(scores_np.tolist())
-            cast("list[Any]", entry["matches"]).extend(matches_np.tolist())
-            cast("list[Any]", entry["ignore"]).extend(ignore_np.tolist())
+            cast("list[float]", entry["scores"]).extend(scores_np.tolist())
+            cast("list[int]", entry["matches"]).extend(matches_np.tolist())
+            cast("list[bool]", entry["ignore"]).extend(ignore_np.tolist())
             entry["total_gt"] = cast(int, entry["total_gt"]) + total_gt
 
     return {

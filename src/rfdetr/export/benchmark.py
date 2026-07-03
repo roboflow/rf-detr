@@ -40,7 +40,7 @@ logger = get_logger()
 
 
 def get_image_list(ann_file):
-    with open(ann_file, "r") as fin:
+    with open(ann_file) as fin:
         data = json.load(fin)
     return data["images"]
 
@@ -169,7 +169,7 @@ def infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device, rep
         if coco_evaluator is not None:
             coco_evaluator.update(res)
 
-    logger.info("Model latency with ONNX Runtime: {}ms".format(1000 * sum(time_list) / len(img_list)))
+    logger.info(f"Model latency with ONNX Runtime: {1000 * sum(time_list) / len(img_list)}ms")
 
     # accumulate predictions from all images
     stats = {}
@@ -214,7 +214,7 @@ def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, 
             res = {img_dict["id"]: results[0]}
             coco_evaluator.update(res)
 
-    logger.info("Model latency with TensorRT: {}ms".format(1000 * sum(time_list) / len(img_list)))
+    logger.info(f"Model latency with TensorRT: {1000 * sum(time_list) / len(img_list)}ms")
 
     # accumulate predictions from all images
     stats = {}
@@ -226,7 +226,7 @@ def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, 
         logger.info(stats)
 
 
-class TRTInference(object):
+class TRTInference:
     """TensorRT inference engine."""
 
     def __init__(

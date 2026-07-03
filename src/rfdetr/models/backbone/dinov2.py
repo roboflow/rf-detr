@@ -10,8 +10,8 @@ import os
 import types
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
+from torch import nn
 from transformers import AutoBackbone
 
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
@@ -47,7 +47,7 @@ def get_config(size, use_registers):
     current_dir = os.path.dirname(os.path.abspath(__file__))
     configs_dir = os.path.join(current_dir, "dinov2_configs")
     config_path = os.path.join(configs_dir, config_dict[size])
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         dino_config = json.load(f)
     return dino_config
 
@@ -56,7 +56,7 @@ class DinoV2(nn.Module):
     def __init__(
         self,
         shape=(640, 640),
-        out_feature_indexes=[2, 4, 5, 9],
+        out_feature_indexes: tuple[int, ...] | None = None,
         size="base",
         use_registers=True,
         use_windowed_attn=True,
@@ -68,6 +68,9 @@ class DinoV2(nn.Module):
         drop_path_rate=0.0,
     ):
         super().__init__()
+
+        if out_feature_indexes is None:
+            out_feature_indexes = (2, 4, 5, 9)
 
         name = f"facebook/dinov2-with-registers-{size}" if use_registers else f"facebook/dinov2-{size}"
 

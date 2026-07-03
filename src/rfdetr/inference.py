@@ -9,7 +9,8 @@ from __future__ import annotations
 
 __all__ = ["ModelContext"]
 
-from typing import TYPE_CHECKING, Any, Callable, List, Optional, cast
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
@@ -32,7 +33,7 @@ class ModelContext:
         postprocess: PostProcess instance for converting raw outputs to boxes.
         device: Device the model lives on.
         resolution: Input resolution (square side length in pixels).
-        args: Namespace produced by :func:`build_namespace`.
+        args: Namespace of resolved training/model configuration.
         class_names: Optional list of class name strings loaded from checkpoint.
     """
 
@@ -43,7 +44,7 @@ class ModelContext:
         device: torch.device,
         resolution: int,
         args: Any,
-        class_names: Optional[List[str]] = None,
+        class_names: list[str] | None = None,
     ) -> None:
         self.model = model
         self.postprocess = postprocess
@@ -59,7 +60,7 @@ class ModelContext:
         Args:
             num_classes: New number of output classes (including background).
         """
-        reinitialize_head = cast(Callable[[int], None], getattr(self.model, "reinitialize_detection_head"))
+        reinitialize_head = cast("Callable[[int], None]", self.model.reinitialize_detection_head)
         reinitialize_head(num_classes)
         self.args.num_classes = num_classes
 
@@ -112,17 +113,22 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
 
     # A dummy TrainConfig is needed only for _namespace_from_configs' required fields;
     # dataset_dir/output_dir are unused during model construction.
-    dummy_train_config = TrainConfig(dataset_dir=".", output_dir=".")
+    dummy_train_config = TrainConfig(dataset_dir=None, output_dir="output")
     args = _namespace_from_configs(model_config, dummy_train_config)
+    # ``TrainConfig.expand_paths`` realpaths these to the caller's absolute CWD, which would be embedded into
+    # ``args`` and serialized into exported ``weights.pt`` (see ``RFDETR.export_for_roboflow``). Reset them on the
+    # namespace to placeholders so inference-built checkpoints never leak the caller's filesystem layout.
+    args.dataset_dir = None
+    args.output_dir = "output"
     nn_model = build_model(args)
 
-    class_names: List[str] = []
+    class_names: list[str] = []
     if model_config.pretrain_weights is not None:
         class_names = load_pretrain_weights(nn_model, model_config)
         # ``load_pretrain_weights`` can mutate ``model_config.num_classes`` and
         # ``model_config.num_keypoints_per_class`` when aligning to checkpoint schema.
         # Keep the derived namespace in sync so postprocess and predict() use correct values.
-        if hasattr(args, "num_classes") and getattr(args, "num_classes") != model_config.num_classes:
+        if hasattr(args, "num_classes") and args.num_classes != model_config.num_classes:
             args.num_classes = model_config.num_classes
         _mc_kp = list(getattr(model_config, "num_keypoints_per_class", []) or [])
         if (

@@ -13,8 +13,6 @@
 # ------------------------------------------------------------------------------------------------
 """Multi-Scale Deformable Attention Module."""
 
-from __future__ import absolute_import, division, print_function
-
 import math
 import warnings
 
@@ -28,7 +26,7 @@ from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 
 def _is_power_of_2(n):
     if (not isinstance(n, int)) or (n < 0):
-        raise ValueError("invalid input for _is_power_of_2: {} (type: {})".format(n, type(n)))
+        raise ValueError(f"invalid input for _is_power_of_2: {n} (type: {type(n)})")
     return (n & (n - 1) == 0) and n != 0
 
 
@@ -41,7 +39,7 @@ class MSDeformAttn(nn.Module):
         attention head per feature level."""
         super().__init__()
         if d_model % n_heads != 0:
-            raise ValueError("d_model must be divisible by n_heads, but got {} and {}".format(d_model, n_heads))
+            raise ValueError(f"d_model must be divisible by n_heads, but got {d_model} and {n_heads}")
         _d_per_head = d_model // n_heads
         # you'd better set _d_per_head to a power of 2 which is more efficient in our CUDA implementation
         if not _is_power_of_2(_d_per_head):
@@ -156,7 +154,7 @@ class MSDeformAttn(nn.Module):
             )
         else:
             raise ValueError(
-                "Last dim of reference_points must be 2 or 4, but get {} instead.".format(reference_points.shape[-1])
+                f"Last dim of reference_points must be 2 or 4, but get {reference_points.shape[-1]} instead."
             )
         attention_weights = F.softmax(attention_weights, -1)
 

@@ -157,8 +157,9 @@ class HungarianMatcher(nn.Module):
             A list of size batch_size, containing tuples of (index_i, index_j) where:
                 - index_i is the indices of the selected predictions (in order)
                 - index_j is the indices of the corresponding selected targets (in order)
-            For each batch element, it holds:
-                len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
+            For each batch element, it holds len(index_i) == len(index_j). With group_detr == 1 this
+            length is min(num_queries, num_target_boxes); with group_detr > 1 the per-group matches are
+            concatenated, so the length is that quantity summed over the groups.
         """
         bs, num_queries = outputs["pred_logits"].shape[:2]
 
@@ -280,6 +281,8 @@ class HungarianMatcher(nn.Module):
 
         sizes = [len(v["boxes"]) for v in targets]
         indices = []
+        if num_queries % group_detr != 0:
+            raise ValueError(f"num_queries ({num_queries}) must be divisible by group_detr ({group_detr})")
         g_num_queries = num_queries // group_detr
         cost_matrix_list = cost_matrix.split(g_num_queries, dim=1)
         for g_i in range(group_detr):

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Any, List
+from typing import Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -260,7 +260,7 @@ def load_pretrain_weights(
     nn_model: torch.nn.Module,
     model_config: ModelConfig,
     train_config: TrainConfig | None = None,
-) -> List[str]:
+) -> list[str]:
     """Load pretrained checkpoint weights into *nn_model* in-place.
 
     Canonical implementation shared by the L1 facade (``_build_model_context`` in ``rfdetr.detr``) and the L2
@@ -298,7 +298,7 @@ def load_pretrain_weights(
     pretrain_weights = mc.pretrain_weights
     if pretrain_weights is None:
         return []
-    class_names: List[str] = []
+    class_names: list[str] = []
 
     from rfdetr.util.io import _safe_torch_load
 

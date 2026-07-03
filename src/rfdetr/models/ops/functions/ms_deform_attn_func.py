@@ -13,8 +13,6 @@
 # ------------------------------------------------------------------------------------------------
 """ms_deform_attn_func."""
 
-from __future__ import absolute_import, division, print_function
-
 import torch
 
 from rfdetr.utilities.tensors import _bilinear_grid_sample

@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 import warnings
 from copy import deepcopy
-from typing import Any, Optional
+from typing import Any
 
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
@@ -54,11 +54,11 @@ class RFDETREMACallback(Callback):
         self._update_interval_steps = max(1, int(update_interval_steps))
         self.suppress_test_swap = False
 
-        self._average_model: Optional[AveragedModel] = None
+        self._average_model: AveragedModel | None = None
         self._latest_update_step = 0
         self._latest_update_epoch = -1
-        self._swapped_state_dict: Optional[dict[str, torch.Tensor]] = None
-        self._pending_average_state_dict: Optional[dict[str, Any]] = None
+        self._swapped_state_dict: dict[str, torch.Tensor] | None = None
+        self._pending_average_state_dict: dict[str, Any] | None = None
 
     def _avg_fn(
         self,
@@ -113,7 +113,7 @@ class RFDETREMACallback(Callback):
             self._average_model.load_state_dict(self._pending_average_state_dict)
             self._pending_average_state_dict = None
         elif hasattr(pl_module, "_pending_legacy_ema_state"):
-            legacy_ema_state = getattr(pl_module, "_pending_legacy_ema_state")
+            legacy_ema_state = pl_module._pending_legacy_ema_state
             if isinstance(legacy_ema_state, dict):
                 incompatible = self._average_model.module.model.load_state_dict(legacy_ema_state, strict=False)
                 if incompatible.missing_keys or incompatible.unexpected_keys:
@@ -128,8 +128,8 @@ class RFDETREMACallback(Callback):
 
     def should_update(
         self,
-        step_idx: Optional[int] = None,
-        epoch_idx: Optional[int] = None,
+        step_idx: int | None = None,
+        epoch_idx: int | None = None,
     ) -> bool:
         """Return ``True`` after every optimizer step and every epoch end.
 
@@ -218,7 +218,7 @@ class RFDETREMACallback(Callback):
         self._latest_update_epoch = state_dict.get("latest_update_epoch", -1)
         self._pending_average_state_dict = state_dict.get("average_model_state_dict")
 
-    def get_ema_model_state_dict(self) -> Optional[dict[str, torch.Tensor]]:
+    def get_ema_model_state_dict(self) -> dict[str, torch.Tensor] | None:
         """Expose EMA model weights for external checkpoint callbacks."""
         if self._average_model is None or not hasattr(self._average_model.module, "model"):
             return None

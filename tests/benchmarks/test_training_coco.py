@@ -163,7 +163,6 @@ def test_keypoint_training_subset_reports_loss_and_metric(
 
     module = RFDETRModelModule(model.model_config, train_config)
     module.model.load_state_dict(model.model.model.state_dict())
-    module.model.eval()
 
     trainer = build_trainer(
         train_config,

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import contextlib
-import glob
 import importlib
 import io
 import json
@@ -241,11 +240,24 @@ class RFDETR:
     _model_config_class: type[ModelConfig] = ModelConfig
     _train_config_class: type[TrainConfig] = TrainConfig
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
+        """Initialize with ModelConfig fields as keyword arguments.
+
+        Passes all kwargs to the variant's ModelConfig. Unknown kwargs raise
+        ``pydantic.ValidationError``. See the variant's config class for available
+        parameters (e.g. ``RFDETRSmallConfig``).
+
+        Args:
+            **kwargs: ModelConfig field values (e.g. ``resolution``, ``num_classes``,
+                ``pretrain_weights``, ``gradient_checkpointing``).
+        """
         self.model_config = self.get_model_config(**kwargs)
         self.maybe_download_pretrain_weights()
         self.model = self.get_model(self.model_config)
         self.callbacks = defaultdict(list)
+
+        self.means = list(self.means)
+        self.stds = list(self.stds)
 
         # repeat means and stds for non-rgb images
         if self.model_config.num_channels != 3:
@@ -1402,12 +1414,8 @@ class RFDETR:
             # Safety fallback for pathological inputs
             return class_names or [c["name"] for c in categories]
 
-        # list all YAML files in the folder
-        if is_valid_yolo_dataset(dataset_dir):
-            yaml_paths = glob.glob(os.path.join(dataset_dir, "*.yaml")) + glob.glob(os.path.join(dataset_dir, "*.yml"))
-            # any YAML file starting with data e.g. data.yaml, dataset.yaml
-            yaml_data_files = [yp for yp in yaml_paths if os.path.basename(yp).startswith("data")]
-            yaml_path = yaml_data_files[0]
+        yaml_path = RFDETR._yolo_data_file_path(dataset_dir) if is_valid_yolo_dataset(dataset_dir) else None
+        if yaml_path is not None:
             with open(yaml_path) as f:
                 data = yaml.safe_load(f)
             if "names" in data:
@@ -1614,7 +1622,7 @@ class RFDETR:
             if idx in seen or mirror_idx in seen or idx == mirror_idx:
                 seen.add(idx)
                 continue
-            if mirror_idx < len(flip_idx) and flip_idx[mirror_idx] == idx:
+            if 0 <= mirror_idx < len(flip_idx) and flip_idx[mirror_idx] == idx:
                 pairs.extend([idx, mirror_idx])
                 seen.update({idx, mirror_idx})
         return pairs

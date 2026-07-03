@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Sequence
-from functools import lru_cache
+from functools import cache
 from typing import Any
 
 try:
@@ -39,7 +39,7 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
-class Normalize(object):
+class Normalize:
     def __init__(
         self,
         mean: tuple[float, ...] = (0.485, 0.456, 0.406),
@@ -256,7 +256,7 @@ def _build_albu_transform(name: str, params: dict[str, Any]) -> alb.BasicTransfo
     return aug_cls(**_normalize_albu_params(name, params, aug_cls))
 
 
-@lru_cache(maxsize=None)
+@cache
 def _random_sized_crop_uses_size_param(aug_cls: type) -> bool:
     """Return whether ``RandomSizedCrop`` expects a ``size`` keyword.
 
@@ -541,7 +541,7 @@ class AlbumentationsWrapper:
             return True
         if transform_name == "Flip":
             params = replay.get("params") or {}
-            return int(params.get("axis", -1)) == 1
+            return int(params.get("axis", params.get("d", -1))) == 1
         if transform_name in {"D4", "SquareSymmetry"}:
             params = replay.get("params") or {}
             return str(params.get("group_element")) == "h"
@@ -882,7 +882,7 @@ class AlbumentationsWrapper:
         config_dict: dict[str, Any] | list[dict[str, Any]],
         keypoint_flip_pairs: list[int] | None = None,
         strict: bool = False,
-    ) -> list["AlbumentationsWrapper"]:
+    ) -> list[AlbumentationsWrapper]:
         """Build a list of :class:`AlbumentationsWrapper` instances from a config.
 
         Supports both a flat dictionary format (backward-compatible) and a list format that allows duplicate transform
