@@ -490,13 +490,12 @@ def _build_train_resize_config(
                 ]
             }
         }
-        # DETR recipe: resize the short side to 400/500/600, take a random-position crop *at native resolution*
-        # (no intermediate resize-to-square), then resize once to the target scale. ``RandomCrop`` preserves the
-        # cropped resolution (unlike ``RandomSizedCrop``, which rescales to a fixed square), and a ``OneOf`` over
-        # non-square (height, width) pairs restores the independent-side sampling of DETR's ``RandomSizeCrop``.
-        # Crop sides are bounded by 400 -- the smallest possible short side after the first ``SmallestMaxSize`` --
-        # so a crop never exceeds the image (the earlier ``min_max_height`` upper bound of 600 could).
-        crop_sizes = [(384, 384), (384, 400), (400, 384), (400, 400)]
+        # DETR-style crop branch: resize the short side to 400/500/600, then take a ``RandomSizedCrop`` that resizes
+        # the crop *directly* to the target scale (via a per-scale ``OneOf``, mirroring the square path). This removes
+        # the previous fixed 384x384 intermediate hop -- the crop was resampled to 384 and then resized again to the
+        # target, a wasteful downscale-then-upscale. ``min_max_height`` is clamped to [384, 400] so the sampled crop
+        # never exceeds the smallest possible short side (400) after the first ``SmallestMaxSize``; the earlier upper
+        # bound of 600 could exceed the image and degenerate to a full-image resize.
         option_b = {
             "Sequential": {
                 "transforms": [
@@ -504,12 +503,11 @@ def _build_train_resize_config(
                     {
                         "OneOf": {
                             "transforms": [
-                                {"RandomCrop": {"height": crop_h, "width": crop_w}} for crop_h, crop_w in crop_sizes
+                                {"RandomSizedCrop": {"min_max_height": [384, 400], "height": s, "width": s}}
+                                for s in scales
                             ],
                         }
                     },
-                    {"SmallestMaxSize": {"max_size": size_param}},
-                    {"LongestMaxSize": {"max_size": cap}},
                 ]
             }
         }
