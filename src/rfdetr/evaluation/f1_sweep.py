@@ -5,6 +5,8 @@
 # ------------------------------------------------------------------------
 """Confidence-threshold sweep for precision/recall/F1 computation."""
 
+from __future__ import annotations
+
 from typing import Any
 
 import numpy as np
@@ -34,12 +36,12 @@ def sweep_confidence_thresholds(
             - ``"per_class_f1"``: float ndarray
     """
     num_classes = len(per_class_data)
-    results = []
+    results: list[dict[str, Any]] = []
 
     for conf_thresh in conf_thresholds:
-        per_class_precisions = []
-        per_class_recalls = []
-        per_class_f1s = []
+        per_class_precisions: list[float] = []
+        per_class_recalls: list[float] = []
+        per_class_f1s: list[float] = []
 
         for k in range(num_classes):
             data = per_class_data[k]
