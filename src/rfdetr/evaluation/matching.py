@@ -21,8 +21,8 @@ from typing import Any, cast
 
 import numpy as np
 import torch
-from torch import Tensor
 import torch.nn.functional as F  # noqa: N812
+from torch import Tensor
 from torchvision.ops import box_iou
 
 from rfdetr.utilities import all_gather
