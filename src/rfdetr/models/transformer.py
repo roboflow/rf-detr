@@ -16,7 +16,7 @@
 
 import copy
 import math
-from typing import Callable, Optional, Sequence
+from collections.abc import Callable, Sequence
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -57,7 +57,7 @@ def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128) -> Tensor:
         pos_h = torch.stack((pos_h[:, :, 0::2].sin(), pos_h[:, :, 1::2].cos()), dim=3).flatten(2)
         pos = torch.cat((pos_y, pos_x, pos_w, pos_h), dim=2)
     else:
-        raise ValueError("Unknown pos_tensor shape(-1):{}".format(pos_tensor.size(-1)))
+        raise ValueError(f"Unknown pos_tensor shape(-1):{pos_tensor.size(-1)}")
     return pos
 
 
@@ -541,6 +541,9 @@ class TransformerDecoder(nn.Module):
 
     def _create_keypoint_class_mask(self) -> Tensor:
         """Create attention mask that blocks cross-class keypoint interactions."""
+        # NOTE: near-duplicate of LWDETR._create_keypoint_class_mask in models/lwdetr.py (same
+        # mask logic; that one is a pure static taking num_keypoints_per_class, this reads
+        # self.num_keypoints_per_class and registers the keypoint_class_mask buffer). Keep in sync.
         if not self.num_keypoints_per_class:
             mask = torch.zeros(1, 1, dtype=torch.bool)
         else:
@@ -580,20 +583,20 @@ class TransformerDecoder(nn.Module):
         self,
         tgt: Tensor,
         memory: Tensor,
-        tgt_mask: Optional[Tensor] = None,
-        memory_mask: Optional[Tensor] = None,
-        tgt_key_padding_mask: Optional[Tensor] = None,
-        memory_key_padding_mask: Optional[Tensor] = None,
-        pos: Optional[Tensor] = None,
-        refpoints_unsigmoid: Optional[Tensor] = None,
+        tgt_mask: Tensor | None = None,
+        memory_mask: Tensor | None = None,
+        tgt_key_padding_mask: Tensor | None = None,
+        memory_key_padding_mask: Tensor | None = None,
+        pos: Tensor | None = None,
+        refpoints_unsigmoid: Tensor | None = None,
         # for memory
-        level_start_index: Optional[Tensor] = None,  # num_levels
-        spatial_shapes: Optional[Tensor] = None,  # num_levels, 2
-        valid_ratios: Optional[Tensor] = None,
+        level_start_index: Tensor | None = None,  # num_levels
+        spatial_shapes: Tensor | None = None,  # num_levels, 2
+        valid_ratios: Tensor | None = None,
         # keypoints
-        tgt_keypoints: Optional[Tensor] = None,
-        init_kp_ref_xy: Optional[Tensor] = None,
-        kp_cross_attn_memory: Optional[Tensor] = None,
+        tgt_keypoints: Tensor | None = None,
+        init_kp_ref_xy: Tensor | None = None,
+        kp_cross_attn_memory: Tensor | None = None,
     ) -> Tensor | tuple[Tensor, ...]:
         output = tgt
 
@@ -635,16 +638,16 @@ class TransformerDecoder(nn.Module):
         # always use init refpoints
         if self.lite_refpoint_refine:
             if self.bbox_reparam:
-                obj_center, refpoints_input, query_pos, query_sine_embed = get_reference(refpoints_unsigmoid)
+                obj_center, refpoints_input, query_pos, _query_sine_embed = get_reference(refpoints_unsigmoid)
             else:
-                obj_center, refpoints_input, query_pos, query_sine_embed = get_reference(refpoints_unsigmoid.sigmoid())
+                obj_center, refpoints_input, query_pos, _query_sine_embed = get_reference(refpoints_unsigmoid.sigmoid())
 
         for layer_id, layer in enumerate(self.layers):
             if not self.lite_refpoint_refine:
                 if self.bbox_reparam:
-                    obj_center, refpoints_input, query_pos, query_sine_embed = get_reference(refpoints_unsigmoid)
+                    obj_center, refpoints_input, query_pos, _query_sine_embed = get_reference(refpoints_unsigmoid)
                 else:
-                    obj_center, refpoints_input, query_pos, query_sine_embed = get_reference(
+                    obj_center, refpoints_input, query_pos, _query_sine_embed = get_reference(
                         refpoints_unsigmoid.sigmoid()
                     )
 
@@ -829,26 +832,26 @@ class TransformerDecoderLayer(nn.Module):
             self.instance_kp_layer_scale = nn.Parameter(torch.ones(1) * 1e-6)
         self._export = False
 
-    def with_pos_embed(self, tensor: Tensor, pos: Optional[Tensor]) -> Tensor:
+    def with_pos_embed(self, tensor: Tensor, pos: Tensor | None) -> Tensor:
         return tensor if pos is None else tensor + pos
 
     def forward_post(
         self,
         tgt: Tensor,
         memory: Tensor,
-        tgt_mask: Optional[Tensor] = None,
-        memory_mask: Optional[Tensor] = None,
-        tgt_key_padding_mask: Optional[Tensor] = None,
-        memory_key_padding_mask: Optional[Tensor] = None,
-        query_pos: Optional[Tensor] = None,
-        reference_points: Optional[Tensor] = None,
+        tgt_mask: Tensor | None = None,
+        memory_mask: Tensor | None = None,
+        tgt_key_padding_mask: Tensor | None = None,
+        memory_key_padding_mask: Tensor | None = None,
+        query_pos: Tensor | None = None,
+        reference_points: Tensor | None = None,
         spatial_shapes: Tensor | None = None,
         level_start_index: Tensor | None = None,
         # Keypoint processing parameters
-        keypoint_tgt: Optional[Tensor] = None,  # [B, N, total_kp_per_instance, C]
-        keypoint_pos: Optional[Tensor] = None,  # [B, N, total_kp_per_instance, C]
-        keypoint_class_mask: Optional[Tensor] = None,  # [1 + K, 1 + K]
-        kp_cross_attn_memory: Optional[Tensor] = None,
+        keypoint_tgt: Tensor | None = None,  # [B, N, total_kp_per_instance, C]
+        keypoint_pos: Tensor | None = None,  # [B, N, total_kp_per_instance, C]
+        keypoint_class_mask: Tensor | None = None,  # [1 + K, 1 + K]
+        kp_cross_attn_memory: Tensor | None = None,
     ) -> Tensor | tuple[Tensor, ...]:
         bs, num_queries, _ = tgt.shape
 
@@ -989,18 +992,18 @@ class TransformerDecoderLayer(nn.Module):
         self,
         tgt: Tensor,
         memory: Tensor,
-        tgt_mask: Optional[Tensor] = None,
-        memory_mask: Optional[Tensor] = None,
-        tgt_key_padding_mask: Optional[Tensor] = None,
-        memory_key_padding_mask: Optional[Tensor] = None,
-        query_pos: Optional[Tensor] = None,
-        reference_points: Optional[Tensor] = None,
+        tgt_mask: Tensor | None = None,
+        memory_mask: Tensor | None = None,
+        tgt_key_padding_mask: Tensor | None = None,
+        memory_key_padding_mask: Tensor | None = None,
+        query_pos: Tensor | None = None,
+        reference_points: Tensor | None = None,
         spatial_shapes: Tensor | None = None,
         level_start_index: Tensor | None = None,
-        keypoint_tgt: Optional[Tensor] = None,
-        keypoint_pos: Optional[Tensor] = None,
-        keypoint_class_mask: Optional[Tensor] = None,
-        kp_cross_attn_memory: Optional[Tensor] = None,
+        keypoint_tgt: Tensor | None = None,
+        keypoint_pos: Tensor | None = None,
+        keypoint_class_mask: Tensor | None = None,
+        kp_cross_attn_memory: Tensor | None = None,
     ) -> Tensor | tuple[Tensor, ...]:
         return self.forward_post(
             tgt,
