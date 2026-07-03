@@ -679,24 +679,18 @@ def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[P
                 except ValueError:
                     pass  # traversal detected; fall through to Roboflow convention
                 else:
-                    if split_images.is_dir():
-                        # Derive labels dir by replacing the "images" segment anywhere in
-                        # the path — mirrors Ultralytics img2label_paths() convention.
-                        # Handles trailing-images (val/images) and intermediate-images
-                        # (images/val2017) layouts.  When "images" absent, treat
-                        # split_images as the split root with images/ and labels/ subdirs.
-                        path_parts = split_images.parts
-                        if "images" in path_parts:
-                            idx = path_parts.index("images")
-                            label_parts = path_parts[:idx] + ("labels",) + path_parts[idx + 1 :]
-                            split_labels = Path(*label_parts)
-                            if split_labels.is_dir():
-                                return split_images, split_labels
-                        else:
-                            split_images_sub = split_images / "images"
-                            split_labels_sub = split_images / "labels"
-                            if split_images_sub.is_dir() and split_labels_sub.is_dir():
-                                return split_images_sub, split_labels_sub
+                    parts = split_images.parts
+                    is_dir = split_images.is_dir()
+                    if is_dir and "images" in parts:
+                        idx = parts.index("images")
+                        split_labels = Path(*parts[:idx], "labels", *parts[idx + 1 :])
+                        if split_labels.is_dir():
+                            return split_images, split_labels
+                    elif is_dir:
+                        sub_images = split_images / "images"
+                        sub_labels = split_images / "labels"
+                        if sub_images.is_dir() and sub_labels.is_dir():
+                            return sub_images, sub_labels
     except OSError:
         pass
     except (ValueError, TypeError) as exc:
