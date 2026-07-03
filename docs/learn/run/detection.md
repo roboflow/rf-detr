@@ -117,9 +117,10 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
 
     model = RFDETRMedium()
 
-    video_capture = cv2.VideoCapture("<WEBCAM_INDEX>")
+    WEBCAM_INDEX = 0
+    video_capture = cv2.VideoCapture(WEBCAM_INDEX)
     if not video_capture.isOpened():
-        raise RuntimeError("Failed to open webcam: <WEBCAM_INDEX>")
+        raise RuntimeError(f"Failed to open webcam: {WEBCAM_INDEX}")
 
     while True:
         success, frame_bgr = video_capture.read()

@@ -9,6 +9,9 @@ from typing import Any, Generator
 
 import pytest
 
+# NOTE: Model weights (rf-detr-*.pth) download to the CWD (typically tests/ when running pytest).
+# This is a known limitation. Route: change pretrain_weights default to
+# platformdirs.user_cache_dir("rfdetr") in a future PR.
 from rfdetr.datasets.synthetic import DatasetSplitRatios, generate_coco_dataset
 from rfdetr.utilities.reproducibility import seed_all
 

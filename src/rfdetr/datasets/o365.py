@@ -16,7 +16,10 @@ from PIL import Image
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.utilities.logger import get_logger
 
-Image.MAX_IMAGE_PIXELS = None
+# O365 contains images larger than PIL's default 178M-pixel limit.
+# Set a generous but finite cap (2 billion pixels ~ a 45k x 45k image) instead of
+# disabling the guard entirely, so PIL still protects against decompression bombs.
+Image.MAX_IMAGE_PIXELS = 2_000_000_000
 
 logger = get_logger()
 

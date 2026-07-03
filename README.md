@@ -306,14 +306,12 @@ Our work is built upon [LW-DETR](https://arxiv.org/pdf/2406.03459), [DINOv2](htt
 If you find our work helpful for your research, please consider citing the following BibTeX entry.
 
 ```bibtex
-@misc{rf-detr,
-    title={RF-DETR: Neural Architecture Search for Real-Time Detection Transformers},
-    author={Isaac Robinson and Peter Robicheaux and Matvei Popov and Deva Ramanan and Neehar Peri},
-    year={2025},
-    eprint={2511.09554},
-    archivePrefix={arXiv},
-    primaryClass={cs.CV},
-    url={https://arxiv.org/abs/2511.09554},
+@inproceedings{robinson2026rfdetr,
+  title     = {RF-DETR: Real-Time Detection Transformer},
+  author    = {Robinson, Isaac and Robicheaux, Peter and Popov, Fedor and Ramanan, Deva and Peri, Neehar},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2026},
+  url       = {https://arxiv.org/abs/2511.09554}
 }
 ```
 

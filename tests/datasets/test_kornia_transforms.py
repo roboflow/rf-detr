@@ -700,3 +700,33 @@ class TestUnpackBoxesWithMasks:
 
         assert "masks" in result[0], "masks key must still be present when masks_aug=None"
         assert result[0]["masks"] is original_mask, "Original masks object must be preserved unchanged"
+
+
+class TestGaussNoiseStdRangeWarning:
+    """_make_gauss_noise warns when the configured std range is non-degenerate (GPU uses a fixed upper-bound std)."""
+
+    @pytest.fixture(autouse=True)
+    def _require_kornia(self):
+        pytest.importorskip("kornia")
+
+    def test_warns_for_unequal_std_range(self):
+        """A non-degenerate std_range emits a divergence warning at build time."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_gauss_noise({"std_range": (0.01, 0.05), "p": 0.5})
+
+        mock_warning.assert_called_once()
+
+    def test_no_warning_for_degenerate_std_range(self):
+        """An equal-bound std_range matches the CPU path exactly and stays silent."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_gauss_noise({"std_range": (0.05, 0.05), "p": 0.5})
+
+        mock_warning.assert_not_called()

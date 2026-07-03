@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import glob
 import importlib
+import io
 import json
 import operator
 import os
@@ -19,6 +20,7 @@ from copy import copy, deepcopy
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
+from urllib.parse import urlparse
 
 import numpy as np
 import requests
@@ -260,6 +262,7 @@ class RFDETR:
         self._optimized_resolution = None
         self._optimized_dtype = None
         self._optimized_inplace = False
+        self._has_been_trained = False
 
     def maybe_download_pretrain_weights(self):
         """Download pre-trained weights if they are not already downloaded.
@@ -594,6 +597,9 @@ class RFDETR:
         checkpoint_derived_keys = checkpoint_config_keys - set(kwargs)
 
         model = model_cls(**constructor_kwargs)
+        # The instance now carries checkpoint (trained) weights; flag it so a later
+        # train() call warns that it will restart from pretrain_weights, not continue.
+        model._has_been_trained = True
 
         if checkpoint_derived_keys:
             loaded_config = getattr(model, "model_config", None)
@@ -708,6 +714,15 @@ class RFDETR:
                 'Install them with `pip install "rfdetr[train,loggers]"` and try again.',
             ) from exc
 
+        if getattr(self, "_has_been_trained", False):
+            warnings.warn(
+                "Calling train() on a model that has already been trained or loaded from a checkpoint. "
+                "The new training run will start from the original pretrained weights (pretrain_weights), "
+                "NOT from the in-memory trained state. To continue training, pass resume=<checkpoint_path>.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         # Absorb legacy `callbacks` dict — warn if non-empty, then discard.
         callbacks_dict = kwargs.pop("callbacks", None)
         if callbacks_dict and any(callbacks_dict.values()):
@@ -739,7 +754,7 @@ class RFDETR:
         if run_benchmark:
             warnings.warn(
                 "`do_benchmark` in `.train()` is deprecated since v1.7.0 and will be removed in v1.9.0; "
-                "use `rfdetr benchmark`.",
+                "use the `rfdetr.export.benchmark` module instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -850,6 +865,9 @@ class RFDETR:
 
         # Sync the trained weights back so predict() / export() see the updated model.
         self.model.model = module.model
+        # Mark this instance as trained so a subsequent train() call warns that it will
+        # restart from pretrain_weights rather than continue from the in-memory state.
+        self._has_been_trained = True
         # Invalidate any compiled inference snapshot: it was built from the pre-training
         # weights and must not survive the model reassignment above.
         self.remove_optimized_model()
@@ -1862,7 +1880,11 @@ class RFDETR:
 
         self._ensure_eval_mode_for_unoptimized_inference()
 
-        if not isinstance(images, list):
+        # Determine the return shape from the *input* type, not the runtime batch
+        # length: a single image (path / PIL / tensor) yields a bare Detections,
+        # while a list/tuple always yields a list — even when it holds one image.
+        single_input = not isinstance(images, (list, tuple))
+        if single_input:
             images = [images]
 
         orig_sizes = []
@@ -1871,8 +1893,10 @@ class RFDETR:
 
         for img in images:
             if isinstance(img, str):
-                if img.startswith("http"):
-                    img = requests.get(img, stream=True).raw
+                if urlparse(img).scheme in ("http", "https"):
+                    resp = requests.get(img, timeout=30)
+                    resp.raise_for_status()
+                    img = io.BytesIO(resp.content)
                 img = Image.open(img)
 
             if not isinstance(img, torch.Tensor):
@@ -2103,7 +2127,7 @@ class RFDETR:
             else:
                 predictions_list.append(detections)
 
-        return predictions_list if len(predictions_list) > 1 else predictions_list[0]
+        return predictions_list[0] if single_input else predictions_list
 
     def deploy_to_roboflow(
         self,
@@ -2132,11 +2156,19 @@ class RFDETR:
         Raises:
             ValueError: If the `api_key` is not provided and not found in the
                 environment variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.
+            RuntimeError: If the model was cleared by ``optimize_for_inference(inplace=True)``.
 
         Note:
             Bundle creation is delegated to :meth:`export_for_roboflow`, which can be called independently
             to write ``weights.pt`` and ``class_names.txt`` without a network round-trip.
         """
+        if getattr(self, "_optimized_inplace", False) or self.model.model is None:
+            raise RuntimeError(
+                "Cannot deploy after optimize_for_inference(inplace=True) — "
+                "the model weights have been cleared from memory. "
+                "Call export_for_roboflow() before optimizing, then deploy the exported bundle."
+            )
+
         from roboflow import Roboflow
 
         if api_key is None:
@@ -2181,7 +2213,14 @@ class RFDETR:
             PermissionError: If the process lacks write access to *output_dir* or its parent directory.
             OSError: On disk-full, invalid path, or other filesystem failure during directory creation,
                 file write, or ``torch.save``.
+            RuntimeError: If the model was cleared by ``optimize_for_inference(inplace=True)``.
         """
+        if getattr(self, "_optimized_inplace", False) or self.model.model is None:
+            raise RuntimeError(
+                "Cannot export after optimize_for_inference(inplace=True) — "
+                "the model has been cleared from memory. "
+                "Call export_for_roboflow() before optimizing."
+            )
         os.makedirs(output_dir, exist_ok=True)
         # Write class_names.txt so the Roboflow upload pipeline can discover
         # the class labels without relying on args.class_names in the checkpoint.

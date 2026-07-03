@@ -242,9 +242,12 @@ def _make_gaussian_blur(params: dict[str, Any]) -> Any:
     if blur_limit % 2 == 0:
         blur_limit = blur_limit + 1
     blur_limit = max(3, blur_limit)
+    # Match the CPU albumentations default sigma range while allowing an explicit override via config.
+    sigma_range = params.get("sigma", (0.1, 2.0))
+    blur_sigma = tuple(sigma_range) if len(sigma_range) == 2 else (sigma_range[0], sigma_range[0])
     return RandomGaussianBlur(
         kernel_size=(blur_limit, blur_limit),
-        sigma=(0.1, 2.0),
+        sigma=blur_sigma,
         p=params.get("p", 0.5),
     )
 
@@ -252,11 +255,22 @@ def _make_gaussian_blur(params: dict[str, Any]) -> Any:
 def _make_gauss_noise(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomGaussianNoise`` from aug_config params.
 
-    Kornia takes a single ``std`` value; we use the upper bound of ``std_range`` as an acceptable approximation.
+    Kornia takes a single ``std`` value, so the upper bound of ``std_range`` is used as a fixed standard deviation. When
+    the configured range is non-degenerate this diverges from the CPU (albumentations) path, which samples a fresh std
+    per call; a warning is emitted at build time so the drift is visible.
     """
     from kornia.augmentation import RandomGaussianNoise
 
     std_range = params.get("std_range", (0.01, 0.05))
+    if std_range[0] != std_range[1]:
+        logger.warning(
+            "GPU augmentation (Kornia) uses fixed std=%.3f for GaussianNoise "
+            "(Kornia does not support per-sample std ranges). "
+            "CPU augmentation (albumentations) samples from [%.3f, %.3f].",
+            std_range[1],
+            std_range[0],
+            std_range[1],
+        )
     return RandomGaussianNoise(
         std=std_range[1],
         p=params.get("p", 0.5),
