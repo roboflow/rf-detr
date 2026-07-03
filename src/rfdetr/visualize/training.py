@@ -24,7 +24,7 @@ import os
 import re
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
@@ -272,7 +272,7 @@ def _plot_metric_groups(
     metric_groups: dict[str, list[str]],
     *,
     title: str,
-    output_path: Optional[str],
+    output_path: str | None,
     loss_log_scale: bool,
 ) -> Figure:
     """Build a figure for grouped metrics."""
@@ -331,7 +331,7 @@ def _plot_metric_groups(
 
 def plot_loss_metrics(
     metrics_csv: str,
-    output_path: Optional[str] = None,
+    output_path: str | None = None,
     loss_log_scale: bool = False,
 ) -> Figure:
     """Plot aggregate and component training losses from a PTL ``metrics.csv`` file.
@@ -376,7 +376,7 @@ def plot_loss_metrics(
 
 def plot_map_metrics(
     metrics_csv: str,
-    output_path: Optional[str] = None,
+    output_path: str | None = None,
 ) -> Figure:
     """Plot train/val/test detection and keypoint mAP metrics from a PTL ``metrics.csv`` file.
 
@@ -426,7 +426,7 @@ def plot_map_metrics(
     return _plot_map_columns(raw_df, epoch_df, map_columns, output_path=output_path)
 
 
-def _plot_map_columns(raw_df: Any, epoch_df: Any, metric_columns: list[str], *, output_path: Optional[str]) -> Figure:
+def _plot_map_columns(raw_df: Any, epoch_df: Any, metric_columns: list[str], *, output_path: str | None) -> Figure:
     """Plot mAP metrics on a single axes with line style by split."""
     try:
         import matplotlib
@@ -455,7 +455,7 @@ def _plot_map_columns(raw_df: Any, epoch_df: Any, metric_columns: list[str], *, 
 
 def plot_metrics(
     metrics_csv: str,
-    output_path: Optional[str] = None,
+    output_path: str | None = None,
     loss_log_scale: bool = False,
 ) -> Figure:
     """Read a PTL ``CSVLogger`` metrics file and build a training plot.

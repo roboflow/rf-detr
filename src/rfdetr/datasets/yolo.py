@@ -122,7 +122,7 @@ class _LazyYoloSample:
     polygons: tuple[np.ndarray, ...]
     keypoints: np.ndarray
 
-    def to_detections(self) -> "Detections":
+    def to_detections(self) -> Detections:
         """Materialize the current sample as a supervision ``Detections`` object."""
         from supervision import Detections
 
@@ -152,7 +152,7 @@ class _LazyYoloDetectionDataset:
     def __len__(self) -> int:
         return len(self._samples)
 
-    def __getitem__(self, idx: int) -> tuple[str, np.ndarray, "Detections"]:
+    def __getitem__(self, idx: int) -> tuple[str, np.ndarray, Detections]:
         sample = self._samples[idx]
         try:
             with Image.open(sample.image_path) as image:
@@ -751,7 +751,7 @@ class YoloDetection(VisionDataset):
     ):
         if include_masks and include_keypoints:
             raise ValueError("YOLO segmentation masks and keypoints cannot be loaded at the same time.")
-        super(YoloDetection, self).__init__(img_folder)
+        super().__init__(img_folder)
         self._transforms = transforms
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
@@ -840,7 +840,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
 
     # Prefer data.yaml; fall back to data.yml if present; default to data.yaml for error reporting
     data_file = next((root / f for f in REQUIRED_YOLO_YAML_FILES if (root / f).exists()), root / "data.yaml")
-    img_folder, lb_folder = PATHS[image_set.split("_")[0]]
+    img_folder, lb_folder = PATHS[image_set.split("_", maxsplit=1)[0]]
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
     multi_scale = getattr(args, "multi_scale", False)

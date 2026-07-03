@@ -240,7 +240,17 @@ class RFDETR:
     _model_config_class: type[ModelConfig] = ModelConfig
     _train_config_class: type[TrainConfig] = TrainConfig
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
+        """Initialize with ModelConfig fields as keyword arguments.
+
+        Passes all kwargs to the variant's ModelConfig. Unknown kwargs raise
+        ``pydantic.ValidationError``. See the variant's config class for available
+        parameters (e.g. ``RFDETRSmallConfig``).
+
+        Args:
+            **kwargs: ModelConfig field values (e.g. ``resolution``, ``num_classes``,
+                ``pretrain_weights``, ``gradient_checkpointing``).
+        """
         self.model_config = self.get_model_config(**kwargs)
         self.maybe_download_pretrain_weights()
         self.model = self.get_model(self.model_config)

@@ -220,6 +220,9 @@ def get_dinov2_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: 
     Returns:
         Lr decay rate for the given parameter.
     """
+    # NOTE: near-duplicate of get_vit_lr_decay_rate in training/param_groups.py (same formula,
+    # different layer-key pattern: this matches ".layer.", that matches ".blocks.").
+    # If updating this formula, update the sibling too.
     layer_id = num_layers + 1
     if name.startswith("backbone"):
         if "embeddings" in name:

@@ -245,7 +245,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         num_keypoints_per_class: list[int] | None = None,
         remap_category_ids: bool = False,
     ) -> None:
-        super(CocoDetection, self).__init__(img_folder, ann_file)
+        super().__init__(img_folder, ann_file)
         self._transforms = transforms
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
@@ -258,7 +258,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
             # Reverse mapping from contiguous label indices back to COCO category_id
             self.label2cat = {label: cat_id for cat_id, label in self.cat2label.items()}
             # Expose label-to-category mapping on the underlying COCO API object for evaluators
-            setattr(self.coco, "label2cat", self.label2cat)
+            self.coco.label2cat = self.label2cat
         else:
             self.cat2label = None
             self.label2cat = None
@@ -270,7 +270,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         )
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
-        img, target = super(CocoDetection, self).__getitem__(idx)
+        img, target = super().__getitem__(idx)
         image_id = self.ids[idx]
         target = {"image_id": image_id, "annotations": target}
         img, target = self.prepare(img, target)
@@ -281,7 +281,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         return img, target
 
 
-class ConvertCoco(object):
+class ConvertCoco:
     """Convert a raw COCO annotation dict into model-ready tensors.
 
     Accepts the ``(image, target)`` pair produced by ``torchvision.datasets.CocoDetection`` and returns the same image
@@ -722,7 +722,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
         "test": (root / "test2017", root / "annotations" / "image_info_test-dev2017.json"),
     }
 
-    img_folder, ann_file = PATHS[image_set.split("_")[0]]
+    img_folder, ann_file = PATHS[image_set.split("_", maxsplit=1)[0]]
 
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
@@ -822,7 +822,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
         "test": (root / "test", root / "test" / "_annotations.coco.json"),
     }
 
-    img_folder, ann_file = PATHS[image_set.split("_")[0]]
+    img_folder, ann_file = PATHS[image_set.split("_", maxsplit=1)[0]]
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
     multi_scale = getattr(args, "multi_scale", False)

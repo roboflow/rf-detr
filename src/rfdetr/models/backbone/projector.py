@@ -11,11 +11,11 @@
 # ------------------------------------------------------------------------
 """Projector."""
 
-from typing import Callable, Optional, Sequence, Union
+from collections.abc import Callable, Sequence
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
+from torch import nn
 
 
 class LayerNorm(nn.Module):
@@ -43,7 +43,7 @@ class LayerNorm(nn.Module):
         return x
 
 
-def get_norm(norm: Optional[Union[str, Callable[[int], nn.Module]]], out_channels: int) -> Optional[nn.Module]:
+def get_norm(norm: str | Callable[[int], nn.Module] | None, out_channels: int) -> nn.Module | None:
     """
     Args:
         norm: Either one of BN, SyncBN, FrozenBN, GN;
@@ -74,7 +74,7 @@ def get_activation(name, inplace=False):
     elif name is None:
         module = nn.Identity()
     else:
-        raise AttributeError("Unsupported act type: {}".format(name))
+        raise AttributeError(f"Unsupported act type: {name}")
     return module
 
 
@@ -93,7 +93,7 @@ class ConvX(nn.Module):
         layer_norm=False,
         rms_norm=False,
     ):
-        super(ConvX, self).__init__()
+        super().__init__()
         if not isinstance(kernel, tuple):
             kernel = (kernel, kernel)
         padding = (kernel[0] // 2, kernel[1] // 2)
@@ -182,7 +182,7 @@ class MultiScaleProjector(nn.Module):
             scale_factors: List of scaling factors to upsample or downsample
                 the input features for creating pyramid features.
         """
-        super(MultiScaleProjector, self).__init__()
+        super().__init__()
 
         self.scale_factors = scale_factors
         self.survival_prob = survival_prob
@@ -238,7 +238,7 @@ class MultiScaleProjector(nn.Module):
                     self.use_extra_pool = True
                     continue
                 else:
-                    raise NotImplementedError("Unsupported scale_factor:{}".format(scale))
+                    raise NotImplementedError(f"Unsupported scale_factor:{scale}")
                 layers = nn.Sequential(*layers)
                 stages_sampling[-1].append(layers)
             stages_sampling[-1] = nn.ModuleList(stages_sampling[-1])

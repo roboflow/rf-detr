@@ -55,8 +55,8 @@ class PostProcess(nn.Module):
             ``masks``. Keypoint outputs also contain ``keypoints`` and ``keypoint_precision_cholesky``.
         """
         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
-        out_masks = outputs.get("pred_masks", None)
-        out_keypoints = outputs.get("pred_keypoints", None)
+        out_masks = outputs.get("pred_masks")
+        out_keypoints = outputs.get("pred_keypoints")
         self._validate_outputs(out_logits, out_masks, out_keypoints, target_sizes)
 
         scores, labels, topk_boxes = self._select_topk(out_logits)

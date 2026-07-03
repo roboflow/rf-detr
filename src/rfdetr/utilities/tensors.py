@@ -12,8 +12,9 @@
 # ------------------------------------------------------------------------
 """Tensor utilities: NestedTensor, collate_fn, and helpers."""
 
+from collections.abc import Callable
 from functools import partial
-from typing import Any, Callable
+from typing import Any
 
 import torch
 import torchvision

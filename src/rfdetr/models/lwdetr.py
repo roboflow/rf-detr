@@ -19,7 +19,8 @@
 
 import copy
 import math
-from typing import TYPE_CHECKING, Callable, Optional
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Optional
 
 import torch
 from torch import nn
@@ -255,6 +256,11 @@ class LWDETR(nn.Module):
     @staticmethod
     def _create_keypoint_class_mask(num_keypoints_per_class: list[int]) -> torch.Tensor:
         """Create an attention mask that blocks cross-class keypoint interactions."""
+        # NOTE: near-duplicate of TransformerDecoder._create_keypoint_class_mask in transformer.py
+        # (same mask logic; that one reads self.num_keypoints_per_class and registers a buffer,
+        # this pure static returns the mask). Keep in sync. Not extracted: lwdetr imports
+        # transformer, so a shared helper in transformer would invert the dependency safely but
+        # the differing signatures make a shared function awkward.
         if not num_keypoints_per_class:
             return torch.zeros(1, 1, dtype=torch.bool)
 
@@ -708,7 +714,7 @@ class LWDETR(nn.Module):
             values.append(outputs_keypoints[:-1])
         return [{name: value for name, value in zip(names, layer_values)} for layer_values in zip(*values)]
 
-    def _get_backbone_encoder_layers(self) -> Optional[nn.ModuleList]:
+    def _get_backbone_encoder_layers(self) -> nn.ModuleList | None:
         """Resolve the list of transformer blocks/layers from backbone[0].encoder.
 
         Supports multiple backbone architectures:

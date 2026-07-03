@@ -249,9 +249,7 @@ class OnnxOptimizer:
     def find_node_input(self, node, name: str = None, value=None) -> int:
         index = -1
         for i, inp in enumerate(node.inputs):
-            if isinstance(name, str) and inp.name == name:
-                index = i
-            elif inp == value:
+            if isinstance(name, str) and inp.name == name or inp == value:
                 index = i
         if index < 0:
             raise ValueError(f"not found {name}({value}) in node.inputs")
@@ -260,9 +258,7 @@ class OnnxOptimizer:
     def find_node_output(self, node, name: str = None, value=None) -> int:
         index = -1
         for i, inp in enumerate(node.outputs):
-            if isinstance(name, str) and inp.name == name:
-                index = i
-            elif inp == value:
+            if isinstance(name, str) and inp.name == name or inp == value:
                 index = i
         if index < 0:
             raise ValueError(f"not found {name}({value}) in node.outputs")
@@ -604,12 +600,12 @@ class OnnxOptimizer:
         # K and V must have the same output which we feed into fmha plugin
         output_tensor_k = node_k.outputs[0]
         # Create tensor
-        constant_weights_kv = gs.Constant("Weights_KV_{}".format(fused_kv_idx), np.ascontiguousarray(weights_kv))
+        constant_weights_kv = gs.Constant(f"Weights_KV_{fused_kv_idx}", np.ascontiguousarray(weights_kv))
 
         # Create fused KV node
         fused_kv_node = gs.Node(
             op="MatMul",
-            name="MatMul_KV_{}".format(fused_kv_idx),
+            name=f"MatMul_KV_{fused_kv_idx}",
             inputs=[input_tensor, constant_weights_kv],
             outputs=[output_tensor_k],
         )
@@ -651,23 +647,21 @@ class OnnxOptimizer:
 
         # Reshape dims
         shape = gs.Constant(
-            "Shape_KV_{}".format(mhca_idx),
+            f"Shape_KV_{mhca_idx}",
             np.ascontiguousarray(np.array([0, 0, heads, 2, dims_per_head], dtype=np.int64)),
         )
 
         # Reshape output tensor
-        output_reshape = gs.Variable("ReshapeKV_{}".format(mhca_idx), np.dtype(np.float16), None)
+        output_reshape = gs.Variable(f"ReshapeKV_{mhca_idx}", np.dtype(np.float16), None)
         # Create fMHA plugin
-        reshape = gs.Node(
-            op="Reshape", name="Reshape_{}".format(mhca_idx), inputs=[output_kv, shape], outputs=[output_reshape]
-        )
+        reshape = gs.Node(op="Reshape", name=f"Reshape_{mhca_idx}", inputs=[output_kv, shape], outputs=[output_reshape])
         # Insert node
         self.graph.nodes.append(reshape)
 
         # Create fMHCA plugin
         fmhca = gs.Node(
             op="fMHCA",
-            name="fMHCA_{}".format(mhca_idx),
+            name=f"fMHCA_{mhca_idx}",
             inputs=[output_q, output_reshape],
             outputs=[output_final_tranpose],
         )
@@ -678,10 +672,10 @@ class OnnxOptimizer:
         node_q.o(num_dynamic).outputs[0] = output_q
 
         if num_dynamic > 0:
-            reshape2_input1_out = gs.Variable("Reshape2_fmhca{}_out".format(mhca_idx), np.dtype(np.int64), None)
+            reshape2_input1_out = gs.Variable(f"Reshape2_fmhca{mhca_idx}_out", np.dtype(np.int64), None)
             reshape2_input1_shape = gs.Node(
                 "Shape",
-                "Reshape2_fmhca{}_shape".format(mhca_idx),
+                f"Reshape2_fmhca{mhca_idx}_shape",
                 inputs=[node_q.inputs[0]],
                 outputs=[reshape2_input1_out],
             )
@@ -721,12 +715,12 @@ class OnnxOptimizer:
         # Q, K and V must have the same output which we feed into fmha plugin
         output_tensor_k = node_k.outputs[0]
         # Concat and interleave weights such that the output of fused QKV GEMM has [b, s, h, 3, d] shape
-        constant_weights_qkv = gs.Constant("Weights_QKV_{}".format(fused_qkv_idx), np.ascontiguousarray(weights_qkv))
+        constant_weights_qkv = gs.Constant(f"Weights_QKV_{fused_qkv_idx}", np.ascontiguousarray(weights_qkv))
 
         # Created a fused node
         fused_qkv_node = gs.Node(
             op="MatMul",
-            name="MatMul_QKV_{}".format(fused_qkv_idx),
+            name=f"MatMul_QKV_{fused_qkv_idx}",
             inputs=[input_tensor, constant_weights_qkv],
             outputs=[output_tensor_k],
         )
@@ -769,30 +763,26 @@ class OnnxOptimizer:
 
         # Reshape dims
         shape = gs.Constant(
-            "Shape_QKV_{}".format(mha_idx),
+            f"Shape_QKV_{mha_idx}",
             np.ascontiguousarray(np.array([0, 0, heads, 3, dims_per_head], dtype=np.int64)),
         )
 
         # Reshape output tensor
-        output_shape = gs.Variable("ReshapeQKV_{}".format(mha_idx), np.dtype(np.float16), None)
+        output_shape = gs.Variable(f"ReshapeQKV_{mha_idx}", np.dtype(np.float16), None)
         # Create fMHA plugin
-        reshape = gs.Node(
-            op="Reshape", name="Reshape_{}".format(mha_idx), inputs=[output_qkv, shape], outputs=[output_shape]
-        )
+        reshape = gs.Node(op="Reshape", name=f"Reshape_{mha_idx}", inputs=[output_qkv, shape], outputs=[output_shape])
         # Insert node
         self.graph.nodes.append(reshape)
 
         # Create fMHA plugin
-        fmha = gs.Node(
-            op="fMHA_V2", name="fMHA_{}".format(mha_idx), inputs=[output_shape], outputs=[output_final_tranpose]
-        )
+        fmha = gs.Node(op="fMHA_V2", name=f"fMHA_{mha_idx}", inputs=[output_shape], outputs=[output_final_tranpose])
         # Insert node
         self.graph.nodes.append(fmha)
 
         if num_dynamic > 0:
-            reshape2_input1_out = gs.Variable("Reshape2_{}_out".format(mha_idx), np.dtype(np.int64), None)
+            reshape2_input1_out = gs.Variable(f"Reshape2_{mha_idx}_out", np.dtype(np.int64), None)
             reshape2_input1_shape = gs.Node(
-                "Shape", "Reshape2_{}_shape".format(mha_idx), inputs=[node_qkv.inputs[0]], outputs=[reshape2_input1_out]
+                "Shape", f"Reshape2_{mha_idx}_shape", inputs=[node_qkv.inputs[0]], outputs=[reshape2_input1_out]
             )
             self.graph.nodes.append(reshape2_input1_shape)
             final_tranpose.o().inputs[1] = reshape2_input1_out
