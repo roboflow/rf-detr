@@ -5,9 +5,12 @@
 # ------------------------------------------------------------------------
 """OKS keypoint mAP metric backed by :class:`~rfdetr.evaluation.coco_eval.CocoEvaluator`."""
 
+from __future__ import annotations
+
 from enum import Enum
 from typing import Any
 
+import numpy as np
 import torch
 
 from rfdetr.evaluation.coco_eval import CocoEvaluator
@@ -238,7 +241,8 @@ class MetricKeypointOKS:
             evaluator.update(batch)
         evaluator.synchronize_between_processes()
         evaluator.accumulate()
-        stats = evaluator.coco_eval["keypoints"].stats
+        coco_eval_entry: Any = evaluator.coco_eval["keypoints"]
+        stats: np.ndarray[Any, Any] = coco_eval_entry.stats
         assert stats.shape == _KPS_STATS_SHAPE, (
             f"Expected coco keypoint stats shape {_KPS_STATS_SHAPE}, got {stats.shape}; "
             "pycocotools _summarizeKps() contract violated — check faster_coco_eval version"
