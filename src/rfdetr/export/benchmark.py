@@ -115,7 +115,11 @@ def post_process(outputs, target_sizes, num_queries: int = _DEFAULT_NUM_QUERIES)
     assert target_sizes.shape[1] == 2
 
     prob = out_logits.sigmoid()
-    topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), num_queries, dim=1)
+    flat_scores = prob.view(out_logits.shape[0], -1)
+    # Clamp k to the flattened dimension: when num_queries is a fallback for a dynamic-axis model
+    # it may exceed num_queries*num_classes and trigger a topk runtime error.
+    k = min(num_queries, flat_scores.shape[1])
+    topk_values, topk_indexes = torch.topk(flat_scores, k, dim=1)
     scores = topk_values
     topk_boxes = topk_indexes // out_logits.shape[2]
     labels = topk_indexes % out_logits.shape[2]
