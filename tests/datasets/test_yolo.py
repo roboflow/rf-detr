@@ -996,6 +996,44 @@ class TestResolveYoloSplitDirs:
         assert img == tmp_path / "val" / "images"
         assert lb == tmp_path / "val" / "labels"
 
+    def test_yaml_declared_path_absent_on_disk_falls_back_to_roboflow(self, tmp_path: Path) -> None:
+        """Yaml declares a split path that does not exist; must fall back to Roboflow convention."""
+        (tmp_path / "data.yaml").write_text(
+            "path: .\ntrain: train/images\nval: nonexistent/images\nnames:\n  0: person\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "valid" / "images").mkdir(parents=True)
+        (tmp_path / "valid" / "labels").mkdir(parents=True)
+        data_file = tmp_path / "data.yaml"
+        img, lb = _resolve_yolo_split_dirs(tmp_path, data_file, "val")
+        assert img == tmp_path / "valid" / "images"
+        assert lb == tmp_path / "valid" / "labels"
+
+    def test_test_split_falls_back_when_yaml_has_no_test_key(self, tmp_path: Path) -> None:
+        """When yaml exists but has no 'test' key, return root/test/images convention."""
+        (tmp_path / "data.yaml").write_text(
+            "path: .\ntrain: train/images\nval: val/images\nnames:\n  0: person\n",
+            encoding="utf-8",
+        )
+        data_file = tmp_path / "data.yaml"
+        img, lb = _resolve_yolo_split_dirs(tmp_path, data_file, "test")
+        assert img == tmp_path / "test" / "images"
+        assert lb == tmp_path / "test" / "labels"
+
+    def test_path_traversal_in_yaml_does_not_escape_root(self, tmp_path: Path) -> None:
+        """Traversal sequence in yaml split path must not escape dataset root."""
+        outside = tmp_path.parent / "outside_dataset" / "images"
+        outside_labels = tmp_path.parent / "outside_dataset" / "labels"
+        outside.mkdir(parents=True)
+        outside_labels.mkdir(parents=True)
+        (tmp_path / "data.yaml").write_text(
+            "path: .\nval: ../outside_dataset/images\nnames:\n  0: person\n",
+            encoding="utf-8",
+        )
+        data_file = tmp_path / "data.yaml"
+        img, _ = _resolve_yolo_split_dirs(tmp_path, data_file, "val")
+        assert not str(img).startswith(str(tmp_path.parent / "outside_dataset"))
+
 
 class TestIsValidYoloDatasetUltralytics:
     """is_valid_yolo_dataset must accept both val/ (Ultralytics) and valid/ (Roboflow) layouts."""
@@ -1054,8 +1092,7 @@ class TestBuildRoboflowFromYoloUltralytics:
             build_roboflow_from_yolo("val", args, resolution=640)
 
         _, kwargs = mock_dataset.call_args
-        assert "val" in kwargs["img_folder"]
-        assert "valid" not in kwargs["img_folder"]
+        assert kwargs["img_folder"] == str(tmp_path / "val" / "images")
 
     def test_roboflow_layout_still_works(self, tmp_path: Path) -> None:
         """Roboflow export layout (valid/) must keep working after the change."""
