@@ -632,6 +632,70 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
     return contains_required_yolo_yaml and contains_required_split_dirs and contains_required_data_subdirs
 
 
+def _resolve_split_from_yaml(root: Path, data_file: Path, split: str) -> tuple[Path, Path] | None:
+    """Try to resolve image and label dirs for ``split`` from ``data_file``.
+
+    Returns ``None`` when the YAML file is absent, declares no usable path for
+    the requested split, or the resolved path does not exist on disk.
+
+    Args:
+        root: Dataset root directory.
+        data_file: Path to ``data.yaml`` or ``data.yml``.
+        split: One of ``"train"``, ``"val"``, or ``"test"``.
+
+    Returns:
+        ``(images_dir, labels_dir)`` on success, or ``None`` to signal fallback.
+    """
+    if not data_file.exists():
+        return None
+    try:
+        data = _load_yaml_mapping(data_file)
+        yaml_base = Path(data.get("path", "")) if data.get("path") else root
+        if not yaml_base.is_absolute():
+            yaml_base = root / yaml_base
+
+        raw_path: str | None = data.get(split)
+        if raw_path is None and split == "val":
+            raw_path = data.get("valid")
+
+        if raw_path is not None:
+            split_images = yaml_base / raw_path
+            # Path traversal guard: reject yaml-declared paths that escape
+            # the dataset root (e.g. "../../other_project/val/images").
+            try:
+                split_images.resolve().relative_to(root.resolve())
+            except ValueError:
+                return None  # traversal detected; signal fallback
+            parts = split_images.parts
+            is_dir = split_images.is_dir()
+            if is_dir and "images" in parts:
+                idx = parts.index("images")
+                split_labels = Path(*parts[:idx], "labels", *parts[idx + 1 :])
+                if split_labels.is_dir():
+                    return split_images, split_labels
+            elif is_dir:
+                sub_images = split_images / "images"
+                sub_labels = split_images / "labels"
+                if sub_images.is_dir() and sub_labels.is_dir():
+                    return sub_images, sub_labels
+    except OSError:
+        pass
+    except (ValueError, TypeError) as exc:
+        logger.warning(
+            "Could not resolve YAML split path for %r in %s: %s — falling back to Roboflow directory convention.",
+            split,
+            data_file,
+            exc,
+        )
+    except yaml.YAMLError as exc:
+        logger.warning(
+            "Failed to parse YAML file %s: %s — falling back to Roboflow directory convention.",
+            data_file,
+            exc,
+        )
+    return None
+
+
 def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[Path, Path]:
     """Resolve image and label directories for a YOLO dataset split.
 
@@ -659,53 +723,9 @@ def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[P
     Returns:
         ``(images_dir, labels_dir)`` as resolved :class:`~pathlib.Path` objects.
     """
-    if data_file.exists():
-        try:
-            data = _load_yaml_mapping(data_file)
-            yaml_base = Path(data.get("path", "")) if data.get("path") else root
-            if not yaml_base.is_absolute():
-                yaml_base = root / yaml_base
-
-            raw_path: str | None = data.get(split)
-            if raw_path is None and split == "val":
-                raw_path = data.get("valid")
-
-            if raw_path is not None:
-                split_images = yaml_base / raw_path
-                # Path traversal guard: reject yaml-declared paths that escape
-                # the dataset root (e.g. "../../other_project/val/images").
-                try:
-                    split_images.resolve().relative_to(root.resolve())
-                except ValueError:
-                    pass  # traversal detected; fall through to Roboflow convention
-                else:
-                    parts = split_images.parts
-                    is_dir = split_images.is_dir()
-                    if is_dir and "images" in parts:
-                        idx = parts.index("images")
-                        split_labels = Path(*parts[:idx], "labels", *parts[idx + 1 :])
-                        if split_labels.is_dir():
-                            return split_images, split_labels
-                    elif is_dir:
-                        sub_images = split_images / "images"
-                        sub_labels = split_images / "labels"
-                        if sub_images.is_dir() and sub_labels.is_dir():
-                            return sub_images, sub_labels
-        except OSError:
-            pass
-        except (ValueError, TypeError) as exc:
-            logger.warning(
-                "Could not resolve YAML split path for %r in %s: %s — falling back to Roboflow directory convention.",
-                split,
-                data_file,
-                exc,
-            )
-        except yaml.YAMLError as exc:
-            logger.warning(
-                "Failed to parse YAML file %s: %s — falling back to Roboflow directory convention.",
-                data_file,
-                exc,
-            )
+    result = _resolve_split_from_yaml(root, data_file, split)
+    if result is not None:
+        return result
 
     roboflow_map = {"train": "train", "val": "valid", "test": "test"}
     mapped = roboflow_map.get(split, split)
