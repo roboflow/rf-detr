@@ -33,6 +33,7 @@ from rfdetr.datasets.coco import (
 
 REQUIRED_YOLO_YAML_FILES = ["data.yaml", "data.yml"]
 REQUIRED_SPLIT_DIRS = ["train", "valid"]
+_VALID_VAL_DIR_NAMES = ("valid", "val")
 REQUIRED_DATA_SUBDIRS = ["images", "labels"]
 YOLO_IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpg", ".jpeg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
 
@@ -590,7 +591,8 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
 
     We accept a dataset to be in yolo format if the following conditions are met:
     - The dataset_dir contains a data.yaml or data.yml file
-    - The dataset_dir contains "train" and "valid" subdirectories, each containing "images" and "labels" subdirectories
+    - The dataset_dir contains "train" and either "valid" or "val" subdirectories,
+      each containing "images" and "labels" subdirectories
     - The "test" subdirectory is optional
 
     Returns a boolean indicating whether the dataset is in correct yolo format.
@@ -598,15 +600,77 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
     contains_required_yolo_yaml = any(
         os.path.exists(os.path.join(dataset_dir, yaml_file)) for yaml_file in REQUIRED_YOLO_YAML_FILES
     )
-    contains_required_split_dirs = all(
-        os.path.exists(os.path.join(dataset_dir, split_dir)) for split_dir in REQUIRED_SPLIT_DIRS
+    has_train = os.path.exists(os.path.join(dataset_dir, "train"))
+    has_val = any(os.path.exists(os.path.join(dataset_dir, d)) for d in _VALID_VAL_DIR_NAMES)
+    contains_required_split_dirs = has_train and has_val
+
+    val_dir_name = next(
+        (d for d in _VALID_VAL_DIR_NAMES if os.path.exists(os.path.join(dataset_dir, d))),
+        "valid",
     )
+    active_splits = ["train", val_dir_name]
     contains_required_data_subdirs = all(
         os.path.exists(os.path.join(dataset_dir, split_dir, data_subdir))
-        for split_dir in REQUIRED_SPLIT_DIRS
+        for split_dir in active_splits
         for data_subdir in REQUIRED_DATA_SUBDIRS
     )
     return contains_required_yolo_yaml and contains_required_split_dirs and contains_required_data_subdirs
+
+
+def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[Path, Path]:
+    """Resolve image and label directories for a YOLO dataset split.
+
+    Supports both Roboflow (``valid/``) and Ultralytics (``val/``, paths in
+    ``data.yaml``) layouts.  When the YAML file declares ``train``/``val``/
+    ``test`` path keys the function uses those; otherwise it falls back to the
+    existing Roboflow convention with an additional check for ``val/`` when
+    ``valid/`` is absent.
+
+    Args:
+        root: Dataset root directory.
+        data_file: Path to ``data.yaml`` or ``data.yml``.
+        split: One of ``"train"``, ``"val"``, or ``"test"``.
+
+    Returns:
+        ``(images_dir, labels_dir)`` as resolved :class:`~pathlib.Path` objects.
+    """
+    yaml_split_key = split if split != "val" else "val"
+
+    try:
+        if data_file.exists():
+            data = _load_yaml_mapping(data_file)
+            yaml_base = Path(data.get("path", "")) if data.get("path") else root
+            if not yaml_base.is_absolute():
+                yaml_base = root / yaml_base
+
+            raw_path: str | None = data.get(yaml_split_key)
+            if raw_path is None and split == "val":
+                raw_path = data.get("valid")
+
+            if raw_path is not None:
+                split_images = yaml_base / raw_path
+                if split_images.is_dir():
+                    if split_images.name == "images":
+                        split_labels = split_images.parent / "labels"
+                    else:
+                        split_labels = split_images / "labels"
+                        split_images = split_images / "images"
+                    return split_images, split_labels
+    except (OSError, ValueError, TypeError):
+        pass
+
+    roboflow_map = {"train": "train", "val": "valid", "test": "test"}
+    mapped = roboflow_map.get(split, split)
+    img_dir = root / mapped / "images"
+    lb_dir = root / mapped / "labels"
+
+    if split == "val" and not img_dir.exists():
+        for alt in _VALID_VAL_DIR_NAMES:
+            candidate = root / alt / "images"
+            if candidate.is_dir():
+                return candidate, root / alt / "labels"
+
+    return img_dir, lb_dir
 
 
 class ConvertYolo:
@@ -809,10 +873,11 @@ class YoloDetection(VisionDataset):
 
 
 def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> YoloDetection:
-    """Build a Roboflow YOLO-format dataset.
+    """Build a YOLO-format dataset from Roboflow or Ultralytics directory layouts.
 
-    This uses Roboflow's standard YOLO directory structure (train/valid/test folders with images/ and labels/
-    subdirectories).
+    Supports both Roboflow (``train/valid/test``) and Ultralytics (``train/val/test``,
+    with ``data.yaml`` path keys) directory structures.  Split directories are resolved
+    via :func:`_resolve_yolo_split_dirs`.
 
     Args:
         image_set: Dataset split to load. One of ``"train"``, ``"val"``, or
@@ -830,16 +895,10 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     root = Path(args.dataset_dir)
     assert root.exists(), f"provided Roboflow path {root} does not exist"
 
-    # YOLO format uses images/ and labels/ subdirectories
-    PATHS = {  # noqa: N806
-        "train": (root / "train" / "images", root / "train" / "labels"),
-        "val": (root / "valid" / "images", root / "valid" / "labels"),
-        "test": (root / "test" / "images", root / "test" / "labels"),
-    }
-
     # Prefer data.yaml; fall back to data.yml if present; default to data.yaml for error reporting
     data_file = next((root / f for f in REQUIRED_YOLO_YAML_FILES if (root / f).exists()), root / "data.yaml")
-    img_folder, lb_folder = PATHS[image_set.split("_")[0]]
+    split_key = image_set.split("_")[0]
+    img_folder, lb_folder = _resolve_yolo_split_dirs(root, data_file, split_key)
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
     multi_scale = getattr(args, "multi_scale", False)
