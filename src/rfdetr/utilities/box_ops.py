@@ -60,7 +60,9 @@ def box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> tuple[torch.Tensor, t
     union = area1[:, None] + area2 - inter
 
     eps = 1e-7
-    iou = inter / (union + eps)
+    # Clamp only the degenerate (union==0) case so identical non-degenerate boxes
+    # yield IoU==1.0 exactly; adding eps unconditionally would break that identity.
+    iou = inter / union.clamp(min=eps)
     return iou, union
 
 
@@ -81,7 +83,8 @@ def generalized_box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Ten
     area = wh[:, :, 0] * wh[:, :, 1]
 
     eps = 1e-7
-    return iou - (area - union) / (area + eps)
+    # Clamp only when enclosing area is zero (degenerate enclosing box) so normal boxes remain exact.
+    return iou - (area - union) / area.clamp(min=eps)
 
 
 def masks_to_boxes(masks: torch.Tensor) -> torch.Tensor:
