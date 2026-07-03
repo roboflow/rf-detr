@@ -2642,7 +2642,7 @@
 <p class="admonition-title">Installation</p>
 <p><a href="https://badge.fury.io/py/rfdetr"><img alt="version" src="https://badge.fury.io/py/rfdetr.svg" width="125" height="20" /></a>
 <a href="https://badge.fury.io/py/rfdetr"><img alt="python-version" src="https://img.shields.io/pypi/pyversions/rfdetr" width="198" height="20" /></a>
-<a href="https://github.com/roboflow/rfdetr/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/pypi/l/rfdetr" width="164" height="20" /></a>
+<a href="https://github.com/roboflow/rf-detr/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/pypi/l/rfdetr" width="164" height="20" /></a>
 <a href="https://pypistats.org/packages/rfdetr"><img alt="downloads" src="https://img.shields.io/pypi/dm/rfdetr" width="258" height="20" /></a></p>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">pip</label><label for="__tabbed_1_2">uv</label></div>
 <div class="tabbed-content">
@@ -2897,7 +2897,7 @@ RF-DETR Keypoint (Preview) detects 17 body keypoints per person on COCO, achievi
 <p><strong>Is RF-DETR open source?</strong>
 Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. XLarge and 2XLarge models require the <code>rfdetr[plus]</code> package (PML 1.0 license).</p>
 <p><strong>How do I fine-tune RF-DETR on a custom dataset?</strong>
-Instantiate a model and call <code>model.train(...)</code> with your dataset directory in COCO JSON or YOLO format. Example: <code>model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4)</code>. The model downloads pretrained weights automatically and resumes from the best checkpoint.</p>
+Instantiate a model and call <code>model.train(...)</code> with your dataset directory in COCO JSON or YOLO format. Example: <code>model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4)</code>. The model downloads pretrained weights automatically and saves best checkpoints automatically (use <code>resume=</code> to continue from one).</p>
 <p><strong>How do I export RF-DETR to ONNX or TensorRT?</strong>
 Call <code>model.export(format="onnx")</code> after training or loading a checkpoint. ONNX export works on CPU and produces a single <code>.onnx</code> file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, first export to ONNX and then convert the <code>.onnx</code> model with TensorRT tooling or helpers such as <code>trtexec</code>; this requires TensorRT and a CUDA GPU.</p>
 <p><strong>Which RF-DETR model size should I use?</strong>
@@ -2925,7 +2925,7 @@ RF-DETR-Nano (2.3 ms, 67.6 AP50 on COCO) is best for edge and real-time applic
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 3, 2026 14:22:23 UTC">2026-07-03 14:22:23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 3, 2026 19:26:12 UTC">2026-07-03 19:26:12</span>
   </span>
 
     

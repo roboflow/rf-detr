@@ -4902,7 +4902,7 @@ the same object.</p>
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.on_train_batch_start(batch)" class="doc doc-heading doc-heading-parameter">                  <code>batch</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.on_train_batch_start(batch)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="typing.Tuple">Tuple</span></code>
+                  <code><span title="tuple">tuple</span></code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -4970,7 +4970,7 @@ independently; detection and segmentation models keep Lightning's automatic opti
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.training_step(batch)" class="doc doc-heading doc-heading-parameter">                  <code>batch</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.training_step(batch)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="typing.Tuple">Tuple</span></code>
+                  <code><span title="tuple">tuple</span></code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5080,7 +5080,7 @@ independently; detection and segmentation models keep Lightning's automatic opti
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.validation_step(batch)" class="doc doc-heading doc-heading-parameter">                  <code>batch</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.validation_step(batch)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="typing.Tuple">Tuple</span></code>
+                  <code><span title="tuple">tuple</span></code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5122,7 +5122,7 @@ independently; detection and segmentation models keep Lightning's automatic opti
       <tbody>
           <tr class="doc-section-item">
             <td>
-                  <code><span title="typing.Dict">Dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5171,7 +5171,7 @@ training).</p>
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.test_step(batch)" class="doc doc-heading doc-heading-parameter">                  <code>batch</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.test_step(batch)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="typing.Tuple">Tuple</span></code>
+                  <code><span title="tuple">tuple</span></code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5213,7 +5213,7 @@ training).</p>
       <tbody>
           <tr class="doc-section-item">
             <td>
-                  <code><span title="typing.Dict">Dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5259,7 +5259,7 @@ training).</p>
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.predict_step(batch)" class="doc doc-heading doc-heading-parameter">                  <code>batch</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.predict_step(batch)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="typing.Tuple">Tuple</span></code>
+                  <code><span title="tuple">tuple</span></code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5360,7 +5360,7 @@ run regardless of dataset size or accumulation settings.</p>
       <tbody>
           <tr class="doc-section-item">
             <td>
-                  <code><span title="typing.Dict">Dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5425,7 +5425,7 @@ non-fused path (FP16 + GradScaler or FP32) we delegate to <code>super()</code> t
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_val)" class="doc doc-heading doc-heading-parameter">                  <code>gradient_clip_val</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_val)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="typing.Optional">Optional</span>[<span title="float">float</span>]</code>
+                  <code><span title="float">float</span> | None</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5441,7 +5441,7 @@ non-fused path (FP16 + GradScaler or FP32) we delegate to <code>super()</code> t
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_algorithm)" class="doc doc-heading doc-heading-parameter">                  <code>gradient_clip_algorithm</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_algorithm)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="typing.Optional">Optional</span>[<span title="str">str</span>]</code>
+                  <code><span title="str">str</span> | None</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5707,7 +5707,7 @@ yet or the dataset does not expose COCO-style category information.</p>
       <tbody>
           <tr class="doc-section-item">
             <td>
-                  <code><span title="typing.Optional">Optional</span>[<span title="typing.List">List</span>[<span title="str">str</span>]]</code>
+                  <code><span title="list">list</span>[<span title="str">str</span>] | None</code>
             </td>
             <td>
               <div class="doc-md-description">
