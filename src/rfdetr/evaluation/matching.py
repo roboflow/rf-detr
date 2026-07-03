@@ -124,9 +124,9 @@ def _match_single_class(
 
     total_gt = int((~gt_crowd).sum().item())
     return (
-        np.asarray(pred_scores_sorted.float().cpu().numpy(), dtype=np.float32),  # pyright: ignore[reportUnknownMemberType]
-        np.asarray(pred_match.cpu().numpy(), dtype=np.int64),  # pyright: ignore[reportUnknownMemberType]
-        np.asarray(pred_ignore.cpu().numpy(), dtype=np.bool_),  # pyright: ignore[reportUnknownMemberType]
+        np.asarray(pred_scores_sorted.float().cpu().numpy(), dtype=np.float32),
+        np.asarray(pred_match.cpu().numpy(), dtype=np.int64),
+        np.asarray(pred_ignore.cpu().numpy(), dtype=np.bool_),
         total_gt,
     )
 
@@ -187,8 +187,8 @@ def build_matching_data(
         )
         gt_crowd = raw_crowd.bool()
 
-        gt_label_ids = cast("list[int]", gt_labels.tolist())  # pyright: ignore[reportUnknownMemberType]
-        pred_label_ids = cast("list[int]", pred_labels.tolist())  # pyright: ignore[reportUnknownMemberType]
+        gt_label_ids = cast(list[int], gt_labels.tolist())
+        pred_label_ids = cast(list[int], pred_labels.tolist())
         all_class_ids: set[int] = set(gt_label_ids) | set(pred_label_ids)
 
         for class_id in all_class_ids:
@@ -211,11 +211,11 @@ def build_matching_data(
 
             if n_gt == 0:
                 # TODO: support bfloat16 natively once numpy adds bf16 dtype
-                sc = np.asarray(p_scores.float().cpu().numpy(), dtype=np.float32)  # pyright: ignore[reportUnknownMemberType]
+                sc = np.asarray(p_scores.float().cpu().numpy(), dtype=np.float32)
                 order = np.argsort(-sc)
-                cast("list[float]", entry["scores"]).extend(sc[order].tolist())
-                cast("list[int]", entry["matches"]).extend([0] * n_pred)
-                cast("list[bool]", entry["ignore"]).extend([False] * n_pred)
+                cast(list[float], entry["scores"]).extend(sc[order].tolist())
+                cast(list[int], entry["matches"]).extend([0] * n_pred)
+                cast(list[bool], entry["ignore"]).extend([False] * n_pred)
                 continue
 
             if iou_type == "bbox":
@@ -231,9 +231,9 @@ def build_matching_data(
                 p_scores, p_items, gt_items, gt_crowd_c, iou_threshold, iou_type
             )
 
-            cast("list[float]", entry["scores"]).extend(scores_np.tolist())
-            cast("list[int]", entry["matches"]).extend(matches_np.tolist())
-            cast("list[bool]", entry["ignore"]).extend(ignore_np.tolist())
+            cast(list[float], entry["scores"]).extend(scores_np.tolist())
+            cast(list[int], entry["matches"]).extend(matches_np.tolist())
+            cast(list[bool], entry["ignore"]).extend(ignore_np.tolist())
             entry["total_gt"] = cast(int, entry["total_gt"]) + total_gt
 
     return {

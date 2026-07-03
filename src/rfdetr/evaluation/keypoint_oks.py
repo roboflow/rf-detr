@@ -208,9 +208,9 @@ class MetricKeypointOKS:
         and accumulates COCO keypoint statistics.
 
         Returns:
-            Dict with float values for keys :data:`METRIC_KEY_MAP` (mAP@50:95),
-            :data:`METRIC_KEY_MAP_50` (AP@50), :data:`METRIC_KEY_MAP_75` (AP@75),
-            and :data:`METRIC_KEY_MAR` (AR@50:95).  A value of ``-1.0`` indicates
+            Dict with float values for keys :attr:`OKSKey.MAP` (mAP@50:95),
+            :attr:`OKSKey.MAP_50` (AP@50), :attr:`OKSKey.MAP_75` (AP@75),
+            and :attr:`OKSKey.MAR` (AR@50:95).  A value of ``-1.0`` indicates
             the statistic was not available (e.g. no predictions matched any ground-truth
             annotation).  Callers should filter ``value < 0`` before logging.
 
