@@ -659,8 +659,8 @@ def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[P
     Returns:
         ``(images_dir, labels_dir)`` as resolved :class:`~pathlib.Path` objects.
     """
-    try:
-        if data_file.exists():
+    if data_file.exists():
+        try:
             data = _load_yaml_mapping(data_file)
             yaml_base = Path(data.get("path", "")) if data.get("path") else root
             if not yaml_base.is_absolute():
@@ -691,21 +691,21 @@ def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[P
                         sub_labels = split_images / "labels"
                         if sub_images.is_dir() and sub_labels.is_dir():
                             return sub_images, sub_labels
-    except OSError:
-        pass
-    except (ValueError, TypeError) as exc:
-        logger.warning(
-            "Could not resolve YAML split path for %r in %s: %s — falling back to Roboflow directory convention.",
-            split,
-            data_file,
-            exc,
-        )
-    except yaml.YAMLError as exc:
-        logger.warning(
-            "Failed to parse YAML file %s: %s — falling back to Roboflow directory convention.",
-            data_file,
-            exc,
-        )
+        except OSError:
+            pass
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "Could not resolve YAML split path for %r in %s: %s — falling back to Roboflow directory convention.",
+                split,
+                data_file,
+                exc,
+            )
+        except yaml.YAMLError as exc:
+            logger.warning(
+                "Failed to parse YAML file %s: %s — falling back to Roboflow directory convention.",
+                data_file,
+                exc,
+            )
 
     roboflow_map = {"train": "train", "val": "valid", "test": "test"}
     mapped = roboflow_map.get(split, split)
