@@ -260,7 +260,6 @@ overrides = [
   { module = [
     "torchvision", "torchvision.*",
     "pycocotools", "pycocotools.*",
-    "faster_coco_eval", "faster_coco_eval.*",
     "timm", "timm.*",
     "einops", "einops.*",
     "deprecate", "deprecate.*",
