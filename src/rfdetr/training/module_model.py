@@ -142,8 +142,9 @@ class RFDETRModelModule(LightningModule):
             samples, _ = batch
             scales = compute_multi_scale_scales(mc.resolution, tc.expanded_scales, mc.patch_size, mc.num_windows)
             step = self.trainer.global_step
-            random.seed(step)
-            scale = random.choice(scales)
+            # Use a step-local generator so the scale choice is deterministic and DDP-consistent
+            # without reseeding the process-global RNG on every batch.
+            scale = random.Random(step).choice(scales)
             with torch.no_grad():
                 samples.tensors = F.interpolate(samples.tensors, size=scale, mode="bilinear", align_corners=False)
                 samples.mask = (

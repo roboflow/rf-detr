@@ -490,13 +490,25 @@ def _build_train_resize_config(
                 ]
             }
         }
+        # DETR-style crop branch: resize the short side to 400/500/600, then take a ``RandomSizedCrop`` that resizes
+        # the crop *directly* to the target scale (via a per-scale ``OneOf``, mirroring the square path). This removes
+        # the previous fixed 384x384 intermediate hop -- the crop was resampled to 384 and then resized again to the
+        # target, a wasteful downscale-then-upscale. ``min_max_height`` upper bound matches the maximum SmallestMaxSize
+        # value (600): when the sampled scale is smaller (e.g. 400), albumentations clamps the crop to the image height,
+        # effectively giving a full-image crop — this is the original DETR recipe behaviour and preserves training
+        # diversity (zoom-out variety) across the full SmallestMaxSize range.
         option_b = {
             "Sequential": {
                 "transforms": [
                     {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
-                    {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 384, "width": 384}},
-                    {"SmallestMaxSize": {"max_size": size_param}},
-                    {"LongestMaxSize": {"max_size": cap}},
+                    {
+                        "OneOf": {
+                            "transforms": [
+                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": s, "width": s}}
+                                for s in scales
+                            ],
+                        }
+                    },
                 ]
             }
         }
@@ -580,7 +592,7 @@ def make_coco_transforms(
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
         resize_wrappers = AlbumentationsWrapper.from_config(
-            _build_train_resize_config(scales, square=False, max_size=1333)
+            _build_train_resize_config(scales, square=False, max_size=1333), strict=True
         )
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:
@@ -598,11 +610,14 @@ def make_coco_transforms(
             [
                 {"SmallestMaxSize": {"max_size": resolution}},
                 {"LongestMaxSize": {"max_size": 1333}},
-            ]
+            ],
+            strict=True,
         )
         return Compose([*resize_wrappers, to_image, to_float, normalize])
     if image_set == "val_speed":
-        resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
+        resize_wrappers = AlbumentationsWrapper.from_config(
+            [{"Resize": {"height": resolution, "width": resolution}}], strict=True
+        )
         return Compose([*resize_wrappers, to_image, to_float, normalize])
 
     raise ValueError(f"unknown {image_set}")
@@ -669,7 +684,9 @@ def make_coco_transforms_square_div_64(
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
-        resize_wrappers = AlbumentationsWrapper.from_config(_build_train_resize_config(scales, square=True))
+        resize_wrappers = AlbumentationsWrapper.from_config(
+            _build_train_resize_config(scales, square=True), strict=True
+        )
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:
             aug_wrappers = AlbumentationsWrapper.from_config(
@@ -682,7 +699,9 @@ def make_coco_transforms_square_div_64(
         return Compose(pipeline)
 
     if image_set in ("val", "test", "val_speed"):
-        resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
+        resize_wrappers = AlbumentationsWrapper.from_config(
+            [{"Resize": {"height": resolution, "width": resolution}}], strict=True
+        )
         return Compose([*resize_wrappers, to_image, to_float, normalize])
 
     raise ValueError(f"unknown {image_set}")

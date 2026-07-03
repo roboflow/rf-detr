@@ -353,7 +353,7 @@ class TestRFDETRTrainPTL:
             RFDETR.train(mock_self, do_benchmark=truthy_value)
         depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert len(depr) >= 1
-        assert "rfdetr benchmark" in str(depr[0].message)
+        assert "rfdetr.export.benchmark" in str(depr[0].message)
 
     def test_do_benchmark_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
         """do_benchmark is popped before calling get_train_config."""

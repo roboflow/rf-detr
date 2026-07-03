@@ -2224,3 +2224,24 @@ class TestReplayContainsHorizontalFlip:
     def test_replay_contains_horizontal_flip(self, replay: object, expected: bool) -> None:
         """Fixture replay dicts should be correctly classified as horizontal flip or not."""
         assert AlbumentationsWrapper._replay_contains_horizontal_flip(replay) == expected
+
+
+class TestFromConfigStrict:
+    """AlbumentationsWrapper.from_config strict mode raises on required-transform failures instead of skipping."""
+
+    def test_strict_false_skips_unbuildable_transform(self):
+        """Lenient mode (default) logs and skips a transform that cannot be built."""
+        result = AlbumentationsWrapper.from_config([{"NotARealTransform": {"p": 1.0}}])
+
+        assert result == []
+
+    def test_strict_true_raises_on_unbuildable_transform(self):
+        """Strict mode surfaces a RuntimeError so a corrupt required pipeline fails loudly."""
+        with pytest.raises(RuntimeError, match="NotARealTransform"):
+            AlbumentationsWrapper.from_config([{"NotARealTransform": {"p": 1.0}}], strict=True)
+
+    def test_strict_true_builds_valid_config(self):
+        """Strict mode still returns wrappers when every transform builds successfully."""
+        result = AlbumentationsWrapper.from_config([{"HorizontalFlip": {"p": 0.5}}], strict=True)
+
+        assert len(result) == 1
