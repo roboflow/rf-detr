@@ -39,7 +39,7 @@ def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: f
                  classification label for each element in inputs
                 (0 for the negative class and 1 for the positive class).
         alpha: (optional) Weighting factor in range (0,1) to balance
-                positive vs negative examples. Default = -1 (no weighting).
+                positive vs negative examples. Default = 0.25.
         gamma: Exponent of the modulating factor (1 - p_t) to
                balance easy vs hard examples.
 
@@ -283,7 +283,7 @@ class SetCriterion(nn.Module):
             pos_weights = torch.zeros_like(src_logits)
             neg_weights = prob**gamma
 
-            pos_ind = [id for id in idx]
+            pos_ind = list(idx)
             pos_ind.append(target_classes_o)
 
             t = prob[tuple(pos_ind)].pow(alpha) * pos_ious.pow(1 - alpha)
@@ -316,7 +316,7 @@ class SetCriterion(nn.Module):
                 device=src_logits.device,
             )
 
-            pos_ind = [id for id in idx]
+            pos_ind = list(idx)
             pos_ind.append(target_classes_o)
             pos_ious_func = pos_ious_func.to(cls_iou_func_targets.dtype)
             cls_iou_func_targets[tuple(pos_ind)] = pos_ious_func
@@ -352,7 +352,7 @@ class SetCriterion(nn.Module):
                 device=src_logits.device,
             )
 
-            pos_ind = [id for id in idx]
+            pos_ind = list(idx)
             pos_ind.append(target_classes_o)
             cls_iou_targets[tuple(pos_ind)] = pos_ious
             loss_ce = (
@@ -410,8 +410,8 @@ class SetCriterion(nn.Module):
         pred_logits = outputs["pred_logits"]
         device = pred_logits.device
         tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
-        # Count the number of predictions that are NOT "no-object" (which is the last class)
-        card_pred = (pred_logits.argmax(-1) != pred_logits.shape[-1] - 1).sum(1)
+        # Sigmoid/focal heads have no background class; count predictions whose top score is confident
+        card_pred = (pred_logits.sigmoid().max(-1).values > 0.5).sum(1)
         card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
         losses = {"cardinality_error": card_err}
         return losses
@@ -456,10 +456,12 @@ class SetCriterion(nn.Module):
             spatial_features = outputs["pred_masks"]["spatial_features"]
             query_features = outputs["pred_masks"]["query_features"]
             bias = outputs["pred_masks"]["bias"]
-            # If there are no matches, return an empty tensor like the Tensor branch does.
+            # No matches: return a zero loss that still flows through the segmentation-head
+            # outputs, so every parameter stays connected in the autograd graph (required for
+            # DDP, which errors on parameters that receive no gradient).
             if idx[0].numel() == 0:
-                device = spatial_features.device
-                src_masks = torch.tensor([], device=device)
+                zero = (spatial_features.sum() + query_features.sum() + bias.sum()) * 0.0
+                return {"loss_mask_ce": zero, "loss_mask_dice": zero}
             else:
                 batched_selected_masks = []
                 per_batch_counts = idx[0].unique(return_counts=True)[1]

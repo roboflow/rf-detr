@@ -95,7 +95,7 @@ def _ensure_faster_coco(coco_gt: Any) -> COCO:
     faster_coco.createIndex()
     label2cat = getattr(coco_gt, "label2cat", None)
     if label2cat is not None:
-        setattr(faster_coco, "label2cat", copy.deepcopy(label2cat))
+        faster_coco.label2cat = copy.deepcopy(label2cat)
     return faster_coco
 
 
@@ -258,11 +258,7 @@ def _filter_coco_by_category_ids(coco_gt: COCO, category_ids: list[int]) -> COCO
     filtered.createIndex()
     label2cat = getattr(coco_gt, "label2cat", None)
     if label2cat is not None:
-        setattr(
-            filtered,
-            "label2cat",
-            {label: cat_id for label, cat_id in label2cat.items() if cat_id in category_id_set},
-        )
+        filtered.label2cat = {label: cat_id for label, cat_id in label2cat.items() if cat_id in category_id_set}
     return filtered
 
 
@@ -337,10 +333,9 @@ def _accumulate_and_summarize(coco_eval: COCOeval, *, log_summary: bool) -> None
         patched_pycocotools_summarize(coco_eval)
         return
 
-    with open(os.devnull, "w") as devnull:
-        with contextlib.redirect_stdout(devnull):
-            coco_eval.accumulate()
-            patched_pycocotools_summarize(coco_eval, log_summary=False)
+    with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+        coco_eval.accumulate()
+        patched_pycocotools_summarize(coco_eval, log_summary=False)
 
 
 class CocoEvaluator:
@@ -480,7 +475,7 @@ class CocoEvaluator:
     def summarize(self) -> None:
         """Print and log COCO summary statistics."""
         for iou_type, coco_eval in self.coco_eval.items():
-            logger.info("IoU metric: {}".format(iou_type))
+            logger.info(f"IoU metric: {iou_type}")
             if isinstance(coco_eval, _GroupedKeypointCOCOeval):
                 _log_keypoint_stats(coco_eval.stats)
             else:
@@ -489,12 +484,11 @@ class CocoEvaluator:
     def _evaluate(self, iou_type: str, coco_eval: COCOeval) -> None:
         """Run faster-coco-eval evaluation for accumulated COCO result records."""
         results = self.coco_results[iou_type]
-        with open(os.devnull, "w") as devnull:
-            with contextlib.redirect_stdout(devnull):
-                coco_dt = _load_coco_results(self.coco_gt, results)
-                coco_eval.cocoDt = coco_dt
-                coco_eval.params.imgIds = list(np.unique(self.img_ids))
-                coco_eval.evaluate()
+        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+            coco_dt = _load_coco_results(self.coco_gt, results)
+            coco_eval.cocoDt = coco_dt
+            coco_eval.params.imgIds = list(np.unique(self.img_ids))
+            coco_eval.evaluate()
 
     def _evaluate_grouped_keypoints(self, grouped_eval: _GroupedKeypointCOCOeval) -> None:
         """Run keypoint evaluation per keypoint-count group and aggregate stats."""
@@ -530,12 +524,11 @@ class CocoEvaluator:
         img_ids: list[int],
     ) -> None:
         """Evaluate one grouped keypoint result set."""
-        with open(os.devnull, "w") as devnull:
-            with contextlib.redirect_stdout(devnull):
-                coco_dt = _load_coco_results(coco_gt, results)
-                coco_eval.cocoDt = coco_dt
-                coco_eval.params.imgIds = img_ids
-                coco_eval.evaluate()
+        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+            coco_dt = _load_coco_results(coco_gt, results)
+            coco_eval.cocoDt = coco_dt
+            coco_eval.params.imgIds = img_ids
+            coco_eval.evaluate()
 
     def prepare(self, predictions: dict[int, Any], iou_type: str) -> list[dict[str, Any]]:
         """Convert predictions to COCO format for the given iou_type."""
@@ -546,7 +539,7 @@ class CocoEvaluator:
         elif iou_type == "keypoints":
             return self.prepare_for_coco_keypoint(predictions)
         else:
-            raise ValueError("Unknown iou type {}".format(iou_type))
+            raise ValueError(f"Unknown iou type {iou_type}")
 
     def prepare_for_coco_detection(self, predictions: dict[int, Any]) -> list[dict[str, Any]]:
         """Format bounding-box predictions as COCO result dicts."""
@@ -657,9 +650,7 @@ def patched_pycocotools_summarize(self: COCOeval, *, log_summary: bool = True) -
         log_template = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}"
         title_str = "Average Precision" if ap == 1 else "Average Recall"
         type_str = "(AP)" if ap == 1 else "(AR)"
-        iou_str = (
-            "{:0.2f}:{:0.2f}".format(p.iouThrs[0], p.iouThrs[-1]) if iou_thr is None else "{:0.2f}".format(iou_thr)
-        )
+        iou_str = f"{p.iouThrs[0]:0.2f}:{p.iouThrs[-1]:0.2f}" if iou_thr is None else f"{iou_thr:0.2f}"
 
         aind = [i for i, aRng in enumerate(p.areaRngLbl) if aRng == area_rng]
         mind = [i for i, mDet in enumerate(p.maxDets) if mDet == max_dets]

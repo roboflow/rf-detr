@@ -10,7 +10,27 @@ from __future__ import annotations
 import pytest
 import torch
 
-from rfdetr.models.math import accuracy, inverse_sigmoid
+from rfdetr.models.math import accuracy, interpolate, inverse_sigmoid
+
+
+class TestInterpolate:
+    """Verify interpolate() delegates to F.interpolate across torchvision versions."""
+
+    def test_resizes_to_target_size(self) -> None:
+        """Interpolate() upsamples a 4-D tensor to the requested spatial size."""
+        x = torch.randn(2, 3, 4, 4)
+
+        out = interpolate(x, size=[8, 8], mode="bilinear", align_corners=False)
+
+        assert out.shape == (2, 3, 8, 8)
+
+    def test_handles_empty_batch(self) -> None:
+        """Interpolate() supports an empty batch dimension without error."""
+        x = torch.randn(0, 3, 4, 4)
+
+        out = interpolate(x, size=[8, 8], mode="nearest")
+
+        assert out.shape == (0, 3, 8, 8)
 
 
 class TestAccuracy:

@@ -146,9 +146,13 @@ class TestBuildTrainResizeConfigNonSquareSingleScale:
             "Sequential": {
                 "transforms": [
                     {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
-                    {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 384, "width": 384}},
-                    {"SmallestMaxSize": {"max_size": 640}},
-                    {"LongestMaxSize": {"max_size": 1333}},
+                    {
+                        "OneOf": {
+                            "transforms": [
+                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 640, "width": 640}},
+                            ]
+                        }
+                    },
                 ]
             }
         }
@@ -181,60 +185,70 @@ class TestBuildTrainResizeConfigNonSquareMultiScale:
             "Sequential": {
                 "transforms": [
                     {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
-                    {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 384, "width": 384}},
-                    {"SmallestMaxSize": {"max_size": [480, 640]}},
-                    {"LongestMaxSize": {"max_size": 1333}},
+                    {
+                        "OneOf": {
+                            "transforms": [
+                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 480, "width": 480}},
+                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 640, "width": 640}},
+                            ]
+                        }
+                    },
                 ]
             }
         }
 
-    def test_custom_max_size_propagates_to_both_options(self):
+    def test_custom_max_size_applies_to_option_a_only(self):
+        """max_size caps option_a's long side; option_b now resizes the crop directly to the target (no cap step)."""
         result = _build_train_resize_config([480, 640], square=False, max_size=1000)
         option_a = result[0]["OneOf"]["transforms"][0]
-        option_b = result[0]["OneOf"]["transforms"][1]
+        option_b_steps = result[0]["OneOf"]["transforms"][1]["Sequential"]["transforms"]
         assert option_a["Sequential"]["transforms"][1] == {"LongestMaxSize": {"max_size": 1000}}
-        assert option_b["Sequential"]["transforms"][3] == {"LongestMaxSize": {"max_size": 1000}}
+        assert not any("LongestMaxSize" in step for step in option_b_steps)
 
 
 class TestBuildTrainResizeConfigNonSquareScaleJitter:
-    """Non-square option_b must use RandomSizedCrop (scale jitter), not fixed RandomCrop.
+    """Non-square option_b must keep RandomSizedCrop (scale jitter), not a fixed RandomCrop.
 
-    Regression tests for https://github.com/roboflow/rf-detr/issues/1018 — PR #752 replaced
-    RandomSizeCrop(384, 600) with a fixed RandomCrop(384, 384), silently removing scale jitter
-    from the non-square training pipeline.
+    Regression tests for https://github.com/roboflow/rf-detr/issues/1018 — PR #752 replaced RandomSizeCrop(384, 600)
+    with a fixed RandomCrop(384, 384), silently removing scale jitter from the non-square training pipeline.
+
+    The ``fix-resize-crop`` branch keeps RandomSizedCrop and removes the wasteful fixed-384 intermediate hop: the crop
+    now resizes directly to the target scale (per-scale ``OneOf``, mirroring the square path). ``min_max_height`` uses
+    ``[384, 600]`` to match the full SmallestMaxSize range — when the image short side is 400, albumentations clamps
+    the crop to the image height (a full-image crop), which is the original DETR recipe behaviour and preserves
+    zoom-out diversity across the SmallestMaxSize range.
     """
 
     @pytest.mark.parametrize(
-        "scales,square",
+        "scales",
         [
-            pytest.param([640], False, id="nonsquare-single"),
-            pytest.param([480, 640], False, id="nonsquare-multi"),
+            pytest.param([640], id="nonsquare-single"),
+            pytest.param([480, 640], id="nonsquare-multi"),
         ],
     )
-    def test_option_b_crop_step_is_random_sized_crop(self, scales, square):
-        """Non-square option_b crop step must be RandomSizedCrop, not RandomCrop."""
-        result = _build_train_resize_config(scales, square=square)
+    def test_option_b_crop_step_uses_random_sized_crop(self, scales):
+        """Non-square option_b crop must use RandomSizedCrop, never fixed RandomCrop (issue #1018)."""
+        result = _build_train_resize_config(scales, square=False)
         option_b = result[0]["OneOf"]["transforms"][1]
         crop_step = option_b["Sequential"]["transforms"][1]
-        assert "RandomSizedCrop" in crop_step, (
-            "Non-square option_b must use RandomSizedCrop for scale jitter; "
-            f"found {list(crop_step.keys())} instead (regression: issue #1018)"
+        crop_variants = crop_step["OneOf"]["transforms"]
+        assert crop_variants and all(
+            "RandomSizedCrop" in entry and "RandomCrop" not in entry for entry in crop_variants
         )
-        assert "RandomCrop" not in crop_step
 
     @pytest.mark.parametrize(
-        "scales,square",
+        "scales",
         [
-            pytest.param([640], False, id="nonsquare-single"),
-            pytest.param([480, 640], False, id="nonsquare-multi"),
+            pytest.param([640], id="nonsquare-single"),
+            pytest.param([480, 640], id="nonsquare-multi"),
         ],
     )
-    def test_option_b_crop_uses_scale_jitter_range(self, scales, square):
-        """RandomSizedCrop min_max_height must span [384, 600] to restore scale jitter."""
-        result = _build_train_resize_config(scales, square=square)
+    def test_option_b_crop_uses_full_scale_jitter_range(self, scales):
+        """RandomSizedCrop min_max_height matches SmallestMaxSize range [384, 600] for full zoom-out diversity."""
+        result = _build_train_resize_config(scales, square=False)
         option_b = result[0]["OneOf"]["transforms"][1]
-        crop_step = option_b["Sequential"]["transforms"][1]
-        assert crop_step["RandomSizedCrop"]["min_max_height"] == [384, 600]
+        crop_variants = option_b["Sequential"]["transforms"][1]["OneOf"]["transforms"]
+        assert all(entry["RandomSizedCrop"]["min_max_height"] == [384, 600] for entry in crop_variants)
 
     @pytest.mark.parametrize(
         "scales,square",

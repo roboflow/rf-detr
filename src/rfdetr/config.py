@@ -7,8 +7,9 @@
 
 import os
 import warnings
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, ClassVar, Dict, List, Literal, Mapping, Optional, TypeAlias, Union
+from typing import Any, ClassVar, Literal, TypeAlias
 
 import torch
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -99,11 +100,52 @@ class BaseConfig(BaseModel):
 
 
 class ModelConfig(BaseConfig):
+    """Core architecture configuration for RF-DETR models.
+
+    Concrete subclasses (e.g. ``RFDETRBaseConfig``, ``RFDETRLargeConfig``) must supply every field
+    that has no default; direct instantiation of ``ModelConfig`` is unsupported.
+
+    Attributes:
+        encoder: Vision-transformer backbone identifier. Must be provided by concrete subclass.
+        out_feature_indexes: Encoder layer indices whose feature maps are forwarded to the decoder.
+            Must be provided by concrete subclass.
+        dec_layers: Number of transformer decoder layers. Must be provided by concrete subclass.
+        projector_scale: Feature-pyramid levels fed to the decoder cross-attention (subset of
+            ``["P3", "P4", "P5"]``). Must be provided by concrete subclass.
+        hidden_dim: Width of the decoder hidden state. Must be provided by concrete subclass.
+        patch_size: ViT patch size used by the backbone. Must be provided by concrete subclass.
+        num_windows: Number of windowed-attention windows in the backbone. Must be provided by
+            concrete subclass.
+        sa_nheads: Number of heads in decoder self-attention. Must be provided by concrete
+            subclass.
+        ca_nheads: Number of heads in decoder cross-attention. Must be provided by concrete
+            subclass.
+        dec_n_points: Deformable attention points per head per level in the decoder. Must be
+            provided by concrete subclass.
+        resolution: Square input resolution (pixels). Must be provided by concrete subclass.
+        positional_encoding_size: Side length (in patches) of the sinusoidal positional grid.
+            Must be provided by concrete subclass.
+        num_queries: Number of object queries used during inference (and per group during
+            training). Defaults to ``300``.
+        num_classes: Number of output classes (background-free). Defaults to ``90`` (COCO).
+        group_detr: Number of duplicate query groups used during training for GroupPose-style
+            convergence acceleration. ``num_queries * group_detr`` predictions are produced in
+            training mode; ``num_queries`` in eval mode. ``num_queries`` must be divisible by
+            ``group_detr``. Defaults to ``13``.
+        amp: Enable automatic mixed precision (bfloat16/float16). Defaults to ``True``.
+        compile: Compile the model with ``torch.compile`` for faster throughput. Defaults to
+            ``False``.
+        pretrain_weights: Path or URL to pretrained checkpoint. ``None`` trains from scratch.
+        device: Target device string (e.g. ``"cuda"``, ``"cpu"``). Auto-detected if not set.
+        gradient_checkpointing: Trade compute for memory by checkpointing activations. Defaults
+            to ``False``.
+    """
+
     encoder: EncoderName
-    out_feature_indexes: List[int]
+    out_feature_indexes: list[int]
     dec_layers: int
     two_stage: bool = True
-    projector_scale: List[Literal["P3", "P4", "P5"]]
+    projector_scale: list[Literal["P3", "P4", "P5"]]
     hidden_dim: int
     patch_size: int
     num_windows: int
@@ -122,7 +164,7 @@ class ModelConfig(BaseConfig):
     amp: bool = True
     num_channels: int = Field(default=3, ge=1)
     num_classes: int = 90
-    pretrain_weights: Optional[PathLikeStr] = None
+    pretrain_weights: PathLikeStr | None = None
     # torch.device values are accepted at validation time and normalized to string.
     device: str = DEVICE
     resolution: int
@@ -140,13 +182,13 @@ class ModelConfig(BaseConfig):
     grouppose_keypoint_dim_downscale: int = 1
     dual_projector: bool = False
     dual_projector_kp_only: bool = False
-    num_keypoints_per_class: List[int] = Field(default_factory=list)
+    num_keypoints_per_class: list[int] = Field(default_factory=list)
     num_decoder_registers: int = 0
     mask_downsample_ratio: int = 4
     backbone_lora: bool = False
     freeze_encoder: bool = False
     license: str = "Apache-2.0"
-    model_name: Optional[str] = Field(
+    model_name: str | None = Field(
         default=None,
         description=(
             'Name of the model class stored in training checkpoints (e.g. ``"RFDETRLarge"``). '
@@ -343,7 +385,7 @@ class ModelConfig(BaseConfig):
             if _mdr_info is not None and not _mdr_info.is_required():
                 _mdr_default = _mdr_info.default
                 if _mdr_default is not PydanticUndefined:
-                    _mdr_current = getattr(self, "mask_downsample_ratio")
+                    _mdr_current = self.mask_downsample_ratio
                     if _mdr_current != _mdr_default:
                         overrides.append(("mask_downsample_ratio", _mdr_current, _mdr_default))
 
@@ -429,9 +471,9 @@ class RFDETRBaseConfig(ModelConfig):
     dec_n_points: int = 2
     num_queries: int = 300
     num_select: int = 300
-    projector_scale: List[Literal["P3", "P4", "P5"]] = ["P4"]
-    out_feature_indexes: List[int] = [2, 5, 8, 11]
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-base.pth"
+    projector_scale: list[Literal["P3", "P4", "P5"]] = ["P4"]
+    out_feature_indexes: list[int] = [2, 5, 8, 11]
+    pretrain_weights: PathLikeStr | None = "rf-detr-base.pth"
     resolution: int = 560
     positional_encoding_size: int = 37
 
@@ -444,48 +486,50 @@ class RFDETRLargeDeprecatedConfig(RFDETRBaseConfig):
     sa_nheads: int = 12
     ca_nheads: int = 24
     dec_n_points: int = 4
-    projector_scale: List[Literal["P3", "P4", "P5"]] = ["P3", "P5"]
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-large.pth"
+    projector_scale: list[Literal["P3", "P4", "P5"]] = ["P3", "P5"]
+    pretrain_weights: PathLikeStr | None = "rf-detr-large.pth"
 
 
 class RFDETRNanoConfig(RFDETRBaseConfig):
     """The configuration for an RF-DETR Nano model."""
 
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 2
     patch_size: int = 16
     resolution: int = 384
     positional_encoding_size: int = 24
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-nano.pth"
+    pretrain_weights: PathLikeStr | None = "rf-detr-nano.pth"
 
 
 class RFDETRSmallConfig(RFDETRBaseConfig):
     """The configuration for an RF-DETR Small model."""
 
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 3
     patch_size: int = 16
     resolution: int = 512
     positional_encoding_size: int = 32
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-small.pth"
+    pretrain_weights: PathLikeStr | None = "rf-detr-small.pth"
 
 
 class RFDETRMediumConfig(RFDETRBaseConfig):
     """The configuration for an RF-DETR Medium model."""
 
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 4
     patch_size: int = 16
     resolution: int = 576
     positional_encoding_size: int = 36
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-medium.pth"
+    pretrain_weights: PathLikeStr | None = "rf-detr-medium.pth"
 
 
 # res 704, ps 16, 2 windows, 4 dec layers, 300 queries, ViT-S basis
 class RFDETRLargeConfig(ModelConfig):
+    """Configuration for the RF-DETR Large model variant."""
+
     encoder: Literal["dinov2_windowed_small"] = "dinov2_windowed_small"
     hidden_dim: int = 256
     dec_layers: int = 4
@@ -494,11 +538,11 @@ class RFDETRLargeConfig(ModelConfig):
     dec_n_points: int = 2
     num_windows: int = 2
     patch_size: int = 16
-    projector_scale: List[Literal["P4",]] = ["P4"]
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    projector_scale: list[Literal["P4",]] = ["P4"]
+    out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_classes: int = 90
     positional_encoding_size: int = 704 // 16
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-large-2026.pth"
+    pretrain_weights: PathLikeStr | None = "rf-detr-large-2026.pth"
     resolution: int = 704
     # Explicit so populate_args and _build_args_from_configs agree.
     # ModelConfig does not define these fields; without them the legacy path
@@ -509,8 +553,10 @@ class RFDETRLargeConfig(ModelConfig):
 
 
 class RFDETRSegPreviewConfig(RFDETRBaseConfig):
+    """Configuration for the RF-DETR Segmentation Preview model."""
+
     segmentation_head: bool = True
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 4
     patch_size: int = 12
@@ -518,13 +564,15 @@ class RFDETRSegPreviewConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 36
     num_queries: int = 200
     num_select: int = 200
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-preview.pt"
+    pretrain_weights: PathLikeStr | None = "rf-detr-seg-preview.pt"
     num_classes: int = 90
 
 
 class RFDETRSegNanoConfig(RFDETRBaseConfig):
+    """Configuration for the RF-DETR Segmentation Nano model variant."""
+
     segmentation_head: bool = True
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_windows: int = 1
     dec_layers: int = 4
     patch_size: int = 12
@@ -532,13 +580,15 @@ class RFDETRSegNanoConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 312 // 12
     num_queries: int = 100
     num_select: int = 100
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-nano.pt"
+    pretrain_weights: PathLikeStr | None = "rf-detr-seg-nano.pt"
     num_classes: int = 90
 
 
 class RFDETRSegSmallConfig(RFDETRBaseConfig):
+    """Configuration for the RF-DETR Segmentation Small model variant."""
+
     segmentation_head: bool = True
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 4
     patch_size: int = 12
@@ -546,13 +596,15 @@ class RFDETRSegSmallConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 384 // 12
     num_queries: int = 100
     num_select: int = 100
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-small.pt"
+    pretrain_weights: PathLikeStr | None = "rf-detr-seg-small.pt"
     num_classes: int = 90
 
 
 class RFDETRSegMediumConfig(RFDETRBaseConfig):
+    """Configuration for the RF-DETR Segmentation Medium model variant."""
+
     segmentation_head: bool = True
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 5
     patch_size: int = 12
@@ -560,13 +612,15 @@ class RFDETRSegMediumConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 432 // 12
     num_queries: int = 200
     num_select: int = 200
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-medium.pt"
+    pretrain_weights: PathLikeStr | None = "rf-detr-seg-medium.pt"
     num_classes: int = 90
 
 
 class RFDETRSegLargeConfig(RFDETRBaseConfig):
+    """Configuration for the RF-DETR Segmentation Large model variant."""
+
     segmentation_head: bool = True
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 5
     patch_size: int = 12
@@ -574,13 +628,15 @@ class RFDETRSegLargeConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 504 // 12
     num_queries: int = 200
     num_select: int = 200
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-large.pt"
+    pretrain_weights: PathLikeStr | None = "rf-detr-seg-large.pt"
     num_classes: int = 90
 
 
 class RFDETRSegXLargeConfig(RFDETRBaseConfig):
+    """Configuration for the RF-DETR Segmentation XLarge model variant."""
+
     segmentation_head: bool = True
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 6
     patch_size: int = 12
@@ -588,13 +644,15 @@ class RFDETRSegXLargeConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 624 // 12
     num_queries: int = 300
     num_select: int = 300
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-xlarge.pt"
+    pretrain_weights: PathLikeStr | None = "rf-detr-seg-xlarge.pt"
     num_classes: int = 90
 
 
 class RFDETRSeg2XLargeConfig(RFDETRBaseConfig):
+    """Configuration for the RF-DETR Segmentation 2XLarge model variant."""
+
     segmentation_head: bool = True
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 6
     patch_size: int = 12
@@ -602,7 +660,7 @@ class RFDETRSeg2XLargeConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 768 // 12
     num_queries: int = 300
     num_select: int = 300
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-seg-xxlarge.pt"
+    pretrain_weights: PathLikeStr | None = "rf-detr-seg-xxlarge.pt"
     num_classes: int = 90
 
 
@@ -612,11 +670,11 @@ class RFDETRKeypointPreviewConfig(RFDETRBaseConfig):
     use_grouppose_keypoints: bool = True
     dual_projector: bool = True
     dual_projector_kp_only: bool = True
-    num_keypoints_per_class: List[int] = [17]
+    num_keypoints_per_class: list[int] = [17]
     keypoint_cross_attn: bool = True
     inter_instance_kp_attn: bool = False
     grouppose_keypoint_dim_downscale: int = 1
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 4
     patch_size: int = 12
@@ -624,7 +682,7 @@ class RFDETRKeypointPreviewConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 576 // 12
     num_queries: int = 100
     num_select: int = 100
-    pretrain_weights: Optional[PathLikeStr] = "rf-detr-keypoint-preview-xlarge.pth"
+    pretrain_weights: PathLikeStr | None = "rf-detr-keypoint-preview-xlarge.pth"
     num_classes: int = 90
 
 
@@ -656,7 +714,7 @@ class TrainConfig(BaseConfig):
     auto_batch_max_targets_per_image: int = 100
     auto_batch_ema_headroom: float = 0.7  # scale safe batch by this when use_ema=True (EMA uses extra memory)
     epochs: int = 100
-    resume: Optional[PathLikeStr] = None
+    resume: PathLikeStr | None = None
     ema_decay: float = 0.993
     ema_tau: int = 100
     lr_drop: int = 100
@@ -671,15 +729,15 @@ class TrainConfig(BaseConfig):
     ia_bce_loss: bool = True
     cls_loss_coef: float = 1.0
     num_select: int = 300
-    keypoint_flip_pairs: List[int] = Field(default_factory=list)
+    keypoint_flip_pairs: list[int] = Field(default_factory=list)
     keypoint_l1_loss_coef: float = 0
     keypoint_findable_loss_coef: float = 0
     keypoint_visible_loss_coef: float = 0
     keypoint_nll_loss_coef: float = 0
-    keypoint_oks_sigmas: List[float] | None = None
+    keypoint_oks_sigmas: list[float] | None = None
     dataset_file: Literal["coco", "o365", "roboflow", "yolo"] = "roboflow"
     square_resize_div_64: bool = True
-    dataset_dir: Optional[PathLikeStr]
+    dataset_dir: PathLikeStr | None
     output_dir: PathLikeStr = "output"
     multi_scale: bool = True
     expanded_scales: bool = True
@@ -702,23 +760,23 @@ class TrainConfig(BaseConfig):
     early_stopping_patience: int = 10
     early_stopping_min_delta: float = 0.001
     early_stopping_use_ema: bool = False
-    progress_bar: Optional[Literal["tqdm", "rich"]] = None  # Progress bar style: "rich", "tqdm", or None to disable.
+    progress_bar: Literal["tqdm", "rich"] | None = None  # Progress bar style: "rich", "tqdm", or None to disable.
     tensorboard: bool = True
     wandb: bool = False
     mlflow: bool = False
     clearml: bool = False  # Not yet implemented — reserved for future use.
-    project: Optional[str] = None
-    run: Optional[str] = None
-    class_names: Optional[List[str]] = None
+    project: str | None = None
+    run: str | None = None
+    class_names: list[str] | None = None
     run_test: bool = False
     segmentation_head: bool = False
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = True
-    aug_config: Optional[Dict[str, Any]] = None
+    aug_config: dict[str, Any] | None = None
     augmentation_backend: Literal["cpu", "auto", "gpu"] = "cpu"
     save_dataset_grids: bool = False
-    notes: Optional[Any] = Field(
+    notes: Any | None = Field(
         default=None,
         description=(
             "User-defined provenance metadata embedded in best-model .pth checkpoints "
@@ -788,12 +846,12 @@ class TrainConfig(BaseConfig):
     # device is intentionally absent: PTL auto-detects accelerator via Trainer(accelerator="auto").
     accelerator: str = "auto"
     clip_max_norm: float = 0.1
-    seed: Optional[int] = None
+    seed: int | None = None
     sync_bn: bool = False
     # strategy maps to PTL Trainer(strategy=...). Common values: "auto", "ddp",
     # "ddp_spawn", "fsdp", "deepspeed". Invalid values surface as PTL errors.
     strategy: str = "auto"
-    devices: Union[int, str] = 1
+    devices: int | str = 1
     # num_nodes maps to PTL Trainer(num_nodes=...) for multi-machine training.
     # Single-machine DDP users should leave this at 1 (the default).
     num_nodes: int = 1
@@ -807,9 +865,9 @@ class TrainConfig(BaseConfig):
     compute_train_metrics: bool = False
     compute_val_loss: bool = True
     compute_test_loss: bool = True
-    pin_memory: Optional[bool] = None
-    persistent_workers: Optional[bool] = None
-    prefetch_factor: Optional[int] = None
+    pin_memory: bool | None = None
+    persistent_workers: bool | None = None
+    prefetch_factor: int | None = None
 
     @field_validator("batch_size", mode="after")
     @classmethod
@@ -859,7 +917,7 @@ class TrainConfig(BaseConfig):
 
     @field_validator("prefetch_factor", mode="after")
     @classmethod
-    def validate_prefetch_factor(cls, v: Optional[int]) -> Optional[int]:
+    def validate_prefetch_factor(cls, v: int | None) -> int | None:
         """Validate prefetch_factor is None or >= 1."""
         if v is not None and v < 1:
             raise ValueError("prefetch_factor must be >= 1 when provided.")
@@ -908,7 +966,7 @@ class SegmentationTrainConfig(TrainConfig):
         segmentation_head: Whether to attach the segmentation head.
     """
 
-    num_select: Optional[int] = None
+    num_select: int | None = None
     mask_point_sample_ratio: int = 16
     mask_ce_loss_coef: float = 5.0
     mask_dice_loss_coef: float = 5.0

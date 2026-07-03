@@ -6,7 +6,7 @@
 [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
 [![codecov](https://codecov.io/gh/roboflow/rf-detr/graph/badge.svg?token=K8V4ARR3XV)](https://codecov.io/gh/roboflow/rf-detr)
 [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
-[![license](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/roboflow/rfdetr/blob/main/LICENSE)
+[![license](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/roboflow/rf-detr/blob/main/LICENSE)
 
 [![arXiv](https://img.shields.io/badge/arXiv-2511.09554-b31b1b.svg)](https://arxiv.org/abs/2511.09554)
 [![hf space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/SkalskiP/RF-DETR)
@@ -176,6 +176,8 @@ annotated_image = sv.BoxAnnotator().annotate(detections.metadata["source_image"]
 annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 ```
 
+> **Note:** `COCO_CLASSES` works for COCO-pretrained models. For fine-tuned models, use `detections.data["class_name"]` instead — it resolves class names from the checkpoint and works for both COCO and custom datasets.
+
 <details>
 <summary>Run RF-DETR with Inference</summary>
 
@@ -306,14 +308,12 @@ Our work is built upon [LW-DETR](https://arxiv.org/pdf/2406.03459), [DINOv2](htt
 If you find our work helpful for your research, please consider citing the following BibTeX entry.
 
 ```bibtex
-@misc{rf-detr,
-    title={RF-DETR: Neural Architecture Search for Real-Time Detection Transformers},
-    author={Isaac Robinson and Peter Robicheaux and Matvei Popov and Deva Ramanan and Neehar Peri},
-    year={2025},
-    eprint={2511.09554},
-    archivePrefix={arXiv},
-    primaryClass={cs.CV},
-    url={https://arxiv.org/abs/2511.09554},
+@inproceedings{robinson2026rfdetr,
+  title     = {RF-DETR: Real-Time Detection Transformer},
+  author    = {Robinson, Isaac and Robicheaux, Peter and Popov, Fedor and Ramanan, Deva and Peri, Neehar},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2026},
+  url       = {https://arxiv.org/abs/2511.09554}
 }
 ```
 

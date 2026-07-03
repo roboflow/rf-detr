@@ -177,6 +177,16 @@ class TestFromCheckpointDictArgs:
 class TestFromCheckpointEdgeCases:
     """Edge-case handling in from_checkpoint."""
 
+    def test_nonexistent_path_raises_file_not_found(self, tmp_path: Path) -> None:
+        """from_checkpoint raises FileNotFoundError when path does not exist."""
+        with pytest.raises(FileNotFoundError):
+            RFDETR.from_checkpoint(tmp_path / "nope.pth")
+
+    def test_directory_path_raises_os_error(self, tmp_path: Path) -> None:
+        """from_checkpoint raises OSError when path is a directory, not a file."""
+        with pytest.raises((OSError, IsADirectoryError)):
+            RFDETR.from_checkpoint(tmp_path)
+
     def test_characterization_unknown_pretrain_weights_raises_value_error(self, tmp_path: Path) -> None:
         """Unrecognised pretrain_weights name raises a descriptive ValueError."""
         ckpt = _ns("/my/custom/finetuned.pth")

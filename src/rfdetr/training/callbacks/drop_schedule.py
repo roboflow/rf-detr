@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import numpy as np
 from pytorch_lightning import Callback, LightningModule, Trainer
@@ -48,8 +48,8 @@ class DropPathCallback(Callback):
         self._schedule = schedule
         self._vit_encoder_num_layers = vit_encoder_num_layers
 
-        self._dp_schedule: Optional[np.ndarray] = None
-        self._do_schedule: Optional[np.ndarray] = None
+        self._dp_schedule: np.ndarray | None = None
+        self._do_schedule: np.ndarray | None = None
 
     def on_train_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Build per-step rate arrays from trainer metadata.

@@ -242,7 +242,9 @@ def test_depthwise_conv_no_cudnn_bias_none() -> None:
     assert torch.isfinite(weight.grad).all()
 
 
-@pytest.mark.parametrize("layer_scale_init_value", [0, 1e-6], ids=["no_gamma", "with_gamma"])
+@pytest.mark.parametrize(
+    "layer_scale_init_value", [pytest.param(0, id="no_gamma"), pytest.param(1e-6, id="with_gamma")]
+)
 def test_depthwise_conv_block_layer_scale(layer_scale_init_value: float) -> None:
     """DepthwiseConvBlock with and without layer scaling produces valid output and gradients.
 

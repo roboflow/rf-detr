@@ -30,6 +30,16 @@ Both paths run the same underlying PyTorch Lightning stack. `RFDETR.train()` con
 
 ## Quick Start
 
+!!! info "Training requires the `train` extra"
+
+    Training dependencies are not included in the base install. Install them with:
+
+    ```bash
+    pip install "rfdetr[train]"
+    ```
+
+    For experiment tracking, also add `pip install "rfdetr[train,loggers]"`.
+
 RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The format is automatically detected based on the structure of your dataset directory.
 
 === "Object Detection"
@@ -85,7 +95,7 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
 
 Different GPUs have different VRAM capacities, so adjust batch_size and grad_accum_steps to maintain a total batch size of 16. For example, on a powerful GPU like the A100, use `batch_size=16` and `grad_accum_steps=1`; on smaller GPUs like the T4, use `batch_size=4` and `grad_accum_steps=4`. This gradient accumulation strategy helps train effectively even with limited memory.
 
-For object detection, the RF-DETR-B checkpoint is used by default. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
+Each model class downloads its COCO-pretrained checkpoint automatically when instantiated. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
 
 ## Keypoint preview custom datasets
 

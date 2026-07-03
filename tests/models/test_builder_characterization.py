@@ -351,6 +351,22 @@ class TestBuildModelContextCharacterization:
         ctx = _build_model_context(mc)
         assert ctx.inference_model is None
 
+    def test_args_dataset_dir_does_not_leak_cwd(self) -> None:
+        """The serialized namespace must not embed the caller's realpathed CWD as dataset_dir."""
+        from rfdetr.detr import _build_model_context
+
+        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        ctx = _build_model_context(mc)
+        assert ctx.args.dataset_dir is None
+
+    def test_args_output_dir_does_not_leak_cwd(self) -> None:
+        """The serialized namespace must keep a relative output_dir, not the caller's realpathed CWD."""
+        from rfdetr.detr import _build_model_context
+
+        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        ctx = _build_model_context(mc)
+        assert ctx.args.output_dir == "output"
+
 
 # ---------------------------------------------------------------------------
 # RFDETRModelModule.__init__ characterization
