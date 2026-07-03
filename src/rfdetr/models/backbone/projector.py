@@ -294,20 +294,3 @@ class MultiScaleProjector(nn.Module):
         if self.use_extra_pool:
             results.append(F.max_pool2d(results[-1], kernel_size=1, stride=2, padding=0))
         return results
-
-
-class SimpleProjector(nn.Module):
-    def __init__(self, in_dim, out_dim, factor_kernel=False):
-        super(SimpleProjector, self).__init__()
-        if not factor_kernel:
-            self.convx1 = ConvX(in_dim, in_dim * 2, layer_norm=True, act="silu")
-            self.convx2 = ConvX(in_dim * 2, out_dim, layer_norm=True, act="silu")
-        else:
-            self.convx1 = ConvX(in_dim, out_dim, kernel=(3, 1), layer_norm=True, act="silu")
-            self.convx2 = ConvX(out_dim, out_dim, kernel=(1, 3), layer_norm=True, act="silu")
-        self.ln = get_norm("LN", out_dim)
-
-    def forward(self, x):
-        """forward."""
-        out = self.ln(self.convx2(self.convx1(x[0])))
-        return [out]

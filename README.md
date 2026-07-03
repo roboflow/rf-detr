@@ -6,7 +6,7 @@
 [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
 [![codecov](https://codecov.io/gh/roboflow/rf-detr/graph/badge.svg?token=K8V4ARR3XV)](https://codecov.io/gh/roboflow/rf-detr)
 [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
-[![license](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/roboflow/rfdetr/blob/main/LICENSE)
+[![license](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/roboflow/rf-detr/blob/main/LICENSE)
 
 [![arXiv](https://img.shields.io/badge/arXiv-2511.09554-b31b1b.svg)](https://arxiv.org/abs/2511.09554)
 [![hf space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/SkalskiP/RF-DETR)
@@ -175,6 +175,8 @@ labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
 annotated_image = sv.BoxAnnotator().annotate(detections.metadata["source_image"], detections)
 annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 ```
+
+> **Note:** `COCO_CLASSES` works for COCO-pretrained models. For fine-tuned models, use `detections.data["class_name"]` instead — it resolves class names from the checkpoint and works for both COCO and custom datasets.
 
 <details>
 <summary>Run RF-DETR with Inference</summary>

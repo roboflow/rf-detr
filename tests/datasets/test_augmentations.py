@@ -1669,13 +1669,14 @@ class TestTrainingLoop:
     @pytest.mark.parametrize(
         "transform_class,transform_kwargs",
         [
-            (alb.HorizontalFlip, {"p": 1.0}),
-            (alb.VerticalFlip, {"p": 1.0}),
-            (alb.RandomRotate90, {"p": 1.0}),
+            pytest.param(alb.HorizontalFlip, {"p": 1.0}, id="horizontal_flip"),
+            pytest.param(alb.VerticalFlip, {"p": 1.0}, id="vertical_flip"),
+            pytest.param(alb.RandomRotate90, {"p": 1.0}, id="random_rotate_90"),
         ],
-        ids=["horizontal_flip", "vertical_flip", "random_rotate_90"],
     )
-    @pytest.mark.parametrize("include_masks", [False, True], ids=["detection", "segmentation"])
+    @pytest.mark.parametrize(
+        "include_masks", [pytest.param(False, id="detection"), pytest.param(True, id="segmentation")]
+    )
     def test_geometric_dataloader_compatibility(self, include_masks, transform_class, transform_kwargs):
         """Test geometric Albumentations transforms work in DataLoader for detection and segmentation."""
 

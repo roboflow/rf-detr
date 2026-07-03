@@ -99,6 +99,8 @@ class BaseConfig(BaseModel):
 
 
 class ModelConfig(BaseConfig):
+    """Core architecture configuration for RF-DETR models."""
+
     encoder: EncoderName
     out_feature_indexes: List[int]
     dec_layers: int
@@ -486,6 +488,8 @@ class RFDETRMediumConfig(RFDETRBaseConfig):
 
 # res 704, ps 16, 2 windows, 4 dec layers, 300 queries, ViT-S basis
 class RFDETRLargeConfig(ModelConfig):
+    """Configuration for the RF-DETR Large model variant."""
+
     encoder: Literal["dinov2_windowed_small"] = "dinov2_windowed_small"
     hidden_dim: int = 256
     dec_layers: int = 4
@@ -509,6 +513,8 @@ class RFDETRLargeConfig(ModelConfig):
 
 
 class RFDETRSegPreviewConfig(RFDETRBaseConfig):
+    """Configuration for the RF-DETR Segmentation Preview model."""
+
     segmentation_head: bool = True
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
@@ -523,6 +529,8 @@ class RFDETRSegPreviewConfig(RFDETRBaseConfig):
 
 
 class RFDETRSegNanoConfig(RFDETRBaseConfig):
+    """Configuration for the RF-DETR Segmentation Nano model variant."""
+
     segmentation_head: bool = True
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 1
@@ -537,6 +545,8 @@ class RFDETRSegNanoConfig(RFDETRBaseConfig):
 
 
 class RFDETRSegSmallConfig(RFDETRBaseConfig):
+    """Configuration for the RF-DETR Segmentation Small model variant."""
+
     segmentation_head: bool = True
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
@@ -551,6 +561,8 @@ class RFDETRSegSmallConfig(RFDETRBaseConfig):
 
 
 class RFDETRSegMediumConfig(RFDETRBaseConfig):
+    """Configuration for the RF-DETR Segmentation Medium model variant."""
+
     segmentation_head: bool = True
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
@@ -565,6 +577,8 @@ class RFDETRSegMediumConfig(RFDETRBaseConfig):
 
 
 class RFDETRSegLargeConfig(RFDETRBaseConfig):
+    """Configuration for the RF-DETR Segmentation Large model variant."""
+
     segmentation_head: bool = True
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
@@ -579,6 +593,8 @@ class RFDETRSegLargeConfig(RFDETRBaseConfig):
 
 
 class RFDETRSegXLargeConfig(RFDETRBaseConfig):
+    """Configuration for the RF-DETR Segmentation XLarge model variant."""
+
     segmentation_head: bool = True
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
@@ -593,6 +609,8 @@ class RFDETRSegXLargeConfig(RFDETRBaseConfig):
 
 
 class RFDETRSeg2XLargeConfig(RFDETRBaseConfig):
+    """Configuration for the RF-DETR Segmentation 2XLarge model variant."""
+
     segmentation_head: bool = True
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2

@@ -505,6 +505,7 @@ class LWDETR(nn.Module):
             keypoint_hs = None
             enc_kp_predictions = None
 
+        out: dict = {}
         if hs is not None:
             if self.bbox_reparam:
                 outputs_coord_delta = self.bbox_embed(hs)

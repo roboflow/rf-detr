@@ -247,21 +247,25 @@ class OnnxOptimizer:
                 self.graph.outputs[i].name = name
 
     def find_node_input(self, node, name: str = None, value=None) -> int:
+        index = -1
         for i, inp in enumerate(node.inputs):
             if isinstance(name, str) and inp.name == name:
                 index = i
             elif inp == value:
                 index = i
-        assert index >= 0, f"not found {name}({value}) in node.inputs"
+        if index < 0:
+            raise ValueError(f"not found {name}({value}) in node.inputs")
         return index
 
     def find_node_output(self, node, name: str = None, value=None) -> int:
+        index = -1
         for i, inp in enumerate(node.outputs):
             if isinstance(name, str) and inp.name == name:
                 index = i
             elif inp == value:
                 index = i
-        assert index >= 0, f"not found {name}({value}) in node.outputs"
+        if index < 0:
+            raise ValueError(f"not found {name}({value}) in node.outputs")
         return index
 
     def common_opt(self, return_onnx=False):

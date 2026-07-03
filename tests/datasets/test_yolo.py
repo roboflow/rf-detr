@@ -679,7 +679,7 @@ class TestYoloDetectionLazyMasks:
             ),
         ],
     )
-    @pytest.mark.parametrize("include_masks", [True, False], ids=["masks", "no_masks"])
+    @pytest.mark.parametrize("include_masks", [pytest.param(True, id="masks"), pytest.param(False, id="no_masks")])
     def test_malformed_label_line_raises_clear_error(
         self, tmp_path: Path, label_content: str, match_pattern: str, include_masks: bool
     ) -> None:
@@ -741,7 +741,7 @@ class TestYoloDetectionLazyMasks:
             f"Lazy storage ({lazy_bytes} B) should be at least 10× smaller than eager mask cost ({eager_mask_bytes} B)."
         )
 
-    @pytest.mark.parametrize("include_masks", [True, False], ids=["masks", "no_masks"])
+    @pytest.mark.parametrize("include_masks", [pytest.param(True, id="masks"), pytest.param(False, id="no_masks")])
     def test_out_of_range_class_id_raises_clear_error(self, tmp_path: Path, include_masks: bool) -> None:
         """A label with a class ID beyond the class count should raise ValueError at init."""
         image_dir = tmp_path / "images"

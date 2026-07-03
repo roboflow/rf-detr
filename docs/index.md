@@ -30,7 +30,7 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
     <a href="https://badge.fury.io/py/rfdetr"><img alt="version" src="https://badge.fury.io/py/rfdetr.svg" width="125" height="20" /></a>
     <a href="https://badge.fury.io/py/rfdetr"><img alt="python-version" src="https://img.shields.io/pypi/pyversions/rfdetr" width="198" height="20" /></a>
-    <a href="https://github.com/roboflow/rfdetr/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/pypi/l/rfdetr" width="164" height="20" /></a>
+    <a href="https://github.com/roboflow/rf-detr/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/pypi/l/rfdetr" width="164" height="20" /></a>
     <a href="https://pypistats.org/packages/rfdetr"><img alt="downloads" src="https://img.shields.io/pypi/dm/rfdetr" width="258" height="20" /></a>
 
     === "pip"
@@ -185,7 +185,7 @@ RF-DETR Keypoint (Preview) detects 17 body keypoints per person on COCO, achievi
 Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. XLarge and 2XLarge models require the `rfdetr[plus]` package (PML 1.0 license).
 
 **How do I fine-tune RF-DETR on a custom dataset?**
-Instantiate a model and call `model.train(...)` with your dataset directory in COCO JSON or YOLO format. Example: `model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4)`. The model downloads pretrained weights automatically and resumes from the best checkpoint.
+Instantiate a model and call `model.train(...)` with your dataset directory in COCO JSON or YOLO format. Example: `model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4)`. The model downloads pretrained weights automatically and saves best checkpoints automatically (use `resume=` to continue from one).
 
 **How do I export RF-DETR to ONNX or TensorRT?**
 Call `model.export(format="onnx")` after training or loading a checkpoint. ONNX export works on CPU and produces a single `.onnx` file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, first export to ONNX and then convert the `.onnx` model with TensorRT tooling or helpers such as `trtexec`; this requires TensorRT and a CUDA GPU.
@@ -194,3 +194,5 @@ Call `model.export(format="onnx")` after training or loading a checkpoint. ONNX 
 RF-DETR-Nano (2.3 ms, 67.6 AP50 on COCO) is best for edge and real-time applications. RF-DETR-Large (6.8 ms, 56.5 AP50:95) offers the best accuracy–latency trade-off for server deployment. RF-DETR-2XLarge (17.2 ms, 60.1 AP50:95) maximizes accuracy when latency allows.
 
 > **Checkpoint note:** Current `RFDETRLarge` defaults to `rf-detr-large-2026.pth`. The older `rf-detr-large.pth` checkpoint is a legacy Large release kept for backward compatibility and has been superseded by the current release.
+
+> **Note:** External URLs in this documentation have not been automatically verified. Spot-check links before relying on them.

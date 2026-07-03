@@ -24,27 +24,13 @@ from torch import Tensor, nn
 
 from rfdetr.models._types import BuilderArgs
 from rfdetr.models.heads.keypoints import ConditionalQueryInitializer
+from rfdetr.models.math import MLP
 from rfdetr.models.ops.modules import MSDeformAttn
 
 
 def _safe_multinormalize(dim: int) -> int:
     """Clamp a MultiheadAttention head count to at least one."""
     return max(1, dim)
-
-
-class MLP(nn.Module):
-    """Very simple multi-layer perceptron (also called FFN)."""
-
-    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, num_layers: int) -> None:
-        super().__init__()
-        self.num_layers = num_layers
-        h = [hidden_dim] * (num_layers - 1)
-        self.layers = nn.ModuleList(nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
-
-    def forward(self, x: Tensor) -> Tensor:
-        for i, layer in enumerate(self.layers):
-            x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
-        return x
 
 
 def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128) -> Tensor:
@@ -662,10 +648,6 @@ class TransformerDecoder(nn.Module):
                         refpoints_unsigmoid.sigmoid()
                     )
 
-            # Keep first-layer behavior stable.
-            pos_transformation = 1
-            query_pos = query_pos * pos_transformation
-
             if self.enable_keypoint_processing and keypoint_tgt is not None:
                 layer_outputs = layer(
                     output,
@@ -674,10 +656,7 @@ class TransformerDecoder(nn.Module):
                     memory_mask=memory_mask,
                     tgt_key_padding_mask=tgt_key_padding_mask,
                     memory_key_padding_mask=memory_key_padding_mask,
-                    pos=pos,
                     query_pos=query_pos,
-                    query_sine_embed=query_sine_embed,
-                    is_first=(layer_id == 0),
                     reference_points=refpoints_input,
                     spatial_shapes=spatial_shapes,
                     level_start_index=level_start_index,
@@ -696,10 +675,7 @@ class TransformerDecoder(nn.Module):
                     memory_mask=memory_mask,
                     tgt_key_padding_mask=tgt_key_padding_mask,
                     memory_key_padding_mask=memory_key_padding_mask,
-                    pos=pos,
                     query_pos=query_pos,
-                    query_sine_embed=query_sine_embed,
-                    is_first=(layer_id == 0),
                     reference_points=refpoints_input,
                     spatial_shapes=spatial_shapes,
                     level_start_index=level_start_index,
@@ -864,10 +840,7 @@ class TransformerDecoderLayer(nn.Module):
         memory_mask: Optional[Tensor] = None,
         tgt_key_padding_mask: Optional[Tensor] = None,
         memory_key_padding_mask: Optional[Tensor] = None,
-        pos: Optional[Tensor] = None,
         query_pos: Optional[Tensor] = None,
-        query_sine_embed: Optional[Tensor] = None,
-        is_first: bool = False,
         reference_points: Optional[Tensor] = None,
         spatial_shapes: Tensor | None = None,
         level_start_index: Tensor | None = None,
@@ -1020,10 +993,7 @@ class TransformerDecoderLayer(nn.Module):
         memory_mask: Optional[Tensor] = None,
         tgt_key_padding_mask: Optional[Tensor] = None,
         memory_key_padding_mask: Optional[Tensor] = None,
-        pos: Optional[Tensor] = None,
         query_pos: Optional[Tensor] = None,
-        query_sine_embed: Optional[Tensor] = None,
-        is_first: bool = False,
         reference_points: Optional[Tensor] = None,
         spatial_shapes: Tensor | None = None,
         level_start_index: Tensor | None = None,
@@ -1039,10 +1009,7 @@ class TransformerDecoderLayer(nn.Module):
             memory_mask=memory_mask,
             tgt_key_padding_mask=tgt_key_padding_mask,
             memory_key_padding_mask=memory_key_padding_mask,
-            pos=pos,
             query_pos=query_pos,
-            query_sine_embed=query_sine_embed,
-            is_first=is_first,
             reference_points=reference_points,
             spatial_shapes=spatial_shapes,
             level_start_index=level_start_index,

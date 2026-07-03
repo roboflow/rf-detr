@@ -797,11 +797,15 @@ class WindowedDinov2WithRegistersEncoder(nn.Module):
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
 
+        last_feature = self.config.out_features[-1]
+        # Feature names are "stage<N>"; only those carry a layer index to early-stop on.
+        early_stop_layer = int(last_feature[5:]) if last_feature.startswith("stage") else None
+
         for i, layer_module in enumerate(self.layer):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
-            if i > int(self.config.out_features[-1][5:]):
+            if early_stop_layer is not None and i > early_stop_layer:
                 # early stop if we have reached the last output feature
                 break
 

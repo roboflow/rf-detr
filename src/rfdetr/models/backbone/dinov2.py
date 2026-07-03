@@ -56,7 +56,7 @@ class DinoV2(nn.Module):
     def __init__(
         self,
         shape=(640, 640),
-        out_feature_indexes=[2, 4, 5, 9],
+        out_feature_indexes: tuple[int, ...] | None = None,
         size="base",
         use_registers=True,
         use_windowed_attn=True,
@@ -68,6 +68,9 @@ class DinoV2(nn.Module):
         drop_path_rate=0.0,
     ):
         super().__init__()
+
+        if out_feature_indexes is None:
+            out_feature_indexes = (2, 4, 5, 9)
 
         name = f"facebook/dinov2-with-registers-{size}" if use_registers else f"facebook/dinov2-{size}"
 

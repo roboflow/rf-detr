@@ -828,7 +828,8 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
         A :class:`YoloDetection` dataset instance ready for use with a DataLoader.
     """
     root = Path(args.dataset_dir)
-    assert root.exists(), f"provided Roboflow path {root} does not exist"
+    if not root.exists():
+        raise FileNotFoundError(f"YOLO dataset root not found: {root}")
 
     # YOLO format uses images/ and labels/ subdirectories
     PATHS = {  # noqa: N806
@@ -843,10 +844,10 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
     multi_scale = getattr(args, "multi_scale", False)
-    expanded_scales = getattr(args, "expanded_scales", None)
+    expanded_scales = getattr(args, "expanded_scales", False)
     do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
-    patch_size = getattr(args, "patch_size", None)
-    num_windows = getattr(args, "num_windows", None)
+    patch_size = getattr(args, "patch_size", 16)
+    num_windows = getattr(args, "num_windows", 4)
     aug_config = getattr(args, "aug_config", None)
     include_keypoints = getattr(args, "use_grouppose_keypoints", False)
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])

@@ -32,7 +32,7 @@ class ModelContext:
         postprocess: PostProcess instance for converting raw outputs to boxes.
         device: Device the model lives on.
         resolution: Input resolution (square side length in pixels).
-        args: Namespace produced by :func:`build_namespace`.
+        args: Namespace of resolved training/model configuration.
         class_names: Optional list of class name strings loaded from checkpoint.
     """
 
@@ -112,8 +112,13 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
 
     # A dummy TrainConfig is needed only for _namespace_from_configs' required fields;
     # dataset_dir/output_dir are unused during model construction.
-    dummy_train_config = TrainConfig(dataset_dir=".", output_dir=".")
+    dummy_train_config = TrainConfig(dataset_dir=None, output_dir="output")
     args = _namespace_from_configs(model_config, dummy_train_config)
+    # ``TrainConfig.expand_paths`` realpaths these to the caller's absolute CWD, which would be embedded into
+    # ``args`` and serialized into exported ``weights.pt`` (see ``RFDETR.export_for_roboflow``). Reset them on the
+    # namespace to placeholders so inference-built checkpoints never leak the caller's filesystem layout.
+    args.dataset_dir = None
+    args.output_dir = "output"
     nn_model = build_model(args)
 
     class_names: List[str] = []

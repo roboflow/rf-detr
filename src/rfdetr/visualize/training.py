@@ -20,6 +20,7 @@ Usage::
 
 from __future__ import annotations
 
+import os
 import re
 import warnings
 from pathlib import Path
@@ -30,6 +31,20 @@ if TYPE_CHECKING:
 
 _AUXILIARY_LOSS_SUFFIX_RE = re.compile(r"_\d+$")
 _LEGEND_COLUMNS = 4
+
+
+def _ensure_headless_backend(matplotlib: Any) -> None:
+    """Switch matplotlib to the non-interactive ``Agg`` backend only when safe.
+
+    Forcing ``Agg`` unconditionally would break inline rendering in notebooks, so the switch is skipped when a display
+    is available or matplotlib is already in interactive mode.
+    """
+    if matplotlib.get_backend().lower() == "agg":
+        return
+    if os.environ.get("DISPLAY") or matplotlib.is_interactive():
+        return
+    matplotlib.use("Agg")
+
 
 try:
     import seaborn  # noqa: F401
@@ -264,7 +279,7 @@ def _plot_metric_groups(
     try:
         import matplotlib
 
-        matplotlib.use("Agg")
+        _ensure_headless_backend(matplotlib)
         import matplotlib.pyplot as plt
     except ImportError as exc:
         raise ImportError(
@@ -416,7 +431,7 @@ def _plot_map_columns(raw_df: Any, epoch_df: Any, metric_columns: list[str], *, 
     try:
         import matplotlib
 
-        matplotlib.use("Agg")
+        _ensure_headless_backend(matplotlib)
         import matplotlib.pyplot as plt
     except ImportError as exc:
         raise ImportError(

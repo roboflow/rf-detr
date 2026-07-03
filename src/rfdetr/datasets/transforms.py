@@ -541,7 +541,7 @@ class AlbumentationsWrapper:
             return True
         if transform_name == "Flip":
             params = replay.get("params") or {}
-            return int(params.get("axis", -1)) == 1
+            return int(params.get("axis", params.get("d", -1))) == 1
         if transform_name in {"D4", "SquareSymmetry"}:
             params = replay.get("params") or {}
             return str(params.get("group_element")) == "h"
