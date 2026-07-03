@@ -493,9 +493,10 @@ def _build_train_resize_config(
         # DETR-style crop branch: resize the short side to 400/500/600, then take a ``RandomSizedCrop`` that resizes
         # the crop *directly* to the target scale (via a per-scale ``OneOf``, mirroring the square path). This removes
         # the previous fixed 384x384 intermediate hop -- the crop was resampled to 384 and then resized again to the
-        # target, a wasteful downscale-then-upscale. ``min_max_height`` is clamped to [384, 400] so the sampled crop
-        # never exceeds the smallest possible short side (400) after the first ``SmallestMaxSize``; the earlier upper
-        # bound of 600 could exceed the image and degenerate to a full-image resize.
+        # target, a wasteful downscale-then-upscale. ``min_max_height`` upper bound matches the maximum SmallestMaxSize
+        # value (600): when the sampled scale is smaller (e.g. 400), albumentations clamps the crop to the image height,
+        # effectively giving a full-image crop — this is the original DETR recipe behaviour and preserves training
+        # diversity (zoom-out variety) across the full SmallestMaxSize range.
         option_b = {
             "Sequential": {
                 "transforms": [
@@ -503,7 +504,7 @@ def _build_train_resize_config(
                     {
                         "OneOf": {
                             "transforms": [
-                                {"RandomSizedCrop": {"min_max_height": [384, 400], "height": s, "width": s}}
+                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": s, "width": s}}
                                 for s in scales
                             ],
                         }

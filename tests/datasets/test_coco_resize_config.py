@@ -149,7 +149,7 @@ class TestBuildTrainResizeConfigNonSquareSingleScale:
                     {
                         "OneOf": {
                             "transforms": [
-                                {"RandomSizedCrop": {"min_max_height": [384, 400], "height": 640, "width": 640}},
+                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 640, "width": 640}},
                             ]
                         }
                     },
@@ -188,8 +188,8 @@ class TestBuildTrainResizeConfigNonSquareMultiScale:
                     {
                         "OneOf": {
                             "transforms": [
-                                {"RandomSizedCrop": {"min_max_height": [384, 400], "height": 480, "width": 480}},
-                                {"RandomSizedCrop": {"min_max_height": [384, 400], "height": 640, "width": 640}},
+                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 480, "width": 480}},
+                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 640, "width": 640}},
                             ]
                         }
                     },
@@ -212,10 +212,11 @@ class TestBuildTrainResizeConfigNonSquareScaleJitter:
     Regression tests for https://github.com/roboflow/rf-detr/issues/1018 — PR #752 replaced RandomSizeCrop(384, 600)
     with a fixed RandomCrop(384, 384), silently removing scale jitter from the non-square training pipeline.
 
-    The ``fix-resize-crop`` branch keeps RandomSizedCrop but removes the wasteful fixed-384 intermediate hop: the crop
-    now resizes directly to the target scale (per-scale ``OneOf``, mirroring the square path) and ``min_max_height`` is
-    clamped to ``[384, 400]`` so a crop can never exceed the smallest short side (400) after the first
-    ``SmallestMaxSize([400, 500, 600])``.
+    The ``fix-resize-crop`` branch keeps RandomSizedCrop and removes the wasteful fixed-384 intermediate hop: the crop
+    now resizes directly to the target scale (per-scale ``OneOf``, mirroring the square path). ``min_max_height`` uses
+    ``[384, 600]`` to match the full SmallestMaxSize range — when the image short side is 400, albumentations clamps
+    the crop to the image height (a full-image crop), which is the original DETR recipe behaviour and preserves
+    zoom-out diversity across the SmallestMaxSize range.
     """
 
     @pytest.mark.parametrize(
@@ -242,12 +243,12 @@ class TestBuildTrainResizeConfigNonSquareScaleJitter:
             pytest.param([480, 640], id="nonsquare-multi"),
         ],
     )
-    def test_option_b_crop_uses_clamped_scale_jitter_range(self, scales):
-        """RandomSizedCrop min_max_height is clamped to [384, 400] (<= image) while retaining scale jitter."""
+    def test_option_b_crop_uses_full_scale_jitter_range(self, scales):
+        """RandomSizedCrop min_max_height matches SmallestMaxSize range [384, 600] for full zoom-out diversity."""
         result = _build_train_resize_config(scales, square=False)
         option_b = result[0]["OneOf"]["transforms"][1]
         crop_variants = option_b["Sequential"]["transforms"][1]["OneOf"]["transforms"]
-        assert all(entry["RandomSizedCrop"]["min_max_height"] == [384, 400] for entry in crop_variants)
+        assert all(entry["RandomSizedCrop"]["min_max_height"] == [384, 600] for entry in crop_variants)
 
     @pytest.mark.parametrize(
         "scales,square",
