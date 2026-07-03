@@ -91,7 +91,7 @@ def _ensure_faster_coco(coco_gt: Any) -> COCO:
         return coco_gt
 
     faster_coco = COCO()
-    setattr(faster_coco, "dataset", copy.deepcopy(getattr(coco_gt, "dataset", {})))
+    faster_coco.dataset = copy.deepcopy(coco_gt.dataset)  # type: ignore[attr-defined]
     faster_coco.createIndex()
     label2cat = getattr(coco_gt, "label2cat", None)
     if label2cat is not None:
@@ -243,18 +243,21 @@ def _build_keypoint_category_groups(
 def _filter_coco_by_category_ids(coco_gt: COCO, category_ids: list[int]) -> COCO:
     """Return a COCO object containing only the requested categories and annotations."""
     category_id_set = set(category_ids)
-    dataset = copy.deepcopy(getattr(coco_gt, "dataset", {}))
-    dataset["categories"] = [
-        category for category in dataset.get("categories", []) if int(category["id"]) in category_id_set
-    ]
-    dataset["annotations"] = [
-        annotation
-        for annotation in dataset.get("annotations", [])
-        if int(annotation.get("category_id", -1)) in category_id_set
-    ]
+    gt_dataset: dict[str, Any] = copy.deepcopy(coco_gt.dataset)  # type: ignore[attr-defined]
+    dataset: dict[str, Any] = {
+        **gt_dataset,
+        "categories": [
+            category for category in gt_dataset.get("categories", []) if int(category["id"]) in category_id_set
+        ],
+        "annotations": [
+            annotation
+            for annotation in gt_dataset.get("annotations", [])
+            if int(annotation.get("category_id", -1)) in category_id_set
+        ],
+    }
 
     filtered = COCO()
-    setattr(filtered, "dataset", dataset)
+    filtered.dataset = dataset  # type: ignore[attr-defined]
     filtered.createIndex()
     label2cat = getattr(coco_gt, "label2cat", None)
     if label2cat is not None:
@@ -265,15 +268,16 @@ def _filter_coco_by_category_ids(coco_gt: COCO, category_ids: list[int]) -> COCO
 def _load_coco_results(coco_gt: COCO, results: list[dict[str, Any]]) -> COCO:
     """Build a COCO detections object, including the empty-result case."""
     if results:
-        return getattr(COCO, "loadRes")(coco_gt, results)
+        return coco_gt.loadRes(results)  # type: ignore[attr-defined]
 
     coco_dt = COCO()
-    gt_dataset = getattr(coco_gt, "dataset", {})
-    dt_dataset = getattr(coco_dt, "dataset", {})
-    dt_dataset["info"] = copy.deepcopy(gt_dataset.get("info", {}))
-    dt_dataset["images"] = copy.deepcopy(gt_dataset.get("images", []))
-    dt_dataset["categories"] = copy.deepcopy(gt_dataset.get("categories", []))
-    dt_dataset["annotations"] = []
+    gt_dataset: dict[str, Any] = coco_gt.dataset  # type: ignore[attr-defined]
+    coco_dt.dataset = {  # type: ignore[attr-defined]
+        "info": copy.deepcopy(gt_dataset.get("info", {})),
+        "images": copy.deepcopy(gt_dataset.get("images", [])),
+        "categories": copy.deepcopy(gt_dataset.get("categories", [])),
+        "annotations": [],
+    }
     coco_dt.createIndex()
     return coco_dt
 
@@ -375,8 +379,7 @@ class CocoEvaluator:
                 )
                 continue
             kwargs = {"kpt_oks_sigmas": resolved_keypoint_oks_sigmas} if iou_type == "keypoints" else {}
-            coco_eval = getattr(COCOeval, "__new__")(COCOeval)
-            coco_eval.__init__(coco_gt, iouType=iou_type, **kwargs)
+            coco_eval = COCOeval(coco_gt, iouType=iou_type, **kwargs)  # type: ignore[call-arg]
             coco_eval.params.maxDets = [20] if iou_type == "keypoints" else [1, 10, max_dets]
             self.coco_eval[iou_type] = coco_eval
 
@@ -642,9 +645,19 @@ class CocoEvaluator:
 # maxDets[-1] instead of hardcoded 100.
 #################################################################
 def patched_pycocotools_summarize(self: COCOeval, *, log_summary: bool = True) -> None:
-    """Compute and display summary metrics for evaluation results."""
-    p = getattr(self, "params")
-    evaluation = getattr(self, "eval")
+    """Compute and display summary metrics for evaluation results.
+
+    Args:
+        self: COCOeval instance that has already run ``accumulate()``.
+        log_summary: Whether to log per-metric lines at INFO level.
+
+    Raises:
+        Exception: If ``accumulate()`` has not been called (``self.eval`` is empty).
+        ValueError: If ``self.params.iouType`` is not ``"segm"``, ``"bbox"``, or
+            ``"keypoints"``.
+    """
+    p = self.params  # type: ignore[attr-defined]
+    evaluation = self.eval  # type: ignore[attr-defined]
 
     def _summarize(ap: int = 1, iou_thr: float | None = None, area_rng: str = "all", max_dets: int = 100) -> float:
         log_template = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}"
@@ -710,4 +723,4 @@ def patched_pycocotools_summarize(self: COCOeval, *, log_summary: bool = True) -
         summarize = _summarizeKps
     else:
         raise ValueError(f"Unknown iou type {iou_type}")
-    setattr(self, "stats", summarize())
+    self.stats = summarize()  # type: ignore[attr-defined]
