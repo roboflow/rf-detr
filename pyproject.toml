@@ -125,9 +125,9 @@ tests = [
   "pytest-timeout>=2,<3",
   "pytest-doctestplus>=1.2,<2",
   "tomli>=2.0; python_version < '3.11'",
-  "pycocotools",
-  "faster_coco_eval",
-  "opencv-python-headless"
+  "opencv-python>=4.11.0.86",
+  "pycocotools>=2.0.11",
+  "faster-coco-eval>=1.7.2",
 ]
 
 typing = [
