@@ -85,7 +85,7 @@ class ConditionalQueryInitializer(nn.Module):
             nn.GELU(),
             nn.Linear(dim, out_dim * 3),
         )
-        ada_ln_projection = cast(nn.Linear, self.adaLN_modulation[-1])
+        ada_ln_projection = cast("nn.Linear", self.adaLN_modulation[-1])
         nn.init.constant_(ada_ln_projection.weight, 0)
         nn.init.constant_(ada_ln_projection.bias, 0)
 
@@ -119,7 +119,7 @@ class ConditionalQueryInitializer(nn.Module):
         modulation: torch.Tensor = self.adaLN_modulation(query_features.unsqueeze(-2))
         scale, shift, gate = modulation.chunk(3, dim=-1)
         modulated_query_features = self.out_proj(modulate(normed_query_features, scale, shift)) * gate + self.queries
-        return cast(torch.Tensor, modulated_query_features)
+        return cast("torch.Tensor", modulated_query_features)
 
 
 def compute_l1_keypoint_loss(
@@ -197,9 +197,11 @@ def compute_l1_keypoint_loss(
         zeros = all_pred_keypoints.new_zeros(n_targets)
         return zeros, zeros, zeros, zeros
 
-    assert total_padded_num_keypoints % num_classes == 0, (
-        f"total_padded_num_keypoints ({total_padded_num_keypoints}) must be divisible by num_classes ({num_classes})"
-    )
+    if total_padded_num_keypoints % num_classes != 0:
+        raise ValueError(
+            f"total_padded_num_keypoints ({total_padded_num_keypoints}) must be divisible by"
+            f" num_classes ({num_classes})"
+        )
     kpad = total_padded_num_keypoints // num_classes
     split_pred_keypoints = all_pred_keypoints.view(n_targets, num_classes, kpad, pred_dim)
     selected_pred_keypoints = split_pred_keypoints[

@@ -281,9 +281,8 @@ class HungarianMatcher(nn.Module):
 
         sizes = [len(v["boxes"]) for v in targets]
         indices = []
-        assert num_queries % group_detr == 0, (
-            f"num_queries ({num_queries}) must be divisible by group_detr ({group_detr})"
-        )
+        if num_queries % group_detr != 0:
+            raise ValueError(f"num_queries ({num_queries}) must be divisible by group_detr ({group_detr})")
         g_num_queries = num_queries // group_detr
         cost_matrix_list = cost_matrix.split(g_num_queries, dim=1)
         for g_i in range(group_detr):
