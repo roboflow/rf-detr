@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
+import yaml
 
 if TYPE_CHECKING:
     from supervision import Detections
@@ -30,9 +31,11 @@ from rfdetr.datasets.coco import (
     make_coco_transforms,
     make_coco_transforms_square_div_64,
 )
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
 
 REQUIRED_YOLO_YAML_FILES = ["data.yaml", "data.yml"]
-REQUIRED_SPLIT_DIRS = ["train", "valid"]
 _VALID_VAL_DIR_NAMES = ("valid", "val")
 REQUIRED_DATA_SUBDIRS = ["images", "labels"]
 YOLO_IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpg", ".jpeg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
@@ -595,7 +598,19 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
       each containing "images" and "labels" subdirectories
     - The "test" subdirectory is optional
 
-    Returns a boolean indicating whether the dataset is in correct yolo format.
+    .. note::
+        This is a coarse filesystem pre-check and intentionally does **not**
+        consult ``data.yaml`` split path keys.  Actual split directories are
+        resolved by :func:`_resolve_yolo_split_dirs`, which reads the YAML
+        first and falls back to the filesystem convention.  When both ``valid/``
+        and ``val/`` exist but YAML declares the non-priority one, the two
+        functions may pick different directories — this is by design; the
+        validity gate is a cheap early filter only.  When ``valid/`` exists,
+        it takes precedence over ``val/``.
+
+    Returns:
+        ``True`` if the directory satisfies all YOLO format requirements,
+        ``False`` otherwise.
     """
     contains_required_yolo_yaml = any(
         os.path.exists(os.path.join(dataset_dir, yaml_file)) for yaml_file in REQUIRED_YOLO_YAML_FILES
@@ -626,6 +641,16 @@ def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[P
     existing Roboflow convention with an additional check for ``val/`` when
     ``valid/`` is absent.
 
+    When ``split`` is ``"val"``, the function first queries the YAML for a
+    ``"val"`` key and, if absent, retries with a ``"valid"`` key before falling
+    back to the filesystem convention.
+
+    Labels are derived from the resolved images path by replacing the
+    ``"images"`` segment with ``"labels"`` anywhere in the path, mirroring the
+    Ultralytics ``img2label_paths`` convention.  This handles both
+    trailing-images (``val/images``) and intermediate-images
+    (``images/val2017``) layouts.
+
     Args:
         root: Dataset root directory.
         data_file: Path to ``data.yaml`` or ``data.yml``.
@@ -634,8 +659,6 @@ def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[P
     Returns:
         ``(images_dir, labels_dir)`` as resolved :class:`~pathlib.Path` objects.
     """
-    yaml_split_key = split if split != "val" else "val"
-
     try:
         if data_file.exists():
             data = _load_yaml_mapping(data_file)
@@ -643,21 +666,43 @@ def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[P
             if not yaml_base.is_absolute():
                 yaml_base = root / yaml_base
 
-            raw_path: str | None = data.get(yaml_split_key)
+            raw_path: str | None = data.get(split)
             if raw_path is None and split == "val":
                 raw_path = data.get("valid")
 
             if raw_path is not None:
                 split_images = yaml_base / raw_path
                 if split_images.is_dir():
-                    if split_images.name == "images":
-                        split_labels = split_images.parent / "labels"
+                    # Derive labels dir by replacing the "images" segment anywhere in
+                    # the path — mirrors Ultralytics img2label_paths() convention.
+                    # Handles trailing-images (val/images) and intermediate-images
+                    # (images/val2017) layouts.  When "images" absent, treat
+                    # split_images as the split root with images/ and labels/ subdirs.
+                    path_parts = split_images.parts
+                    if "images" in path_parts:
+                        idx = path_parts.index("images")
+                        label_parts = path_parts[:idx] + ("labels",) + path_parts[idx + 1 :]
+                        split_labels = Path(*label_parts)
+                        return split_images, split_labels
                     else:
                         split_labels = split_images / "labels"
                         split_images = split_images / "images"
-                    return split_images, split_labels
-    except (OSError, ValueError, TypeError):
+                        return split_images, split_labels
+    except OSError:
         pass
+    except (ValueError, TypeError) as exc:
+        logger.warning(
+            "Could not resolve YAML split path for %r in %s: %s — falling back to Roboflow directory convention.",
+            split,
+            data_file,
+            exc,
+        )
+    except yaml.YAMLError as exc:
+        logger.warning(
+            "Failed to parse YAML file %s: %s — falling back to Roboflow directory convention.",
+            data_file,
+            exc,
+        )
 
     roboflow_map = {"train": "train", "val": "valid", "test": "test"}
     mapped = roboflow_map.get(split, split)
