@@ -31,9 +31,10 @@ import os
 import sys
 from typing import Any
 
-# np.complex_ was removed in NumPy 2.0 (June 2024). Some transitive dependencies (e.g. older
-# tensorflow, chumpy) still reference it, causing AttributeError on import rfdetr. See issue #1061.
-# TODO: Remove once all transitive deps support NumPy 2.x natively.
+# np.complex_ was removed in NumPy 2.0 (June 2024) but some transitive dependencies (e.g. older tensorflow, chumpy)
+# still reference it, raising AttributeError on import. This shim is idempotent and a no-op once the alias exists.
+# TODO(#1061): remove in v1.9.0 once all transitive deps support NumPy 2.x natively; scope to the tflite export path
+#   (rfdetr.export._tflite.converter) once the import-time consumer set is confirmed.
 try:
     import numpy
 

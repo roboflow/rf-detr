@@ -50,8 +50,6 @@ def is_main_process() -> bool:
 def save_on_master(obj: Any, f: Any, *args: Any, **kwargs: Any) -> None:
     """Save *obj* to *f* only on the main process (rank 0).
 
-    Safely saves objects, removing any callbacks that cannot be pickled.
-
     Args:
         obj: Object to save.
         f: File path or file-like object passed to ``torch.save``.

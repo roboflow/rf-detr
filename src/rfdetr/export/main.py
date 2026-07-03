@@ -10,11 +10,12 @@
 
 import os
 import random
+import warnings
 
 import numpy as np
 import torch
-import torch.nn as nn
 from PIL import Image
+from torch import nn
 from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
@@ -113,8 +114,28 @@ def main(args):
     n_transformer_parameters = sum(p.numel() for p in model.transformer.parameters())
     logger.info(f"number of transformer parameters: {n_transformer_parameters}")
     if args.resume:
-        # weights_only=False: legacy checkpoints may contain non-tensor objects (argparse.Namespace).
-        checkpoint = torch.load(args.resume, map_location="cpu", weights_only=False)
+        # --resume points at RF-DETR-produced checkpoints that may embed
+        # argparse.Namespace objects requiring full-pickle deserialization.
+        # Mirror RFDETR.from_checkpoint(trust_checkpoint=...): honour an optional
+        # `trust_checkpoint` attribute on args (default True for backward
+        # compatibility, since --resume is a developer/ops flag).  Setting
+        # args.trust_checkpoint=False enforces safe-tensors-only loading and
+        # raises if the checkpoint needs pickle.
+        from rfdetr.util.io import _safe_torch_load
+
+        trust_checkpoint = getattr(args, "trust_checkpoint", True)
+        if trust_checkpoint:
+            # Explicit pre-load warning: --resume has no CLI opt-in gate, so make
+            # the pickle-deserialization risk (CWE-502) visible before loading.
+            warnings.warn(
+                f"Loading --resume checkpoint {args.resume!r} with full pickle "
+                "deserialization (weights_only=False fallback). This can execute "
+                "arbitrary code if the checkpoint comes from an untrusted source. "
+                "Set args.trust_checkpoint=False to require safe-tensors-only loading.",
+                UserWarning,
+                stacklevel=2,
+            )
+        checkpoint = _safe_torch_load(args.resume, trust=trust_checkpoint)
         result = model.load_state_dict(checkpoint["model"], strict=False)
         if result.missing_keys or result.unexpected_keys:
             logger.warning(
@@ -141,9 +162,16 @@ def main(args):
         dynamic_axes = {name: {0: "batch"} for name in input_names + output_names}
     else:
         dynamic_axes = None
-    # Run model inference in pytorch mode
-    model.eval().to("cuda")
-    input_tensors = input_tensors.to("cuda")
+    # Run model inference in pytorch mode.
+    # Use the export device (args.device) — not a hard-coded "cuda" — so that
+    # CPU-only export paths work correctly.  Fall back to CPU when CUDA was
+    # requested but is not available (e.g. in a CPU-only CI environment).
+    run_device = torch.device(args.device)
+    if run_device.type == "cuda" and not torch.cuda.is_available():
+        logger.warning("CUDA requested but not available; falling back to CPU for sanity forward pass.")
+        run_device = torch.device("cpu")
+    model.eval().to(run_device)
+    input_tensors = input_tensors.to(run_device)
     with torch.no_grad():
         if args.backbone_only:
             features = model(input_tensors)

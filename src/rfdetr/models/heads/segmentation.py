@@ -4,11 +4,12 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
+from torch import nn
 
 from rfdetr.utilities.tensors import _bilinear_grid_sample
 
@@ -146,7 +147,7 @@ class DepthwiseConvBlock(nn.Module):
         self.pwconv1 = nn.Linear(dim, dim)  # pointwise/1x1 convs, implemented with linear layers
         self.act = nn.GELU()
         self.gamma = (
-            nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             if layer_scale_init_value > 0
             else None
         )
@@ -192,7 +193,7 @@ class MLPBlock(nn.Module):
             ]
         )
         self.gamma = (
-            nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             if layer_scale_init_value > 0
             else None
         )

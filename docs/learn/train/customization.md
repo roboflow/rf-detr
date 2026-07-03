@@ -114,18 +114,18 @@ trainer = build_trainer(train_config, model_config)
 
 ### What build_trainer configures
 
-| Concern               | Source                                                                                                                                                                     |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Max epochs            | `train_config.epochs`                                                                                                                                                      |
-| Gradient accumulation | Detection/segmentation: `train_config.grad_accum_steps` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `1`). |
-| Gradient clipping     | Detection/segmentation: `train_config.clip_max_norm` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `None`). |
-| Mixed precision       | `model_config.amp` enables AMP; dtype resolved from `train_config.amp_dtype` (`"auto"` selects `bf16-mixed` on Ampere+, `"bf16"` / `"fp16"` force a specific dtype)        |
-| Accelerator           | `train_config.accelerator` (default `"auto"`)                                                                                                                              |
-| Strategy              | Pass `strategy=` as a `**trainer_kwarg` to `build_trainer`. `TrainConfig` has no `strategy` field — setting it on `TrainConfig` will raise a `ValueError`.                 |
-| Sync batch norm       | `train_config.sync_bn`                                                                                                                                                     |
-| Progress bar          | `train_config.progress_bar`                                                                                                                                                |
-| Loggers               | CSVLogger always; TensorBoard, WandB, MLflow when their `train_config` flags are `True`                                                                                    |
-| Callbacks             | `RFDETREMACallback`, `DropPathCallback`, `COCOEvalCallback`, `BestModelCallback`, `RFDETREarlyStopping` (conditional)                                                      |
+| Concern               | Source                                                                                                                                                                                                                                                         |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Max epochs            | `train_config.epochs`                                                                                                                                                                                                                                          |
+| Gradient accumulation | Detection/segmentation: `train_config.grad_accum_steps` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `1`).                                                                                     |
+| Gradient clipping     | Detection/segmentation: `train_config.clip_max_norm` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `None`).                                                                                     |
+| Mixed precision       | `model_config.amp` enables AMP; dtype resolved from `train_config.amp_dtype` (`"auto"` selects `bf16-mixed` on Ampere+, `"bf16"` / `"fp16"` force a specific dtype)                                                                                            |
+| Accelerator           | `train_config.accelerator` (default `"auto"`)                                                                                                                                                                                                                  |
+| Strategy              | Set via `train_config.strategy` (default `"auto"`) or pass `strategy=` as a `**trainer_kwarg` to `build_trainer`. Common values: `"auto"`, `"ddp"`, `"ddp_spawn"`. `TrainConfig` also exposes `devices` and `num_nodes` for multi-GPU and multi-node training. |
+| Sync batch norm       | `train_config.sync_bn`                                                                                                                                                                                                                                         |
+| Progress bar          | `train_config.progress_bar`                                                                                                                                                                                                                                    |
+| Loggers               | CSVLogger always; TensorBoard, WandB, MLflow when their `train_config` flags are `True`                                                                                                                                                                        |
+| Callbacks             | `RFDETREMACallback`, `DropPathCallback`, `COCOEvalCallback`, `BestModelCallback`, `RFDETREarlyStopping` (conditional)                                                                                                                                          |
 
 ### Overriding PTL Trainer kwargs
 

@@ -10,7 +10,7 @@ description: Export RF-DETR models to ONNX, TensorRT, and TFLite (FP32/FP16/INT8
     - Export to TFLite (FP32, FP16, INT8) for mobile and edge deployment
     - TensorRT conversion delivers lowest latency on NVIDIA GPUs (2.3 ms for Nano)
     - INT8 quantization requires calibration data from your dataset for accurate results
-    - Custom input resolutions supported (must be divisible by 14)
+    - Custom input resolutions supported (must be divisible by `patch_size × num_windows`, which varies by model variant)
 
 RF-DETR supports exporting models to ONNX and TFLite formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
 
@@ -63,14 +63,15 @@ The `export()` method accepts several parameters to customize the export process
 | `quantization`     | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`.                                                                                             |
 | `calibration_data` | `None`     | Calibration data for TFLite export. Image directory, `.npy` file path, NumPy array, or `None`. See [TFLite Export](#tflite-export).                                                             |
 | `max_images`       | `100`      | Maximum number of images to load from a calibration directory for TFLite INT8 quantization. Ignored for other calibration data formats.                                                         |
-| `infer_dir`        | `None`     | Path to an image file to use for tracing. If not provided, a random dummy image is generated.                                                                                                   |
-| `simplify`         | `False`    | Deprecated and ignored. ONNX simplification is no longer run by `export()`.                                                                                                                     |
+| `infer_dir`        | `None`     | Optional directory of sample images for inference validation during export tracing. If not provided, a random dummy image is generated.                                                         |
 | `backbone_only`    | `False`    | Export only the backbone feature extractor instead of the full model.                                                                                                                           |
 | `opset_version`    | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                                                                                                  |
 | `verbose`          | `True`     | Whether to print verbose export information.                                                                                                                                                    |
-| `force`            | `False`    | Deprecated and ignored.                                                                                                                                                                         |
 | `shape`            | `None`     | Input shape as tuple `(height, width)`. Each dimension must be divisible by the selected model's block size (`patch_size * num_windows`). If not provided, uses the model's default resolution. |
 | `batch_size`       | `1`        | Batch size for the exported model.                                                                                                                                                              |
+| `dynamic_batch`    | `False`    | If `True`, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime.                                                                                     |
+| `patch_size`       | `None`     | Backbone patch size override. Defaults to the value from `model_config.patch_size`. Must match the instantiated model's patch size when provided.                                               |
+| `notes`            | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the `"rfdetr_notes"` metadata property.                           |
 
 ## Advanced Export Examples
 
@@ -82,18 +83,6 @@ from rfdetr import RFDETRMedium
 model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 
 model.export(output_dir="exports/my_model")
-```
-
-### Deprecated: Export with Simplification
-
-The `simplify` flag is deprecated and ignored:
-
-```python
-from rfdetr import RFDETRMedium
-
-model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
-
-model.export(simplify=True)  # Deprecated: same result as model.export()
 ```
 
 ### Export with Custom Resolution
@@ -201,9 +190,9 @@ pip install "rfdetr[onnx,tflite]"
 === "Object Detection"
 
     ```python
-    from rfdetr import RFDETRBase
+    from rfdetr import RFDETRSmall
 
-    model = RFDETRBase()
+    model = RFDETRSmall()
 
     model.export(format="tflite", output_dir="output")
     ```
@@ -266,10 +255,10 @@ Prepare calibration data as a NumPy array and save it to a `.npy` file:
 ```python
 import numpy as np
 from PIL import Image
-from rfdetr import RFDETRBase
+from rfdetr import RFDETRSmall
 
-model = RFDETRBase()
-target_resolution = model.resolution
+model = RFDETRSmall()
+target_resolution = model.model_config.resolution
 
 # Load representative images from your dataset
 images = []

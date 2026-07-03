@@ -243,8 +243,8 @@ def _run_inference(
             "Export the model with float32 quantization or implement input quantization manually."
         )
 
-    pil_img = PILImage.open(image_path)
-    inp_tensor = _preprocess_image(pil_img, (int(height), int(width)), int(channels))
+    with PILImage.open(image_path) as pil_img:
+        inp_tensor = _preprocess_image(pil_img, (int(height), int(width)), int(channels))
 
     interp.set_tensor(inp_det[0]["index"], inp_tensor)
     interp.invoke()

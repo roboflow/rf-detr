@@ -245,6 +245,11 @@ class TestOptimizeForInferenceCompile:
 class TestOptimizeForInferenceState:
     """Verify that optimize_for_inference correctly sets internal state flags."""
 
+    def test_is_optimized_inplace_false_before_optimization(self) -> None:
+        """is_optimized_inplace is False before any optimization is applied."""
+        rfdetr = _FakeRFDETR()
+        assert rfdetr.is_optimized_inplace is False
+
     def test_is_optimized_flag_set(self) -> None:
         """_is_optimized_for_inference should be True after optimization."""
         rfdetr = _FakeRFDETR()
@@ -278,7 +283,7 @@ class TestOptimizeForInferenceState:
         assert rfdetr._optimized_resolution is None
         assert rfdetr._optimized_has_been_compiled is False
         assert rfdetr._optimized_batch_size is None
-        assert rfdetr._optimized_inplace is False
+        assert rfdetr.is_optimized_inplace is False
 
 
 class TestOptimizeForInferenceInplace:
@@ -297,7 +302,7 @@ class TestOptimizeForInferenceInplace:
         assert rfdetr.model.model is original_model
         assert rfdetr.model.inference_model is copied_model
         assert rfdetr._is_optimized_for_inference is True
-        assert rfdetr._optimized_inplace is False
+        assert rfdetr.is_optimized_inplace is False
 
     def test_inplace_true_compile_false_does_not_deepcopy(self) -> None:
         """Inplace=True with compile=False should use the loaded module directly."""
@@ -311,7 +316,7 @@ class TestOptimizeForInferenceInplace:
         assert rfdetr.model.model is None
         assert rfdetr.model.inference_model is original_model
         assert rfdetr._is_optimized_for_inference is True
-        assert rfdetr._optimized_inplace is True
+        assert rfdetr.is_optimized_inplace is True
 
     def test_remove_optimized_model_after_inplace_warns_and_preserves_state(self) -> None:
         """remove_optimized_model() after inplace optimization issues UserWarning and no-ops."""
@@ -326,7 +331,7 @@ class TestOptimizeForInferenceInplace:
         assert rfdetr.model.model is None
         assert rfdetr.model.inference_model is original_model
         assert rfdetr._is_optimized_for_inference is True
-        assert rfdetr._optimized_inplace is True
+        assert rfdetr.is_optimized_inplace is True
 
     def test_second_optimize_after_inplace_raises_runtime_error(self) -> None:
         """Calling optimize_for_inference() again after inplace=True raises RuntimeError."""
@@ -386,7 +391,7 @@ class TestOptimizeForInferenceInplace:
         assert rfdetr.model.model is original_model
         assert rfdetr.model.inference_model is None
         assert rfdetr._is_optimized_for_inference is False
-        assert rfdetr._optimized_inplace is False
+        assert rfdetr.is_optimized_inplace is False
 
     @pytest.mark.parametrize(
         "dtype",
@@ -412,7 +417,7 @@ class TestOptimizeForInferenceInplace:
         assert rfdetr.model.model is original_model
         assert rfdetr.model.inference_model is None
         assert rfdetr._is_optimized_for_inference is False
-        assert rfdetr._optimized_inplace is False
+        assert rfdetr.is_optimized_inplace is False
 
     def test_inplace_compile_true_raises_before_export_or_trace(self) -> None:
         """In-place optimization rejects compile=True before mutating the base model."""
@@ -435,7 +440,7 @@ class TestOptimizeForInferenceInplace:
         assert rfdetr._is_optimized_for_inference is False
         assert rfdetr._optimized_has_been_compiled is False
         assert rfdetr._optimized_batch_size is None
-        assert rfdetr._optimized_inplace is False
+        assert rfdetr.is_optimized_inplace is False
 
 
 class TestOptimizeForInferenceExceptionRecovery:
@@ -521,7 +526,7 @@ class TestOptimizeForInferenceExceptionRecovery:
             rfdetr.optimize_for_inference(compile=False, inplace=True)
 
         assert rfdetr._is_optimized_for_inference is False
-        assert rfdetr._optimized_inplace is False
+        assert rfdetr.is_optimized_inplace is False
         assert rfdetr.model.model is original_model
         # The mutation happened and cannot be undone by RFDETR's recovery path
         assert mutated["happened"] is True

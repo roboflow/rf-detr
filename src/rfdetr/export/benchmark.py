@@ -25,7 +25,7 @@ from PIL import Image
 from tqdm.auto import tqdm
 
 try:
-    import _tensorrt as trt
+    import tensorrt as trt
 except ImportError:
     trt = None
 
@@ -40,7 +40,7 @@ logger = get_logger()
 
 
 def get_image_list(ann_file):
-    with open(ann_file, "r") as fin:
+    with open(ann_file) as fin:
         data = json.load(fin)
     return data["images"]
 
@@ -49,14 +49,47 @@ def load_image(file_path):
     return Image.open(file_path).convert("RGB")
 
 
-def infer_transforms():
+_DEFAULT_INPUT_SIZE = (640, 640)
+_DEFAULT_NUM_QUERIES = 300
+
+
+def _static_dim(value, fallback: int) -> int:
+    """Coerce a tensor-shape entry to a positive int, falling back for dynamic/unknown axes.
+
+    ONNX Runtime and TensorRT report dynamic axes as strings (e.g. ``"height"``), ``None``, or ``-1``. Such values
+    cannot drive a fixed preprocessing size, so the caller-supplied *fallback* is used instead.
+
+    Args:
+        value: A single entry from a model input/output shape.
+        fallback: Value to return when *value* is not a concrete positive integer.
+
+    Returns:
+        The integer dimension, or *fallback* for dynamic axes.
+    """
+    try:
+        dim = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return dim if dim > 0 else fallback
+
+
+def infer_transforms(size: tuple[int, int] = _DEFAULT_INPUT_SIZE):
+    """Build the benchmark preprocessing pipeline for a given model input size.
+
+    Args:
+        size: Target ``(height, width)`` the image is resized to before inference. Defaults to
+            :data:`_DEFAULT_INPUT_SIZE` for dynamic-axis models where a static size cannot be read.
+
+    Returns:
+        A ``torchvision.transforms.v2.Compose`` that resizes, tensorizes, and normalizes an image.
+    """
     from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
     from rfdetr.datasets.transforms import Normalize
 
     return Compose(
         [
-            Resize((640, 640)),
+            Resize(size),
             ToImage(),
             ToDtype(torch.float32, scale=True),
             Normalize(),
@@ -75,14 +108,18 @@ def box_cxcywh_to_xyxy(x):
     return torch.stack(b, dim=-1)
 
 
-def post_process(outputs, target_sizes):
+def post_process(outputs, target_sizes, num_queries: int = _DEFAULT_NUM_QUERIES):
     out_logits, out_bbox = outputs["labels"], outputs["dets"]
 
     assert len(out_logits) == len(target_sizes)
     assert target_sizes.shape[1] == 2
 
     prob = out_logits.sigmoid()
-    topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), 300, dim=1)
+    flat_scores = prob.view(out_logits.shape[0], -1)
+    # Clamp k to the flattened dimension: when num_queries is a fallback for a dynamic-axis model
+    # it may exceed num_queries*num_classes and trigger a topk runtime error.
+    k = min(num_queries, flat_scores.shape[1])
+    topk_values, topk_indexes = torch.topk(flat_scores, k, dim=1)
     scores = topk_values
     topk_boxes = topk_indexes // out_logits.shape[2]
     labels = topk_indexes % out_logits.shape[2]
@@ -100,12 +137,20 @@ def post_process(outputs, target_sizes):
 
 
 def infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device, repeats=1):
+    input_shape = sess.get_inputs()[0].shape
+    # fallback for dynamic-axis models (dynamic H/W report as strings or None)
+    input_h = _static_dim(input_shape[2] if len(input_shape) > 3 else None, _DEFAULT_INPUT_SIZE[0])
+    input_w = _static_dim(input_shape[3] if len(input_shape) > 3 else None, _DEFAULT_INPUT_SIZE[1])
+    output_shape = sess.get_outputs()[0].shape
+    num_queries = _static_dim(output_shape[1] if len(output_shape) > 1 else None, _DEFAULT_NUM_QUERIES)
+    transforms = infer_transforms((input_h, input_w))
+
     time_list = []
     for img_dict in tqdm(img_list):
         image = load_image(os.path.join(prefix, img_dict["file_name"]))
         width, height = image.size
         orig_target_sizes = torch.Tensor([height, width])
-        image_tensor, _ = infer_transforms()(image, None)  # target is None
+        image_tensor, _ = transforms(image, None)  # target is None
 
         samples = image_tensor[None].numpy()
 
@@ -119,12 +164,12 @@ def infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device, rep
         outputs["dets"] = torch.Tensor(res[0]).to(device)
 
         orig_target_sizes = torch.stack([orig_target_sizes], dim=0).to(device)
-        results = post_process(outputs, orig_target_sizes)
+        results = post_process(outputs, orig_target_sizes, num_queries=num_queries)
         res = {img_dict["id"]: results[0]}
         if coco_evaluator is not None:
             coco_evaluator.update(res)
 
-    logger.info("Model latency with ONNX Runtime: {}ms".format(1000 * sum(time_list) / len(img_list)))
+    logger.info(f"Model latency with ONNX Runtime: {1000 * sum(time_list) / len(img_list)}ms")
 
     # accumulate predictions from all images
     stats = {}
@@ -137,12 +182,20 @@ def infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device, rep
 
 
 def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, repeats=1):
+    input_shape = list(model.bindings[model.input_names[0]].shape)
+    # fallback for dynamic-axis models
+    input_h = _static_dim(input_shape[2] if len(input_shape) > 3 else None, _DEFAULT_INPUT_SIZE[0])
+    input_w = _static_dim(input_shape[3] if len(input_shape) > 3 else None, _DEFAULT_INPUT_SIZE[1])
+    output_shape = list(model.bindings[model.output_names[0]].shape)
+    num_queries = _static_dim(output_shape[1] if len(output_shape) > 1 else None, _DEFAULT_NUM_QUERIES)
+    transforms = infer_transforms((input_h, input_w))
+
     time_list = []
     for img_dict in tqdm(img_list):
         image = load_image(os.path.join(prefix, img_dict["file_name"]))
         width, height = image.size
         orig_target_sizes = torch.Tensor([height, width])
-        image_tensor, _ = infer_transforms()(image, None)  # target is None
+        image_tensor, _ = transforms(image, None)  # target is None
 
         samples = image_tensor[None].to(device)
         _, _, h, w = samples.shape
@@ -157,11 +210,11 @@ def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, 
         time_list.append(time_profile.total / repeats)
         orig_target_sizes = torch.stack([orig_target_sizes], dim=0).to(device)
         if coco_evaluator is not None:
-            results = post_process(outputs, orig_target_sizes)
+            results = post_process(outputs, orig_target_sizes, num_queries=num_queries)
             res = {img_dict["id"]: results[0]}
             coco_evaluator.update(res)
 
-    logger.info("Model latency with TensorRT: {}ms".format(1000 * sum(time_list) / len(img_list)))
+    logger.info(f"Model latency with TensorRT: {1000 * sum(time_list) / len(img_list)}ms")
 
     # accumulate predictions from all images
     stats = {}
@@ -173,7 +226,7 @@ def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, 
         logger.info(stats)
 
 
-class TRTInference(object):
+class TRTInference:
     """TensorRT inference engine."""
 
     def __init__(

@@ -187,8 +187,10 @@ class TestRFDETRTrainPTL:
 
     @pytest.mark.parametrize(
         "missing_name",
-        ["rfdetr.training", "rfdetr.training.auto_batch"],
-        ids=["training-package", "training-submodule"],
+        [
+            pytest.param("rfdetr.training", id="training-package"),
+            pytest.param("rfdetr.training.auto_batch", id="training-submodule"),
+        ],
     )
     def test_internal_training_module_import_error_preserved(self, tmp_path, monkeypatch, missing_name, patch_lit):
         """Missing internal training modules should keep original ModuleNotFoundError."""
@@ -343,7 +345,10 @@ class TestRFDETRTrainPTL:
             RFDETR.train(mock_self, do_benchmark=False)
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
 
-    @pytest.mark.parametrize("truthy_value", [True, 1, "yes"], ids=["bool_true", "int_1", "str_yes"])
+    @pytest.mark.parametrize(
+        "truthy_value",
+        [pytest.param(True, id="bool_true"), pytest.param(1, id="int_1"), pytest.param("yes", id="str_yes")],
+    )
     def test_do_benchmark_truthy_emits_deprecation_warning(self, tmp_path, truthy_value, patch_lit):
         """Any truthy do_benchmark value emits DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
@@ -353,7 +358,7 @@ class TestRFDETRTrainPTL:
             RFDETR.train(mock_self, do_benchmark=truthy_value)
         depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert len(depr) >= 1
-        assert "rfdetr benchmark" in str(depr[0].message)
+        assert "rfdetr.export.benchmark" in str(depr[0].message)
 
     def test_do_benchmark_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
         """do_benchmark is popped before calling get_train_config."""
@@ -1052,8 +1057,11 @@ class TestPublicAPIExports:
 
     @pytest.mark.parametrize(
         "name",
-        ["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
-        ids=["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
+        [
+            pytest.param("RFDETRModelModule", id="RFDETRModelModule"),
+            pytest.param("RFDETRDataModule", id="RFDETRDataModule"),
+            pytest.param("build_trainer", id="build_trainer"),
+        ],
     )
     def test_symbol_importable_from_rfdetr(self, name, patch_lit):
         """Each PTL export is accessible as rfdetr.<name> via lazy __getattr__."""
@@ -1063,8 +1071,11 @@ class TestPublicAPIExports:
 
     @pytest.mark.parametrize(
         "name",
-        ["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
-        ids=["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
+        [
+            pytest.param("RFDETRModelModule", id="RFDETRModelModule"),
+            pytest.param("RFDETRDataModule", id="RFDETRDataModule"),
+            pytest.param("build_trainer", id="build_trainer"),
+        ],
     )
     def test_symbol_is_same_object_as_rfdetr_training(self, name, patch_lit):
         """rfdetr.<name> is the identical object to rfdetr.training.<name>."""

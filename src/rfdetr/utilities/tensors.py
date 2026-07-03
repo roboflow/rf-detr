@@ -12,8 +12,9 @@
 # ------------------------------------------------------------------------
 """Tensor utilities: NestedTensor, collate_fn, and helpers."""
 
+from collections.abc import Callable
 from functools import partial
-from typing import Any, Callable
+from typing import Any
 
 import torch
 import torchvision
@@ -49,7 +50,7 @@ def _max_by_axis(the_list: list[list[int]]) -> list[int]:
     Returns:
         List of per-position maximums.
     """
-    maxes = the_list[0]
+    maxes = list(the_list[0])
     for sublist in the_list[1:]:
         for index, item in enumerate(sublist):
             maxes[index] = max(maxes[index], item)

@@ -444,3 +444,101 @@ def test_forward_validates_spatial_dims(h: int, w: int, num_windows: int, should
             model(pixel_values)
     else:
         model(pixel_values)  # must not raise
+
+
+def _make_small_model() -> WindowedDinov2WithRegistersModel:
+    """Return the smallest valid WindowedDinov2WithRegistersModel for unit tests."""
+    config = WindowedDinov2WithRegistersConfig(
+        hidden_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        image_size=32,
+        patch_size=16,
+        num_register_tokens=2,
+    )
+    return WindowedDinov2WithRegistersModel(config)
+
+
+class TestSetAttnImplementationPreservesWeights:
+    """set_attn_implementation must transfer trained weights to the new attention module.
+
+    Before the fix the method replaced each layer's attention with a freshly constructed (randomly initialised) module,
+    silently discarding all trained q/k/v/output weights.
+    """
+
+    @pytest.mark.parametrize(
+        "from_impl, to_impl",
+        [
+            pytest.param("sdpa", "eager", id="sdpa_to_eager"),
+            pytest.param("eager", "sdpa", id="eager_to_sdpa"),
+        ],
+    )
+    def test_query_weight_preserved_after_switch(self, from_impl: str, to_impl: str) -> None:
+        """After switching implementation the query weight tensor must be unchanged."""
+        model = _make_small_model()
+        model.set_attn_implementation(from_impl)
+
+        # Record the query weights of every layer before switching.
+        before = [layer.attention.attention.query.weight.clone() for layer in model.encoder.layer]
+
+        model.set_attn_implementation(to_impl)
+
+        after = [layer.attention.attention.query.weight for layer in model.encoder.layer]
+        for layer_idx, (w_before, w_after) in enumerate(zip(before, after)):
+            assert torch.equal(w_before, w_after), (
+                f"Layer {layer_idx}: query weight changed after set_attn_implementation({from_impl!r} → {to_impl!r})"
+            )
+
+    def test_key_and_value_weights_preserved(self) -> None:
+        """Key and value weights must also survive the implementation switch."""
+        model = _make_small_model()
+        model.set_attn_implementation("sdpa")
+
+        key_before = [layer.attention.attention.key.weight.clone() for layer in model.encoder.layer]
+        val_before = [layer.attention.attention.value.weight.clone() for layer in model.encoder.layer]
+
+        model.set_attn_implementation("eager")
+
+        for layer_idx, layer in enumerate(model.encoder.layer):
+            assert torch.equal(key_before[layer_idx], layer.attention.attention.key.weight), (
+                f"Layer {layer_idx}: key weight changed after implementation switch"
+            )
+            assert torch.equal(val_before[layer_idx], layer.attention.attention.value.weight), (
+                f"Layer {layer_idx}: value weight changed after implementation switch"
+            )
+
+    def test_output_dense_weight_preserved(self) -> None:
+        """The output projection (dense) weight must survive the implementation switch."""
+        model = _make_small_model()
+        model.set_attn_implementation("sdpa")
+
+        dense_before = [layer.attention.output.dense.weight.clone() for layer in model.encoder.layer]
+
+        model.set_attn_implementation("eager")
+
+        for layer_idx, layer in enumerate(model.encoder.layer):
+            assert torch.equal(dense_before[layer_idx], layer.attention.output.dense.weight), (
+                f"Layer {layer_idx}: output dense weight changed after implementation switch"
+            )
+
+    def test_config_updated_after_switch(self) -> None:
+        """config._attn_implementation must reflect the new implementation after switching."""
+        model = _make_small_model()
+        model.set_attn_implementation("eager")
+        assert model.config._attn_implementation == "eager"
+        model.set_attn_implementation("sdpa")
+        assert model.config._attn_implementation == "sdpa"
+
+    def test_attention_module_type_after_switch(self) -> None:
+        """After switching to eager, every layer must hold a non-SDPA attention class."""
+        model = _make_small_model()
+        model.set_attn_implementation("eager")
+        for layer in model.encoder.layer:
+            assert isinstance(layer.attention, Dinov2WithRegistersAttention)
+            assert not isinstance(layer.attention, Dinov2WithRegistersSdpaAttention)
+
+    def test_invalid_implementation_raises_value_error(self) -> None:
+        """An unknown implementation name must raise ValueError before touching any layer."""
+        model = _make_small_model()
+        with pytest.raises(ValueError, match="Unknown attn_implementation"):
+            model.set_attn_implementation("flash_attn")

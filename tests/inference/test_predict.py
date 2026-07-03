@@ -3,16 +3,19 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+import io
 import socket
 from types import SimpleNamespace
 
 import numpy as np
 import PIL.Image
 import pytest
+import requests
 import supervision as sv
 import torch
 
 from rfdetr import RFDETRNano, RFDETRSegNano
+from rfdetr.detr import RFDETR
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 
 from .helpers import _DummyModel, _DummyRFDETR
@@ -952,3 +955,177 @@ class TestPredictKeypointClassNameMapping:
         assert detections.data["class_name"][0] == "cat", (
             f"Detection model: class_id=0 must map to 'cat', got '{detections.data['class_name'][0]}'"
         )
+
+
+# ---------------------------------------------------------------------------
+# Fix F — non-RGB PIL / file-path inputs are auto-converted to RGB
+# ---------------------------------------------------------------------------
+
+
+class TestPredictNonRGBAutoConvert:
+    """Predict() must silently convert non-RGB PIL images and file paths to RGB.
+
+    Standard detector contract: callers pass images in any PIL mode (L, LA,
+    RGBA, P …) and expect detection results, not opaque tensor-shape errors.
+    Tensor inputs with wrong channel count are still the caller's error.
+    """
+
+    @pytest.mark.parametrize(
+        "pil_mode",
+        [
+            pytest.param("L", id="grayscale-L"),
+            pytest.param("LA", id="grayscale-with-alpha-LA"),
+            pytest.param("RGBA", id="rgba"),
+            pytest.param("P", id="palette-P"),
+            pytest.param("CMYK", id="cmyk"),
+        ],
+    )
+    def test_non_rgb_pil_image_succeeds(self, pil_mode: str) -> None:
+        """PIL images in any mode are auto-converted to RGB and return sv.Detections."""
+        import supervision as sv
+
+        img = PIL.Image.new(pil_mode, (28, 28))
+        model = _DummyRFDETR()
+        detections = model.predict(img)
+        assert isinstance(detections, sv.Detections)
+
+    def test_grayscale_file_path_succeeds(self, tmp_path) -> None:
+        """Grayscale image opened from a file path is auto-converted and returns sv.Detections."""
+        import supervision as sv
+
+        img_path = tmp_path / "gray.png"
+        PIL.Image.new("L", (28, 28)).save(str(img_path))
+        model = _DummyRFDETR()
+        detections = model.predict(str(img_path))
+        assert isinstance(detections, sv.Detections)
+
+    def test_wrong_channel_tensor_still_raises(self) -> None:
+        """Tensor inputs with wrong channel count must still raise ValueError with helpful message."""
+        import torch
+
+        # 1-channel tensor — caller is responsible for correct shape
+        tensor = torch.rand(1, 28, 28)
+        model = _DummyRFDETR()
+        with pytest.raises(ValueError, match="PIL Image or a file path"):
+            model.predict(tensor)
+
+
+def _png_bytes(size: tuple[int, int] = (28, 28)) -> bytes:
+    """Return the PNG-encoded bytes of a solid grey image."""
+    buf = io.BytesIO()
+    PIL.Image.new("RGB", size, (128, 128, 128)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class _FakeResponse:
+    """Minimal stand-in for ``requests.Response`` used by ``predict()`` URL tests."""
+
+    def __init__(self, content: bytes = b"", status_code: int = 200) -> None:
+        """Store the response body and status code."""
+        self.content = content
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        """Raise ``requests.HTTPError`` for 4xx/5xx status codes, mirroring requests."""
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} Client Error")
+
+
+class TestPredictURLFetch:
+    """``predict()`` URL handling: robust HTTP fetch and correct local-path classification."""
+
+    def test_http_error_status_raises_httperror(self, monkeypatch) -> None:
+        """A 404 response surfaces as ``requests.HTTPError``, not an opaque PIL error."""
+        model = _DummyRFDETR()
+
+        def _fake_get(url: str, **kwargs: object) -> _FakeResponse:
+            return _FakeResponse(content=b"not found", status_code=404)
+
+        monkeypatch.setattr(requests, "get", _fake_get)
+        with pytest.raises(requests.HTTPError):
+            model.predict("http://example.com/missing.jpg")
+
+    def test_timeout_is_passed_to_requests_get(self, monkeypatch) -> None:
+        """The HTTP fetch must pass an explicit ``timeout`` so it cannot hang forever."""
+        model = _DummyRFDETR()
+        captured: dict[str, object] = {}
+
+        def _fake_get(url: str, **kwargs: object) -> _FakeResponse:
+            captured.update(kwargs)
+            return _FakeResponse(content=_png_bytes(), status_code=200)
+
+        monkeypatch.setattr(requests, "get", _fake_get)
+        detections = model.predict("http://example.com/image.png")
+        assert isinstance(detections, sv.Detections)
+        assert captured.get("timeout") == 30, "predict() must pass timeout=30 to requests.get"
+
+    def test_local_file_named_like_http_is_not_fetched(self, tmp_path, monkeypatch) -> None:
+        """A local file whose name starts with ``http`` must be opened, not fetched over HTTP."""
+        img_path = tmp_path / "httpcam_frame.png"
+        PIL.Image.new("RGB", (28, 28), (128, 128, 128)).save(str(img_path))
+        model = _DummyRFDETR()
+
+        def _fail_get(url: str, **kwargs: object) -> _FakeResponse:
+            raise AssertionError(f"requests.get must not be called for local path {url!r}")
+
+        monkeypatch.setattr(requests, "get", _fail_get)
+        detections = model.predict(str(img_path))
+        assert isinstance(detections, sv.Detections)
+
+
+class TestPredictInputTypeReturnShape:
+    """``predict()`` return shape is governed by input type, not runtime batch length."""
+
+    def test_single_element_list_returns_list(self) -> None:
+        """A one-element list input returns a list, not a bare ``Detections``."""
+        img = PIL.Image.new("RGB", (28, 28), (128, 128, 128))
+        model = _DummyRFDETR()
+        result = model.predict([img])
+        assert isinstance(result, list), "list input must always return a list"
+        assert len(result) == 1
+
+    def test_bare_image_returns_detections(self) -> None:
+        """A single (non-list) image returns a bare ``Detections``."""
+        img = PIL.Image.new("RGB", (28, 28), (128, 128, 128))
+        model = _DummyRFDETR()
+        result = model.predict(img)
+        assert isinstance(result, sv.Detections)
+
+
+class TestExportInplaceOptimizeGuards:
+    """Roboflow export methods raise a clear error after ``optimize_for_inference(inplace=True)``."""
+
+    def test_export_for_roboflow_raises_after_inplace_optimize(self, tmp_path) -> None:
+        """``export_for_roboflow`` raises ``RuntimeError`` once the model has been cleared."""
+        model = _DummyRFDETR()
+        model._optimized_inplace = True
+        with pytest.raises(RuntimeError, match="optimize_for_inference"):
+            model.export_for_roboflow(str(tmp_path))
+
+    def test_deploy_to_roboflow_raises_after_inplace_optimize(self) -> None:
+        """``deploy_to_roboflow`` raises ``RuntimeError`` before any auth/network calls."""
+        model = _DummyRFDETR()
+        model._optimized_inplace = True
+        with pytest.raises(RuntimeError, match="optimize_for_inference"):
+            model.deploy_to_roboflow("ws", "proj", 1)
+
+
+class TestTrainAlreadyTrainedWarning:
+    """Calling ``train()`` on an already-trained/loaded model emits a loud warning."""
+
+    def test_second_train_warns(self, monkeypatch) -> None:
+        """A model flagged as trained warns that training restarts from pretrain_weights."""
+        model = _DummyRFDETR()
+        model._has_been_trained = True
+
+        class _StopTrainError(Exception):
+            pass
+
+        def _stub_get_train_config(self, **kwargs: object) -> None:
+            raise _StopTrainError
+
+        # Short-circuit train() right after the warning so no real training runs.
+        monkeypatch.setattr(RFDETR, "get_train_config", _stub_get_train_config, raising=False)
+        with pytest.warns(UserWarning, match="already been trained"):
+            with pytest.raises(_StopTrainError):
+                model.train()

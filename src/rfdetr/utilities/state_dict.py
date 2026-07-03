@@ -147,11 +147,14 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     """
     import torch
 
+    from rfdetr.util.io import _safe_torch_load
+
     # `checkpoint_best_total.pth` is produced by local RF-DETR training and can
     # contain non-tensor metadata under "args" (e.g. `types.SimpleNamespace`).
     # PyTorch 2.6 changed `torch.load` default `weights_only=True`, which rejects
-    # these objects. This utility intentionally operates on trusted checkpoints.
-    state_dict = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    # these objects. This utility intentionally operates on trusted, locally
+    # produced checkpoints, so trust=True permits the full-pickle fallback.
+    state_dict = _safe_torch_load(checkpoint, trust=True)
     new_state_dict = {
         "model": state_dict["model"],
         "args": state_dict["args"],
