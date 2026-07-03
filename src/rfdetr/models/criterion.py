@@ -456,10 +456,12 @@ class SetCriterion(nn.Module):
             spatial_features = outputs["pred_masks"]["spatial_features"]
             query_features = outputs["pred_masks"]["query_features"]
             bias = outputs["pred_masks"]["bias"]
-            # If there are no matches, return an empty tensor like the Tensor branch does.
+            # No matches: return a zero loss that still flows through the segmentation-head
+            # outputs, so every parameter stays connected in the autograd graph (required for
+            # DDP, which errors on parameters that receive no gradient).
             if idx[0].numel() == 0:
-                device = spatial_features.device
-                src_masks = torch.tensor([], device=device)
+                zero = (spatial_features.sum() + query_features.sum() + bias.sum()) * 0.0
+                return {"loss_mask_ce": zero, "loss_mask_dice": zero}
             else:
                 batched_selected_masks = []
                 per_batch_counts = idx[0].unique(return_counts=True)[1]

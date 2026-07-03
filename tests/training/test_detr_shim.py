@@ -353,7 +353,7 @@ class TestRFDETRTrainPTL:
             RFDETR.train(mock_self, do_benchmark=truthy_value)
         depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert len(depr) >= 1
-        assert "rfdetr benchmark" in str(depr[0].message)
+        assert "rfdetr.export.benchmark" in str(depr[0].message)
 
     def test_do_benchmark_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
         """do_benchmark is popped before calling get_train_config."""
@@ -1681,6 +1681,58 @@ class TestDeployToRoboflow:
         assert not deployed_paths[0].exists(), "Temporary upload dir must be removed even after a failed deploy"
         assert not (tmp_path / ".roboflow_temp_upload").exists(), "Fixed-name temp dir must not be created"
 
+    @staticmethod
+    def _deploy(mock_self, size=None):
+        """Call deploy_to_roboflow with a mocked Roboflow client; return the captured deploy mock."""
+        mock_rf = MagicMock()
+        deploy_mock = mock_rf.workspace.return_value.project.return_value.version.return_value.deploy
+        kwargs = {} if size is None else {"size": size}
+        with patch("roboflow.Roboflow", return_value=mock_rf):
+            RFDETR.deploy_to_roboflow(
+                mock_self,
+                workspace="test-workspace",
+                project_id="test-project",
+                version=1,
+                api_key="dummy-key",
+                **kwargs,
+            )
+        return deploy_mock
+
+    def test_explicit_size_overrides_model_size(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """An explicitly passed size must win over self.size (documented precedence).
+
+        Regression: ``size = self.size or size`` inverted the precedence, silently ignoring the user's argument.
+        """
+        monkeypatch.chdir(tmp_path)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            deploy_mock = self._deploy(mock_self, size="rfdetr-medium")
+
+        assert deploy_mock.call_args.kwargs["model_type"] == "rfdetr-medium"
+
+    def test_size_defaults_to_model_size_when_not_provided(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """Without an explicit size the model's own size is deployed."""
+        monkeypatch.chdir(tmp_path)
+        deploy_mock = self._deploy(mock_self)
+
+        assert deploy_mock.call_args.kwargs["model_type"] == "rfdetr-small"
+
+    def test_warns_when_explicit_size_differs_from_model_size(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """A UserWarning is emitted when the explicit size conflicts with the model's own size."""
+        monkeypatch.chdir(tmp_path)
+        with pytest.warns(UserWarning, match="rfdetr-medium.*rfdetr-small"):
+            self._deploy(mock_self, size="rfdetr-medium")
+
+    def test_no_warning_when_explicit_size_matches_model_size(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """No size-conflict warning is emitted when the explicit size equals the model's own size."""
+        monkeypatch.chdir(tmp_path)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            self._deploy(mock_self, size="rfdetr-small")
+
+        conflict_warnings = [w for w in caught if "deploy_to_roboflow" in str(w.message)]
+        assert not conflict_warnings
+
 
 # ---------------------------------------------------------------------------
 # TestSaveTrainingConfig
@@ -1842,8 +1894,8 @@ class TestRFDETRTrainNumClassesAutoDetect:
 
         assert mock_self.model_config.num_classes == 3
 
-    def test_keypoint_coco_auto_detect_uses_schema_label_slots(self, mock_self, patch_lit):
-        """Keypoint COCO class-count detection should count RF-DETR schema label slots."""
+    def test_keypoint_coco_auto_detect_uses_active_first_schema_slots(self, mock_self, patch_lit):
+        """Keypoint COCO class-count detection should count active-first RF-DETR schema slots."""
         mock_self.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
         dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
         self._write_coco_categories(
@@ -1862,8 +1914,8 @@ class TestRFDETRTrainNumClassesAutoDetect:
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
-        assert mock_self.model_config.num_classes == 2
-        assert mock_self.model.args.num_classes == 2
+        assert mock_self.model_config.num_classes == 1
+        assert mock_self.model.args.num_classes == 1
 
     def test_preserves_explicit_default_num_classes_when_dataset_differs(
         self,
@@ -1942,7 +1994,7 @@ class TestRFDETRTrainNumClassesAutoDetect:
     def test_keypoint_schema_inferred_when_not_explicitly_overridden(self, mock_self, patch_lit):
         """Roboflow keypoint metadata should populate model_config.num_keypoints_per_class."""
         mock_self.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
-        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[0, 17])
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[17])
         mock_self._align_keypoint_schema_from_dataset = lambda config: RFDETR._align_keypoint_schema_from_dataset(
             mock_self, config
         )
@@ -1957,14 +2009,117 @@ class TestRFDETRTrainNumClassesAutoDetect:
         assert mock_self.model.args.num_keypoints_per_class == [25]
         assert mock_self.model_config.num_classes == 1
 
+    def test_keypoint_flip_pairs_inferred_from_roboflow_coco_metadata(self, mock_self, patch_lit):
+        """Roboflow COCO keypoint names should populate train_config.keypoint_flip_pairs."""
+        mock_self.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[17])
+        mock_self._align_keypoint_schema_from_dataset = lambda config: RFDETR._align_keypoint_schema_from_dataset(
+            mock_self, config
+        )
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_coco_categories(
+            dataset_dir,
+            categories=[
+                {
+                    "id": 0,
+                    "name": "person",
+                    "supercategory": "none",
+                    "keypoints": ["nose", "left_eye", "right_eye"],
+                    "skeleton": [],
+                }
+            ],
+        )
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.get_train_config.return_value.keypoint_flip_pairs == [1, 2]
+
+    def test_keypoint_schema_and_flip_pairs_inferred_from_native_coco_metadata(self, tmp_path: Path) -> None:
+        """Native COCO person-keypoint annotations should use the same symmetry inference as Roboflow COCO."""
+        annotation_dir = tmp_path / "annotations"
+        annotation_dir.mkdir(parents=True)
+        annotation_path = annotation_dir / "person_keypoints_train2017.json"
+        annotation_path.write_text(
+            json.dumps(
+                {
+                    "images": [],
+                    "annotations": [],
+                    "categories": [
+                        {
+                            "id": 1,
+                            "name": "person",
+                            "supercategory": "person",
+                            "keypoints": ["nose", "left_eye", "right_eye"],
+                            "skeleton": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        from rfdetr.config import KeypointTrainConfig
+
+        model = object.__new__(RFDETR)
+        model.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        model.model = SimpleNamespace(args=SimpleNamespace(num_classes=90, num_keypoints_per_class=[17]))
+        train_config = KeypointTrainConfig(dataset_dir=str(tmp_path), dataset_file="coco", tensorboard=False)
+
+        model._align_keypoint_schema_from_dataset(train_config)
+
+        assert model.model_config.num_keypoints_per_class == [3]
+        assert model.model.args.num_keypoints_per_class == [3]
+        assert train_config.keypoint_flip_pairs == [1, 2]
+
+    def test_explicit_keypoint_flip_pairs_are_preserved_when_dataset_metadata_has_pairs(self, tmp_path: Path) -> None:
+        """Dataset-inferred pairs must not override an explicit user mapping."""
+        annotation_path = tmp_path / "train" / "_annotations.coco.json"
+        annotation_path.parent.mkdir(parents=True)
+        annotation_path.write_text(
+            json.dumps(
+                {
+                    "images": [],
+                    "annotations": [],
+                    "categories": [
+                        {
+                            "id": 0,
+                            "name": "person",
+                            "supercategory": "person",
+                            "keypoints": ["nose", "left_eye", "right_eye"],
+                            "skeleton": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        from rfdetr.config import KeypointTrainConfig
+
+        model = object.__new__(RFDETR)
+        model.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        model.model = SimpleNamespace(args=SimpleNamespace(num_classes=90, num_keypoints_per_class=[17]))
+        train_config = KeypointTrainConfig(
+            dataset_dir=str(tmp_path),
+            dataset_file="roboflow",
+            tensorboard=False,
+            keypoint_flip_pairs=[2, 0],
+        )
+
+        model._align_keypoint_schema_from_dataset(train_config)
+
+        assert model.model_config.num_keypoints_per_class == [3]
+        assert model.model.args.num_keypoints_per_class == [3]
+        assert train_config.keypoint_flip_pairs == [2, 0]
+
     def test_explicit_keypoint_schema_mismatch_warns_and_uses_dataset(self, mock_self, patch_lit, caplog):
         """Explicit num_keypoints_per_class mismatches should warn and use dataset metadata."""
         mock_self.model_config = RFDETRKeypointPreviewConfig(
             pretrain_weights=None,
             device="cpu",
-            num_keypoints_per_class=[0, 17],
+            num_keypoints_per_class=[17],
         )
-        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[0, 17])
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[17])
         mock_self._align_keypoint_schema_from_dataset = lambda config: RFDETR._align_keypoint_schema_from_dataset(
             mock_self, config
         )
@@ -1984,7 +2139,7 @@ class TestRFDETRTrainNumClassesAutoDetect:
         assert mock_self.model.args.num_keypoints_per_class == [25]
         assert any(
             record.levelname == "WARNING"
-            and "Configured num_keypoints_per_class=[0, 17]" in record.message
+            and "Configured num_keypoints_per_class=[17]" in record.message
             and "dataset keypoint metadata [25]" in record.message
             for record in caplog.records
         )
@@ -2119,7 +2274,7 @@ class TestRFDETRTrainNumClassesAutoDetect:
             pretrain_weights=None,
             device="cpu",
         )
-        mock_self.model_config.num_keypoints_per_class = []  # override default [0, 17]
+        mock_self.model_config.num_keypoints_per_class = []  # override default [17]
         mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[])
 
         load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball", "referee"])

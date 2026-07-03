@@ -3,25 +3,22 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Shared fixtures for model tests."""
+"""Shared fixtures for the models test suite."""
 
 import pytest
+import torch
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _prewarm_dinov2_cache() -> None:
-    """Download DINOv2 backbone weights once per test session.
+@pytest.fixture(autouse=True)
+def reset_torch_safe_globals():
+    """Reset torch serialization safe globals after each test.
 
-    HuggingFace hub uses file-level locking internally, so concurrent xdist
-    workers block on each other rather than issuing duplicate network requests.
-    After the first worker finishes, all others read from the local disk cache.
-
-    Examples:
-        This fixture is autouse — no explicit reference needed in tests.
+    Prevents cross-test state contamination caused by ``_safe_torch_load``'s Attempt 2 path, which calls
+    ``torch.serialization.add_safe_globals``. Without this reset, globals registered by one test bleed into subsequent
+    tests and can mask trust-gate failures.
     """
-    from huggingface_hub import snapshot_download
-
-    snapshot_download(
-        "facebook/dinov2-with-registers-base",
-        ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"],
-    )
+    yield
+    try:
+        torch.serialization.clear_safe_globals()
+    except AttributeError:
+        pass  # torch <2.4 does not have clear_safe_globals

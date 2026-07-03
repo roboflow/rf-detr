@@ -334,6 +334,55 @@ class TestOnTrainBatchEnd:
         cb.map_metric.reset.assert_called_once()
         cb.map_metric_train.reset.assert_not_called()
 
+    def test_train_batch_end_segm_without_masks_skips_metric_update(self) -> None:
+        """Segm callback skips map_metric_train.update when preds lack a masks key."""
+        cb = COCOEvalCallback(segmentation=True)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        # _detection_preds returns preds without "masks" — mimics sparse_forward training mode
+        outputs = {"results": _detection_preds(1), "targets": _detection_targets()}
+
+        cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
+
+        cb.map_metric_train.update.assert_not_called()
+
+    def test_train_batch_end_segm_with_masks_calls_metric_update(self) -> None:
+        """Segm callback calls map_metric_train.update when preds include a masks key."""
+        cb = COCOEvalCallback(segmentation=True)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        preds_with_masks = [
+            {
+                "boxes": torch.zeros(1, 4),
+                "scores": torch.zeros(1),
+                "labels": torch.zeros(1, dtype=torch.long),
+                "masks": torch.zeros(1, 16, 16, dtype=torch.bool),
+            }
+        ]
+        outputs = {"results": preds_with_masks, "targets": _detection_targets()}
+
+        cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
+
+        cb.map_metric_train.update.assert_called_once()
+
+    def test_train_batch_end_segm_empty_preds_falls_through(self) -> None:
+        """Segm callback with empty preds list falls through guard and calls update."""
+        cb = COCOEvalCallback(segmentation=True)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        # Empty preds: `preds and ...` short-circuits to False → no early return → update called
+        outputs = {"results": [], "targets": _detection_targets()}
+
+        cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
+
+        cb.map_metric_train.update.assert_called_once()
+
 
 class TestMetricsTablePrinting:
     """Metric table terminal/notebook rendering behavior.
@@ -369,7 +418,8 @@ class TestMetricsTablePrinting:
 
         assert render_tables.call_count == 2
         assert render_tables.call_args_list[0].args[0] is console
-        assert render_tables.call_args_list[0].args[1] == title_pfx
+        assert render_tables.call_args_list[0].args[1].startswith(title_pfx)
+        assert "(Epoch" in render_tables.call_args_list[0].args[1]
         assert render_tables.call_args_list[0].args[2] == "overall-1"
 
     def test_missing_rich_warns_once_and_skips_metric_tables(self) -> None:

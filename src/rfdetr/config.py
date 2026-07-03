@@ -612,7 +612,7 @@ class RFDETRKeypointPreviewConfig(RFDETRBaseConfig):
     use_grouppose_keypoints: bool = True
     dual_projector: bool = True
     dual_projector_kp_only: bool = True
-    num_keypoints_per_class: List[int] = [0, 17]
+    num_keypoints_per_class: List[int] = [17]
     keypoint_cross_attn: bool = True
     inter_instance_kp_attn: bool = False
     grouppose_keypoint_dim_downscale: int = 1
@@ -642,7 +642,10 @@ class TrainConfig(BaseConfig):
           This avoids silently changing behavior when scaling from single-GPU to multi-GPU training.
     """
 
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore", validate_assignment=True)
+    # extra="forbid" arms BaseConfig.catch_typo_kwargs so typo'd train() kwargs (e.g. ``epoch`` instead of
+    # ``epochs``) raise with a helpful message instead of being silently ignored.  Legacy kwargs handled by
+    # RFDETR.train() (resolution/device/callbacks/start_epoch/do_benchmark) are popped before construction.
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", validate_assignment=True)
 
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
@@ -685,6 +688,16 @@ class TrainConfig(BaseConfig):
     ema_update_interval: int = 1
     num_workers: int = 2
     weight_decay: float = 1e-4
+    amp_dtype: Literal["auto", "bf16", "fp16"] = Field(
+        default="auto",
+        description=(
+            "Mixed-precision autocast dtype. "
+            "'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
+            "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported). "
+            "'fp16' forces fp16. "
+            "Has no effect when model_config.amp=False or when training on CPU."
+        ),
+    )
     early_stopping: bool = False
     early_stopping_patience: int = 10
     early_stopping_min_delta: float = 0.001
@@ -751,6 +764,24 @@ class TrainConfig(BaseConfig):
         """
         if isinstance(value, bool):
             return "tqdm" if value else None
+        return value
+
+    @field_validator("amp_dtype", mode="before")
+    @classmethod
+    def _coerce_amp_dtype(cls, value: Any) -> Any:
+        """Fall back to ``'auto'`` (with a warning) for an unrecognised or wrong-typed ``amp_dtype``.
+
+        Mixed precision is a best-effort speed/memory optimisation, so an invalid request degrades to the auto-selected
+        dtype rather than failing the whole training run.
+        """
+        if value not in ("auto", "bf16", "fp16"):
+            # stacklevel=2 points into Pydantic internals; unavoidable with @field_validator in Pydantic v2.
+            warnings.warn(
+                f"Unknown amp_dtype={value!r}; expected one of 'auto', 'bf16', 'fp16'. Falling back to 'auto'.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return "auto"
         return value
 
     # Promoted from populate_args() — PTL migration (T4-2).
@@ -858,11 +889,30 @@ class TrainConfig(BaseConfig):
 
 
 class SegmentationTrainConfig(TrainConfig):
+    """Training configuration for instance segmentation models.
+
+    Extends :class:`TrainConfig` with segmentation-specific loss coefficients.
+
+    Attributes:
+        num_select: Maximum number of predictions to keep per image. ``None`` uses
+            the model default.
+        mask_point_sample_ratio: Number of points sampled per mask for point-based
+            mask loss computation.
+        mask_ce_loss_coef: Cross-entropy loss weight for mask prediction.
+        mask_dice_loss_coef: Dice loss weight for mask prediction.
+        cls_loss_coef: Classification loss weight. Defaults to ``1.0`` to match the
+            effective pre-v1.7 value (the v1.7 TrainConfig ownership migration
+            silently activated a dormant ``5.0``; this field restores the correct
+            weight). To reproduce pre-fix segmentation behaviour pass
+            ``cls_loss_coef=5.0`` explicitly.
+        segmentation_head: Whether to attach the segmentation head.
+    """
+
     num_select: Optional[int] = None
     mask_point_sample_ratio: int = 16
     mask_ce_loss_coef: float = 5.0
     mask_dice_loss_coef: float = 5.0
-    cls_loss_coef: float = 5.0
+    cls_loss_coef: float = 1.0
     segmentation_head: bool = True
 
 
@@ -878,9 +928,11 @@ class KeypointTrainConfig(TrainConfig):
         keypoint_l1_loss_coef: L1 regression loss weight for keypoint coordinates.
         keypoint_findable_loss_coef: Loss weight for the keypoint visibility head.
         keypoint_visible_loss_coef: Loss weight for the keypoint visibility score.
-        keypoint_nll_loss_coef: NLL-Cholesky loss weight. Reduced from 1.0 to 0.5
-            to dampen OKS@75 oscillation caused by precision-coupling in the
-            Cholesky parameterisation.
+        keypoint_nll_loss_coef: NLL-Cholesky loss weight. Restored to ``1.0`` to
+            align with the other keypoint loss terms (``keypoint_l1_loss_coef``,
+            ``keypoint_findable_loss_coef``, ``keypoint_visible_loss_coef``).
+            Previously set to ``0.5`` to dampen OKS@75 oscillation; reverted as
+            the under-weighting was not beneficial in practice.
         smooth_alpha: EMA smoothing factor for :class:`BestModelCallback` metric
             comparison. Overrides the :class:`TrainConfig` default of ``0.0``
             (disabled) to ``0.5``, which balances responsiveness and noise
@@ -895,19 +947,6 @@ class KeypointTrainConfig(TrainConfig):
     keypoint_l1_loss_coef: float = 1
     keypoint_findable_loss_coef: float = 1
     keypoint_visible_loss_coef: float = 1
-    keypoint_nll_loss_coef: float = 0.5
+    keypoint_nll_loss_coef: float = 1.0
     smooth_alpha: float = 0.5
     skip_best_epochs: int = Field(default=10, ge=0)
-
-    @model_validator(mode="after")
-    def _warn_keypoint_flip_pairs_not_yet_implemented(self) -> "KeypointTrainConfig":
-        """Emit a warning when keypoint_flip_pairs is set before the feature ships."""
-        if self.keypoint_flip_pairs:
-            warnings.warn(
-                "keypoint_flip_pairs is accepted but not yet implemented and will be ignored. "
-                "Flip pair swapping (swapping left/right joint indices after a horizontal flip) "
-                "is planned for a future release. Training will proceed without semantic joint swapping.",
-                UserWarning,
-                stacklevel=2,
-            )
-        return self

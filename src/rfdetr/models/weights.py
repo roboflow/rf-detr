@@ -300,22 +300,24 @@ def load_pretrain_weights(
         return []
     class_names: List[str] = []
 
+    from rfdetr.util.io import _safe_torch_load
+
     # Download first (no-op if already present and hash is valid).
     download_pretrain_weights(pretrain_weights)
     # If the first download attempt didn't produce the file (e.g. stale MD5
-    # caused an earlier ValueError that was silently swallowed), retry with
-    # MD5 validation disabled so a stale registry hash can't block training.
+    # caused an earlier ValueError that was silently swallowed), retry once.
+    # MD5 validation is kept on the retry — if it fails again the error is real.
     if not os.path.isfile(pretrain_weights):
-        logger.warning("Pretrain weights not found after initial download; retrying without MD5 validation.")
-        download_pretrain_weights(pretrain_weights, redownload=True, validate_md5=False)
+        logger.warning("Pretrain weights not found after initial download; retrying.")
+        download_pretrain_weights(pretrain_weights, redownload=True)
     validate_pretrain_weights(pretrain_weights, strict=False)
 
     try:
-        checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
+        checkpoint = _safe_torch_load(pretrain_weights)
     except Exception:
         logger.info("Failed to load pretrain weights, re-downloading")
-        download_pretrain_weights(pretrain_weights, redownload=True, validate_md5=False)
-        checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
+        download_pretrain_weights(pretrain_weights, redownload=True)
+        checkpoint = _safe_torch_load(pretrain_weights)
 
     # Normalize PyTorch Lightning native .ckpt format to the expected {"model": {...}}
     # structure.  PTL stores model weights in "state_dict" with keys prefixed by
@@ -467,6 +469,44 @@ def load_pretrain_weights(
                 checkpoint["model"][name] = tensor[: mc.num_queries * mc.group_detr]
 
     checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)
+
+    # Auto-align num_keypoints_per_class from checkpoint when the user did not explicitly set it.
+    # Without this, loading a bg-first checkpoint ([0, 17]) into a model configured with the
+    # active-first default ([17]) causes a semantic mismatch: the detection head is trimmed to 2
+    # rows but keeps background weights at row 0 — the slot active-first inference expects to be
+    # person — producing AP ≈ 0.0 on pretrained keypoint models.
+    # Mirrors the existing num_classes auto-align pattern (lines ~385-392).
+    _user_overrode_kp_schema = "num_keypoints_per_class" in getattr(mc, "model_fields_set", set())
+    if (
+        not _user_overrode_kp_schema
+        and getattr(mc, "use_grouppose_keypoints", False)
+        and hasattr(mc, "num_keypoints_per_class")
+    ):
+        _early_kp_mask = checkpoint["model"].get("_kp_active_mask")
+        if isinstance(_early_kp_mask, torch.Tensor) and _early_kp_mask.ndim == 2:
+            _ckpt_kp_schema = [int(n) for n in _early_kp_mask.sum(dim=1).tolist()]
+            _cfg_kp_schema = list(getattr(mc, "num_keypoints_per_class", []) or [])
+            if not any(n > 0 for n in _ckpt_kp_schema):
+                logger.warning(
+                    "load_pretrain_weights: _kp_active_mask in checkpoint has no active slots "
+                    "(schema=%s) — skipping auto-align to avoid overwriting config with empty schema.",
+                    _ckpt_kp_schema,
+                )
+            elif _ckpt_kp_schema != _cfg_kp_schema:
+                logger.debug(
+                    "load_pretrain_weights: auto-aligning num_keypoints_per_class %s → %s "
+                    "(inferred from checkpoint _kp_active_mask; user did not set explicitly).",
+                    _cfg_kp_schema,
+                    _ckpt_kp_schema,
+                )
+                mc.num_keypoints_per_class = _ckpt_kp_schema
+        elif isinstance(_early_kp_mask, torch.Tensor):
+            logger.warning(
+                "load_pretrain_weights: _kp_active_mask has unexpected shape %s (expected 2-D) "
+                "— skipping auto-align; schema mismatch may cause AP≈0 on keypoint models.",
+                tuple(_early_kp_mask.shape),
+            )
+
     # Detection checkpoints/configs may omit keypoint schema fields; absence means no keypoint reconciliation.
     configured_keypoint_schema = list(getattr(mc, "num_keypoints_per_class", []) or [])
     checkpoint_keypoint_schema = None

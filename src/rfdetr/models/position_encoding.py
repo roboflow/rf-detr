@@ -135,14 +135,42 @@ class PositionEmbeddingLearned(nn.Module):
         return pos
 
 
-def build_position_encoding(hidden_dim, position_embedding):
+def build_position_encoding(hidden_dim: int, position_embedding: str) -> nn.Module:
+    """Build a positional encoding module.
+
+    Args:
+        hidden_dim: Transformer hidden dimension. Half of this value is used as the number
+            of positional feature dimensions for the sine encoding.
+        position_embedding: Encoding variant to construct.  Supported values:
+            ``"sine"`` / ``"v2"`` — standard sine/cosine positional encoding (recommended).
+            The aliases ``"learned"`` / ``"v3"`` are **not supported** and raise
+            :exc:`ValueError`; their implementation had two bugs (wrong ``forward`` signature
+            and wrong shape unpacking) and are rejected early rather than silently producing
+            incorrect results.
+
+    Returns:
+        Positional encoding module.
+
+    Raises:
+        ValueError: If *position_embedding* is not a recognised and supported variant.
+
+    Examples:
+        >>> import torch
+        >>> from rfdetr.models.position_encoding import build_position_encoding
+        >>> enc = build_position_encoding(256, "sine")
+        >>> enc  # doctest: +ELLIPSIS
+        PositionEmbeddingSine(...)
+    """
     num_steps = hidden_dim // 2
     if position_embedding in ("v2", "sine"):
         # TODO find a better way of exposing other arguments
-        position_embedding = PositionEmbeddingSine(num_steps, normalize=True)
-    elif position_embedding in ("v3", "learned"):
-        position_embedding = PositionEmbeddingLearned(num_steps)
-    else:
-        raise ValueError(f"not supported {position_embedding}")
-
-    return position_embedding
+        return PositionEmbeddingSine(num_steps, normalize=True)
+    if position_embedding in ("v3", "learned"):
+        raise ValueError(
+            f"position_embedding={position_embedding!r} is not supported. "
+            "The 'learned'/'v3' implementation has two bugs: the forward() signature "
+            "is incompatible with Joiner.forward(), and the shape unpacking uses "
+            "x.shape[:2] (batch, channels) instead of x.shape[-2:] (height, width). "
+            "Use 'sine' or 'v2' instead."
+        )
+    raise ValueError(f"position_embedding={position_embedding!r} is not supported. Supported values: 'sine', 'v2'.")

@@ -6,6 +6,7 @@
 
 from unittest.mock import Mock
 
+import pytest
 import torch
 from PIL import Image
 
@@ -52,3 +53,58 @@ class TestTRTInference:
         assert image_tensor.shape == (3, 640, 640)
         assert image_tensor.dtype == torch.float32
         assert target is None
+
+
+class TestBenchmarkShapeParameterization:
+    """Benchmark preprocessing/postprocessing read input size and query count instead of hardcoding 640/300."""
+
+    def test_infer_transforms_uses_requested_size(self) -> None:
+        """infer_transforms resizes to the caller-supplied (height, width)."""
+        image = Image.new("RGB", (320, 240))
+
+        image_tensor, _ = infer_transforms((512, 384))(image, None)
+
+        assert image_tensor.shape == (3, 512, 384)
+
+    def test_infer_transforms_defaults_to_640(self) -> None:
+        """The default input size stays 640x640 for callers that do not pass a size."""
+        image = Image.new("RGB", (320, 240))
+
+        image_tensor, _ = infer_transforms()(image, None)
+
+        assert image_tensor.shape == (3, 640, 640)
+
+    def test_static_dim_returns_concrete_int(self) -> None:
+        """A concrete positive dimension is returned unchanged."""
+        from rfdetr.export.benchmark import _static_dim
+
+        assert _static_dim(384, 640) == 384
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param("height", id="dynamic-string"),
+            pytest.param(None, id="none"),
+            pytest.param(-1, id="negative"),
+        ],
+    )
+    def test_static_dim_falls_back_for_dynamic_axis(self, value) -> None:
+        """Dynamic/unknown axes fall back to the provided default."""
+        from rfdetr.export.benchmark import _static_dim
+
+        assert _static_dim(value, 640) == 640
+
+    def test_post_process_respects_num_queries(self) -> None:
+        """post_process selects exactly num_queries detections per image."""
+        from rfdetr.export.benchmark import post_process
+
+        num_queries = 5
+        outputs = {
+            "labels": torch.rand(1, 20, 3),
+            "dets": torch.rand(1, 20, 4),
+        }
+        target_sizes = torch.tensor([[480, 640]])
+
+        results = post_process(outputs, target_sizes, num_queries=num_queries)
+
+        assert results[0]["scores"].shape == (num_queries,)

@@ -1,5 +1,7 @@
 # RF-DETR: Real-Time SOTA Object Detection, Instance Segmentation, and Keypoint Detection
 
+<div align="center">
+
 [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
 [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
 [![codecov](https://codecov.io/gh/roboflow/rf-detr/graph/badge.svg?token=K8V4ARR3XV)](https://codecov.io/gh/roboflow/rf-detr)
@@ -11,6 +13,14 @@
 [![colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb)
 [![roboflow](https://raw.githubusercontent.com/roboflow-ai/notebooks/main/assets/badges/roboflow-blogpost.svg)](https://blog.roboflow.com/rf-detr)
 [![discord](https://img.shields.io/discord/1159501506232451173?logo=discord&label=discord&labelColor=fff&color=5865f2&link=https%3A%2F%2Fdiscord.gg%2FGbfgXGJ8Bk)](https://discord.gg/GbfgXGJ8Bk)
+
+<a href="https://trendshift.io/repositories/14379?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-14379" target="_blank" rel="noopener noreferrer">
+<img src="https://trendshift.io/api/badge/repositories/14379" alt="roboflow%2Frf-detr | Trendshift" width="250" height="55"/>
+</a>
+
+</div>
+
+---
 
 RF-DETR is a real-time transformer architecture for object detection, instance segmentation, and keypoint detection (preview) developed by Roboflow. Built on a DINOv2 vision transformer backbone, RF-DETR delivers state-of-the-art accuracy and latency trade-offs on [Microsoft COCO](https://cocodataset.org/#home) and [RF100-VL](https://github.com/roboflow/rf100-vl).
 
@@ -296,14 +306,12 @@ Our work is built upon [LW-DETR](https://arxiv.org/pdf/2406.03459), [DINOv2](htt
 If you find our work helpful for your research, please consider citing the following BibTeX entry.
 
 ```bibtex
-@misc{rf-detr,
-    title={RF-DETR: Neural Architecture Search for Real-Time Detection Transformers},
-    author={Isaac Robinson and Peter Robicheaux and Matvei Popov and Deva Ramanan and Neehar Peri},
-    year={2025},
-    eprint={2511.09554},
-    archivePrefix={arXiv},
-    primaryClass={cs.CV},
-    url={https://arxiv.org/abs/2511.09554},
+@inproceedings{robinson2026rfdetr,
+  title     = {RF-DETR: Real-Time Detection Transformer},
+  author    = {Robinson, Isaac and Robicheaux, Peter and Popov, Fedor and Ramanan, Deva and Peri, Neehar},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2026},
+  url       = {https://arxiv.org/abs/2511.09554}
 }
 ```
 

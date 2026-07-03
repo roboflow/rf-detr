@@ -9,7 +9,128 @@ from __future__ import annotations
 
 import numpy as np
 
-__all__ = ["precision_cholesky_to_pixel_covariance"]
+__all__ = [
+    "schemas_semantically_equal",
+    "precision_cholesky_to_pixel_covariance",
+]
+
+
+def _is_bg_first_schema(schema: list[int]) -> bool:
+    """Return True if *schema* uses a background-first layout.
+
+    A background-first schema has a leading slot with zero keypoints that
+    acts as a background/no-keypoint sentinel, e.g. ``[0, 17]`` where slot 0
+    is background and slot 1 is person with 17 keypoints.  Active-first
+    schemas omit that slot entirely, e.g. ``[17]``.
+
+    Args:
+        schema: Keypoints-per-class list.
+
+    Returns:
+        ``True`` when ``schema`` is non-empty and its first element is zero.
+
+    Examples:
+        >>> _is_bg_first_schema([0, 17])
+        True
+        >>> _is_bg_first_schema([17])
+        False
+        >>> _is_bg_first_schema([])
+        False
+    """
+    return bool(schema) and schema[0] == 0
+
+
+def _to_active_first(schema: list[int]) -> list[int]:
+    """Strip the leading background slot from a bg-first schema.
+
+    Always returns a new list. A no-op (copy) when *schema* is already
+    active-first or empty. Only the first leading zero slot is removed;
+    schemas with multiple leading zeros (e.g. ``[0, 0, 17]``) retain all
+    but the first.
+
+    Args:
+        schema: Keypoints-per-class list.
+
+    Returns:
+        Schema with the leading zero-keypoint slot removed when bg-first,
+        or a copy of *schema* otherwise.
+
+    Examples:
+        >>> _to_active_first([0, 17])
+        [17]
+        >>> _to_active_first([17])
+        [17]
+        >>> _to_active_first([0, 17, 4])
+        [17, 4]
+        >>> _to_active_first([0])
+        []
+    """
+    if _is_bg_first_schema(schema):
+        return schema[1:]
+    return list(schema)
+
+
+def _to_bg_first(schema: list[int]) -> list[int]:
+    """Prepend a background slot to an active-first schema.
+
+    A no-op when *schema* already starts with a zero-keypoint slot or is empty.
+
+    Args:
+        schema: Keypoints-per-class list.
+
+    Returns:
+        Schema with a leading ``0`` prepended when not already bg-first.
+
+    Examples:
+        >>> _to_bg_first([17])
+        [0, 17]
+        >>> _to_bg_first([0, 17])
+        [0, 17]
+        >>> _to_bg_first([17, 4])
+        [0, 17, 4]
+    """
+    if _is_bg_first_schema(schema) or not schema:
+        return list(schema)
+    return [0] + list(schema)
+
+
+def schemas_semantically_equal(a: list[int], b: list[int]) -> bool:
+    """Return True if *a* and *b* represent the same keypoint structure.
+
+    Two schemas are semantically equal when they encode identical active
+    keypoint counts per class after stripping any leading background slot.
+    This allows ``[0, 17]`` (bg-first) and ``[17]`` (active-first) to
+    compare equal.
+
+    Args:
+        a: First keypoints-per-class list.
+        b: Second keypoints-per-class list.
+
+    Returns:
+        ``True`` when both schemas reduce to the same active-first form.
+
+    Note:
+        A schema of ``[0]`` (one detection-only background slot) is semantically
+        equal to ``[]`` (no schema) because both reduce to an empty active-first
+        form.  Callers that need to distinguish "no schema" from "bg-first with no
+        active slots" should compare ``to_active_first(a)`` directly or check
+        ``bool(schema)`` before calling this function.
+
+        Use this function for user-facing validation where representational form
+        does not matter.  Use exact ``!=`` comparison when preserving
+        representational form is required (e.g. auto-align in checkpoint loading).
+
+    Examples:
+        >>> schemas_semantically_equal([0, 17], [17])
+        True
+        >>> schemas_semantically_equal([17], [17])
+        True
+        >>> schemas_semantically_equal([0, 17], [0, 33])
+        False
+        >>> schemas_semantically_equal([0], [])
+        True
+    """
+    return _to_active_first(a) == _to_active_first(b)
 
 
 def precision_cholesky_to_pixel_covariance(

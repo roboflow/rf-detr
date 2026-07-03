@@ -59,7 +59,10 @@ def box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> tuple[torch.Tensor, t
 
     union = area1[:, None] + area2 - inter
 
-    iou = inter / union
+    eps = 1e-7
+    # Clamp only the degenerate (union==0) case so identical non-degenerate boxes
+    # yield IoU==1.0 exactly; adding eps unconditionally would break that identity.
+    iou = inter / union.clamp(min=eps)
     return iou, union
 
 
@@ -70,8 +73,7 @@ def generalized_box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Ten
 
     Returns a [N, M] pairwise matrix, where N = len(boxes1) and M = len(boxes2).
     """
-    # degenerate boxes gives inf / nan results
-    # so do an early check
+    # Degenerate (zero-area) boxes would divide 0/0; eps in the denominators keeps results finite.
     iou, union = box_iou(boxes1, boxes2)
 
     lt = torch.min(boxes1[:, None, :2], boxes2[:, :2])
@@ -80,7 +82,9 @@ def generalized_box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Ten
     wh = (rb - lt).clamp(min=0)  # [N,M,2]
     area = wh[:, :, 0] * wh[:, :, 1]
 
-    return iou - (area - union) / area
+    eps = 1e-7
+    # Clamp only when enclosing area is zero (degenerate enclosing box) so normal boxes remain exact.
+    return iou - (area - union) / area.clamp(min=eps)
 
 
 def masks_to_boxes(masks: torch.Tensor) -> torch.Tensor:

@@ -130,6 +130,7 @@ class COCOEvalCallback(Callback):
         self._output_widget: Any = None  # ipywidgets.Output, created lazily
         self._keypoint_mode: bool = False
         self._use_segm_metrics: bool = segmentation
+        self._train_segm_skip_warned: bool = False
         self._keypoint_oks_metrics: dict[str, MetricKeypointOKS] = {}
         self._keypoint_oks_sigmas = keypoint_oks_sigmas
         self._in_notebook: bool = False
@@ -297,6 +298,16 @@ class COCOEvalCallback(Callback):
 
         preds: list[dict[str, torch.Tensor]] = self._convert_preds(outputs["results"])
         targets = self._convert_targets(outputs["targets"])
+        # In training mode pred_masks is a sparse dict, excluded from postprocess inputs, so
+        # preds have no masks key.  torchmetrics requires it when iou_type includes "segm" → skip.
+        if self._use_segm_metrics and preds and "masks" not in preds[0]:
+            if not self._train_segm_skip_warned:
+                logger.info(
+                    "Train-split segmentation mAP skipped: pred_masks is a sparse dict during training "
+                    "(sparse_forward).  Only val/test segm mAP is available."
+                )
+                self._train_segm_skip_warned = True
+            return
         self.map_metric_train.update(preds, targets)
 
         iou_type = "segm" if self._use_segm_metrics else "bbox"
@@ -1002,7 +1013,14 @@ class COCOEvalCallback(Callback):
             return
 
         console = _get_rich_console(trainer)
-        title_pfx = split.capitalize()
+        current_epoch = int(getattr(trainer, "current_epoch", 0)) + 1
+        max_epochs = getattr(trainer, "max_epochs", None)
+        epoch_sfx = (
+            f" (Epoch {current_epoch}/{max_epochs})"
+            if isinstance(max_epochs, int) and max_epochs > 0
+            else f" (Epoch {current_epoch})"
+        )
+        title_pfx = split.capitalize() + epoch_sfx
         overall_rendered = _render_overall_merged(title_pfx, overall, self._max_dets)
 
         if self._in_notebook:
@@ -1023,6 +1041,15 @@ class COCOEvalCallback(Callback):
                 with self._output_widget:
                     _render_summary_tables(console, title_pfx, overall_rendered, per_class)
                 return
+
+            # ipywidgets not installed — fall back to IPython cell-level clear so
+            # tables replace each other instead of accumulating across epochs.
+            with contextlib.suppress(ImportError):
+                from IPython.display import clear_output
+
+                clear_output(wait=True)
+            _render_summary_tables(console, title_pfx, overall_rendered, per_class)
+            return
 
         # Print directly through the console.  A second rich.live.Live on the same
         # console as RichProgressBar would silently nest (Live._nested=True) and

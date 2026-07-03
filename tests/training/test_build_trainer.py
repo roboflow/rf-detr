@@ -486,6 +486,110 @@ class TestBuildTrainerPrecision:
             strategy._configure_launcher()
 
 
+class TestBuildTrainerAmpDtype:
+    """``TrainConfig.amp_dtype`` (a ``train()`` kwarg) lets callers pin the AMP autocast dtype (fp16 vs bf16) — #1132.
+
+    Precision is resolved inside ``build_trainer``; these tests mock the CUDA/MPS capability probes and assert the
+    Lightning precision string captured at ``Trainer`` construction time.
+    """
+
+    @staticmethod
+    def _resolved_precision(tmp_path, *, cuda: bool, bf16: bool = False, mps: bool = False, amp_dtype: str = "auto"):
+        """Resolve the Lightning precision string for a mocked device capability and ``amp_dtype``.
+
+        Args:
+            tmp_path: pytest temporary directory fixture.
+            cuda: Value returned by the mocked ``torch.cuda.is_available``.
+            bf16: Value returned by the mocked ``torch.cuda.is_bf16_supported``.
+            mps: Value returned by the mocked ``torch.backends.mps.is_available``.
+            amp_dtype: The ``TrainConfig.amp_dtype`` value under test.
+
+        Returns:
+            The ``precision`` string passed to the (mocked) ``Trainer``.
+        """
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        with (
+            mock.patch("torch.cuda.is_available", return_value=cuda),
+            mock.patch("torch.cuda.is_bf16_supported", return_value=bf16),
+            mock.patch("torch.backends.mps.is_available", return_value=mps),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype=amp_dtype), _mc(amp=True))
+        return captured["precision"]
+
+    def test_amp_dtype_is_a_train_kwarg_not_dropped(self, tmp_path):
+        """amp_dtype is a real TrainConfig field (reachable via train(**kwargs)), not silently dropped."""
+        assert _tc(tmp_path, amp_dtype="fp16").amp_dtype == "fp16"
+
+    @pytest.mark.parametrize(
+        "cuda, bf16, mps, amp_dtype, expected",
+        [
+            pytest.param(True, True, False, "auto", "bf16-mixed", id="auto-cuda-bf16"),
+            pytest.param(True, True, False, "fp16", "16-mixed", id="fp16-cuda-bf16"),
+            pytest.param(True, True, False, "bf16", "bf16-mixed", id="bf16-cuda-bf16"),
+            pytest.param(True, False, False, "auto", "16-mixed", id="auto-cuda-no-bf16"),
+            pytest.param(False, False, True, "fp16", "16-mixed", id="fp16-mps"),
+        ],
+    )
+    def test_resolved_precision(self, tmp_path, cuda, bf16, mps, amp_dtype, expected):
+        """amp_dtype + hardware caps resolve to the correct Lightning precision string."""
+        assert self._resolved_precision(tmp_path, cuda=cuda, bf16=bf16, mps=mps, amp_dtype=amp_dtype) == expected
+
+    @pytest.mark.parametrize(
+        "cuda, bf16, mps, amp_dtype, warn_match",
+        [
+            pytest.param(True, False, False, "bf16", "bf16", id="bf16-cuda-no-hw-support"),
+            pytest.param(False, False, True, "bf16", "MPS", id="bf16-mps"),
+        ],
+    )
+    def test_resolved_precision_warns(self, tmp_path, cuda, bf16, mps, amp_dtype, warn_match):
+        """amp_dtype falls back to '16-mixed' and emits a UserWarning when hardware cannot satisfy the request."""
+        with pytest.warns(UserWarning, match=warn_match):
+            precision = self._resolved_precision(tmp_path, cuda=cuda, bf16=bf16, mps=mps, amp_dtype=amp_dtype)
+        assert precision == "16-mixed"
+
+    def test_amp_false_overrides_amp_dtype(self, tmp_path):
+        """Amp=False wins over any amp_dtype: precision is '32-true'."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp16"), _mc(amp=False))
+        assert trainer.precision == "32-true"
+
+    def test_cpu_accelerator_ignores_amp_dtype(self, tmp_path):
+        """Explicit accelerator='cpu' yields '32-true' regardless of amp_dtype."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp16"), _mc(amp=True), accelerator="cpu")
+        assert captured["precision"] == "32-true"
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [
+            pytest.param("float8", id="string-float8"),
+            pytest.param(None, id="none"),
+            pytest.param(42, id="int"),
+            pytest.param(True, id="bool"),
+        ],
+    )
+    def test_invalid_amp_dtype_falls_back_to_auto_with_warning(self, tmp_path, bad_value):
+        """An unrecognised or wrong-typed amp_dtype falls back to 'auto' with a warning rather than raising."""
+        with pytest.warns(UserWarning, match="amp_dtype"):
+            tc = _tc(tmp_path, amp_dtype=bad_value)
+        assert tc.amp_dtype == "auto"
+
+
 class TestBuildTrainerEMAShardingGuard:
     """EMA must be disabled and a UserWarning emitted for sharded strategies.
 

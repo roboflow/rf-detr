@@ -67,6 +67,31 @@ def _instantiate(class_path: str, init_args: dict) -> object:
 # ---------------------------------------------------------------------------
 
 
+class TestCLIEntrypoint:
+    """Module entrypoint and CLI import tests."""
+
+    def test_python_module_entrypoint_runs(self) -> None:
+        """Python -m rfdetr --help exits 0 and mentions rfdetr."""
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "-m", "rfdetr", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0
+        assert "rfdetr" in result.stdout.lower() or "rfdetr" in result.stderr.lower()
+
+    def test_cli_main_is_importable(self) -> None:
+        """rfdetr.cli module is importable and exposes a callable main."""
+        import importlib
+
+        mod = importlib.import_module("rfdetr.cli")
+        assert callable(getattr(mod, "main", None))
+
+
 class TestCLIHelp:
     """Rfdetr --help and subcommand --help must exit 0."""
 

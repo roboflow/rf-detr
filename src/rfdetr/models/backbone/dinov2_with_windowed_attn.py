@@ -973,7 +973,13 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
             )
         self.config._attn_implementation = attn_implementation
         for layer in self.encoder.layer:
-            layer.attention = DINOV2_WITH_REGISTERS_ATTENTION_CLASSES[attn_implementation](self.config)
+            new_attn = DINOV2_WITH_REGISTERS_ATTENTION_CLASSES[attn_implementation](self.config)
+            # Transfer trained weights: eager and sdpa variants share identical parameter keys
+            # (both contain attention.{query,key,value,dropout} and output.{dense,dropout}).
+            # strict=True is intentional — a key mismatch would indicate a structural divergence
+            # that should be caught and fixed rather than silently skipped.
+            new_attn.load_state_dict(layer.attention.state_dict())
+            layer.attention = new_attn
 
     @add_start_docstrings_to_model_forward(DINOV2_WITH_REGISTERS_BASE_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=BaseModelOutputWithPooling, config_class=_CONFIG_FOR_DOC)

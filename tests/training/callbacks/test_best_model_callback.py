@@ -19,6 +19,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from rfdetr.config import RFDETRLargeDeprecatedConfig, RFDETRMediumConfig
 from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyStopping
+from rfdetr.training.callbacks.ema import RFDETREMACallback
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1892,3 +1893,205 @@ class TestCheckpointNotes:
             weights_only=False,
         )
         assert checkpoint["args"]["notes"] == notes
+
+
+# ---------------------------------------------------------------------------
+# _serialize_model_config — schema sync from live weights
+# ---------------------------------------------------------------------------
+
+
+def _make_kp_active_mask(schema: list[int]) -> torch.Tensor:
+    """Build a bool _kp_active_mask tensor from a keypoints-per-class schema list."""
+    max_kp = max(schema) if schema else 0
+    mask = torch.zeros(len(schema), max_kp, dtype=torch.bool)
+    for cls_idx, n in enumerate(schema):
+        mask[cls_idx, :n] = True
+    return mask
+
+
+class TestSerializeModelConfig:
+    """Verify _serialize_model_config syncs schema-critical fields from live model weights."""
+
+    def test_syncs_keypoint_schema_from_kp_active_mask(self) -> None:
+        """Stale num_keypoints_per_class in model_config is overridden by _kp_active_mask from weights."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = MagicMock()
+        pl_module.model_config.model_dump.return_value = {
+            "num_keypoints_per_class": [0, 17],
+            "num_classes": 2,
+        }
+        pl_module.model.state_dict.return_value = {
+            "_kp_active_mask": _make_kp_active_mask([0, 33]),
+        }
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is not None
+        assert result["num_keypoints_per_class"] == [0, 33]
+
+    def test_syncs_num_classes_from_class_embed_weight(self) -> None:
+        """Stale num_classes in model_config is overridden by class_embed.weight.shape[0] from weights."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = MagicMock()
+        pl_module.model_config.model_dump.return_value = {
+            "num_keypoints_per_class": [0, 33],
+            "num_classes": 90,
+        }
+        pl_module.model.state_dict.return_value = {
+            "class_embed.weight": torch.zeros(3, 256),
+        }
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is not None
+        assert result["num_classes"] == 2
+
+    def test_no_sync_when_kp_mask_absent(self) -> None:
+        """num_keypoints_per_class is left unchanged when model has no _kp_active_mask."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = MagicMock()
+        pl_module.model_config.model_dump.return_value = {
+            "num_keypoints_per_class": [0, 17],
+            "num_classes": 2,
+        }
+        pl_module.model.state_dict.return_value = {"w": torch.zeros(1)}
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is not None
+        assert result["num_keypoints_per_class"] == [0, 17]
+
+    def test_no_sync_when_field_absent_from_dumped_config(self) -> None:
+        """_kp_active_mask in weights does not insert num_keypoints_per_class when key absent from config."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = MagicMock()
+        pl_module.model_config.model_dump.return_value = {"num_classes": 2}
+        pl_module.model.state_dict.return_value = {
+            "_kp_active_mask": _make_kp_active_mask([0, 33]),
+        }
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is not None
+        assert "num_keypoints_per_class" not in result
+
+    def test_returns_none_when_model_config_absent(self) -> None:
+        """Returns None when pl_module exposes no model_config."""
+        pl_module = _make_pl_module()
+        pl_module.model_config = None
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is None
+
+    def test_returns_dict_directly_for_dict_model_config(self) -> None:
+        """Returns a dict model_config as-is without any weight-based sync."""
+        pl_module = _make_pl_module()
+        raw = {"num_classes": 3, "num_keypoints_per_class": [0, 5]}
+        pl_module.model_config = raw
+
+        result = BestModelCallback._serialize_model_config(pl_module)
+
+        assert result is raw
+
+
+# ---------------------------------------------------------------------------
+# TestOnFitEndEMASwapSuppression
+# ---------------------------------------------------------------------------
+
+
+class _TestStepLinearModule(LightningModule):
+    """Real module with ``test_step`` and a tiny linear model for weight-identity assertions."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = torch.nn.Linear(1, 1, bias=False)
+        self.train_config = {"lr": 0.001}
+
+    def test_step(self, batch: object, batch_idx: int) -> None:
+        """No-op test step so BestModelCallback.on_fit_end runs trainer.test()."""
+
+
+def _fill_module_weight(pl_module: LightningModule, value: float) -> None:
+    """Set the single linear weight of *pl_module* to *value* in-place."""
+    with torch.no_grad():
+        pl_module.model.weight.fill_(value)
+
+
+class TestOnFitEndEMASwapSuppression:
+    """The fit-end test run must evaluate the best checkpoint, not the final EMA weights.
+
+    Regression tests: ``BestModelCallback.on_fit_end`` loads ``checkpoint_best_total.pth`` into the module and then
+    calls ``trainer.test()`` — but ``RFDETREMACallback.on_test_epoch_start`` used to swap in the final EMA weights,
+    silently overwriting the just-loaded best weights for the whole test run.
+    """
+
+    @staticmethod
+    def _build_fit_end_scenario(
+        tmp_path: Path,
+    ) -> tuple[BestModelCallback, RFDETREMACallback, LightningModule, MagicMock, list[torch.Tensor]]:
+        """Arrange best=3.0 checkpoint, EMA=5.0 average model, live=7.0 weights, and a hook-simulating trainer."""
+        from torch.optim.swa_utils import AveragedModel
+
+        pl_module = _TestStepLinearModule()
+        cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
+        ema_cb = RFDETREMACallback()
+
+        # Best checkpoint saved at weight 3.0.
+        _fill_module_weight(pl_module, 3.0)
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        cb.on_validation_end(trainer, pl_module)
+
+        # EMA average model captured at weight 5.0.
+        _fill_module_weight(pl_module, 5.0)
+        ema_cb._average_model = AveragedModel(
+            model=pl_module,
+            use_buffers=True,
+            avg_fn=ema_cb._avg_fn,
+        )
+        ema_cb._average_model.eval()
+
+        # Final live weights end training at 7.0.
+        _fill_module_weight(pl_module, 7.0)
+
+        trainer.callbacks = [ema_cb, cb]
+        observed_weights: list[torch.Tensor] = []
+
+        def _fake_test(module: object, datamodule: object = None, verbose: bool = False) -> None:
+            # Simulate the PTL test loop invoking the EMA callback's test hooks.
+            ema_cb.on_test_epoch_start(trainer, pl_module)
+            observed_weights.append(pl_module.model.weight.detach().clone())
+            ema_cb.on_test_epoch_end(trainer, pl_module)
+
+        trainer.test = MagicMock(side_effect=_fake_test)
+        return cb, ema_cb, pl_module, trainer, observed_weights
+
+    def test_fit_end_test_runs_on_best_weights_not_ema(self, tmp_path: Path) -> None:
+        """During the fit-end test run the module must hold the best checkpoint weights (3.0), not EMA (5.0)."""
+        cb, _ema_cb, pl_module, trainer, observed_weights = self._build_fit_end_scenario(tmp_path)
+
+        cb.on_fit_end(trainer, pl_module)
+
+        assert observed_weights, "trainer.test() must have been invoked"
+        expected = torch.full_like(observed_weights[0], 3.0)
+        assert torch.allclose(observed_weights[0], expected), (
+            f"test ran with weight {observed_weights[0].item():.1f}; expected best-checkpoint weight 3.0"
+        )
+
+    def test_ema_swap_suppression_cleared_after_fit_end(self, tmp_path: Path) -> None:
+        """After on_fit_end the EMA callback must swap again for standalone trainer.test() runs."""
+        cb, ema_cb, pl_module, trainer, _observed = self._build_fit_end_scenario(tmp_path)
+
+        cb.on_fit_end(trainer, pl_module)
+
+        assert ema_cb.suppress_test_swap is False
+
+    def test_ema_swap_suppression_cleared_when_test_raises(self, tmp_path: Path) -> None:
+        """Suppression must be lifted even when trainer.test() raises."""
+        cb, ema_cb, pl_module, trainer, _observed = self._build_fit_end_scenario(tmp_path)
+        trainer.test = MagicMock(side_effect=RuntimeError("boom"))
+
+        with pytest.raises(RuntimeError, match="boom"):
+            cb.on_fit_end(trainer, pl_module)
+
+        assert ema_cb.suppress_test_swap is False

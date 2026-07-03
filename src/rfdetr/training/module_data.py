@@ -29,6 +29,26 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
 
+def _worker_init_fn(worker_id: int) -> None:
+    """Seed NumPy and the ``random`` module per DataLoader worker.
+
+    PyTorch seeds ``torch``'s RNG per worker automatically but leaves NumPy and the stdlib ``random`` module unseeded,
+    so without this hook every worker would draw identical NumPy/``random`` sequences (a well-known augmentation
+    duplication footgun). Deriving the seed from ``torch.initial_seed()`` keeps augmentation reproducible while still
+    giving each worker a distinct stream.
+
+    Args:
+        worker_id: Index of the DataLoader worker (unused; seed is derived from the per-worker torch seed).
+    """
+    import random
+
+    import numpy as np
+
+    seed = torch.initial_seed() % (2**32)
+    np.random.seed(seed)
+    random.seed(seed)
+
+
 def _has_cuda_device() -> bool:
     """Return ``True`` when the runtime has a CUDA accelerator available.
 
@@ -290,6 +310,7 @@ class RFDETRDataModule(LightningDataModule):
                 pin_memory=self._pin_memory,
                 persistent_workers=self._persistent_workers,
                 prefetch_factor=self._prefetch_factor,
+                worker_init_fn=_worker_init_fn,
             )
 
         # Pad the dataset to a multiple of effective_batch_size * world_size so
@@ -309,6 +330,7 @@ class RFDETRDataModule(LightningDataModule):
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
+            worker_init_fn=_worker_init_fn,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -327,6 +349,7 @@ class RFDETRDataModule(LightningDataModule):
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
+            worker_init_fn=_worker_init_fn,
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -345,6 +368,7 @@ class RFDETRDataModule(LightningDataModule):
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
+            worker_init_fn=_worker_init_fn,
         )
 
     def predict_dataloader(self) -> DataLoader:
@@ -363,6 +387,7 @@ class RFDETRDataModule(LightningDataModule):
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
+            worker_init_fn=_worker_init_fn,
         )
 
     def _show_samples(
@@ -386,7 +411,9 @@ class RFDETRDataModule(LightningDataModule):
                 inches. When omitted, the size is derived from the grid shape.
 
         Returns:
-            Matplotlib figure containing the annotated sample grid.
+            Matplotlib figure containing the annotated sample grid. When the
+            dataset includes instance masks, they are rendered as coloured
+            overlays before bounding boxes and labels.
 
         Raises:
             ValueError: If ``count`` or ``columns`` is not positive.
@@ -452,11 +479,19 @@ class RFDETRDataModule(LightningDataModule):
                 scale = torch.tensor([width, height, width, height], dtype=torch.float32)
                 xyxy = box_cxcywh_to_xyxy(boxes.detach().cpu()) * scale
                 class_ids = labels.detach().cpu().numpy().astype(int)
-                detections = sv.Detections(xyxy=xyxy.numpy().astype(np.float32), class_id=class_ids)
+                masks_tensor = target.get("masks")
+                mask_array = (
+                    masks_tensor.detach().cpu().numpy()
+                    if masks_tensor is not None and masks_tensor.numel() > 0
+                    else None
+                )
+                detections = sv.Detections(xyxy=xyxy.numpy().astype(np.float32), class_id=class_ids, mask=mask_array)
                 labels_text = [
                     class_names[class_id] if class_names is not None and class_id < len(class_names) else str(class_id)
                     for class_id in class_ids
                 ]
+                if mask_array is not None:
+                    scene = sv.MaskAnnotator().annotate(scene=scene, detections=detections)
                 scene = sv.BoxAnnotator(thickness=1).annotate(scene=scene, detections=detections)
                 scene = sv.LabelAnnotator(text_scale=0.4, text_padding=2).annotate(
                     scene=scene,
