@@ -672,22 +672,31 @@ def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[P
 
             if raw_path is not None:
                 split_images = yaml_base / raw_path
-                if split_images.is_dir():
-                    # Derive labels dir by replacing the "images" segment anywhere in
-                    # the path — mirrors Ultralytics img2label_paths() convention.
-                    # Handles trailing-images (val/images) and intermediate-images
-                    # (images/val2017) layouts.  When "images" absent, treat
-                    # split_images as the split root with images/ and labels/ subdirs.
-                    path_parts = split_images.parts
-                    if "images" in path_parts:
-                        idx = path_parts.index("images")
-                        label_parts = path_parts[:idx] + ("labels",) + path_parts[idx + 1 :]
-                        split_labels = Path(*label_parts)
-                        return split_images, split_labels
-                    else:
-                        split_labels = split_images / "labels"
-                        split_images = split_images / "images"
-                        return split_images, split_labels
+                # Path traversal guard: reject yaml-declared paths that escape
+                # the dataset root (e.g. "../../other_project/val/images").
+                try:
+                    split_images.resolve().relative_to(root.resolve())
+                except ValueError:
+                    pass  # traversal detected; fall through to Roboflow convention
+                else:
+                    if split_images.is_dir():
+                        # Derive labels dir by replacing the "images" segment anywhere in
+                        # the path — mirrors Ultralytics img2label_paths() convention.
+                        # Handles trailing-images (val/images) and intermediate-images
+                        # (images/val2017) layouts.  When "images" absent, treat
+                        # split_images as the split root with images/ and labels/ subdirs.
+                        path_parts = split_images.parts
+                        if "images" in path_parts:
+                            idx = path_parts.index("images")
+                            label_parts = path_parts[:idx] + ("labels",) + path_parts[idx + 1 :]
+                            split_labels = Path(*label_parts)
+                            if split_labels.is_dir():
+                                return split_images, split_labels
+                        else:
+                            split_images_sub = split_images / "images"
+                            split_labels_sub = split_images / "labels"
+                            if split_images_sub.is_dir() and split_labels_sub.is_dir():
+                                return split_images_sub, split_labels_sub
     except OSError:
         pass
     except (ValueError, TypeError) as exc:
@@ -712,8 +721,9 @@ def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[P
     if split == "val" and not img_dir.exists():
         for alt in _VALID_VAL_DIR_NAMES:
             candidate = root / alt / "images"
-            if candidate.is_dir():
-                return candidate, root / alt / "labels"
+            candidate_labels = root / alt / "labels"
+            if candidate.is_dir() and candidate_labels.is_dir():
+                return candidate, candidate_labels
 
     return img_dir, lb_dir
 
