@@ -2164,9 +2164,9 @@ class RFDETR:
         """
         if getattr(self, "_optimized_inplace", False) or self.model.model is None:
             raise RuntimeError(
-                "Cannot export after optimize_for_inference(inplace=True) — "
-                "the model has been cleared from memory. "
-                "Call export_for_roboflow() before optimizing."
+                "Cannot deploy after optimize_for_inference(inplace=True) — "
+                "the model weights have been cleared from memory. "
+                "Call export_for_roboflow() before optimizing, then deploy the exported bundle."
             )
 
         from roboflow import Roboflow

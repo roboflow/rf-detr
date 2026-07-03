@@ -51,44 +51,44 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
         does **not** register the override and RF-DETR may still auto-align the schema from the
         checkpoint. Always pass it to the constructor.
 
-### Removed in v1.9
+### Planned for Removal in v1.9
 
-The following APIs were deprecated in earlier releases and have been removed in v1.9:
+The following APIs were deprecated in earlier releases and will be removed in v1.9. They still work in the current release (v1.8.x) but emit `DeprecationWarning`. Update your code before upgrading.
 
-!!! danger "Removed: `rfdetr.util.*` and `rfdetr.deploy.*` import paths"
+!!! warning "Planned for removal: `rfdetr.util.*` and `rfdetr.deploy.*` import paths"
 
     Deprecated since v1.6. Use the canonical replacements listed in the [Upgrade 1.5 → 1.6](#upgrade-15--16) section.
 
     ```python
-    # These imports now raise ImportError
+    # These imports still work in v1.8 but emit DeprecationWarning; update before v1.9
     from rfdetr.util.coco_classes import COCO_CLASSES  # → rfdetr.assets.coco_classes
     from rfdetr.util.misc import get_rank  # → rfdetr.utilities
     from rfdetr.deploy import export_onnx  # → rfdetr.export.main
     ```
 
-!!! danger "Removed: `build_namespace(model_config, train_config)`"
+!!! warning "Planned for removal: `build_namespace(model_config, train_config)`"
 
     Deprecated since v1.7. Use `build_model_from_config` and `build_criterion_from_config` instead.
 
-!!! danger "Removed: `load_pretrain_weights(nn_model, model_config, train_config)` with `train_config`"
+!!! warning "Planned for removal: `load_pretrain_weights(nn_model, model_config, train_config)` with `train_config`"
 
     Deprecated since v1.7. Drop the `train_config` positional argument.
 
-!!! danger "Removed: `start_epoch` kwarg in `train()`"
+!!! warning "Planned for removal: `start_epoch` kwarg in `train()`"
 
     Deprecated since v1.7. PyTorch Lightning resumes automatically via `resume=`.
 
-!!! danger "Removed: `do_benchmark` kwarg in `train()`"
+!!! warning "Planned for removal: `do_benchmark` kwarg in `train()`"
 
-    Deprecated since v1.7.
+    Deprecated since v1.7. Use the `rfdetr.export.benchmark` module instead.
 
-!!! danger "Removed: `callbacks` dict kwarg in `train()`"
+!!! warning "Planned for removal: `callbacks` dict kwarg in `train()`"
 
     Deprecated since v1.7. Pass PTL `Callback` objects directly via the Lightning API instead.
 
-!!! danger "Removed: misplaced config fields"
+!!! warning "Planned for removal: misplaced config fields"
 
-    The following `TrainConfig` and `ModelConfig` fields moved to their correct config class in v1.7 and the deprecated compatibility shims are now removed. Update any direct references:
+    The following `TrainConfig` and `ModelConfig` fields moved to their correct config class in v1.7 and the deprecated compatibility shims will be removed in v1.9. Update any direct references:
 
     | Field               | Removed from  | Use in        |
     | ------------------- | ------------- | ------------- |
