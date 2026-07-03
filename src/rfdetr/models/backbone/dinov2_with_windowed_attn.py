@@ -33,7 +33,6 @@ Helper functions copied locally:
 
 import collections.abc
 import math
-from typing import Dict, List, Optional, Set, Tuple, Union
 
 import torch
 from torch import nn
@@ -61,8 +60,8 @@ logger = logging.get_logger(__name__)
 
 
 def _find_pruneable_heads_and_indices(
-    heads: Set[int], n_heads: int, head_size: int, already_pruned_heads: Set[int]
-) -> Tuple[Set[int], torch.LongTensor]:
+    heads: set[int], n_heads: int, head_size: int, already_pruned_heads: set[int]
+) -> tuple[set[int], torch.LongTensor]:
     """Return the set of pruneable heads and their index mask for weight pruning.
 
     Copied from transformers.pytorch_utils.find_pruneable_heads_and_indices (removed from public API in transformers
@@ -92,10 +91,10 @@ def _find_pruneable_heads_and_indices(
 
 
 def _align_output_features_output_indices(
-    out_features: Optional[List[str]],
-    out_indices: Optional[Union[List[int], Tuple[int, ...]]],
-    stage_names: List[str],
-) -> Tuple[List[str], List[int]]:
+    out_features: list[str] | None,
+    out_indices: list[int] | tuple[int, ...] | None,
+    stage_names: list[str],
+) -> tuple[list[str], list[int]]:
     if out_indices is None and out_features is None:
         out_indices = [len(stage_names) - 1]
         out_features = [stage_names[-1]]
@@ -107,10 +106,10 @@ def _align_output_features_output_indices(
 
 
 def _get_aligned_output_features_output_indices(
-    out_features: Optional[List[str]],
-    out_indices: Optional[Union[List[int], Tuple[int, ...]]],
-    stage_names: List[str],
-) -> Tuple[List[str], List[int]]:
+    out_features: list[str] | None,
+    out_indices: list[int] | tuple[int, ...] | None,
+    stage_names: list[str],
+) -> tuple[list[str], list[int]]:
     """Align out_features and out_indices against stage_names, filling in defaults when either is None.
 
     Copied from transformers.utils.backbone_utils.get_aligned_output_features_output_indices (removed from public API in
@@ -387,7 +386,7 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
         # Combine class and patch embeddings
         return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)
 
-    def forward(self, pixel_values: torch.Tensor, bool_masked_pos: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, pixel_values: torch.Tensor, bool_masked_pos: torch.Tensor | None = None) -> torch.Tensor:
         """Compute windowed patch embeddings for the given pixel values.
 
         Args:
@@ -488,7 +487,7 @@ class Dinov2WithRegistersSelfAttention(nn.Module):
 
     def forward(
         self, hidden_states: torch.Tensor, output_attentions: bool = False
-    ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor]]:
+    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor]:
         # Note: head_mask was removed in the transformers v5 migration.
         # In v4 the parameter defaulted to None and callers universally passed None,
         # so dropping it produces identical numerics.  Permanent head pruning is still
@@ -529,7 +528,7 @@ class Dinov2WithRegistersSdpaSelfAttention(Dinov2WithRegistersSelfAttention):
 
     def forward(
         self, hidden_states: torch.Tensor, output_attentions: bool = False
-    ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor]]:
+    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor]:
         if output_attentions:
             logger.warning_once(
                 "Dinov2WithRegistersModel is using Dinov2WithRegistersSdpaSelfAttention, "
@@ -586,7 +585,7 @@ class Dinov2WithRegistersAttention(nn.Module):
         self.output = Dinov2WithRegistersSelfOutput(config)
         self.pruned_heads = set()
 
-    def prune_heads(self, heads: Set[int]) -> None:
+    def prune_heads(self, heads: set[int]) -> None:
         if len(heads) == 0:
             return
         heads, index = _find_pruneable_heads_and_indices(
@@ -608,7 +607,7 @@ class Dinov2WithRegistersAttention(nn.Module):
         self,
         hidden_states: torch.Tensor,
         output_attentions: bool = False,
-    ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor]]:
+    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor]:
         self_outputs = self.attention(hidden_states, output_attentions)
 
         attention_output = self.output(self_outputs[0], hidden_states)
@@ -654,7 +653,7 @@ def drop_path(input: torch.Tensor, drop_prob: float = 0.0, training: bool = Fals
 class Dinov2WithRegistersDropPath(nn.Module):
     """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks)."""
 
-    def __init__(self, drop_prob: Optional[float] = None) -> None:
+    def __init__(self, drop_prob: float | None = None) -> None:
         super().__init__()
         self.drop_prob = drop_prob
 
@@ -662,7 +661,7 @@ class Dinov2WithRegistersDropPath(nn.Module):
         return drop_path(hidden_states, self.drop_prob, self.training)
 
     def extra_repr(self) -> str:
-        return "p={}".format(self.drop_prob)
+        return f"p={self.drop_prob}"
 
 
 class Dinov2WithRegistersMLP(nn.Module):
@@ -735,7 +734,7 @@ class WindowedDinov2WithRegistersLayer(nn.Module):
         hidden_states: torch.Tensor,
         output_attentions: bool = False,
         run_full_attention: bool = False,
-    ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor]]:
+    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor]:
         assert not output_attentions, "output_attentions is not supported for windowed attention"
         shortcut = hidden_states
         if run_full_attention:
@@ -793,15 +792,19 @@ class WindowedDinov2WithRegistersEncoder(nn.Module):
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
-    ) -> Union[tuple, BaseModelOutput]:
+    ) -> tuple | BaseModelOutput:
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
+
+        last_feature = self.config.out_features[-1]
+        # Feature names are "stage<N>"; only those carry a layer index to early-stop on.
+        early_stop_layer = int(last_feature[5:]) if last_feature.startswith("stage") else None
 
         for i, layer_module in enumerate(self.layer):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
-            if i > int(self.config.out_features[-1][5:]):
+            if early_stop_layer is not None and i > early_stop_layer:
                 # early stop if we have reached the last output feature
                 break
 
@@ -845,7 +848,7 @@ class WindowedDinov2WithRegistersPreTrainedModel(PreTrainedModel):
     _no_split_modules = ["Dinov2WithRegistersSwiGLUFFN"]
     _supports_sdpa = True
 
-    def _init_weights(self, module: Union[nn.Linear, nn.Conv2d, nn.LayerNorm]) -> None:
+    def _init_weights(self, module: nn.Linear | nn.Conv2d | nn.LayerNorm) -> None:
         """Initialize the weights."""
         if isinstance(module, (nn.Linear, nn.Conv2d)):
             # Upcast the input in `fp32` and cast it back to desired `dtype` to avoid
@@ -924,7 +927,7 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
     def get_input_embeddings(self) -> Dinov2WithRegistersPatchEmbeddings:
         return self.embeddings.patch_embeddings
 
-    def _prune_heads(self, heads_to_prune: Dict[int, List[int]]) -> None:
+    def _prune_heads(self, heads_to_prune: dict[int, list[int]]) -> None:
         """Prunes heads of the model.
 
         heads_to_prune: dict of {layer_num: list of heads to prune in this layer} See base
@@ -985,12 +988,12 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
     @replace_return_docstrings(output_type=BaseModelOutputWithPooling, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
-        pixel_values: Optional[torch.Tensor] = None,
-        bool_masked_pos: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, BaseModelOutputWithPooling]:
+        pixel_values: torch.Tensor | None = None,
+        bool_masked_pos: torch.Tensor | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        return_dict: bool | None = None,
+    ) -> tuple | BaseModelOutputWithPooling:
         """
         Returns:
 
@@ -1094,12 +1097,12 @@ class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegist
     )
     def forward(
         self,
-        pixel_values: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-    ) -> Union[tuple, ImageClassifierOutput]:
+        pixel_values: torch.Tensor | None = None,
+        labels: torch.Tensor | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        return_dict: bool | None = None,
+    ) -> tuple | ImageClassifierOutput:
         r"""Labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
 
             Labels for computing the image classification/regression loss. Indices should be in `[0, ...,
@@ -1212,9 +1215,9 @@ class WindowedDinov2WithRegistersBackbone(WindowedDinov2WithRegistersPreTrainedM
     def forward(
         self,
         pixel_values: torch.Tensor,
-        output_hidden_states: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
+        output_hidden_states: bool | None = None,
+        output_attentions: bool | None = None,
+        return_dict: bool | None = None,
     ) -> BackboneOutput:
         """
         Returns:

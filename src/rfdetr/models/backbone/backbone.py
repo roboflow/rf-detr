@@ -34,12 +34,12 @@ class Backbone(BackboneBase):
     def __init__(
         self,
         name: str,
-        pretrained_encoder: str = None,
-        window_block_indexes: list = None,
+        pretrained_encoder: str | None = None,
+        window_block_indexes: list | None = None,
         drop_path=0.0,
         out_channels=256,
-        out_feature_indexes: list = None,
-        projector_scale: list = None,
+        out_feature_indexes: list | None = None,
+        projector_scale: list | None = None,
         use_cls_token: bool = False,
         freeze_encoder: bool = False,
         layer_norm: bool = False,
@@ -220,6 +220,9 @@ def get_dinov2_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: 
     Returns:
         Lr decay rate for the given parameter.
     """
+    # NOTE: near-duplicate of get_vit_lr_decay_rate in training/param_groups.py (same formula,
+    # different layer-key pattern: this matches ".layer.", that matches ".blocks.").
+    # If updating this formula, update the sibling too.
     layer_id = num_layers + 1
     if name.startswith("backbone"):
         if "embeddings" in name:

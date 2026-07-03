@@ -216,7 +216,7 @@ def _flip_idx_to_pairs(flip_idx: list[int]) -> list[int]:
         if idx in seen or mirror_idx in seen or idx == mirror_idx:
             seen.add(idx)
             continue
-        if mirror_idx < len(flip_idx) and flip_idx[mirror_idx] == idx:
+        if 0 <= mirror_idx < len(flip_idx) and flip_idx[mirror_idx] == idx:
             pairs.extend([idx, mirror_idx])
             seen.update({idx, mirror_idx})
     return pairs

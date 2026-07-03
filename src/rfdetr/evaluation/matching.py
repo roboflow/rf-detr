@@ -106,13 +106,12 @@ def _match_single_class(
         if best_nc_iou >= iou_threshold:
             pred_match[i] = 1
             gt_matched[best_nc_idx] = True
-        else:
-            # A detection matched to a crowd GT is ignored (not a false positive).
-            if gt_crowd.any():
-                crowd_ious = ious.clone()
-                crowd_ious[~gt_crowd] = -1.0
-                if crowd_ious.max() >= iou_threshold:
-                    pred_ignore[i] = True
+        # A detection matched to a crowd GT is ignored (not a false positive).
+        elif gt_crowd.any():
+            crowd_ious = ious.clone()
+            crowd_ious[~gt_crowd] = -1.0
+            if crowd_ious.max() >= iou_threshold:
+                pred_ignore[i] = True
             # else: false positive — pred_match stays 0
 
     total_gt = int((~gt_crowd).sum().item())

@@ -170,8 +170,8 @@ def _run_inference(
     # ONNX NCHW: [batch, channels, height, width]
     _, channels, height, width = inputs[0].shape
 
-    pil_img = PILImage.open(image_path)
-    inp_tensor = _preprocess_pil_to_nchw(pil_img, height, width, channels)
+    with PILImage.open(image_path) as pil_img:
+        inp_tensor = _preprocess_pil_to_nchw(pil_img, height, width, channels)
 
     raw_outputs = session.run(None, {input_name: inp_tensor})
 

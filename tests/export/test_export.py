@@ -202,7 +202,7 @@ def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
-@pytest.mark.parametrize("mode", ["train", "eval"], ids=["train_mode", "eval_mode"])
+@pytest.mark.parametrize("mode", [pytest.param("train", id="train_mode"), pytest.param("eval", id="eval_mode")])
 def test_segmentation_outputs_present_in_train_and_eval(mode: Literal["train", "eval"]) -> None:
     """Use case: segmentation outputs are present in both train and eval modes."""
     model = RFDETRSegNano()

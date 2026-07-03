@@ -111,7 +111,11 @@ def masks_to_boxes(masks: torch.Tensor) -> torch.Tensor:
     y_max = y_mask.flatten(1).max(-1)[0]
     y_min = y_mask.masked_fill(~(masks.bool()), 1e8).flatten(1).min(-1)[0]
 
-    return torch.stack([x_min, y_min, x_max, y_max], 1)
+    boxes = torch.stack([x_min, y_min, x_max, y_max], 1)
+
+    keep = masks.flatten(1).any(-1)
+    boxes[~keep] = boxes.new_zeros(4)
+    return boxes
 
 
 def batch_dice_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:

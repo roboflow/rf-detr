@@ -119,7 +119,9 @@ class TestFileMD5Validation:
         finally:
             os.unlink(temp_file)
 
-    @pytest.mark.parametrize("hash_case", ["lower", "upper"], ids=["lowercase", "uppercase"])
+    @pytest.mark.parametrize(
+        "hash_case", [pytest.param("lower", id="lowercase"), pytest.param("upper", id="uppercase")]
+    )
     def test_validate_file_md5_case_insensitive(self, hash_case: Literal["lower", "upper"]) -> None:
         """Test that MD5 validation is case-insensitive."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
