@@ -8,20 +8,26 @@
 # ------------------------------------------------------------------------
 """CLI orchestrator for ONNX and TensorRT model export."""
 
+from __future__ import annotations
+
+import argparse
 import os
 import random
 import warnings
+from typing import cast
 
 import numpy as np
 import torch
+from torch import Tensor
 import torch.nn as nn
 from PIL import Image
-from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
+from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage  # type: ignore[import-untyped]
 
 from rfdetr.datasets.transforms import Normalize
 from rfdetr.export._onnx.exporter import export_onnx
 from rfdetr.export._tensorrt import trtexec
-from rfdetr.models import build_model
+from rfdetr.models import BuilderArgs, build_model
+from rfdetr.models.lwdetr import LWDETR
 from rfdetr.utilities.distributed import get_rank
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_sha, get_version
@@ -29,10 +35,16 @@ from rfdetr.utilities.package import get_sha, get_version
 logger = get_logger()
 
 
-def make_infer_image(infer_dir, shape, batch_size, device="cuda", num_channels: int = 3):
+def make_infer_image(
+    infer_dir: str | None,
+    shape: tuple[int, int],
+    batch_size: int,
+    device: str | torch.device = "cuda",
+    num_channels: int = 3,
+) -> Tensor:
     if infer_dir is None:
         if num_channels == 3:
-            dummy = np.random.randint(0, 256, (shape[0], shape[1], 3), dtype=np.uint8)
+            dummy = np.random.randint(0, 256, (shape[0], shape[1], 3), dtype=np.uint8)  # type: ignore[misc]
             image = Image.fromarray(dummy, mode="RGB")
         else:
             # Non-RGB: build a random float tensor directly, bypassing PIL.
@@ -67,13 +79,13 @@ def make_infer_image(infer_dir, shape, batch_size, device="cuda", num_channels: 
     return inps
 
 
-def no_batch_norm(model):
+def no_batch_norm(model: nn.Module) -> None:
     for module in model.modules():
         if isinstance(module, nn.BatchNorm2d):
             raise ValueError("BatchNorm2d found in the model. Please remove it.")
 
 
-def main(args):
+def main(args: argparse.Namespace) -> None:
     git_info = get_sha()
     if git_info != "unknown":
         logger.info(f"Running from git repository: {git_info}")
@@ -96,22 +108,28 @@ def main(args):
     os.environ["CUDA_VISIBLE_DEVICES"] = device_id
 
     # fix the seed for reproducibility
-    seed = args.seed + get_rank()
-    torch.manual_seed(seed)
+    seed: int = args.seed + get_rank()
+    torch.manual_seed(seed)  # type: ignore[misc]
     np.random.seed(seed)
     random.seed(seed)
 
-    result = build_model(args)
-    model = result[0] if isinstance(result, tuple) else result
+    result = build_model(cast(BuilderArgs, args))
+    model = cast(LWDETR, result[0] if isinstance(result, tuple) else result)
     n_parameters = sum(p.numel() for p in model.parameters())
     logger.info(f"number of parameters: {n_parameters}")
-    n_backbone_parameters = sum(p.numel() for p in model.backbone.parameters())
+    n_backbone_parameters = sum(p.numel() for p in model.backbone.parameters())  # type: ignore[attr-defined]
     logger.info(f"number of backbone parameters: {n_backbone_parameters}")
-    n_projector_parameters = sum(p.numel() for p in model.backbone[0].projector.parameters())
+    n_projector_parameters = sum(
+        p.numel()  # type: ignore[attr-defined]
+        for p in model.backbone[0].projector.parameters()  # type: ignore[attr-defined]
+    )
     logger.info(f"number of projector parameters: {n_projector_parameters}")
-    n_backbone_encoder_parameters = sum(p.numel() for p in model.backbone[0].encoder.parameters())
+    n_backbone_encoder_parameters = sum(
+        p.numel()  # type: ignore[attr-defined]
+        for p in model.backbone[0].encoder.parameters()  # type: ignore[attr-defined]
+    )
     logger.info(f"number of backbone encoder parameters: {n_backbone_encoder_parameters}")
-    n_transformer_parameters = sum(p.numel() for p in model.transformer.parameters())
+    n_transformer_parameters = sum(p.numel() for p in model.transformer.parameters())  # type: ignore[attr-defined]
     logger.info(f"number of transformer parameters: {n_transformer_parameters}")
     if args.resume:
         # --resume points at RF-DETR-produced checkpoints that may embed
@@ -121,7 +139,7 @@ def main(args):
         # compatibility, since --resume is a developer/ops flag).  Setting
         # args.trust_checkpoint=False enforces safe-tensors-only loading and
         # raises if the checkpoint needs pickle.
-        from rfdetr.util.io import _safe_torch_load
+        from rfdetr.util.io import _safe_torch_load  # type: ignore[misc]
 
         trust_checkpoint = getattr(args, "trust_checkpoint", True)
         if trust_checkpoint:
@@ -137,11 +155,11 @@ def main(args):
             )
         checkpoint = _safe_torch_load(args.resume, trust=trust_checkpoint)
         result = model.load_state_dict(checkpoint["model"], strict=False)
-        if result.missing_keys or result.unexpected_keys:
+        if result.missing_keys or result.unexpected_keys:  # type: ignore[attr-defined]
             logger.warning(
                 "load_state_dict strict=False: missing=%s unexpected=%s",
-                result.missing_keys[:5],
-                result.unexpected_keys[:5],
+                result.missing_keys[:5],  # type: ignore[attr-defined]
+                result.unexpected_keys[:5],  # type: ignore[attr-defined]
             )
         logger.info(f"load checkpoints {args.resume}")
 
