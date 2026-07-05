@@ -19,11 +19,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 from scipy.optimize import linear_sum_assignment
-from torch import nn
+from torch import Tensor, nn
 
 from rfdetr.models.heads.keypoints import compute_keypoint_matching_cost
 from rfdetr.models.heads.segmentation import point_sample
@@ -94,7 +96,7 @@ class HungarianMatcher(nn.Module):
         self._warned_non_finite_costs = False
 
     @staticmethod
-    def _sanitize_cost_matrix(cost_matrix: torch.Tensor) -> torch.Tensor:
+    def _sanitize_cost_matrix(cost_matrix: Tensor) -> Tensor:
         """Replace non-finite cost entries with a large finite sentinel.
 
         >>> HungarianMatcher._sanitize_cost_matrix(
@@ -136,10 +138,10 @@ class HungarianMatcher(nn.Module):
     @torch.no_grad()
     def forward(
         self,
-        outputs: dict,
-        targets: list,
+        outputs: dict[str, Any],
+        targets: list[dict[str, Any]],
         group_detr: int = 1,
-    ) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    ) -> list[tuple[Tensor, Tensor]]:
         """Performs the matching
 
         Args:
@@ -199,7 +201,7 @@ class HungarianMatcher(nn.Module):
         if masks_present:
             tgt_masks = torch.cat([v["masks"] for v in targets])
 
-            if isinstance(outputs["pred_masks"], torch.Tensor):
+            if isinstance(outputs["pred_masks"], Tensor):
                 out_masks = outputs["pred_masks"].flatten(0, 1)
 
                 num_points = out_masks.shape[-2] * out_masks.shape[-1] // self.mask_point_sample_ratio
@@ -301,7 +303,7 @@ class HungarianMatcher(nn.Module):
         return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
 
 
-def build_matcher(args) -> HungarianMatcher:
+def build_matcher(args: Any) -> HungarianMatcher:
     """Build a HungarianMatcher from a training argument namespace.
 
     Args:
