@@ -567,12 +567,12 @@ def _patch_validation_download(npy_path: str) -> Generator[None, None, None]:
             NHWC format.
     """
 
-    def _replacement() -> NDArray[Any]:
+    def _replacement() -> NDArray[np.float32]:
         # Calibration data prepared by _prepare_calibration_data() is always
         # a plain float32 ndarray — never pickled.  allow_pickle=False is
         # intentional here; allow_pickle=True is handled by _numpy_allow_pickle()
         # for onnx2tf's own internal np.load calls.
-        return cast(NDArray[Any], np.load(npy_path, allow_pickle=False))
+        return cast(NDArray[np.float32], np.load(npy_path, allow_pickle=False))
 
     originals: dict[str, Any] = {}
     modules = [
@@ -679,7 +679,7 @@ def _get_onnx_input_info(onnx_path: Path) -> tuple[str, list[int]]:
 
 def _prepare_calibration_data(
     onnx_path: Path,
-    calibration_data: str | os.PathLike[str] | np.ndarray | None,
+    calibration_data: str | os.PathLike[str] | NDArray[np.float32] | None,
     output_dir: Path,
     quantization: str | None,
     max_images: int = _DEFAULT_DIR_CALIB_SAMPLES,
@@ -782,7 +782,7 @@ def export_tflite(
     onnx_path: str | os.PathLike[str],
     output_dir: str | os.PathLike[str],
     quantization: str | None = None,
-    calibration_data: str | os.PathLike[str] | np.ndarray | None = None,
+    calibration_data: str | os.PathLike[str] | NDArray[np.float32] | None = None,
     verbosity: str = "error",
     max_images: int = _DEFAULT_DIR_CALIB_SAMPLES,
     *,

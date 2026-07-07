@@ -5,9 +5,12 @@
 # ------------------------------------------------------------------------
 """OKS keypoint mAP metric backed by :class:`~rfdetr.evaluation.coco_eval.CocoEvaluator`."""
 
+from __future__ import annotations
+
 from enum import Enum
 from typing import Any
 
+import numpy as np
 import torch
 
 from rfdetr.evaluation.coco_eval import CocoEvaluator
@@ -205,9 +208,9 @@ class MetricKeypointOKS:
         and accumulates COCO keypoint statistics.
 
         Returns:
-            Dict with float values for keys :data:`METRIC_KEY_MAP` (mAP@50:95),
-            :data:`METRIC_KEY_MAP_50` (AP@50), :data:`METRIC_KEY_MAP_75` (AP@75),
-            and :data:`METRIC_KEY_MAR` (AR@50:95).  A value of ``-1.0`` indicates
+            Dict with float values for keys :attr:`OKSKey.MAP` (mAP@50:95),
+            :attr:`OKSKey.MAP_50` (AP@50), :attr:`OKSKey.MAP_75` (AP@75),
+            and :attr:`OKSKey.MAR` (AR@50:95).  A value of ``-1.0`` indicates
             the statistic was not available (e.g. no predictions matched any ground-truth
             annotation).  Callers should filter ``value < 0`` before logging.
 
@@ -238,7 +241,8 @@ class MetricKeypointOKS:
             evaluator.update(batch)
         evaluator.synchronize_between_processes()
         evaluator.accumulate()
-        stats = evaluator.coco_eval["keypoints"].stats
+        coco_eval_entry: Any = evaluator.coco_eval["keypoints"]
+        stats: np.ndarray[Any, Any] = coco_eval_entry.stats
         assert stats.shape == _KPS_STATS_SHAPE, (
             f"Expected coco keypoint stats shape {_KPS_STATS_SHAPE}, got {stats.shape}; "
             "pycocotools _summarizeKps() contract violated — check faster_coco_eval version"
