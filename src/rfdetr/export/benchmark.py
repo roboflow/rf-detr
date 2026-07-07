@@ -19,8 +19,8 @@ import os
 import os.path as osp
 import time
 from collections import OrderedDict, namedtuple
-from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Protocol, cast
 
 import numpy as np
 import torch
@@ -41,6 +41,14 @@ except ImportError:
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
+
+
+class _JsonArgparseCLI(Protocol):
+    """Minimal jsonargparse CLI callable interface used by this script."""
+
+    def __call__(self, component: Callable[..., Any]) -> Any:
+        """Run jsonargparse CLI for a callable component."""
+        ...
 
 
 def get_image_list(ann_file: str) -> list[dict[str, Any]]:
@@ -485,4 +493,4 @@ def main(
 if __name__ == "__main__":
     jsonargparse = importlib.import_module("jsonargparse")
 
-    cast(Any, getattr(jsonargparse, "CLI"))(main)
+    cast(_JsonArgparseCLI, getattr(jsonargparse, "CLI"))(main)

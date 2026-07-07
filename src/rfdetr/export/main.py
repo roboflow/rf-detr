@@ -14,7 +14,7 @@ import argparse
 import os
 import random
 import warnings
-from typing import Any, cast
+from typing import cast
 
 import numpy as np
 import torch
@@ -27,6 +27,7 @@ from rfdetr.datasets.transforms import Normalize
 from rfdetr.export._onnx.exporter import export_onnx
 from rfdetr.export._tensorrt import trtexec
 from rfdetr.models import BuilderArgs, build_model
+from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.utilities.distributed import get_rank
 from rfdetr.utilities.logger import get_logger
@@ -120,14 +121,15 @@ def main(args: argparse.Namespace) -> None:
 
     result = build_model(cast(BuilderArgs, args))
     model = cast(LWDETR, result[0] if isinstance(result, tuple) else result)
-    backbone = cast(Any, model.backbone)
+    backbone = model.backbone
+    backbone_model = cast(Backbone, backbone[0])
     n_parameters = _num_parameters(model)
     logger.info(f"number of parameters: {n_parameters}")
-    n_backbone_parameters = _num_parameters(cast(nn.Module, backbone))
+    n_backbone_parameters = _num_parameters(backbone)
     logger.info(f"number of backbone parameters: {n_backbone_parameters}")
-    n_projector_parameters = _num_parameters(cast(nn.Module, backbone[0].projector))
+    n_projector_parameters = _num_parameters(backbone_model.projector)
     logger.info(f"number of projector parameters: {n_projector_parameters}")
-    n_backbone_encoder_parameters = _num_parameters(cast(nn.Module, backbone[0].encoder))
+    n_backbone_encoder_parameters = _num_parameters(backbone_model.encoder)
     logger.info(f"number of backbone encoder parameters: {n_backbone_encoder_parameters}")
     n_transformer_parameters = _num_parameters(cast(nn.Module, model.transformer))
     logger.info(f"number of transformer parameters: {n_transformer_parameters}")

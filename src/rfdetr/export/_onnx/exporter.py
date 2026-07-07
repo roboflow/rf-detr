@@ -15,7 +15,7 @@ from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from os import PathLike
-from typing import Any, cast
+from typing import Any, Protocol, TypeVar, cast
 
 import numpy as np
 import torch
@@ -23,8 +23,66 @@ import torch
 from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
 from rfdetr.utilities.logger import get_logger
 
-onnx: Any | None
-shape_inference: Any | None
+_DependencyT = TypeVar("_DependencyT")
+
+
+class _OnnxModule(Protocol):
+    """Minimal ONNX module interface used by this exporter."""
+
+    def load(self, model_path: str, *args: Any, **kwargs: Any) -> Any:
+        """Load an ONNX model from disk."""
+        ...
+
+    def save(self, model: Any, model_path: str, *args: Any, **kwargs: Any) -> None:
+        """Save an ONNX model to disk."""
+        ...
+
+
+class _ShapeInferenceModule(Protocol):
+    """Minimal ONNX shape inference interface used by this exporter."""
+
+    def infer_shapes(self, model: Any, *args: Any, **kwargs: Any) -> Any:
+        """Infer ONNX graph shapes."""
+        ...
+
+
+class _GraphSurgeonModule(Protocol):
+    """Minimal ONNX GraphSurgeon module interface used by the optimizer."""
+
+    def import_onnx(self, model: Any) -> Any:
+        """Import an ONNX model into a GraphSurgeon graph."""
+        ...
+
+    def export_onnx(self, graph: Any) -> Any:
+        """Export a GraphSurgeon graph into an ONNX model."""
+        ...
+
+
+class _GraphSurgeonLogger(Protocol):
+    """Minimal GraphSurgeon logger interface used by the optimizer."""
+
+    INFO: Any
+    severity: Any
+
+    def info(self, message: str) -> None:
+        """Log an informational message."""
+        ...
+
+    def verbose(self, message: str) -> None:
+        """Log a verbose message."""
+        ...
+
+
+class _FoldConstants(Protocol):
+    """Callable Polygraphy constant-folding interface used by the optimizer."""
+
+    def __call__(self, model: Any, *args: Any, **kwargs: Any) -> Any:
+        """Fold constants in an ONNX model."""
+        ...
+
+
+onnx: _OnnxModule | None
+shape_inference: _ShapeInferenceModule | None
 try:
     import onnx as _onnx
     from onnx import shape_inference as _shape_inference
@@ -32,8 +90,8 @@ except ImportError:
     onnx = None
     shape_inference = None
 else:
-    onnx = _onnx
-    shape_inference = _shape_inference
+    onnx = cast(_OnnxModule, _onnx)
+    shape_inference = cast(_ShapeInferenceModule, _shape_inference)
 
 try:
     import onnx_graphsurgeon as gs
@@ -48,6 +106,50 @@ except ImportError:
     fold_constants = None
 
 logger = get_logger()
+
+
+def _onnx_dependency_error(missing_deps: Sequence[str]) -> ImportError:
+    """Build the shared ONNX optional-dependency error."""
+    missing_str = ", ".join(missing_deps)
+    return ImportError(f"ONNX export dependencies are missing ({missing_str}). Install with: pip install rfdetr[onnx]")
+
+
+def _require_dependency(dependency: _DependencyT | None, name: str) -> _DependencyT:
+    """Return a dependency after narrowing it away from ``None``."""
+    if dependency is None:
+        raise _onnx_dependency_error([name])
+    return dependency
+
+
+def _require_onnx_optimizer_dependencies() -> tuple[
+    _OnnxModule,
+    _ShapeInferenceModule,
+    _GraphSurgeonModule,
+    _GraphSurgeonLogger,
+    _FoldConstants,
+]:
+    """Resolve optional ONNX optimizer dependencies as non-optional typed handles."""
+    graphsurgeon = cast(_GraphSurgeonModule | None, gs)
+    graphsurgeon_logger = cast(_GraphSurgeonLogger | None, G_LOGGER)
+    constant_folder = cast(_FoldConstants | None, fold_constants)
+    missing_deps = []
+    if onnx is None:
+        missing_deps.append("onnx")
+    if shape_inference is None:
+        missing_deps.append("onnx.shape_inference")
+    if graphsurgeon is None or graphsurgeon_logger is None:
+        missing_deps.append("onnx_graphsurgeon")
+    if constant_folder is None:
+        missing_deps.append("polygraphy.backend.onnx.loader.fold_constants")
+    if missing_deps:
+        raise _onnx_dependency_error(missing_deps)
+    return (
+        _require_dependency(onnx, "onnx"),
+        _require_dependency(shape_inference, "onnx.shape_inference"),
+        _require_dependency(graphsurgeon, "onnx_graphsurgeon"),
+        _require_dependency(graphsurgeon_logger, "onnx_graphsurgeon"),
+        _require_dependency(constant_folder, "polygraphy.backend.onnx.loader.fold_constants"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +225,7 @@ def export_onnx(
         verbose=verbose,
         opset_version=opset_version,
         dynamic_axes=dynamic_axes,
-        **cast(Any, export_kwargs),
+        **export_kwargs,
     )
 
     if notes is not None and onnx is not None:
@@ -195,29 +297,18 @@ def onnx_simplify(
 
 
 class OnnxOptimizer:
-    def __init__(self, input: Any, severity: Any = None) -> None:
-        missing_deps = []
-        if onnx is None:
-            missing_deps.append("onnx")
-        if shape_inference is None:
-            missing_deps.append("onnx.shape_inference")
-        if gs is None or G_LOGGER is None:
-            missing_deps.append("onnx_graphsurgeon")
-        if fold_constants is None:
-            missing_deps.append("polygraphy.backend.onnx.loader.fold_constants")
-        if missing_deps:
-            missing_str = ", ".join(missing_deps)
-            raise ImportError(
-                f"ONNX export dependencies are missing ({missing_str}). Install with: pip install rfdetr[onnx]"
-            )
-        self._gs = gs
-        self._onnx_logger = G_LOGGER
-        self._fold_constants = fold_constants
-        self._shape_inference = shape_inference
-        self._onnx = onnx
+    def __init__(self, input: object, severity: object | None = None) -> None:
+        onnx_module, shape_inference_module, graphsurgeon, graphsurgeon_logger, constant_folder = (
+            _require_onnx_optimizer_dependencies()
+        )
+        self._gs = graphsurgeon
+        self._onnx_logger = graphsurgeon_logger
+        self._fold_constants = constant_folder
+        self._shape_inference = shape_inference_module
+        self._onnx = onnx_module
         if severity is None:
             severity = self._onnx_logger.INFO
-        if isinstance(input, str):
+        if isinstance(input, (str, PathLike)):
             onnx_graph = self.load_onnx(input)
         else:
             onnx_graph = input
@@ -225,14 +316,15 @@ class OnnxOptimizer:
         self.severity = severity
         self.set_severity(severity)
 
-    def set_severity(self, severity: Any) -> None:
+    def set_severity(self, severity: object) -> None:
         self._onnx_logger.severity = severity
 
-    def load_onnx(self, onnx_path: str) -> Any:
+    def load_onnx(self, onnx_path: str | PathLike[str]) -> Any:
         """Load onnx from file."""
-        assert os.path.isfile(onnx_path), f"not found onnx file: {onnx_path}"
-        onnx_graph = self._onnx.load(onnx_path)
-        self._onnx_logger.info(f"load onnx file: {onnx_path}")
+        path = os.fspath(onnx_path)
+        assert os.path.isfile(path), f"not found onnx file: {path}"
+        onnx_graph = self._onnx.load(path)
+        self._onnx_logger.info(f"load onnx file: {path}")
         return onnx_graph
 
     def save_onnx(self, onnx_path: str) -> None:
