@@ -24,9 +24,9 @@ _MASK_CHUNK = 32
 class PostProcess(nn.Module):
     """Convert raw RF-DETR model outputs into per-image prediction tensors.
 
-    The postprocessor is shared by detection, segmentation, keypoint, and oriented-box inference. It selects top
-    scoring query/class pairs, scales boxes back to the requested image sizes, and then delegates to the head-specific
-    private helper for masks, keypoints, oriented boxes, or box-only results.
+    The postprocessor is shared by detection, segmentation, keypoint, and oriented-box inference. It selects top scoring
+    query/class pairs, scales boxes back to the requested image sizes, and then delegates to the head-specific private
+    helper for masks, keypoints, oriented boxes, or box-only results.
     """
 
     def __init__(

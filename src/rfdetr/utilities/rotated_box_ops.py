@@ -237,33 +237,29 @@ def probiou_pairwise(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor
         Cost matrix of shape ``(N, M)`` where lower values indicate better matches.
         Entries are in ``[0, 1]`` (0 = identical boxes, 1 = no overlap).
     """
-    mu_p, sigma_p = _obb_to_gaussian(boxes1)   # (N, 2), (N, 2, 2)
-    mu_t, sigma_t = _obb_to_gaussian(boxes2)   # (M, 2), (M, 2, 2)
+    mu_p, sigma_p = _obb_to_gaussian(boxes1)  # (N, 2), (N, 2, 2)
+    mu_t, sigma_t = _obb_to_gaussian(boxes2)  # (M, 2), (M, 2, 2)
 
     n, m = boxes1.shape[0], boxes2.shape[0]
 
     # Broadcast to (N, M, ...)
-    mu_p_exp = mu_p[:, None, :]                          # (N, 1, 2)
-    mu_t_exp = mu_t[None, :, :]                          # (1, M, 2)
-    sigma_p_exp = sigma_p[:, None, :, :]                 # (N, 1, 2, 2)
-    sigma_t_exp = sigma_t[None, :, :, :]                 # (1, M, 2, 2)
+    mu_p_exp = mu_p[:, None, :]  # (N, 1, 2)
+    mu_t_exp = mu_t[None, :, :]  # (1, M, 2)
+    sigma_p_exp = sigma_p[:, None, :, :]  # (N, 1, 2, 2)
+    sigma_t_exp = sigma_t[None, :, :, :]  # (1, M, 2, 2)
 
-    sigma_avg = (sigma_p_exp + sigma_t_exp) / 2          # (N, M, 2, 2)
+    sigma_avg = (sigma_p_exp + sigma_t_exp) / 2  # (N, M, 2, 2)
 
     det_avg = (sigma_avg[..., 0, 0] * sigma_avg[..., 1, 1] - sigma_avg[..., 0, 1] ** 2).clamp(min=1e-8)
     det_p = (sigma_p[..., 0, 0] * sigma_p[..., 1, 1] - sigma_p[..., 0, 1] ** 2).clamp(min=1e-8)
     det_t = (sigma_t[..., 0, 0] * sigma_t[..., 1, 1] - sigma_t[..., 0, 1] ** 2).clamp(min=1e-8)
 
-    inv_avg00 = sigma_avg[..., 1, 1] / det_avg           # (N, M)
+    inv_avg00 = sigma_avg[..., 1, 1] / det_avg  # (N, M)
     inv_avg01 = -sigma_avg[..., 0, 1] / det_avg
     inv_avg11 = sigma_avg[..., 0, 0] / det_avg
 
-    diff = mu_p_exp - mu_t_exp                           # (N, M, 2)
-    mahal = (
-        inv_avg00 * diff[..., 0] ** 2
-        + 2 * inv_avg01 * diff[..., 0] * diff[..., 1]
-        + inv_avg11 * diff[..., 1] ** 2
-    )
+    diff = mu_p_exp - mu_t_exp  # (N, M, 2)
+    mahal = inv_avg00 * diff[..., 0] ** 2 + 2 * inv_avg01 * diff[..., 0] * diff[..., 1] + inv_avg11 * diff[..., 1] ** 2
 
     log_coeff = 0.5 * (torch.log(det_avg) - 0.5 * (torch.log(det_p[:, None]) + torch.log(det_t[None, :])))
     bd = 0.125 * mahal + log_coeff

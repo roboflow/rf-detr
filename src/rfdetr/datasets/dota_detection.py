@@ -216,9 +216,7 @@ class OBBGeometricTransform:
             ),
         )
 
-    def __call__(
-        self, image: Image.Image, target: dict[str, Any] | None
-    ) -> tuple[Image.Image, dict[str, Any] | None]:
+    def __call__(self, image: Image.Image, target: dict[str, Any] | None) -> tuple[Image.Image, dict[str, Any] | None]:
         """Apply the geometric transform to image and OBB corners.
 
         Args:
@@ -312,9 +310,8 @@ def make_dota_transforms(
 class DotaNormalize:
     """Normalize images and convert OBB corners to normalized cxcywha format.
 
-    After geometric augmentations, recomputes ``boxes_obb`` from the
-    (potentially transformed) ``corners`` keypoints, then normalizes
-    spatial coordinates by image size.
+    After geometric augmentations, recomputes ``boxes_obb`` from the (potentially transformed) ``corners`` keypoints,
+    then normalizes spatial coordinates by image size.
     """
 
     def __init__(
