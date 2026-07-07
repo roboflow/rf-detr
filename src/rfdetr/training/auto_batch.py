@@ -130,8 +130,8 @@ def _probe_step(
             autocast_kwargs["dtype"] = autocast_dtype
         with torch.autocast(**autocast_kwargs):
             outputs = model(samples, targets)
-            loss_dict = cast(dict[str, torch.Tensor], criterion(outputs, targets))
-            weight_dict = cast(dict[str, float], getattr(criterion, "weight_dict"))
+            loss_dict = cast("dict[str, torch.Tensor]", criterion(outputs, targets))
+            weight_dict = cast("dict[str, float]", criterion.weight_dict)
             weighted_losses = [loss_dict[name] * weight_dict[name] for name in loss_dict if name in weight_dict]
             if not weighted_losses:
                 raise RuntimeError(

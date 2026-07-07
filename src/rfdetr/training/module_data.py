@@ -6,7 +6,7 @@
 """LightningDataModule for RF-DETR dataset construction and loaders."""
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Literal
 
 import torch
 import torch.utils.data
@@ -27,6 +27,26 @@ _MIN_TRAIN_BATCHES = 5
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
+
+
+def _worker_init_fn(worker_id: int) -> None:
+    """Seed NumPy and the ``random`` module per DataLoader worker.
+
+    PyTorch seeds ``torch``'s RNG per worker automatically but leaves NumPy and the stdlib ``random`` module unseeded,
+    so without this hook every worker would draw identical NumPy/``random`` sequences (a well-known augmentation
+    duplication footgun). Deriving the seed from ``torch.initial_seed()`` keeps augmentation reproducible while still
+    giving each worker a distinct stream.
+
+    Args:
+        worker_id: Index of the DataLoader worker (unused; seed is derived from the per-worker torch seed).
+    """
+    import random
+
+    import numpy as np
+
+    seed = torch.initial_seed() % (2**32)
+    np.random.seed(seed)
+    random.seed(seed)
 
 
 def _has_cuda_device() -> bool:
@@ -165,9 +185,9 @@ class RFDETRDataModule(LightningDataModule):
             block_size=block_size,
         )
 
-        self._dataset_train: Optional[torch.utils.data.Dataset] = None
-        self._dataset_val: Optional[torch.utils.data.Dataset] = None
-        self._dataset_test: Optional[torch.utils.data.Dataset] = None
+        self._dataset_train: torch.utils.data.Dataset | None = None
+        self._dataset_val: torch.utils.data.Dataset | None = None
+        self._dataset_test: torch.utils.data.Dataset | None = None
 
         # GPU augmentation pipeline (Kornia); built lazily in setup("fit").
         self._kornia_pipeline: Any | None = None
@@ -290,6 +310,7 @@ class RFDETRDataModule(LightningDataModule):
                 pin_memory=self._pin_memory,
                 persistent_workers=self._persistent_workers,
                 prefetch_factor=self._prefetch_factor,
+                worker_init_fn=_worker_init_fn,
             )
 
         # Pad the dataset to a multiple of effective_batch_size * world_size so
@@ -309,6 +330,7 @@ class RFDETRDataModule(LightningDataModule):
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
+            worker_init_fn=_worker_init_fn,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -327,6 +349,7 @@ class RFDETRDataModule(LightningDataModule):
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
+            worker_init_fn=_worker_init_fn,
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -345,6 +368,7 @@ class RFDETRDataModule(LightningDataModule):
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
+            worker_init_fn=_worker_init_fn,
         )
 
     def predict_dataloader(self) -> DataLoader:
@@ -363,6 +387,7 @@ class RFDETRDataModule(LightningDataModule):
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
+            worker_init_fn=_worker_init_fn,
         )
 
     def _show_samples(
@@ -584,7 +609,7 @@ class RFDETRDataModule(LightningDataModule):
         self._kornia_normalize = build_normalize()
         logger.info("Kornia GPU augmentation pipeline built (backend=%s)", backend)
 
-    def on_after_batch_transfer(self, batch: Tuple, dataloader_idx: int) -> Tuple:
+    def on_after_batch_transfer(self, batch: tuple, dataloader_idx: int) -> tuple:
         """Apply Kornia GPU augmentation after the batch is transferred to device.
 
         When ``_kornia_pipeline`` is set and the trainer is in training mode, augmentation and normalization are applied
@@ -642,7 +667,7 @@ class RFDETRDataModule(LightningDataModule):
     # ------------------------------------------------------------------
 
     @property
-    def class_names(self) -> Optional[List[str]]:
+    def class_names(self) -> list[str] | None:
         """Class names from the training or validation dataset annotation file.
 
         Reads category names from the first available COCO-style dataset. Returns ``None`` if no dataset has been set up
@@ -670,7 +695,7 @@ class RFDETRDataModule(LightningDataModule):
                 return [coco.cats[k]["name"] for k in sorted(coco.cats.keys())]
         return None
 
-    def transfer_batch_to_device(self, batch: Tuple, device: torch.device, dataloader_idx: int) -> Tuple:
+    def transfer_batch_to_device(self, batch: tuple, device: torch.device, dataloader_idx: int) -> tuple:
         """Move a ``(NestedTensor, targets)`` batch to *device*.
 
         PTL's default iterates tuple elements and calls ``.to(device)``; that works for plain tensors but

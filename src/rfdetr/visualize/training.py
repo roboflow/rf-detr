@@ -20,16 +20,31 @@ Usage::
 
 from __future__ import annotations
 
+import os
 import re
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
 _AUXILIARY_LOSS_SUFFIX_RE = re.compile(r"_\d+$")
 _LEGEND_COLUMNS = 4
+
+
+def _ensure_headless_backend(matplotlib: Any) -> None:
+    """Switch matplotlib to the non-interactive ``Agg`` backend only when safe.
+
+    Forcing ``Agg`` unconditionally would break inline rendering in notebooks, so the switch is skipped when a display
+    is available or matplotlib is already in interactive mode.
+    """
+    if matplotlib.get_backend().lower() == "agg":
+        return
+    if os.environ.get("DISPLAY") or matplotlib.is_interactive():
+        return
+    matplotlib.use("Agg")
+
 
 try:
     import seaborn  # noqa: F401
@@ -257,14 +272,14 @@ def _plot_metric_groups(
     metric_groups: dict[str, list[str]],
     *,
     title: str,
-    output_path: Optional[str],
+    output_path: str | None,
     loss_log_scale: bool,
 ) -> Figure:
     """Build a figure for grouped metrics."""
     try:
         import matplotlib
 
-        matplotlib.use("Agg")
+        _ensure_headless_backend(matplotlib)
         import matplotlib.pyplot as plt
     except ImportError as exc:
         raise ImportError(
@@ -316,7 +331,7 @@ def _plot_metric_groups(
 
 def plot_loss_metrics(
     metrics_csv: str,
-    output_path: Optional[str] = None,
+    output_path: str | None = None,
     loss_log_scale: bool = False,
 ) -> Figure:
     """Plot aggregate and component training losses from a PTL ``metrics.csv`` file.
@@ -361,7 +376,7 @@ def plot_loss_metrics(
 
 def plot_map_metrics(
     metrics_csv: str,
-    output_path: Optional[str] = None,
+    output_path: str | None = None,
 ) -> Figure:
     """Plot train/val/test detection and keypoint mAP metrics from a PTL ``metrics.csv`` file.
 
@@ -411,12 +426,12 @@ def plot_map_metrics(
     return _plot_map_columns(raw_df, epoch_df, map_columns, output_path=output_path)
 
 
-def _plot_map_columns(raw_df: Any, epoch_df: Any, metric_columns: list[str], *, output_path: Optional[str]) -> Figure:
+def _plot_map_columns(raw_df: Any, epoch_df: Any, metric_columns: list[str], *, output_path: str | None) -> Figure:
     """Plot mAP metrics on a single axes with line style by split."""
     try:
         import matplotlib
 
-        matplotlib.use("Agg")
+        _ensure_headless_backend(matplotlib)
         import matplotlib.pyplot as plt
     except ImportError as exc:
         raise ImportError(
@@ -440,7 +455,7 @@ def _plot_map_columns(raw_df: Any, epoch_df: Any, metric_columns: list[str], *, 
 
 def plot_metrics(
     metrics_csv: str,
-    output_path: Optional[str] = None,
+    output_path: str | None = None,
     loss_log_scale: bool = False,
 ) -> Figure:
     """Read a PTL ``CSVLogger`` metrics file and build a training plot.

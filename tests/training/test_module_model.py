@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Comprehensive unit tests for RFDETRModelModule (LightningModule wrapper)."""
 
+import random
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
@@ -148,6 +149,44 @@ def _make_batch(batch_size=2, channels=3, h=16, w=16):
         for i in range(batch_size)
     ]
     return samples, targets
+
+
+class TestMultiScaleBatchStart:
+    """on_train_batch_start multi-scale resize picks a step-deterministic scale without clobbering global RNG."""
+
+    def _build_multi_scale_module(self, tmp_path, global_step):
+        """Return a module configured for multi-scale with a stubbed trainer at the given global step."""
+        tc = _base_train_config(tmp_path, multi_scale=True, do_random_resize_via_padding=False)
+        module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
+        module.trainer = SimpleNamespace(global_step=global_step)
+        return module
+
+    def test_scale_choice_is_deterministic_per_step(self, tmp_path):
+        """The same global step must resize the batch to the same scale regardless of batch contents."""
+        module = self._build_multi_scale_module(tmp_path, global_step=7)
+
+        batch_a = _make_batch(h=64, w=64)
+        module.on_train_batch_start(batch_a, 0)
+        size_a = tuple(batch_a[0].tensors.shape[-2:])
+
+        batch_b = _make_batch(h=64, w=64)
+        module.on_train_batch_start(batch_b, 0)
+        size_b = tuple(batch_b[0].tensors.shape[-2:])
+
+        assert size_a == size_b
+
+    def test_does_not_perturb_global_rng(self, tmp_path):
+        """Scale selection must use a step-local generator and leave the process-global RNG untouched."""
+        module = self._build_multi_scale_module(tmp_path, global_step=3)
+
+        random.seed(42)
+        expected = [random.random() for _ in range(3)]
+
+        random.seed(42)
+        module.on_train_batch_start(_make_batch(h=64, w=64), 0)
+        actual = [random.random() for _ in range(3)]
+
+        assert actual == expected
 
 
 class _ScalarLossModel(nn.Module):

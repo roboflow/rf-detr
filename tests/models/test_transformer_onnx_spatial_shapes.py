@@ -318,7 +318,7 @@ def test_spatial_shapes_export_is_shape_derived(exported_static_onnx: "onnx.Mode
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("batch_size", [1, 2], ids=["batch1", "batch2"])
+@pytest.mark.parametrize("batch_size", [pytest.param(1, id="batch1"), pytest.param(2, id="batch2")])
 def test_spatial_shapes_dynamic_batch_inference(
     exported_dynamic_onnx_bytes: bytes,
     batch_size: int,

@@ -6,7 +6,26 @@
 
 import torch
 
-from rfdetr.utilities.box_ops import masks_to_boxes
+from rfdetr.utilities.box_ops import box_iou, generalized_box_iou, masks_to_boxes
+
+
+def test_box_iou_zero_area_boxes_are_finite() -> None:
+    """Zero-area boxes yield finite IoU/union instead of a 0/0 NaN."""
+    zero_box = torch.tensor([[10.0, 10.0, 10.0, 10.0]])  # w = h = 0
+
+    iou, union = box_iou(zero_box, zero_box)
+
+    assert torch.isfinite(iou).all()
+    assert torch.isfinite(union).all()
+
+
+def test_generalized_box_iou_zero_area_boxes_are_finite() -> None:
+    """Degenerate zero-area boxes give finite GIoU instead of NaN/inf."""
+    zero_box = torch.tensor([[10.0, 10.0, 10.0, 10.0]])  # w = h = 0
+
+    giou = generalized_box_iou(zero_box, zero_box)
+
+    assert torch.isfinite(giou).all()
 
 
 def test_masks_to_boxes_passes_ij_indexing_to_meshgrid(monkeypatch) -> None:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 import random
 import warnings
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812 -- project-conventional alias (see AGENTS.md)
@@ -125,7 +125,7 @@ class RFDETRModelModule(LightningModule):
         if self.train_config.seed is not None:
             seed_everything(self.train_config.seed + self.global_rank, workers=True)
 
-    def on_train_batch_start(self, batch: Tuple, batch_idx: int) -> None:
+    def on_train_batch_start(self, batch: tuple, batch_idx: int) -> None:
         """Apply optional multi-scale resize to the incoming batch.
 
         Modifications to ``batch`` (in-place on ``NestedTensor``) are visible in ``training_step`` because they share
@@ -142,8 +142,9 @@ class RFDETRModelModule(LightningModule):
             samples, _ = batch
             scales = compute_multi_scale_scales(mc.resolution, tc.expanded_scales, mc.patch_size, mc.num_windows)
             step = self.trainer.global_step
-            random.seed(step)
-            scale = random.choice(scales)
+            # Use a step-local generator so the scale choice is deterministic and DDP-consistent
+            # without reseeding the process-global RNG on every batch.
+            scale = random.Random(step).choice(scales)
             with torch.no_grad():
                 samples.tensors = F.interpolate(samples.tensors, size=scale, mode="bilinear", align_corners=False)
                 samples.mask = (
@@ -177,7 +178,7 @@ class RFDETRModelModule(LightningModule):
                 pass  # Not attached to Trainer (unit-test context); nothing to zero.
         self._accumulated_box_normalizer = None
 
-    def training_step(self, batch: Tuple, batch_idx: int) -> torch.Tensor | dict[str, Any]:
+    def training_step(self, batch: tuple, batch_idx: int) -> torch.Tensor | dict[str, Any]:
         """Compute loss for one training step and log metrics.
 
         PTL handles AMP (``precision``) without a manual ``GradScaler``. Keypoint models perform manual optimization so
@@ -485,7 +486,7 @@ class RFDETRModelModule(LightningModule):
         )
         self.log("val/loss", loss, prog_bar=True, on_epoch=True, sync_dist=True, batch_size=batch_size)
 
-    def validation_step(self, batch: Tuple, batch_idx: int) -> Dict[str, Any]:
+    def validation_step(self, batch: tuple, batch_idx: int) -> dict[str, Any]:
         """Run forward pass and postprocess for one validation step.
 
         Returns raw results and targets so ``COCOEvalCallback`` can accumulate them across the epoch via
@@ -538,7 +539,7 @@ class RFDETRModelModule(LightningModule):
             and str(self.trainer.precision) in {"bf16-mixed", "bf16", "bf16-true"}
         )
 
-    def configure_optimizers(self) -> Dict[str, Any]:
+    def configure_optimizers(self) -> dict[str, Any]:
         """Build AdamW optimizer with layer-wise LR decay and LambdaLR scheduler.
 
         Uses ``trainer.estimated_stepping_batches`` for total step count so cosine annealing covers the full training
@@ -605,8 +606,8 @@ class RFDETRModelModule(LightningModule):
     def clip_gradients(
         self,
         optimizer: torch.optim.Optimizer,
-        gradient_clip_val: Optional[float] = None,
-        gradient_clip_algorithm: Optional[str] = None,
+        gradient_clip_val: float | None = None,
+        gradient_clip_algorithm: str | None = None,
     ) -> None:
         """Override PTL gradient clipping to support fused AdamW.
 
@@ -630,7 +631,7 @@ class RFDETRModelModule(LightningModule):
                 gradient_clip_algorithm=gradient_clip_algorithm,
             )
 
-    def test_step(self, batch: Tuple, batch_idx: int) -> Dict[str, Any]:
+    def test_step(self, batch: tuple, batch_idx: int) -> dict[str, Any]:
         """Run forward pass and postprocess for one test step.
 
         Mirrors :meth:`validation_step` so ``COCOEvalCallback`` can accumulate results via ``on_test_batch_end`` when
@@ -656,7 +657,7 @@ class RFDETRModelModule(LightningModule):
         results = self.postprocess(outputs, orig_sizes)
         return {"results": results, "targets": targets}
 
-    def predict_step(self, batch: Tuple, batch_idx: int, dataloader_idx: int = 0) -> Any:
+    def predict_step(self, batch: tuple, batch_idx: int, dataloader_idx: int = 0) -> Any:
         """Run inference on a preprocessed batch and return postprocessed results.
 
         Args:
