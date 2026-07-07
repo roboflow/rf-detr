@@ -11,7 +11,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -27,6 +28,8 @@ from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.math import accuracy
 from rfdetr.utilities import box_ops
 from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
+
+_LossFunction = Callable[..., dict[str, Tensor]]
 
 
 def sigmoid_focal_loss(
@@ -62,7 +65,7 @@ def sigmoid_focal_loss(
         alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
         loss = alpha_t * loss
 
-    return loss.mean(1).sum() / num_boxes
+    return cast(Tensor, loss.mean(1).sum() / num_boxes)
 
 
 def sigmoid_varifocal_loss(
@@ -119,7 +122,8 @@ def dice_loss(
     numerator = 2 * (inputs * targets).sum(-1)
     denominator = inputs.sum(-1) + targets.sum(-1)
     loss = 1 - (numerator + 1) / (denominator + 1)
-    return loss.sum() / num_masks
+    result: Tensor = loss.sum() / num_masks
+    return result
 
 
 dice_loss_jit = torch.jit.script(dice_loss)  # type: torch.jit.ScriptFunction[Any, Any]
@@ -644,7 +648,7 @@ class SetCriterion(nn.Module):
         num_boxes: Tensor,
         **kwargs: Any,
     ) -> dict[str, Tensor]:
-        loss_map = {
+        loss_map: dict[str, _LossFunction] = {
             "labels": self.loss_labels,
             "cardinality": self.loss_cardinality,
             "boxes": self.loss_boxes,

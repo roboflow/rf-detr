@@ -147,7 +147,7 @@ def _get_aligned_output_features_output_indices(
 _CONFIG_FOR_DOC = "WindowedDinov2WithRegistersConfig"
 
 
-class WindowedDinov2WithRegistersConfig(BackboneConfigMixin, PretrainedConfig):  # type: ignore[no-untyped-call]
+class WindowedDinov2WithRegistersConfig(BackboneConfigMixin, PretrainedConfig):  # type: ignore[no-untyped-call,unused-ignore]
     r"""
     This is the configuration class to store the configuration of a [`Dinov2WithRegistersModel`].
     It is used to instantiate a Dinov2WithRegisters model according to the specified arguments,

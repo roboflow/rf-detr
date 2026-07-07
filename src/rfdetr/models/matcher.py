@@ -19,12 +19,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
-from scipy.optimize import linear_sum_assignment
+from numpy.typing import NDArray
+from scipy.optimize import linear_sum_assignment as _linear_sum_assignment  # type: ignore[import-untyped,unused-ignore]
 from torch import Tensor, nn
 
 from rfdetr.models.heads.keypoints import compute_keypoint_matching_cost
@@ -35,6 +37,8 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 _SANITIZED_COST_MARGIN = 1.0
 _FOCAL_LOSS_GAMMA = 2.0
+_LinearSumAssignment = Callable[[Any], tuple[NDArray[np.int64], NDArray[np.int64]]]
+linear_sum_assignment = cast(_LinearSumAssignment, _linear_sum_assignment)
 
 
 class HungarianMatcher(nn.Module):
