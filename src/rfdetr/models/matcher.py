@@ -29,7 +29,7 @@ from rfdetr.models.heads.keypoints import compute_keypoint_matching_cost
 from rfdetr.models.heads.segmentation import point_sample
 from rfdetr.utilities.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.rotated_box_ops import gwd_pairwise
+from rfdetr.utilities.rotated_box_ops import probiou_pairwise
 
 logger = get_logger()
 _SANITIZED_COST_MARGIN = 1.0
@@ -78,7 +78,7 @@ class HungarianMatcher(nn.Module):
             mask_point_sample_ratio: Downsampling ratio for mask point sampling.
             cost_mask_ce: Relative weight of the binary cross-entropy mask cost.
             cost_mask_dice: Relative weight of the Dice mask cost.
-            oriented: If ``True``, use GWD cost instead of GIoU for rotated boxes.
+            oriented: If ``True``, use ProbIoU cost instead of GIoU for rotated boxes.
         """
         super().__init__()
         self.cost_class = cost_class
@@ -184,7 +184,7 @@ class HungarianMatcher(nn.Module):
             tgt_keypoints = torch.cat([v["keypoints"] for v in targets], dim=0)
 
         if self.oriented:
-            cost_giou = gwd_pairwise(out_bbox, tgt_bbox)
+            cost_giou = probiou_pairwise(out_bbox, tgt_bbox)
         else:
             giou = generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
             cost_giou = -giou

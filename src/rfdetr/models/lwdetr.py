@@ -858,6 +858,8 @@ def build_criterion_and_postprocessors(args: "BuilderArgs"):
     matcher = build_matcher(args)
     weight_dict = {"loss_ce": args.cls_loss_coef, "loss_bbox": args.bbox_loss_coef}
     weight_dict["loss_giou"] = args.giou_loss_coef
+    if getattr(args, "oriented", False):
+        weight_dict["loss_kld"] = args.giou_loss_coef
     if args.segmentation_head:
         weight_dict["loss_mask_ce"] = args.mask_ce_loss_coef
         weight_dict["loss_mask_dice"] = args.mask_dice_loss_coef

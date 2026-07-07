@@ -439,7 +439,8 @@ class SetCriterion(nn.Module):
             loss_bbox = F.l1_loss(src_boxes[..., :4], target_boxes[..., :4], reduction="none")
             losses["loss_bbox"] = loss_bbox.sum() / num_boxes
             loss_kld = kld_loss(src_boxes, target_boxes)
-            losses["loss_giou"] = loss_kld.sum() / num_boxes
+            losses["loss_kld"] = loss_kld.sum() / num_boxes
+            losses["loss_giou"] = losses["loss_kld"]
         else:
             loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
             losses["loss_bbox"] = loss_bbox.sum() / num_boxes

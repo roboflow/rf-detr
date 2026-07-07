@@ -62,6 +62,12 @@ class PostProcess(nn.Module):
         out_keypoints = outputs.get("pred_keypoints")
         self._validate_outputs(out_logits, out_masks, out_keypoints, target_sizes)
 
+        if self.oriented and out_masks is not None:
+            raise ValueError(
+                "Segmentation head is not supported together with oriented=True. "
+                "Disable the segmentation head or set oriented=False."
+            )
+
         scores, labels, topk_boxes = self._select_topk(out_logits)
 
         if self.oriented:

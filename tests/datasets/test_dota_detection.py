@@ -192,7 +192,28 @@ class TestBuildDota:
         (root_with_split / "labelTxt").mkdir(exist_ok=True)
         img = Image.new("RGB", (50, 50), color="blue")
         img.save(root_with_split / "images" / "test.png")
-        (root_with_split / "labelTxt" / "test.txt").write_text("")
+        (root_with_split / "labelTxt" / "test.txt").write_text("5 5 20 5 20 20 5 20 plane 0\n")
         args.dataset_dir = str(dota_root.parent)
         dataset = build_dota("train", args, 256)
         assert isinstance(dataset, DotaDetection)
+
+    def test_getitem_after_transforms_normalizes_coords(self, tmp_path: Path) -> None:
+        """Geometric transforms must update corners; normalized box coords must be in [0, 1]."""
+        import types
+
+        root = tmp_path / "split"
+        (root / "images").mkdir(parents=True)
+        (root / "labelTxt").mkdir()
+        img = Image.new("RGB", (100, 100), color="green")
+        img.save(root / "images" / "img.png")
+        (root / "labelTxt" / "img.txt").write_text("5 5 40 5 40 40 5 40 plane 0\n")
+
+        args = types.SimpleNamespace(dataset_dir=str(tmp_path))
+        dataset = build_dota("split", args, 64)
+
+        image_tensor, target = dataset[0]
+
+        assert target["boxes_obb"].shape[0] == 1, "one box should survive transforms"
+        obb = target["boxes_obb"][0]
+        assert (obb[:4] >= 0).all() and (obb[:4] <= 1).all(), "normalized box coords out of [0, 1]"
+        assert 0.0 <= obb[4].item() < math.pi, "angle out of [0, pi)"

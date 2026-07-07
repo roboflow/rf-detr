@@ -9,12 +9,17 @@
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision.transforms.v2 import Compose, ToDtype, ToImage
 
-from rfdetr.datasets.transforms import AlbumentationsWrapper
+try:
+    import albumentations as A  # noqa: N812
+except ImportError:
+    A = None  # type: ignore[assignment]
+
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.rotated_box_ops import corners_to_cxcywha
 
@@ -185,6 +190,92 @@ class DotaDetection(Dataset):
         return image, target
 
 
+class OBBGeometricTransform:
+    """Apply an Albumentations geometric transform to an image and its oriented-box corners.
+
+    Treats the 4 corners of each oriented box as individual keypoints so that
+    geometric augmentations (flip, rotate, crop) correctly update the box
+    geometry.  After the transform the ``corners`` tensor in the target is
+    updated in place; ``DotaNormalize`` then recomputes ``boxes_obb`` from
+    the updated corners.
+
+    Args:
+        transform: An Albumentations ``BasicTransform`` or ``Compose`` that
+            applies a single geometric operation (e.g. ``HorizontalFlip``).
+    """
+
+    def __init__(self, transform: "A.BasicTransform") -> None:
+        if A is None:
+            raise ImportError("albumentations is required for OBBGeometricTransform")
+        self._pipeline = A.Compose(
+            [transform],
+            keypoint_params=A.KeypointParams(
+                format="xy",
+                label_fields=["kp_instance_ids", "kp_point_ids"],
+                remove_invisible=False,
+            ),
+        )
+
+    def __call__(
+        self, image: Image.Image, target: dict[str, Any] | None
+    ) -> tuple[Image.Image, dict[str, Any] | None]:
+        """Apply the geometric transform to image and OBB corners.
+
+        Args:
+            image: Input PIL image.
+            target: Target dict with ``corners`` tensor of shape ``(N, 4, 2)``
+                in pixel coordinates, plus ``labels``.
+
+        Returns:
+            Augmented ``(image, target)`` pair with ``corners`` updated.
+        """
+        image_np = np.array(image)
+
+        if target is None or "corners" not in target or len(target["corners"]) == 0:
+            augmented = self._pipeline(image=image_np, keypoints=[], kp_instance_ids=[], kp_point_ids=[])
+            return Image.fromarray(augmented["image"]), target
+
+        corners: torch.Tensor = target["corners"]  # (N, 4, 2)
+        n_boxes = corners.shape[0]
+
+        # Flatten (N, 4, 2) → list of (x, y) tuples; track instance and point ids
+        kp_xy = []
+        inst_ids = []
+        point_ids = []
+        h_orig, w_orig = image_np.shape[:2]
+        corners_np = corners.cpu().numpy()
+        for i in range(n_boxes):
+            for j in range(4):
+                x, y = float(corners_np[i, j, 0]), float(corners_np[i, j, 1])
+                # Clamp to image bounds so albumentations doesn't discard them
+                x = max(0.0, min(x, w_orig - 1))
+                y = max(0.0, min(y, h_orig - 1))
+                kp_xy.append((x, y))
+                inst_ids.append(i)
+                point_ids.append(j)
+
+        augmented = self._pipeline(
+            image=image_np,
+            keypoints=kp_xy,
+            kp_instance_ids=inst_ids,
+            kp_point_ids=point_ids,
+        )
+
+        new_image_np = augmented["image"]
+        aug_h, aug_w = new_image_np.shape[:2]
+
+        # Rebuild (N, 4, 2) tensor from augmented keypoints
+        out_corners = corners_np.copy()
+        for kp, inst, pt in zip(augmented["keypoints"], augmented["kp_instance_ids"], augmented["kp_point_ids"]):
+            x, y = float(kp[0]), float(kp[1])
+            out_corners[int(inst), int(pt), 0] = min(x, aug_w - 1)
+            out_corners[int(inst), int(pt), 1] = min(y, aug_h - 1)
+
+        target = target.copy()
+        target["corners"] = torch.from_numpy(out_corners).to(corners.dtype)
+        return Image.fromarray(new_image_np), target
+
+
 def make_dota_transforms(
     image_set: str,
     resolution: int,
@@ -198,31 +289,24 @@ def make_dota_transforms(
     Returns:
         Composed transform pipeline.
     """
+    if A is None:
+        raise ImportError("albumentations is required for DOTA transforms. Install with: pip install albumentations")
+
     to_image = ToImage()
     to_float = ToDtype(torch.float32, scale=True)
     normalize = DotaNormalize()
 
-    if image_set == "train":
-        resize_wrappers = AlbumentationsWrapper.from_config(
-            [
-                {"Resize": {"height": resolution, "width": resolution}},
-            ]
-        )
-        aug_wrappers = AlbumentationsWrapper.from_config(
-            [
-                {"HorizontalFlip": {"p": 0.5}},
-                {"VerticalFlip": {"p": 0.5}},
-                {"RandomRotate90": {"p": 0.5}},
-            ]
-        )
-        return Compose([*resize_wrappers, *aug_wrappers, to_image, to_float, normalize])
+    resize = OBBGeometricTransform(A.Resize(height=resolution, width=resolution))
 
-    resize_wrappers = AlbumentationsWrapper.from_config(
-        [
-            {"Resize": {"height": resolution, "width": resolution}},
+    if image_set == "train":
+        augmentations = [
+            OBBGeometricTransform(A.HorizontalFlip(p=0.5)),
+            OBBGeometricTransform(A.VerticalFlip(p=0.5)),
+            OBBGeometricTransform(A.RandomRotate90(p=0.5)),
         ]
-    )
-    return Compose([*resize_wrappers, to_image, to_float, normalize])
+        return Compose([resize, *augmentations, to_image, to_float, normalize])
+
+    return Compose([resize, to_image, to_float, normalize])
 
 
 class DotaNormalize:
