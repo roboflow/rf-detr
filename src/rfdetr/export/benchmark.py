@@ -13,6 +13,7 @@ It offers reliable measurements of inference latency using ONNX Runtime or Tenso
 """
 
 import contextlib
+import importlib
 import json
 import os
 import os.path as osp
@@ -482,6 +483,6 @@ def main(
 
 
 if __name__ == "__main__":
-    import jsonargparse
+    jsonargparse = importlib.import_module("jsonargparse")
 
     cast(Any, getattr(jsonargparse, "CLI"))(main)
