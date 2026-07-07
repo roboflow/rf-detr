@@ -231,9 +231,9 @@ def build_matching_data(
                 p_scores, p_items, gt_items, gt_crowd_c, iou_threshold, iou_type
             )
 
-            cast(list[float], entry["scores"]).extend(scores_np.tolist())
-            cast(list[int], entry["matches"]).extend(matches_np.tolist())
-            cast(list[bool], entry["ignore"]).extend(ignore_np.tolist())
+            cast(list[float], entry["scores"]).extend(float(score) for score in scores_np)
+            cast(list[int], entry["matches"]).extend(int(match) for match in matches_np)
+            cast(list[bool], entry["ignore"]).extend(bool(ignore) for ignore in ignore_np)
             entry["total_gt"] = cast(int, entry["total_gt"]) + total_gt
 
     return {
