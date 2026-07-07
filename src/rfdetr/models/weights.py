@@ -24,7 +24,7 @@ import torch.nn.functional as F  # noqa: N812
 
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import ModelConfig, TrainConfig
-from rfdetr.utilities.decorators import deprecated
+from rfdetr.utilities.decorators import TargetMode, deprecated
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.state_dict import _ckpt_args_get, remap_projector_to_cross_attn, validate_checkpoint_compatibility
 
@@ -255,7 +255,13 @@ def interpolate_position_embeddings(
         )
 
 
-@deprecated(target=True, args_mapping={"train_config": None}, deprecated_in="1.7.0", remove_in="1.9.0", num_warns=-1)
+@deprecated(
+    target=TargetMode.ARGS_REMAP,
+    args_mapping={"train_config": None},
+    deprecated_in="1.7.0",
+    remove_in="1.9.0",
+    num_warns=-1,
+)
 def load_pretrain_weights(
     nn_model: torch.nn.Module,
     model_config: ModelConfig,

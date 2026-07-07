@@ -7,9 +7,9 @@
 
 import warnings
 
-from deprecate import deprecated, void
+from deprecate import TargetMode, deprecated, void
 
-__all__ = ["deprecated", "void"]
+__all__ = ["TargetMode", "deprecated", "void"]
 
 
 def _warn_deprecated_module(old: str, new: str, deprecated_in: str, remove_in: str) -> None:
