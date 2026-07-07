@@ -15,33 +15,141 @@ from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from os import PathLike
+from typing import Any, Protocol, TypeVar, cast
 
 import numpy as np
 import torch
 
+from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
+from rfdetr.utilities.logger import get_logger
+
+_DependencyT = TypeVar("_DependencyT")
+
+
+class _OnnxModule(Protocol):
+    """Minimal ONNX module interface used by this exporter."""
+
+    def load(self, model_path: str, *args: Any, **kwargs: Any) -> Any:
+        """Load an ONNX model from disk."""
+        ...
+
+    def save(self, model: Any, model_path: str, *args: Any, **kwargs: Any) -> None:
+        """Save an ONNX model to disk."""
+        ...
+
+
+class _ShapeInferenceModule(Protocol):
+    """Minimal ONNX shape inference interface used by this exporter."""
+
+    def infer_shapes(self, model: Any, *args: Any, **kwargs: Any) -> Any:
+        """Infer ONNX graph shapes."""
+        ...
+
+
+class _GraphSurgeonModule(Protocol):
+    """Minimal ONNX GraphSurgeon module interface used by the optimizer."""
+
+    def import_onnx(self, model: Any) -> Any:
+        """Import an ONNX model into a GraphSurgeon graph."""
+        ...
+
+    def export_onnx(self, graph: Any) -> Any:
+        """Export a GraphSurgeon graph into an ONNX model."""
+        ...
+
+
+class _GraphSurgeonLogger(Protocol):
+    """Minimal GraphSurgeon logger interface used by the optimizer."""
+
+    INFO: Any
+    severity: Any
+
+    def info(self, message: str) -> None:
+        """Log an informational message."""
+        ...
+
+    def verbose(self, message: str) -> None:
+        """Log a verbose message."""
+        ...
+
+
+class _FoldConstants(Protocol):
+    """Callable Polygraphy constant-folding interface used by the optimizer."""
+
+    def __call__(self, model: Any, *args: Any, **kwargs: Any) -> Any:
+        """Fold constants in an ONNX model."""
+        ...
+
+
+onnx: _OnnxModule | None
+shape_inference: _ShapeInferenceModule | None
 try:
-    import onnx
-    from onnx import shape_inference
+    import onnx as _onnx
+    from onnx import shape_inference as _shape_inference
 except ImportError:
-    onnx = None  # type: ignore[assignment]
-    shape_inference = None  # type: ignore[assignment]
+    onnx = None
+    shape_inference = None
+else:
+    onnx = cast(_OnnxModule, _onnx)
+    shape_inference = cast(_ShapeInferenceModule, _shape_inference)
 
 try:
     import onnx_graphsurgeon as gs
     from onnx_graphsurgeon.logger.logger import G_LOGGER
 except ImportError:
-    gs = None  # type: ignore[assignment]
-    G_LOGGER = None  # type: ignore[assignment]
+    gs = None
+    G_LOGGER = None
 
 try:
     from polygraphy.backend.onnx.loader import fold_constants
 except ImportError:
-    fold_constants = None  # type: ignore[assignment]
-
-from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
-from rfdetr.utilities.logger import get_logger
+    fold_constants = None
 
 logger = get_logger()
+
+
+def _onnx_dependency_error(missing_deps: Sequence[str]) -> ImportError:
+    """Build the shared ONNX optional-dependency error."""
+    missing_str = ", ".join(missing_deps)
+    return ImportError(f"ONNX export dependencies are missing ({missing_str}). Install with: pip install rfdetr[onnx]")
+
+
+def _require_dependency(dependency: _DependencyT | None, name: str) -> _DependencyT:
+    """Return a dependency after narrowing it away from ``None``."""
+    if dependency is None:
+        raise _onnx_dependency_error([name])
+    return dependency
+
+
+def _require_onnx_optimizer_dependencies() -> tuple[
+    _OnnxModule,
+    _ShapeInferenceModule,
+    _GraphSurgeonModule,
+    _GraphSurgeonLogger,
+    _FoldConstants,
+]:
+    """Resolve optional ONNX optimizer dependencies as non-optional typed handles."""
+    graphsurgeon = cast(_GraphSurgeonModule | None, gs)
+    graphsurgeon_logger = cast(_GraphSurgeonLogger | None, G_LOGGER)
+    constant_folder = cast(_FoldConstants | None, fold_constants)
+    missing_deps = []
+    if onnx is None:
+        missing_deps.append("onnx")
+    if shape_inference is None:
+        missing_deps.append("onnx.shape_inference")
+    if graphsurgeon is None or graphsurgeon_logger is None:
+        missing_deps.append("onnx_graphsurgeon")
+    if constant_folder is None:
+        missing_deps.append("polygraphy.backend.onnx.loader.fold_constants")
+    if missing_deps:
+        raise _onnx_dependency_error(missing_deps)
+    return (
+        _require_dependency(onnx, "onnx"),
+        _require_dependency(shape_inference, "onnx.shape_inference"),
+        _require_dependency(graphsurgeon, "onnx_graphsurgeon"),
+        _require_dependency(graphsurgeon_logger, "onnx_graphsurgeon"),
+        _require_dependency(constant_folder, "polygraphy.backend.onnx.loader.fold_constants"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -95,10 +203,11 @@ def export_onnx(
     output_file = os.path.join(output_dir, f"{export_name}.onnx")
 
     # Prepare model for export
-    if hasattr(model, "export"):
-        model.export()
+    export_method = getattr(model, "export", None)
+    if callable(export_method):
+        export_method()
 
-    export_kwargs = {}
+    export_kwargs: dict[str, Any] = {}
     if "dynamo" in inspect.signature(torch.onnx.export).parameters:
         # Torch 2.10+ may default to the dynamo exporter which requires extra deps
         # (e.g. onnxscript). Use the legacy path for compatibility.
@@ -106,7 +215,7 @@ def export_onnx(
 
     torch.onnx.export(
         model,
-        input_tensors,
+        (input_tensors,) if isinstance(input_tensors, torch.Tensor) else tuple(input_tensors),
         output_file,
         input_names=input_names,
         output_names=output_names,
@@ -188,65 +297,61 @@ def onnx_simplify(
 
 
 class OnnxOptimizer:
-    def __init__(self, input, severity=None):
-        missing_deps = []
-        if onnx is None:
-            missing_deps.append("onnx")
-        if shape_inference is None:
-            missing_deps.append("onnx.shape_inference")
-        if gs is None or G_LOGGER is None:
-            missing_deps.append("onnx_graphsurgeon")
-        if fold_constants is None:
-            missing_deps.append("polygraphy.backend.onnx.loader.fold_constants")
-        if missing_deps:
-            missing_str = ", ".join(missing_deps)
-            raise ImportError(
-                f"ONNX export dependencies are missing ({missing_str}). Install with: pip install rfdetr[onnx]"
-            )
+    def __init__(self, input: object, severity: object | None = None) -> None:
+        onnx_module, shape_inference_module, graphsurgeon, graphsurgeon_logger, constant_folder = (
+            _require_onnx_optimizer_dependencies()
+        )
+        self._gs = graphsurgeon
+        self._onnx_logger = graphsurgeon_logger
+        self._fold_constants = constant_folder
+        self._shape_inference = shape_inference_module
+        self._onnx = onnx_module
         if severity is None:
-            severity = G_LOGGER.INFO
-        if isinstance(input, str):
+            severity = self._onnx_logger.INFO
+        if isinstance(input, (str, PathLike)):
             onnx_graph = self.load_onnx(input)
         else:
             onnx_graph = input
-        self.graph = gs.import_onnx(onnx_graph)
+        self.graph = self._gs.import_onnx(onnx_graph)
         self.severity = severity
         self.set_severity(severity)
 
-    def set_severity(self, severity):
-        G_LOGGER.severity = severity
+    def set_severity(self, severity: object) -> None:
+        self._onnx_logger.severity = severity
 
-    def load_onnx(self, onnx_path: str):
+    def load_onnx(self, onnx_path: str | PathLike[str]) -> Any:
         """Load onnx from file."""
-        assert os.path.isfile(onnx_path), f"not found onnx file: {onnx_path}"
-        onnx_graph = onnx.load(onnx_path)
-        G_LOGGER.info(f"load onnx file: {onnx_path}")
+        path = os.fspath(onnx_path)
+        assert os.path.isfile(path), f"not found onnx file: {path}"
+        onnx_graph = self._onnx.load(path)
+        self._onnx_logger.info(f"load onnx file: {path}")
         return onnx_graph
 
-    def save_onnx(self, onnx_path: str):
-        onnx_graph = gs.export_onnx(self.graph)
-        G_LOGGER.info(f"save onnx file: {onnx_path}")
-        onnx.save(onnx_graph, onnx_path)
+    def save_onnx(self, onnx_path: str) -> None:
+        onnx_graph = self._gs.export_onnx(self.graph)
+        self._onnx_logger.info(f"save onnx file: {onnx_path}")
+        self._onnx.save(onnx_graph, onnx_path)
 
-    def info(self, prefix=""):
-        G_LOGGER.verbose(
+    def info(self, prefix: str = "") -> None:
+        self._onnx_logger.verbose(
             f"{prefix} .. {len(self.graph.nodes)} nodes, "
             f"{len(self.graph.tensors().keys())} tensors, "
             f"{len(self.graph.inputs)} inputs, {len(self.graph.outputs)} outputs"
         )
 
-    def cleanup(self, return_onnx=False):
+    def cleanup(self, return_onnx: bool = False) -> Any | None:
         self.graph.cleanup().toposort()
         if return_onnx:
-            return gs.export_onnx(self.graph)
+            return self._gs.export_onnx(self.graph)
+        return None
 
-    def select_outputs(self, keep, names=None):
+    def select_outputs(self, keep: Sequence[int], names: Sequence[str] | None = None) -> None:
         self.graph.outputs = [self.graph.outputs[o] for o in keep]
         if names:
             for i, name in enumerate(names):
                 self.graph.outputs[i].name = name
 
-    def find_node_input(self, node, name: str = None, value=None) -> int:
+    def find_node_input(self, node: Any, name: str | None = None, value: Any = None) -> int:
         index = -1
         for i, inp in enumerate(node.inputs):
             if isinstance(name, str) and inp.name == name or inp == value:
@@ -255,7 +360,7 @@ class OnnxOptimizer:
             raise ValueError(f"not found {name}({value}) in node.inputs")
         return index
 
-    def find_node_output(self, node, name: str = None, value=None) -> int:
+    def find_node_output(self, node: Any, name: str | None = None, value: Any = None) -> int:
         index = -1
         for i, inp in enumerate(node.outputs):
             if isinstance(name, str) and inp.name == name or inp == value:
@@ -264,21 +369,22 @@ class OnnxOptimizer:
             raise ValueError(f"not found {name}({value}) in node.outputs")
         return index
 
-    def common_opt(self, return_onnx=False):
+    def common_opt(self, return_onnx: bool = False) -> Any | None:
         for fn in CustomOpSymbolicRegistry._OPTIMIZER:
             fn(self)
             self.cleanup()
-        onnx_graph = fold_constants(gs.export_onnx(self.graph), allow_onnxruntime_shape_inference=False)
+        onnx_graph = self._fold_constants(self._gs.export_onnx(self.graph), allow_onnxruntime_shape_inference=False)
         if onnx_graph.ByteSize() > 2147483648:
             raise TypeError("ERROR: model size exceeds supported 2GB limit")
         else:
-            onnx_graph = shape_inference.infer_shapes(onnx_graph)
-        self.graph = gs.import_onnx(onnx_graph)
+            onnx_graph = self._shape_inference.infer_shapes(onnx_graph)
+        self.graph = self._gs.import_onnx(onnx_graph)
         self.cleanup()
         if return_onnx:
             return onnx_graph
+        return None
 
-    def resize_fix(self):
+    def resize_fix(self) -> int:
         """This function loops through the graph looking for Resize nodes that uses scales for resize (has 3 inputs).
 
         It substitutes found Resize with Resize that takes the size of the output tensor instead of scales. It adds
@@ -352,7 +458,7 @@ class OnnxOptimizer:
         self.cleanup()
         return resized_node_count
 
-    def adjustAddNode(self):  # noqa: N802
+    def adjustAddNode(self) -> int:  # noqa: N802
         adjusted_add_node_count = 0
         for node in self.graph.nodes:
             # Change the bias const to the second input to allow Gemm+BiasAdd fusion in TRT.
@@ -365,7 +471,7 @@ class OnnxOptimizer:
         self.cleanup()
         return adjusted_add_node_count
 
-    def decompose_instancenorms(self):
+    def decompose_instancenorms(self) -> int:
         removed_instance_norm_count = 0
         for node in self.graph.nodes:
             if node.op == "InstanceNormalization":
@@ -441,7 +547,7 @@ class OnnxOptimizer:
         self.cleanup()
         return removed_instance_norm_count
 
-    def insert_groupnorm_plugin(self):
+    def insert_groupnorm_plugin(self) -> int:
         group_norm_plugin_count = 0
         for node in self.graph.nodes:
             if (
@@ -507,7 +613,7 @@ class OnnxOptimizer:
         self.cleanup()
         return group_norm_plugin_count
 
-    def insert_layernorm_plugin(self):
+    def insert_layernorm_plugin(self) -> int:
         layer_norm_plugin_count = 0
         for node in self.graph.nodes:
             if (
@@ -575,7 +681,7 @@ class OnnxOptimizer:
         self.cleanup()
         return layer_norm_plugin_count
 
-    def fuse_kv(self, node_k, node_v, fused_kv_idx, heads, num_dynamic=0):
+    def fuse_kv(self, node_k: Any, node_v: Any, fused_kv_idx: int, heads: int, num_dynamic: int = 0) -> Any:
         # Get weights of K
         weights_k = node_k.inputs[1].values
         # Get weights of V
@@ -627,7 +733,9 @@ class OnnxOptimizer:
         self.cleanup()
         return fused_kv_node
 
-    def insert_fmhca(self, node_q, node_kv, final_tranpose, mhca_idx, heads, num_dynamic=0):
+    def insert_fmhca(
+        self, node_q: Any, node_kv: Any, final_tranpose: Any, mhca_idx: int, heads: int, num_dynamic: int = 0
+    ) -> None:
         # Get inputs and outputs for the fMHCA plugin
         # We take an output of reshape that follows the Q GEMM
         output_q = node_q.o(num_dynamic).o().inputs[0]
@@ -687,7 +795,9 @@ class OnnxOptimizer:
 
         self.cleanup()
 
-    def fuse_qkv(self, node_q, node_k, node_v, fused_qkv_idx, heads, num_dynamic=0):
+    def fuse_qkv(
+        self, node_q: Any, node_k: Any, node_v: Any, fused_qkv_idx: int, heads: int, num_dynamic: int = 0
+    ) -> Any:
         # Get weights of Q
         weights_q = node_q.inputs[1].values
         # Get weights of K
@@ -747,7 +857,7 @@ class OnnxOptimizer:
         self.cleanup()
         return fused_qkv_node
 
-    def insert_fmha(self, node_qkv, final_tranpose, mha_idx, heads, num_dynamic=0):
+    def insert_fmha(self, node_qkv: Any, final_tranpose: Any, mha_idx: int, heads: int, num_dynamic: int = 0) -> None:
         # Get inputs and outputs for the fMHA plugin
         output_qkv = node_qkv.o().inputs[0]
         output_final_tranpose = final_tranpose.outputs[0]
@@ -792,7 +902,7 @@ class OnnxOptimizer:
 
         self.cleanup()
 
-    def mha_mhca_detected(self, node, mha):
+    def mha_mhca_detected(self, node: Any, mha: bool) -> tuple[bool, int, int, Any, Any, Any, Any]:
         # Go from V GEMM down to the S*V MatMul and all way up to K GEMM
         # If we are looking for MHCA inputs of two matmuls (K and V) must be equal.
         # If we are looking for MHA inputs (K and V) must be not equal.
@@ -843,7 +953,7 @@ class OnnxOptimizer:
                     return True, num_dynamic_q, num_dynamic_kv, node_q, node_k, node_v, final_tranpose
         return False, 0, 0, None, None, None, None
 
-    def fuse_kv_insert_fmhca(self, heads, mhca_index, sm):
+    def fuse_kv_insert_fmhca(self, heads: int, mhca_index: int, sm: int) -> bool:
         nodes = self.graph.nodes
         # Iterate over graph and search for MHCA pattern
         for idx, _ in enumerate(nodes):
@@ -867,7 +977,7 @@ class OnnxOptimizer:
                 return True
         return False
 
-    def fuse_qkv_insert_fmha(self, heads, mha_index):
+    def fuse_qkv_insert_fmha(self, heads: int, mha_index: int) -> bool:
         nodes = self.graph.nodes
         # Iterate over graph and search for MHA pattern
         for idx, _ in enumerate(nodes):
@@ -888,13 +998,13 @@ class OnnxOptimizer:
                 return True
         return False
 
-    def insert_fmhca_plugin(self, num_heads, sm):
+    def insert_fmhca_plugin(self, num_heads: int, sm: int) -> int:
         mhca_index = 0
         while self.fuse_kv_insert_fmhca(num_heads, mhca_index, sm):
             mhca_index += 1
         return mhca_index
 
-    def insert_fmha_plugin(self, num_heads):
+    def insert_fmha_plugin(self, num_heads: int) -> int:
         mha_index = 0
         while self.fuse_qkv_insert_fmha(num_heads, mha_index):
             mha_index += 1
