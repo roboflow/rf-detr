@@ -1835,10 +1835,10 @@ class RFDETR:
             :class:`~supervision.Detections`. Keypoint models return :class:`~supervision.KeyPoints`, with keypoint
             coordinates in ``xy``. Keypoint predictions preserve the detection-level fields produced by RF-DETR:
             ``key_points.detection_confidence`` is the per-object score used by ``threshold``. For keypoint models this
-            is the postprocessed detection score and, by default, includes keypoint uncertainty fusion controlled by
-            ``model_config.postprocess_trace_alpha``. ``key_points.keypoint_confidence`` is separate: it is a
-            ``(num_detections, num_keypoints)`` array of per-keypoint findability scores decoded from the keypoint head,
-            not a repeated copy of the detection score. When RF-DETR emits keypoint precision parameters,
+            is the postprocessed detection score and, by default, includes normalized keypoint uncertainty fusion
+            controlled by ``model_config.postprocess_trace_alpha``. ``key_points.keypoint_confidence`` is separate: it
+            is a ``(num_detections, num_keypoints)`` array of per-keypoint findability scores decoded from the keypoint
+            head, not a repeated copy of the detection score. When RF-DETR emits keypoint precision parameters,
             ``key_points.data["covariance"]`` stores per-keypoint pixel-space covariance matrices with shape
             ``(num_detections, num_keypoints, 2, 2)``. ``key_points.data["xyxy"]`` stores the corresponding detection
             boxes as a ``(num_detections, 4)`` array in the same row order as ``key_points.xy`` because Supervision
