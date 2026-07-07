@@ -14,14 +14,14 @@ import argparse
 import os
 import random
 import warnings
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
 from torch import Tensor
-from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage  # type: ignore[import-untyped]
+from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
 from rfdetr.export._onnx.exporter import export_onnx
@@ -35,6 +35,11 @@ from rfdetr.utilities.package import get_sha, get_version
 logger = get_logger()
 
 
+def _num_parameters(module: nn.Module) -> int:
+    """Count trainable and non-trainable parameters in a module."""
+    return sum(int(p.numel()) for p in module.parameters())
+
+
 def make_infer_image(
     infer_dir: str | None,
     shape: tuple[int, int],
@@ -44,7 +49,7 @@ def make_infer_image(
 ) -> Tensor:
     if infer_dir is None:
         if num_channels == 3:
-            dummy = np.random.randint(0, 256, (shape[0], shape[1], 3), dtype=np.uint8)  # type: ignore[misc]
+            dummy = np.random.randint(0, 256, (shape[0], shape[1], 3), dtype=np.uint8)
             image = Image.fromarray(dummy, mode="RGB")
         else:
             # Non-RGB: build a random float tensor directly, bypassing PIL.
@@ -109,27 +114,22 @@ def main(args: argparse.Namespace) -> None:
 
     # fix the seed for reproducibility
     seed: int = args.seed + get_rank()
-    torch.manual_seed(seed)  # type: ignore[misc]
+    torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
 
     result = build_model(cast(BuilderArgs, args))
     model = cast(LWDETR, result[0] if isinstance(result, tuple) else result)
-    n_parameters = sum(p.numel() for p in model.parameters())
+    backbone = cast(Any, model.backbone)
+    n_parameters = _num_parameters(model)
     logger.info(f"number of parameters: {n_parameters}")
-    n_backbone_parameters = sum(p.numel() for p in model.backbone.parameters())  # type: ignore[attr-defined]
+    n_backbone_parameters = _num_parameters(cast(nn.Module, backbone))
     logger.info(f"number of backbone parameters: {n_backbone_parameters}")
-    n_projector_parameters = sum(
-        p.numel()  # type: ignore[attr-defined]
-        for p in model.backbone[0].projector.parameters()  # type: ignore[attr-defined]
-    )
+    n_projector_parameters = _num_parameters(cast(nn.Module, backbone[0].projector))
     logger.info(f"number of projector parameters: {n_projector_parameters}")
-    n_backbone_encoder_parameters = sum(
-        p.numel()  # type: ignore[attr-defined]
-        for p in model.backbone[0].encoder.parameters()  # type: ignore[attr-defined]
-    )
+    n_backbone_encoder_parameters = _num_parameters(cast(nn.Module, backbone[0].encoder))
     logger.info(f"number of backbone encoder parameters: {n_backbone_encoder_parameters}")
-    n_transformer_parameters = sum(p.numel() for p in model.transformer.parameters())  # type: ignore[attr-defined]
+    n_transformer_parameters = _num_parameters(cast(nn.Module, model.transformer))
     logger.info(f"number of transformer parameters: {n_transformer_parameters}")
     if args.resume:
         # --resume points at RF-DETR-produced checkpoints that may embed
@@ -139,7 +139,7 @@ def main(args: argparse.Namespace) -> None:
         # compatibility, since --resume is a developer/ops flag).  Setting
         # args.trust_checkpoint=False enforces safe-tensors-only loading and
         # raises if the checkpoint needs pickle.
-        from rfdetr.util.io import _safe_torch_load  # type: ignore[misc]
+        from rfdetr.util.io import _safe_torch_load
 
         trust_checkpoint = getattr(args, "trust_checkpoint", True)
         if trust_checkpoint:
@@ -155,11 +155,11 @@ def main(args: argparse.Namespace) -> None:
             )
         checkpoint = _safe_torch_load(args.resume, trust=trust_checkpoint)
         result = model.load_state_dict(checkpoint["model"], strict=False)
-        if result.missing_keys or result.unexpected_keys:  # type: ignore[attr-defined]
+        if result.missing_keys or result.unexpected_keys:
             logger.warning(
                 "load_state_dict strict=False: missing=%s unexpected=%s",
-                result.missing_keys[:5],  # type: ignore[attr-defined]
-                result.unexpected_keys[:5],  # type: ignore[attr-defined]
+                result.missing_keys[:5],
+                result.unexpected_keys[:5],
             )
         logger.info(f"load checkpoints {args.resume}")
 
