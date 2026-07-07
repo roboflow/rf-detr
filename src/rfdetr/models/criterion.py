@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -65,7 +65,8 @@ def sigmoid_focal_loss(
         alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
         loss = alpha_t * loss
 
-    return cast(Tensor, loss.mean(1).sum() / num_boxes)
+    result: Tensor = loss.mean(1).sum() / num_boxes
+    return result
 
 
 def sigmoid_varifocal_loss(
