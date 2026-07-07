@@ -3,6 +3,7 @@ ci:
   autoupdate_schedule: monthly
   autofix_commit_msg: "fix(pre-commit): 🎨 auto format pre-commit hooks"
   autoupdate_commit_msg: "chore(pre-commit): ⬆ pre_commit autoupdate"
+  skip: [mypy]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -55,7 +56,7 @@ repos:
       - id: mypy
         name: mypy
         # Keep the mypy requirement in pyproject.toml aligned when changing this hook.
-        entry: uv run --no-sync mypy src/rfdetr/ --no-error-summary
+        entry: python -m mypy src/rfdetr/ --no-error-summary
         language: system
         pass_filenames: false
 
