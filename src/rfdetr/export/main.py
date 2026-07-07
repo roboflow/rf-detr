@@ -18,9 +18,9 @@ from typing import cast
 
 import numpy as np
 import torch
-from torch import Tensor
 import torch.nn as nn
 from PIL import Image
+from torch import Tensor
 from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage  # type: ignore[import-untyped]
 
 from rfdetr.datasets.transforms import Normalize
