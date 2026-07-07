@@ -14,9 +14,12 @@
 # ------------------------------------------------------------------------
 """Transformer class."""
 
+from __future__ import annotations
+
 import copy
 import math
 from collections.abc import Callable, Sequence
+from typing import cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -79,6 +82,7 @@ def gen_encoder_output_proposals(
     proposals = []
     _cur = 0
     batch_size, _, _ = memory.shape
+    assert spatial_shapes is not None
     for lvl, (height, width) in enumerate(spatial_shapes):
         if memory_padding_mask is not None:
             # reshape(-1, ...) infers batch dynamically in ONNX instead of baking it in as constants.
@@ -160,6 +164,9 @@ class Transformer(nn.Module):
     ) -> None:
         super().__init__()
         self.encoder = None
+        self.enc_out_class_embed: nn.ModuleList | None = None
+        self.enc_out_bbox_embed: nn.ModuleList | None = None
+        self.enc_out_keypoint_embed: nn.ModuleList | None = None
 
         self.use_grouppose_keypoints = use_grouppose_keypoints
         self.dual_projector_kp_only = dual_projector_kp_only
@@ -184,11 +191,11 @@ class Transformer(nn.Module):
             inter_instance_kp_attn=inter_instance_kp_attn,
         )
         assert decoder_norm_type in ["LN", "Identity"]
-        norm = {
+        norm_ctors: dict[str, Callable[[int], nn.Module]] = {
             "LN": lambda channels: nn.LayerNorm(channels),
             "Identity": lambda channels: nn.Identity(),
         }
-        decoder_norm = norm[decoder_norm_type](d_model)
+        decoder_norm = norm_ctors[decoder_norm_type](d_model)
 
         self.decoder = TransformerDecoder(
             decoder_layer,
@@ -238,10 +245,10 @@ class Transformer(nn.Module):
 
         self._export = False
 
-    def export(self):
+    def export(self) -> None:
         self._export = True
 
-    def _reset_parameters(self):
+    def _reset_parameters(self) -> None:
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
@@ -265,30 +272,33 @@ class Transformer(nn.Module):
         pos_embeds: list[Tensor],
         refpoint_embed: Tensor,
         query_feat: Tensor,
-        cross_attn_srcs: Sequence[Tensor | nn.Module] | None = None,
+        cross_attn_srcs: Sequence[Tensor] | None = None,
     ) -> tuple[Tensor | None, ...]:
         src_flatten = []
-        mask_flatten = [] if masks is not None else None
-        lvl_pos_embed_flatten = []
+        mask_flatten_parts: list[Tensor] | None = [] if masks is not None else None
+        lvl_pos_embed_flatten_parts = []
         spatial_shapes_hw: list[tuple[int, int]] = []
-        valid_ratios = [] if masks is not None else None
         for lvl, (src, pos_embed) in enumerate(zip(srcs, pos_embeds)):
             _, c, h, w = src.shape
             spatial_shapes_hw.append((h, w))
 
             src = src.flatten(2).transpose(1, 2)  # bs, hw, c
             pos_embed = pos_embed.flatten(2).transpose(1, 2)  # bs, hw, c
-            lvl_pos_embed_flatten.append(pos_embed)
+            lvl_pos_embed_flatten_parts.append(pos_embed)
             src_flatten.append(src)
             if masks is not None:
                 mask = masks[lvl].flatten(1)  # bs, hw
-                mask_flatten.append(mask)
+                assert mask_flatten_parts is not None
+                mask_flatten_parts.append(mask)
 
         memory = torch.cat(src_flatten, 1)  # bs, \sum{hxw}, c
+        mask_flatten: Tensor | None = None
+        valid_ratios: Tensor | None = None
         if masks is not None:
-            mask_flatten = torch.cat(mask_flatten, 1)  # bs, \sum{hxw}
+            assert mask_flatten_parts is not None
+            mask_flatten = torch.cat(mask_flatten_parts, 1)  # bs, \sum{hxw}
             valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
-        lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten, 1)  # bs, \sum{hxw}, c
+        lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten_parts, 1)  # bs, \sum{hxw}, c
         # spatial_shapes must not be built by torch.empty(...) + in-place index assignment:
         # that emits a ScatterND feeding a shape tensor (level_start_index), which TensorRT
         # rejects ("IScatterLayer cannot be used to compute a shape tensor").
@@ -307,17 +317,19 @@ class Transformer(nn.Module):
         cross_attn_memory = None
         if cross_attn_srcs is not None:
             ca_flatten = []
-            for src in cross_attn_srcs:
-                tensor = getattr(src, "tensors", src)
+            for cross_src in cross_attn_srcs:
+                tensor = getattr(cross_src, "tensors", cross_src)
                 ca_flatten.append(tensor.flatten(2).transpose(1, 2))
             cross_attn_memory = torch.cat(ca_flatten, 1)
 
         if self.two_stage:
+            assert self.enc_out_class_embed is not None
+            assert self.enc_out_bbox_embed is not None
             output_memory, output_proposals = gen_encoder_output_proposals(
                 memory, mask_flatten, spatial_shapes_hw, unsigmoid=not self.bbox_reparam
             )
             # group detr for first stage
-            refpoint_embed_ts, memory_ts, boxes_ts = [], [], []
+            refpoint_embed_ts_parts, memory_ts_parts, boxes_ts_parts = [], [], []
             group_detr = self.group_detr if self.training else 1
             for g_idx in range(group_detr):
                 output_memory_gidx = self.enc_output_norm[g_idx](self.enc_output[g_idx](output_memory))
@@ -351,19 +363,20 @@ class Transformer(nn.Module):
                     output_memory_gidx, 1, topk_proposals_gidx.unsqueeze(-1).repeat(1, 1, self.d_model)
                 )
 
-                refpoint_embed_ts.append(refpoint_embed_gidx)
-                memory_ts.append(tgt_undetach_gidx)
-                boxes_ts.append(refpoint_embed_gidx_undetach)
+                refpoint_embed_ts_parts.append(refpoint_embed_gidx)
+                memory_ts_parts.append(tgt_undetach_gidx)
+                boxes_ts_parts.append(refpoint_embed_gidx_undetach)
             # concat on dim=1, the nq dimension, (bs, nq, d) --> (bs, nq, d)
-            refpoint_embed_ts = torch.cat(refpoint_embed_ts, dim=1)
+            refpoint_embed_ts = torch.cat(refpoint_embed_ts_parts, dim=1)
             # (bs, nq, d)
-            memory_ts = torch.cat(memory_ts, dim=1)
-            boxes_ts = torch.cat(boxes_ts, dim=1)
+            memory_ts = torch.cat(memory_ts_parts, dim=1)
+            boxes_ts = torch.cat(boxes_ts_parts, dim=1)
 
         enc_kp_predictions = None
         init_kp_ref_xy = None
         keypoint_memory_ts = None
         if self.two_stage and self.use_grouppose_keypoints and hasattr(self, "keypoint_query_initializer"):
+            assert self.enc_out_keypoint_embed is not None
             batch_size, _, _ = memory_ts.shape
             keypoint_memory_ts = self.keypoint_query_initializer_enc(memory_ts)
             boxes_ref = boxes_ts if self.bbox_reparam else boxes_ts.sigmoid()
@@ -409,15 +422,19 @@ class Transformer(nn.Module):
                 original_num_queries_per_group = tgt.shape[1] // group_count
                 reg_tgt = self.register_tokens.unsqueeze(0).expand(bs, -1, -1)
                 reg_ref = self.register_ref_points.unsqueeze(0).expand(bs, -1, -1)
-                tgt_chunks = list(tgt.split(original_num_queries_per_group, dim=1))
-                ref_chunks = list(refpoint_embed.split(original_num_queries_per_group, dim=1))
+                tgt_chunks = list(tgt.split(original_num_queries_per_group, dim=1))  # type: ignore[no-untyped-call]
+                ref_chunks = list(
+                    refpoint_embed.split(original_num_queries_per_group, dim=1)  # type: ignore[no-untyped-call]
+                )
                 tgt = torch.cat([torch.cat([chunk, reg_tgt], dim=1) for chunk in tgt_chunks], dim=1)
                 refpoint_embed = torch.cat([torch.cat([chunk, reg_ref], dim=1) for chunk in ref_chunks], dim=1)
                 if init_kp_ref_xy is not None:
                     num_keypoints = init_kp_ref_xy.shape[2]
                     reg_kp_xy = self.register_ref_points[:, :2].sigmoid()
                     reg_kp_xy = reg_kp_xy.unsqueeze(0).unsqueeze(2).expand(bs, -1, num_keypoints, -1)
-                    kp_ref_chunks = list(init_kp_ref_xy.split(original_num_queries_per_group, dim=1))
+                    kp_ref_chunks = list(
+                        init_kp_ref_xy.split(original_num_queries_per_group, dim=1)  # type: ignore[no-untyped-call]
+                    )
                     init_kp_ref_xy = torch.cat([torch.cat([chunk, reg_kp_xy], dim=1) for chunk in kp_ref_chunks], dim=1)
 
             tgt_keypoints = None
@@ -566,7 +583,7 @@ class TransformerDecoder(nn.Module):
             self._buffers["keypoint_class_mask"] = mask
         else:
             self.register_buffer("keypoint_class_mask", mask, persistent=True)
-        return self.keypoint_class_mask
+        return cast(Tensor, self.keypoint_class_mask)
 
     def refpoints_refine(self, refpoints_unsigmoid: Tensor, new_refpoints_delta: Tensor) -> Tensor:
         if self.bbox_reparam:
@@ -598,6 +615,7 @@ class TransformerDecoder(nn.Module):
         init_kp_ref_xy: Tensor | None = None,
         kp_cross_attn_memory: Tensor | None = None,
     ) -> Tensor | tuple[Tensor, ...]:
+        assert refpoints_unsigmoid is not None
         output = tgt
 
         intermediate = []
@@ -621,7 +639,7 @@ class TransformerDecoder(nn.Module):
                 .expand(keypoint_tgt.shape[0], keypoint_tgt.shape[1], -1, -1)
             )
 
-        def get_reference(refpoints):
+        def get_reference(refpoints: Tensor) -> tuple[Tensor, Tensor, Tensor, Tensor]:
             # [num_queries, batch_size, 4]
             obj_center = refpoints[..., :4]
 
@@ -629,6 +647,7 @@ class TransformerDecoder(nn.Module):
                 query_sine_embed = gen_sineembed_for_position(obj_center, self.d_model // 2)  # bs, nq, 256*2
                 refpoints_input = obj_center[:, :, None]  # bs, nq, 1, 4
             else:
+                assert valid_ratios is not None
                 refpoints_input = obj_center[:, :, None] * torch.cat([valid_ratios, valid_ratios], -1)[:, None]
                 query_sine_embed = gen_sineembed_for_position(refpoints_input[:, :, 0, :], self.d_model // 2)
 
@@ -685,6 +704,7 @@ class TransformerDecoder(nn.Module):
                 )
 
             if not self.lite_refpoint_refine:
+                assert self.bbox_embed is not None
                 new_refpoints_delta = self.bbox_embed(output)
                 new_refpoints_unsigmoid = self.refpoints_refine(refpoints_unsigmoid, new_refpoints_delta)
                 if layer_id != self.num_layers - 1:
@@ -692,6 +712,7 @@ class TransformerDecoder(nn.Module):
                 refpoints_unsigmoid = new_refpoints_unsigmoid.detach()
 
             if self.return_intermediate:
+                assert self.norm is not None
                 intermediate.append(self.norm(output))
 
         if self.norm is not None:
@@ -858,12 +879,12 @@ class TransformerDecoderLayer(nn.Module):
         # ========== Begin of Self-Attention =============
         # Apply projections here
         # shape: batch_size x num_queries x 256
-        q = k = tgt + query_pos
+        q = k = self.with_pos_embed(tgt, query_pos)
         v = tgt
         if self.training:
-            q = torch.cat(q.split(num_queries // self.group_detr, dim=1), dim=0)
-            k = torch.cat(k.split(num_queries // self.group_detr, dim=1), dim=0)
-            v = torch.cat(v.split(num_queries // self.group_detr, dim=1), dim=0)
+            q = torch.cat(q.split(num_queries // self.group_detr, dim=1), dim=0)  # type: ignore[no-untyped-call]
+            k = torch.cat(k.split(num_queries // self.group_detr, dim=1), dim=0)  # type: ignore[no-untyped-call]
+            v = torch.cat(v.split(num_queries // self.group_detr, dim=1), dim=0)  # type: ignore[no-untyped-call]
 
         tgt2 = self.self_attn(q, k, v, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask, need_weights=False)[0]
 
@@ -894,6 +915,8 @@ class TransformerDecoderLayer(nn.Module):
         if self.enable_keypoint_processing:
             if keypoint_tgt is None or keypoint_pos is None:
                 raise ValueError("Keypoint processing is enabled but keypoint_tgt/keypoint_pos missing")
+            if reference_points is None:
+                raise ValueError("Keypoint processing is enabled but reference_points missing")
 
             tgt_for_kp = self.inst_in_proj(tgt)
             tgt_for_kp_pos = self.inst_pos_in_proj(query_pos)
@@ -1035,16 +1058,16 @@ def build_transformer(args: BuilderArgs) -> Transformer:
         sa_nhead=args.sa_nheads,
         ca_nhead=args.ca_nheads,
         num_queries=args.num_queries,
-        dropout=args.dropout,
+        dropout=args.dropout,  # type: ignore[attr-defined]
         dim_feedforward=args.dim_feedforward,
         num_decoder_layers=args.dec_layers,
         return_intermediate_dec=True,
         group_detr=args.group_detr,
         two_stage=two_stage,
-        num_feature_levels=args.num_feature_levels,
+        num_feature_levels=args.num_feature_levels,  # type: ignore[attr-defined]
         dec_n_points=args.dec_n_points,
         lite_refpoint_refine=args.lite_refpoint_refine,
-        decoder_norm_type=args.decoder_norm,
+        decoder_norm_type=args.decoder_norm,  # type: ignore[attr-defined]
         bbox_reparam=args.bbox_reparam,
         # Detection-only builder args may omit keypoint-only fields; default to the non-keypoint path.
         use_grouppose_keypoints=getattr(args, "use_grouppose_keypoints", False),
