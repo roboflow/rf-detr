@@ -122,8 +122,7 @@ def dice_loss(
     numerator = 2 * (inputs * targets).sum(-1)
     denominator = inputs.sum(-1) + targets.sum(-1)
     loss = 1 - (numerator + 1) / (denominator + 1)
-    result: Tensor = loss.sum() / num_masks
-    return result
+    return cast(Tensor, loss.sum() / num_masks)
 
 
 dice_loss_jit = torch.jit.script(dice_loss)  # type: torch.jit.ScriptFunction[Any, Any]
