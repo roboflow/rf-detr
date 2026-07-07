@@ -195,11 +195,6 @@ def onnx_simplify(
 
 
 class OnnxOptimizer:
-    _gs: Any
-    _onnx_logger: Any
-    _fold_constants: Any
-    _shape_inference: Any
-    _onnx: Any
 
     def __init__(self, input: Any, severity: Any = None) -> None:
         missing_deps = []
