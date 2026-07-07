@@ -275,6 +275,7 @@ overrides = [
     "onnxruntime", "onnxruntime.*",
     "tflite_runtime", "tflite_runtime.*",
     "tensorflow", "tensorflow.*",
+    "rfdetr_plus", "rfdetr_plus.*",
   ], ignore_missing_imports = true },
   # Optional-import None assignments in console.py: type: ignore[assignment, misc] is needed when
   # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the
@@ -317,9 +318,6 @@ overrides = [
     "rfdetr.models.postprocess",
     "rfdetr.models.transformer",
     "rfdetr.models.weights",
-    "rfdetr.platform",
-    "rfdetr.platform.downloads",
-    "rfdetr.platform.models",
     "rfdetr.training.callbacks.best_model",
     "rfdetr.training.callbacks.coco_eval",
     "rfdetr.training.callbacks.drop_schedule",
