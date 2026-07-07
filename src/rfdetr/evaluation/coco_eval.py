@@ -91,7 +91,7 @@ def _ensure_faster_coco(coco_gt: Any) -> COCO:
         return coco_gt
 
     faster_coco = COCO()
-    faster_coco.dataset = copy.deepcopy(coco_gt.dataset)  # type: ignore[attr-defined]
+    faster_coco.dataset = copy.deepcopy(coco_gt.dataset)
     faster_coco.createIndex()
     label2cat = getattr(coco_gt, "label2cat", None)
     if label2cat is not None:
@@ -108,14 +108,12 @@ def _backfill_num_keypoints(coco_gt: COCO) -> None:
             annotations_by_id[annotation_id] = annotation
         keypoints = annotation.get("keypoints")
         if "num_keypoints" not in annotation and isinstance(keypoints, list):
-            keypoints_list = cast(list[Any], keypoints)
-            annotation["num_keypoints"] = sum(1 for visibility in keypoints_list[2::3] if visibility > 0)
+            annotation["num_keypoints"] = sum(1 for visibility in keypoints[2::3] if visibility > 0)
 
     for annotation_id, annotation in getattr(coco_gt, "anns", {}).items():
         keypoints = annotation.get("keypoints")
         if "num_keypoints" not in annotation and isinstance(keypoints, list):
-            keypoints_list = cast(list[Any], keypoints)
-            annotation["num_keypoints"] = sum(1 for visibility in keypoints_list[2::3] if visibility > 0)
+            annotation["num_keypoints"] = sum(1 for visibility in keypoints[2::3] if visibility > 0)
         dataset_annotation = annotations_by_id.get(annotation_id)
         if dataset_annotation is not None and "num_keypoints" in annotation:
             dataset_annotation["num_keypoints"] = annotation["num_keypoints"]
@@ -141,23 +139,20 @@ def _infer_keypoint_counts_by_category(coco_gt: COCO) -> dict[int, int]:
     for category_id, category in getattr(coco_gt, "cats", {}).items():
         keypoints = category.get("keypoints")
         if isinstance(keypoints, list) and keypoints:
-            keypoints_list = cast(list[Any], keypoints)
-            counts[int(category_id)] = len(keypoints_list)
+            counts[int(category_id)] = len(keypoints)
 
     for annotation in getattr(coco_gt, "dataset", {}).get("annotations", []):
         keypoints = annotation.get("keypoints")
         if not isinstance(keypoints, list) or not keypoints:
             continue
         category_id = int(annotation["category_id"])
-        keypoints_list = cast(list[Any], keypoints)
-        counts[category_id] = max(counts.get(category_id, 0), len(keypoints_list) // 3)
+        counts[category_id] = max(counts.get(category_id, 0), len(keypoints) // 3)
     for annotation in getattr(coco_gt, "anns", {}).values():
         keypoints = annotation.get("keypoints")
         if not isinstance(keypoints, list) or not keypoints:
             continue
         category_id = int(annotation["category_id"])
-        keypoints_list = cast(list[Any], keypoints)
-        counts[category_id] = max(counts.get(category_id, 0), len(keypoints_list) // 3)
+        counts[category_id] = max(counts.get(category_id, 0), len(keypoints) // 3)
     return counts
 
 
@@ -174,13 +169,13 @@ def _resolve_keypoint_oks_sigmas(coco_gt: COCO, keypoint_oks_sigmas: list[float]
             raise ValueError(
                 f"keypoint_oks_sigmas length {sigmas.size} does not match dataset keypoint count {keypoint_count}."
             )
-        return sigmas.tolist()
+        return cast(list[float], sigmas.tolist())
 
     if keypoint_count is None or keypoint_count == len(_COCO_PERSON_KEYPOINT_SIGMAS):
         return None
 
     _warn_custom_keypoint_oks_sigma_once(keypoint_count)
-    return np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32).tolist()
+    return cast(list[float], np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32).tolist())
 
 
 def _resolve_group_keypoint_oks_sigmas(
@@ -192,7 +187,7 @@ def _resolve_group_keypoint_oks_sigmas(
         if keypoint_count == len(_COCO_PERSON_KEYPOINT_SIGMAS):
             return None
         _warn_custom_keypoint_oks_sigma_once(keypoint_count)
-        return np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32).tolist()
+        return cast(list[float], np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32).tolist())
 
     sigmas = np.asarray(keypoint_oks_sigmas, dtype=np.float32)
     if sigmas.ndim != 1 or sigmas.size == 0:
@@ -203,7 +198,7 @@ def _resolve_group_keypoint_oks_sigmas(
         raise ValueError(
             f"keypoint_oks_sigmas length {sigmas.size} does not match dataset keypoint count {keypoint_count}."
         )
-    return sigmas[:keypoint_count].tolist()
+    return cast(list[float], sigmas[:keypoint_count].tolist())
 
 
 def _warn_custom_keypoint_oks_sigma_once(keypoint_count: int) -> None:
@@ -243,7 +238,7 @@ def _build_keypoint_category_groups(
 def _filter_coco_by_category_ids(coco_gt: COCO, category_ids: list[int]) -> COCO:
     """Return a COCO object containing only the requested categories and annotations."""
     category_id_set = set(category_ids)
-    gt_dataset: dict[str, Any] = copy.deepcopy(coco_gt.dataset)  # type: ignore[attr-defined]
+    gt_dataset: dict[str, Any] = copy.deepcopy(coco_gt.dataset)
     dataset: dict[str, Any] = {
         **gt_dataset,
         "categories": [
@@ -257,7 +252,7 @@ def _filter_coco_by_category_ids(coco_gt: COCO, category_ids: list[int]) -> COCO
     }
 
     filtered = COCO()
-    filtered.dataset = dataset  # type: ignore[attr-defined]
+    filtered.dataset = dataset
     filtered.createIndex()
     label2cat = getattr(coco_gt, "label2cat", None)
     if label2cat is not None:
@@ -268,11 +263,11 @@ def _filter_coco_by_category_ids(coco_gt: COCO, category_ids: list[int]) -> COCO
 def _load_coco_results(coco_gt: COCO, results: list[dict[str, Any]]) -> COCO:
     """Build a COCO detections object, including the empty-result case."""
     if results:
-        return coco_gt.loadRes(results)  # type: ignore[attr-defined]
+        return coco_gt.loadRes(results)
 
     coco_dt = COCO()
-    gt_dataset: dict[str, Any] = coco_gt.dataset  # type: ignore[attr-defined]
-    coco_dt.dataset = {  # type: ignore[attr-defined]
+    gt_dataset: dict[str, Any] = coco_gt.dataset
+    coco_dt.dataset = {
         "info": copy.deepcopy(gt_dataset.get("info", {})),
         "images": copy.deepcopy(gt_dataset.get("images", [])),
         "categories": copy.deepcopy(gt_dataset.get("categories", [])),
@@ -379,7 +374,7 @@ class CocoEvaluator:
                 )
                 continue
             kwargs = {"kpt_oks_sigmas": resolved_keypoint_oks_sigmas} if iou_type == "keypoints" else {}
-            coco_eval = COCOeval(coco_gt, iouType=iou_type, **kwargs)  # type: ignore[call-arg]
+            coco_eval = COCOeval(coco_gt, iouType=iou_type, **kwargs)
             coco_eval.params.maxDets = [20] if iou_type == "keypoints" else [1, 10, max_dets]
             self.coco_eval[iou_type] = coco_eval
 
@@ -656,8 +651,8 @@ def patched_pycocotools_summarize(self: COCOeval, *, log_summary: bool = True) -
         ValueError: If ``self.params.iouType`` is not ``"segm"``, ``"bbox"``, or
             ``"keypoints"``.
     """
-    p = self.params  # type: ignore[attr-defined]
-    evaluation = self.eval  # type: ignore[attr-defined]
+    p = self.params
+    evaluation = self.eval
 
     def _summarize(ap: int = 1, iou_thr: float | None = None, area_rng: str = "all", max_dets: int = 100) -> float:
         log_template = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}"
@@ -723,4 +718,4 @@ def patched_pycocotools_summarize(self: COCOeval, *, log_summary: bool = True) -
         summarize = _summarizeKps
     else:
         raise ValueError(f"Unknown iou type {iou_type}")
-    self.stats = summarize()  # type: ignore[attr-defined]
+    self.stats = summarize()

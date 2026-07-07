@@ -263,6 +263,7 @@ overrides = [
     "timm", "timm.*",
     "einops", "einops.*",
     "deprecate", "deprecate.*",
+    "faster_coco_eval", "faster_coco_eval.*",
     "matplotlib", "matplotlib.*",
     "pandas", "pandas.*",
     "requests", "requests.*",
