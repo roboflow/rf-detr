@@ -25,9 +25,9 @@ from torch import Tensor
 
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import ModelConfig, TrainConfig
-from rfdetr.utilities.decorators import TargetMode, deprecated
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.lwdetr import LWDETR
+from rfdetr.utilities.decorators import TargetMode, deprecated
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.state_dict import _ckpt_args_get, remap_projector_to_cross_attn, validate_checkpoint_compatibility
 
