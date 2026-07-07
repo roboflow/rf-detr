@@ -195,7 +195,6 @@ def onnx_simplify(
 
 
 class OnnxOptimizer:
-
     def __init__(self, input: Any, severity: Any = None) -> None:
         missing_deps = []
         if onnx is None:
