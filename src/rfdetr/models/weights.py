@@ -258,7 +258,7 @@ def interpolate_position_embeddings(
         )
 
 
-@deprecated(
+@deprecated(  # type: ignore[untyped-decorator,unused-ignore]
     target=TargetMode.ARGS_REMAP,
     args_mapping={"train_config": None},
     deprecated_in="1.7.0",

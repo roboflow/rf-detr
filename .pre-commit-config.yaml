@@ -50,16 +50,13 @@ repos:
         additional_dependencies: [tomli]
         args: ["--in-place"]
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.1.0
+  - repo: local
     hooks:
       - id: mypy
-        # The isolated hook has no torch; CI runs strict mypy with project deps.
-        args: ["--ignore-missing-imports", "--allow-subclassing-any"]
-        exclude: ^docs/(hooks|scripts)/.*\.py$
-        additional_dependencies:
-          - "types-PyYAML"
-          - "types-requests"
+        name: mypy
+        entry: uv run --no-sync mypy src/rfdetr/ --no-error-summary
+        language: system
+        pass_filenames: false
 
   - repo: https://github.com/executablebooks/mdformat
     rev: 1.0.0

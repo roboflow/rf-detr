@@ -679,7 +679,7 @@ def _get_onnx_input_info(onnx_path: Path) -> tuple[str, list[int]]:
 
 def _prepare_calibration_data(
     onnx_path: Path,
-    calibration_data: str | os.PathLike[str] | np.ndarray | None,
+    calibration_data: str | os.PathLike[str] | NDArray[np.float32] | None,
     output_dir: Path,
     quantization: str | None,
     max_images: int = _DEFAULT_DIR_CALIB_SAMPLES,
@@ -782,7 +782,7 @@ def export_tflite(
     onnx_path: str | os.PathLike[str],
     output_dir: str | os.PathLike[str],
     quantization: str | None = None,
-    calibration_data: str | os.PathLike[str] | np.ndarray | None = None,
+    calibration_data: str | os.PathLike[str] | NDArray[np.float32] | None = None,
     verbosity: str = "error",
     max_images: int = _DEFAULT_DIR_CALIB_SAMPLES,
     *,
