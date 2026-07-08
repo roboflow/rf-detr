@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import argparse
 import logging
+import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
 
+from rfdetr.config import PretrainWeightsCompatibilityWarning
 from rfdetr.detr import RFDETR
 from rfdetr.detr import logger as detr_logger
 from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
@@ -573,8 +575,10 @@ class TestFromCheckpointNumClassesProvenance:
     """
 
     def test_checkpoint_num_classes_is_not_marked_user_set(self, two_class_checkpoint: Path) -> None:
-        """from_checkpoint adopts the checkpoint class count without marking it as a user override."""
-        model = RFDETR.from_checkpoint(two_class_checkpoint)
+        """from_checkpoint adopts the checkpoint class count without warning about pretrained weights."""
+        with warnings.catch_warnings():
+            warnings.filterwarnings("error", category=PretrainWeightsCompatibilityWarning)
+            model = RFDETR.from_checkpoint(two_class_checkpoint)
 
         assert model.model_config.num_classes == 2
         assert model.model.model.class_embed.bias.shape[0] == 3, "Head must match checkpoint (2 classes + background)."

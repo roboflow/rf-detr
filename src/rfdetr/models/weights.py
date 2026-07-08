@@ -139,6 +139,10 @@ def _filter_intentional_keys(keys: list[str]) -> list[str]:
         *_QUERY_PARAM_SUFFIXES,
         "enc_out_class_embed.",
         "enc_out_bbox_embed.",
+        # The preview keypoint checkpoint still stores the old standalone
+        # MLP projection head, but the current GroupPose inference path no
+        # longer consumes it.
+        "keypoint_head.keypoint_proj.",
     )
 
     def _is_intentional(key: str) -> bool:

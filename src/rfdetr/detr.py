@@ -1835,10 +1835,10 @@ class RFDETR:
             :class:`~supervision.Detections`. Keypoint models return :class:`~supervision.KeyPoints`, with keypoint
             coordinates in ``xy``. Keypoint predictions preserve the detection-level fields produced by RF-DETR:
             ``key_points.detection_confidence`` is the per-object score used by ``threshold``. For keypoint models this
-            is the postprocessed detection score and, by default, includes keypoint uncertainty fusion controlled by
-            ``model_config.postprocess_trace_alpha``. ``key_points.keypoint_confidence`` is separate: it is a
-            ``(num_detections, num_keypoints)`` array of per-keypoint findability scores decoded from the keypoint head,
-            not a repeated copy of the detection score. When RF-DETR emits keypoint precision parameters,
+            is the postprocessed detection score and, by default, includes normalized keypoint uncertainty fusion
+            controlled by ``model_config.postprocess_trace_alpha``. ``key_points.keypoint_confidence`` is separate: it
+            is a ``(num_detections, num_keypoints)`` array of per-keypoint findability scores decoded from the keypoint
+            head, not a repeated copy of the detection score. When RF-DETR emits keypoint precision parameters,
             ``key_points.data["covariance"]`` stores per-keypoint pixel-space covariance matrices with shape
             ``(num_detections, num_keypoints, 2, 2)``. ``key_points.data["xyxy"]`` stores the corresponding detection
             boxes as a ``(num_detections, 4)`` array in the same row order as ``key_points.xy`` because Supervision
@@ -1857,7 +1857,9 @@ class RFDETR:
             (detected when ``model.args.num_classes > len(class_names)`` and ``class_names`` matches
             ``COCO_CLASS_NAMES``), raw COCO category IDs (1–90, sparse) are looked up by category ID rather than by
             position — so ``class_id=18`` yields ``"dog"``, not ``class_names[18]``. For fine-tuned detection and
-            segmentation models and active-first keypoint models, ``class_id`` is a 0-based index into ``class_names``.
+            segmentation models and active-first keypoint models, ``class_id`` is a 0-based index into
+            ``class_names``. In the one-class preview keypoint setup, that means ``class_id=0`` is the foreground
+            class and ``class_id=1`` is ``"__background__"``.
             Legacy keypoint checkpoints with ``args.num_keypoints_per_class[0] == 0`` use a background-first layout:
             slot 0 maps to ``"__background__"`` and foreground slots map to ``class_names`` in order.
 
