@@ -420,9 +420,14 @@ class PostProcess(nn.Module):
             log_mean_traces[class_mask] = self._keypoint_log_mean_trace(active_keypoints)
 
         scores_i = scores_i.clone()
-        fused_scores = scores_i[valid_indices] * torch.exp(-self.trace_alpha * log_mean_traces)
-        # normalize in [0, 1), empirically approximating distribution of this_orig_scores on coco kp val dataset
-        scores_i[valid_indices] = fused_scores / (1.0 + fused_scores)
+        log_fused_scores = torch.log(scores_i[valid_indices]) - self.trace_alpha * log_mean_traces
+        normalized_scores = torch.sigmoid(log_fused_scores)
+        # Keep the public contract strictly below 1.0 even when the log-fused score saturates.
+        max_score = torch.nextafter(
+            torch.ones_like(normalized_scores),
+            torch.zeros_like(normalized_scores),
+        )
+        scores_i[valid_indices] = torch.minimum(normalized_scores, max_score)
         return scores_i
 
     @staticmethod
