@@ -26,6 +26,8 @@ RF-DETR is a real-time transformer architecture for object detection, instance s
 
 RF-DETR uses a DINOv2 vision transformer backbone and supports object detection, instance segmentation, and keypoint detection (preview) in a single, consistent API. The open-source `rfdetr` package and Apache-designated models are released under Apache 2.0, while Plus components (`rfdetr_plus`, including RF-DETR-XL/2XL detection models) are licensed under PML 1.0.
 
+The published RF-DETR sizes were created with neural architecture search (NAS) — and the same NAS method is now available on the [Roboflow platform](https://app.roboflow.com/), so you can discover the best architecture for your own dataset. Learn more in the [NAS docs](https://docs.roboflow.com/train/neural-architecture-search).
+
 https://github.com/user-attachments/assets/add23fd1-266f-4538-8809-d7dd5767e8e6
 
 ## Install
@@ -287,8 +289,6 @@ key_points = model.predict("image.jpg", threshold=0.5)
 RF-DETR supports training for object detection, instance segmentation, and keypoint detection (preview). You can train models in [Google Colab](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb) or directly on the Roboflow platform. Below you will find a step-by-step video fine-tuning tutorial.
 
 [![rf-detr-tutorial-banner](https://github.com/user-attachments/assets/555a45c3-96e8-4d8a-ad29-f23403c8edfd)](https://youtu.be/-OvpdLAElFA)
-
-> **Note:** The same neural architecture search (NAS) method used to create the published RF-DETR sizes is available on the [Roboflow platform](https://app.roboflow.com/), where you can use it to find the best architecture for your own dataset. Learn more in the [NAS documentation](https://docs.roboflow.com/train/neural-architecture-search).
 
 ## Documentation
 
