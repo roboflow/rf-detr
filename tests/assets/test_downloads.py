@@ -90,6 +90,7 @@ class TestDownloadPretrainWeights:
         """Test that a private-only registry imports cleanly without evaluating PLATFORM_MODELS early."""
         from importlib import reload
 
+        import rfdetr.platform as platform_pkg
         import rfdetr.platform.downloads as platform_downloads
 
         mock_rfdetr_plus_pkg = ModuleType("rfdetr_plus")
@@ -108,7 +109,7 @@ class TestDownloadPretrainWeights:
                 "rfdetr_plus.models": mock_platforms_pkg,
                 "rfdetr_plus.models.downloads": mock_downloads_module,
             },
-        ):
+        ), patch.object(platform_pkg, "_IS_RFDETR_PLUS_AVAILABLE", True):
             reloaded = reload(platform_downloads)
             assert reloaded.PLATFORM_MODELS == {"legacy-model.pth": "https://legacy.com/model.pth"}
 
