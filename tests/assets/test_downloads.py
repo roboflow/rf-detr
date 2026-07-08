@@ -102,14 +102,17 @@ class TestDownloadPretrainWeights:
         mock_platforms_pkg.downloads = mock_downloads_module
         mock_rfdetr_plus_pkg.models = mock_platforms_pkg
 
-        with patch.dict(
-            "sys.modules",
-            {
-                "rfdetr_plus": mock_rfdetr_plus_pkg,
-                "rfdetr_plus.models": mock_platforms_pkg,
-                "rfdetr_plus.models.downloads": mock_downloads_module,
-            },
-        ), patch.object(platform_pkg, "_IS_RFDETR_PLUS_AVAILABLE", True):
+        with (
+            patch.dict(
+                "sys.modules",
+                {
+                    "rfdetr_plus": mock_rfdetr_plus_pkg,
+                    "rfdetr_plus.models": mock_platforms_pkg,
+                    "rfdetr_plus.models.downloads": mock_downloads_module,
+                },
+            ),
+            patch.object(platform_pkg, "_IS_RFDETR_PLUS_AVAILABLE", True),
+        ):
             reloaded = reload(platform_downloads)
             assert reloaded.PLATFORM_MODELS == {"legacy-model.pth": "https://legacy.com/model.pth"}
 
