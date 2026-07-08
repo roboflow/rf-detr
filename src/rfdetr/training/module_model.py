@@ -125,6 +125,40 @@ class RFDETRModelModule(LightningModule):
         if self.train_config.seed is not None:
             seed_everything(self.train_config.seed + self.global_rank, workers=True)
 
+    def on_train_start(self) -> None:
+        """Normalize restored fused-optimizer state before the first training step.
+
+        Lightning restores optimizer state after ``on_fit_start``.  Fused AdamW is strict about the dtype, device, and
+        layout of its moment tensors, so resuming from a checkpoint can fail if Lightning rehydrates those tensors in a
+        layout that no longer matches the live parameters.  Recasting same-shaped floating-point tensors here keeps the
+        resumed optimizer compatible without discarding the saved momentum state.
+        """
+        if not self._use_fused_optimizer:
+            return
+
+        try:
+            optimizers = self.optimizers(use_pl_optimizer=False)
+        except RuntimeError:
+            return
+        if optimizers is None:
+            return
+        if isinstance(optimizers, list):
+            optimizer_list = optimizers
+        else:
+            optimizer_list = [optimizers]
+
+        normalized_tensors = 0
+        for optimizer in optimizer_list:
+            if not isinstance(optimizer, torch.optim.Optimizer):
+                optimizer = getattr(optimizer, "optimizer", optimizer)
+            if isinstance(optimizer, torch.optim.Optimizer):
+                normalized_tensors += self._normalize_optimizer_state(optimizer)
+        if normalized_tensors and getattr(self.trainer, "is_global_zero", True):
+            logger.info(
+                "Normalized %d restored fused AdamW state tensors after checkpoint resume.",
+                normalized_tensors,
+            )
+
     def on_train_batch_start(self, batch: tuple, batch_idx: int) -> None:
         """Apply optional multi-scale resize to the incoming batch.
 
@@ -630,6 +664,35 @@ class RFDETRModelModule(LightningModule):
                 gradient_clip_val=gradient_clip_val,
                 gradient_clip_algorithm=gradient_clip_algorithm,
             )
+
+    @staticmethod
+    def _normalize_optimizer_state(optimizer: torch.optim.Optimizer) -> int:
+        """Cast restored floating-point optimizer state tensors to match live parameters.
+
+        Args:
+            optimizer: AdamW optimizer whose state may have been rehydrated with a mismatched dtype or layout.
+
+        Returns:
+            Number of state tensors that were reallocated to match the current parameter layout.
+        """
+        normalized = 0
+        for group in optimizer.param_groups:
+            for param in group["params"]:
+                state = optimizer.state.get(param)
+                if not state:
+                    continue
+                for key, value in list(state.items()):
+                    if not isinstance(value, torch.Tensor) or not value.is_floating_point():
+                        continue
+                    if value.shape != param.shape:
+                        continue
+                    if value.device == param.device and value.dtype == param.dtype and value.stride() == param.stride():
+                        continue
+                    restored = torch.empty_like(param)
+                    restored.copy_(value.to(device=param.device, dtype=param.dtype))
+                    state[key] = restored
+                    normalized += 1
+        return normalized
 
     def test_step(self, batch: tuple, batch_idx: int) -> dict[str, Any]:
         """Run forward pass and postprocess for one test step.
