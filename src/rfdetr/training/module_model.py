@@ -137,19 +137,22 @@ class RFDETRModelModule(LightningModule):
             return
 
         try:
-            optimizers = self.optimizers()
+            optimizers = self.optimizers(use_pl_optimizer=False)
         except RuntimeError:
+            return
+        if optimizers is None:
             return
         if isinstance(optimizers, list):
             optimizer_list = optimizers
         else:
             optimizer_list = [optimizers]
 
-        normalized_tensors = sum(
-            self._normalize_optimizer_state(optimizer)
-            for optimizer in optimizer_list
-            if isinstance(optimizer, torch.optim.Optimizer)
-        )
+        normalized_tensors = 0
+        for optimizer in optimizer_list:
+            if not isinstance(optimizer, torch.optim.Optimizer):
+                optimizer = getattr(optimizer, "optimizer", optimizer)
+            if isinstance(optimizer, torch.optim.Optimizer):
+                normalized_tensors += self._normalize_optimizer_state(optimizer)
         if normalized_tensors and getattr(self.trainer, "is_global_zero", True):
             logger.info(
                 "Normalized %d restored fused AdamW state tensors after checkpoint resume.",

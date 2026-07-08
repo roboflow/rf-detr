@@ -1651,6 +1651,7 @@ class TestFusedOptimizerResumeStateNormalization:
             trainer_prop.return_value = trainer
             module.on_train_start()
 
+        module.optimizers.assert_called_once_with(use_pl_optimizer=False)
         state = optimizer.state[optimizer_param]
         assert state["exp_avg"].dtype == optimizer_param.dtype
         assert state["exp_avg"].stride() == optimizer_param.stride()
@@ -1658,6 +1659,43 @@ class TestFusedOptimizerResumeStateNormalization:
         assert state["exp_avg_sq"].stride() == optimizer_param.stride()
         torch.testing.assert_close(state["exp_avg"], torch.full_like(optimizer_param, 2.0))
         torch.testing.assert_close(state["exp_avg_sq"], torch.full_like(optimizer_param, 3.0))
+
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_on_train_start_unwraps_optimizer_wrapper(
+        self,
+        mock_cuda_available,
+        mock_bf16_supported,
+    ) -> None:
+        """Lightning-style optimizer wrappers must still be normalized on resume."""
+        module = RFDETRModelModule.__new__(RFDETRModelModule)
+        module.model_config = SimpleNamespace(fused_optimizer=True)
+        trainer = MagicMock()
+        trainer.precision = "bf16-mixed"
+        trainer.is_global_zero = True
+        module._trainer = trainer
+        module.optimizers = MagicMock()
+
+        optimizer_param = nn.Parameter(torch.arange(6.0, dtype=torch.bfloat16).reshape(2, 3).t())
+        optimizer = torch.optim.AdamW([optimizer_param], lr=1e-3)
+        optimizer.state[optimizer_param] = {
+            "exp_avg": torch.full((3, 2), 4.0, dtype=torch.float32),
+            "exp_avg_sq": torch.full((3, 2), 5.0, dtype=torch.float64),
+        }
+        module.optimizers.return_value = SimpleNamespace(optimizer=optimizer)
+
+        with patch.object(type(module), "trainer", new_callable=PropertyMock) as trainer_prop:
+            trainer_prop.return_value = trainer
+            module.on_train_start()
+
+        module.optimizers.assert_called_once_with(use_pl_optimizer=False)
+        state = optimizer.state[optimizer_param]
+        assert state["exp_avg"].dtype == optimizer_param.dtype
+        assert state["exp_avg"].stride() == optimizer_param.stride()
+        assert state["exp_avg_sq"].dtype == optimizer_param.dtype
+        assert state["exp_avg_sq"].stride() == optimizer_param.stride()
+        torch.testing.assert_close(state["exp_avg"], torch.full_like(optimizer_param, 4.0))
+        torch.testing.assert_close(state["exp_avg_sq"], torch.full_like(optimizer_param, 5.0))
 
     @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
     @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
