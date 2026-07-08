@@ -26,6 +26,8 @@ RF-DETR is a real-time transformer architecture for object detection, instance s
 
 RF-DETR uses a DINOv2 vision transformer backbone and supports object detection, instance segmentation, and keypoint detection (preview) in a single, consistent API. The open-source `rfdetr` package and Apache-designated models are released under Apache 2.0, while Plus components (`rfdetr_plus`, including RF-DETR-XL/2XL detection models) are licensed under PML 1.0.
 
+The published RF-DETR sizes were created with neural architecture search (NAS) — and the same NAS method is now available on the [Roboflow platform](https://app.roboflow.com/), so you can discover the best architecture for your own dataset. Learn more in the [NAS docs](https://docs.roboflow.com/train/neural-architecture-search).
+
 https://github.com/user-attachments/assets/add23fd1-266f-4538-8809-d7dd5767e8e6
 
 ## Install
