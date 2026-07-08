@@ -288,6 +288,8 @@ RF-DETR supports training for object detection, instance segmentation, and keypo
 
 [![rf-detr-tutorial-banner](https://github.com/user-attachments/assets/555a45c3-96e8-4d8a-ad29-f23403c8edfd)](https://youtu.be/-OvpdLAElFA)
 
+> **Note:** The same neural architecture search (NAS) method used to create the published RF-DETR sizes is available on the [Roboflow platform](https://app.roboflow.com/), where you can use it to find the best architecture for your own dataset. Learn more in the [NAS documentation](https://docs.roboflow.com/train/neural-architecture-search).
+
 ## Documentation
 
 Visit our [documentation website](https://rfdetr.roboflow.com) to learn more about how to use RF-DETR.
