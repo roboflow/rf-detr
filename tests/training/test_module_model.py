@@ -15,6 +15,7 @@ from torch import nn
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
+from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.tensors import NestedTensor
 
 # ---------------------------------------------------------------------------
@@ -1617,6 +1618,72 @@ class TestConfigureOptimizers:
         # If total_steps were wrongly 100, lr at step 25 would still be ~0.87 (near peak).
         lr_at_decay_end = lr_lambda(expected_total_steps)
         assert lr_at_decay_end == pytest.approx(lr_min_factor, abs=1e-6)
+
+
+class TestFusedOptimizerResumeStateNormalization:
+    """Tests for resume-time fused AdamW state normalization."""
+
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_on_train_start_normalizes_restored_fused_optimizer_state(
+        self,
+        mock_cuda_available,
+        mock_bf16_supported,
+    ) -> None:
+        """Resumed fused AdamW state tensors must match the live parameter layout before the first step."""
+        module = RFDETRModelModule.__new__(RFDETRModelModule)
+        module.model_config = SimpleNamespace(fused_optimizer=True)
+        trainer = MagicMock()
+        trainer.precision = "bf16-mixed"
+        trainer.is_global_zero = True
+        module._trainer = trainer
+        module.optimizers = MagicMock()
+
+        optimizer_param = nn.Parameter(torch.arange(6.0, dtype=torch.bfloat16).reshape(2, 3).t())
+        optimizer = torch.optim.AdamW([optimizer_param], lr=1e-3)
+        optimizer.state[optimizer_param] = {
+            "exp_avg": torch.full((3, 2), 2.0, dtype=torch.float32),
+            "exp_avg_sq": torch.full((3, 2), 3.0, dtype=torch.float64),
+        }
+        module.optimizers.return_value = optimizer
+
+        with patch.object(type(module), "trainer", new_callable=PropertyMock) as trainer_prop:
+            trainer_prop.return_value = trainer
+            module.on_train_start()
+
+        state = optimizer.state[optimizer_param]
+        assert state["exp_avg"].dtype == optimizer_param.dtype
+        assert state["exp_avg"].stride() == optimizer_param.stride()
+        assert state["exp_avg_sq"].dtype == optimizer_param.dtype
+        assert state["exp_avg_sq"].stride() == optimizer_param.stride()
+        torch.testing.assert_close(state["exp_avg"], torch.full_like(optimizer_param, 2.0))
+        torch.testing.assert_close(state["exp_avg_sq"], torch.full_like(optimizer_param, 3.0))
+
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_on_train_start_leaves_empty_optimizer_state_untouched(
+        self,
+        mock_cuda_available,
+        mock_bf16_supported,
+    ) -> None:
+        """Fresh fused-optimizer runs with no restored state should remain a no-op."""
+        module = RFDETRModelModule.__new__(RFDETRModelModule)
+        module.model_config = SimpleNamespace(fused_optimizer=True)
+        trainer = MagicMock()
+        trainer.precision = "bf16-mixed"
+        trainer.is_global_zero = True
+        module._trainer = trainer
+        module.optimizers = MagicMock()
+
+        optimizer_param = nn.Parameter(torch.ones((2, 2), dtype=torch.bfloat16))
+        optimizer = torch.optim.AdamW([optimizer_param], lr=1e-3)
+        module.optimizers.return_value = optimizer
+
+        with patch.object(type(module), "trainer", new_callable=PropertyMock) as trainer_prop:
+            trainer_prop.return_value = trainer
+            module.on_train_start()
+
+        assert optimizer.state == {}
 
 
 class TestClipGradients:
