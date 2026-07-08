@@ -312,7 +312,7 @@ If you find our work helpful for your research, please consider citing the follo
 ```bibtex
 @inproceedings{robinson2026rfdetr,
   title     = {RF-DETR: Real-Time Detection Transformer},
-  author    = {Robinson, Isaac and Robicheaux, Peter and Popov, Fedor and Ramanan, Deva and Peri, Neehar},
+  author    = {Robinson, Isaac and Robicheaux, Peter and Popov, Matvei and Ramanan, Deva and Peri, Neehar},
   booktitle = {International Conference on Learning Representations (ICLR)},
   year      = {2026},
   url       = {https://arxiv.org/abs/2511.09554}
