@@ -5,11 +5,13 @@
 # ------------------------------------------------------------------------
 """Trainer factory — assembles a PTL Trainer from RF-DETR configs."""
 
+from __future__ import annotations
+
 import warnings
 from typing import Any
 
 import torch
-from pytorch_lightning import Trainer
+from pytorch_lightning import Callback, Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar, TQDMProgressBar
 from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBarTheme
 from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
@@ -21,7 +23,7 @@ from pytorch_lightning.strategies import DDPStrategy as _DDPStrategy
 try:
     from pytorch_lightning.strategies.launchers.multiprocessing import _MultiProcessingLauncher
 except ImportError:  # pragma: no cover - exercised in unit tests via monkeypatch
-    _MultiProcessingLauncher = None  # type: ignore[assignment]
+    _MultiProcessingLauncher = None  # type: ignore[assignment,misc]
 
 from rfdetr.config import KeypointTrainConfig, ModelConfig, TrainConfig
 from rfdetr.training.callbacks import (
@@ -77,11 +79,11 @@ if _MultiProcessingLauncher is not None:
         """Spawn launcher that reports itself as interactive-compatible."""
 
         @property
-        def is_interactive_compatible(self) -> bool:  # type: ignore[override]
+        def is_interactive_compatible(self) -> bool:
             return True
 
 else:
-    _InteractiveSpawnLauncher = None
+    _InteractiveSpawnLauncher = None  # type: ignore[assignment,misc]
 
 
 class _NotebookSpawnDDPStrategy(_DDPStrategy):
@@ -99,6 +101,11 @@ class _NotebookSpawnDDPStrategy(_DDPStrategy):
                 "pytorch_lightning.strategies.launchers.multiprocessing._MultiProcessingLauncher. "
                 "Your installed PyTorch Lightning version changed this private API; "
                 "pin/upgrade PTL to a compatible version in the supported >=2.6,<3 range."
+            )
+        if self._start_method == "popen":
+            raise RuntimeError(
+                "_NotebookSpawnDDPStrategy does not support start_method='popen'; "
+                "it is always constructed with start_method='spawn' in build_trainer()."
             )
         self._launcher = _InteractiveSpawnLauncher(self, start_method=self._start_method)
 
@@ -306,7 +313,7 @@ def build_trainer(
         )
 
     # --- Build callbacks ---
-    callbacks = []
+    callbacks: list[Callback] = []
 
     if tc.progress_bar == "rich":
         callbacks.append(
@@ -391,7 +398,7 @@ def build_trainer(
     # always reads the raw (un-smoothed) metric value.
     callbacks.append(
         BestModelCallback(
-            output_dir=tc.output_dir,
+            output_dir=str(tc.output_dir),
             monitor_regular=monitor_regular,
             monitor_ema=monitor_ema,
             run_test=tc.run_test,
@@ -419,7 +426,7 @@ def build_trainer(
     # emits a UserWarning instead of crashing.
     # CSVLogger is always enabled — no extra package required.
     # Produces metrics.csv in output_dir so there is always a log file.
-    loggers: list = [CSVLogger(save_dir=tc.output_dir, name="", version="")]
+    loggers: list[Any] = [CSVLogger(save_dir=tc.output_dir, name="", version="")]
 
     if tc.tensorboard:
         try:
@@ -458,7 +465,7 @@ def build_trainer(
                 MLFlowLogger(
                     experiment_name=tc.project or "rfdetr",
                     run_name=tc.run,
-                    save_dir=tc.output_dir,
+                    save_dir=str(tc.output_dir),
                 )
             )
         except ModuleNotFoundError as exc:

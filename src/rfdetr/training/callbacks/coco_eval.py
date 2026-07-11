@@ -5,9 +5,12 @@
 # ------------------------------------------------------------------------
 """COCOEvalCallback — torchmetrics-based mAP and F1 evaluation."""
 
+from __future__ import annotations
+
 import contextlib
 import io
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -15,6 +18,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F  # noqa: N812
 from pytorch_lightning import Callback
+from torch import Tensor
 from torchmetrics.detection import MeanAveragePrecision
 
 from rfdetr.datasets import get_coco_api_from_dataset
@@ -136,9 +140,9 @@ class COCOEvalCallback(Callback):
         self._in_notebook: bool = False
         if in_notebook is None:
             with contextlib.suppress(ImportError):
-                from IPython import get_ipython
+                from IPython import get_ipython  # type: ignore[attr-defined]
 
-                self._in_notebook = get_ipython() is not None
+                self._in_notebook = get_ipython() is not None  # type: ignore[no-untyped-call]
         else:
             self._in_notebook = in_notebook
 
@@ -296,7 +300,7 @@ class COCOEvalCallback(Callback):
         if not isinstance(outputs, dict) or "results" not in outputs or "targets" not in outputs:
             return
 
-        preds: list[dict[str, torch.Tensor]] = self._convert_preds(outputs["results"])
+        preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
         targets = self._convert_targets(outputs["targets"])
         # In training mode pred_masks is a sparse dict, excluded from postprocess inputs, so
         # preds have no masks key.  torchmetrics requires it when iou_type includes "segm" → skip.
@@ -342,9 +346,10 @@ class COCOEvalCallback(Callback):
         self,
         trainer: Any,
         pl_module: Any,
-        outputs: dict[str, Any],
+        outputs: Tensor | Mapping[str, Any] | None,
         batch: Any,
         batch_idx: int,
+        dataloader_idx: int = 0,
     ) -> None:
         """Accumulate predictions and matching data for one validation batch.
 
@@ -360,8 +365,11 @@ class COCOEvalCallback(Callback):
             outputs: Return value of ``validation_step``.
             batch: The device-transferred batch ``(samples, targets)``.
             batch_idx: Batch index within the validation epoch.
+            dataloader_idx: Index of the validation dataloader (unused here).
         """
-        preds: list[dict[str, torch.Tensor]] = self._convert_preds(outputs["results"])
+        if not isinstance(outputs, Mapping):
+            return
+        preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
         targets = self._convert_targets(outputs["targets"])
 
         self.map_metric.update(preds, targets)
@@ -422,7 +430,7 @@ class COCOEvalCallback(Callback):
         self,
         trainer: Any,
         pl_module: Any,
-        outputs: dict[str, Any],
+        outputs: Tensor | Mapping[str, Any] | None,
         batch: Any,
         batch_idx: int,
         dataloader_idx: int = 0,
@@ -440,7 +448,9 @@ class COCOEvalCallback(Callback):
             batch_idx: Batch index within the test epoch.
             dataloader_idx: Index of the test dataloader (unused here).
         """
-        preds: list[dict[str, torch.Tensor]] = self._convert_preds(outputs["results"])
+        if not isinstance(outputs, Mapping):
+            return
+        preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
         targets = self._convert_targets(outputs["targets"])
 
         self.map_metric.update(preds, targets)
@@ -620,9 +630,10 @@ class COCOEvalCallback(Callback):
         if "classes" in metrics and metrics["classes"].ndim == 0:
             metrics = dict(metrics)
             metrics["classes"] = metrics["classes"].unsqueeze(0)
-            for k in list(metrics):
-                if isinstance(metrics[k], torch.Tensor) and metrics[k].ndim == 0 and "per_class" in k:
-                    metrics[k] = metrics[k].unsqueeze(0)
+            for metric_key in list(metrics):
+                value = metrics[metric_key]
+                if isinstance(value, Tensor) and value.ndim == 0 and "per_class" in metric_key:
+                    metrics[metric_key] = value.unsqueeze(0)
 
         # Per-class AR from torchmetrics (keyed by category_id)
         ar_pc_key = f"{pfx}mar_{self._max_dets}_per_class"
@@ -665,7 +676,8 @@ class COCOEvalCallback(Callback):
     def _compute_map_metric(self, trainer: Any, metric: Any) -> dict[str, Any]:
         """Compute a torchmetrics mAP metric while suppressing duplicate terminal summaries under progress bars."""
         if not _has_progress_bar(trainer):
-            return metric.compute()
+            result: dict[str, Any] = metric.compute()
+            return result
 
         metric_loggers = (logger, logging.getLogger("faster_coco_eval"), logging.getLogger("faster_coco_eval.core"))
         previous_levels = [(metric_logger, metric_logger.level) for metric_logger in metric_loggers]
@@ -674,7 +686,8 @@ class COCOEvalCallback(Callback):
                 if metric_logger.getEffectiveLevel() < logging.WARNING:
                     metric_logger.setLevel(logging.WARNING)
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                return metric.compute()
+                result = metric.compute()
+                return result
         finally:
             for metric_logger, previous_level in previous_levels:
                 metric_logger.setLevel(previous_level)
@@ -851,7 +864,7 @@ class COCOEvalCallback(Callback):
         if metric is not None:
             metric.reset()
 
-    def _update_keypoint_oks_metric(self, trainer: Any, outputs: dict[str, Any], split: str) -> None:
+    def _update_keypoint_oks_metric(self, trainer: Any, outputs: Mapping[str, Any], split: str) -> None:
         """Accumulate batch predictions into the keypoint OKS metric.
 
         Args:
@@ -866,7 +879,7 @@ class COCOEvalCallback(Callback):
         if metric is None:
             return
 
-        predictions: dict[int, dict[str, torch.Tensor]] = {}
+        predictions: dict[int, dict[str, Tensor]] = {}
         results = outputs["results"]
         targets = outputs["targets"]
         for result, target in zip(results, targets):
@@ -1030,11 +1043,11 @@ class COCOEvalCallback(Callback):
             # (and PTL's progress bar) is never touched, so there is no flicker.
             if self._output_widget is None:
                 with contextlib.suppress(ImportError):
-                    import ipywidgets as widgets
+                    import ipywidgets as widgets  # type: ignore[import-not-found]
                     from IPython.display import display
 
                     self._output_widget = widgets.Output()
-                    display(self._output_widget)
+                    display(self._output_widget)  # type: ignore[no-untyped-call]
 
             if self._output_widget is not None:
                 self._output_widget.clear_output(wait=True)
@@ -1047,7 +1060,7 @@ class COCOEvalCallback(Callback):
             with contextlib.suppress(ImportError):
                 from IPython.display import clear_output
 
-                clear_output(wait=True)
+                clear_output(wait=True)  # type: ignore[no-untyped-call]
             _render_summary_tables(console, title_pfx, overall_rendered, per_class)
             return
 
@@ -1057,7 +1070,7 @@ class COCOEvalCallback(Callback):
         # tables would never appear.  console.print() avoids that nesting issue.
         _render_summary_tables(console, title_pfx, overall_rendered, per_class)
 
-    def _convert_preds(self, preds: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:
+    def _convert_preds(self, preds: list[dict[str, Tensor]]) -> list[dict[str, Tensor]]:
         """Normalise prediction dicts from ``PostProcess`` for torchmetrics.
 
         ``PostProcess.forward`` returns masks with shape ``[K, 1, H, W]`` (the extra channel is introduced by
@@ -1083,7 +1096,7 @@ class COCOEvalCallback(Callback):
             out.append(entry)
         return out
 
-    def _convert_targets(self, targets: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:
+    def _convert_targets(self, targets: list[dict[str, Tensor]]) -> list[dict[str, Tensor]]:
         """Convert targets from normalised CxCyWH to absolute xyxy boxes.
 
         Also passes ``iscrowd`` and ``masks`` through unchanged.
@@ -1100,7 +1113,7 @@ class COCOEvalCallback(Callback):
             h, w = t["orig_size"].tolist()
             scale = t["boxes"].new_tensor([w, h, w, h])
             boxes = box_cxcywh_to_xyxy(t["boxes"]) * scale
-            entry: dict[str, torch.Tensor] = {"boxes": boxes, "labels": t["labels"]}
+            entry: dict[str, Tensor] = {"boxes": boxes, "labels": t["labels"]}
             if "masks" in t:
                 masks = t["masks"].bool()
                 # PostProcess resizes predicted masks to orig_size; resize GT

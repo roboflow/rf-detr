@@ -753,7 +753,12 @@ class LWDETR(nn.Module):
             if hasattr(layers[i], "drop_path") and hasattr(layers[i].drop_path, "drop_prob"):
                 layers[i].drop_path.drop_prob = dp_rates[i]
 
-    def update_dropout(self, drop_rate):
+    def update_dropout(self, drop_rate: float) -> None:
+        """Update dropout probability for all Dropout modules in the transformer.
+
+        Args:
+            drop_rate: New dropout probability to apply.
+        """
         for module in self.transformer.modules():
             if isinstance(module, nn.Dropout):
                 module.p = drop_rate
