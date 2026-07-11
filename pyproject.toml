@@ -328,10 +328,6 @@ overrides = [
     "rfdetr.training.module_data",
     "rfdetr.training.module_model",
     "rfdetr.training.trainer",
-    "rfdetr.utilities.distributed",
-    "rfdetr.utilities.logger",
-    "rfdetr.utilities.state_dict",
-    "rfdetr.utilities.tensors",
     "rfdetr.variants",
   ], ignore_errors = true },
 ]

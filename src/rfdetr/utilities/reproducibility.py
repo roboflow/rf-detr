@@ -5,6 +5,8 @@
 # ------------------------------------------------------------------------
 """Reproducibility helpers: seed all RNGs consistently."""
 
+from __future__ import annotations
+
 import random
 
 import numpy as np
