@@ -28,6 +28,7 @@ import torchvision.transforms.functional as F  # noqa: N812
 import yaml
 from PIL import Image
 
+from rfdetr._namespace import _namespace_from_configs
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
@@ -877,6 +878,10 @@ class RFDETR:
 
         # Sync the trained weights back so predict() / export() see the updated model.
         self.model.model = module.model
+        # Rebuild model.args from the real training config (#1199): it was previously left as the
+        # construction-time snapshot built from a dummy TrainConfig, so overrides like lr/lr_encoder
+        # never appeared in model.model.__dict__['args'] even though the optimizer used them correctly.
+        self.model.args = _namespace_from_configs(self.model_config, config)
         # Mark this instance as trained so a subsequent train() call warns that it will
         # restart from pretrain_weights rather than continue from the in-memory state.
         self._has_been_trained = True

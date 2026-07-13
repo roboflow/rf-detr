@@ -256,6 +256,23 @@ class TestRFDETRTrainPTL:
 
         assert mock_self.model.class_names == []
 
+    def test_model_args_synced_from_train_config_after_training(self, tmp_path, patch_lit):
+        """self.model.args reflects the real TrainConfig's lr/lr_encoder after train().
+
+        Regression test for #1199: model.model.__dict__['args'] retained the construction-time defaults (lr=0.0001,
+        lr_encoder=0.00015) instead of the overrides passed to train(), because ``self.model.args`` was built once at
+        model-construction time from a dummy config and never refreshed after ``train()`` completed.
+        """
+        mock_self = _make_rfdetr_self(tmp_path, lr=5e-5, lr_encoder=1e-4)
+        mock_self.model.args = SimpleNamespace(lr=0.0001, lr_encoder=0.00015, resolution=560)
+        p_mod, p_dm, p_bt, *_ = patch_lit
+
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model.args.lr == 5e-5
+        assert mock_self.model.args.lr_encoder == 1e-4
+
     def test_device_kwarg_cpu_no_warning(self, tmp_path, patch_lit):
         """Device='cpu' is consumed without a DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
