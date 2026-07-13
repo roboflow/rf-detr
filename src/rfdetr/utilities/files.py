@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """File download and MD5 validation helpers."""
 
+import contextlib
 import hashlib
 import os
 import tempfile
@@ -76,7 +77,7 @@ def _download_file(
             logger.warning(f"File {filename} exists but MD5 hash mismatch. Re-downloading...")
             os.remove(filename)
 
-    with requests.get(url, stream=True, timeout=timeout) as response:
+    with contextlib.closing(requests.get(url, stream=True, timeout=timeout)) as response:
         response.raise_for_status()
         total_size_header = response.headers.get("content-length")
         try:
