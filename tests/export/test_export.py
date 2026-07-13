@@ -27,7 +27,7 @@ import pytest
 import torch
 from torch.jit import TracerWarning
 
-from rfdetr import RFDETRSegNano
+from rfdetr import RFDETRNano, RFDETRSegNano
 from rfdetr import detr as _detr_module
 from rfdetr.export import main as _cli_export_module
 
@@ -60,6 +60,9 @@ class _DummyCoreModel:
 
     def cpu(self):
         return self
+
+    def modules(self):
+        return iter(())
 
     def __call__(self, *_args, **_kwargs):
         out = {"pred_boxes": torch.zeros(1, 1, 4), "pred_logits": torch.zeros(1, 1, 2)}
@@ -114,6 +117,27 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
         model.export(output_dir=str(tmp_path), verbose=False)
 
     # Verify export produced output files
+    onnx_files = list(tmp_path.glob("*.onnx"))
+    assert len(onnx_files) > 0, "Export should produce ONNX file(s)"
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
+@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnx]")
+def test_export_with_shape_different_from_resolution_no_crash(tmp_path: Path) -> None:
+    """Integration test: exporting with a `shape` different from the model's native resolution should not crash.
+
+    A mismatched shape forces the DINOv2 backbone to interpolate its position embeddings for the new grid size. This
+    must not trace an antialiased bicubic resize (``aten::_upsample_bicubic2d_aa``), which has no ONNX opset-17
+    symbolic function.
+    """
+    model = RFDETRNano()
+    export_shape = (608, 608)
+    assert export_shape != (model.model.resolution, model.model.resolution)
+
+    with ignore_tracer_warnings():
+        model.export(output_dir=str(tmp_path), shape=export_shape, verbose=False)
+
     onnx_files = list(tmp_path.glob("*.onnx"))
     assert len(onnx_files) > 0, "Export should produce ONNX file(s)"
 
