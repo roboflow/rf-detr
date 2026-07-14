@@ -244,7 +244,7 @@ class RFDETRModelModule(LightningModule):
             loss_dict = self.criterion(outputs, targets)
             loss_for_backward = None
         weight_dict = self.criterion.weight_dict
-        loss: Tensor = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
+        loss: Tensor = torch.stack([loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict]).sum()
         # Automatic optimization path: divide by accumulate_grad_batches so the accumulated
         # gradient matches a single large batch, matching the legacy engine.  PTL accumulates
         # full-scale gradients by default; dividing here keeps the effective LR identical.
