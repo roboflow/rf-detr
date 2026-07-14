@@ -40,6 +40,7 @@ from rfdetr.datasets._keypoint_schema import (
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
+from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.utilities.distributed import is_main_process
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
@@ -1290,6 +1291,15 @@ class RFDETR:
                     )
             else:
                 shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
+
+            # Freeze the backbone's position embeddings to the export shape before tracing. Without this, a
+            # `shape` that differs from the model's native resolution forces the traced forward pass through
+            # DINOv2's antialiased bicubic interpolation, which has no ONNX symbolic (`aten::_upsample_bicubic2d_aa`
+            # is unsupported). Precomputing here (outside the trace) keeps that op out of the traced graph.
+            for backbone_module in model.modules():
+                if isinstance(backbone_module, DinoV2):
+                    backbone_module.shape = shape
+                    backbone_module.export()
 
             input_tensors = make_infer_image(
                 infer_dir, shape, batch_size, device, num_channels=self.model_config.num_channels
