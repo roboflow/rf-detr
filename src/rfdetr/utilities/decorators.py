@@ -5,6 +5,8 @@
 # ------------------------------------------------------------------------
 """Deprecation utilities and decorators."""
 
+from __future__ import annotations
+
 import warnings
 
 from deprecate import TargetMode, deprecated, void
