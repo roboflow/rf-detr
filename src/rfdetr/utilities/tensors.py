@@ -12,6 +12,8 @@
 # ------------------------------------------------------------------------
 """Tensor utilities: NestedTensor, collate_fn, and helpers."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from functools import partial
 from typing import Any
@@ -169,16 +171,20 @@ def _onnx_nested_tensor_from_tensor_list(
     Returns:
         Padded NestedTensor suitable for ONNX export.
     """
-    max_size = []
+    max_size: list[Tensor] = []
     for i in range(tensor_list[0].dim()):
-        max_size_i = torch.max(torch.stack([img.shape[i] for img in tensor_list]).to(torch.float32)).to(torch.int64)
+        # ``img.shape[i]`` is a symbolic Tensor under ONNX tracing (not the plain
+        # int mypy infers for the untraced case); ``as_tensor`` is a no-op on the
+        # traced Tensor and correctly wraps the untraced int.
+        dim_sizes = torch.stack([torch.as_tensor(img.shape[i]) for img in tensor_list]).to(torch.float32)
+        max_size_i = torch.max(dim_sizes).to(torch.int64)
         max_size.append(max_size_i)
     if block_size is not None:
         # Spatial dimensions are indices 1 (H) and 2 (W); index 0 is channels.
         bs = torch.as_tensor(block_size, dtype=torch.int64)
         max_size[1] = ((max_size[1] + bs - 1) // bs) * bs
         max_size[2] = ((max_size[2] + bs - 1) // bs) * bs
-    max_size = tuple(max_size)
+    max_size_tuple = tuple(max_size)
 
     # work around for
     # pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
@@ -187,12 +193,14 @@ def _onnx_nested_tensor_from_tensor_list(
     padded_imgs = []
     padded_masks = []
     for img in tensor_list:
-        padding = [(s1 - s2) for s1, s2 in zip(max_size, tuple(img.shape))]
-        padded_img = torch.nn.functional.pad(img, (0, padding[2], 0, padding[1], 0, padding[0]))
+        padding = [(s1 - s2) for s1, s2 in zip(max_size_tuple, tuple(img.shape))]
+        # ``F.pad``'s size argument is typed as Sequence[int], but during ONNX tracing
+        # these are symbolic Tensors so the padded size stays dynamic in the exported graph.
+        padded_img = torch.nn.functional.pad(img, (0, padding[2], 0, padding[1], 0, padding[0]))  # type: ignore[arg-type]
         padded_imgs.append(padded_img)
 
         m = torch.zeros_like(img[0], dtype=torch.int, device=img.device)
-        padded_mask = torch.nn.functional.pad(m, (0, padding[2], 0, padding[1]), "constant", 1)
+        padded_mask = torch.nn.functional.pad(m, (0, padding[2], 0, padding[1]), "constant", 1)  # type: ignore[arg-type]
         padded_masks.append(padded_mask.to(torch.bool))
 
     tensor = torch.stack(padded_imgs)
@@ -202,11 +210,11 @@ def _onnx_nested_tensor_from_tensor_list(
 
 
 def _bilinear_grid_sample(
-    input: torch.Tensor,
-    grid: torch.Tensor,
+    input: Tensor,
+    grid: Tensor,
     padding_mode: str = "zeros",
     align_corners: bool = False,
-) -> torch.Tensor:
+) -> Tensor:
     """Bilinear grid sampling compatible with all PyTorch backends including MPS.
 
     Drop-in replacement for ``F.grid_sample(input, grid, mode='bilinear', ...)``. On MPS, ``F.grid_sample`` backward
@@ -278,7 +286,7 @@ def _bilinear_grid_sample(
     # MPS path: GatherElements(axis=2) — correct on MPS at runtime.
     flat = input.flatten(2)  # (N, C, H*W)
 
-    def _gather(iy_: torch.Tensor, ix_: torch.Tensor) -> torch.Tensor:
+    def _gather(iy_: Tensor, ix_: Tensor) -> Tensor:
         idx = (iy_ * width + ix_).flatten(1).unsqueeze(1).expand(batch_size, channels, -1)
         return flat.gather(2, idx).view(batch_size, channels, grid_height, grid_width)
 
@@ -313,9 +321,9 @@ def _collate_with_block_size(
     Returns:
         Tuple of ``(NestedTensor_of_images, tuple_of_targets)``.
     """
-    batch = list(zip(*batch))
-    batch[0] = nested_tensor_from_tensor_list(batch[0], block_size=block_size)
-    return tuple(batch)
+    columns = list(zip(*batch))
+    images = nested_tensor_from_tensor_list(list(columns[0]), block_size=block_size)
+    return (images, *columns[1:])
 
 
 def collate_fn(batch: list[tuple[Any, ...]]) -> tuple[Any, ...]:

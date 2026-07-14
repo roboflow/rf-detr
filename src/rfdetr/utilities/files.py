@@ -5,6 +5,8 @@
 # ------------------------------------------------------------------------
 """File download and MD5 validation helpers."""
 
+from __future__ import annotations
+
 import hashlib
 import os
 import tempfile
