@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.detr import RFDETR
 from rfdetr.training import auto_batch
 from rfdetr.training.auto_batch import AutoBatchResult
@@ -153,6 +154,7 @@ def test_train_auto_batch_ensures_model_on_device_before_resolve(
     _mock_build_trainer: MagicMock,
     mock_resolve: MagicMock,
     _mock_is_main: MagicMock,
+    tmp_path,
 ) -> None:
     """Model weights must be moved before resolve_auto_batch_config when batch_size='auto'."""
     auto_result = SimpleNamespace(safe_micro_batch=4, recommended_grad_accum_steps=1, effective_batch_size=4)
@@ -168,16 +170,17 @@ def test_train_auto_batch_ensures_model_on_device_before_resolve(
     mock_move.side_effect = _move_side_effect
     mock_resolve.side_effect = _resolve_side_effect
 
-    train_config = SimpleNamespace(
+    # Real config objects: RFDETR.train() rebuilds self.model.args via _namespace_from_configs
+    # after trainer.fit() (#1199 fix), which requires genuine ModelConfig/TrainConfig instances.
+    train_config = TrainConfig(
+        dataset_dir=None,
+        output_dir=str(tmp_path / "out"),
         batch_size="auto",
         grad_accum_steps=99,
-        dataset_dir=None,
-        resume=None,
-        class_names=None,
-        save_dataset_grids=False,
+        tensorboard=False,
     )
     mock_self = MagicMock()
-    mock_self.model_config = SimpleNamespace(model_name=None)
+    mock_self.model_config = RFDETRBaseConfig(pretrain_weights=None, num_classes=3, device="cpu")
     mock_self.get_train_config.return_value = train_config
 
     RFDETR.train(mock_self)

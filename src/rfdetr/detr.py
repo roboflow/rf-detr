@@ -28,6 +28,7 @@ import torchvision.transforms.functional as F  # noqa: N812
 import yaml
 from PIL import Image
 
+from rfdetr._namespace import _namespace_from_configs
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
@@ -877,6 +878,10 @@ class RFDETR:
 
         # Sync the trained weights back so predict() / export() see the updated model.
         self.model.model = module.model
+        # Rebuild model.args from the real training config (#1199): it was previously left as the
+        # construction-time snapshot built from a dummy TrainConfig, so overrides like lr/lr_encoder
+        # never appeared in model.model.__dict__['args'] even though the optimizer used them correctly.
+        self.model.args = _namespace_from_configs(self.model_config, config)
         # Mark this instance as trained so a subsequent train() call warns that it will
         # restart from pretrain_weights rather than continue from the in-memory state.
         self._has_been_trained = True
@@ -2211,7 +2216,7 @@ class RFDETR:
         """Write a Roboflow upload bundle (``weights.pt`` + ``class_names.txt``) into *output_dir*.
 
         This is the network-free core of :meth:`deploy_to_roboflow`: it serialises the model state and
-        training args into ``weights.pt``, always embedding ``class_names`` into a copy of the args so
+        a sanitized copy of the training args into ``weights.pt``, always embedding ``class_names`` so
         the bundle is self-contained, and writes the class labels to ``class_names.txt``.  The Roboflow
         SDK uses this format to adapt raw PyTorch-Lightning checkpoints into a deploy-ready bundle.
 
@@ -2238,11 +2243,12 @@ class RFDETR:
         with open(class_names_path, "w", encoding="utf-8", newline="\n") as f:
             f.write("\n".join(self.class_names))
 
-        # Embed class_names in a shallow copy of args so the saved bundle is
-        # self-contained (roboflow-python's second fallback reads args.class_names
-        # directly from the checkpoint).  Using a copy leaves self.model.args
-        # unmodified — each export call is independent regardless of call order.
+        # Serialize a sanitized copy so trained bundles do not expose the caller's
+        # filesystem layout.  Keep self.model.args unchanged for runtime consumers.
         args = copy(self.model.args)
+        args.dataset_dir = None
+        args.output_dir = "output"
+        args.resume = ""
         if not hasattr(args, "class_names") or args.class_names is None:
             args.class_names = self.class_names
 
