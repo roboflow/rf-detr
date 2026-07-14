@@ -16,6 +16,8 @@ import torch
 
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
+from rfdetr.models.backbone.backbone import Backbone
+from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 
 if TYPE_CHECKING:
@@ -121,6 +123,9 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
     args.dataset_dir = None
     args.output_dir = "output"
     nn_model = build_model(args)
+    assert isinstance(nn_model, LWDETR), (
+        "build_model() returned a non-LWDETR result even though encoder_only/backbone_only were not set."
+    )
 
     class_names: list[str] = []
     if model_config.pretrain_weights is not None:
@@ -144,14 +149,15 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
     if model_config.num_channels != 3:
         import copy
 
-        proj = nn_model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection
+        backbone = cast(Backbone, nn_model.backbone[0])
+        proj = backbone.encoder.encoder.embeddings.patch_embeddings.projection
         new_proj = copy.deepcopy(proj)
         new_proj.in_channels = model_config.num_channels
         new_weight = _adapt_input_conv(model_config.num_channels, proj.weight)
         new_proj.weight = torch.nn.Parameter(new_weight)
         new_proj.weight.requires_grad = proj.weight.requires_grad
-        nn_model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection = new_proj
-        nn_model.backbone[0].encoder.encoder.embeddings.patch_embeddings.num_channels = model_config.num_channels
+        backbone.encoder.encoder.embeddings.patch_embeddings.projection = new_proj
+        backbone.encoder.encoder.embeddings.patch_embeddings.num_channels = model_config.num_channels
 
     device = torch.device(args.device)
     # Keep the model on CPU here; predict() / export() / optimize_for_inference()
