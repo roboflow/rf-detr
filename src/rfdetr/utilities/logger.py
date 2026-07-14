@@ -5,9 +5,13 @@
 # ------------------------------------------------------------------------
 """Shared logger factory for RF-DETR modules."""
 
+from __future__ import annotations
+
 import logging
 import os
 import sys
+from types import TracebackType
+from typing import Mapping
 
 
 class _RFDETRLogger(logging.Logger):
@@ -17,11 +21,30 @@ class _RFDETRLogger(logging.Logger):
         super().__init__(name, level)
         self._warned_once: set[str] = set()
 
-    def warning_once(self, msg: str, *args: object, **kwargs: object) -> None:
+    def warning_once(
+        self,
+        msg: str,
+        *args: object,
+        exc_info: bool
+        | tuple[type[BaseException], BaseException, TracebackType | None]
+        | tuple[None, None, None]
+        | BaseException
+        | None = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra: Mapping[str, object] | None = None,
+    ) -> None:
         """Emit *msg* as a WARNING exactly once per unique message string."""
         if msg not in self._warned_once:
             self._warned_once.add(msg)
-            self.warning(msg, *args, **kwargs)
+            self.warning(
+                msg,
+                *args,
+                exc_info=exc_info,
+                stack_info=stack_info,
+                stacklevel=stacklevel,
+                extra=extra,
+            )
 
 
 def get_logger(name: str = "rf-detr", level: int | None = None) -> _RFDETRLogger:

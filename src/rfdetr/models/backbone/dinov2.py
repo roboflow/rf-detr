@@ -206,7 +206,8 @@ class DinoV2(nn.Module):
         def new_interpolate_pos_encoding(self_mod: Any, embeddings: Tensor, height: int, width: int) -> Tensor:
             num_patches = embeddings.shape[1] - 1
             num_positions = self_mod.position_embeddings.shape[1] - 1
-            if num_patches == num_positions and height == width:
+            # The precomputed table is valid only for this exact static export grid.
+            if num_patches == num_positions and (height, width) == shape:
                 return cast(Tensor, self_mod.position_embeddings)
             return cast(Tensor, old_interpolate_pos_encoding(embeddings, height, width))
 
