@@ -8,10 +8,11 @@
 from __future__ import annotations
 
 import contextlib
+import importlib
 import io
 import logging
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Callable, Mapping
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -85,6 +86,15 @@ def _get_ema_inner_module(ema_cb: Any) -> Any:
     return getattr(averaged, "module", averaged)
 
 
+def _is_running_in_notebook() -> bool:
+    """Return whether an active IPython shell is available."""
+    with contextlib.suppress(ImportError):
+        ipython = importlib.import_module("IPython")
+        get_ipython = cast(Callable[[], Any], getattr(ipython, "get_ipython"))
+        return get_ipython() is not None
+    return False
+
+
 class COCOEvalCallback(Callback):
     """Validation callback that computes mAP (via torchmetrics) and macro-F1.
 
@@ -137,12 +147,9 @@ class COCOEvalCallback(Callback):
         self._train_segm_skip_warned: bool = False
         self._keypoint_oks_metrics: dict[str, MetricKeypointOKS] = {}
         self._keypoint_oks_sigmas = keypoint_oks_sigmas
-        self._in_notebook: bool = False
+        self._in_notebook: bool
         if in_notebook is None:
-            with contextlib.suppress(ImportError):
-                from IPython import get_ipython  # type: ignore[attr-defined]
-
-                self._in_notebook = get_ipython() is not None  # type: ignore[no-untyped-call]
+            self._in_notebook = _is_running_in_notebook()
         else:
             self._in_notebook = in_notebook
 
@@ -1044,10 +1051,12 @@ class COCOEvalCallback(Callback):
             if self._output_widget is None:
                 with contextlib.suppress(ImportError):
                     import ipywidgets as widgets  # type: ignore[import-not-found]
-                    from IPython.display import display
+
+                    ipython_display = importlib.import_module("IPython.display")
+                    display = cast(Callable[..., Any], getattr(ipython_display, "display"))
 
                     self._output_widget = widgets.Output()
-                    display(self._output_widget)  # type: ignore[no-untyped-call]
+                    display(self._output_widget)
 
             if self._output_widget is not None:
                 self._output_widget.clear_output(wait=True)
@@ -1058,9 +1067,9 @@ class COCOEvalCallback(Callback):
             # ipywidgets not installed — fall back to IPython cell-level clear so
             # tables replace each other instead of accumulating across epochs.
             with contextlib.suppress(ImportError):
-                from IPython.display import clear_output
-
-                clear_output(wait=True)  # type: ignore[no-untyped-call]
+                ipython_display = importlib.import_module("IPython.display")
+                clear_output = cast(Callable[..., Any], getattr(ipython_display, "clear_output"))
+                clear_output(wait=True)
             _render_summary_tables(console, title_pfx, overall_rendered, per_class)
             return
 

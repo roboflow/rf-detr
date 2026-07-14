@@ -83,7 +83,7 @@ if _MultiProcessingLauncher is not None:
             return True
 
 else:
-    _InteractiveSpawnLauncher = None  # type: ignore[assignment,misc]
+    _InteractiveSpawnLauncher = None  # type: ignore[misc]
 
 
 class _NotebookSpawnDDPStrategy(_DDPStrategy):
