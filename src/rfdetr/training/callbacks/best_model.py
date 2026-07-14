@@ -10,15 +10,17 @@ from __future__ import annotations
 import math
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from typing import Any
 
+    from rfdetr.training.module_model import RFDETRModelModule
+
 import torch
 from pytorch_lightning import LightningModule, Trainer
-from pytorch_lightning import __version__ as ptl_version
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from torch import Tensor
 
 from rfdetr.training.callbacks.ema import RFDETREMACallback
 from rfdetr.utilities.logger import get_logger
@@ -26,6 +28,8 @@ from rfdetr.utilities.package import get_version
 from rfdetr.utilities.state_dict import _make_fit_loop_state, strip_checkpoint
 
 logger = get_logger()
+
+ptl_version = get_version("pytorch-lightning") or "unknown"
 
 
 class BestModelCallback(ModelCheckpoint):
@@ -124,7 +128,7 @@ class BestModelCallback(ModelCheckpoint):
 
     @staticmethod
     def _build_checkpoint_payload(
-        model_state_dict: dict[str, torch.Tensor],
+        model_state_dict: dict[str, Tensor],
         args_dict: object,
         trainer: Trainer,
         model_name: str | None = None,
@@ -179,7 +183,14 @@ class BestModelCallback(ModelCheckpoint):
         return payload
 
     @staticmethod
-    def _get_live_model_state_dict(pl_module: LightningModule) -> dict[str, torch.Tensor]:
+    def _unwrap_model(pl_module: LightningModule) -> torch.nn.Module:
+        """Return the live ``nn.Module``, unwrapped from ``torch.compile``'s ``OptimizedModule`` when needed."""
+        model = cast("RFDETRModelModule", pl_module).model
+        orig = getattr(model, "_orig_mod", None)
+        return orig if isinstance(orig, torch.nn.Module) else model
+
+    @staticmethod
+    def _get_live_model_state_dict(pl_module: LightningModule) -> dict[str, Tensor]:
         """Resolve live model weights from the active Lightning module.
 
         Args:
@@ -188,15 +199,14 @@ class BestModelCallback(ModelCheckpoint):
         Returns:
             State dict from the live, non-EMA model, unwrapped from ``torch.compile`` when needed.
         """
-        _orig = getattr(pl_module.model, "_orig_mod", None)
-        raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
+        raw = BestModelCallback._unwrap_model(pl_module)
         return raw.state_dict()
 
     @staticmethod
     def _get_ema_model_state_dict(
         trainer: Trainer,
         pl_module: LightningModule,
-    ) -> dict[str, torch.Tensor]:
+    ) -> dict[str, Tensor]:
         """Resolve EMA model weights from the active EMA callback.
 
         Args:
@@ -206,18 +216,17 @@ class BestModelCallback(ModelCheckpoint):
         Returns:
             EMA model state dict when available, otherwise the live model state dict.
         """
-        for callback in trainer.callbacks:
+        for callback in trainer.callbacks:  # type: ignore[attr-defined]
             getter = getattr(callback, "get_ema_model_state_dict", None)
             if callable(getter):
                 state_dict = getter()
                 if state_dict is not None:
-                    return state_dict
+                    return cast("dict[str, Tensor]", state_dict)
                 break
         logger.warning(
             "EMA metric improved but EMA callback weights were unavailable; saving current model weights as fallback."
         )
-        _orig = getattr(pl_module.model, "_orig_mod", None)
-        raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
+        raw = BestModelCallback._unwrap_model(pl_module)
         return raw.state_dict()
 
     @staticmethod
@@ -249,16 +258,15 @@ class BestModelCallback(ModelCheckpoint):
 
         # Sync schema-critical fields from live model weights.
         if state_dict is None:
-            _orig = getattr(pl_module.model, "_orig_mod", None)
-            raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
+            raw = BestModelCallback._unwrap_model(pl_module)
             state_dict = raw.state_dict()
 
         _kp_mask = state_dict.get("_kp_active_mask")
-        if isinstance(_kp_mask, torch.Tensor) and _kp_mask.ndim == 2 and "num_keypoints_per_class" in dumped:
+        if isinstance(_kp_mask, Tensor) and _kp_mask.ndim == 2 and "num_keypoints_per_class" in dumped:
             dumped["num_keypoints_per_class"] = [int(n) for n in _kp_mask.sum(dim=1).tolist()]
 
         _ce_weight = state_dict.get("class_embed.weight")
-        if isinstance(_ce_weight, torch.Tensor) and _ce_weight.ndim == 2 and "num_classes" in dumped:
+        if isinstance(_ce_weight, Tensor) and _ce_weight.ndim == 2 and "num_classes" in dumped:
             dumped["num_classes"] = _ce_weight.shape[0] - 1  # shape[0] = num_classes + 1 (background)
 
         return dumped
@@ -360,8 +368,8 @@ class BestModelCallback(ModelCheckpoint):
         model_state_dict = self._get_live_model_state_dict(pl_module)
         # Enrich train_config with dataset class names so reloaded checkpoints
         # return the correct labels, not COCO defaults (#509).
-        train_config = pl_module.train_config
-        dataset_class_names = getattr(trainer.datamodule, "class_names", None)
+        train_config = cast("RFDETRModelModule", pl_module).train_config
+        dataset_class_names = getattr(trainer.datamodule, "class_names", None)  # type: ignore[attr-defined]
         if (
             dataset_class_names is not None
             and hasattr(train_config, "model_copy")
@@ -382,6 +390,7 @@ class BestModelCallback(ModelCheckpoint):
             pth_path,
         )
         self._last_global_step_saved = trainer.global_step
+        assert self.monitor is not None
         monitor_value = trainer.callback_metrics.get(self.monitor)
         if torch.is_tensor(monitor_value):
             monitor_display = f"{monitor_value.item():.6g}"
@@ -460,8 +469,8 @@ class BestModelCallback(ModelCheckpoint):
             ema_state_dict = self._get_ema_model_state_dict(trainer, pl_module)
             # Enrich train_config with dataset class names so reloaded checkpoints
             # return the correct labels, not COCO defaults (#509).
-            ema_train_config = pl_module.train_config
-            dataset_class_names = getattr(trainer.datamodule, "class_names", None)
+            ema_train_config = cast("RFDETRModelModule", pl_module).train_config
+            dataset_class_names = getattr(trainer.datamodule, "class_names", None)  # type: ignore[attr-defined]
             if (
                 dataset_class_names is not None
                 and hasattr(ema_train_config, "model_copy")
@@ -552,19 +561,22 @@ class BestModelCallback(ModelCheckpoint):
                 ckpt = _safe_torch_load(total_path, trust=True)
                 # Checkpoints always store plain keys; load into the unwrapped module
                 # so compiled (OptimizedModule) and non-compiled models both work.
-                _orig = getattr(pl_module.model, "_orig_mod", None)
-                raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
+                raw = BestModelCallback._unwrap_model(pl_module)
                 raw.load_state_dict(ckpt["model"], strict=True)
                 logger.info("Loaded best weights from %s for test evaluation.", total_path)
                 # The EMA callback swaps final-EMA weights in for test epochs, which would silently overwrite the
                 # just-loaded best weights — suppress its swap for this run only, restoring the default afterwards
                 # so standalone trainer.test() calls keep evaluating EMA weights.
-                ema_callbacks = [cb for cb in trainer.callbacks if isinstance(cb, RFDETREMACallback)]
+                ema_callbacks = [
+                    cb
+                    for cb in trainer.callbacks  # type: ignore[attr-defined]
+                    if isinstance(cb, RFDETREMACallback)
+                ]
                 prior_flags = [cb.suppress_test_swap for cb in ema_callbacks]
                 for ema_callback in ema_callbacks:
                     ema_callback.suppress_test_swap = True
                 try:
-                    trainer.test(pl_module, datamodule=trainer.datamodule, verbose=False)
+                    trainer.test(pl_module, datamodule=trainer.datamodule, verbose=False)  # type: ignore[attr-defined]
                 finally:
                     for ema_callback, prior in zip(ema_callbacks, prior_flags):
                         ema_callback.suppress_test_swap = prior
