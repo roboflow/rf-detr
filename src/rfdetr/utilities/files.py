@@ -96,13 +96,7 @@ def _download_file(
         try:
             with (
                 os.fdopen(fd, "wb") as f,
-                tqdm(
-                    desc=filename,
-                    total=total_size,
-                    unit="iB",
-                    unit_scale=True,
-                    unit_divisor=1024,
-                ) as pbar,
+                tqdm(desc=filename, total=total_size, unit="iB", unit_scale=True, unit_divisor=1024) as pbar,
             ):
                 for data in response.iter_content(chunk_size=1024):
                     size = f.write(data)
