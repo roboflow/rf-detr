@@ -28,6 +28,7 @@ import torchvision.transforms.functional as F  # noqa: N812
 import yaml
 from PIL import Image
 
+from rfdetr._namespace import _namespace_from_configs
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
@@ -877,6 +878,10 @@ class RFDETR:
 
         # Sync the trained weights back so predict() / export() see the updated model.
         self.model.model = module.model
+        # Rebuild model.args from the real training config (#1199): it was previously left as the
+        # construction-time snapshot built from a dummy TrainConfig, so overrides like lr/lr_encoder
+        # never appeared in model.model.__dict__['args'] even though the optimizer used them correctly.
+        self.model.args = _namespace_from_configs(self.model_config, config)
         # Mark this instance as trained so a subsequent train() call warns that it will
         # restart from pretrain_weights rather than continue from the in-memory state.
         self._has_been_trained = True
@@ -1835,10 +1840,10 @@ class RFDETR:
             :class:`~supervision.Detections`. Keypoint models return :class:`~supervision.KeyPoints`, with keypoint
             coordinates in ``xy``. Keypoint predictions preserve the detection-level fields produced by RF-DETR:
             ``key_points.detection_confidence`` is the per-object score used by ``threshold``. For keypoint models this
-            is the postprocessed detection score and, by default, includes keypoint uncertainty fusion controlled by
-            ``model_config.postprocess_trace_alpha``. ``key_points.keypoint_confidence`` is separate: it is a
-            ``(num_detections, num_keypoints)`` array of per-keypoint findability scores decoded from the keypoint head,
-            not a repeated copy of the detection score. When RF-DETR emits keypoint precision parameters,
+            is the postprocessed detection score and, by default, includes normalized keypoint uncertainty fusion
+            controlled by ``model_config.postprocess_trace_alpha``. ``key_points.keypoint_confidence`` is separate: it
+            is a ``(num_detections, num_keypoints)`` array of per-keypoint findability scores decoded from the keypoint
+            head, not a repeated copy of the detection score. When RF-DETR emits keypoint precision parameters,
             ``key_points.data["covariance"]`` stores per-keypoint pixel-space covariance matrices with shape
             ``(num_detections, num_keypoints, 2, 2)``. ``key_points.data["xyxy"]`` stores the corresponding detection
             boxes as a ``(num_detections, 4)`` array in the same row order as ``key_points.xy`` because Supervision
@@ -1857,7 +1862,9 @@ class RFDETR:
             (detected when ``model.args.num_classes > len(class_names)`` and ``class_names`` matches
             ``COCO_CLASS_NAMES``), raw COCO category IDs (1–90, sparse) are looked up by category ID rather than by
             position — so ``class_id=18`` yields ``"dog"``, not ``class_names[18]``. For fine-tuned detection and
-            segmentation models and active-first keypoint models, ``class_id`` is a 0-based index into ``class_names``.
+            segmentation models and active-first keypoint models, ``class_id`` is a 0-based index into
+            ``class_names``. In the one-class preview keypoint setup, that means ``class_id=0`` is the foreground
+            class and ``class_id=1`` is ``"__background__"``.
             Legacy keypoint checkpoints with ``args.num_keypoints_per_class[0] == 0`` use a background-first layout:
             slot 0 maps to ``"__background__"`` and foreground slots map to ``class_names`` in order.
 
@@ -1947,7 +1954,9 @@ class RFDETR:
             processed_images.append(img_tensor.to(self.model.device))
 
         resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
-        batch_tensor = torch.stack([F.resize(t, resize_to) for t in processed_images])
+        # antialias=False matches the antialias-free bilinear resize (cv2.INTER_LINEAR)
+        # used by Albumentations during training — see issue #1203.
+        batch_tensor = torch.stack([F.resize(t, resize_to, antialias=False) for t in processed_images])
         batch_tensor = F.normalize(batch_tensor, self.means, self.stds)
 
         if self._is_optimized_for_inference:
@@ -2209,7 +2218,7 @@ class RFDETR:
         """Write a Roboflow upload bundle (``weights.pt`` + ``class_names.txt``) into *output_dir*.
 
         This is the network-free core of :meth:`deploy_to_roboflow`: it serialises the model state and
-        training args into ``weights.pt``, always embedding ``class_names`` into a copy of the args so
+        a sanitized copy of the training args into ``weights.pt``, always embedding ``class_names`` so
         the bundle is self-contained, and writes the class labels to ``class_names.txt``.  The Roboflow
         SDK uses this format to adapt raw PyTorch-Lightning checkpoints into a deploy-ready bundle.
 
@@ -2236,11 +2245,12 @@ class RFDETR:
         with open(class_names_path, "w", encoding="utf-8", newline="\n") as f:
             f.write("\n".join(self.class_names))
 
-        # Embed class_names in a shallow copy of args so the saved bundle is
-        # self-contained (roboflow-python's second fallback reads args.class_names
-        # directly from the checkpoint).  Using a copy leaves self.model.args
-        # unmodified — each export call is independent regardless of call order.
+        # Serialize a sanitized copy so trained bundles do not expose the caller's
+        # filesystem layout.  Keep self.model.args unchanged for runtime consumers.
         args = copy(self.model.args)
+        args.dataset_dir = None
+        args.output_dir = "output"
+        args.resume = ""
         if not hasattr(args, "class_names") or args.class_names is None:
             args.class_names = self.class_names
 

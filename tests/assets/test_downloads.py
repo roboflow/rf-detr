@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from types import ModuleType
 from unittest.mock import Mock, patch
 
 import pytest
@@ -84,6 +85,38 @@ class TestDownloadPretrainWeights:
             call_kwargs = mock_file_operations["download"].call_args[1]
             assert call_kwargs["url"] == "https://legacy.com/model.pth"
             assert call_kwargs["expected_md5"] is None  # Platform models don't have MD5
+
+    def test_private_platform_models_registry_imports_without_eager_fallback(self):
+        """Test that a private-only registry imports cleanly without evaluating PLATFORM_MODELS early."""
+        from importlib import reload
+
+        import rfdetr.platform as platform_pkg
+        import rfdetr.platform.downloads as platform_downloads
+
+        mock_rfdetr_plus_pkg = ModuleType("rfdetr_plus")
+        mock_rfdetr_plus_pkg.__path__ = []
+        mock_platforms_pkg = ModuleType("rfdetr_plus.models")
+        mock_platforms_pkg.__path__ = []
+        mock_downloads_module = ModuleType("rfdetr_plus.models.downloads")
+        mock_downloads_module._PLATFORM_MODELS = {"legacy-model.pth": "https://legacy.com/model.pth"}
+        mock_platforms_pkg.downloads = mock_downloads_module
+        mock_rfdetr_plus_pkg.models = mock_platforms_pkg
+
+        with (
+            patch.dict(
+                "sys.modules",
+                {
+                    "rfdetr_plus": mock_rfdetr_plus_pkg,
+                    "rfdetr_plus.models": mock_platforms_pkg,
+                    "rfdetr_plus.models.downloads": mock_downloads_module,
+                },
+            ),
+            patch.object(platform_pkg, "_IS_RFDETR_PLUS_AVAILABLE", True),
+        ):
+            reloaded = reload(platform_downloads)
+            assert reloaded.PLATFORM_MODELS == {"legacy-model.pth": "https://legacy.com/model.pth"}
+
+        reload(platform_downloads)
 
     def test_file_exists_with_correct_md5(self, mock_file_operations):
         """Test that download is skipped if file exists with correct MD5."""

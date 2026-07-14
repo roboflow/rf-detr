@@ -457,6 +457,38 @@ class TestPredictShape:
             model.predict(img, shape=bad_shape)  # type: ignore[arg-type]
 
 
+class TestPredictResizeMatchesTrainingInterpolation:
+    """Verify ``predict()`` resize matches the training-time interpolation.
+
+    Regression test for https://github.com/roboflow/rf-detr/issues/1203.
+
+    Training/validation uses Albumentations ``Resize`` (cv2 bilinear, no
+    antialiasing). torchvision's ``F.resize`` defaults to antialiased
+    bilinear, which drifts bbox/confidence values relative to the
+    pretrained checkpoints' reference preprocessing. ``predict()`` must
+    disable antialiasing to match the training resize.
+    """
+
+    def test_predict_resize_disables_antialias(self) -> None:
+        """``predict()`` calls ``F.resize`` with ``antialias=False``."""
+        from unittest.mock import patch
+
+        import torchvision.transforms.functional as F  # noqa: N812
+
+        model = _DummyRFDETR()
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+
+        with patch("rfdetr.detr.F.resize", wraps=F.resize) as mock_resize:
+            model.predict(img)
+
+        assert mock_resize.call_args.kwargs.get("antialias") is False, (
+            "predict() must resize with antialias=False to match the antialias-free "
+            "bilinear resize (cv2.INTER_LINEAR) used during training. Antialiasing "
+            "on drifts bbox/confidence values away from the pretrained checkpoints' "
+            "reference preprocessing."
+        )
+
+
 class TestPredictPatchSize:
     """Predict() patch_size resolution and validation tests."""
 
@@ -914,6 +946,9 @@ class TestPredictKeypointClassNameMapping:
             ),
             # Active-first schemas (no leading zero) — fallback path must stay correct
             pytest.param(["person"], [0], [25], "person", id="active-first-single-class-slot-0-maps-to-person"),
+            pytest.param(
+                ["person"], [1], [25], "__background__", id="active-first-single-class-slot-1-maps-to-background"
+            ),
             pytest.param(
                 ["person", "bicycle"], [0], [17, 4], "person", id="active-first-multi-class-slot-0-maps-to-person"
             ),
