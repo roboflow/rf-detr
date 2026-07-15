@@ -5,6 +5,8 @@
 # ------------------------------------------------------------------------
 """Checkpoint and state-dict helpers."""
 
+from __future__ import annotations
+
 import os
 import tempfile
 from collections import OrderedDict
@@ -64,7 +66,7 @@ def _ckpt_args_get(args: Any, field: str, default: Any = None) -> Any:
     return getattr(args, field, default)
 
 
-def _make_fit_loop_state(epoch: int) -> dict:
+def _make_fit_loop_state(epoch: int) -> dict[str, Any]:
     """Build a minimal ``fit_loop`` state dict that restores the epoch counter.
 
     ``BestModelCallback`` stores ``trainer.current_epoch`` as ``"epoch"`` in the checkpoint.  That value is captured
@@ -145,13 +147,18 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     Args:
         checkpoint: Path to the ``.pth`` checkpoint file to strip in place.
     """
+    from pathlib import Path
+
     import torch
+
+    from rfdetr.util.io import _safe_torch_load
 
     # `checkpoint_best_total.pth` is produced by local RF-DETR training and can
     # contain non-tensor metadata under "args" (e.g. `types.SimpleNamespace`).
     # PyTorch 2.6 changed `torch.load` default `weights_only=True`, which rejects
-    # these objects. This utility intentionally operates on trusted checkpoints.
-    state_dict = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    # these objects. This utility intentionally operates on trusted, locally
+    # produced checkpoints, so trust=True permits the full-pickle fallback.
+    state_dict = _safe_torch_load(Path(checkpoint), trust=True)
     new_state_dict = {
         "model": state_dict["model"],
         "args": state_dict["args"],
@@ -166,6 +173,14 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     for key in _PTL_COMPAT_KEYS:
         if key in state_dict:
             new_state_dict[key] = state_dict[key]
+    # Backfill validate_loop/test_loop stubs so old checkpoints (saved before the stubs
+    # were added to _build_checkpoint_payload) can be passed as ckpt_path to
+    # trainer.validate() / trainer.test() without a KeyError from PTL restore_loops().
+    if "loops" in new_state_dict:
+        loops = new_state_dict["loops"]
+        for loop_key in ("validate_loop", "test_loop"):
+            if loop_key not in loops:
+                loops[loop_key] = {"state_dict": {}}
     # Create the temp file in the destination directory so os.replace stays on the same filesystem (atomic).
     checkpoint_dir = os.path.dirname(os.path.abspath(os.fspath(checkpoint)))
     with tempfile.NamedTemporaryFile(dir=checkpoint_dir, delete=False) as tmp_file:

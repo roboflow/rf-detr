@@ -47,6 +47,7 @@ import torch
 from torch import Tensor
 
 from rfdetr.config import AugmentationBackend
+from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -102,10 +103,10 @@ def resolve_augmentation_backend(backend: str) -> AugmentationBackend:
         ValueError: When *backend* is not a recognised value.
 
     Examples:
-        >>> resolve_augmentation_backend("cpu")
-        <AugmentationBackend.CPU: 'cpu'>
         >>> resolve_augmentation_backend("albu")
         <AugmentationBackend.ALBU: 'albu'>
+        >>> resolve_augmentation_backend("kornia")
+        <AugmentationBackend.KORNIA: 'kornia'>
     """
     if backend in (AugmentationBackend.ALBU, "albu"):
         return AugmentationBackend.ALBU
@@ -115,7 +116,7 @@ def resolve_augmentation_backend(backend: str) -> AugmentationBackend:
     if backend in (AugmentationBackend.CPU, "cpu"):
         # Auto-pick best CPU backend: albu > kornia (CPU) > torchvision
         try:
-            import albumentations
+            import albumentations  # type: ignore[import-untyped]
 
             return AugmentationBackend.ALBU
         except ImportError:
@@ -272,9 +273,12 @@ def _make_gaussian_blur(params: dict[str, Any]) -> Any:
     if blur_limit % 2 == 0:
         blur_limit = blur_limit + 1
     blur_limit = max(3, blur_limit)
+    # Match the CPU albumentations default sigma range while allowing an explicit override via config.
+    sigma_range = params.get("sigma", (0.1, 2.0))
+    blur_sigma = tuple(sigma_range) if len(sigma_range) == 2 else (sigma_range[0], sigma_range[0])
     return RandomGaussianBlur(
         kernel_size=(blur_limit, blur_limit),
-        sigma=(0.1, 2.0),
+        sigma=blur_sigma,
         p=params.get("p", 0.5),
     )
 
@@ -282,11 +286,22 @@ def _make_gaussian_blur(params: dict[str, Any]) -> Any:
 def _make_gauss_noise(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomGaussianNoise`` from aug_config params.
 
-    Kornia takes a single ``std`` value; we use the upper bound of ``std_range`` as an acceptable approximation.
+    Kornia takes a single ``std`` value, so the upper bound of ``std_range`` is used as a fixed standard deviation. When
+    the configured range is non-degenerate this diverges from the CPU (albumentations) path, which samples a fresh std
+    per call; a warning is emitted at build time so the drift is visible.
     """
     from kornia.augmentation import RandomGaussianNoise
 
     std_range = params.get("std_range", (0.01, 0.05))
+    if std_range[0] != std_range[1]:
+        logger.warning(
+            "GPU augmentation (Kornia) uses fixed std=%.3f for GaussianNoise "
+            "(Kornia does not support per-sample std ranges). "
+            "CPU augmentation (albumentations) samples from [%.3f, %.3f].",
+            std_range[1],
+            std_range[0],
+            std_range[1],
+        )
     return RandomGaussianNoise(
         std=std_range[1],
         p=params.get("p", 0.5),
@@ -314,6 +329,7 @@ def build_kornia_pipeline(
     aug_config: dict[str, dict[str, Any]],
     resolution: int,
     with_masks: bool = False,
+    include_keypoints: bool = False,
 ) -> Any:
     """Build a Kornia ``AugmentationSequential`` from an aug_config dict.
 
@@ -329,6 +345,8 @@ def build_kornia_pipeline(
             instance segmentation masks are augmented in sync with images and boxes.  The pipeline then expects three
             inputs ``(img, boxes, masks)`` and returns three outputs.  Defaults to ``False`` (detection-only, two
             inputs/outputs).
+        include_keypoints: When ``True``, keypoint-unsafe horizontal-flip
+            transforms are dropped with a warning before the Kornia pipeline is built.
 
     Returns:
         A ``kornia.augmentation.AugmentationSequential`` instance.
@@ -344,8 +362,15 @@ def build_kornia_pipeline(
     _require_kornia()
     from kornia.augmentation import AugmentationSequential
 
+    filtered_aug_config = filter_keypoint_hflip_augmentations(
+        aug_config,
+        include_keypoints=include_keypoints,
+        warn=logger.warning,
+    )
+    assert isinstance(filtered_aug_config, dict)
+
     transforms: list[Any] = []
-    for name, params in aug_config.items():
+    for name, params in filtered_aug_config.items():
         factory = _REGISTRY.get(name)
         if factory is None:
             raise ValueError(

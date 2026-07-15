@@ -60,6 +60,20 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
     ```
 
+!!! note "Using COCO classes vs. fine-tuned model classes"
+
+    `COCO_CLASSES` works for COCO-pretrained models (80 COCO classes, indexed 0-79).
+    For fine-tuned models, use `detections.data["class_name"]` instead — it resolves
+    class names from the checkpoint and works for both COCO and custom datasets.
+
+For memory-constrained inference-only deployments with the `rfdetr` package, optimize the loaded model in place before
+calling `predict()`. Pass `dtype="float16"` to halve weight memory in addition to clearing the base model reference.
+This operation is irreversible — to restore the original model, create a new `RFDETR` instance:
+
+```python
+model.inference(compile=False, inplace=True, dtype="float16")
+```
+
 ## Run on video, webcam, or RTSP stream
 
 These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>`, `<WEBCAM_INDEX>`, and `<RTSP_STREAM_URL>` with your inputs. `<WEBCAM_INDEX>` is usually `0` for the default camera.
@@ -109,9 +123,10 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
 
     model = RFDETRMedium()
 
-    video_capture = cv2.VideoCapture("<WEBCAM_INDEX>")
+    WEBCAM_INDEX = 0
+    video_capture = cv2.VideoCapture(WEBCAM_INDEX)
     if not video_capture.isOpened():
-        raise RuntimeError("Failed to open webcam: <WEBCAM_INDEX>")
+        raise RuntimeError(f"Failed to open webcam: {WEBCAM_INDEX}")
 
     while True:
         success, frame_bgr = video_capture.read()

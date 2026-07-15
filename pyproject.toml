@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.8.0"
+version = "1.8.3"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -78,11 +78,11 @@ trt = [
     "polygraphy",
 ]
 tflite = [
-    "onnx2tf>=2.4.0,<3.0.0",
-    "flatbuffers>=23.5.26",
-    "onnx>=1.20.0,<2.0",
-    "tf-keras>=2.16.0",
-    "tensorflow>=2.16.0",
+    "onnx2tf>=2.4.0,<3.0.0; python_version >= '3.12' and python_version < '3.13'",
+    "flatbuffers>=23.5.26; python_version >= '3.12' and python_version < '3.13'",
+    "onnx>=1.20.0,<2.0; python_version >= '3.12' and python_version < '3.13'",
+    "tf-keras>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
+    "tensorflow>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
 ]
 loggers = [
     "tensorboard>=2.13.0",
@@ -105,6 +105,7 @@ plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
 #   Does not affect users installing rfdetr from PyPI.
 ci-gpu-pin = [
     "torch<2.11",
+    "torchvision<0.26",
 ]
 
 build = [
@@ -124,7 +125,8 @@ tests = [
 ]
 
 typing = [
-    "mypy>=1.0",
+    # Keep this pin aligned with the local mypy hook in .pre-commit-config.yaml.
+    "mypy==1.19.1",
     # mypy 1.19.x can crash while processing NumPy 2.4 symbols in strict mode.
     "numpy<2.4",
     "types-PyYAML",
@@ -150,14 +152,15 @@ Homepage = "https://github.com/roboflow/rf-detr"
 rfdetr = "rfdetr.cli:main"
 
 [tool.uv]
-# onnx2tf 2.4.0 pins ml-dtypes==0.5.1 unconditionally, but ml-dtypes 0.5.1 requires
-# numpy>=2.1.0 on Python 3.13 while onnx2tf also pins numpy==1.26.4 — contradiction.
-# The entire [tflite] extra is gated to python_version>='3.12', and onnx2tf 2.4.0 requires
-# Python>=3.12 and <3.13 (tensorflow constraint); override ml-dtypes to the same window
-# so uv's universal resolver doesn't see the conflict on Python 3.13+.
+# onnx2tf>=2.4.0 pins numpy==1.26.4 (exact). Its dependency ml-dtypes==0.5.1 in turn requires
+# numpy>=2.1.0 on python_full_version>='3.13' — contradicting the numpy==1.26.4 pin on 3.13.
+# tflite deps carry python_version>='3.12' and <'3.13' markers because onnx2tf's numpy pin
+# cannot be satisfied on 3.13 via any available release; when onnx2tf relaxes the exact pin,
+# remove the <'3.13' upper bound from the tflite deps AND from the override below.
 override-dependencies = [
     "ml-dtypes==0.5.1; python_version >= '3.12' and python_version < '3.13'",
 ]
+
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -194,6 +197,10 @@ ignore = [
 "docs/cookbooks/*.ipynb" = [
     "E402",  # cell-local imports are intentional in percent-format scripts
     "E501",  # jupytext notebook — markdown prose lines are intentionally unwrapped
+]
+"docs/cookbooks/*.py" = [
+    "E402",  # cell-local imports are intentional in percent-format scripts
+    "E501",  # .py mirror of jupytext notebook — markdown prose lines are intentionally unwrapped
 ]
 
 [tool.docformatter]
@@ -257,6 +264,7 @@ overrides = [
     "timm", "timm.*",
     "einops", "einops.*",
     "deprecate", "deprecate.*",
+    "faster_coco_eval", "faster_coco_eval.*",
     "matplotlib", "matplotlib.*",
     "pandas", "pandas.*",
     "requests", "requests.*",
@@ -267,9 +275,19 @@ overrides = [
     "onnx2tf", "onnx2tf.*",
     "onnx_graphsurgeon", "onnx_graphsurgeon.*",
     "onnxruntime", "onnxruntime.*",
+    "onnxsim", "onnxsim.*",
+    "polygraphy", "polygraphy.*",
+    "tensorrt", "tensorrt.*",
+    "pycuda", "pycuda.*",
+    "jsonargparse", "jsonargparse.*",
     "tflite_runtime", "tflite_runtime.*",
     "tensorflow", "tensorflow.*",
+    "rfdetr_plus", "rfdetr_plus.*",
   ], ignore_missing_imports = true },
+  # Optional-import None assignments in console.py: type: ignore[assignment, misc] is needed when
+  # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the
+  # pre-commit hook (which runs mypy with --ignore-missing-imports so rich types are unresolved).
+  { module = ["rfdetr.utilities.console"], warn_unused_ignores = false },
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [
     "rfdetr",
@@ -283,48 +301,6 @@ overrides = [
     "rfdetr.datasets.transforms",
     "rfdetr.datasets.yolo",
     "rfdetr.detr",
-    "rfdetr.evaluation.coco_eval",
-    "rfdetr.evaluation.matching",
-    "rfdetr.export._onnx.exporter",
-    "rfdetr.export._onnx.symbolic",
-    "rfdetr.export.benchmark",
-    "rfdetr.export.main",
-    "rfdetr.export.tensorrt",
-    "rfdetr.models.backbone",
-    "rfdetr.models.backbone.backbone",
-    "rfdetr.models.backbone.base",
-    "rfdetr.models.backbone.dinov2",
-    "rfdetr.models.backbone.dinov2_with_windowed_attn",
-    "rfdetr.models.backbone.projector",
-    "rfdetr.models.criterion",
-    "rfdetr.models.heads.detection",
-    "rfdetr.models.heads.segmentation",
-    "rfdetr.models.lwdetr",
-    "rfdetr.models.math",
-    "rfdetr.models.matcher",
-    "rfdetr.models.ops.functions.ms_deform_attn_func",
-    "rfdetr.models.ops.modules.ms_deform_attn",
-    "rfdetr.models.position_encoding",
-    "rfdetr.models.postprocess",
-    "rfdetr.models.transformer",
-    "rfdetr.models.weights",
-    "rfdetr.platform",
-    "rfdetr.platform.downloads",
-    "rfdetr.platform.models",
-    "rfdetr.training.callbacks.best_model",
-    "rfdetr.training.callbacks.coco_eval",
-    "rfdetr.training.callbacks.drop_schedule",
-    "rfdetr.training.callbacks.ema",
-    "rfdetr.training.cli",
-    "rfdetr.training.drop_schedule",
-    "rfdetr.training.model_ema",
-    "rfdetr.training.module_data",
-    "rfdetr.training.module_model",
-    "rfdetr.training.trainer",
-    "rfdetr.utilities.distributed",
-    "rfdetr.utilities.logger",
-    "rfdetr.utilities.state_dict",
-    "rfdetr.utilities.tensors",
     "rfdetr.variants",
   ], ignore_errors = true },
 ]

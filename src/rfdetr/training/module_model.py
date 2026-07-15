@@ -10,11 +10,15 @@ from __future__ import annotations
 import math
 import random
 import warnings
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812 -- project-conventional alias (see AGENTS.md)
 from pytorch_lightning import LightningModule, seed_everything
+from pytorch_lightning.core.optimizer import LightningOptimizer
+from pytorch_lightning.utilities.types import OptimizerLRSchedulerConfig
+from torch import Tensor
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import ModelConfig, TrainConfig
@@ -58,7 +62,7 @@ class RFDETRModelModule(LightningModule):
         # the pre-fix/scaling behaviour.
         self._use_manual_optimization: bool = bool(getattr(model_config, "use_grouppose_keypoints", False))
         self.automatic_optimization = not self._use_manual_optimization
-        self._accumulated_box_normalizer: torch.Tensor | None = None
+        self._accumulated_box_normalizer: Tensor | None = None
         # Allow partial state-dict loading when resuming from a .pth checkpoint
         # (which contains only model weights, not criterion/postprocess state).
         self.strict_loading = False
@@ -110,7 +114,9 @@ class RFDETRModelModule(LightningModule):
             # would cause PendingUnbackedSymbolNotFound (which only occurs without dynamic).
             torch._dynamo.config.suppress_errors = True
             torch._dynamo.config.capture_scalar_outputs = True
-            self.model = torch.compile(self.model, dynamic=True)
+            # OptimizedModule forwards attribute access to the wrapped LWDETR via
+            # __getattr__ at runtime, so self.model keeps working everywhere it's used below.
+            self.model = torch.compile(self.model, dynamic=True)  # type: ignore[assignment]
 
     # ------------------------------------------------------------------
     # PTL lifecycle hooks
@@ -125,7 +131,41 @@ class RFDETRModelModule(LightningModule):
         if self.train_config.seed is not None:
             seed_everything(self.train_config.seed + self.global_rank, workers=True)
 
-    def on_train_batch_start(self, batch: Tuple, batch_idx: int) -> None:
+    def on_train_start(self) -> None:
+        """Normalize restored fused-optimizer state before the first training step.
+
+        Lightning restores optimizer state after ``on_fit_start``.  Fused AdamW is strict about the dtype, device, and
+        layout of its moment tensors, so resuming from a checkpoint can fail if Lightning rehydrates those tensors in a
+        layout that no longer matches the live parameters.  Recasting same-shaped floating-point tensors here keeps the
+        resumed optimizer compatible without discarding the saved momentum state.
+        """
+        if not self._use_fused_optimizer:
+            return
+
+        try:
+            optimizers = self.optimizers(use_pl_optimizer=False)
+        except RuntimeError:
+            return
+        if optimizers is None:
+            return
+        if isinstance(optimizers, list):
+            optimizer_list = optimizers
+        else:
+            optimizer_list = [optimizers]
+
+        normalized_tensors = 0
+        for optimizer in optimizer_list:
+            if not isinstance(optimizer, torch.optim.Optimizer):
+                optimizer = getattr(optimizer, "optimizer", optimizer)
+            if isinstance(optimizer, torch.optim.Optimizer):
+                normalized_tensors += self._normalize_optimizer_state(optimizer)
+        if normalized_tensors and getattr(self.trainer, "is_global_zero", True):
+            logger.info(
+                "Normalized %d restored fused AdamW state tensors after checkpoint resume.",
+                normalized_tensors,
+            )
+
+    def on_train_batch_start(self, batch: tuple[Any, Any], batch_idx: int) -> None:
         """Apply optional multi-scale resize to the incoming batch.
 
         Modifications to ``batch`` (in-place on ``NestedTensor``) are visible in ``training_step`` because they share
@@ -142,8 +182,9 @@ class RFDETRModelModule(LightningModule):
             samples, _ = batch
             scales = compute_multi_scale_scales(mc.resolution, tc.expanded_scales, mc.patch_size, mc.num_windows)
             step = self.trainer.global_step
-            random.seed(step)
-            scale = random.choice(scales)
+            # Use a step-local generator so the scale choice is deterministic and DDP-consistent
+            # without reseeding the process-global RNG on every batch.
+            scale = random.Random(step).choice(scales)
             with torch.no_grad():
                 samples.tensors = F.interpolate(samples.tensors, size=scale, mode="bilinear", align_corners=False)
                 samples.mask = (
@@ -177,7 +218,7 @@ class RFDETRModelModule(LightningModule):
                 pass  # Not attached to Trainer (unit-test context); nothing to zero.
         self._accumulated_box_normalizer = None
 
-    def training_step(self, batch: Tuple, batch_idx: int) -> torch.Tensor | dict[str, Any]:
+    def training_step(self, batch: tuple[Any, Any], batch_idx: int) -> Tensor | dict[str, Any]:
         """Compute loss for one training step and log metrics.
 
         PTL handles AMP (``precision``) without a manual ``GradScaler``. Keypoint models perform manual optimization so
@@ -203,7 +244,7 @@ class RFDETRModelModule(LightningModule):
             loss_dict = self.criterion(outputs, targets)
             loss_for_backward = None
         weight_dict = self.criterion.weight_dict
-        loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
+        loss: Tensor = torch.stack([loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict]).sum()
         # Automatic optimization path: divide by accumulate_grad_batches so the accumulated
         # gradient matches a single large batch, matching the legacy engine.  PTL accumulates
         # full-scale gradients by default; dividing here keeps the effective LR identical.
@@ -243,13 +284,29 @@ class RFDETRModelModule(LightningModule):
             self.log("train/lr_min", min_lr, prog_bar=False, on_step=True, on_epoch=False)
             self.log("train/lr_max", max_lr, prog_bar=False, on_step=True, on_epoch=False)
         if self._use_manual_optimization:
+            # loss_for_backward is only None in the automatic-optimization branch above,
+            # which is mutually exclusive with _use_manual_optimization.
+            assert loss_for_backward is not None
             self.manual_backward(loss_for_backward)
             if self._should_step_optimizer(batch_idx):
                 self._step_optimizer(optimizer)
         if self.train_config.compute_train_metrics:
             with torch.no_grad():
                 orig_sizes = torch.stack([t["orig_size"] for t in targets])
-                results = self.postprocess(outputs, orig_sizes)
+                # Slice to group-0 queries only — mirrors the eval-mode path in
+                # lwdetr.py that trims refpoint_embed to [:num_queries]. Without
+                # this, training mode emits group_detr×num_queries queries (e.g.
+                # 13×300=3900) and postprocess top-k selection draws from all
+                # groups, producing OKS/mAP values ~50× below true accuracy.
+                nq = self.model_config.num_queries
+                # Only include tensor-valued keys — pred_masks is a dict in
+                # train mode (sparse_forward) and postprocess cannot handle it.
+                inference_outputs = {
+                    k: v[:, :nq] if v.ndim >= 2 else v
+                    for k, v in outputs.items()
+                    if k in ("pred_logits", "pred_boxes", "pred_masks", "pred_keypoints") and isinstance(v, Tensor)
+                }
+                results = self.postprocess(inference_outputs, orig_sizes)
             return {
                 "loss": loss_for_return.detach() if self._use_manual_optimization else loss_for_return,
                 "results": self._detach_results(results),
@@ -259,9 +316,9 @@ class RFDETRModelModule(LightningModule):
 
     def _compute_train_losses(
         self,
-        outputs: dict[str, torch.Tensor],
-        targets: list[dict[str, torch.Tensor]],
-    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+        outputs: dict[str, Tensor],
+        targets: list[dict[str, Tensor]],
+    ) -> tuple[dict[str, Tensor], Tensor, Tensor]:
         """Compute normalized losses for logging and raw weighted loss for backward.
 
         Args:
@@ -296,9 +353,9 @@ class RFDETRModelModule(LightningModule):
 
     def _scale_loss_for_accumulation(
         self,
-        raw_loss: torch.Tensor,
-        normalizer: torch.Tensor,
-    ) -> torch.Tensor:
+        raw_loss: Tensor,
+        normalizer: Tensor,
+    ) -> Tensor:
         """Scale the current numerator loss by the accumulated box denominator.
 
         Args:
@@ -316,7 +373,7 @@ class RFDETRModelModule(LightningModule):
         self._accumulated_box_normalizer = accumulated_normalizer.detach()
         return raw_loss / accumulated_normalizer
 
-    def _rescale_accumulated_gradients(self, scale: torch.Tensor) -> None:
+    def _rescale_accumulated_gradients(self, scale: Tensor) -> None:
         """Rescale gradients already accumulated in the current optimizer window.
 
         Args:
@@ -357,7 +414,7 @@ class RFDETRModelModule(LightningModule):
             and batch_idx + 1 >= num_training_batches
         )
 
-    def _step_optimizer(self, optimizer: torch.optim.Optimizer) -> None:
+    def _step_optimizer(self, optimizer: torch.optim.Optimizer | LightningOptimizer) -> None:
         """Clip gradients, step optimizer and scheduler, then reset accumulation state.
 
         Args:
@@ -394,10 +451,14 @@ class RFDETRModelModule(LightningModule):
             return
         schedulers = scheduler if isinstance(scheduler, list) else [scheduler]
         for scheduler_item in schedulers:
+            if isinstance(scheduler_item, ReduceLROnPlateau):
+                # configure_optimizers() only ever configures LambdaLR; a metrics-based
+                # scheduler isn't supported by this manual-optimization step loop.
+                continue
             scheduler_item.step()
 
     @staticmethod
-    def _detach_results(results: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:
+    def _detach_results(results: list[dict[str, Tensor]]) -> list[dict[str, Tensor]]:
         """Detach postprocessed result tensors before handing them to callbacks.
 
         Args:
@@ -413,8 +474,8 @@ class RFDETRModelModule(LightningModule):
 
     def _log_train_progress_metrics(
         self,
-        loss: torch.Tensor,
-        loss_dict: dict[str, torch.Tensor],
+        loss: Tensor,
+        loss_dict: dict[str, Tensor],
         *,
         batch_size: int,
     ) -> None:
@@ -450,8 +511,8 @@ class RFDETRModelModule(LightningModule):
 
     def _log_val_loss_metrics(
         self,
-        loss: torch.Tensor,
-        loss_dict: dict[str, torch.Tensor],
+        loss: Tensor,
+        loss_dict: dict[str, Tensor],
         *,
         batch_size: int,
     ) -> None:
@@ -471,7 +532,7 @@ class RFDETRModelModule(LightningModule):
         )
         self.log("val/loss", loss, prog_bar=True, on_epoch=True, sync_dist=True, batch_size=batch_size)
 
-    def validation_step(self, batch: Tuple, batch_idx: int) -> Dict[str, Any]:
+    def validation_step(self, batch: tuple[Any, Any], batch_idx: int) -> dict[str, Any]:
         """Run forward pass and postprocess for one validation step.
 
         Returns raw results and targets so ``COCOEvalCallback`` can accumulate them across the epoch via
@@ -524,7 +585,7 @@ class RFDETRModelModule(LightningModule):
             and str(self.trainer.precision) in {"bf16-mixed", "bf16", "bf16-true"}
         )
 
-    def configure_optimizers(self) -> Dict[str, Any]:
+    def configure_optimizers(self) -> OptimizerLRSchedulerConfig:
         """Build AdamW optimizer with layer-wise LR decay and LambdaLR scheduler.
 
         Uses ``trainer.estimated_stepping_batches`` for total step count so cosine annealing covers the full training
@@ -590,9 +651,9 @@ class RFDETRModelModule(LightningModule):
 
     def clip_gradients(
         self,
-        optimizer: torch.optim.Optimizer,
-        gradient_clip_val: Optional[float] = None,
-        gradient_clip_algorithm: Optional[str] = None,
+        optimizer: torch.optim.Optimizer | LightningOptimizer,
+        gradient_clip_val: float | None = None,
+        gradient_clip_algorithm: str | None = None,
     ) -> None:
         """Override PTL gradient clipping to support fused AdamW.
 
@@ -610,13 +671,44 @@ class RFDETRModelModule(LightningModule):
             if gradient_clip_val and gradient_clip_val > 0:
                 torch.nn.utils.clip_grad_norm_(self.parameters(), gradient_clip_val)
         else:
+            # PTL's own type stub only declares Optimizer here, but LightningOptimizer dynamically
+            # multiply-inherits from the wrapped optimizer's class, so it satisfies this at runtime too.
             super().clip_gradients(
-                optimizer,
+                optimizer,  # type: ignore[arg-type]
                 gradient_clip_val=gradient_clip_val,
                 gradient_clip_algorithm=gradient_clip_algorithm,
             )
 
-    def test_step(self, batch: Tuple, batch_idx: int) -> Dict[str, Any]:
+    @staticmethod
+    def _normalize_optimizer_state(optimizer: torch.optim.Optimizer) -> int:
+        """Cast restored floating-point optimizer state tensors to match live parameters.
+
+        Args:
+            optimizer: AdamW optimizer whose state may have been rehydrated with a mismatched dtype or layout.
+
+        Returns:
+            Number of state tensors that were reallocated to match the current parameter layout.
+        """
+        normalized = 0
+        for group in optimizer.param_groups:
+            for param in group["params"]:
+                state = optimizer.state.get(param)
+                if not state:
+                    continue
+                for key, value in list(state.items()):
+                    if not isinstance(value, torch.Tensor) or not value.is_floating_point():
+                        continue
+                    if value.shape != param.shape:
+                        continue
+                    if value.device == param.device and value.dtype == param.dtype and value.stride() == param.stride():
+                        continue
+                    restored = torch.empty_like(param)
+                    restored.copy_(value.to(device=param.device, dtype=param.dtype))
+                    state[key] = restored
+                    normalized += 1
+        return normalized
+
+    def test_step(self, batch: tuple[Any, Any], batch_idx: int) -> dict[str, Any]:
         """Run forward pass and postprocess for one test step.
 
         Mirrors :meth:`validation_step` so ``COCOEvalCallback`` can accumulate results via ``on_test_batch_end`` when
@@ -642,7 +734,7 @@ class RFDETRModelModule(LightningModule):
         results = self.postprocess(outputs, orig_sizes)
         return {"results": results, "targets": targets}
 
-    def predict_step(self, batch: Tuple, batch_idx: int, dataloader_idx: int = 0) -> Any:
+    def predict_step(self, batch: tuple[Any, Any], batch_idx: int, dataloader_idx: int = 0) -> Any:
         """Run inference on a preprocessed batch and return postprocessed results.
 
         Args:

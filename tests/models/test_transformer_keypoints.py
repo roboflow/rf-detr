@@ -157,6 +157,72 @@ def test_keypoint_class_mask_person_only() -> None:
     assert not decoder.keypoint_class_mask.any()
 
 
+def test_enc_keypoint_embed_eval_uses_only_head_zero() -> None:
+    """Encoder keypoint path must use a single head (head 0) in eval mode.
+
+    Regression: ``group_detr = len(self.enc_out_keypoint_embed)`` without a
+    ``self.training`` guard caused eval mode to split ``num_queries`` across all
+    group heads instead of routing every query through head 0. Fix:
+    ``group_detr = len(...) if self.training else 1``.
+
+    Strategy: zero all head weights/biases; set head-0 last-layer bias to
+    ``sentinel``. In eval mode every query routes through head 0, so
+    ``kp_pred[..., 2:]`` (the pure-delta dims unaffected by ref_xy/wh) must all
+    equal ``sentinel``. In training mode only the first 1/group_detr queries go
+    through head 0 (the rest equal 0.0).
+    """
+    group_detr = 3
+    num_queries = 6  # divisible by group_detr
+    hidden_dim = 16
+    batch_size = 1
+    sentinel = 50.0
+
+    srcs, masks, pos_embeds, _, _ = _build_transformer_inputs(batch_size=batch_size, hidden_dim=hidden_dim)
+    refpoint_embed = torch.rand(num_queries, 4)
+    query_feat = torch.randn(num_queries, hidden_dim)
+
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=2,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        group_detr=group_detr,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=[2],
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2) for _ in range(group_detr)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4) for _ in range(group_detr)])
+
+    # Zero all keypoint head weights and biases; give head 0 a distinctive output.
+    with torch.no_grad():
+        for _, head in enumerate(transformer.enc_out_keypoint_embed):
+            for layer in head.layers:
+                layer.weight.zero_()
+                layer.bias.zero_()
+        transformer.enc_out_keypoint_embed[0].layers[-1].bias.fill_(sentinel)
+
+    transformer.eval()
+    with torch.no_grad():
+        outputs = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+
+    _, _, _, _, _, enc_kp_predictions, _ = outputs
+    assert enc_kp_predictions is not None, "enc_kp_predictions should not be None in keypoint mode"
+
+    # kp_pred = [kp_xy(2 dims), kp_delta[2:]]; dims 2: are pure MLP output unaffected by ref_xy/wh.
+    kp_beyond_xy = enc_kp_predictions[..., 2:]
+    assert (kp_beyond_xy == sentinel).all(), (
+        f"Eval mode must route all {num_queries} queries through head 0 (bias={sentinel}). "
+        f"Got min={kp_beyond_xy.min().item():.2f}, max={kp_beyond_xy.max().item():.2f}. "
+        "Bug: group_detr not guarded by self.training in enc_out_keypoint_embed loop."
+    )
+
+
 def test_cross_attn_srcs_none_backward_compat() -> None:
     """`cross_attn_srcs=None` must remain equivalent to passing the primary feature stream."""
     srcs, masks, pos_embeds, refpoint_embed, query_feat = _build_transformer_inputs()

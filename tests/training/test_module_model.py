@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Comprehensive unit tests for RFDETRModelModule (LightningModule wrapper)."""
 
+import random
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
@@ -14,6 +15,7 @@ from torch import nn
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
+from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.tensors import NestedTensor
 
 # ---------------------------------------------------------------------------
@@ -148,6 +150,44 @@ def _make_batch(batch_size=2, channels=3, h=16, w=16):
         for i in range(batch_size)
     ]
     return samples, targets
+
+
+class TestMultiScaleBatchStart:
+    """on_train_batch_start multi-scale resize picks a step-deterministic scale without clobbering global RNG."""
+
+    def _build_multi_scale_module(self, tmp_path, global_step):
+        """Return a module configured for multi-scale with a stubbed trainer at the given global step."""
+        tc = _base_train_config(tmp_path, multi_scale=True, do_random_resize_via_padding=False)
+        module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
+        module.trainer = SimpleNamespace(global_step=global_step)
+        return module
+
+    def test_scale_choice_is_deterministic_per_step(self, tmp_path):
+        """The same global step must resize the batch to the same scale regardless of batch contents."""
+        module = self._build_multi_scale_module(tmp_path, global_step=7)
+
+        batch_a = _make_batch(h=64, w=64)
+        module.on_train_batch_start(batch_a, 0)
+        size_a = tuple(batch_a[0].tensors.shape[-2:])
+
+        batch_b = _make_batch(h=64, w=64)
+        module.on_train_batch_start(batch_b, 0)
+        size_b = tuple(batch_b[0].tensors.shape[-2:])
+
+        assert size_a == size_b
+
+    def test_does_not_perturb_global_rng(self, tmp_path):
+        """Scale selection must use a step-local generator and leave the process-global RNG untouched."""
+        module = self._build_multi_scale_module(tmp_path, global_step=3)
+
+        random.seed(42)
+        expected = [random.random() for _ in range(3)]
+
+        random.seed(42)
+        module.on_train_batch_start(_make_batch(h=64, w=64), 0)
+        actual = [random.random() for _ in range(3)]
+
+        assert actual == expected
 
 
 class _ScalarLossModel(nn.Module):
@@ -396,19 +436,21 @@ class TestLoadPretrainWeights:
 
         load_calls = [0]
 
-        def fake_torch_load(*args, **kwargs):
+        def fake_safe_load(*args, **kwargs):
             load_calls[0] += 1
             if load_calls[0] == 1:
                 raise RuntimeError("corrupted file")
             return checkpoint
 
-        with patch("rfdetr.models.weights.torch.load", side_effect=fake_torch_load):
+        # Patch at the definition site in util.io (_safe_torch_load is a deferred import in
+        # weights.py so it is not a module-level name there). MD5 validation is intentionally
+        # kept on the retry (validate_md5=False was removed in favour of rejecting
+        # hash-mismatched files rather than silently accepting them).
+        with patch("rfdetr.util.io._safe_torch_load", side_effect=fake_safe_load):
             load_pretrain_weights(module.model, module.model_config)
 
-        # Verify a redownload with validate_md5=False was triggered after load failure.
         redownload_calls = [c for c in mock_download.call_args_list if c.kwargs.get("redownload") is True]
         assert len(redownload_calls) >= 1
-        assert all(c.kwargs.get("validate_md5") is False for c in redownload_calls)
         assert load_calls[0] == 2
 
     @patch("rfdetr.models.weights.os.path.isfile", return_value=False)
@@ -933,6 +975,97 @@ class TestTrainingStep:
         loss = module.training_step((samples, targets), batch_idx=0)
 
         assert loss.item() == pytest.approx(2.0)
+
+    def test_train_metrics_slices_to_group0_queries(self, tmp_path):
+        """compute_train_metrics postprocess must receive only group-0 queries ([:num_queries]).
+
+        Group DETR emits group_detr×num_queries outputs in train mode. Without the slice, postprocess top-k draws from
+        all groups and OKS/mAP reads ~50× below true accuracy. Assert the received pred_logits has shape (B,
+        num_queries, C).
+        """
+        nq = 10
+        group_detr = 3
+        batch_size = 2
+        num_classes = 5
+        mc = _base_model_config(num_classes=num_classes, num_queries=nq)
+        tc = _base_train_config(tmp_path, compute_train_metrics=True)
+        module, fake_model, fake_criterion, _ = _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+
+        full_logits = torch.randn(batch_size, group_detr * nq, num_classes)
+        model_output = {
+            "pred_logits": full_logits,
+            "pred_boxes": torch.randn(batch_size, group_detr * nq, 4),
+        }
+        fake_model.return_value = model_output
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        fake_criterion.weight_dict = {"loss_ce": 1.0}
+
+        received: dict = {}
+
+        def capture_postprocess(outputs, orig_sizes):
+            received.update(outputs)
+            return [
+                {"boxes": torch.zeros(nq, 4), "scores": torch.ones(nq), "labels": torch.zeros(nq, dtype=torch.long)}
+            ]
+
+        module.postprocess = capture_postprocess
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        real_param = nn.Parameter(torch.randn(4))
+        module.optimizers = MagicMock(return_value=torch.optim.SGD([real_param], lr=1e-3))
+        trainer = MagicMock()
+        trainer.accumulate_grad_batches = 1
+        trainer.num_training_batches = 1
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        samples, targets = _make_batch(batch_size=batch_size)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        assert "pred_logits" in received
+        assert received["pred_logits"].shape == (batch_size, nq, num_classes)
+        torch.testing.assert_close(received["pred_logits"], full_logits[:, :nq])
+
+    def test_train_metrics_skips_dict_pred_masks(self, tmp_path):
+        """Dict-valued pred_masks (sparse_forward in train mode) must not crash training_step.
+
+        In segmentation train mode lwdetr uses sparse_forward which returns pred_masks as a dict. PostProcess cannot
+        handle a dict — it calls .shape[0] on it. The fix filters out non-tensor values so postprocess receives
+        pred_masks=None (box path).
+        """
+        tc = _base_train_config(tmp_path, compute_train_metrics=True)
+        module, fake_model, fake_criterion, _ = _build_module(train_config=tc, tmp_path=tmp_path)
+
+        model_output = {
+            "pred_logits": torch.randn(2, 10, 5),
+            "pred_boxes": torch.randn(2, 10, 4),
+            "pred_masks": {"spatial_features": torch.randn(2, 256, 8, 8), "query_features": torch.randn(2, 10, 256)},
+        }
+        fake_model.return_value = model_output
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        fake_criterion.weight_dict = {"loss_ce": 1.0}
+
+        received: dict = {}
+
+        def capture_postprocess(outputs, orig_sizes):
+            received.update(outputs)
+            return [{"boxes": torch.zeros(1, 4), "scores": torch.ones(1), "labels": torch.zeros(1, dtype=torch.long)}]
+
+        module.postprocess = capture_postprocess
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        real_param = nn.Parameter(torch.randn(4))
+        module.optimizers = MagicMock(return_value=torch.optim.SGD([real_param], lr=1e-3))
+        trainer = MagicMock()
+        trainer.accumulate_grad_batches = 1
+        trainer.num_training_batches = 1
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        samples, targets = _make_batch()
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        assert "pred_masks" not in received
 
 
 class TestShouldStepOptimizer:
@@ -1485,6 +1618,110 @@ class TestConfigureOptimizers:
         # If total_steps were wrongly 100, lr at step 25 would still be ~0.87 (near peak).
         lr_at_decay_end = lr_lambda(expected_total_steps)
         assert lr_at_decay_end == pytest.approx(lr_min_factor, abs=1e-6)
+
+
+class TestFusedOptimizerResumeStateNormalization:
+    """Tests for resume-time fused AdamW state normalization."""
+
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_on_train_start_normalizes_restored_fused_optimizer_state(
+        self,
+        mock_cuda_available,
+        mock_bf16_supported,
+    ) -> None:
+        """Resumed fused AdamW state tensors must match the live parameter layout before the first step."""
+        module = RFDETRModelModule.__new__(RFDETRModelModule)
+        module.model_config = SimpleNamespace(fused_optimizer=True)
+        trainer = MagicMock()
+        trainer.precision = "bf16-mixed"
+        trainer.is_global_zero = True
+        module._trainer = trainer
+        module.optimizers = MagicMock()
+
+        optimizer_param = nn.Parameter(torch.arange(6.0, dtype=torch.bfloat16).reshape(2, 3).t())
+        optimizer = torch.optim.AdamW([optimizer_param], lr=1e-3)
+        optimizer.state[optimizer_param] = {
+            "exp_avg": torch.full((3, 2), 2.0, dtype=torch.float32),
+            "exp_avg_sq": torch.full((3, 2), 3.0, dtype=torch.float64),
+        }
+        module.optimizers.return_value = optimizer
+
+        with patch.object(type(module), "trainer", new_callable=PropertyMock) as trainer_prop:
+            trainer_prop.return_value = trainer
+            module.on_train_start()
+
+        module.optimizers.assert_called_once_with(use_pl_optimizer=False)
+        state = optimizer.state[optimizer_param]
+        assert state["exp_avg"].dtype == optimizer_param.dtype
+        assert state["exp_avg"].stride() == optimizer_param.stride()
+        assert state["exp_avg_sq"].dtype == optimizer_param.dtype
+        assert state["exp_avg_sq"].stride() == optimizer_param.stride()
+        torch.testing.assert_close(state["exp_avg"], torch.full_like(optimizer_param, 2.0))
+        torch.testing.assert_close(state["exp_avg_sq"], torch.full_like(optimizer_param, 3.0))
+
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_on_train_start_unwraps_optimizer_wrapper(
+        self,
+        mock_cuda_available,
+        mock_bf16_supported,
+    ) -> None:
+        """Lightning-style optimizer wrappers must still be normalized on resume."""
+        module = RFDETRModelModule.__new__(RFDETRModelModule)
+        module.model_config = SimpleNamespace(fused_optimizer=True)
+        trainer = MagicMock()
+        trainer.precision = "bf16-mixed"
+        trainer.is_global_zero = True
+        module._trainer = trainer
+        module.optimizers = MagicMock()
+
+        optimizer_param = nn.Parameter(torch.arange(6.0, dtype=torch.bfloat16).reshape(2, 3).t())
+        optimizer = torch.optim.AdamW([optimizer_param], lr=1e-3)
+        optimizer.state[optimizer_param] = {
+            "exp_avg": torch.full((3, 2), 4.0, dtype=torch.float32),
+            "exp_avg_sq": torch.full((3, 2), 5.0, dtype=torch.float64),
+        }
+        module.optimizers.return_value = SimpleNamespace(optimizer=optimizer)
+
+        with patch.object(type(module), "trainer", new_callable=PropertyMock) as trainer_prop:
+            trainer_prop.return_value = trainer
+            module.on_train_start()
+
+        module.optimizers.assert_called_once_with(use_pl_optimizer=False)
+        state = optimizer.state[optimizer_param]
+        assert state["exp_avg"].dtype == optimizer_param.dtype
+        assert state["exp_avg"].stride() == optimizer_param.stride()
+        assert state["exp_avg_sq"].dtype == optimizer_param.dtype
+        assert state["exp_avg_sq"].stride() == optimizer_param.stride()
+        torch.testing.assert_close(state["exp_avg"], torch.full_like(optimizer_param, 4.0))
+        torch.testing.assert_close(state["exp_avg_sq"], torch.full_like(optimizer_param, 5.0))
+
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_on_train_start_leaves_empty_optimizer_state_untouched(
+        self,
+        mock_cuda_available,
+        mock_bf16_supported,
+    ) -> None:
+        """Fresh fused-optimizer runs with no restored state should remain a no-op."""
+        module = RFDETRModelModule.__new__(RFDETRModelModule)
+        module.model_config = SimpleNamespace(fused_optimizer=True)
+        trainer = MagicMock()
+        trainer.precision = "bf16-mixed"
+        trainer.is_global_zero = True
+        module._trainer = trainer
+        module.optimizers = MagicMock()
+
+        optimizer_param = nn.Parameter(torch.ones((2, 2), dtype=torch.bfloat16))
+        optimizer = torch.optim.AdamW([optimizer_param], lr=1e-3)
+        module.optimizers.return_value = optimizer
+
+        with patch.object(type(module), "trainer", new_callable=PropertyMock) as trainer_prop:
+            trainer_prop.return_value = trainer
+            module.on_train_start()
+
+        assert optimizer.state == {}
 
 
 class TestClipGradients:

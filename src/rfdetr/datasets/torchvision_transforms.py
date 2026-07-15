@@ -11,7 +11,8 @@ pairs where ``image`` is a PIL image or ``torch.Tensor`` and ``target`` is an
 optional dict with keys ``boxes``, ``labels``, ``masks``, ``keypoints``, etc.
 
 Examples:
-    >>> from rfdetr.datasets.torchvision_transforms import Compose, Resize, Normalize
+    >>> from rfdetr.datasets.torchvision_transforms import Compose, Resize
+    >>> from rfdetr.datasets.transforms import Normalize
     >>> transform = Compose([Resize((640, 640)), Normalize()])
 """
 

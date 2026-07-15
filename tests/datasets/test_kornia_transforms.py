@@ -71,6 +71,24 @@ class TestBuildKorniaPipeline:
         with pytest.raises(ValueError, match="BogusTransform"):
             build_kornia_pipeline(mixed, 560)
 
+    def test_hflip_disabled_for_keypoint_pipeline(self):
+        """Keypoint-mode Kornia augmentation drops hflip transforms with a warning."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        config = {"HorizontalFlip": {"p": 0.5}, "VerticalFlip": {"p": 0.5}}
+        mock_warning = mock.patch.object(kornia_transforms.logger, "warning")
+
+        with mock_warning as warning:
+            pipeline = kornia_transforms.build_kornia_pipeline(config, 560, include_keypoints=True)
+
+        transform_names = [child.__class__.__name__ for child in pipeline.children()]
+        assert "RandomHorizontalFlip" not in transform_names
+        assert "RandomVerticalFlip" in transform_names
+        assert warning.called
+        assert "HorizontalFlip" in str(warning.call_args)
+
 
 # ---------------------------------------------------------------------------
 # TestCollateBoxes — validates packing of variable-length per-image boxes
@@ -680,3 +698,33 @@ class TestUnpackBoxesWithMasks:
 
         assert "masks" in result[0], "masks key must still be present when masks_aug=None"
         assert result[0]["masks"] is original_mask, "Original masks object must be preserved unchanged"
+
+
+class TestGaussNoiseStdRangeWarning:
+    """_make_gauss_noise warns when the configured std range is non-degenerate (GPU uses a fixed upper-bound std)."""
+
+    @pytest.fixture(autouse=True)
+    def _require_kornia(self):
+        pytest.importorskip("kornia")
+
+    def test_warns_for_unequal_std_range(self):
+        """A non-degenerate std_range emits a divergence warning at build time."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_gauss_noise({"std_range": (0.01, 0.05), "p": 0.5})
+
+        mock_warning.assert_called_once()
+
+    def test_no_warning_for_degenerate_std_range(self):
+        """An equal-bound std_range matches the CPU path exactly and stays silent."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_gauss_noise({"std_range": (0.05, 0.05), "p": 0.5})
+
+        mock_warning.assert_not_called()

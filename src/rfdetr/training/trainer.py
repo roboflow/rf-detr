@@ -5,11 +5,13 @@
 # ------------------------------------------------------------------------
 """Trainer factory — assembles a PTL Trainer from RF-DETR configs."""
 
+from __future__ import annotations
+
 import warnings
 from typing import Any
 
 import torch
-from pytorch_lightning import Trainer
+from pytorch_lightning import Callback, Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar, TQDMProgressBar
 from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBarTheme
 from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
@@ -21,9 +23,9 @@ from pytorch_lightning.strategies import DDPStrategy as _DDPStrategy
 try:
     from pytorch_lightning.strategies.launchers.multiprocessing import _MultiProcessingLauncher
 except ImportError:  # pragma: no cover - exercised in unit tests via monkeypatch
-    _MultiProcessingLauncher = None  # type: ignore[assignment]
+    _MultiProcessingLauncher = None  # type: ignore[assignment,misc]
 
-from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.config import KeypointTrainConfig, ModelConfig, TrainConfig
 from rfdetr.training.callbacks import (
     BestModelCallback,
     DropPathCallback,
@@ -34,6 +36,22 @@ from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.utilities.logger import get_logger
 
 _logger = get_logger()
+
+
+def _try_import_tensorboard_summary_writer() -> None:
+    """Probe the full tensorboard import chain to surface numpy/tensorflow incompatibilities early.
+
+    When tensorboard is installed alongside a numpy-2.0-incompatible tensorflow, importing
+    ``torch.utils.tensorboard`` raises ``AttributeError`` at module level (e.g. ``np.float_`` was
+    removed in NumPy 2.0).  Calling this function inside the logger-construction try/except lets
+    ``build_trainer`` degrade gracefully to CSV-only logging instead of crashing mid-training.
+
+    Raises:
+        ImportError: If the ``tensorboard`` package is absent.
+        AttributeError: If ``torch.utils.tensorboard`` fails to import due to a NumPy 2.0 /
+            tensorflow incompatibility.
+    """
+    from torch.utils.tensorboard import SummaryWriter  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -61,11 +79,11 @@ if _MultiProcessingLauncher is not None:
         """Spawn launcher that reports itself as interactive-compatible."""
 
         @property
-        def is_interactive_compatible(self) -> bool:  # type: ignore[override]
+        def is_interactive_compatible(self) -> bool:
             return True
 
 else:
-    _InteractiveSpawnLauncher = None
+    _InteractiveSpawnLauncher = None  # type: ignore[misc]
 
 
 class _NotebookSpawnDDPStrategy(_DDPStrategy):
@@ -83,6 +101,11 @@ class _NotebookSpawnDDPStrategy(_DDPStrategy):
                 "pytorch_lightning.strategies.launchers.multiprocessing._MultiProcessingLauncher. "
                 "Your installed PyTorch Lightning version changed this private API; "
                 "pin/upgrade PTL to a compatible version in the supported >=2.6,<3 range."
+            )
+        if self._start_method == "popen":
+            raise RuntimeError(
+                "_NotebookSpawnDDPStrategy does not support start_method='popen'; "
+                "it is always constructed with start_method='spawn' in build_trainer()."
             )
         self._launcher = _InteractiveSpawnLauncher(self, start_method=self._start_method)
 
@@ -160,16 +183,28 @@ def build_trainer(
     # --- Precision resolution ---
     def _resolve_precision() -> str:
         if not model_config.amp:
+            if tc.amp_dtype != "auto":
+                warnings.warn(
+                    f"amp_dtype={tc.amp_dtype!r} has no effect when model_config.amp=False.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             return "32-true"
         # CPU accelerator: bf16 autocast on macOS CPU (Apple Silicon) is ~13x slower
         # than fp32 due to missing native bfloat16 kernels — no benefit, high cost.
         if accelerator == "cpu":
             return "32-true"
+        # ``train_config.amp_dtype`` (a train() kwarg) lets callers pin the autocast dtype (see issue #1132):
+        #   "auto" — bf16 on bf16-capable CUDA, fp16 otherwise (historical default);
+        #   "fp16" — force "16-mixed" (e.g. deployment targets without bf16 support);
+        #   "bf16" — force "bf16-mixed", falling back to fp16 with a warning when unsupported.
+        # Unrecognised values are coerced to "auto" (with a warning) by TrainConfig validation.
+        amp_dtype = tc.amp_dtype
         # Ampere+ GPUs support bf16-mixed which is scaler-free —
         # no GradScaler.scale/unscale/update overhead per optimizer step.
         # BF16 is safe for fine-tuning (pretrained weights loaded by default).
-        # Training from random init with very small LR may underflow; callers
-        # can override via trainer_kwargs(precision="16-mixed") if needed.
+        # Training from random init with very small LR may underflow; pass
+        # ``amp_dtype="fp16"`` if needed.
         #
         # Note: torch.cuda.is_available() and torch.cuda.is_bf16_supported() both
         # create a CUDA driver context in the parent process.  This is intentional
@@ -180,10 +215,34 @@ def build_trainer(
         # parent has initialised. If a fork-based path is ever added, this
         # precision check must be moved into the child process.
         if torch.cuda.is_available():
-            if torch.cuda.is_bf16_supported():
-                return "bf16-mixed"
-            return "16-mixed"
+            if amp_dtype == "fp16":
+                return "16-mixed"
+            if amp_dtype == "bf16":
+                if torch.cuda.is_bf16_supported():
+                    return "bf16-mixed"
+                _logger.warning(
+                    "amp_dtype='bf16' was requested but this CUDA device does not support bfloat16; "
+                    "falling back to fp16 ('16-mixed')."
+                )
+                warnings.warn(
+                    "amp_dtype='bf16' was requested but this CUDA device does not support bfloat16; "
+                    "falling back to fp16 ('16-mixed').",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                return "16-mixed"
+            # amp_dtype == "auto"
+            return "bf16-mixed" if torch.cuda.is_bf16_supported() else "16-mixed"
         if torch.backends.mps.is_available():
+            if amp_dtype == "bf16":
+                _logger.warning(
+                    "amp_dtype='bf16' is not applied on MPS; RF-DETR uses fp16 ('16-mixed') for MPS autocast."
+                )
+                warnings.warn(
+                    "amp_dtype='bf16' is not applied on MPS; RF-DETR uses fp16 ('16-mixed') for MPS autocast.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             return "16-mixed"
         return "32-true"
 
@@ -193,6 +252,12 @@ def build_trainer(
     num_nodes = trainer_kwargs.get("num_nodes", tc.num_nodes)
     strategy_name = strategy.strip().lower() if isinstance(strategy, str) else None
     has_keypoints = bool(model_config.use_grouppose_keypoints)
+    if isinstance(tc, KeypointTrainConfig) != has_keypoints:
+        raise ValueError(
+            f"Config/model mismatch: isinstance(tc, KeypointTrainConfig)={isinstance(tc, KeypointTrainConfig)} "
+            f"but model_config.use_grouppose_keypoints={model_config.use_grouppose_keypoints}. "
+            "Pass KeypointTrainConfig for keypoint models and TrainConfig for detection models."
+        )
     distributed_requested = (
         _is_distributed_strategy_requested(str(strategy))
         or num_nodes > 1
@@ -248,7 +313,7 @@ def build_trainer(
         )
 
     # --- Build callbacks ---
-    callbacks = []
+    callbacks: list[Callback] = []
 
     if tc.progress_bar == "rich":
         callbacks.append(
@@ -323,14 +388,22 @@ def build_trainer(
         early_stopping_monitor_ema = "val/ema_mAP_50_95"
     monitor_ema = early_stopping_monitor_ema if enable_ema else None
 
+    best_model_smooth_alpha = tc.smooth_alpha
+
     # Best-model checkpointing — monitor EMA metric only when EMA is active and emitted.
+    # PTL _reorder_callbacks moves all Checkpoint subclasses (including BestModelCallback)
+    # to the end of the callback list; RFDETREarlyStopping (not a Checkpoint subclass) always
+    # fires BEFORE BestModelCallback on every on_validation_end, regardless of append order.
+    # The try/finally restore in BestModelCallback.on_validation_end guarantees EarlyStopping
+    # always reads the raw (un-smoothed) metric value.
     callbacks.append(
         BestModelCallback(
-            output_dir=tc.output_dir,
+            output_dir=str(tc.output_dir),
             monitor_regular=monitor_regular,
             monitor_ema=monitor_ema,
             run_test=tc.run_test,
             skip_best_epochs=tc.skip_best_epochs,
+            smooth_alpha=best_model_smooth_alpha,
         )
     )
 
@@ -353,10 +426,11 @@ def build_trainer(
     # emits a UserWarning instead of crashing.
     # CSVLogger is always enabled — no extra package required.
     # Produces metrics.csv in output_dir so there is always a log file.
-    loggers: list = [CSVLogger(save_dir=tc.output_dir, name="", version="")]
+    loggers: list[Any] = [CSVLogger(save_dir=tc.output_dir, name="", version="")]
 
     if tc.tensorboard:
         try:
+            _try_import_tensorboard_summary_writer()
             loggers.append(
                 TensorBoardLogger(
                     save_dir=tc.output_dir,
@@ -364,8 +438,14 @@ def build_trainer(
                     version="",
                 )
             )
-        except ModuleNotFoundError as exc:
-            _logger.warning("TensorBoard logging disabled: %s. Install with: pip install tensorboard", exc)
+        except (ImportError, AttributeError) as exc:
+            _logger.warning(
+                "TensorBoard logging disabled: %s. "
+                "If using NumPy 2.x, ensure your TensorBoard installation is NumPy 2.0 compatible "
+                "(the failure can originate from tensorboard.compat.tensorflow_stub). "
+                "Install TensorBoard with: pip install tensorboard",
+                exc,
+            )
 
     if tc.wandb:
         try:
@@ -385,7 +465,7 @@ def build_trainer(
                 MLFlowLogger(
                     experiment_name=tc.project or "rfdetr",
                     run_name=tc.run,
-                    save_dir=tc.output_dir,
+                    save_dir=str(tc.output_dir),
                 )
             )
         except ModuleNotFoundError as exc:
@@ -448,5 +528,10 @@ def build_trainer(
                     stacklevel=2,
                 )
         trainer_config["accumulate_grad_batches"] = 1
+        # gradient_clip_val=None here does NOT disable gradient clipping — clipping is
+        # performed inside RFDETRModelModule._step_optimizer using train_config.clip_max_norm
+        # (see src/rfdetr/training/module_model.py).  Under manual optimization the module
+        # owns the clipping step; passing None to the PTL Trainer simply prevents PTL from
+        # doing a second redundant clip on top of the module's own.
         trainer_config["gradient_clip_val"] = None
     return Trainer(**trainer_config)

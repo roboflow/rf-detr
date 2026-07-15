@@ -27,9 +27,10 @@ import pytest
 import torch
 from torch.jit import TracerWarning
 
-from rfdetr import RFDETRSegNano
+from rfdetr import RFDETRNano, RFDETRSegNano
 from rfdetr import detr as _detr_module
 from rfdetr.export import main as _cli_export_module
+from rfdetr.models.backbone.dinov2 import DinoV2
 
 _IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
 
@@ -60,6 +61,9 @@ class _DummyCoreModel:
 
     def cpu(self):
         return self
+
+    def modules(self):
+        return iter(())
 
     def __call__(self, *_args, **_kwargs):
         out = {"pred_boxes": torch.zeros(1, 1, 4), "pred_logits": torch.zeros(1, 1, 2)}
@@ -116,6 +120,70 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
     # Verify export produced output files
     onnx_files = list(tmp_path.glob("*.onnx"))
     assert len(onnx_files) > 0, "Export should produce ONNX file(s)"
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
+@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnx]")
+def test_export_with_rectangular_shape_different_from_resolution_no_crash(tmp_path: Path) -> None:
+    """Integration test: exporting with a valid rectangular shape should not crash.
+
+    A mismatched shape forces the DINOv2 backbone to interpolate its position embeddings for the new grid size. This
+    must not trace an antialiased bicubic resize (``aten::_upsample_bicubic2d_aa``), which has no ONNX opset-17
+    symbolic function.
+    """
+    model = RFDETRNano()
+    block_size = model.model_config.patch_size * model.model_config.num_windows
+    native_resolution = model.model.resolution
+    export_shape = (native_resolution, native_resolution + block_size)
+    assert all(dimension % block_size == 0 for dimension in export_shape)
+    assert export_shape != (native_resolution, native_resolution)
+
+    with ignore_tracer_warnings():
+        model.export(output_dir=str(tmp_path), shape=export_shape, verbose=False)
+
+    onnx_files = list(tmp_path.glob("*.onnx"))
+    assert len(onnx_files) > 0, "Export should produce ONNX file(s)"
+
+
+def test_dinov2_export_uses_precomputed_positions_for_exact_rectangular_grid() -> None:
+    """DINOv2 export must bypass interpolation only for its precomputed rectangular grid."""
+    patch_size = 8
+    export_shape = (32, 48)
+    source_positions = torch.nn.Parameter(torch.randn(1, 17, 2))
+    original_calls: list[tuple[int, int]] = []
+    fallback_positions = torch.randn(1, 1, 2)
+
+    def original_interpolate_pos_encoding(_embeddings: torch.Tensor, height: int, width: int) -> torch.Tensor:
+        """Record fallback interpolation calls made by the exported backbone."""
+        original_calls.append((height, width))
+        return fallback_positions
+
+    backbone = DinoV2.__new__(DinoV2)
+    torch.nn.Module.__init__(backbone)
+    backbone.shape = export_shape
+    backbone._export = False
+    backbone.encoder = types.SimpleNamespace(
+        config=types.SimpleNamespace(patch_size=patch_size),
+        embeddings=types.SimpleNamespace(
+            position_embeddings=source_positions,
+            interpolate_pos_encoding=original_interpolate_pos_encoding,
+        ),
+    )
+
+    backbone.export()
+    patch_count = (export_shape[0] // patch_size) * (export_shape[1] // patch_size)
+    embeddings = torch.randn(1, patch_count + 1, 2)
+
+    fixed_positions = backbone.encoder.embeddings.interpolate_pos_encoding(embeddings, *export_shape)
+    assert fixed_positions is backbone.encoder.embeddings.position_embeddings
+    assert original_calls == []
+
+    transposed_positions = backbone.encoder.embeddings.interpolate_pos_encoding(
+        embeddings, export_shape[1], export_shape[0]
+    )
+    assert transposed_positions is fallback_positions
+    assert original_calls == [(export_shape[1], export_shape[0])]
 
 
 @pytest.mark.gpu
@@ -202,7 +270,7 @@ def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
-@pytest.mark.parametrize("mode", ["train", "eval"], ids=["train_mode", "eval_mode"])
+@pytest.mark.parametrize("mode", [pytest.param("train", id="train_mode"), pytest.param("eval", id="eval_mode")])
 def test_segmentation_outputs_present_in_train_and_eval(mode: Literal["train", "eval"]) -> None:
     """Use case: segmentation outputs are present in both train and eval modes."""
     model = RFDETRSegNano()
@@ -472,6 +540,70 @@ class TestCliExportMain:
         assert set(dynamic_axes.keys()) == expected_names, (
             f"expected keys {expected_names}, got {set(dynamic_axes.keys())}"
         )
+
+    @pytest.mark.parametrize(
+        "device",
+        [
+            pytest.param("cpu", id="cpu"),
+            pytest.param("cuda", id="cuda"),
+        ],
+    )
+    def test_model_moved_to_correct_device(self, output_dir: str, device: str, monkeypatch) -> None:
+        """model.to() and input_tensors.to() must use args.device, not a hard-coded 'cuda'.
+
+        Before the fix, export/main.py line 145 called model.eval().to('cuda') unconditionally, which crashed when
+        CUDA_VISIBLE_DEVICES was blank (CPU export).
+        """
+        import torch
+
+        to_calls = []
+
+        mock_model = MagicMock()
+        mock_model.parameters.return_value = []
+        mock_model.backbone.parameters.return_value = []
+        mock_model.backbone.__getitem__.return_value.projector.parameters.return_value = []
+        mock_model.backbone.__getitem__.return_value.encoder.parameters.return_value = []
+        mock_model.transformer.parameters.return_value = []
+
+        # Capture .to() calls
+        def _record_to(dev):
+            to_calls.append(str(dev))
+            return mock_model
+
+        mock_model.to.side_effect = _record_to
+        mock_model.cpu.return_value = mock_model
+        mock_model.eval.return_value = mock_model
+        mock_model.return_value = {"pred_boxes": torch.zeros(1, 300, 4), "pred_logits": torch.zeros(1, 300, 90)}
+
+        mock_tensor = MagicMock()
+        tensor_to_calls = []
+
+        def _tensor_to(dev):
+            tensor_to_calls.append(str(dev))
+            return mock_tensor
+
+        mock_tensor.to.side_effect = _tensor_to
+        mock_tensor.cpu.return_value = mock_tensor
+
+        # When testing "cuda" path, pretend CUDA is not available so the
+        # fallback-to-cpu branch fires and we can verify the warning without
+        # needing a GPU in CI.
+        monkeypatch.setattr(torch, "cuda", MagicMock(is_available=MagicMock(return_value=False)))
+
+        args = self._make_args(output_dir=output_dir)
+        args.device = device
+
+        with (
+            patch.object(_cli_export_module, "build_model", return_value=(mock_model, MagicMock(), MagicMock())),
+            patch.object(_cli_export_module, "make_infer_image", return_value=mock_tensor),
+            patch.object(_cli_export_module, "export_onnx", return_value=str(output_dir) + "/m.onnx"),
+            patch.object(_cli_export_module, "get_rank", return_value=0),
+        ):
+            _cli_export_module.main(args)
+
+        # The model must NOT have been moved to a hard-coded "cuda" device when
+        # device="cpu" — verify the fallback CPU path was taken.
+        assert "cuda" not in to_calls, f"model was moved to 'cuda' unexpectedly: {to_calls}"
 
 
 class TestExportPatchSize:

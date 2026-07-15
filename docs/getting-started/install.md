@@ -85,6 +85,23 @@ If you plan to contribute to RF-DETR or modify the codebase locally, set up a lo
         uv pip install -e . --all-extras
         ```
 
+## Optional Extras
+
+RF-DETR provides several optional extras for additional functionality:
+
+| Extra     | Install command                     | Purpose                                                         |
+| --------- | ----------------------------------- | --------------------------------------------------------------- |
+| `train`   | `pip install "rfdetr[train]"`       | Training dependencies (PyTorch Lightning, albumentations, etc.) |
+| `loggers` | `pip install "rfdetr[loggers]"`     | Experiment tracking (TensorBoard, W&B, MLflow, ClearML)         |
+| `onnx`    | `pip install "rfdetr[onnx]"`        | ONNX export                                                     |
+| `tflite`  | `pip install "rfdetr[onnx,tflite]"` | TFLite export (Python 3.12 only)                                |
+| `trt`     | `pip install "rfdetr[trt]"`         | TensorRT inference (pycuda, onnxruntime-gpu, tensorrt)          |
+| `kornia`  | `pip install "rfdetr[kornia]"`      | GPU-accelerated augmentations via Kornia                        |
+| `lora`    | `pip install "rfdetr[lora]"`        | LoRA fine-tuning with PEFT                                      |
+| `visual`  | `pip install "rfdetr[visual]"`      | Visualization utilities (matplotlib, pandas, seaborn)           |
+| `cli`     | `pip install "rfdetr[cli]"`         | CLI with typed argument parsing (jsonargparse)                  |
+| `plus`    | `pip install "rfdetr[plus]"`        | XLarge and 2XLarge detection models (PML 1.0 license)           |
+
 ## Additional Notes
 
 - Ensure you have Python 3.10 or higher installed.

@@ -5,7 +5,8 @@
 # ------------------------------------------------------------------------
 """Unit tests for COCOEvalCallback."""
 
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -332,6 +333,209 @@ class TestOnTrainBatchEnd:
 
         cb.map_metric.reset.assert_called_once()
         cb.map_metric_train.reset.assert_not_called()
+
+    def test_train_batch_end_segm_without_masks_skips_metric_update(self) -> None:
+        """Segm callback skips map_metric_train.update when preds lack a masks key."""
+        cb = COCOEvalCallback(segmentation=True)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        # _detection_preds returns preds without "masks" — mimics sparse_forward training mode
+        outputs = {"results": _detection_preds(1), "targets": _detection_targets()}
+
+        cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
+
+        cb.map_metric_train.update.assert_not_called()
+
+    def test_train_batch_end_segm_with_masks_calls_metric_update(self) -> None:
+        """Segm callback calls map_metric_train.update when preds include a masks key."""
+        cb = COCOEvalCallback(segmentation=True)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        preds_with_masks = [
+            {
+                "boxes": torch.zeros(1, 4),
+                "scores": torch.zeros(1),
+                "labels": torch.zeros(1, dtype=torch.long),
+                "masks": torch.zeros(1, 16, 16, dtype=torch.bool),
+            }
+        ]
+        outputs = {"results": preds_with_masks, "targets": _detection_targets()}
+
+        cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
+
+        cb.map_metric_train.update.assert_called_once()
+
+    def test_train_batch_end_segm_empty_preds_falls_through(self) -> None:
+        """Segm callback with empty preds list falls through guard and calls update."""
+        cb = COCOEvalCallback(segmentation=True)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        # Empty preds: `preds and ...` short-circuits to False → no early return → update called
+        outputs = {"results": [], "targets": _detection_targets()}
+
+        cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
+
+        cb.map_metric_train.update.assert_called_once()
+
+
+class TestMetricsTablePrinting:
+    """Metric table terminal/notebook rendering behavior.
+
+    Covers: terminal (console.print path), Rich-missing warning, teardown
+    cleanup, RichProgressBar console routing, notebook in-place updates.
+    """
+
+    @pytest.mark.parametrize(
+        "split,title_pfx",
+        [
+            pytest.param("val", "Val", id="val"),
+            pytest.param("test", "Test", id="test"),
+        ],
+    )
+    def test_terminal_metrics_tables_print_to_console(self, split: str, title_pfx: str) -> None:
+        """Terminal metric tables print directly through the Rich console each epoch."""
+        cb = COCOEvalCallback(in_notebook=False)
+        trainer = _make_trainer()
+        trainer.is_global_zero = True
+        console = MagicMock(name="console")
+
+        with (
+            patch("rfdetr.training.callbacks.coco_eval._get_rich_console", return_value=console),
+            patch(
+                "rfdetr.training.callbacks.coco_eval._render_overall_merged",
+                side_effect=["overall-1", "overall-2"],
+            ),
+            patch("rfdetr.training.callbacks.coco_eval._render_summary_tables") as render_tables,
+        ):
+            cb._print_metrics_tables(trainer, split, {"mAP": 0.1}, [])
+            cb._print_metrics_tables(trainer, split, {"mAP": 0.2}, [])
+
+        assert render_tables.call_count == 2
+        assert render_tables.call_args_list[0].args[0] is console
+        assert render_tables.call_args_list[0].args[1].startswith(title_pfx)
+        assert "(Epoch" in render_tables.call_args_list[0].args[1]
+        assert render_tables.call_args_list[0].args[2] == "overall-1"
+
+    def test_missing_rich_warns_once_and_skips_metric_tables(self) -> None:
+        """Missing Rich emits one warning and skips noisy table rendering."""
+        cb = COCOEvalCallback(in_notebook=False)
+        trainer = _make_trainer()
+        trainer.is_global_zero = True
+
+        with (
+            patch("rfdetr.training.callbacks.coco_eval._IS_RICH_AVAILABLE", False),
+            patch("rfdetr.training.callbacks.coco_eval.logger.warning") as warning,
+            patch("rfdetr.training.callbacks.coco_eval._get_rich_console") as get_console,
+        ):
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.1}, [])
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.2}, [])
+
+        warning.assert_called_once_with(
+            "Rich is not installed; skipping metric table rendering. Install `rich` to enable tables."
+        )
+        assert cb._missing_rich_warning_emitted is True
+        get_console.assert_not_called()
+
+    def test_teardown_releases_notebook_widget(self) -> None:
+        """Teardown clears the notebook output widget reference."""
+        cb = COCOEvalCallback(in_notebook=True)
+        cb._output_widget = MagicMock(name="output_widget")
+
+        cb.teardown(_make_trainer(), _make_pl_module(), "fit")
+
+        assert cb._output_widget is None
+
+    @pytest.mark.parametrize("stage", ["fit", "validate", "test", "predict"])
+    def test_teardown_no_op_when_no_widget(self, stage: str) -> None:
+        """Teardown does not raise when no output widget was created."""
+        cb = COCOEvalCallback(in_notebook=False)
+        assert cb._output_widget is None
+
+        cb.teardown(_make_trainer(), _make_pl_module(), stage)
+
+        assert cb._output_widget is None
+
+    def test_terminal_prints_through_rich_progress_bar_console(self) -> None:
+        """Metric tables route through RichProgressBar._console when active."""
+        # Create a fake callback whose class name is RichProgressBar so
+        # _get_rich_console picks it up without importing PTL.
+        rich_progress_bar_fake = type("RichProgressBar", (), {})
+        rich_console = MagicMock(name="rich_console")
+        fake_pb = rich_progress_bar_fake()
+        fake_pb._console = rich_console  # type: ignore[attr-defined]
+
+        cb = COCOEvalCallback(in_notebook=False)
+        trainer = _make_trainer(callbacks=[fake_pb])
+        trainer.is_global_zero = True
+
+        with patch(
+            "rfdetr.training.callbacks.coco_eval._render_overall_merged",
+            return_value="overall",
+        ):
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.5}, [])
+
+        rich_console.print.assert_called_once()
+
+    def test_notebook_metrics_tables_reuse_and_clear_output_widget(self) -> None:
+        """Notebook metric tables update one output widget instead of appending one table block per epoch."""
+
+        class FakeOutput:
+            """Minimal ipywidgets.Output stand-in."""
+
+            def __init__(self) -> None:
+                self.clear_output = MagicMock(name="clear_output")
+                self.enter_count = 0
+
+            def __enter__(self) -> "FakeOutput":
+                self.enter_count += 1
+                return self
+
+            def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+                return False
+
+        output_widget = FakeOutput()
+        display = MagicMock(name="display")
+        widgets_module = ModuleType("ipywidgets")
+        widgets_module.Output = MagicMock(return_value=output_widget)
+        ipython_module = ModuleType("IPython")
+        ipython_module.__path__ = []
+        display_module = ModuleType("IPython.display")
+        display_module.display = display
+
+        cb = COCOEvalCallback(in_notebook=True)
+        trainer = _make_trainer()
+        trainer.is_global_zero = True
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "ipywidgets": widgets_module,
+                    "IPython": ipython_module,
+                    "IPython.display": display_module,
+                },
+            ),
+            patch("rfdetr.training.callbacks.coco_eval._render_overall_merged", side_effect=["overall-1", "overall-2"]),
+            patch("rfdetr.training.callbacks.coco_eval._render_summary_tables") as render_summary_tables,
+        ):
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.1}, [])
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.2}, [])
+
+        widgets_module.Output.assert_called_once()
+        display.assert_called_once_with(output_widget)
+        assert cb._output_widget is output_widget
+        assert [call.kwargs for call in output_widget.clear_output.call_args_list] == [
+            {"wait": True},
+            {"wait": True},
+        ]
+        assert output_widget.enter_count == 2
+        assert render_summary_tables.call_count == 2
 
 
 @pytest.mark.parametrize(
@@ -740,8 +944,8 @@ class TestOnValidationEpochEnd:
         cb.map_metric.compute.assert_called_once()
         module.log.assert_called()
 
-    def test_progress_bar_suppresses_terminal_metric_summaries(self, capsys) -> None:
-        """Progress-bar training should keep scalar logs but suppress duplicate terminal summary text."""
+    def test_progress_bar_suppresses_duplicate_pycocotools_output(self, capsys) -> None:
+        """Progress-bar training suppresses duplicate pycocotools stdout but still prints metric tables."""
         cb = COCOEvalCallback(max_dets=500)
         trainer = _make_trainer(callbacks=[_TQDMProgressBar()])
         trainer.callback_metrics = {}
@@ -759,7 +963,7 @@ class TestOnValidationEpochEnd:
             cb._compute_and_log(trainer, module, "val")
 
         assert "Average Precision" not in capsys.readouterr().out
-        print_metrics_tables.assert_not_called()
+        print_metrics_tables.assert_called_once()
         cb.map_metric.compute.assert_called_once()
         module.log.assert_called()
 

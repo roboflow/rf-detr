@@ -4,7 +4,9 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import os
 import warnings
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,6 +14,7 @@ import torch
 from pydantic import ValidationError
 
 from rfdetr.config import (
+    KeypointTrainConfig,
     ModelConfig,
     PretrainWeightsCompatibilityWarning,
     RFDETRBaseConfig,
@@ -107,6 +110,61 @@ class TestModelConfigValidation:
 
         assert config.postprocess_trace_alpha == 0.2
 
+    def test_pretrain_weights_absolute_path_realpath_normalised(self, tmp_path) -> None:
+        """An absolute pathlib.Path for pretrain_weights is stored as the realpath-normalised string."""
+        weights_path = tmp_path / "weights.pth"
+
+        config = RFDETRBaseConfig(pretrain_weights=weights_path)
+
+        assert config.pretrain_weights == os.path.realpath(os.fspath(weights_path))
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            pytest.param("dataset_dir", id="dataset_dir"),
+            pytest.param("output_dir", id="output_dir"),
+        ],
+    )
+    def test_train_dir_fields_accept_path(self, tmp_path, field: str) -> None:
+        """TrainConfig dataset/output dir fields accept pathlib.Path and store the realpath-normalised string."""
+        path = tmp_path / "artifact"
+        kwargs = {"dataset_dir": str(tmp_path)}
+        kwargs[field] = path
+
+        config = TrainConfig(**kwargs)
+
+        assert getattr(config, field) == os.path.realpath(os.fspath(path))
+
+    def test_accepts_bare_path_object_for_pretrain_weights(self) -> None:
+        """Bare pretrained weight Path values resolve the same as bare strings."""
+        path_config = RFDETRBaseConfig(pretrain_weights=Path("rf-detr-base.pth"))
+        string_config = RFDETRBaseConfig(pretrain_weights="rf-detr-base.pth")
+
+        assert path_config.pretrain_weights == string_config.pretrain_weights
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            # PTL trainer.fit(ckpt_path=...) sentinels — must pass through verbatim.
+            pytest.param("best", id="sentinel_best"),
+            pytest.param("last", id="sentinel_last"),
+            pytest.param("hpc", id="sentinel_hpc"),
+            pytest.param("registry:model-name", id="sentinel_registry"),
+            # A relative Path proves os.fspath coercion without realpath resolution.
+            pytest.param(Path("checkpoints/last.ckpt"), id="path_object"),
+        ],
+    )
+    def test_resume_coerced_via_fspath_without_realpath(self, value) -> None:
+        """``resume`` accepts pathlib.Path and is coerced to ``str`` via ``os.fspath`` only.
+
+        Unlike ``dataset_dir``/``output_dir``, ``resume`` is forwarded verbatim to PyTorch Lightning's
+        ``trainer.fit(ckpt_path=...)``, which also accepts sentinels such as ``"last"``. Realpath-normalising it would
+        rewrite those sentinels (and relative paths) into spurious absolute paths, so the value must be preserved.
+        """
+        config = TrainConfig(dataset_dir="/tmp", resume=value)
+
+        assert config.resume == os.fspath(value)
+
 
 class TestRFDETRBaseConfigEncoder:
     """Encoder field validation on RFDETRBaseConfig (no fixture needed — has defaults)."""
@@ -150,6 +208,42 @@ class TestSegmentationTrainConfigNumSelect:
         assert config_class().num_select == expected_num_select
 
 
+class TestTrainConfigRejectsUnknownKwargs:
+    """TrainConfig must raise on unknown/typo'd kwargs instead of silently ignoring them (extra='forbid')."""
+
+    def test_typo_kwarg_raises_with_helpful_message(self, tmp_path) -> None:
+        """A typo'd kwarg (epoch instead of epochs) raises listing the unknown and available parameters."""
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'epoch'"):
+            TrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+    def test_typo_error_lists_available_parameters(self, tmp_path) -> None:
+        """The rejection message includes the available parameter list so the typo is easy to fix."""
+        with pytest.raises(ValidationError, match=r"Available parameter\(s\):.*epochs"):
+            TrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+    @pytest.mark.parametrize(
+        "config_class",
+        [
+            pytest.param(SegmentationTrainConfig, id="segmentation"),
+            pytest.param(KeypointTrainConfig, id="keypoint"),
+        ],
+    )
+    def test_subclasses_reject_unknown_kwargs(self, tmp_path, config_class) -> None:
+        """TrainConfig subclasses inherit the forbid behaviour."""
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'epoch'"):
+            config_class(dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+    def test_get_train_config_raises_for_typo_kwarg(self, tmp_path) -> None:
+        """The public RFDETR.get_train_config path surfaces the typo instead of swallowing it."""
+        from types import SimpleNamespace
+
+        from rfdetr.detr import RFDETR
+
+        stub = SimpleNamespace(_train_config_class=TrainConfig)
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'epoch'"):
+            RFDETR.get_train_config(stub, dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+
 class TestTrainConfigT42PromotedFields:
     """T4-2: Promoted fields exist with correct defaults; device field is absent."""
 
@@ -164,11 +258,10 @@ class TestTrainConfigT42PromotedFields:
         """Device must not appear in TrainConfig.model_fields (PTL auto-detects accelerator)."""
         assert "device" not in TrainConfig.model_fields
 
-    def test_device_kwarg_silently_ignored(self, tmp_path):
-        """Passing device= to TrainConfig is silently ignored (extra='ignore'); PTL absorbs it."""
-        # TrainConfig uses Pydantic default extra='ignore', so unknown kwargs don't raise.
-        tc = self._tc(tmp_path, device="cpu")
-        assert not hasattr(tc, "device")  # field not set on the instance
+    def test_device_kwarg_rejected(self, tmp_path):
+        """Passing device= directly to TrainConfig raises (extra='forbid'); RFDETR.train() pops it beforehand."""
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'device'"):
+            self._tc(tmp_path, device="cpu")
 
     # --- promoted fields: defaults ---
 
@@ -316,6 +409,19 @@ class TestBuildTrainerUsesRealFields:
         defaults.update(kwargs)
         return TrainConfig(**defaults)
 
+    def _kp_tc(self, tmp_path, **kwargs):
+        defaults = dict(
+            dataset_dir=str(tmp_path),
+            output_dir=str(tmp_path),
+            tensorboard=False,
+            wandb=False,
+            mlflow=False,
+            clearml=False,
+            use_ema=False,
+        )
+        defaults.update(kwargs)
+        return KeypointTrainConfig(**defaults)
+
     def _mc(self, **kwargs):
         from rfdetr.config import RFDETRBaseConfig
 
@@ -337,7 +443,7 @@ class TestBuildTrainerUsesRealFields:
         from rfdetr.training import build_trainer
 
         trainer = build_trainer(
-            self._tc(tmp_path, clip_max_norm=0.25),
+            self._kp_tc(tmp_path, clip_max_norm=0.25),
             self._mc(use_grouppose_keypoints=True),
         )
         assert trainer.gradient_clip_val is None
