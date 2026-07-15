@@ -93,6 +93,15 @@ def resolve_augmentation_backend(backend: str) -> AugmentationBackend:
     ``"albu"`` forces the Albumentations CPU path regardless of whether ``aug_config`` is set.
     The legacy ``"gpu"`` string is treated as an alias for ``KORNIA``.
 
+    Note:
+        ``"cpu"`` and ``"auto"`` resolution depends on which optional packages happen to be
+        installed (Albumentations and/or Kornia are both optional, via ``pip install
+        'rfdetr[augment]'``). The same ``backend`` value can therefore resolve to a different
+        concrete backend across environments — e.g. CI without ``[augment]`` installed resolves
+        to ``CPU`` (torchvision), while a local dev environment with Albumentations installed
+        resolves to ``ALBU``. Pass an explicit backend to guarantee identical behaviour across
+        environments.
+
     Args:
         backend: One of ``"cpu"``, ``"albu"``, ``"kornia"``, ``"auto"``, or legacy ``"gpu"``.
 

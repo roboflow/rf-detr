@@ -20,6 +20,29 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
 
 ## Upgrade 1.8 → 1.9
 
+### Breaking changes
+
+!!! warning "Breaking: `albumentations` and `kornia` extras merged into `augment`"
+
+    **PyPI extras renamed.** Default training/validation/prediction/export augmentations now use
+    torchvision-native transforms, so `[train]` no longer installs Albumentations. Custom CPU
+    (Albumentations) and GPU (Kornia) augmentation both live behind a single new `augment` extra.
+
+    | Old extra                                | New extra               |
+    | ---------------------------------------- | ----------------------- |
+    | `rfdetr[train]` (implied albumentations) | `rfdetr[train,augment]` |
+    | `rfdetr[kornia]`                         | `rfdetr[augment]`       |
+
+    ```bash
+    # Before
+    pip install 'rfdetr[train]'    # bundled albumentations
+    pip install 'rfdetr[kornia]'
+
+    # After
+    pip install 'rfdetr[train,augment]'   # custom aug_config or GPU backend
+    pip install 'rfdetr[augment]'
+    ```
+
 ### Planned for Removal in v1.9
 
 The following APIs were deprecated in earlier releases and will be removed in v1.9. They still work in the current release (v1.8.x) but emit `DeprecationWarning`. Update your code before upgrading.

@@ -87,8 +87,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `_detect_horizontal_flip` in Albumentations transform pipeline now uses `len(bboxes) == 0` instead of `not bboxes` to correctly handle Albumentations 2.x where bboxes is a NumPy array (falsy even when non-empty). ([#1126](https://github.com/roboflow/rf-detr/pull/1126))
 - TensorBoard logger is now disabled gracefully when `tensorboard` is installed alongside a NumPy-2.0-incompatible `tensorflow`. Training degrades to CSV-only logging with a clear warning instead of crashing inside `_log_hyperparams`. ([#1123](https://github.com/roboflow/rf-detr/pull/1123))
 
-> > > > > > > origin/develop
-
 ---
 
 ## [1.8.0] — 2026-06-13

@@ -397,9 +397,18 @@ class AlbumentationsWrapper:
 
     Note:
         For custom geometric transforms, add the transform class name to the GEOMETRIC_TRANSFORMS set at module level.
+
+    Raises:
+        ImportError: If Albumentations is not installed.
     """
 
     def __init__(self, transform: alb.BasicTransform, keypoint_flip_pairs: list[int] | None = None) -> None:
+        if alb is None:
+            raise ImportError(
+                "Custom Albumentations augmentations require the optional augmentation extra. "
+                "Install with: pip install 'rfdetr[augment]'"
+            )
+
         # Auto-detect if transform is geometric (recursively for containers)
         self._is_geometric = _is_geometric_transform(transform)
         self._keypoint_flip_pairs = list(keypoint_flip_pairs or [])
