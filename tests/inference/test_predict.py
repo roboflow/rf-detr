@@ -72,6 +72,85 @@ class TestPredictReturnTypes:
         assert all(isinstance(result, sv.KeyPoints) for result in batch)
 
 
+class _TupleOutputModelContext:
+    """Model context whose forward returns a 3-tuple, mirroring ``forward_export()`` after ``optimize_for_inference()``.
+
+    Regression fixture for GitHub #1208: ``predict()`` mislabels the tuple's third element as ``pred_masks`` instead of
+    ``pred_keypoints`` because it reads a nonexistent ``model.model_config`` attribute instead of ``model.args``.
+    """
+
+    def __init__(self) -> None:
+        self.device = torch.device("cpu")
+        self.resolution = 28
+        self.class_names = ["object"]
+        self.args = SimpleNamespace(use_grouppose_keypoints=True, num_keypoints_per_class=[17])
+        self.model = torch.nn.Identity()
+        self.inference_model = self._forward
+        self.captured_predictions: dict[str, torch.Tensor] | None = None
+
+    def _forward(self, batch_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch = batch_tensor.shape[0]
+        boxes = torch.tensor([[[0.5, 0.5, 0.2, 0.2]]] * batch)
+        logits = torch.full((batch, 1, 1), 10.0)
+        keypoints = torch.full((batch, 1, 17, 3), 0.5)
+        return boxes, logits, keypoints
+
+    def postprocess(
+        self, predictions: dict[str, torch.Tensor], target_sizes: torch.Tensor
+    ) -> list[dict[str, torch.Tensor]]:
+        self.captured_predictions = predictions
+        batch = target_sizes.shape[0]
+        results = []
+        for _ in range(batch):
+            result: dict[str, torch.Tensor] = {
+                "scores": torch.tensor([0.9]),
+                "labels": torch.tensor([0]),
+                "boxes": torch.tensor([[0.0, 0.0, 1.0, 1.0]]),
+            }
+            if "pred_keypoints" in predictions:
+                result["keypoints"] = torch.full((1, 17, 3), 0.5)
+            results.append(result)
+        return results
+
+
+def _make_optimized_keypoint_model() -> tuple[RFDETR, _TupleOutputModelContext]:
+    """Build a ``_DummyRFDETR`` wired to look like it already ran ``optimize_for_inference()``."""
+    model = _DummyRFDETR()
+    stub = _TupleOutputModelContext()
+    model.model = stub
+    model._is_optimized_for_inference = True
+    model._optimized_resolution = stub.resolution
+    model._optimized_has_been_compiled = False
+    model._optimized_dtype = torch.float32
+    return model, stub
+
+
+class TestPredictOptimizedInferenceKeypoints:
+    """Regression tests for GitHub #1208: optimize_for_inference() breaks keypoint predict()."""
+
+    def test_tuple_output_labels_third_slot_as_keypoints_not_masks(self) -> None:
+        """The 3rd tuple slot must be labeled pred_keypoints, not pred_masks, when use_grouppose_keypoints=True."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model, stub = _make_optimized_keypoint_model()
+
+        model.predict(img)
+
+        assert stub.captured_predictions is not None
+        assert "pred_keypoints" in stub.captured_predictions
+        assert "pred_masks" not in stub.captured_predictions
+
+    def test_optimized_keypoint_model_predict_returns_sv_keypoints(self) -> None:
+        """Predict() must return sv.KeyPoints, not sv.Detections, for an optimized keypoint model."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model, _stub = _make_optimized_keypoint_model()
+
+        result = model.predict(img)
+
+        assert isinstance(result, sv.KeyPoints), (
+            f"expected sv.KeyPoints for optimized keypoint model, got {type(result)}"
+        )
+
+
 def test_predict_accepts_image_url() -> None:
     if not _is_online(_HTTP_HOST, _HTTP_PORT):
         pytest.skip("Offline environment, skipping HTTP predict URL test.")
