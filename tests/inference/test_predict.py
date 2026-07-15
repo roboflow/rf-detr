@@ -73,7 +73,7 @@ class TestPredictReturnTypes:
 
 
 class _TupleOutputModelContext:
-    """Model context whose forward returns a 3-tuple, mirroring ``forward_export()`` after ``optimize_for_inference()``.
+    """Model context whose forward returns a 3-tuple, mirroring ``forward_export()`` after ``inference()``.
 
     Regression fixture for GitHub #1208: ``predict()`` mislabels the tuple's third element as ``pred_masks`` instead of
     ``pred_keypoints`` because it reads a nonexistent ``model.model_config`` attribute instead of ``model.args``.
@@ -114,7 +114,7 @@ class _TupleOutputModelContext:
 
 
 def _make_optimized_keypoint_model() -> tuple[RFDETR, _TupleOutputModelContext]:
-    """Build a ``_DummyRFDETR`` wired to look like it already ran ``optimize_for_inference()``."""
+    """Build a ``_DummyRFDETR`` wired to look like it already ran ``inference()``."""
     model = _DummyRFDETR()
     stub = _TupleOutputModelContext()
     model.model = stub
@@ -126,7 +126,7 @@ def _make_optimized_keypoint_model() -> tuple[RFDETR, _TupleOutputModelContext]:
 
 
 class TestPredictOptimizedInferenceKeypoints:
-    """Regression tests for GitHub #1208: optimize_for_inference() breaks keypoint predict()."""
+    """Regression tests for GitHub #1208: inference() breaks keypoint predict()."""
 
     def test_tuple_output_labels_third_slot_as_keypoints_not_masks(self) -> None:
         """The 3rd tuple slot must be labeled pred_keypoints, not pred_masks, when use_grouppose_keypoints=True."""
@@ -1207,20 +1207,20 @@ class TestPredictInputTypeReturnShape:
 
 
 class TestExportInplaceOptimizeGuards:
-    """Roboflow export methods raise a clear error after ``optimize_for_inference(inplace=True)``."""
+    """Roboflow export methods raise a clear error after ``inference(inplace=True)``."""
 
     def test_export_for_roboflow_raises_after_inplace_optimize(self, tmp_path) -> None:
         """``export_for_roboflow`` raises ``RuntimeError`` once the model has been cleared."""
         model = _DummyRFDETR()
         model._optimized_inplace = True
-        with pytest.raises(RuntimeError, match="optimize_for_inference"):
+        with pytest.raises(RuntimeError, match="inference"):
             model.export_for_roboflow(str(tmp_path))
 
     def test_deploy_to_roboflow_raises_after_inplace_optimize(self) -> None:
         """``deploy_to_roboflow`` raises ``RuntimeError`` before any auth/network calls."""
         model = _DummyRFDETR()
         model._optimized_inplace = True
-        with pytest.raises(RuntimeError, match="optimize_for_inference"):
+        with pytest.raises(RuntimeError, match="inference"):
             model.deploy_to_roboflow("ws", "proj", 1)
 
 

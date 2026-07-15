@@ -26,6 +26,7 @@ import requests
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 import yaml
+from deprecate import deprecated
 from PIL import Image
 
 from rfdetr._namespace import _namespace_from_configs
@@ -916,7 +917,7 @@ class RFDETR:
                 logger.warning("Could not save training_config.json to %s: %s", config.output_dir, exc)
 
     @_ensure_model_on_device
-    def optimize_for_inference(
+    def inference(
         self,
         compile: bool = True,
         batch_size: int = 1,
@@ -990,7 +991,7 @@ class RFDETR:
             >>> model._optimized_dtype = None
             >>> model._optimized_inplace = False
             >>> # Standard (non-inplace) optimization — reversible:
-            >>> model.optimize_for_inference(compile=False)
+            >>> model.inference(compile=False)
             >>> model._is_optimized_for_inference
             True
             >>> model._optimized_inplace
@@ -999,7 +1000,7 @@ class RFDETR:
             >>> model._is_optimized_for_inference
             False
             >>> # Inplace optimization — destructive, cannot be reversed:
-            >>> model.optimize_for_inference(compile=False, dtype="float16", inplace=True)
+            >>> model.inference(compile=False, dtype="float16", inplace=True)
             >>> model._is_optimized_for_inference
             True
             >>> model._optimized_dtype
@@ -1018,7 +1019,7 @@ class RFDETR:
             raise ValueError(f"dtype must be a floating-point torch.dtype or string name of one, got {dtype}")
         if inplace and compile:
             raise ValueError(
-                "optimize_for_inference(inplace=True) requires compile=False. "
+                "inference(inplace=True) requires compile=False. "
                 "torch.jit.trace retains references to the original parameter storage in the returned "
                 "ScriptModule, so setting model.model=None would not free the weight tensors and "
                 "inplace=True would not reduce memory usage."
@@ -1077,10 +1078,33 @@ class RFDETR:
                 self.remove_optimized_model()
             raise
 
+    @deprecated(target=inference, deprecated_in="1.9.0", remove_in="1.11.0")
+    def optimize_for_inference(
+        self,
+        compile: bool = True,
+        batch_size: int = 1,
+        dtype: torch.dtype | str = torch.float32,
+        *,
+        inplace: bool = False,
+    ) -> None:
+        """Deprecated alias for :meth:`inference`.
+
+        .. deprecated:: 1.9.0
+            ``optimize_for_inference`` was renamed to :meth:`inference`. Deprecated since v1.9.0, will be
+            removed in v1.11.0. Use :meth:`inference` instead.
+
+        Args:
+            compile: See :meth:`inference`.
+            batch_size: See :meth:`inference`.
+            dtype: See :meth:`inference`.
+            inplace: See :meth:`inference`.
+        """
+        ...
+
     def remove_optimized_model(self) -> None:
         """Remove the optimized inference model and reset all optimization flags.
 
-        Clears ``model.inference_model`` and resets all internal state set by :meth:`optimize_for_inference`. Safe to
+        Clears ``model.inference_model`` and resets all internal state set by :meth:`inference`. Safe to
         call even if the model has not been optimized. When the model was optimized with ``inplace=True``, this method
         issues a :class:`UserWarning` and returns without modifying state — the original module cannot be restored
         because ``export()`` and dtype casting mutate it; create or reload a new ``RFDETR`` instance instead.
@@ -1112,7 +1136,7 @@ class RFDETR:
             >>> model._optimized_resolution = None
             >>> model._optimized_dtype = None
             >>> model._optimized_inplace = False
-            >>> model.optimize_for_inference(compile=False)
+            >>> model.inference(compile=False)
             >>> model.remove_optimized_model()
             >>> model._is_optimized_for_inference
             False
@@ -1138,7 +1162,7 @@ class RFDETR:
     def is_optimized_inplace(self) -> bool:
         """Whether the model was optimized with ``inplace=True``.
 
-        Returns ``True`` after a successful :meth:`optimize_for_inference` call with ``inplace=True``,
+        Returns ``True`` after a successful :meth:`inference` call with ``inplace=True``,
         meaning the base model has been cleared and :meth:`remove_optimized_model` is a no-op.
 
         Examples:
@@ -1170,7 +1194,7 @@ class RFDETR:
             >>> model._optimized_inplace = False
             >>> model.is_optimized_inplace
             False
-            >>> model.optimize_for_inference(compile=False, inplace=True)
+            >>> model.inference(compile=False, inplace=True)
             >>> model.is_optimized_inplace
             True
         """
@@ -1799,7 +1823,7 @@ class RFDETR:
             logger.warning(
                 "Model is not optimized for inference. Latency may be higher than expected."
                 " For full GPU throughput (e.g. ~8x on T4 via FP16 Tensor Cores),"
-                " call model.optimize_for_inference(dtype=torch.float16).",
+                " call model.inference(dtype=torch.float16).",
             )
             self._has_warned_about_not_being_optimized_for_inference = True
         self.model.model.eval()
@@ -1994,7 +2018,7 @@ class RFDETR:
                         else (
                             " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
                             " Alternatively, you can recompile the optimized model for a different batch size"
-                            " by calling model.optimize_for_inference(batch_size=<new_batch_size>)."
+                            " by calling model.inference(batch_size=<new_batch_size>)."
                         )
                     )
                     raise ValueError(
@@ -2183,7 +2207,7 @@ class RFDETR:
         Raises:
             ValueError: If the `api_key` is not provided and not found in the
                 environment variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.
-            RuntimeError: If the model was cleared by ``optimize_for_inference(inplace=True)``.
+            RuntimeError: If the model was cleared by ``inference(inplace=True)``.
 
         Note:
             Bundle creation is delegated to :meth:`export_for_roboflow`, which can be called independently
@@ -2191,7 +2215,7 @@ class RFDETR:
         """
         if getattr(self, "_optimized_inplace", False) or self.model.model is None:
             raise RuntimeError(
-                "Cannot deploy after optimize_for_inference(inplace=True) — "
+                "Cannot deploy after inference(inplace=True) — "
                 "the model weights have been cleared from memory. "
                 "Call export_for_roboflow() before optimizing, then deploy the exported bundle."
             )
@@ -2240,11 +2264,11 @@ class RFDETR:
             PermissionError: If the process lacks write access to *output_dir* or its parent directory.
             OSError: On disk-full, invalid path, or other filesystem failure during directory creation,
                 file write, or ``torch.save``.
-            RuntimeError: If the model was cleared by ``optimize_for_inference(inplace=True)``.
+            RuntimeError: If the model was cleared by ``inference(inplace=True)``.
         """
         if getattr(self, "_optimized_inplace", False) or self.model.model is None:
             raise RuntimeError(
-                "Cannot export after optimize_for_inference(inplace=True) — "
+                "Cannot export after inference(inplace=True) — "
                 "the model has been cleared from memory. "
                 "Call export_for_roboflow() before optimizing."
             )
