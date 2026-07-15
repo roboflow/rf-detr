@@ -67,6 +67,21 @@ The following APIs were deprecated in earlier releases and will be removed in v1
     | `num_select`        | `TrainConfig` | `ModelConfig` |
     | `cls_loss_coef`     | `ModelConfig` | `TrainConfig` |
 
+### Deprecated in v1.9 → Remove in v1.11
+
+!!! note "Deprecated: `RFDETR.optimize_for_inference()` renamed to `RFDETR.inference()`"
+
+    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=...)`** — renamed to
+    `inference()` with the same signature.
+
+    ```python
+    # Before (deprecated)
+    model.optimize_for_inference(dtype=torch.float16)
+
+    # After
+    model.inference(dtype=torch.float16)
+    ```
+
 ---
 
 ## Upgrade 1.7 → 1.8
