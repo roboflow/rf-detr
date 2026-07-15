@@ -980,9 +980,11 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
         image_set: Dataset split to load. One of ``"train"``, ``"val"``, or
             ``"test"``.
         args: Argument namespace. The following attributes are consumed:
-            ``dataset_dir``, ``square_resize_div_64``, ``aug_config``, ``segmentation_head``, ``multi_scale``,
-            ``expanded_scales``, ``do_random_resize_via_padding``, ``patch_size``, ``num_windows``. ``aug_config`` is
-            forwarded to the transform builder; when ``None`` the builder uses torchvision-native defaults.
+            ``dataset_dir``, ``square_resize_div_64``, ``aug_config``, ``scale_jitter``, ``segmentation_head``,
+            ``multi_scale``, ``expanded_scales``, ``do_random_resize_via_padding``, ``patch_size``, ``num_windows``.
+            ``aug_config`` is forwarded to the transform builder; when ``None`` the builder uses torchvision-native
+            defaults. ``scale_jitter`` independently controls the resize-crop branch (Option B) and defaults to
+            ``True`` when absent.
         resolution: Target square resolution in pixels.
 
     Returns:
@@ -1004,6 +1006,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     patch_size = getattr(args, "patch_size", 16)
     num_windows = getattr(args, "num_windows", 4)
     aug_config = getattr(args, "aug_config", None)
+    scale_jitter = getattr(args, "scale_jitter", True)
     include_keypoints = getattr(args, "use_grouppose_keypoints", False)
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
     keypoint_flip_pairs: list[int] | None = (
@@ -1034,6 +1037,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             ),
@@ -1055,6 +1059,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             ),

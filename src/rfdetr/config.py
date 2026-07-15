@@ -813,6 +813,7 @@ class TrainConfig(BaseConfig):
     eval_interval: int = 1
     log_per_class_metrics: bool = True
     aug_config: Optional[Dict[str, Any]] = None
+    scale_jitter: bool = True
     augmentation_backend: AugmentationBackend = AugmentationBackend.CPU
     save_dataset_grids: bool = False
 
