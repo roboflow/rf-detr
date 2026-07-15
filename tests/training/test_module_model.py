@@ -891,6 +891,18 @@ class TestTrainingStep:
         assert progress_loss_calls[0].kwargs.get("on_step") is True
         assert progress_loss_calls[0].kwargs.get("on_epoch") is False
 
+    def test_logs_epoch_train_loss_to_progress_bar(self, tmp_path):
+        """Canonical training loss must be visible after each epoch."""
+        module, samples, targets, _, _ = self._run_step(tmp_path)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        epoch_loss_calls = [call for call in module.log.call_args_list if call[0][0] == "train/loss"]
+        assert len(epoch_loss_calls) == 1
+        assert epoch_loss_calls[0].kwargs.get("prog_bar") is True
+        assert epoch_loss_calls[0].kwargs.get("on_step") is False
+        assert epoch_loss_calls[0].kwargs.get("on_epoch") is True
+
     def test_logs_learning_rate_without_progress_bar(self, tmp_path):
         """Current learning rate should be logged without occupying progress-bar metric slots."""
         module, samples, targets, _, _ = self._run_step(tmp_path)

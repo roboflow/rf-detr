@@ -262,7 +262,7 @@ class RFDETRModelModule(LightningModule):
         self.log(
             "train/loss",
             loss,
-            prog_bar=False,
+            prog_bar=True,
             on_step=train_log_on_step,
             on_epoch=True,
             sync_dist=train_log_sync_dist,
