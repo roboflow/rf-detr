@@ -286,9 +286,10 @@ To disable all augmentations, pass an empty dict:
 model.train(dataset_dir="path/to/dataset", aug_config={})
 ```
 
-`aug_config` controls only the Albumentations augmentation stack. The training resize
-pipeline's independent resize → crop → resize branch (Option B) is controlled separately
-by `scale_jitter`:
+`aug_config` controls only the augmentation stack (Albumentations on CPU, or the
+equivalent Kornia pipeline when `augmentation_backend="gpu"`/`"auto"`). The training
+resize pipeline's independent resize → crop → resize branch (Option B) is controlled
+separately by `scale_jitter`:
 
 ```python
 # Keep aug_config's default augmentation stack, but disable random crop/scale jitter

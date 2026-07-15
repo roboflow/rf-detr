@@ -267,18 +267,18 @@ class TestBuildTrainResizeConfigNonSquareScaleJitter:
             assert entry["RandomSizedCrop"]["min_max_height"] == [384, 600]
 
 
-class TestBuildTrainResizeConfigCropBranch:
-    """include_crop_branch=False drops Option B so only the direct-resize branch (Option A) runs."""
+class TestBuildTrainResizeConfigScaleJitter:
+    """scale_jitter=False drops Option B so only the direct-resize branch (Option A) runs."""
 
     @pytest.mark.parametrize(
         "square",
         [pytest.param(True, id="square"), pytest.param(False, id="nonsquare")],
     )
-    def test_include_crop_branch_false_drops_crop_branch(self, square):
-        """No RandomSizedCrop anywhere in result when crop branch is disabled."""
+    def test_scale_jitter_false_drops_crop_branch(self, square):
+        """No RandomSizedCrop anywhere in result when scale jitter is disabled."""
         import json
 
-        result = _build_train_resize_config([480, 640], square=square, include_crop_branch=False)
+        result = _build_train_resize_config([480, 640], square=square, scale_jitter=False)
         assert len(result) == 1
         assert "RandomSizedCrop" not in json.dumps(result)
 
@@ -286,11 +286,11 @@ class TestBuildTrainResizeConfigCropBranch:
         "square",
         [pytest.param(True, id="square"), pytest.param(False, id="nonsquare")],
     )
-    def test_include_crop_branch_true_produces_one_of_with_crop(self, square):
-        """Default (include_crop_branch=True) outer entry is a two-branch OneOf wrapping option_b with crop."""
+    def test_scale_jitter_true_produces_one_of_with_crop(self, square):
+        """Default (scale_jitter=True) outer entry is a two-branch OneOf wrapping option_b with crop."""
         import json
 
-        result = _build_train_resize_config([480, 640], square=square, include_crop_branch=True)
+        result = _build_train_resize_config([480, 640], square=square, scale_jitter=True)
         assert len(result) == 1
         assert "OneOf" in result[0]
         assert "RandomSizedCrop" in json.dumps(result)

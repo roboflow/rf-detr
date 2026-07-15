@@ -431,7 +431,7 @@ def _build_train_resize_config(
     *,
     square: bool,
     max_size: int | None = None,
-    include_crop_branch: bool = True,
+    scale_jitter: bool = True,
 ) -> list[dict[str, Any]]:
     """Build the training resize pipeline as an Albumentations config list.
 
@@ -454,12 +454,12 @@ def _build_train_resize_config(
             optional long-side cap.
         max_size: Maximum long-side size for non-square resizes.  Defaults to
             ``1333`` when *square* is ``False``.
-        include_crop_branch: If ``True`` (default), both Option A and Option B are randomly
+        scale_jitter: If ``True`` (default), both Option A and Option B are randomly
             selected.  If ``False``, only Option A (direct resize) is used — no random crop.
 
     Returns:
         A single-element list. By default the entry wraps a ``OneOf`` over both
-        branches; when ``include_crop_branch=False``, the entry is Option A directly.
+        branches; when ``scale_jitter=False``, the entry is Option A directly.
     """
     if square:
         option_a: dict[str, Any] = {
@@ -517,7 +517,7 @@ def _build_train_resize_config(
             }
         }
 
-    if not include_crop_branch:
+    if not scale_jitter:
         return [option_a]
 
     return [{"OneOf": {"transforms": [option_a, option_b]}}]
@@ -611,7 +611,7 @@ def make_coco_transforms(
                 scales,
                 square=False,
                 max_size=1333,
-                include_crop_branch=scale_jitter,
+                scale_jitter=scale_jitter,
             ),
             strict=True,
         )
@@ -716,7 +716,7 @@ def make_coco_transforms_square_div_64(
             _build_train_resize_config(
                 scales,
                 square=True,
-                include_crop_branch=scale_jitter,
+                scale_jitter=scale_jitter,
             ),
             strict=True,
         )
