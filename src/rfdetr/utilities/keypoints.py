@@ -7,7 +7,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
+from numpy.typing import NDArray
 
 __all__ = [
     "schemas_semantically_equal",
@@ -134,9 +137,9 @@ def schemas_semantically_equal(a: list[int], b: list[int]) -> bool:
 
 
 def precision_cholesky_to_pixel_covariance(
-    precision_cholesky: np.ndarray,
-    source_shape: np.ndarray,
-) -> np.ndarray:
+    precision_cholesky: NDArray[np.floating[Any]],
+    source_shape: NDArray[np.floating[Any]],
+) -> NDArray[np.float32]:
     """Convert RF-DETR keypoint precision parameters into pixel covariances.
 
     The keypoint head predicts lower-triangular precision-Cholesky parameters in

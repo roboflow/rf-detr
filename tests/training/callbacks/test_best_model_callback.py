@@ -19,6 +19,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from rfdetr.config import RFDETRLargeDeprecatedConfig, RFDETRMediumConfig
 from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyStopping
+from rfdetr.training.callbacks.ema import RFDETREMACallback
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1992,3 +1993,105 @@ class TestSerializeModelConfig:
         result = BestModelCallback._serialize_model_config(pl_module)
 
         assert result is raw
+
+
+# ---------------------------------------------------------------------------
+# TestOnFitEndEMASwapSuppression
+# ---------------------------------------------------------------------------
+
+
+class _TestStepLinearModule(LightningModule):
+    """Real module with ``test_step`` and a tiny linear model for weight-identity assertions."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = torch.nn.Linear(1, 1, bias=False)
+        self.train_config = {"lr": 0.001}
+
+    def test_step(self, batch: object, batch_idx: int) -> None:
+        """No-op test step so BestModelCallback.on_fit_end runs trainer.test()."""
+
+
+def _fill_module_weight(pl_module: LightningModule, value: float) -> None:
+    """Set the single linear weight of *pl_module* to *value* in-place."""
+    with torch.no_grad():
+        pl_module.model.weight.fill_(value)
+
+
+class TestOnFitEndEMASwapSuppression:
+    """The fit-end test run must evaluate the best checkpoint, not the final EMA weights.
+
+    Regression tests: ``BestModelCallback.on_fit_end`` loads ``checkpoint_best_total.pth`` into the module and then
+    calls ``trainer.test()`` — but ``RFDETREMACallback.on_test_epoch_start`` used to swap in the final EMA weights,
+    silently overwriting the just-loaded best weights for the whole test run.
+    """
+
+    @staticmethod
+    def _build_fit_end_scenario(
+        tmp_path: Path,
+    ) -> tuple[BestModelCallback, RFDETREMACallback, LightningModule, MagicMock, list[torch.Tensor]]:
+        """Arrange best=3.0 checkpoint, EMA=5.0 average model, live=7.0 weights, and a hook-simulating trainer."""
+        from torch.optim.swa_utils import AveragedModel
+
+        pl_module = _TestStepLinearModule()
+        cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
+        ema_cb = RFDETREMACallback()
+
+        # Best checkpoint saved at weight 3.0.
+        _fill_module_weight(pl_module, 3.0)
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        cb.on_validation_end(trainer, pl_module)
+
+        # EMA average model captured at weight 5.0.
+        _fill_module_weight(pl_module, 5.0)
+        ema_cb._average_model = AveragedModel(
+            model=pl_module,
+            use_buffers=True,
+            avg_fn=ema_cb._avg_fn,
+        )
+        ema_cb._average_model.eval()
+
+        # Final live weights end training at 7.0.
+        _fill_module_weight(pl_module, 7.0)
+
+        trainer.callbacks = [ema_cb, cb]
+        observed_weights: list[torch.Tensor] = []
+
+        def _fake_test(module: object, datamodule: object = None, verbose: bool = False) -> None:
+            # Simulate the PTL test loop invoking the EMA callback's test hooks.
+            ema_cb.on_test_epoch_start(trainer, pl_module)
+            observed_weights.append(pl_module.model.weight.detach().clone())
+            ema_cb.on_test_epoch_end(trainer, pl_module)
+
+        trainer.test = MagicMock(side_effect=_fake_test)
+        return cb, ema_cb, pl_module, trainer, observed_weights
+
+    def test_fit_end_test_runs_on_best_weights_not_ema(self, tmp_path: Path) -> None:
+        """During the fit-end test run the module must hold the best checkpoint weights (3.0), not EMA (5.0)."""
+        cb, _ema_cb, pl_module, trainer, observed_weights = self._build_fit_end_scenario(tmp_path)
+
+        cb.on_fit_end(trainer, pl_module)
+
+        assert observed_weights, "trainer.test() must have been invoked"
+        expected = torch.full_like(observed_weights[0], 3.0)
+        assert torch.allclose(observed_weights[0], expected), (
+            f"test ran with weight {observed_weights[0].item():.1f}; expected best-checkpoint weight 3.0"
+        )
+
+    def test_ema_swap_suppression_cleared_after_fit_end(self, tmp_path: Path) -> None:
+        """After on_fit_end the EMA callback must swap again for standalone trainer.test() runs."""
+        cb, ema_cb, pl_module, trainer, _observed = self._build_fit_end_scenario(tmp_path)
+
+        cb.on_fit_end(trainer, pl_module)
+
+        assert ema_cb.suppress_test_swap is False
+
+    def test_ema_swap_suppression_cleared_when_test_raises(self, tmp_path: Path) -> None:
+        """Suppression must be lifted even when trainer.test() raises."""
+        cb, ema_cb, pl_module, trainer, _observed = self._build_fit_end_scenario(tmp_path)
+        trainer.test = MagicMock(side_effect=RuntimeError("boom"))
+
+        with pytest.raises(RuntimeError, match="boom"):
+            cb.on_fit_end(trainer, pl_module)
+
+        assert ema_cb.suppress_test_swap is False

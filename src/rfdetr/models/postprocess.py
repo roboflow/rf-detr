@@ -15,6 +15,10 @@ from torch import nn
 
 from rfdetr.utilities import box_ops
 
+# Number of masks upsampled per interpolation call. Bounds peak memory when many masks are
+# resized to full image resolution (e.g. K=300 at 1080p would otherwise allocate gigabytes).
+_MASK_CHUNK = 32
+
 
 class PostProcess(nn.Module):
     """Convert raw RF-DETR model outputs into per-image prediction tensors.
@@ -51,8 +55,8 @@ class PostProcess(nn.Module):
             ``masks``. Keypoint outputs also contain ``keypoints`` and ``keypoint_precision_cholesky``.
         """
         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
-        out_masks = outputs.get("pred_masks", None)
-        out_keypoints = outputs.get("pred_keypoints", None)
+        out_masks = outputs.get("pred_masks")
+        out_keypoints = outputs.get("pred_keypoints")
         self._validate_outputs(out_logits, out_masks, out_keypoints, target_sizes)
 
         scores, labels, topk_boxes = self._select_topk(out_logits)
@@ -172,10 +176,24 @@ class PostProcess(nn.Module):
                 k_idx.unsqueeze(-1).unsqueeze(-1).repeat(1, out_masks.shape[-2], out_masks.shape[-1]),
             )  # [K, Hm, Wm]
             h, w = target_sizes[i].tolist()
-            masks_i = F.interpolate(
-                masks_i.unsqueeze(1), size=(int(h), int(w)), mode="bilinear", align_corners=False
-            )  # [K,1,H,W]
-            res_i["masks"] = masks_i > 0.0
+            # Upsample in chunks and threshold *inside* the comprehension so only one float32 chunk
+            # is live at a time; the accumulated list holds bool tensors (1 byte/pixel vs 4 for float32).
+            # At K=300, 1080p this reduces peak memory from ~5 GB to ~1.5 GB vs a single F.interpolate
+            # call that would allocate the full [K,1,H,W] float tensor followed by a bool copy.
+            chunks = [
+                F.interpolate(
+                    masks_i[start : start + _MASK_CHUNK].unsqueeze(1),
+                    size=(int(h), int(w)),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                > 0.0
+                for start in range(0, masks_i.shape[0], _MASK_CHUNK)
+            ]
+            masks_i = (
+                torch.cat(chunks, dim=0) if chunks else masks_i.new_zeros((0, 1, int(h), int(w)), dtype=torch.bool)
+            )  # [K,1,H,W] bool
+            res_i["masks"] = masks_i
             results.append(res_i)
         return results
 
@@ -204,8 +222,8 @@ class PostProcess(nn.Module):
             One result dict per image containing postprocessed object scores,
             labels, boxes, pixel-space keypoints, and raw precision-Cholesky
             parameters. When ``trace_alpha > 0``, scores for valid keypoint
-            classes are multiplied by an uncertainty penalty derived from the
-            active keypoints of the predicted class.
+            classes are fused with uncertainty from the active keypoints of the
+            predicted class and normalized to ``[0, 1)``.
         """
         results = []
         max_num_keypoints = max(self.num_keypoints_per_class, default=0)
@@ -376,9 +394,10 @@ class PostProcess(nn.Module):
 
         Returns:
             A score tensor where valid keypoint detections are multiplied by
-            ``exp(-trace_alpha * log_mean_trace)``. The trace is the
-            findability-weighted mean expected squared localization error
-            implied by the predicted precision-Cholesky parameters.
+            ``exp(-trace_alpha * log_mean_trace)`` and then normalized to
+            ``[0, 1)``. The trace is the findability-weighted mean expected
+            squared localization error implied by the predicted
+            precision-Cholesky parameters.
         """
         num_keypoint_classes = len(self.num_keypoints_per_class)
         log_mean_traces = selected_keypoints.new_zeros(selected_labels.shape[0])
@@ -401,7 +420,14 @@ class PostProcess(nn.Module):
             log_mean_traces[class_mask] = self._keypoint_log_mean_trace(active_keypoints)
 
         scores_i = scores_i.clone()
-        scores_i[valid_indices] = scores_i[valid_indices] * torch.exp(-self.trace_alpha * log_mean_traces)
+        log_fused_scores = torch.log(scores_i[valid_indices]) - self.trace_alpha * log_mean_traces
+        normalized_scores = torch.sigmoid(log_fused_scores)
+        # Keep the public contract strictly below 1.0 even when the log-fused score saturates.
+        max_score = torch.nextafter(
+            torch.ones_like(normalized_scores),
+            torch.zeros_like(normalized_scores),
+        )
+        scores_i[valid_indices] = torch.minimum(normalized_scores, max_score)
         return scores_i
 
     @staticmethod

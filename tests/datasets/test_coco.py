@@ -20,7 +20,7 @@ import torch
 from PIL import Image
 
 from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema
-from rfdetr.datasets.coco import ConvertCoco, build_coco, build_roboflow_from_coco
+from rfdetr.datasets.coco import CocoDetection, ConvertCoco, build_coco, build_roboflow_from_coco
 from rfdetr.detr import RFDETR
 
 # Minimal image shared across all tests
@@ -953,3 +953,36 @@ class TestAugConfigDisablesCrop:
             make_coco_transforms("train", 640, aug_config=None)
 
         assert mock_build.call_args.kwargs["include_crop_branch"] is True
+
+
+class TestCocoDetectionZeroAnnotations:
+    """CocoDetection correctly handles images with no annotations."""
+
+    def test_zero_annotation_sample_yields_empty_boxes_and_labels(self, tmp_path: Path) -> None:
+        """An image with no annotations yields boxes (0, 4) float32 and labels (0,) int64 tensors."""
+        img_dir = tmp_path / "images"
+        img_dir.mkdir()
+        Image.new("RGB", (100, 100)).save(img_dir / "img1.jpg")
+        Image.new("RGB", (100, 100)).save(img_dir / "img2.jpg")
+        ann_file = tmp_path / "annotations.json"
+        ann_file.write_text(
+            json.dumps(
+                {
+                    "images": [
+                        {"id": 1, "file_name": "img1.jpg", "width": 100, "height": 100},
+                        {"id": 2, "file_name": "img2.jpg", "width": 100, "height": 100},
+                    ],
+                    "annotations": [
+                        {"id": 1, "image_id": 1, "category_id": 1, "bbox": [10, 10, 30, 30], "area": 900, "iscrowd": 0}
+                    ],
+                    "categories": [{"id": 1, "name": "cat", "supercategory": "animal"}],
+                }
+            )
+        )
+        dataset = CocoDetection(img_dir, ann_file, transforms=None)
+        zero_ann_idx = dataset.ids.index(2)
+        _, target = dataset[zero_ann_idx]
+        assert target["boxes"].shape == torch.Size([0, 4])
+        assert target["labels"].shape == torch.Size([0])
+        assert target["boxes"].dtype == torch.float32
+        assert target["labels"].dtype == torch.int64

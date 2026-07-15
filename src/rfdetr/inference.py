@@ -9,12 +9,15 @@ from __future__ import annotations
 
 __all__ = ["ModelContext"]
 
-from typing import TYPE_CHECKING, Any, Callable, List, Optional, cast
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
+from rfdetr.models.backbone.backbone import Backbone
+from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 
 if TYPE_CHECKING:
@@ -32,7 +35,7 @@ class ModelContext:
         postprocess: PostProcess instance for converting raw outputs to boxes.
         device: Device the model lives on.
         resolution: Input resolution (square side length in pixels).
-        args: Namespace produced by :func:`build_namespace`.
+        args: Namespace of resolved training/model configuration.
         class_names: Optional list of class name strings loaded from checkpoint.
     """
 
@@ -43,7 +46,7 @@ class ModelContext:
         device: torch.device,
         resolution: int,
         args: Any,
-        class_names: Optional[List[str]] = None,
+        class_names: list[str] | None = None,
     ) -> None:
         self.model = model
         self.postprocess = postprocess
@@ -59,7 +62,7 @@ class ModelContext:
         Args:
             num_classes: New number of output classes (including background).
         """
-        reinitialize_head = cast(Callable[[int], None], getattr(self.model, "reinitialize_detection_head"))
+        reinitialize_head = cast("Callable[[int], None]", self.model.reinitialize_detection_head)
         reinitialize_head(num_classes)
         self.args.num_classes = num_classes
 
@@ -98,7 +101,7 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
 
     Replicates ``Model.__init__`` logic: builds the nn.Module, optionally loads pretrain weights and applies LoRA.  The
     model is intentionally kept on CPU; :func:`_ensure_model_on_device` in ``detr.py`` performs the deferred
-    ``.to(device)`` on the first ``predict()`` / ``export()`` / ``optimize_for_inference()`` call.  Keeping construction
+    ``.to(device)`` on the first ``predict()`` / ``export()`` / ``inference()`` call.  Keeping construction
     CPU-only prevents CUDA initialisation during ``__init__``, which would block DDP strategies (``ddp_notebook``,
     ``ddp_spawn``) from spawning child processes in notebook environments.
 
@@ -112,17 +115,25 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
 
     # A dummy TrainConfig is needed only for _namespace_from_configs' required fields;
     # dataset_dir/output_dir are unused during model construction.
-    dummy_train_config = TrainConfig(dataset_dir=".", output_dir=".")
+    dummy_train_config = TrainConfig(dataset_dir=None, output_dir="output")
     args = _namespace_from_configs(model_config, dummy_train_config)
+    # ``TrainConfig.expand_paths`` realpaths these to the caller's absolute CWD, which would be embedded into
+    # ``args`` and serialized into exported ``weights.pt`` (see ``RFDETR.export_for_roboflow``). Reset them on the
+    # namespace to placeholders so inference-built checkpoints never leak the caller's filesystem layout.
+    args.dataset_dir = None
+    args.output_dir = "output"
     nn_model = build_model(args)
+    assert isinstance(nn_model, LWDETR), (
+        "build_model() returned a non-LWDETR result even though encoder_only/backbone_only were not set."
+    )
 
-    class_names: List[str] = []
+    class_names: list[str] = []
     if model_config.pretrain_weights is not None:
         class_names = load_pretrain_weights(nn_model, model_config)
         # ``load_pretrain_weights`` can mutate ``model_config.num_classes`` and
         # ``model_config.num_keypoints_per_class`` when aligning to checkpoint schema.
         # Keep the derived namespace in sync so postprocess and predict() use correct values.
-        if hasattr(args, "num_classes") and getattr(args, "num_classes") != model_config.num_classes:
+        if hasattr(args, "num_classes") and args.num_classes != model_config.num_classes:
             args.num_classes = model_config.num_classes
         _mc_kp = list(getattr(model_config, "num_keypoints_per_class", []) or [])
         if (
@@ -138,17 +149,18 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
     if model_config.num_channels != 3:
         import copy
 
-        proj = nn_model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection
+        backbone = cast(Backbone, nn_model.backbone[0])
+        proj = backbone.encoder.encoder.embeddings.patch_embeddings.projection
         new_proj = copy.deepcopy(proj)
         new_proj.in_channels = model_config.num_channels
         new_weight = _adapt_input_conv(model_config.num_channels, proj.weight)
         new_proj.weight = torch.nn.Parameter(new_weight)
         new_proj.weight.requires_grad = proj.weight.requires_grad
-        nn_model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection = new_proj
-        nn_model.backbone[0].encoder.encoder.embeddings.patch_embeddings.num_channels = model_config.num_channels
+        backbone.encoder.encoder.embeddings.patch_embeddings.projection = new_proj
+        backbone.encoder.encoder.embeddings.patch_embeddings.num_channels = model_config.num_channels
 
     device = torch.device(args.device)
-    # Keep the model on CPU here; predict() / export() / optimize_for_inference()
+    # Keep the model on CPU here; predict() / export() / inference()
     # will lazily move it to the target device on first use.  Eagerly calling
     # .to("cuda") would initialise the CUDA runtime during __init__(), which
     # prevents DDP strategies (ddp_notebook, ddp_spawn) from forking/spawning

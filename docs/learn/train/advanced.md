@@ -299,12 +299,19 @@ model.train(dataset_dir="path/to/dataset", aug_config={})
 
 ### Gradient Checkpointing
 
-For large models or high resolutions, enable gradient checkpointing to trade compute for memory:
+For large models or high resolutions, enable gradient checkpointing to trade compute for memory.
+
+!!! warning "Constructor parameter — not a `train()` parameter"
+
+    `gradient_checkpointing` is a `ModelConfig` field and must be passed to the **model constructor**, not to `train()`. Passing it to `train()` will raise a `ValidationError` because `TrainConfig` has `extra="forbid"`.
 
 ```python
+from rfdetr import RFDETRMedium
+
+model = RFDETRMedium(gradient_checkpointing=True)
+
 model.train(
     dataset_dir="path/to/dataset",
-    gradient_checkpointing=True,
     batch_size=2,  # May be able to increase with checkpointing
 )
 ```
@@ -362,7 +369,7 @@ These are automatically configured and don't require manual setup.
 If you encounter CUDA out of memory errors:
 
 1. Reduce `batch_size`
-2. Enable `gradient_checkpointing=True`
+2. Enable `gradient_checkpointing=True` (pass to the model constructor, not `train()`)
 3. Reduce `resolution`
 4. Increase `grad_accum_steps` to maintain effective batch size
 

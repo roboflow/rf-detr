@@ -187,8 +187,10 @@ class TestRFDETRTrainPTL:
 
     @pytest.mark.parametrize(
         "missing_name",
-        ["rfdetr.training", "rfdetr.training.auto_batch"],
-        ids=["training-package", "training-submodule"],
+        [
+            pytest.param("rfdetr.training", id="training-package"),
+            pytest.param("rfdetr.training.auto_batch", id="training-submodule"),
+        ],
     )
     def test_internal_training_module_import_error_preserved(self, tmp_path, monkeypatch, missing_name, patch_lit):
         """Missing internal training modules should keep original ModuleNotFoundError."""
@@ -253,6 +255,28 @@ class TestRFDETRTrainPTL:
             RFDETR.train(mock_self)
 
         assert mock_self.model.class_names == []
+
+    def test_model_args_synced_from_train_config_after_training(self, tmp_path, patch_lit):
+        """self.model.args reflects effective training and model config after train().
+
+        Regression test for #1199: model.model.__dict__['args'] retained the construction-time defaults (lr=0.0001,
+        lr_encoder=0.00015) instead of the overrides passed to train(), because ``self.model.args`` was built once at
+        model-construction time from a dummy config and never refreshed after ``train()`` completed.
+        """
+        mock_self = _make_rfdetr_self(tmp_path, lr=5e-5, lr_encoder=1e-4, batch_size=7)
+        mock_self.model_config.num_classes = 7
+        mock_self.model.args = SimpleNamespace(lr=0.0001, lr_encoder=0.00015, resolution=560)
+        p_mod, p_dm, p_bt, *_ = patch_lit
+
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model.args.lr == 5e-5
+        assert mock_self.model.args.lr_encoder == 1e-4
+        assert mock_self.model.args.batch_size == 7
+        assert mock_self.model.args.num_classes == 7
+        assert mock_self.model.args.dataset_dir == str(tmp_path / "ds")
+        assert mock_self.model.args.output_dir == str(tmp_path / "out")
 
     def test_device_kwarg_cpu_no_warning(self, tmp_path, patch_lit):
         """Device='cpu' is consumed without a DeprecationWarning."""
@@ -343,7 +367,10 @@ class TestRFDETRTrainPTL:
             RFDETR.train(mock_self, do_benchmark=False)
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
 
-    @pytest.mark.parametrize("truthy_value", [True, 1, "yes"], ids=["bool_true", "int_1", "str_yes"])
+    @pytest.mark.parametrize(
+        "truthy_value",
+        [pytest.param(True, id="bool_true"), pytest.param(1, id="int_1"), pytest.param("yes", id="str_yes")],
+    )
     def test_do_benchmark_truthy_emits_deprecation_warning(self, tmp_path, truthy_value, patch_lit):
         """Any truthy do_benchmark value emits DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
@@ -353,7 +380,7 @@ class TestRFDETRTrainPTL:
             RFDETR.train(mock_self, do_benchmark=truthy_value)
         depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert len(depr) >= 1
-        assert "rfdetr benchmark" in str(depr[0].message)
+        assert "rfdetr.export.benchmark" in str(depr[0].message)
 
     def test_do_benchmark_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
         """do_benchmark is popped before calling get_train_config."""
@@ -1052,8 +1079,11 @@ class TestPublicAPIExports:
 
     @pytest.mark.parametrize(
         "name",
-        ["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
-        ids=["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
+        [
+            pytest.param("RFDETRModelModule", id="RFDETRModelModule"),
+            pytest.param("RFDETRDataModule", id="RFDETRDataModule"),
+            pytest.param("build_trainer", id="build_trainer"),
+        ],
     )
     def test_symbol_importable_from_rfdetr(self, name, patch_lit):
         """Each PTL export is accessible as rfdetr.<name> via lazy __getattr__."""
@@ -1063,8 +1093,11 @@ class TestPublicAPIExports:
 
     @pytest.mark.parametrize(
         "name",
-        ["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
-        ids=["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
+        [
+            pytest.param("RFDETRModelModule", id="RFDETRModelModule"),
+            pytest.param("RFDETRDataModule", id="RFDETRDataModule"),
+            pytest.param("build_trainer", id="build_trainer"),
+        ],
     )
     def test_symbol_is_same_object_as_rfdetr_training(self, name, patch_lit):
         """rfdetr.<name> is the identical object to rfdetr.training.<name>."""
@@ -1680,6 +1713,58 @@ class TestDeployToRoboflow:
         assert deployed_paths, "deploy must receive a temporary model_path"
         assert not deployed_paths[0].exists(), "Temporary upload dir must be removed even after a failed deploy"
         assert not (tmp_path / ".roboflow_temp_upload").exists(), "Fixed-name temp dir must not be created"
+
+    @staticmethod
+    def _deploy(mock_self, size=None):
+        """Call deploy_to_roboflow with a mocked Roboflow client; return the captured deploy mock."""
+        mock_rf = MagicMock()
+        deploy_mock = mock_rf.workspace.return_value.project.return_value.version.return_value.deploy
+        kwargs = {} if size is None else {"size": size}
+        with patch("roboflow.Roboflow", return_value=mock_rf):
+            RFDETR.deploy_to_roboflow(
+                mock_self,
+                workspace="test-workspace",
+                project_id="test-project",
+                version=1,
+                api_key="dummy-key",
+                **kwargs,
+            )
+        return deploy_mock
+
+    def test_explicit_size_overrides_model_size(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """An explicitly passed size must win over self.size (documented precedence).
+
+        Regression: ``size = self.size or size`` inverted the precedence, silently ignoring the user's argument.
+        """
+        monkeypatch.chdir(tmp_path)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            deploy_mock = self._deploy(mock_self, size="rfdetr-medium")
+
+        assert deploy_mock.call_args.kwargs["model_type"] == "rfdetr-medium"
+
+    def test_size_defaults_to_model_size_when_not_provided(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """Without an explicit size the model's own size is deployed."""
+        monkeypatch.chdir(tmp_path)
+        deploy_mock = self._deploy(mock_self)
+
+        assert deploy_mock.call_args.kwargs["model_type"] == "rfdetr-small"
+
+    def test_warns_when_explicit_size_differs_from_model_size(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """A UserWarning is emitted when the explicit size conflicts with the model's own size."""
+        monkeypatch.chdir(tmp_path)
+        with pytest.warns(UserWarning, match="rfdetr-medium.*rfdetr-small"):
+            self._deploy(mock_self, size="rfdetr-medium")
+
+    def test_no_warning_when_explicit_size_matches_model_size(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """No size-conflict warning is emitted when the explicit size equals the model's own size."""
+        monkeypatch.chdir(tmp_path)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            self._deploy(mock_self, size="rfdetr-small")
+
+        conflict_warnings = [w for w in caught if "deploy_to_roboflow" in str(w.message)]
+        assert not conflict_warnings
 
 
 # ---------------------------------------------------------------------------

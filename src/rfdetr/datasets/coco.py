@@ -277,7 +277,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         num_keypoints_per_class: list[int] | None = None,
         remap_category_ids: bool = False,
     ) -> None:
-        super(CocoDetection, self).__init__(img_folder, ann_file)
+        super().__init__(img_folder, ann_file)
         self._transforms = transforms
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
@@ -290,7 +290,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
             # Reverse mapping from contiguous label indices back to COCO category_id
             self.label2cat = {label: cat_id for cat_id, label in self.cat2label.items()}
             # Expose label-to-category mapping on the underlying COCO API object for evaluators
-            setattr(self.coco, "label2cat", self.label2cat)
+            self.coco.label2cat = self.label2cat
         else:
             self.cat2label = None
             self.label2cat = None
@@ -302,7 +302,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         )
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
-        img, target = super(CocoDetection, self).__getitem__(idx)
+        img, target = super().__getitem__(idx)
         image_id = self.ids[idx]
         target = {"image_id": image_id, "annotations": target}
         img, target = self.prepare(img, target)
@@ -313,7 +313,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         return img, target
 
 
-class ConvertCoco(object):
+class ConvertCoco:
     """Convert a raw COCO annotation dict into model-ready tensors.
 
     Accepts the ``(image, target)`` pair produced by ``torchvision.datasets.CocoDetection`` and returns the same image
@@ -526,13 +526,25 @@ def _build_train_resize_config(
                 ]
             }
         }
+        # DETR-style crop branch: resize the short side to 400/500/600, then take a ``RandomSizedCrop`` that resizes
+        # the crop *directly* to the target scale (via a per-scale ``OneOf``, mirroring the square path). This removes
+        # the previous fixed 384x384 intermediate hop -- the crop was resampled to 384 and then resized again to the
+        # target, a wasteful downscale-then-upscale. ``min_max_height`` upper bound matches the maximum SmallestMaxSize
+        # value (600): when the sampled scale is smaller (e.g. 400), albumentations clamps the crop to the image height,
+        # effectively giving a full-image crop — this is the original DETR recipe behaviour and preserves training
+        # diversity (zoom-out variety) across the full SmallestMaxSize range.
         option_b = {
             "Sequential": {
                 "transforms": [
                     {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
-                    {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 384, "width": 384}},
-                    {"SmallestMaxSize": {"max_size": size_param}},
-                    {"LongestMaxSize": {"max_size": cap}},
+                    {
+                        "OneOf": {
+                            "transforms": [
+                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": s, "width": s}}
+                                for s in scales
+                            ],
+                        }
+                    },
                 ]
             }
         }
@@ -628,7 +640,8 @@ def make_coco_transforms(
                 square=False,
                 max_size=1333,
                 include_crop_branch=_crop_branch_enabled(aug_config),
-            )
+            ),
+            strict=True,
         )
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:
@@ -646,11 +659,14 @@ def make_coco_transforms(
             [
                 {"SmallestMaxSize": {"max_size": resolution}},
                 {"LongestMaxSize": {"max_size": 1333}},
-            ]
+            ],
+            strict=True,
         )
         return Compose([*resize_wrappers, to_image, to_float, normalize])
     if image_set == "val_speed":
-        resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
+        resize_wrappers = AlbumentationsWrapper.from_config(
+            [{"Resize": {"height": resolution, "width": resolution}}], strict=True
+        )
         return Compose([*resize_wrappers, to_image, to_float, normalize])
 
     raise ValueError(f"unknown {image_set}")
@@ -725,7 +741,8 @@ def make_coco_transforms_square_div_64(
                 scales,
                 square=True,
                 include_crop_branch=_crop_branch_enabled(aug_config),
-            )
+            ),
+            strict=True,
         )
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:
@@ -739,7 +756,9 @@ def make_coco_transforms_square_div_64(
         return Compose(pipeline)
 
     if image_set in ("val", "test", "val_speed"):
-        resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
+        resize_wrappers = AlbumentationsWrapper.from_config(
+            [{"Resize": {"height": resolution, "width": resolution}}], strict=True
+        )
         return Compose([*resize_wrappers, to_image, to_float, normalize])
 
     raise ValueError(f"unknown {image_set}")
@@ -760,7 +779,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
         "test": (root / "test2017", root / "annotations" / "image_info_test-dev2017.json"),
     }
 
-    img_folder, ann_file = PATHS[image_set.split("_")[0]]
+    img_folder, ann_file = PATHS[image_set.split("_", maxsplit=1)[0]]
 
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
@@ -860,7 +879,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
         "test": (root / "test", root / "test" / "_annotations.coco.json"),
     }
 
-    img_folder, ann_file = PATHS[image_set.split("_")[0]]
+    img_folder, ann_file = PATHS[image_set.split("_", maxsplit=1)[0]]
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
     multi_scale = getattr(args, "multi_scale", False)

@@ -3,16 +3,19 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+import io
 import socket
 from types import SimpleNamespace
 
 import numpy as np
 import PIL.Image
 import pytest
+import requests
 import supervision as sv
 import torch
 
 from rfdetr import RFDETRNano, RFDETRSegNano
+from rfdetr.detr import RFDETR
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 
 from .helpers import _DummyModel, _DummyRFDETR
@@ -67,6 +70,85 @@ class TestPredictReturnTypes:
         assert isinstance(single, sv.KeyPoints)
         assert isinstance(batch, list)
         assert all(isinstance(result, sv.KeyPoints) for result in batch)
+
+
+class _TupleOutputModelContext:
+    """Model context whose forward returns a 3-tuple, mirroring ``forward_export()`` after ``inference()``.
+
+    Regression fixture for GitHub #1208: ``predict()`` mislabels the tuple's third element as ``pred_masks`` instead of
+    ``pred_keypoints`` because it reads a nonexistent ``model.model_config`` attribute instead of ``model.args``.
+    """
+
+    def __init__(self) -> None:
+        self.device = torch.device("cpu")
+        self.resolution = 28
+        self.class_names = ["object"]
+        self.args = SimpleNamespace(use_grouppose_keypoints=True, num_keypoints_per_class=[17])
+        self.model = torch.nn.Identity()
+        self.inference_model = self._forward
+        self.captured_predictions: dict[str, torch.Tensor] | None = None
+
+    def _forward(self, batch_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch = batch_tensor.shape[0]
+        boxes = torch.tensor([[[0.5, 0.5, 0.2, 0.2]]] * batch)
+        logits = torch.full((batch, 1, 1), 10.0)
+        keypoints = torch.full((batch, 1, 17, 3), 0.5)
+        return boxes, logits, keypoints
+
+    def postprocess(
+        self, predictions: dict[str, torch.Tensor], target_sizes: torch.Tensor
+    ) -> list[dict[str, torch.Tensor]]:
+        self.captured_predictions = predictions
+        batch = target_sizes.shape[0]
+        results = []
+        for _ in range(batch):
+            result: dict[str, torch.Tensor] = {
+                "scores": torch.tensor([0.9]),
+                "labels": torch.tensor([0]),
+                "boxes": torch.tensor([[0.0, 0.0, 1.0, 1.0]]),
+            }
+            if "pred_keypoints" in predictions:
+                result["keypoints"] = torch.full((1, 17, 3), 0.5)
+            results.append(result)
+        return results
+
+
+def _make_optimized_keypoint_model() -> tuple[RFDETR, _TupleOutputModelContext]:
+    """Build a ``_DummyRFDETR`` wired to look like it already ran ``inference()``."""
+    model = _DummyRFDETR()
+    stub = _TupleOutputModelContext()
+    model.model = stub
+    model._is_optimized_for_inference = True
+    model._optimized_resolution = stub.resolution
+    model._optimized_has_been_compiled = False
+    model._optimized_dtype = torch.float32
+    return model, stub
+
+
+class TestPredictOptimizedInferenceKeypoints:
+    """Regression tests for GitHub #1208: inference() breaks keypoint predict()."""
+
+    def test_tuple_output_labels_third_slot_as_keypoints_not_masks(self) -> None:
+        """The 3rd tuple slot must be labeled pred_keypoints, not pred_masks, when use_grouppose_keypoints=True."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model, stub = _make_optimized_keypoint_model()
+
+        model.predict(img)
+
+        assert stub.captured_predictions is not None
+        assert "pred_keypoints" in stub.captured_predictions
+        assert "pred_masks" not in stub.captured_predictions
+
+    def test_optimized_keypoint_model_predict_returns_sv_keypoints(self) -> None:
+        """Predict() must return sv.KeyPoints, not sv.Detections, for an optimized keypoint model."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model, _stub = _make_optimized_keypoint_model()
+
+        result = model.predict(img)
+
+        assert isinstance(result, sv.KeyPoints), (
+            f"expected sv.KeyPoints for optimized keypoint model, got {type(result)}"
+        )
 
 
 def test_predict_accepts_image_url() -> None:
@@ -452,6 +534,38 @@ class TestPredictShape:
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
         with pytest.raises(ValueError, match="shape"):
             model.predict(img, shape=bad_shape)  # type: ignore[arg-type]
+
+
+class TestPredictResizeMatchesTrainingInterpolation:
+    """Verify ``predict()`` resize matches the training-time interpolation.
+
+    Regression test for https://github.com/roboflow/rf-detr/issues/1203.
+
+    Training/validation uses Albumentations ``Resize`` (cv2 bilinear, no
+    antialiasing). torchvision's ``F.resize`` defaults to antialiased
+    bilinear, which drifts bbox/confidence values relative to the
+    pretrained checkpoints' reference preprocessing. ``predict()`` must
+    disable antialiasing to match the training resize.
+    """
+
+    def test_predict_resize_disables_antialias(self) -> None:
+        """``predict()`` calls ``F.resize`` with ``antialias=False``."""
+        from unittest.mock import patch
+
+        import torchvision.transforms.functional as F  # noqa: N812
+
+        model = _DummyRFDETR()
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+
+        with patch("rfdetr.detr.F.resize", wraps=F.resize) as mock_resize:
+            model.predict(img)
+
+        assert mock_resize.call_args.kwargs.get("antialias") is False, (
+            "predict() must resize with antialias=False to match the antialias-free "
+            "bilinear resize (cv2.INTER_LINEAR) used during training. Antialiasing "
+            "on drifts bbox/confidence values away from the pretrained checkpoints' "
+            "reference preprocessing."
+        )
 
 
 class TestPredictPatchSize:
@@ -912,6 +1026,9 @@ class TestPredictKeypointClassNameMapping:
             # Active-first schemas (no leading zero) — fallback path must stay correct
             pytest.param(["person"], [0], [25], "person", id="active-first-single-class-slot-0-maps-to-person"),
             pytest.param(
+                ["person"], [1], [25], "__background__", id="active-first-single-class-slot-1-maps-to-background"
+            ),
+            pytest.param(
                 ["person", "bicycle"], [0], [17, 4], "person", id="active-first-multi-class-slot-0-maps-to-person"
             ),
         ],
@@ -952,3 +1069,177 @@ class TestPredictKeypointClassNameMapping:
         assert detections.data["class_name"][0] == "cat", (
             f"Detection model: class_id=0 must map to 'cat', got '{detections.data['class_name'][0]}'"
         )
+
+
+# ---------------------------------------------------------------------------
+# Fix F — non-RGB PIL / file-path inputs are auto-converted to RGB
+# ---------------------------------------------------------------------------
+
+
+class TestPredictNonRGBAutoConvert:
+    """Predict() must silently convert non-RGB PIL images and file paths to RGB.
+
+    Standard detector contract: callers pass images in any PIL mode (L, LA,
+    RGBA, P …) and expect detection results, not opaque tensor-shape errors.
+    Tensor inputs with wrong channel count are still the caller's error.
+    """
+
+    @pytest.mark.parametrize(
+        "pil_mode",
+        [
+            pytest.param("L", id="grayscale-L"),
+            pytest.param("LA", id="grayscale-with-alpha-LA"),
+            pytest.param("RGBA", id="rgba"),
+            pytest.param("P", id="palette-P"),
+            pytest.param("CMYK", id="cmyk"),
+        ],
+    )
+    def test_non_rgb_pil_image_succeeds(self, pil_mode: str) -> None:
+        """PIL images in any mode are auto-converted to RGB and return sv.Detections."""
+        import supervision as sv
+
+        img = PIL.Image.new(pil_mode, (28, 28))
+        model = _DummyRFDETR()
+        detections = model.predict(img)
+        assert isinstance(detections, sv.Detections)
+
+    def test_grayscale_file_path_succeeds(self, tmp_path) -> None:
+        """Grayscale image opened from a file path is auto-converted and returns sv.Detections."""
+        import supervision as sv
+
+        img_path = tmp_path / "gray.png"
+        PIL.Image.new("L", (28, 28)).save(str(img_path))
+        model = _DummyRFDETR()
+        detections = model.predict(str(img_path))
+        assert isinstance(detections, sv.Detections)
+
+    def test_wrong_channel_tensor_still_raises(self) -> None:
+        """Tensor inputs with wrong channel count must still raise ValueError with helpful message."""
+        import torch
+
+        # 1-channel tensor — caller is responsible for correct shape
+        tensor = torch.rand(1, 28, 28)
+        model = _DummyRFDETR()
+        with pytest.raises(ValueError, match="PIL Image or a file path"):
+            model.predict(tensor)
+
+
+def _png_bytes(size: tuple[int, int] = (28, 28)) -> bytes:
+    """Return the PNG-encoded bytes of a solid grey image."""
+    buf = io.BytesIO()
+    PIL.Image.new("RGB", size, (128, 128, 128)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class _FakeResponse:
+    """Minimal stand-in for ``requests.Response`` used by ``predict()`` URL tests."""
+
+    def __init__(self, content: bytes = b"", status_code: int = 200) -> None:
+        """Store the response body and status code."""
+        self.content = content
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        """Raise ``requests.HTTPError`` for 4xx/5xx status codes, mirroring requests."""
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} Client Error")
+
+
+class TestPredictURLFetch:
+    """``predict()`` URL handling: robust HTTP fetch and correct local-path classification."""
+
+    def test_http_error_status_raises_httperror(self, monkeypatch) -> None:
+        """A 404 response surfaces as ``requests.HTTPError``, not an opaque PIL error."""
+        model = _DummyRFDETR()
+
+        def _fake_get(url: str, **kwargs: object) -> _FakeResponse:
+            return _FakeResponse(content=b"not found", status_code=404)
+
+        monkeypatch.setattr(requests, "get", _fake_get)
+        with pytest.raises(requests.HTTPError):
+            model.predict("http://example.com/missing.jpg")
+
+    def test_timeout_is_passed_to_requests_get(self, monkeypatch) -> None:
+        """The HTTP fetch must pass an explicit ``timeout`` so it cannot hang forever."""
+        model = _DummyRFDETR()
+        captured: dict[str, object] = {}
+
+        def _fake_get(url: str, **kwargs: object) -> _FakeResponse:
+            captured.update(kwargs)
+            return _FakeResponse(content=_png_bytes(), status_code=200)
+
+        monkeypatch.setattr(requests, "get", _fake_get)
+        detections = model.predict("http://example.com/image.png")
+        assert isinstance(detections, sv.Detections)
+        assert captured.get("timeout") == 30, "predict() must pass timeout=30 to requests.get"
+
+    def test_local_file_named_like_http_is_not_fetched(self, tmp_path, monkeypatch) -> None:
+        """A local file whose name starts with ``http`` must be opened, not fetched over HTTP."""
+        img_path = tmp_path / "httpcam_frame.png"
+        PIL.Image.new("RGB", (28, 28), (128, 128, 128)).save(str(img_path))
+        model = _DummyRFDETR()
+
+        def _fail_get(url: str, **kwargs: object) -> _FakeResponse:
+            raise AssertionError(f"requests.get must not be called for local path {url!r}")
+
+        monkeypatch.setattr(requests, "get", _fail_get)
+        detections = model.predict(str(img_path))
+        assert isinstance(detections, sv.Detections)
+
+
+class TestPredictInputTypeReturnShape:
+    """``predict()`` return shape is governed by input type, not runtime batch length."""
+
+    def test_single_element_list_returns_list(self) -> None:
+        """A one-element list input returns a list, not a bare ``Detections``."""
+        img = PIL.Image.new("RGB", (28, 28), (128, 128, 128))
+        model = _DummyRFDETR()
+        result = model.predict([img])
+        assert isinstance(result, list), "list input must always return a list"
+        assert len(result) == 1
+
+    def test_bare_image_returns_detections(self) -> None:
+        """A single (non-list) image returns a bare ``Detections``."""
+        img = PIL.Image.new("RGB", (28, 28), (128, 128, 128))
+        model = _DummyRFDETR()
+        result = model.predict(img)
+        assert isinstance(result, sv.Detections)
+
+
+class TestExportInplaceOptimizeGuards:
+    """Roboflow export methods raise a clear error after ``inference(inplace=True)``."""
+
+    def test_export_for_roboflow_raises_after_inplace_optimize(self, tmp_path) -> None:
+        """``export_for_roboflow`` raises ``RuntimeError`` once the model has been cleared."""
+        model = _DummyRFDETR()
+        model._optimized_inplace = True
+        with pytest.raises(RuntimeError, match="inference"):
+            model.export_for_roboflow(str(tmp_path))
+
+    def test_deploy_to_roboflow_raises_after_inplace_optimize(self) -> None:
+        """``deploy_to_roboflow`` raises ``RuntimeError`` before any auth/network calls."""
+        model = _DummyRFDETR()
+        model._optimized_inplace = True
+        with pytest.raises(RuntimeError, match="inference"):
+            model.deploy_to_roboflow("ws", "proj", 1)
+
+
+class TestTrainAlreadyTrainedWarning:
+    """Calling ``train()`` on an already-trained/loaded model emits a loud warning."""
+
+    def test_second_train_warns(self, monkeypatch) -> None:
+        """A model flagged as trained warns that training restarts from pretrain_weights."""
+        model = _DummyRFDETR()
+        model._has_been_trained = True
+
+        class _StopTrainError(Exception):
+            pass
+
+        def _stub_get_train_config(self, **kwargs: object) -> None:
+            raise _StopTrainError
+
+        # Short-circuit train() right after the warning so no real training runs.
+        monkeypatch.setattr(RFDETR, "get_train_config", _stub_get_train_config, raising=False)
+        with pytest.warns(UserWarning, match="already been trained"):
+            with pytest.raises(_StopTrainError):
+                model.train()

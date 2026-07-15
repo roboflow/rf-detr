@@ -13,7 +13,7 @@ exposes the required attributes — including the ``SimpleNamespace`` produced b
 
 from __future__ import annotations
 
-from typing import List, Optional, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -32,7 +32,8 @@ class BuilderArgs(Protocol):
 
     # --- Architecture ---
     encoder: str
-    out_feature_indexes: List[int]
+    out_feature_indexes: list[int]
+    drop_path: float
     dec_layers: int
     freeze_encoder: bool
     backbone_lora: bool
@@ -43,9 +44,9 @@ class BuilderArgs(Protocol):
     grouppose_keypoint_dim_downscale: int
     dual_projector: bool
     dual_projector_kp_only: bool
-    num_keypoints_per_class: List[int]
+    num_keypoints_per_class: list[int]
     num_decoder_registers: int
-    projector_scale: List[str]
+    projector_scale: list[str]
     hidden_dim: int
     patch_size: int
     num_windows: int
@@ -57,7 +58,7 @@ class BuilderArgs(Protocol):
     layer_norm: bool
     amp: bool
     num_classes: int
-    pretrain_weights: Optional[str]
+    pretrain_weights: str | None
     device: str
     resolution: int
     group_detr: int
@@ -71,13 +72,13 @@ class BuilderArgs(Protocol):
     num_select: int
     # --- Legacy / hardcoded defaults (present on Namespace, absent on raw configs) ---
     vit_encoder_num_layers: int
-    window_block_indexes: Optional[List[int]]
+    window_block_indexes: list[int] | None
     position_embedding: str
     rms_norm: bool
     force_no_pretrain: bool
     dim_feedforward: int
     use_cls_token: bool
-    pretrained_encoder: Optional[str]
+    pretrained_encoder: str | None
     backbone_only: bool
     encoder_only: bool
     # --- Criterion ---

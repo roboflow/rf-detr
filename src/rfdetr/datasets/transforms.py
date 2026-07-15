@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Sequence
-from functools import lru_cache
+from functools import cache
 from typing import Any
 
 try:
@@ -39,7 +39,7 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
-class Normalize(object):
+class Normalize:
     def __init__(
         self,
         mean: tuple[float, ...] = (0.485, 0.456, 0.406),
@@ -256,7 +256,7 @@ def _build_albu_transform(name: str, params: dict[str, Any]) -> alb.BasicTransfo
     return aug_cls(**_normalize_albu_params(name, params, aug_cls))
 
 
-@lru_cache(maxsize=None)
+@cache
 def _random_sized_crop_uses_size_param(aug_cls: type) -> bool:
     """Return whether ``RandomSizedCrop`` expects a ``size`` keyword.
 
@@ -541,7 +541,7 @@ class AlbumentationsWrapper:
             return True
         if transform_name == "Flip":
             params = replay.get("params") or {}
-            return int(params.get("axis", -1)) == 1
+            return int(params.get("axis", params.get("d", -1))) == 1
         if transform_name in {"D4", "SquareSymmetry"}:
             params = replay.get("params") or {}
             return str(params.get("group_element")) == "h"
@@ -881,7 +881,8 @@ class AlbumentationsWrapper:
     def from_config(
         config_dict: dict[str, Any] | list[dict[str, Any]],
         keypoint_flip_pairs: list[int] | None = None,
-    ) -> list["AlbumentationsWrapper"]:
+        strict: bool = False,
+    ) -> list[AlbumentationsWrapper]:
         """Build a list of :class:`AlbumentationsWrapper` instances from a config.
 
         Supports both a flat dictionary format (backward-compatible) and a list format that allows duplicate transform
@@ -926,6 +927,10 @@ class AlbumentationsWrapper:
                 detection pipelines where horizontal flips are always permitted. Pass an empty list
                 ``[]`` to mark a keypoint pipeline without any defined flip pairs -- horizontal-flip
                 augmentations are then disabled until flip-pair swapping is implemented.
+            strict: When ``True``, a transform that fails to build raises :class:`RuntimeError`
+                instead of being logged and skipped. Use for internally-generated pipelines (e.g. the
+                required resize stack) where a silently dropped transform would corrupt the output shape.
+                Defaults to ``False`` for user augmentation configs, which stay lenient.
 
         Returns:
             List of :class:`AlbumentationsWrapper` instances in config order.
@@ -933,6 +938,7 @@ class AlbumentationsWrapper:
         Raises:
             ImportError: If Albumentations is not installed.
             TypeError: If *config_dict* is neither a ``dict`` nor a ``list``.
+            RuntimeError: If ``strict=True`` and a transform fails to build.
 
         Examples:
             >>> config = {
@@ -998,6 +1004,8 @@ class AlbumentationsWrapper:
                 transform = _build_albu_transform(aug_name, params)
                 transforms.append(AlbumentationsWrapper(transform, keypoint_flip_pairs=keypoint_flip_pairs))
             except Exception as e:
+                if strict:
+                    raise RuntimeError(f"Failed to build required transform {aug_name!r}: {e}") from e
                 logger.warning(
                     "Failed to initialize %s with params %r: %s. Skipping.",
                     aug_name,

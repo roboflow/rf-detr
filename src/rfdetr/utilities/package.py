@@ -5,6 +5,8 @@
 # ------------------------------------------------------------------------
 """Package version and git-status helpers."""
 
+from __future__ import annotations
+
 import os
 import subprocess
 from importlib.metadata import PackageNotFoundError, version

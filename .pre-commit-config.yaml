@@ -3,6 +3,7 @@ ci:
   autoupdate_schedule: monthly
   autofix_commit_msg: "fix(pre-commit): 🎨 auto format pre-commit hooks"
   autoupdate_commit_msg: "chore(pre-commit): ⬆ pre_commit autoupdate"
+  skip: [mypy]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -26,7 +27,7 @@ repos:
       - id: mixed-line-ending
 
   - repo: https://github.com/JoC0de/pre-commit-prettier
-    rev: v3.8.3 # using tag; previously pinned SHA when tags were not persistent
+    rev: v3.9.4 # using tag; previously pinned SHA when tags were not persistent
     hooks:
       - id: prettier
         files: \.(ya?ml|toml)$
@@ -34,7 +35,7 @@ repos:
         args: ["--print-width=120"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.15
+    rev: v0.15.20
     hooks:
       - id: ruff-check
         args: ["--exit-non-zero-on-fix"]
@@ -50,16 +51,14 @@ repos:
         additional_dependencies: [tomli]
         args: ["--in-place"]
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.1.0
+  - repo: local
     hooks:
       - id: mypy
-        # The isolated hook has no torch; CI runs strict mypy with project deps.
-        args: ["--ignore-missing-imports", "--allow-subclassing-any"]
-        exclude: ^docs/(hooks|scripts)/.*\.py$
-        additional_dependencies:
-          - "types-PyYAML"
-          - "types-requests"
+        name: mypy
+        # Keep the mypy requirement in pyproject.toml aligned when changing this hook.
+        entry: python -m mypy src/rfdetr/ --no-error-summary
+        language: system
+        pass_filenames: false
 
   - repo: https://github.com/executablebooks/mdformat
     rev: 1.0.0

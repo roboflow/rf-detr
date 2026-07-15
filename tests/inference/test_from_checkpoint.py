@@ -13,16 +13,26 @@ from __future__ import annotations
 
 import argparse
 import logging
+import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
 
+from rfdetr.config import PretrainWeightsCompatibilityWarning
 from rfdetr.detr import RFDETR
 from rfdetr.detr import logger as detr_logger
 from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 from rfdetr.variants import RFDETRSmall
+
+
+class _CustomObj:
+    """Module-level class that weights_only=True rejects (not in safe globals).
+
+    Must be at module scope so pickle can resolve the fully-qualified name during torch.save.  Local/nested classes
+    cannot be pickled.
+    """
 
 
 def _ns(pretrain_weights: str, num_classes: int = 80) -> dict:
@@ -169,6 +179,16 @@ class TestFromCheckpointDictArgs:
 class TestFromCheckpointEdgeCases:
     """Edge-case handling in from_checkpoint."""
 
+    def test_nonexistent_path_raises_file_not_found(self, tmp_path: Path) -> None:
+        """from_checkpoint raises FileNotFoundError when path does not exist."""
+        with pytest.raises(FileNotFoundError):
+            RFDETR.from_checkpoint(tmp_path / "nope.pth")
+
+    def test_directory_path_raises_os_error(self, tmp_path: Path) -> None:
+        """from_checkpoint raises OSError when path is a directory, not a file."""
+        with pytest.raises((OSError, IsADirectoryError)):
+            RFDETR.from_checkpoint(tmp_path)
+
     def test_characterization_unknown_pretrain_weights_raises_value_error(self, tmp_path: Path) -> None:
         """Unrecognised pretrain_weights name raises a descriptive ValueError."""
         ckpt = _ns("/my/custom/finetuned.pth")
@@ -277,6 +297,18 @@ class TestFromCheckpointEdgeCases:
             with patch("rfdetr.detr.torch.load", return_value=ckpt):
                 with pytest.raises(ImportError):
                     RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+    def test_trust_gate_rejects_custom_class_by_default(self, tmp_path: Path) -> None:
+        """from_checkpoint raises RuntimeError for custom-class checkpoints without trust_checkpoint=True.
+
+        Scenario: user calls from_checkpoint on a file containing an unrecognised Python class.
+        The default trust_checkpoint=False must reject it to prevent arbitrary code execution.
+        """
+        ckpt_path = tmp_path / "custom_obj.pth"
+        torch.save({"model": {}, "args": _CustomObj(), "model_name": "RFDETRSmall"}, ckpt_path)
+
+        with pytest.raises(RuntimeError, match="trust_checkpoint=True"):
+            RFDETR.from_checkpoint(ckpt_path)
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +467,25 @@ class TestFromCheckpointModelName:
             model = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
         assert model.__class__.__name__ == expected_class
 
+    def test_large_deprecated_model_name_resolves_to_deprecated_class(self, tmp_path: Path) -> None:
+        """Checkpoints saved with model_name='RFDETRLargeDeprecated' must load as RFDETRLargeDeprecated.
+
+        Before the fix, RFDETRLargeDeprecated was absent from _name_map; the substring matcher would pick RFDETRLarge,
+        which fails with a pydantic literal_error when the saved model_config carries encoder='dinov2_windowed_base'
+        (only valid for the deprecated Large configuration).
+        """
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-large.pth", "num_classes": 80},
+            "model_name": "RFDETRLargeDeprecated",
+            "model_config": {
+                "encoder": "dinov2_windowed_base",
+                "projector_scale": "P4",
+            },
+        }
+        result, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRLargeDeprecated")
+        mock_cls.assert_called_once()
+        assert result is mock_cls.return_value
+
     @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
     @pytest.mark.parametrize("model_name", ["RFDETRXLarge", "RFDETR2XLarge"])
     def test_plus_model_name_without_plus_raises_import_error(self, tmp_path: Path, model_name: str) -> None:
@@ -524,8 +575,10 @@ class TestFromCheckpointNumClassesProvenance:
     """
 
     def test_checkpoint_num_classes_is_not_marked_user_set(self, two_class_checkpoint: Path) -> None:
-        """from_checkpoint adopts the checkpoint class count without marking it as a user override."""
-        model = RFDETR.from_checkpoint(two_class_checkpoint)
+        """from_checkpoint adopts the checkpoint class count without warning about pretrained weights."""
+        with warnings.catch_warnings():
+            warnings.filterwarnings("error", category=PretrainWeightsCompatibilityWarning)
+            model = RFDETR.from_checkpoint(two_class_checkpoint)
 
         assert model.model_config.num_classes == 2
         assert model.model.model.class_embed.bias.shape[0] == 3, "Head must match checkpoint (2 classes + background)."
