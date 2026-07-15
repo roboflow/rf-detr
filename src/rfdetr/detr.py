@@ -2014,7 +2014,7 @@ class RFDETR:
             }
             if len(predictions) == 3:
                 # Distinguish optional keypoint vs mask tuple output for legacy compiled/export shims.
-                if getattr(getattr(self.model, "model_config", None), "use_grouppose_keypoints", False):
+                if getattr(getattr(self.model, "args", None), "use_grouppose_keypoints", False):
                     return_predictions["pred_keypoints"] = predictions[2]
                 else:
                     return_predictions["pred_masks"] = predictions[2]
