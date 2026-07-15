@@ -42,7 +42,7 @@ class _DummyTqdm:
 class _FakeResponse:
     """Test double for requests responses used by the downloader.
 
-    Provides headers, iterable content chunks, and optional HTTP error behavior via `raise_for_status`.
+    Provides headers, iterable content chunks, observable close behavior, and optional HTTP errors.
     """
 
     def __init__(
@@ -55,15 +55,20 @@ class _FakeResponse:
         self._content_chunks = list(content_chunks)
         self.headers = headers or {}
         self._raise_error = raise_error
+        self.close = Mock()
 
     def raise_for_status(self) -> None:
         """Raise the configured HTTP error, if any."""
+        if self.close.called:
+            raise AssertionError("response closed before HTTP status validation")
         if self._raise_error is not None:
             raise self._raise_error
 
     def iter_content(self, chunk_size: int = 1024) -> Iterator[bytes]:
         """Yield the configured content chunks."""
         for chunk in self._content_chunks:
+            if self.close.called:
+                raise AssertionError("response closed before streaming completed")
             yield chunk
 
 
@@ -193,6 +198,7 @@ class TestDownloadFile:
         assert target_path.read_bytes() == b"helloworld"
         _assert_no_download_temp_files(tmp_path)
         mock_get.assert_called_once_with("https://example.com/file.bin", stream=True, timeout=30.0)
+        response.close.assert_called_once_with()
 
     @patch("rfdetr.utilities.files.requests.get")
     def test_download_file_http_error(self, mock_get: Mock, tmp_path: Path):
@@ -206,6 +212,7 @@ class TestDownloadFile:
 
         assert not target_path.exists()
         _assert_no_download_temp_files(tmp_path)
+        response.close.assert_called_once_with()
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
@@ -226,6 +233,7 @@ class TestDownloadFile:
 
         assert not target_path.exists()
         _assert_no_download_temp_files(tmp_path)
+        response.close.assert_called_once_with()
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
@@ -244,6 +252,7 @@ class TestDownloadFile:
 
         assert not target_path.exists()
         _assert_no_download_temp_files(tmp_path)
+        response.close.assert_called_once_with()
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
@@ -261,6 +270,7 @@ class TestDownloadFile:
 
         assert not target_path.exists()
         _assert_no_download_temp_files(tmp_path)
+        response.close.assert_called_once_with()
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.open", side_effect=AssertionError("must not reopen temp filename"))
