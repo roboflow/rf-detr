@@ -895,6 +895,66 @@ class TestBuildKeypointCat2Label:
         assert result == {1: 0, 3: 1}
 
 
+class TestScaleJitter:
+    """``scale_jitter`` controls the resize-crop branch independently of ``aug_config``."""
+
+    @pytest.mark.parametrize(
+        "scale_jitter,expected",
+        [
+            pytest.param(True, True, id="enabled_keeps_crop"),
+            pytest.param(False, False, id="disabled_drops_crop"),
+        ],
+    )
+    def test_make_coco_transforms_forwards_scale_jitter(self, scale_jitter, expected):
+        """make_coco_transforms passes scale_jitter through to resize config unchanged."""
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.coco import make_coco_transforms
+
+        with (
+            patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build,
+            patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=MagicMock()),
+        ):
+            make_coco_transforms("train", 640, scale_jitter=scale_jitter)
+
+        assert mock_build.call_args.kwargs["scale_jitter"] is expected
+
+    @pytest.mark.parametrize(
+        "scale_jitter,expected",
+        [
+            pytest.param(True, True, id="enabled_keeps_crop"),
+            pytest.param(False, False, id="disabled_drops_crop"),
+        ],
+    )
+    def test_make_coco_transforms_square_forwards_scale_jitter(self, scale_jitter, expected):
+        """make_coco_transforms_square_div_64 passes scale_jitter through to resize config unchanged."""
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.coco import make_coco_transforms_square_div_64
+
+        with (
+            patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build,
+            patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=MagicMock()),
+        ):
+            make_coco_transforms_square_div_64("train", 640, scale_jitter=scale_jitter)
+
+        assert mock_build.call_args.kwargs["scale_jitter"] is expected
+
+    def test_empty_aug_config_no_longer_affects_crop_branch(self):
+        """aug_config={} disables the augmentation stack only — crop branch stays on by default."""
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.coco import make_coco_transforms
+
+        with (
+            patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build,
+            patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=MagicMock()),
+        ):
+            make_coco_transforms("train", 640, aug_config={})
+
+        assert mock_build.call_args.kwargs["scale_jitter"] is True
+
+
 class TestCocoDetectionZeroAnnotations:
     """CocoDetection correctly handles images with no annotations."""
 

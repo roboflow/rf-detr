@@ -431,6 +431,7 @@ def _build_train_resize_config(
     *,
     square: bool,
     max_size: int | None = None,
+    scale_jitter: bool = True,
 ) -> list[dict[str, Any]]:
     """Build the training resize pipeline as an Albumentations config list.
 
@@ -453,9 +454,12 @@ def _build_train_resize_config(
             optional long-side cap.
         max_size: Maximum long-side size for non-square resizes.  Defaults to
             ``1333`` when *square* is ``False``.
+        scale_jitter: If ``True`` (default), both Option A and Option B are randomly
+            selected.  If ``False``, only Option A (direct resize) is used — no random crop.
 
     Returns:
-        A single-element list containing a ``OneOf`` config entry.
+        A single-element list. By default the entry wraps a ``OneOf`` over both
+        branches; when ``scale_jitter=False``, the entry is Option A directly.
     """
     if square:
         option_a: dict[str, Any] = {
@@ -513,6 +517,9 @@ def _build_train_resize_config(
             }
         }
 
+    if not scale_jitter:
+        return [option_a]
+
     return [{"OneOf": {"transforms": [option_a, option_b]}}]
 
 
@@ -525,22 +532,24 @@ def make_coco_transforms(
     patch_size: int = 16,
     num_windows: int = 4,
     aug_config: dict[str, dict[str, Any]] | None = None,
+    scale_jitter: bool = True,
     gpu_postprocess: bool = False,
     keypoint_flip_pairs: list[int] | None = None,
 ) -> Compose:
     """Build the standard COCO transform pipeline for a given dataset split.
 
-    Returns a composed transform that resizes images to the target ``resolution`` (with optional multi-scale jitter),
-    applies Albumentations-based augmentations during training, and normalises pixel values with ImageNet statistics.
+    Returns a composed transform that resizes images to the target ``resolution``
+    (with optional multi-scale jitter), applies Albumentations-based augmentations
+    during training, and normalises pixel values with ImageNet statistics.
 
     For the ``"train"`` split the pipeline uses a two-branch ``OneOf`` between a direct resize and a resize →
-    random-crop → resize sequence (built via :func:`_build_train_resize_config`), followed by the augmentation stack and
-    normalisation.  For ``"val"``, ``"test"``, and ``"val_speed"`` only resize and normalisation are applied — no
-    augmentation.
+    random-crop → resize sequence (built via :func:`_build_train_resize_config`), followed by the
+    augmentation stack and normalisation.  For ``"val"``, ``"test"``, and ``"val_speed"`` only resize
+    and normalisation are applied — no augmentation.
 
     When *gpu_postprocess* is ``True``, both the Albumentations augmentation wrappers and the ``Normalize`` step are
-    omitted from the ``"train"`` pipeline. The ``RFDETRDataModule`` then applies augmentation and normalization on the
-    device in ``on_after_batch_transfer`` instead.
+    omitted from the ``"train"`` pipeline. The ``RFDETRDataModule`` then applies
+    augmentation and normalization on the device in ``on_after_batch_transfer`` instead.
 
     Args:
         image_set: Dataset split identifier — ``"train"``, ``"val"``, ``"test"``,
@@ -559,7 +568,12 @@ def make_coco_transforms(
             :func:`compute_multi_scale_scales` to derive candidate resolutions.
         aug_config: Albumentations augmentation config dict passed to
             :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`.  Falls back to the default
-            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` when ``None``.
+            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` when ``None``.  Controls only the
+            augmentation stack — not the resize pipeline; see ``scale_jitter`` for that.
+        scale_jitter: If ``True`` (default), the training resize pipeline randomly picks between
+            a direct resize (Option A) and a resize → crop → resize sequence (Option B) for scale
+            variation.  Set to ``False`` to use Option A only — no random crop, annotations near
+            image borders stay intact.
         gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
             ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
             normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
@@ -570,7 +584,8 @@ def make_coco_transforms(
         .. note::
             This pipeline does **not** guarantee that output ``H`` and ``W`` are divisible by ``patch_size *
             num_windows``.  Divisibility is enforced at the batch level by the DataLoader collate function.  If you
-            apply these transforms outside of :class:`~rfdetr.training.module_data.RFDETRDataModule`, pass the result
+            apply these transforms outside of :class:`~rfdetr.training.module_data.RFDETRDataModule`,
+            pass the result
             through :func:`~rfdetr.utilities.tensors.nested_tensor_from_tensor_list` with ``block_size=patch_size *
             num_windows``, or use :func:`~rfdetr.utilities.tensors.make_collate_fn` with that value.
 
@@ -592,7 +607,13 @@ def make_coco_transforms(
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
         resize_wrappers = AlbumentationsWrapper.from_config(
-            _build_train_resize_config(scales, square=False, max_size=1333), strict=True
+            _build_train_resize_config(
+                scales,
+                square=False,
+                max_size=1333,
+                scale_jitter=scale_jitter,
+            ),
+            strict=True,
         )
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:
@@ -632,18 +653,19 @@ def make_coco_transforms_square_div_64(
     patch_size: int = 16,
     num_windows: int = 4,
     aug_config: dict[str, dict[str, Any]] | None = None,
+    scale_jitter: bool = True,
     gpu_postprocess: bool = False,
     keypoint_flip_pairs: list[int] | None = None,
 ) -> Compose:
     """Create COCO transforms with square resizing where the output size is divisible by 64.
 
     This function builds a torchvision-style transform pipeline for COCO images that resizes them to square shapes
-    suitable for models that require spatial dimensions divisible by 64. It supports multi-scale training and optional
-    random resizing and cropping for the training split.
+    suitable for models that require spatial dimensions divisible by 64. It supports
+    multi-scale training and optional random resizing and cropping for the training split.
 
     When *gpu_postprocess* is ``True``, both the Albumentations augmentation wrappers and the ``Normalize`` step are
-    omitted from the ``"train"`` pipeline. The ``RFDETRDataModule`` then applies augmentation and normalization on the
-    device in ``on_after_batch_transfer`` instead.
+    omitted from the ``"train"`` pipeline. The ``RFDETRDataModule`` then applies
+    augmentation and normalization on the device in ``on_after_batch_transfer`` instead.
 
     Args:
         image_set: Dataset split identifier. Expected values are "train", "val",
@@ -655,14 +677,20 @@ def make_coco_transforms_square_div_64(
         expanded_scales: If True, expand the range of scales used during
             multi-scale training. Passed through to ``compute_multi_scale_scales``.
         skip_random_resize: If True and ``multi_scale`` is enabled, use only the
-            largest scale returned by ``compute_multi_scale_scales`` and skip random selection among multiple scales.
+            largest scale returned by ``compute_multi_scale_scales`` and skip
+            random selection among multiple scales.
         patch_size: Patch size used by ``compute_multi_scale_scales`` when
             determining valid square resolutions (typically related to the model's patch embedding or stride).
         num_windows: Number of windows used by ``compute_multi_scale_scales`` to
             derive the list of candidate square resolutions.
         aug_config: Augmentation configuration dictionary compatible with
             :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`. If ``None``, the default
-            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` is used.
+            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` is used.  Controls only the augmentation
+            stack — not the resize pipeline; see ``scale_jitter`` for that.
+        scale_jitter: If ``True`` (default), the training resize pipeline randomly picks between
+            a direct resize (Option A) and a resize → crop → resize sequence (Option B) for scale
+            variation.  Set to ``False`` to use Option A only — no random crop, annotations near
+            image borders stay intact.
         gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
             ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
             normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
@@ -685,7 +713,12 @@ def make_coco_transforms_square_div_64(
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
         resize_wrappers = AlbumentationsWrapper.from_config(
-            _build_train_resize_config(scales, square=True), strict=True
+            _build_train_resize_config(
+                scales,
+                square=True,
+                scale_jitter=scale_jitter,
+            ),
+            strict=True,
         )
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:
@@ -729,6 +762,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     include_keypoints = has_keypoints
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
     aug_config = getattr(args, "aug_config", None)
+    scale_jitter = getattr(args, "scale_jitter", True)
     keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(augmentation_backend)
@@ -753,6 +787,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 patch_size=args.patch_size,
                 num_windows=args.num_windows,
                 aug_config=aug_config,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             ),
@@ -778,6 +813,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 patch_size=args.patch_size,
                 num_windows=args.num_windows,
                 aug_config=aug_config,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             ),
@@ -835,6 +871,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
     keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
     aug_config = getattr(args, "aug_config", None)
+    scale_jitter = getattr(args, "scale_jitter", True)
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
     gpu_postprocess = resolved_augmentation_backend != "cpu"
 
@@ -852,6 +889,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             ),
@@ -874,6 +912,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             ),

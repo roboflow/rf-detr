@@ -35,6 +35,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
 
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
+    scale_jitter = getattr(args, "scale_jitter", True)
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
     resolved_backend = resolve_augmentation_backend(augmentation_backend)
 
@@ -55,6 +56,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 resolution,
                 multi_scale=args.multi_scale,
                 expanded_scales=args.expanded_scales,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
             ),
         )
@@ -67,6 +69,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 resolution,
                 multi_scale=args.multi_scale,
                 expanded_scales=args.expanded_scales,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
             ),
         )

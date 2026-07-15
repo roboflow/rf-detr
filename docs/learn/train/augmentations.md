@@ -32,7 +32,13 @@ model.train(
 )
 ```
 
-To disable augmentations: `aug_config={}`. Omitting it uses the default (horizontal flip at 50%).
+To disable all augmentations: `aug_config={}`. Omitting it uses the default (horizontal flip at 50%).
+
+`aug_config` controls only this augmentation stack — Albumentations on CPU, or the
+equivalent Kornia pipeline when `augmentation_backend="gpu"`/`"auto"`. To also disable
+the independent resize → crop → resize branch (Option B) in the training resize
+pipeline — so no spatial clipping occurs and annotations near image borders stay
+intact — pass `scale_jitter=False` to `model.train()`.
 
 ## Built-in Presets
 
