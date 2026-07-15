@@ -3,12 +3,10 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for native RLE annotation support in the COCO dataset pipeline.
 
-Verifies that :func:`convert_coco_poly_to_mask` and :class:`ConvertCoco`
-correctly handle compressed RLE, uncompressed RLE, and polygon segmentation
-formats — including mixed annotations within the same image.
+Verifies that :func:`convert_coco_poly_to_mask` and :class:`ConvertCoco` correctly handle compressed RLE, uncompressed
+RLE, and polygon segmentation formats — including mixed annotations within the same image.
 """
 
 import numpy as np
@@ -259,12 +257,10 @@ class TestConvertCocoClassWithRle:
 class TestMalformedRle:
     """Documents _is_rle behaviour for structurally malformed inputs.
 
-    Before this PR a bare ``except:`` in the polygon path silently swallowed
-    any pycocotools error.  These tests confirm that ``_is_rle`` is a
-    *structural* check only (it does not validate values inside the dict) and
-    that dicts missing required keys are correctly classified as non-RLE so
-    they are routed through the polygon path — where pycocotools will either
-    handle them or raise a descriptive error rather than silently falling back.
+    Before this PR a bare ``except:`` in the polygon path silently swallowed any pycocotools error.  These tests confirm
+    that ``_is_rle`` is a *structural* check only (it does not validate values inside the dict) and that dicts missing
+    required keys are correctly classified as non-RLE so they are routed through the polygon path — where pycocotools
+    will either handle them or raise a descriptive error rather than silently falling back.
     """
 
     def test_missing_size_key_is_not_rle(self) -> None:

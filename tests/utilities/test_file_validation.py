@@ -17,44 +17,32 @@ from rfdetr.utilities.files import _compute_file_md5, _download_file, _validate_
 
 
 class _DummyTqdm:
-    """
-    Minimal tqdm stand-in for download tests.
+    """Minimal tqdm stand-in for download tests.
 
-    This avoids real progress bars while preserving the context manager and
-    `update` calls used by the downloader.
+    This avoids real progress bars while preserving the context manager and `update` calls used by the downloader.
     """
 
     def __init__(self, **kwargs: object) -> None:
-        """
-        Store initialization kwargs for optional inspection.
-        """
+        """Store initialization kwargs for optional inspection."""
         self.kwargs = kwargs
 
     def __enter__(self) -> "_DummyTqdm":
-        """
-        Return self to satisfy context manager protocol.
-        """
+        """Return self to satisfy context manager protocol."""
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        """
-        Propagate exceptions raised inside the context.
-        """
+        """Propagate exceptions raised inside the context."""
         return False
 
     def update(self, size: int) -> None:
-        """
-        No-op progress update for compatibility with tqdm.
-        """
+        """No-op progress update for compatibility with tqdm."""
         return None
 
 
 class _FakeResponse:
-    """
-    Test double for requests responses used by the downloader.
+    """Test double for requests responses used by the downloader.
 
-    Provides headers, iterable content chunks, and optional HTTP error behavior
-    via `raise_for_status`.
+    Provides headers, iterable content chunks, observable close behavior, and optional HTTP errors.
     """
 
     def __init__(
@@ -63,25 +51,24 @@ class _FakeResponse:
         headers: Optional[dict[str, str]] = None,
         raise_error: Optional[Exception] = None,
     ) -> None:
-        """
-        Initialize the fake response with content and metadata.
-        """
+        """Initialize the fake response with content and metadata."""
         self._content_chunks = list(content_chunks)
         self.headers = headers or {}
         self._raise_error = raise_error
+        self.close = Mock()
 
     def raise_for_status(self) -> None:
-        """
-        Raise the configured HTTP error, if any.
-        """
+        """Raise the configured HTTP error, if any."""
+        if self.close.called:
+            raise AssertionError("response closed before HTTP status validation")
         if self._raise_error is not None:
             raise self._raise_error
 
     def iter_content(self, chunk_size: int = 1024) -> Iterator[bytes]:
-        """
-        Yield the configured content chunks.
-        """
+        """Yield the configured content chunks."""
         for chunk in self._content_chunks:
+            if self.close.called:
+                raise AssertionError("response closed before streaming completed")
             yield chunk
 
 
@@ -137,7 +124,9 @@ class TestFileMD5Validation:
         finally:
             os.unlink(temp_file)
 
-    @pytest.mark.parametrize("hash_case", ["lower", "upper"], ids=["lowercase", "uppercase"])
+    @pytest.mark.parametrize(
+        "hash_case", [pytest.param("lower", id="lowercase"), pytest.param("upper", id="uppercase")]
+    )
     def test_validate_file_md5_case_insensitive(self, hash_case: Literal["lower", "upper"]) -> None:
         """Test that MD5 validation is case-insensitive."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
@@ -209,6 +198,7 @@ class TestDownloadFile:
         assert target_path.read_bytes() == b"helloworld"
         _assert_no_download_temp_files(tmp_path)
         mock_get.assert_called_once_with("https://example.com/file.bin", stream=True, timeout=30.0)
+        response.close.assert_called_once_with()
 
     @patch("rfdetr.utilities.files.requests.get")
     def test_download_file_http_error(self, mock_get: Mock, tmp_path: Path):
@@ -222,6 +212,7 @@ class TestDownloadFile:
 
         assert not target_path.exists()
         _assert_no_download_temp_files(tmp_path)
+        response.close.assert_called_once_with()
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
@@ -242,6 +233,7 @@ class TestDownloadFile:
 
         assert not target_path.exists()
         _assert_no_download_temp_files(tmp_path)
+        response.close.assert_called_once_with()
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
@@ -260,6 +252,7 @@ class TestDownloadFile:
 
         assert not target_path.exists()
         _assert_no_download_temp_files(tmp_path)
+        response.close.assert_called_once_with()
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
@@ -277,6 +270,7 @@ class TestDownloadFile:
 
         assert not target_path.exists()
         _assert_no_download_temp_files(tmp_path)
+        response.close.assert_called_once_with()
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.open", side_effect=AssertionError("must not reopen temp filename"))

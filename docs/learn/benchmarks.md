@@ -1,5 +1,5 @@
 ---
-description: RF-DETR benchmark results on COCO and RF100-VL for detection and segmentation. Compare accuracy and latency against YOLO, D-FINE, and LW-DETR.
+description: RF-DETR benchmark results on COCO and RF100-VL for detection, segmentation, and keypoint detection. Compare accuracy and latency against YOLO, D-FINE, and LW-DETR.
 ---
 
 # Benchmarks
@@ -7,12 +7,13 @@ description: RF-DETR benchmark results on COCO and RF100-VL for detection and se
 !!! tip "Key Takeaways"
 
     - RF-DETR-2XL achieves 60.1 AP50:95 on COCO detection at 17.2 ms latency (T4, TensorRT FP16)
-    - RF-DETR-L outperforms YOLOv11x (56.5 vs 54.7 AP50:95) at lower latency (6.8 vs 10.5 ms)
+    - RF-DETR-L outperforms YOLOv11x (56.5 vs 50.9 AP50:95) at lower latency (6.8 vs 10.5 ms)
     - Segmentation models range from 40.3 AP (Nano, 3.4 ms) to 49.9 AP (2XL, 21.8 ms) on COCO
     - All latency measured on NVIDIA T4 with TensorRT 10.4, CUDA 12.4, FP16, batch size 1
     - RF100-VL results demonstrate strong domain-shift generalization across 100 diverse datasets
+    - RF-DETR Keypoint (Preview) achieves 71.8 AP50:95 on COCO person keypoints at 9.7 ms (T4, TensorRT FP16)
 
-This page reports RF-DETR benchmark results for object detection and instance segmentation on Microsoft COCO and RF100-VL. All benchmark numbers and plots match the latest released checkpoints and tables shown below. Latency values are measured on an NVIDIA T4 with TensorRT in FP16 at batch size 1. For full methodology details and architectural context, see the RF-DETR paper.
+This page reports RF-DETR benchmark results for object detection, instance segmentation, and keypoint detection on Microsoft COCO and RF100-VL (detection only). All benchmark numbers and plots match the latest released checkpoints and tables shown below. Latency values are measured on an NVIDIA T4 with TensorRT in FP16 at batch size 1. For full methodology details and architectural context, see the RF-DETR paper.
 
 ## Methodology
 
@@ -89,3 +90,23 @@ Accuracy and latency are always measured using the same model artifact and the s
 |  YOLO26-M-Seg   |         67.8         |          44.0           |     6.32     |    23.6    |  640x640   |
 |  YOLO26-L-Seg   |         69.8         |          45.5           |     7.58     |    28.0    |  640x640   |
 |  YOLO26-X-Seg   |         71.6         |          46.8           |    12.92     |    62.8    |  640x640   |
+
+## Keypoints
+
+<img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="../assets/keypoints/kp-map-latency.png" />
+
+|        Architecture        | COCO AP<sub>50:95</sub> | Latency (ms) |
+| :------------------------: | :---------------------: | :----------: |
+| RF-DETR Keypoint (Preview) |          71.8           |     9.7      |
+|       YOLO11-pose N        |          48.9           |     3.2      |
+|       YOLO11-pose S        |          57.5           |     3.4      |
+|       YOLO11-pose M        |          64.2           |     5.2      |
+|       YOLO11-pose L        |          65.2           |     6.6      |
+|       YOLO11-pose X        |          68.6           |     10.6     |
+|       YOLO26-pose N        |          55.9           |     1.9      |
+|       YOLO26-pose S        |          62.0           |     2.7      |
+|       YOLO26-pose M        |          68.0           |     4.6      |
+|       YOLO26-pose L        |          69.2           |     5.9      |
+|       YOLO26-pose X        |          71.0           |     9.8      |
+
+> Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric.

@@ -3,8 +3,9 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Confidence-threshold sweep for precision/recall/F1 computation."""
+
+from __future__ import annotations
 
 from typing import Any
 
@@ -20,11 +21,9 @@ def sweep_confidence_thresholds(
 
     Args:
         per_class_data: Per-class matching data list indexed by class id.
-            Each entry is a dict with keys ``"scores"``, ``"matches"``,
-            ``"ignore"``, and ``"total_gt"``.
+            Each entry is a dict with keys ``"scores"``, ``"matches"``, ``"ignore"``, and ``"total_gt"``.
         conf_thresholds: Iterable of float confidence thresholds to evaluate.
-        classes_with_gt: List of class indices that have at least one GT
-            instance — used for macro-averaging.
+        classes_with_gt: List of class indices that have at least one GT instance — used for macro-averaging.
 
     Returns:
         List of result dicts, one per threshold, each containing:
@@ -37,12 +36,12 @@ def sweep_confidence_thresholds(
             - ``"per_class_f1"``: float ndarray
     """
     num_classes = len(per_class_data)
-    results = []
+    results: list[dict[str, Any]] = []
 
     for conf_thresh in conf_thresholds:
-        per_class_precisions = []
-        per_class_recalls = []
-        per_class_f1s = []
+        per_class_precisions: list[float] = []
+        per_class_recalls: list[float] = []
+        per_class_f1s: list[float] = []
 
         for k in range(num_classes):
             data = per_class_data[k]
@@ -69,9 +68,9 @@ def sweep_confidence_thresholds(
             per_class_f1s.append(f1)
 
         if len(classes_with_gt) > 0:
-            macro_precision = np.mean([per_class_precisions[k] for k in classes_with_gt])
-            macro_recall = np.mean([per_class_recalls[k] for k in classes_with_gt])
-            macro_f1 = np.mean([per_class_f1s[k] for k in classes_with_gt])
+            macro_precision = float(np.mean([per_class_precisions[k] for k in classes_with_gt]))
+            macro_recall = float(np.mean([per_class_recalls[k] for k in classes_with_gt]))
+            macro_f1 = float(np.mean([per_class_f1s[k] for k in classes_with_gt]))
         else:
             macro_precision = 0.0
             macro_recall = 0.0

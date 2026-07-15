@@ -6,7 +6,6 @@
 # Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
-
 """Dataset file for Object365."""
 
 from pathlib import Path
@@ -17,7 +16,10 @@ from PIL import Image
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.utilities.logger import get_logger
 
-Image.MAX_IMAGE_PIXELS = None
+# O365 contains images larger than PIL's default 178M-pixel limit.
+# Set a generous but finite cap (2 billion pixels ~ a 45k x 45k image) instead of
+# disabling the guard entirely, so PIL still protects against decompression bombs.
+Image.MAX_IMAGE_PIXELS = 2_000_000_000
 
 logger = get_logger()
 
@@ -78,4 +80,4 @@ def build_o365(image_set: str, args: Any, resolution: int) -> CocoDetection:
     if image_set == "val":
         val_ds = build_o365_raw("val", args, resolution=resolution)
         return val_ds
-    raise ValueError("Unknown image_set: {}".format(image_set))
+    raise ValueError(f"Unknown image_set: {image_set}")

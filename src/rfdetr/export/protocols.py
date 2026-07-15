@@ -3,21 +3,20 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Exporter protocol — enables dependency-inversion for model export."""
 
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-import torch.nn as nn
+from torch import nn
 
 
 @runtime_checkable
 class ExporterProtocol(Protocol):
     """Protocol for model exporters.
 
-    Any callable or class that matches this signature can be registered
-    as an exporter without inheriting from a base class.
+    Any callable or class that matches this signature can be registered as an exporter without inheriting from a base
+    class.
     """
 
     def __call__(

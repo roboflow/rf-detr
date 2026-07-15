@@ -3,35 +3,29 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Hardcoded architectural constants not exposed in ModelConfig or TrainConfig.
 
-These values correspond to the ``build_namespace()`` defaults in ``_namespace.py``
-that have no corresponding config field.  Making them explicit in a frozen
-dataclass enables testing, documentation, and (future) overrides without
+These values correspond to the ``build_namespace()`` defaults in ``_namespace.py`` that have no corresponding config
+field.  Making them explicit in a frozen dataclass enables testing, documentation, and (future) overrides without
 touching config validation.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 
 @dataclass(frozen=True, slots=True)
 class ModelDefaults:
     """Hardcoded architectural constants not exposed in ModelConfig or TrainConfig.
 
-    These values mirror the legacy ``build_namespace()`` hardcoded section
-    implemented in ``_namespace.py``. Making them explicit enables testing
-    and future overrides without touching config validation.
+    These values mirror the legacy ``build_namespace()`` hardcoded section implemented in ``_namespace.py``. Making them
+    explicit enables testing and future overrides without touching config validation.
 
     Note:
-        ``ModelDefaults`` is public API as of v1.7.  Fields that represent
-        true architectural decisions (e.g. ``dim_feedforward``, ``aux_loss``)
-        will be promoted to ``ModelConfig`` or ``TrainConfig`` in future
-        phases; field names and defaults may change across minor versions
-        during this transitional period.
+        ``ModelDefaults`` is public API as of v1.7.  Fields that represent true architectural decisions (e.g.
+        ``dim_feedforward``, ``aux_loss``) will be promoted to ``ModelConfig`` or ``TrainConfig`` in future phases;
+        field names and defaults may change across minor versions during this transitional period.
 
     Attributes:
         drop_mode: Drop-path mode used during training.
@@ -79,12 +73,12 @@ class ModelDefaults:
     drop_mode: str = "standard"
     drop_schedule: str = "constant"
     cutoff_epoch: int = 0
-    pretrained_encoder: Optional[str] = None
-    pretrain_exclude_keys: Optional[List[str]] = None
-    pretrain_keys_modify_to_load: Optional[Dict[str, str]] = None
-    pretrained_distiller: Optional[str] = None
+    pretrained_encoder: str | None = None
+    pretrain_exclude_keys: list[str] | None = None
+    pretrain_keys_modify_to_load: dict[str, str] | None = None
+    pretrained_distiller: str | None = None
     vit_encoder_num_layers: int = 12
-    window_block_indexes: Optional[List[int]] = None
+    window_block_indexes: list[int] | None = None
     position_embedding: str = "sine"
     rms_norm: bool = False
     force_no_pretrain: bool = False
@@ -107,7 +101,7 @@ class ModelDefaults:
     print_freq: int = 10
     do_benchmark: bool = False
     dropout: float = 0.0
-    coco_path: Optional[str] = None
+    coco_path: str | None = None
     dont_save_weights: bool = False
     start_epoch: int = 0
     eval: bool = False
@@ -115,7 +109,7 @@ class ModelDefaults:
     dist_url: str = "env://"
     lr_scheduler: str = "step"
     lr_min_factor: float = 0.0
-    subcommand: Optional[str] = None
+    subcommand: str | None = None
 
 
 MODEL_DEFAULTS = ModelDefaults()

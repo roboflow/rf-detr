@@ -3,17 +3,16 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Package-private helper: build a self-contained namespace from Pydantic configs.
 
-Replaces the previous shim in ``_args.py`` that called the deprecated
-``populate_args()`` function from ``main.py``.  This module has zero dependency
-on ``main.py`` and can survive its deletion.
+Replaces the previous shim in ``_args.py`` that called the deprecated ``populate_args()`` function from ``main.py``.
+This module has zero dependency on ``main.py`` and can survive its deletion.
 """
 
 import dataclasses
 import types
-import warnings
+
+from deprecate import deprecated
 
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.models._defaults import MODEL_DEFAULTS, ModelDefaults
@@ -50,6 +49,15 @@ _MC_NAMESPACE_FIELDS = {
     "resolution",
     "sa_nheads",
     "segmentation_head",
+    "use_grouppose_keypoints",
+    "keypoint_cross_attn",
+    "inter_instance_kp_attn",
+    "grouppose_keypoint_dim_downscale",
+    "dual_projector",
+    "dual_projector_kp_only",
+    "num_keypoints_per_class",
+    "num_decoder_registers",
+    "postprocess_trace_alpha",
     "two_stage",
 }
 
@@ -89,6 +97,7 @@ _TC_NON_NAMESPACE_FIELDS = {
     "auto_batch_ema_headroom",
     # PTL-only Trainer / DataModule / LR-scheduler knobs.
     "progress_bar",
+    "compute_train_metrics",
     "run_test",
     "dont_save_weights",
     "pin_memory",
@@ -113,26 +122,22 @@ def _namespace_from_configs(
 ) -> types.SimpleNamespace:
     """Build a ``types.SimpleNamespace`` from configs and architectural defaults.
 
-    This is the internal implementation behind :func:`build_namespace`.
-    Extracting it allows config-native builder functions to construct a
-    namespace without going through the public ``build_namespace()`` API
-    while still accepting overridable defaults.
+    This is the internal implementation behind :func:`build_namespace`. Extracting it allows config-native builder
+    functions to construct a namespace without going through the public ``build_namespace()`` API while still accepting
+    overridable defaults.
 
     This function is used by multiple modules as the transitional namespace
-    bridge: :func:`rfdetr.models.build_model_from_config`,
-    :func:`rfdetr.models.build_criterion_from_config`, and
-    :func:`rfdetr.detr._build_model_context` all call it directly to avoid
-    the public ``build_namespace()`` shim.
+    bridge: :func:`rfdetr.models.build_model_from_config`, :func:`rfdetr.models.build_criterion_from_config`, and
+    :func:`rfdetr.detr._build_model_context` all call it directly to avoid the public ``build_namespace()`` shim.
 
     Args:
         model_config: Architecture configuration.
         train_config: Training hyperparameter configuration.
-        defaults: Hardcoded architectural constants.  Defaults to
-            :data:`MODEL_DEFAULTS`.
+        defaults: Hardcoded architectural constants.  Defaults to :data:`MODEL_DEFAULTS`.
 
     Returns:
-        ``types.SimpleNamespace`` compatible with ``build_model``,
-        ``build_criterion_and_postprocessors``, and ``build_dataset``.
+        ``types.SimpleNamespace`` compatible with ``build_model``, ``build_criterion_and_postprocessors``, and
+        ``build_dataset``.
     """
     mc = model_config
     tc = train_config
@@ -170,12 +175,13 @@ def _namespace_from_configs(
     )
 
 
+@deprecated(target=_namespace_from_configs, deprecated_in="1.7.0", remove_in="1.9.0")
 def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> types.SimpleNamespace:
     """Build a ``types.SimpleNamespace`` from Pydantic model and train configs.
 
-    .. deprecated::
-        ``build_namespace`` is a backward-compatibility shim with no remaining
-        internal callers.  Use the config-native builders instead:
+    .. deprecated:: 1.7.0
+        ``build_namespace`` is a backward-compatibility shim with no remaining internal callers.
+        Deprecated since v1.7.0, will be removed in v1.9.0. Use the config-native builders instead:
 
         - :func:`rfdetr.models.build_model_from_config` — replaces
           ``build_model(build_namespace(mc, tc))``
@@ -184,21 +190,12 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> typ
         - :func:`rfdetr._namespace._namespace_from_configs` — for the rare
           case where a raw namespace is still required (e.g. ``build_dataset``)
 
-        ``build_namespace`` will be removed in v1.9.
-
     Args:
         model_config: Architecture configuration.
         train_config: Training hyperparameter configuration.
 
     Returns:
-        ``types.SimpleNamespace`` compatible with ``build_model``,
-        ``build_criterion_and_postprocessors``, and ``build_dataset``.
+        ``types.SimpleNamespace`` compatible with ``build_model``, ``build_criterion_and_postprocessors``, and
+        ``build_dataset``.
     """
-    warnings.warn(
-        "build_namespace() is deprecated and will be removed in v1.9. "
-        "Use build_model_from_config() or build_criterion_from_config() instead; "
-        "for raw namespace access use rfdetr._namespace._namespace_from_configs().",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return _namespace_from_configs(model_config, train_config)
+    ...

@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Utility functions and helpers."""
 
 from rfdetr.utilities import box_ops
@@ -15,6 +14,10 @@ from rfdetr.utilities.distributed import (
     is_main_process,
     reduce_dict,
     save_on_master,
+)
+from rfdetr.utilities.keypoints import (
+    precision_cholesky_to_pixel_covariance,
+    schemas_semantically_equal,
 )
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_sha, get_version
@@ -48,6 +51,9 @@ __all__ = [
     # package
     "get_sha",
     "get_version",
+    # keypoints
+    "schemas_semantically_equal",
+    "precision_cholesky_to_pixel_covariance",
     # reproducibility
     "seed_all",
     # state_dict

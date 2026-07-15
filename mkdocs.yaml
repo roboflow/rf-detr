@@ -31,11 +31,13 @@ extra:
 nav:
   - Home: index.md
   - How to:
-      - Install: learn/install.md
-      - Migration Guide: learn/migration.md
+      - Getting Started:
+          - Install: getting-started/install.md
+          - Migration Guide: getting-started/migration.md
       - Run Model:
           - Detection: learn/run/detection.md
           - Segmentation: learn/run/segmentation.md
+          - Keypoints: learn/run/keypoints.md
           - Pretrained Models: learn/pretrained.md
       - Train Model:
           - Overview: learn/train/index.md
@@ -64,9 +66,12 @@ nav:
           - RF-DETR Seg Large: reference/seg_large.md
           - RF-DETR Seg XLarge: reference/seg_xlarge.md
           - RF-DETR Seg 2XLarge: reference/seg_2xlarge.md
+      - Keypoint Models:
+          - RF-DETR Keypoint Preview: reference/kp_preview.md
       - Training Configs:
           - Train Config: reference/train_config.md
           - Segmentation Train Config: reference/segmentation_train_config.md
+          - Keypoint Train Config: reference/keypoint_train_config.md
       - Lightning Training:
           - Training Primitives: reference/training.md
   - Cookbooks: cookbooks.md
