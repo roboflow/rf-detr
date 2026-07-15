@@ -895,25 +895,53 @@ class TestBuildKeypointCat2Label:
         assert result == {1: 0, 3: 1}
 
 
-class TestAugConfigDisablesCrop:
-    """aug_config={} coupling: empty dict disables both aug stack and resize-crop branch."""
+class TestScaleJitter:
+    """``scale_jitter`` controls the resize-crop branch independently of ``aug_config``."""
 
     @pytest.mark.parametrize(
-        "aug_config,expected",
+        "scale_jitter,expected",
         [
-            pytest.param(None, True, id="none_keeps_crop"),
-            pytest.param({"HorizontalFlip": {"p": 0.5}}, True, id="nonempty_keeps_crop"),
-            pytest.param({}, False, id="empty_disables_crop"),
+            pytest.param(True, True, id="enabled_keeps_crop"),
+            pytest.param(False, False, id="disabled_drops_crop"),
         ],
     )
-    def test_crop_branch_enabled(self, aug_config, expected):
-        """_crop_branch_enabled returns False only for empty dict."""
-        from rfdetr.datasets.coco import _crop_branch_enabled
+    def test_make_coco_transforms_forwards_scale_jitter(self, scale_jitter, expected):
+        """make_coco_transforms passes include_crop_branch=scale_jitter to resize config."""
+        from unittest.mock import MagicMock, patch
 
-        assert _crop_branch_enabled(aug_config) is expected
+        from rfdetr.datasets.coco import make_coco_transforms
 
-    def test_make_coco_transforms_empty_aug_config_disables_crop_branch(self):
-        """make_coco_transforms with aug_config={} passes include_crop_branch=False."""
+        with (
+            patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build,
+            patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=MagicMock()),
+        ):
+            make_coco_transforms("train", 640, scale_jitter=scale_jitter)
+
+        assert mock_build.call_args.kwargs["include_crop_branch"] is expected
+
+    @pytest.mark.parametrize(
+        "scale_jitter,expected",
+        [
+            pytest.param(True, True, id="enabled_keeps_crop"),
+            pytest.param(False, False, id="disabled_drops_crop"),
+        ],
+    )
+    def test_make_coco_transforms_square_forwards_scale_jitter(self, scale_jitter, expected):
+        """make_coco_transforms_square_div_64 passes include_crop_branch=scale_jitter."""
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.coco import make_coco_transforms_square_div_64
+
+        with (
+            patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build,
+            patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=MagicMock()),
+        ):
+            make_coco_transforms_square_div_64("train", 640, scale_jitter=scale_jitter)
+
+        assert mock_build.call_args.kwargs["include_crop_branch"] is expected
+
+    def test_empty_aug_config_no_longer_affects_crop_branch(self):
+        """aug_config={} disables the augmentation stack only — crop branch stays on by default."""
         from unittest.mock import MagicMock, patch
 
         from rfdetr.datasets.coco import make_coco_transforms
@@ -923,34 +951,6 @@ class TestAugConfigDisablesCrop:
             patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=MagicMock()),
         ):
             make_coco_transforms("train", 640, aug_config={})
-
-        assert mock_build.call_args.kwargs["include_crop_branch"] is False
-
-    def test_make_coco_transforms_square_empty_aug_config_disables_crop_branch(self):
-        """make_coco_transforms_square_div_64 with aug_config={} passes include_crop_branch=False."""
-        from unittest.mock import MagicMock, patch
-
-        from rfdetr.datasets.coco import make_coco_transforms_square_div_64
-
-        with (
-            patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build,
-            patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=MagicMock()),
-        ):
-            make_coco_transforms_square_div_64("train", 640, aug_config={})
-
-        assert mock_build.call_args.kwargs["include_crop_branch"] is False
-
-    def test_make_coco_transforms_none_aug_config_keeps_crop_branch(self):
-        """make_coco_transforms with aug_config=None leaves include_crop_branch=True."""
-        from unittest.mock import MagicMock, patch
-
-        from rfdetr.datasets.coco import make_coco_transforms
-
-        with (
-            patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build,
-            patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=MagicMock()),
-        ):
-            make_coco_transforms("train", 640, aug_config=None)
 
         assert mock_build.call_args.kwargs["include_crop_branch"] is True
 

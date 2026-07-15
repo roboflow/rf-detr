@@ -36,38 +36,6 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
-def _crop_branch_enabled(aug_config: dict[str, Any] | None) -> bool:
-    """Return whether the resize-crop branch (Option B) should be active.
-
-    When ``aug_config={}`` is passed, the caller opts out of all augmentation.
-    By convention this also disables the stage-1 resize-crop branch so no
-    spatial clipping occurs and annotations stay intact.
-
-    Args:
-        aug_config: Augmentation config dict passed by the caller, or ``None``
-            to use the default config.
-
-    Returns:
-        ``False`` when ``aug_config`` is an empty dict; ``True`` otherwise.
-
-    Examples:
-        >>> _crop_branch_enabled(None)
-        True
-        >>> _crop_branch_enabled({"HorizontalFlip": {"p": 0.5}})
-        True
-        >>> _crop_branch_enabled({})
-        False
-    """
-    if aug_config is not None and not aug_config:
-        logger.warning_once(
-            "aug_config={} disables all augmentation including the resize-crop branch (Option B). "
-            "Annotations near image borders will not be cropped out. "
-            "Pass aug_config=None to keep the default augmentation stack with the crop branch enabled."
-        )
-        return False
-    return True
-
-
 def is_valid_coco_dataset(dataset_dir: str) -> bool:
     return (Path(dataset_dir) / "train" / "_annotations.coco.json").exists()
 
@@ -564,6 +532,7 @@ def make_coco_transforms(
     patch_size: int = 16,
     num_windows: int = 4,
     aug_config: dict[str, dict[str, Any]] | None = None,
+    scale_jitter: bool = True,
     gpu_postprocess: bool = False,
     keypoint_flip_pairs: list[int] | None = None,
 ) -> Compose:
@@ -599,9 +568,12 @@ def make_coco_transforms(
             :func:`compute_multi_scale_scales` to derive candidate resolutions.
         aug_config: Albumentations augmentation config dict passed to
             :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`.  Falls back to the default
-            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` when ``None``.  Passing an
-            empty dict (``aug_config={}``) disables augmentation **and** the resize → crop → resize
-            branch (Option B); pass ``None`` to keep the default stack with the crop branch active.
+            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` when ``None``.  Controls only the
+            augmentation stack — not the resize pipeline; see ``scale_jitter`` for that.
+        scale_jitter: If ``True`` (default), the training resize pipeline randomly picks between
+            a direct resize (Option A) and a resize → crop → resize sequence (Option B) for scale
+            variation.  Set to ``False`` to use Option A only — no random crop, annotations near
+            image borders stay intact.
         gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
             ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
             normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
@@ -639,7 +611,7 @@ def make_coco_transforms(
                 scales,
                 square=False,
                 max_size=1333,
-                include_crop_branch=_crop_branch_enabled(aug_config),
+                include_crop_branch=scale_jitter,
             ),
             strict=True,
         )
@@ -681,6 +653,7 @@ def make_coco_transforms_square_div_64(
     patch_size: int = 16,
     num_windows: int = 4,
     aug_config: dict[str, dict[str, Any]] | None = None,
+    scale_jitter: bool = True,
     gpu_postprocess: bool = False,
     keypoint_flip_pairs: list[int] | None = None,
 ) -> Compose:
@@ -712,9 +685,12 @@ def make_coco_transforms_square_div_64(
             derive the list of candidate square resolutions.
         aug_config: Augmentation configuration dictionary compatible with
             :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`. If ``None``, the default
-            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` is used.  Passing an empty
-            dict (``aug_config={}``) disables augmentation **and** the resize → crop → resize
-            branch (Option B); pass ``None`` to keep the default stack with the crop branch active.
+            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` is used.  Controls only the augmentation
+            stack — not the resize pipeline; see ``scale_jitter`` for that.
+        scale_jitter: If ``True`` (default), the training resize pipeline randomly picks between
+            a direct resize (Option A) and a resize → crop → resize sequence (Option B) for scale
+            variation.  Set to ``False`` to use Option A only — no random crop, annotations near
+            image borders stay intact.
         gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
             ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
             normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
@@ -740,7 +716,7 @@ def make_coco_transforms_square_div_64(
             _build_train_resize_config(
                 scales,
                 square=True,
-                include_crop_branch=_crop_branch_enabled(aug_config),
+                include_crop_branch=scale_jitter,
             ),
             strict=True,
         )
@@ -786,6 +762,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     include_keypoints = has_keypoints
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
     aug_config = getattr(args, "aug_config", None)
+    scale_jitter = getattr(args, "scale_jitter", True)
     keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(augmentation_backend)
@@ -810,6 +787,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 patch_size=args.patch_size,
                 num_windows=args.num_windows,
                 aug_config=aug_config,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             ),
@@ -835,6 +813,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 patch_size=args.patch_size,
                 num_windows=args.num_windows,
                 aug_config=aug_config,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             ),
@@ -892,6 +871,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
     keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
     aug_config = getattr(args, "aug_config", None)
+    scale_jitter = getattr(args, "scale_jitter", True)
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
     gpu_postprocess = resolved_augmentation_backend != "cpu"
 
@@ -909,6 +889,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             ),
@@ -931,6 +912,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             ),

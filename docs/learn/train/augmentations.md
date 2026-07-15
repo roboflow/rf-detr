@@ -32,7 +32,12 @@ model.train(
 )
 ```
 
-To disable all augmentations: `aug_config={}`. This also disables the resize-and-crop branch (Option B) in the training resize pipeline — no spatial clipping will occur and annotations near image borders will stay intact.
+To disable all augmentations: `aug_config={}`. Omitting it uses the default (horizontal flip at 50%).
+
+`aug_config` controls only this Albumentations stack. To also disable the independent
+resize → crop → resize branch (Option B) in the training resize pipeline — so no spatial
+clipping occurs and annotations near image borders stay intact — pass `scale_jitter=False`
+to `model.train()`.
 
 ## Built-in Presets
 
