@@ -393,6 +393,12 @@ class Resize:
         """
         old_height, old_width = _image_size(image)
         new_height, new_width = self.size
+        # antialias is a no-op for the default (train/val/export) path: it feeds PIL images here
+        # (ToImage runs after resize), and torchvision always antialiases PIL input, ignoring this
+        # flag. Micro-benchmark (600x800 -> 640x640, 200 iters): PIL antialias True vs False both
+        # ~1.52 ms (identical); it only changes tensor input (~0.55 vs 0.45 ms). Kept True so tensor
+        # inputs match PIL's always-on antialiasing rather than as a perf lever -- do not flip it to
+        # speed up the CPU path; it would not (the cost is PIL.resize itself, not antialiasing).
         image = functional.resize(
             image,
             [new_height, new_width],
