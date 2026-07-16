@@ -967,6 +967,60 @@ class TestScaleJitter:
         assert mock_build.call_args.kwargs["scale_jitter"] is expected
 
 
+def _make_gradient_image(width: int, height: int) -> Image.Image:
+    """Build a deterministic RGB gradient image with real pixel content for interpolation comparisons."""
+    import numpy as np
+
+    x = np.linspace(0, 255, width, dtype=np.uint8)
+    y = np.linspace(0, 255, height, dtype=np.uint8)
+    grid = np.broadcast_to(x, (height, width))
+    channel_b = np.broadcast_to(y[:, None], (height, width))
+    array = np.stack([grid, channel_b, (grid // 2 + channel_b // 2)], axis=-1).astype(np.uint8)
+    return Image.fromarray(array, mode="RGB")
+
+
+class TestPipelineParity:
+    """Torchvision and Albumentations eval pipelines produce statistically close resize+normalize output.
+
+    Both backends use different interpolation algorithms (torchvision: BILINEAR + antialias;
+    Albumentations: cv2 INTER_LINEAR, no antialias) so exact pixel parity is not expected — see the
+    backend-switch UserWarning in ``_build_torchvision_pipeline``. This test asserts statistical
+    closeness (shape/dtype match, output distribution within tolerance) instead.
+    """
+
+    def test_eval_resize_normalize_output_stats_are_close(self) -> None:
+        """_build_torchvision_pipeline and _build_albumentations_pipeline agree on shape, dtype, and pixel stats."""
+        from rfdetr.datasets.coco import _build_albumentations_pipeline, _build_torchvision_pipeline
+
+        image = _make_gradient_image(120, 90)
+        target = {
+            "boxes": torch.tensor([[10.0, 5.0, 60.0, 45.0]]),
+            "labels": torch.tensor([1]),
+            "orig_size": torch.tensor([90, 120]),
+            "size": torch.tensor([90, 120]),
+        }
+        pipeline_kwargs = {
+            "image_set": "val",
+            "resolution": 128,
+            "scales": [128],
+            "square": False,
+            "aug_config": None,
+            "gpu_postprocess": False,
+            "keypoint_flip_pairs": None,
+        }
+
+        tv_pipeline = _build_torchvision_pipeline(**pipeline_kwargs)
+        albu_pipeline = _build_albumentations_pipeline(**pipeline_kwargs)
+
+        tv_image, _ = tv_pipeline(image, dict(target))
+        albu_image, _ = albu_pipeline(image, dict(target))
+
+        assert tv_image.shape == albu_image.shape
+        assert tv_image.dtype == albu_image.dtype
+        torch.testing.assert_close(tv_image.mean(), albu_image.mean(), atol=0.05, rtol=0)
+        torch.testing.assert_close(tv_image.std(), albu_image.std(), atol=0.05, rtol=0)
+
+
 class TestCocoDetectionZeroAnnotations:
     """CocoDetection correctly handles images with no annotations."""
 

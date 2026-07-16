@@ -137,6 +137,7 @@ GEOMETRIC_TRANSFORMS = {
     "Resize",
     "SmallestMaxSize",
     "LongestMaxSize",
+    "CappedLongestMaxSize",
     "RandomScale",
     "Downscale",
     # Padding and symmetry
@@ -147,6 +148,37 @@ GEOMETRIC_TRANSFORMS = {
 
 # Albumentations container/meta transforms that hold nested transforms
 ALBUMENTATIONS_CONTAINERS = frozenset({"OneOf", "SomeOf", "Sequential"})
+
+# Config name for the conditional-cap resize transform built by _capped_longest_max_size_cls().
+_CAPPED_LONGEST_MAX_SIZE_NAME = "CappedLongestMaxSize"
+
+
+@cache
+def _capped_longest_max_size_cls() -> type:
+    """Build a ``LongestMaxSize`` subclass that only shrinks, never upscales.
+
+    Standard ``alb.LongestMaxSize`` always forces the longest side to exactly ``max_size``, scaling the image up
+    when its current longest side is smaller than the target. Chained after ``SmallestMaxSize`` (as in RF-DETR's
+    non-square training resize), this silently inflates every image whose aspect ratio keeps the long side below
+    ``max_size`` — the common case, since ``max_size`` defaults to the DETR-style 1333 cap while typical training
+    resolutions are far smaller.
+
+    This subclass clamps the resolved scale factor to ``<= 1.0``, giving it torchvision
+    ``RandomResize``-style conditional-cap semantics: a no-op when the image already fits within ``max_size``, a
+    shrink when it doesn't. Lazily defined (not at module scope) so importing this module never requires
+    Albumentations to be installed.
+
+    Returns:
+        A ``LongestMaxSize`` subclass with capped (never-upscale) resize behaviour.
+    """
+
+    class CappedLongestMaxSize(alb.LongestMaxSize):
+        def get_params_dependent_on_data(self, params: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+            resolved = super().get_params_dependent_on_data(params, data)
+            resolved["scale"] = min(resolved["scale"], 1.0)
+            return resolved
+
+    return CappedLongestMaxSize
 
 
 def _is_geometric_transform(transform: alb.BasicTransform) -> bool:
@@ -250,7 +282,7 @@ def _build_albu_transform(name: str, params: dict[str, Any]) -> alb.BasicTransfo
             raise ValueError(f"Unknown Albumentations container: {name!r}")
         return container_cls(transforms=nested_transforms, **other_params)
 
-    aug_cls = getattr(alb, name, None)
+    aug_cls = _capped_longest_max_size_cls() if name == _CAPPED_LONGEST_MAX_SIZE_NAME else getattr(alb, name, None)
     if aug_cls is None:
         raise ValueError(f"Unknown Albumentations transform: {name!r}")
     return aug_cls(**_normalize_albu_params(name, params, aug_cls))

@@ -502,7 +502,10 @@ def _build_train_resize_config(
             "Sequential": {
                 "transforms": [
                     {"SmallestMaxSize": {"max_size": size_param}},
-                    {"LongestMaxSize": {"max_size": cap}},
+                    # CappedLongestMaxSize only shrinks (never upscales) -- a plain LongestMaxSize would force
+                    # every image's longest side up to `cap`, silently inflating training resolution far beyond
+                    # `size_param` whenever the aspect ratio keeps the long side below `cap` after SmallestMaxSize.
+                    {"CappedLongestMaxSize": {"max_size": cap}},
                 ]
             }
         }
@@ -644,7 +647,9 @@ def _build_albumentations_pipeline(
     resize_wrappers = AlbumentationsWrapper.from_config(
         [
             {"SmallestMaxSize": {"max_size": resolution}},
-            {"LongestMaxSize": {"max_size": _COCO_MAX_SIZE}},
+            # CappedLongestMaxSize only shrinks (never upscales) -- see the matching comment in
+            # _build_train_resize_config's option_a.
+            {"CappedLongestMaxSize": {"max_size": _COCO_MAX_SIZE}},
         ]
     )
     return Compose([*resize_wrappers, to_image, to_float, normalize])
