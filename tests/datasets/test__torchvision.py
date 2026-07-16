@@ -326,11 +326,13 @@ class TestEdgeCaseCoverage:
             builder("predict", 640)
 
     def test_resize_masks_zero_spatial_dim(self) -> None:
-        """_resize_masks handles (0, H, W) masks returning (0, new_H, new_W) without error."""
-        from rfdetr.datasets._torchvision import _resize_masks
+        """_apply_to_masks handles (0, H, W) masks returning (0, new_H, new_W) without error."""
+        from torchvision.transforms.v2 import functional
+
+        from rfdetr.datasets._torchvision import _apply_to_masks
 
         empty_masks = torch.zeros((0, 50, 100), dtype=torch.bool)
-        result = _resize_masks(empty_masks, (200, 200))
+        result = _apply_to_masks(empty_masks, lambda masks: functional.resize(masks, [200, 200]))
 
         assert result.shape == (0, 200, 200)
         assert result.dtype == torch.bool

@@ -22,8 +22,8 @@ from collections.abc import Sequence
 from typing import Any, Dict, Optional, Tuple, TypeAlias, cast
 
 import torch
-import torch.nn.functional as torch_f
 from PIL import Image
+from torchvision import tv_tensors
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional
 
@@ -31,17 +31,6 @@ _GLOBAL_TARGET_FIELDS = frozenset({"boxes", "labels", "orig_size", "size", "imag
 _ImageInput: TypeAlias = Image.Image | torch.Tensor
 _Target: TypeAlias = Optional[Dict[str, Any]]
 _TransformResult: TypeAlias = Tuple[_ImageInput, _Target]
-
-__all__ = [
-    "Compose",
-    "RandomSelect",
-    "RandomChoice",
-    "RandomResize",
-    "Resize",
-    "RandomSizedCrop",
-    "RandomHorizontalFlip",
-    "crop",
-]
 
 
 def _image_size(image: Image.Image | torch.Tensor) -> tuple[int, int]:
@@ -59,20 +48,42 @@ def _image_size(image: Image.Image | torch.Tensor) -> tuple[int, int]:
     return int(image.shape[-2]), int(image.shape[-1])
 
 
-def _resize_masks(masks: torch.Tensor, size: tuple[int, int]) -> torch.Tensor:
-    """Resize per-instance masks with nearest-neighbor interpolation.
+def _apply_to_boxes(boxes: torch.Tensor, canvas_hw: tuple[int, int], op: Any) -> torch.Tensor:
+    """Apply a torchvision geometric functional op to absolute xyxy boxes.
+
+    Wraps ``boxes`` as ``tv_tensors.BoundingBoxes`` so ``op`` (a ``torchvision.transforms.v2``
+    functional such as ``resize``/``horizontal_flip``/``crop``) updates coordinates using
+    torchvision's own tested geometry math instead of hand-rolled arithmetic.
 
     Args:
-        masks: Boolean or numeric mask tensor of shape ``(N, H, W)``.
-        size: Output ``(height, width)``.
+        boxes: Absolute xyxy box tensor of shape ``(N, 4)``, any numeric dtype.
+        canvas_hw: Current image ``(height, width)`` the boxes are defined against.
+        op: Callable taking a ``tv_tensors.BoundingBoxes`` and returning one.
 
     Returns:
-        Boolean mask tensor of shape ``(N, size[0], size[1])``.
+        Plain ``float32`` tensor of shape ``(N, 4)`` with updated coordinates.
     """
-    if masks.numel() == 0:
-        return masks.new_zeros((masks.shape[0], size[0], size[1]), dtype=torch.bool)
-    resized = torch_f.interpolate(masks[:, None].float(), size=size, mode="nearest")[:, 0]
-    return cast(torch.Tensor, resized.to(dtype=torch.bool))
+    wrapped = tv_tensors.BoundingBoxes(boxes.float(), format=tv_tensors.BoundingBoxFormat.XYXY, canvas_size=canvas_hw)
+    return cast(torch.Tensor, op(wrapped).as_subclass(torch.Tensor))
+
+
+def _apply_to_masks(masks: torch.Tensor, op: Any) -> torch.Tensor:
+    """Apply a torchvision geometric functional op to boolean instance masks.
+
+    Wraps ``masks`` as ``tv_tensors.Mask`` so ``op`` resizes/crops/flips with torchvision's
+    nearest-neighbor mask handling, verified bitwise-equal to the previous manual
+    ``interpolate(..., mode="nearest")`` implementation. Unlike boxes, masks carry their own
+    spatial size, so no separate ``canvas_hw`` is needed.
+
+    Args:
+        masks: Boolean mask tensor of shape ``(N, H, W)``.
+        op: Callable taking a ``tv_tensors.Mask`` and returning one.
+
+    Returns:
+        Boolean mask tensor with updated spatial dimensions.
+    """
+    wrapped = tv_tensors.Mask(masks, dtype=torch.bool)
+    return cast(torch.Tensor, op(wrapped).as_subclass(torch.Tensor))
 
 
 def _filter_per_instance_fields(target: Dict[str, Any], keep: torch.Tensor, boxes: torch.Tensor) -> Dict[str, Any]:
@@ -349,11 +360,15 @@ class Resize:
         ratio_width = new_width / old_width
         ratio_height = new_height / old_height
         if "boxes" in target_out:
-            boxes = target_out["boxes"].float()
-            scale = boxes.new_tensor([ratio_width, ratio_height, ratio_width, ratio_height])
-            target_out["boxes"] = boxes * scale
+            target_out["boxes"] = _apply_to_boxes(
+                target_out["boxes"],
+                (old_height, old_width),
+                lambda boxes: functional.resize(boxes, [new_height, new_width]),
+            )
         if "masks" in target_out:
-            target_out["masks"] = _resize_masks(target_out["masks"], (new_height, new_width))
+            target_out["masks"] = _apply_to_masks(
+                target_out["masks"], lambda masks: functional.resize(masks, [new_height, new_width])
+            )
         if "keypoints" in target_out:
             keypoints = target_out["keypoints"].float().clone()
             keypoints[..., 0] = keypoints[..., 0] * ratio_width
@@ -447,9 +462,7 @@ class RandomHorizontalFlip:
 
         target_out = target.copy()
         if "boxes" in target_out:
-            boxes = target_out["boxes"].clone()
-            boxes[:, [0, 2]] = width - boxes[:, [2, 0]]
-            target_out["boxes"] = boxes
+            target_out["boxes"] = _apply_to_boxes(target_out["boxes"], (height, width), functional.horizontal_flip)
         if "masks" in target_out:
             target_out["masks"] = functional.horizontal_flip(target_out["masks"])
         if "keypoints" in target_out:
@@ -496,19 +509,20 @@ def crop(
         >>> img = Image.new("RGB", (100, 100))
         >>> cropped_img, cropped_target = crop(img, None, top=0, left=0, height=50, width=50)
     """
+    orig_height, orig_width = _image_size(image)
     image = functional.crop(image, top=top, left=left, height=height, width=width)
     if target is None:
         return image, None
 
     target_out = target.copy()
     if "boxes" in target_out:
-        boxes = target_out["boxes"].clone()
-        boxes[:, 0::2] -= left
-        boxes[:, 1::2] -= top
-        boxes[:, 0::2].clamp_(min=0, max=width)
-        boxes[:, 1::2].clamp_(min=0, max=height)
-        keep = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
-        boxes = boxes[keep]
+        cropped = _apply_to_boxes(
+            target_out["boxes"],
+            (orig_height, orig_width),
+            lambda boxes: functional.crop(boxes, top=top, left=left, height=height, width=width),
+        )
+        keep = (cropped[:, 2] > cropped[:, 0]) & (cropped[:, 3] > cropped[:, 1])
+        boxes = cropped[keep]
         target_out = _filter_per_instance_fields(target_out, keep, boxes)
     if "masks" in target_out:
         target_out["masks"] = functional.crop(target_out["masks"], top=top, left=left, height=height, width=width)
