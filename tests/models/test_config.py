@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import json
 import os
 import warnings
 from pathlib import Path
@@ -14,6 +15,7 @@ import torch
 from pydantic import ValidationError
 
 from rfdetr.config import (
+    AugmentationBackend,
     KeypointTrainConfig,
     ModelConfig,
     PretrainWeightsCompatibilityWarning,
@@ -923,3 +925,61 @@ class TestBreakingListIntegrity:
         }
         stale = all_breaking - set(ModelConfig.model_fields.keys())
         assert not stale, f"Fields in breaking lists not in ModelConfig.model_fields: {stale}"
+
+
+class TestTrainConfigAugmentationBackendSerialization:
+    """Serialization contract for ``TrainConfig.augmentation_backend`` used by checkpoint writers (Item #6).
+
+    ``BestModelCallback`` serializes the training config with a plain ``model_dump()`` before writing it into the
+    ``.pth`` checkpoint's ``args``.  A ``@field_serializer`` renders the ``AugmentationBackend`` enum as its plain
+    string value so the writer stays JSON-safe without a blanket ``model_dump(mode="json")`` that would silently coerce
+    every *other* field's serialized shape (e.g. ``int`` loss coefficients to ``float``).
+    """
+
+    def test_backend_dumps_to_json_safe_string(self, tmp_path: Path) -> None:
+        """Plain ``model_dump()`` (as BestModelCallback uses) renders the enum as its ``str`` value."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        assert dumped["augmentation_backend"] == AugmentationBackend.TV.value
+        assert type(dumped["augmentation_backend"]) is str
+
+    def test_dumped_backend_survives_json_sidecar(self, tmp_path: Path) -> None:
+        """The dumped backend survives the ``json.dump(..., default=str)`` sidecar path unchanged."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        round_tripped = json.loads(json.dumps(dumped, default=str))
+        assert round_tripped["augmentation_backend"] == "torchvision"
+
+    def test_dumped_backend_reconstructs_to_enum_member(self, tmp_path: Path) -> None:
+        """Reloading a config from its dumped args restores the concrete ``AugmentationBackend`` member."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        with warnings.catch_warnings():
+            # Reconstructing from a full dump sets deprecated fields; those warnings are unrelated
+            # to the backend round-trip under test.
+            warnings.simplefilter("ignore", DeprecationWarning)
+            reloaded = TrainConfig(**dumped)
+        assert reloaded.augmentation_backend is AugmentationBackend.TV
+
+    def test_plain_dump_does_not_coerce_int_field(self, tmp_path: Path) -> None:
+        """Plain ``model_dump()`` keeps native field types — guards against a blanket ``mode="json"`` regression.
+
+        Under ``model_dump(mode="json")`` this ``int`` default is silently coerced to ``float``; the
+        ``field_serializer`` lets the writer stay on plain ``model_dump()`` so unrelated fields keep their shape.
+        """
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        assert type(dumped["keypoint_l1_loss_coef"]) is int
+
+    @pytest.mark.parametrize(
+        "sentinel",
+        [
+            pytest.param("cpu", id="cpu"),
+            pytest.param("auto", id="auto"),
+        ],
+    )
+    def test_sentinel_backend_passes_through_as_string(self, tmp_path: Path, sentinel: str) -> None:
+        """The ``"cpu"``/``"auto"`` auto-pick sentinels serialize unchanged as plain strings."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=sentinel)
+        dumped = config.model_dump()
+        assert dumped["augmentation_backend"] == sentinel

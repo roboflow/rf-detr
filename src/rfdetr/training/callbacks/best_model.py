@@ -376,7 +376,7 @@ class BestModelCallback(ModelCheckpoint):
             and getattr(train_config, "class_names", None) is None
         ):
             train_config = train_config.model_copy(update={"class_names": dataset_class_names})
-        args_dict = train_config.model_dump(mode="json") if hasattr(train_config, "model_dump") else train_config
+        args_dict = train_config.model_dump() if hasattr(train_config, "model_dump") else train_config
         model_name = self._resolve_model_name(pl_module)
         model_config_dict = self._serialize_model_config(pl_module, model_state_dict)
         torch.save(
@@ -478,9 +478,7 @@ class BestModelCallback(ModelCheckpoint):
             ):
                 ema_train_config = ema_train_config.model_copy(update={"class_names": dataset_class_names})
             ema_args_dict = (
-                ema_train_config.model_dump(mode="json")
-                if hasattr(ema_train_config, "model_dump")
-                else ema_train_config
+                ema_train_config.model_dump() if hasattr(ema_train_config, "model_dump") else ema_train_config
             )
             ema_model_name = self._resolve_model_name(pl_module)
             ema_model_config_dict = self._serialize_model_config(pl_module, ema_state_dict)

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Dict, Literal, Optional, TypeAlias
 
 import torch
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from pydantic_core import PydanticUndefined
 
 EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
@@ -926,6 +926,33 @@ class TrainConfig(BaseConfig):
         if isinstance(v, str):
             return _LEGACY_AUGMENTATION_BACKEND_ALIASES.get(v, v)
         return v
+
+    @field_serializer("augmentation_backend")
+    def _serialize_augmentation_backend(self, value: AugmentationBackend | str) -> str:
+        """Serialize the backend selector to its plain string form.
+
+        Returns the enum's ``.value`` for :class:`AugmentationBackend` members and passes the
+        ``"cpu"``/``"auto"`` sentinel strings through unchanged. This lets checkpoint writers call
+        plain :meth:`model_dump` and still get a JSON-safe ``str`` for this one field, instead of a
+        blanket ``model_dump(mode="json")`` that would also coerce every *other* field's serialized
+        shape (e.g. the ``int`` keypoint loss coefficients to ``float``). Applies in both python and
+        json ``model_dump`` modes, so the two checkpoint writers stay consistent.
+
+        Args:
+            value: Stored backend selector — an :class:`AugmentationBackend` member or a
+                ``"cpu"``/``"auto"`` sentinel string.
+
+        Returns:
+            The plain string form of the backend selector.
+
+        Examples:
+            >>> cfg = TrainConfig(dataset_dir="ds", augmentation_backend="torchvision")
+            >>> cfg.model_dump()["augmentation_backend"]
+            'torchvision'
+        """
+        if isinstance(value, AugmentationBackend):
+            return value.value
+        return value
 
     notes: Optional[Any] = Field(
         default=None,
