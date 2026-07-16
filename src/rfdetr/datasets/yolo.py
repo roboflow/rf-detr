@@ -20,7 +20,6 @@ if TYPE_CHECKING:
 from PIL import Image, ImageDraw
 from torchvision.datasets import VisionDataset
 
-from rfdetr.config import AugmentationBackend
 from rfdetr.datasets._keypoint_schema import (
     YoloKeypointSchema,
     _extract_yolo_class_names_from_data,
@@ -28,10 +27,10 @@ from rfdetr.datasets._keypoint_schema import (
     infer_yolo_keypoint_schema,
 )
 from rfdetr.datasets.coco import (
-    _resolve_runtime_augmentation_backend,
     make_coco_transforms,
     make_coco_transforms_square_div_64,
 )
+from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -1013,8 +1012,8 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     keypoint_flip_pairs: list[int] | None = (
         (getattr(args, "keypoint_flip_pairs", []) or []) if include_keypoints else None
     )
-    resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
-    gpu_postprocess = resolved_augmentation_backend == AugmentationBackend.KORNIA
+    resolved_augmentation_backend = resolve_backend_for_build(getattr(args, "augmentation_backend", "cpu"))
+    gpu_postprocess = is_gpu_postprocess(resolved_augmentation_backend)
 
     if include_keypoints:
         try:

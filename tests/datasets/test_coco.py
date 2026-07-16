@@ -571,6 +571,34 @@ class TestBuildRoboflowFromCocoBackendResolution:
             build_roboflow_from_coco("train", args, resolution=640)
         assert mock_transforms.call_args.kwargs["gpu_postprocess"] is False
 
+    def test_gpu_backend_no_cuda_raises_runtime_error(self, tmp_path: Path) -> None:
+        """Roboflow COCO builder fails fast when 'gpu' is requested without a CUDA device."""
+        from unittest.mock import patch
+
+        from rfdetr.datasets.coco import build_roboflow_from_coco
+
+        args = types.SimpleNamespace(dataset_dir=str(tmp_path), augmentation_backend="gpu")
+        with (
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
+            pytest.raises(RuntimeError, match="CUDA"),
+        ):
+            build_roboflow_from_coco("train", args, resolution=640)
+
+    def test_gpu_backend_no_kornia_raises_import_error(self, tmp_path: Path) -> None:
+        """Roboflow COCO builder fails fast with an install hint when 'gpu' is requested but kornia is missing."""
+        from unittest.mock import patch
+
+        from rfdetr.config import AugmentationBackend
+        from rfdetr.datasets.coco import build_roboflow_from_coco
+
+        args = types.SimpleNamespace(dataset_dir=str(tmp_path), augmentation_backend="gpu")
+        with (
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
+        ):
+            build_roboflow_from_coco("train", args, resolution=640)
+
     @pytest.mark.parametrize(
         ("square_resize_div_64", "transform_factory"),
         [
@@ -664,7 +692,7 @@ class TestBuilderGpuPostprocess:
         )
 
         with (
-            patch("rfdetr.datasets.coco._resolve_runtime_augmentation_backend", return_value=resolved_backend),
+            patch("rfdetr.datasets.coco.resolve_backend_for_build", return_value=resolved_backend),
             patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
             patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
         ):

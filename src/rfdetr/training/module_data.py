@@ -126,33 +126,6 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset[Any]):
         return self._dataset[dataset_idx]
 
 
-def _resolve_augmentation_backend(backend: str) -> AugmentationBackend:
-    """Resolve an ``augmentation_backend`` value (including ``"auto"``) to a concrete backend.
-
-    Delegates to :func:`rfdetr.datasets.kornia_transforms.resolve_augmentation_backend`, passing
-    this module's own fork-safe :func:`_has_cuda_device` explicitly (instead of letting it default
-    to ``kornia_transforms``'s own check) so that this module's CUDA check is what gates ``"auto"``
-    resolution. Called before dataset construction so that ``gpu_postprocess`` in dataset builders
-    always matches what the DataModule will do in ``on_after_batch_transfer``.
-
-    Args:
-        backend: Value of ``TrainConfig.augmentation_backend``.
-
-    Returns:
-        One of :attr:`AugmentationBackend.TV`, :attr:`AugmentationBackend.ALBU`, or
-        :attr:`AugmentationBackend.KORNIA`.
-
-    Examples:
-        >>> _resolve_augmentation_backend("albumentations")
-        <AugmentationBackend.ALBU: 'albumentations'>
-        >>> _resolve_augmentation_backend("kornia")
-        <AugmentationBackend.KORNIA: 'kornia'>
-    """
-    from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
-
-    return resolve_augmentation_backend(backend, has_cuda=_has_cuda_device())
-
-
 class RFDETRDataModule(LightningDataModule):
     """LightningDataModule wrapping RF-DETR dataset construction and data loading.
 
@@ -253,7 +226,11 @@ class RFDETRDataModule(LightningDataModule):
                     f"augmentation_backend={requested_backend!r} does not support keypoint transforms. "
                     "Set augmentation_backend='cpu' or 'albumentations' when use_grouppose_keypoints=True."
                 )
-            from rfdetr.datasets.kornia_transforms import require_gpu_backend_ready
+            from rfdetr.datasets.kornia_transforms import (
+                is_gpu_postprocess,
+                require_gpu_backend_ready,
+                resolve_augmentation_backend,
+            )
 
             require_gpu_backend_ready(requested_backend, has_cuda=_has_cuda_device())
             # Resolve 'auto' to an actual backend before building datasets so that
@@ -261,18 +238,18 @@ class RFDETRDataModule(LightningDataModule):
             # will actually do in on_after_batch_transfer.  Without this, 'auto' on
             # a machine without CUDA/kornia would strip CPU Normalize from datasets
             # while _kornia_pipeline stays None, leaving training inputs unnormalized.
-            resolved = _resolve_augmentation_backend(requested_backend)
+            resolved = resolve_augmentation_backend(requested_backend, has_cuda=_has_cuda_device())
             if resolved != requested_backend:
                 # 'auto'/'cpu' (and legacy aliases) were resolved above only to decide the
                 # DataModule-side Kornia pipeline and AUG_CONFIG injection below. Dataset
                 # builders do their own environment-aware CPU sub-backend pick (Albumentations
                 # vs. torchvision), so forward the simplified sentinel -- not e.g. the specific
                 # TV/ALBU pick -- to stay consistent with the gpu_postprocess flag they compute.
-                ns.augmentation_backend = "kornia" if resolved == AugmentationBackend.KORNIA else "cpu"
+                ns.augmentation_backend = "kornia" if is_gpu_postprocess(resolved) else "cpu"
             # ALBU forces Albumentations even when aug_config is None
             if resolved == AugmentationBackend.ALBU and ns.aug_config is None:
                 ns.aug_config = AUG_CONFIG
-            if self.model_config.use_grouppose_keypoints and resolved == AugmentationBackend.KORNIA:
+            if self.model_config.use_grouppose_keypoints and is_gpu_postprocess(resolved):
                 raise ValueError(
                     f"augmentation_backend='{resolved}' does not support keypoint transforms. "
                     "Set augmentation_backend='cpu' or 'albumentations' when use_grouppose_keypoints=True."
@@ -633,10 +610,12 @@ class RFDETRDataModule(LightningDataModule):
         whatever device the batch arrives on.
 
         ``self._resolved_augmentation_backend`` (set by :meth:`setup` just before this call) is the concrete backend
-        returned by :func:`_resolve_augmentation_backend`.
+        returned by :func:`rfdetr.datasets.kornia_transforms.resolve_augmentation_backend`.
         """
+        from rfdetr.datasets.kornia_transforms import is_gpu_postprocess
+
         resolved = self._resolved_augmentation_backend
-        if resolved != AugmentationBackend.KORNIA:
+        if resolved is None or not is_gpu_postprocess(resolved):
             return
 
         if not AugmentationBackend._is_kornia_available():

@@ -1162,61 +1162,6 @@ class TestBackendResolution:
             "auto + no CUDA must resolve to cpu before dataset build to preserve CPU Normalize"
         )
 
-    def test_resolve_augmentation_backend_auto_no_cuda_no_packages(self):
-        """_resolve_augmentation_backend returns TV for auto when CUDA, kornia, and albu absent."""
-        from rfdetr.config import AugmentationBackend
-        from rfdetr.training.module_data import _resolve_augmentation_backend
-
-        with (
-            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
-            patch.object(AugmentationBackend, "_is_albu_available", return_value=False),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
-        ):
-            assert _resolve_augmentation_backend("auto") == AugmentationBackend.TV
-
-    def test_resolve_augmentation_backend_cpu_no_packages(self):
-        """_resolve_augmentation_backend returns TV when neither albu nor kornia installed."""
-        from rfdetr.config import AugmentationBackend
-        from rfdetr.training.module_data import _resolve_augmentation_backend
-
-        with (
-            patch.object(AugmentationBackend, "_is_albu_available", return_value=False),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
-        ):
-            assert _resolve_augmentation_backend("cpu") == AugmentationBackend.TV
-
-    def test_resolve_augmentation_backend_kornia_passthrough(self):
-        """_resolve_augmentation_backend passes 'kornia' through as KORNIA enum member."""
-        from rfdetr.config import AugmentationBackend
-        from rfdetr.training.module_data import _resolve_augmentation_backend
-
-        assert _resolve_augmentation_backend("kornia") == AugmentationBackend.KORNIA
-
-    def test_resolve_augmentation_backend_gpu_maps_to_kornia(self):
-        """Legacy 'gpu' string resolves to KORNIA for backward compatibility."""
-        from rfdetr.config import AugmentationBackend
-        from rfdetr.training.module_data import _resolve_augmentation_backend
-
-        assert _resolve_augmentation_backend("gpu") == AugmentationBackend.KORNIA
-
-    def test_resolve_augmentation_backend_albu_passthrough(self):
-        """_resolve_augmentation_backend passes legacy 'albu' through as ALBU enum member."""
-        from rfdetr.config import AugmentationBackend
-        from rfdetr.training.module_data import _resolve_augmentation_backend
-
-        assert _resolve_augmentation_backend("albu") == AugmentationBackend.ALBU
-
-    def test_resolve_augmentation_backend_albu_missing_raises_import_error(self):
-        """_resolve_augmentation_backend fails fast with a clear hint when 'albu' is explicit but uninstalled."""
-        from rfdetr.config import AugmentationBackend
-        from rfdetr.training.module_data import _resolve_augmentation_backend
-
-        with (
-            patch.object(AugmentationBackend, "_is_albu_available", return_value=False),
-            pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
-        ):
-            _resolve_augmentation_backend("albu")
-
 
 # ---------------------------------------------------------------------------
 # TestOnAfterBatchTransfer — validates GPU-side augmentation hook

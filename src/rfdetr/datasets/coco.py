@@ -40,6 +40,7 @@ from rfdetr.datasets._torchvision import (
     Resize,
 )
 from rfdetr.datasets.aug_configs import AUG_CONFIG
+from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
 
@@ -979,13 +980,13 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     scale_jitter = getattr(args, "scale_jitter", True)
     keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
-    resolved_augmentation_backend = _resolve_runtime_augmentation_backend(augmentation_backend)
+    resolved_augmentation_backend = resolve_backend_for_build(augmentation_backend)
     if augmentation_backend == "auto" and resolved_augmentation_backend == AugmentationBackend.TV:
         logger.warning(
             "augmentation_backend='auto' resolved to torchvision because CUDA/Albumentations/kornia are "
             "unavailable; disabling GPU postprocess transforms and retaining CPU normalization."
         )
-    gpu_postprocess = resolved_augmentation_backend == AugmentationBackend.KORNIA
+    gpu_postprocess = is_gpu_postprocess(resolved_augmentation_backend)
 
     if square_resize_div_64:
         logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
@@ -1042,21 +1043,6 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     return dataset
 
 
-def _resolve_runtime_augmentation_backend(backend: str) -> AugmentationBackend:
-    """Resolve ``augmentation_backend`` at runtime for dataset builders.
-
-    Thin wrapper around :func:`rfdetr.datasets.kornia_transforms.resolve_augmentation_backend` kept for
-    backward-compatibility with callers in ``yolo.py``.
-
-    ``"auto"`` resolves to :attr:`AugmentationBackend.KORNIA` only when CUDA and Kornia are both available,
-    otherwise to the best installed CPU backend (Albumentations, else torchvision). Explicit backend values
-    (including legacy ``"gpu"``/``"tv"``/``"albu"`` aliases) pass through to their concrete member.
-    """
-    from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
-
-    return resolve_augmentation_backend(backend)
-
-
 def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     """Build a Roboflow COCO-format dataset.
 
@@ -1087,8 +1073,8 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
     aug_config = getattr(args, "aug_config", None)
     scale_jitter = getattr(args, "scale_jitter", True)
-    resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
-    gpu_postprocess = resolved_augmentation_backend == AugmentationBackend.KORNIA
+    resolved_augmentation_backend = resolve_backend_for_build(getattr(args, "augmentation_backend", "cpu"))
+    gpu_postprocess = is_gpu_postprocess(resolved_augmentation_backend)
 
     if square_resize_div_64:
         logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")
