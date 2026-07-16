@@ -54,23 +54,21 @@ class TestDefaultTorchvisionTransforms:
         assert not any(isinstance(step, AlbumentationsWrapper) for step in pipeline.transforms)
         assert any(isinstance(step, Normalize) for step in pipeline.transforms)
 
+    @patch("rfdetr.datasets.transforms.alb", None)
     def test_custom_aug_config_missing_albumentations_raises_extra_hint(self) -> None:
         """Custom Albumentations configs require the augmentation extra."""
-        with (
-            patch("rfdetr.datasets.transforms.alb", None),
-            pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
-        ):
+        with pytest.raises(ImportError, match=r"rfdetr\[augment\]"):
             make_coco_transforms("train", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
 
+    @patch("rfdetr.datasets.transforms.alb", None)
     def test_gpu_postprocess_custom_aug_config_does_not_require_albumentations(self) -> None:
         """GPU augmentation uses torchvision CPU resize even with custom aug_config."""
-        with patch("rfdetr.datasets.transforms.alb", None):
-            pipeline = make_coco_transforms(
-                "train",
-                640,
-                aug_config={"HorizontalFlip": {"p": 1.0}},
-                gpu_postprocess=True,
-            )
+        pipeline = make_coco_transforms(
+            "train",
+            640,
+            aug_config={"HorizontalFlip": {"p": 1.0}},
+            gpu_postprocess=True,
+        )
 
         assert not any(isinstance(step, AlbumentationsWrapper) for step in pipeline.transforms)
         assert not any(isinstance(step, Normalize) for step in pipeline.transforms)
