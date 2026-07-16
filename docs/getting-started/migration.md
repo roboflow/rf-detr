@@ -43,6 +43,13 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     pip install 'rfdetr[augment]'
     ```
 
+!!! note "`augmentation_backend` values renamed"
+
+    `augmentation_backend="tv"` and `"albu"` are renamed to `"torchvision"` and
+    `"albumentations"`. The old strings (and `"gpu"`) still work as aliases, so no code
+    changes are required — see [Augmentation Backend Values](../learn/train/augmentations.md#augmentation-backend-values)
+    for the full accepted set.
+
 ### Planned for Removal in v1.9
 
 The following APIs were deprecated in earlier releases and will be removed in v1.9. They still work in the current release (v1.8.x) but emit `DeprecationWarning`. Update your code before upgrading.

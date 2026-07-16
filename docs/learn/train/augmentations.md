@@ -8,6 +8,20 @@ RF-DETR uses torchvision-native default augmentations for training, validation, 
 
 RF-DETR also supports advanced custom data augmentations via optional [Albumentations](https://albumentations.ai/), with automatic bounding box and mask handling for geometric transforms. Albumentations 1.4.24+ and 2.x are supported.
 
+## Augmentation Backend Values
+
+`augmentation_backend` (on `model.train()`/`TrainConfig`) selects which pipeline runs the augmentation stack:
+
+| Value              | Behavior                                                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `"cpu"` (default)  | Auto-picks the best *installed* CPU backend: Albumentations > Kornia (CPU) > torchvision.                                 |
+| `"auto"`           | Same priority as `"cpu"`, but prefers GPU-side Kornia first when CUDA is available.                                       |
+| `"torchvision"`    | Forces the torchvision-native default pipeline, never auto-upgraded — use to pin behavior regardless of what's installed. |
+| `"albumentations"` | Forces the CPU Albumentations pipeline; requires `rfdetr[augment]`.                                                       |
+| `"kornia"`         | Forces the GPU Kornia pipeline; requires `rfdetr[augment]`.                                                               |
+
+`"cpu"`/`"auto"` resolution is late (checked at dataset-build time, not when `TrainConfig` is constructed), so a saved config stays portable across environments with different optional packages installed. The legacy strings `"tv"`, `"albu"`, and `"gpu"` are still accepted as aliases for `"torchvision"`, `"albumentations"`, and `"kornia"` respectively.
+
 ## Quick Start
 
 Install the optional augmentation extra before using custom `aug_config` dictionaries or built-in Albumentations presets:
@@ -121,7 +135,7 @@ RF-DETR automatically handles bounding boxes for **geometric transforms** (flips
 
 - **Default path:** Uses torchvision-native transforms and does not require Albumentations.
 - **Custom CPU path:** Non-empty `aug_config` dictionaries use Albumentations and require `rfdetr[augment]`.
-- **GPU path:** `augmentation_backend="gpu"` uses Kornia and requires `rfdetr[augment]`.
+- **GPU path:** `augmentation_backend="kornia"` uses Kornia and requires `rfdetr[augment]`.
 - **CPU-bound custom configs:** More transforms means slower data loading
 - **Use `num_workers`:** Parallelize augmentation across data loader workers
 - **Monitor training mAP vs validation mAP:** With strong augmentations it's normal for training mAP to be lower — validation uses original images while training uses augmented (harder) ones

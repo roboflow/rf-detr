@@ -249,7 +249,7 @@ RF-DETR uses torchvision-native default augmentations during training. Passing a
 - **CPU (default when `aug_config` is set):** [Albumentations](https://albumentations.ai/) integration, with access to over 70 image transformations optimized for object detection.
 - **GPU (`augmentation_backend="kornia"` or `"auto"` with CUDA):** [Kornia](https://kornia.readthedocs.io/) integration, applying augmentations on-batch on the GPU instead of per-sample on CPU workers.
 
-Both optional backends share the same `aug_config` dictionary format. Install the optional augmentation extra before using custom `aug_config` dictionaries or the built-in presets:
+Both optional backends share the same `aug_config` dictionary format. See [Augmentation Backend Values](augmentations.md#augmentation-backend-values) for the full set of accepted `augmentation_backend` strings, including `"torchvision"` to force the default pipeline regardless of what's installed. Install the optional augmentation extra before using custom `aug_config` dictionaries or the built-in presets:
 
 ```bash
 pip install "rfdetr[train,augment]"
@@ -296,7 +296,7 @@ model.train(dataset_dir="path/to/dataset", aug_config={})
 ```
 
 `aug_config` controls only the augmentation stack (Albumentations on CPU, or the
-equivalent Kornia pipeline when `augmentation_backend="gpu"`/`"auto"`). The training
+equivalent Kornia pipeline when `augmentation_backend="kornia"`/`"auto"`). The training
 resize pipeline's independent resize → crop → resize branch (Option B) is controlled
 separately by `scale_jitter`:
 
