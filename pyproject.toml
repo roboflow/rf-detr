@@ -64,9 +64,6 @@ augment = [
     "albumentations>=1.4.24,<3.0.0",  # optional custom CPU augmentations
     "kornia>=0.7,<1",                  # optional GPU-side augmentation
 ]
-kornia = [
-    "rfdetr[augment]",  # deprecated alias, kept for one release; use `augment` instead
-]
 onnx = [
     "onnx>=1.16.0,<2.0",
     "onnxsim<0.6.0",  # TODO: onnxsim 0.6.0+ hangs on install
