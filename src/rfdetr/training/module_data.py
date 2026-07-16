@@ -137,12 +137,12 @@ def _resolve_augmentation_backend(backend: str) -> AugmentationBackend:
         backend: Value of ``TrainConfig.augmentation_backend``.
 
     Returns:
-        One of :attr:`AugmentationBackend.CPU`, :attr:`AugmentationBackend.TV`,
-        :attr:`AugmentationBackend.ALBU`, or :attr:`AugmentationBackend.KORNIA`.
+        One of :attr:`AugmentationBackend.TV`, :attr:`AugmentationBackend.ALBU`, or
+        :attr:`AugmentationBackend.KORNIA`.
 
     Examples:
-        >>> _resolve_augmentation_backend("albu")
-        <AugmentationBackend.ALBU: 'albu'>
+        >>> _resolve_augmentation_backend("albumentations")
+        <AugmentationBackend.ALBU: 'albumentations'>
         >>> _resolve_augmentation_backend("kornia")
         <AugmentationBackend.KORNIA: 'kornia'>
     """
@@ -248,7 +248,7 @@ class RFDETRDataModule(LightningDataModule):
             if self.model_config.use_grouppose_keypoints and resolved == AugmentationBackend.KORNIA:
                 raise ValueError(
                     f"augmentation_backend='{resolved}' does not support keypoint transforms. "
-                    "Set augmentation_backend='cpu' or 'albu' when use_grouppose_keypoints=True."
+                    "Set augmentation_backend='cpu' or 'albumentations' when use_grouppose_keypoints=True."
                 )
             if self._dataset_train is None:
                 self._dataset_train = build_dataset("train", ns, resolution)
@@ -601,8 +601,8 @@ class RFDETRDataModule(LightningDataModule):
     def _setup_kornia_pipeline(self, resolved: AugmentationBackend) -> None:
         """Build the Kornia pipeline for the given resolved backend.
 
-        ``CPU``, ``TV``, and ``ALBU`` are no-ops.  ``KORNIA`` validates that kornia is installed
-        then builds the pipeline on whatever device the batch arrives on.
+        ``TV`` and ``ALBU`` are no-ops.  ``KORNIA`` validates that kornia is installed then builds
+        the pipeline on whatever device the batch arrives on.
 
         Args:
             resolved: Concrete backend returned by :func:`_resolve_augmentation_backend`.
@@ -610,12 +610,8 @@ class RFDETRDataModule(LightningDataModule):
         if resolved != AugmentationBackend.KORNIA:
             return
 
-        try:
-            import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
-        except ImportError as err:
-            raise ImportError(
-                "Kornia augmentation requires kornia. Install with: pip install 'rfdetr[augment]'"
-            ) from err
+        if not AugmentationBackend._is_kornia_available():
+            raise ImportError("Kornia augmentation requires kornia. Install with: pip install 'rfdetr[augment]'")
 
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize
 

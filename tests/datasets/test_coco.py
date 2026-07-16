@@ -455,12 +455,13 @@ class TestBuildO365RawGpuBackend:
 
     def test_auto_backend_emits_warning(self):
         """Auto + CUDA + kornia available: logger.warning about O365 Phase 1 limitation."""
-        import sys
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
+
+        from rfdetr.config import AugmentationBackend
 
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=True),
             patch("rfdetr.datasets.o365.logger") as mock_logger,
         ):
             self._call_build_o365_raw("auto")
@@ -487,12 +488,13 @@ class TestBuildO365RawGpuBackend:
 
     def test_gpu_postprocess_true_for_auto_backend(self):
         """Auto + CUDA + kornia available: gpu_postprocess=True passed to make_coco_transforms."""
-        import sys
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
+
+        from rfdetr.config import AugmentationBackend
 
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=True),
         ):
             _, mock_transform, _ = self._call_build_o365_raw("auto")
         call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}

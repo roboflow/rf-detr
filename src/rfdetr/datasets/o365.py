@@ -44,7 +44,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
         logger.warning(
             "O365 dataset does not support custom aug_config in Phase 1 GPU augmentation; "
             "Albumentations augmentation is skipped and normalization runs on GPU. "
-            "Pass augmentation_backend='cpu' or 'albu' for full CPU augmentation pipeline with O365."
+            "Pass augmentation_backend='cpu' or 'albumentations' for full CPU augmentation pipeline with O365."
         )
     gpu_postprocess = resolved_backend == AugmentationBackend.KORNIA
 

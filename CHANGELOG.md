@@ -12,12 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `scale_jitter: bool = True` on `TrainConfig` — independent control for the resize → crop → resize branch (Option B) in the training resize pipeline. Previously, disabling this branch required passing `aug_config={}`, which also disabled the entire Albumentations augmentation stack; `aug_config` now controls only that stack. Set `scale_jitter=False` to use direct resize only, with annotations near image borders never clipped.
-- `AugmentationBackend.TV` (`augmentation_backend="tv"`) — forces the torchvision-native default pipeline. Unlike `"cpu"`/`"auto"`, which auto-select the best *installed* backend (Albumentations > Kornia > torchvision) and can therefore resolve differently across environments, `"tv"` always resolves to torchvision regardless of what optional packages happen to be installed.
+- `AugmentationBackend.TV` (`augmentation_backend="torchvision"`) — forces the torchvision-native default pipeline. Unlike `"cpu"`/`"auto"`, which auto-select the best *installed* backend (Albumentations > Kornia > torchvision) and can therefore resolve differently across environments, `"torchvision"` always resolves to torchvision regardless of what optional packages happen to be installed. `AugmentationBackend` now only holds concrete, directly-usable backends (`TV`, `ALBU`, `KORNIA`); `"cpu"`/`"auto"` remain accepted `augmentation_backend` input strings (resolved lazily at dataset-build time, keeping saved configs portable across environments) but are no longer enum members. `AugmentationBackend.TV`/`.ALBU` values changed from `"tv"`/`"albu"` to `"torchvision"`/`"albumentations"`; the old `"tv"`/`"albu"`/`"gpu"` strings are still accepted as legacy input aliases.
 
 ### Fixed
 
-- Non-square Albumentations training resize (`aug_config` set, `augmentation_backend` resolving to `"albu"`) no longer silently inflates every image's longest side to `max_size` (1333 by default). `SmallestMaxSize` → `LongestMaxSize` always forces an exact resize in Albumentations, not a conditional cap; a new `CappedLongestMaxSize` internal transform only shrinks, never upscales, matching torchvision's `RandomResize` semantics.
-- Explicit `augmentation_backend="albu"` now raises a clear `ImportError` immediately if Albumentations is not installed, instead of resolving successfully and failing later, deep in dataset construction.
+- Non-square Albumentations training resize (`aug_config` set, `augmentation_backend` resolving to `"albumentations"`) no longer silently inflates every image's longest side to `max_size` (1333 by default). `SmallestMaxSize` → `LongestMaxSize` always forces an exact resize in Albumentations, not a conditional cap; a new `CappedLongestMaxSize` internal transform only shrinks, never upscales, matching torchvision's `RandomResize` semantics.
+- Explicit `augmentation_backend="albumentations"` now raises a clear `ImportError` immediately if Albumentations is not installed, instead of resolving successfully and failing later, deep in dataset construction.
 
 ### Deprecated
 

@@ -980,13 +980,10 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(augmentation_backend)
-    if (
-        resolved_augmentation_backend != augmentation_backend
-        and resolved_augmentation_backend == AugmentationBackend.CPU
-    ):
+    if augmentation_backend == "auto" and resolved_augmentation_backend == AugmentationBackend.TV:
         logger.warning(
-            "augmentation_backend='auto' resolved to 'cpu' because CUDA or kornia is unavailable; "
-            "disabling GPU postprocess transforms and retaining CPU normalization."
+            "augmentation_backend='auto' resolved to torchvision because CUDA/Albumentations/kornia are "
+            "unavailable; disabling GPU postprocess transforms and retaining CPU normalization."
         )
     gpu_postprocess = resolved_augmentation_backend == AugmentationBackend.KORNIA
 
