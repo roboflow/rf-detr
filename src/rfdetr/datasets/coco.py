@@ -981,6 +981,11 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
     resolved_augmentation_backend = resolve_backend_for_build(augmentation_backend)
+    # NOTE: `augmentation_backend == "auto"` never reaches here on the RFDETRDataModule path --
+    # module_data.py's setup("fit") resolves "auto" to a concrete "cpu"/"kornia" sentinel before
+    # calling build_dataset()/build_coco(). This branch only fires when build_coco() is called
+    # directly with `args.augmentation_backend == "auto"` (a supported direct usage, since
+    # build_coco is re-exported from rfdetr.datasets), bypassing the DataModule.
     if augmentation_backend == "auto" and resolved_augmentation_backend == AugmentationBackend.TV:
         logger.warning(
             "augmentation_backend='auto' resolved to torchvision because CUDA/Albumentations/kornia are "

@@ -21,6 +21,28 @@ from pydantic_core import PydanticUndefined
 EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
 PathLikeStr: TypeAlias = str | Path
 
+__all__ = [
+    "AugmentationBackend",
+    "ModelConfig",
+    "RFDETRBaseConfig",
+    "RFDETRLargeDeprecatedConfig",
+    "RFDETRNanoConfig",
+    "RFDETRSmallConfig",
+    "RFDETRMediumConfig",
+    "RFDETRLargeConfig",
+    "RFDETRSegPreviewConfig",
+    "RFDETRSegNanoConfig",
+    "RFDETRSegSmallConfig",
+    "RFDETRSegMediumConfig",
+    "RFDETRSegLargeConfig",
+    "RFDETRSegXLargeConfig",
+    "RFDETRSeg2XLargeConfig",
+    "RFDETRKeypointPreviewConfig",
+    "TrainConfig",
+    "SegmentationTrainConfig",
+    "KeypointTrainConfig",
+]
+
 #: Legacy augmentation-backend string aliases, mapped to their current form.
 _LEGACY_AUGMENTATION_BACKEND_ALIASES: Dict[str, str] = {
     "gpu": "kornia",

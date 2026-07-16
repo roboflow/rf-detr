@@ -50,6 +50,35 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     changes are required — see [Augmentation Backend Values](../learn/train/augmentations.md#augmentation-backend-values)
     for the full accepted set.
 
+!!! warning "Breaking: default resize interpolation changed — pixel values and mAP may shift"
+
+    The default resize backend changed from Albumentations (cv2 `INTER_LINEAR`, no antialias) to
+    torchvision (`BILINEAR` + `antialias=True`). Resized pixel values differ slightly from previous
+    versions, and mAP may drift on existing benchmarks. **This affects training as well as
+    validation, test, and export preprocessing** — not just the training split.
+
+    To restore the previous pixel-exact behaviour:
+
+    ```bash
+    pip install 'rfdetr[augment]'
+    ```
+
+    ```python
+    from rfdetr.datasets.aug_configs import AUG_CONFIG
+
+    train_config = TrainConfig(aug_config=AUG_CONFIG, ...)
+    ```
+
+    Installing `rfdetr[augment]` alone is **not** sufficient to pin this behaviour — with
+    Albumentations installed, `augmentation_backend="auto"`/`"cpu"` (the default) auto-selects
+    Albumentations for you, but identical code on a machine without `[augment]` installed silently
+    falls back to torchvision instead. The only setting that pins resize behaviour regardless of
+    what is installed is:
+
+    ```python
+    train_config = TrainConfig(augmentation_backend="torchvision", ...)
+    ```
+
 ### Planned for Removal in v1.9
 
 The following APIs were deprecated in earlier releases and will be removed in v1.9. They still work in the current release (v1.8.x) but emit `DeprecationWarning`. Update your code before upgrading.
