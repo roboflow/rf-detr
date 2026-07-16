@@ -30,6 +30,8 @@ __all__ = [
     "RFDETRSeg2XLarge",
 ]
 
+from typing import Any
+
 from deprecate import deprecated_class
 
 from rfdetr.config import (
@@ -171,7 +173,7 @@ class RFDETRLarge(RFDETR):
             return any(marker in message for marker in incompatible_state_dict_markers)
         return False
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         self.init_error = None
         self.is_deprecated = False
         # When the user explicitly sets a custom resolution, a PE size mismatch
@@ -210,7 +212,7 @@ class RFDETRLarge(RFDETR):
                 )
                 raise self.init_error from retry_exc
 
-    def get_model_config(self, **kwargs) -> ModelConfig:
+    def get_model_config(self, **kwargs: Any) -> ModelConfig:
         if not self.is_deprecated:
             return RFDETRLargeConfig(**kwargs)
         else:
