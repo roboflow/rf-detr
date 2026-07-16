@@ -33,11 +33,16 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     }
     img_folder, ann_file = PATHS[image_set]
 
-    from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
+    from rfdetr.datasets.kornia_transforms import (
+        _has_cuda_device,
+        require_gpu_backend_ready,
+        resolve_augmentation_backend,
+    )
 
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     scale_jitter = getattr(args, "scale_jitter", True)
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
+    require_gpu_backend_ready(augmentation_backend, has_cuda=_has_cuda_device())
     resolved_backend = resolve_augmentation_backend(augmentation_backend)
 
     if resolved_backend == AugmentationBackend.KORNIA:

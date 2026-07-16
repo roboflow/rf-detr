@@ -84,13 +84,19 @@ def _has_cuda_device() -> bool:
     return str(DEVICE).startswith("cuda")
 
 
-def resolve_augmentation_backend(backend: str) -> AugmentationBackend:
+def resolve_augmentation_backend(backend: str, *, has_cuda: bool | None = None) -> AugmentationBackend:
     """Resolve an ``augmentation_backend`` value to a concrete :class:`AugmentationBackend`.
 
     Auto-pick priority (for ``"cpu"``/``"auto"``) is implemented by
     :meth:`AugmentationBackend.from_str`; this function supplies the fork-safe CUDA check that
     gates ``"auto"``'s GPU-Kornia preference and fails fast when ``"albumentations"``/``"albu"``
     is explicitly requested but Albumentations is not installed.
+
+    This is a pure resolution step — explicit ``"kornia"``/``"gpu"`` requests always pass through
+    to :attr:`AugmentationBackend.KORNIA` regardless of *has_cuda*, so a saved/forced concrete
+    backend resolves deterministically. Callers that need to fail fast when an explicit GPU
+    request cannot actually run (no CUDA device, or Kornia not installed) should additionally call
+    :func:`require_gpu_backend_ready` before building anything that depends on the result.
 
     Note:
         ``"cpu"`` and ``"auto"`` resolution depends on which optional packages happen to be
@@ -104,6 +110,10 @@ def resolve_augmentation_backend(backend: str) -> AugmentationBackend:
     Args:
         backend: One of ``"cpu"``, ``"auto"``, ``"torchvision"``, ``"albumentations"``,
             ``"kornia"``, or legacy ``"tv"``/``"albu"``/``"gpu"``.
+        has_cuda: Whether a CUDA device is available. When ``None`` (default), computed via this
+            module's fork-safe :func:`_has_cuda_device`. Callers with their own fork-safe CUDA
+            check (e.g. :mod:`rfdetr.training.module_data`) may pass it explicitly so patching
+            their own check affects resolution.
 
     Returns:
         Resolved :class:`AugmentationBackend` member.
@@ -123,7 +133,38 @@ def resolve_augmentation_backend(backend: str) -> AugmentationBackend:
     """
     if backend in (AugmentationBackend.ALBU, "albumentations", "albu"):
         _require_albu()
-    return AugmentationBackend.from_str(backend, has_cuda=_has_cuda_device())
+    if has_cuda is None:
+        has_cuda = _has_cuda_device()
+    return AugmentationBackend.from_str(backend, has_cuda=has_cuda)
+
+
+def require_gpu_backend_ready(requested_backend: str, *, has_cuda: bool) -> None:
+    """Fail fast when an explicit Kornia/GPU backend request cannot run in this environment.
+
+    Only gates explicit ``"kornia"``/``"gpu"`` requests. ``"auto"``/``"cpu"`` silently fall back to
+    the best installed CPU backend elsewhere (see :func:`resolve_augmentation_backend`) and are
+    never gated here — an unavailable GPU is not an error for those sentinels, only for a backend
+    the caller explicitly pinned to Kornia.
+
+    Args:
+        requested_backend: Raw ``augmentation_backend`` value as configured by the caller, before
+            legacy-alias/auto-pick resolution.
+        has_cuda: Whether a CUDA device is available, as determined by the caller's own fork-safe
+            check.
+
+    Raises:
+        RuntimeError: ``kornia``/``gpu`` is explicitly requested but no CUDA device is available.
+        ImportError: ``kornia``/``gpu`` is explicitly requested, CUDA is available, but Kornia is
+            not installed.
+
+    Examples:
+        >>> require_gpu_backend_ready("cpu", has_cuda=False)
+    """
+    if requested_backend not in (AugmentationBackend.KORNIA, "kornia", "gpu"):
+        return
+    if not has_cuda:
+        raise RuntimeError(f"augmentation_backend={requested_backend!r} requires a CUDA device, but none is available.")
+    _require_kornia()
 
 
 def _require_kornia() -> None:

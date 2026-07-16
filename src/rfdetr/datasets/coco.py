@@ -1042,14 +1042,15 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     return dataset
 
 
-def _resolve_runtime_augmentation_backend(backend: str) -> str:
+def _resolve_runtime_augmentation_backend(backend: str) -> AugmentationBackend:
     """Resolve ``augmentation_backend`` at runtime for dataset builders.
 
     Thin wrapper around :func:`rfdetr.datasets.kornia_transforms.resolve_augmentation_backend` kept for
     backward-compatibility with callers in ``yolo.py``.
 
-    ``"auto"`` becomes ``"gpu"`` only when CUDA and Kornia are both available, otherwise ``"cpu"``. Explicit
-    ``"cpu"``/``"gpu"`` values pass through.
+    ``"auto"`` resolves to :attr:`AugmentationBackend.KORNIA` only when CUDA and Kornia are both available,
+    otherwise to the best installed CPU backend (Albumentations, else torchvision). Explicit backend values
+    (including legacy ``"gpu"``/``"tv"``/``"albu"`` aliases) pass through to their concrete member.
     """
     from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
 

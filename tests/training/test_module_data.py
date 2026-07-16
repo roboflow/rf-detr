@@ -1102,7 +1102,7 @@ class TestBackendResolution:
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
             patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
-            pytest.raises(ImportError, match="rfdetr\\[kornia\\]"),
+            pytest.raises(ImportError, match="rfdetr\\[augment\\]"),
         ):
             self._setup_with_mock_build(dm)
 

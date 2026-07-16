@@ -129,9 +129,11 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset[Any]):
 def _resolve_augmentation_backend(backend: str) -> AugmentationBackend:
     """Resolve an ``augmentation_backend`` value (including ``"auto"``) to a concrete backend.
 
-    Delegates to :func:`rfdetr.datasets.kornia_transforms.resolve_augmentation_backend`.
-    Called before dataset construction so that ``gpu_postprocess`` in dataset builders always
-    matches what the DataModule will do in ``on_after_batch_transfer``.
+    Delegates to :func:`rfdetr.datasets.kornia_transforms.resolve_augmentation_backend`, passing
+    this module's own fork-safe :func:`_has_cuda_device` explicitly (instead of letting it default
+    to ``kornia_transforms``'s own check) so that this module's CUDA check is what gates ``"auto"``
+    resolution. Called before dataset construction so that ``gpu_postprocess`` in dataset builders
+    always matches what the DataModule will do in ``on_after_batch_transfer``.
 
     Args:
         backend: Value of ``TrainConfig.augmentation_backend``.
@@ -148,7 +150,7 @@ def _resolve_augmentation_backend(backend: str) -> AugmentationBackend:
     """
     from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
 
-    return resolve_augmentation_backend(backend)
+    return resolve_augmentation_backend(backend, has_cuda=_has_cuda_device())
 
 
 class RFDETRDataModule(LightningDataModule):
@@ -186,6 +188,9 @@ class RFDETRDataModule(LightningDataModule):
         # GPU augmentation pipeline (Kornia); built lazily in setup("fit").
         self._kornia_pipeline: Any | None = None
         self._kornia_normalize: Any | None = None
+        # Resolved backend for the pending/most recent _setup_kornia_pipeline() call; set by
+        # setup("fit") just before that call so _setup_kornia_pipeline can stay a zero-arg method.
+        self._resolved_augmentation_backend: AugmentationBackend | None = None
         # Sentinel: True once _setup_kornia_pipeline has run (even on fallback paths
         # where _kornia_pipeline stays None), preventing redundant re-runs on repeated
         # setup("fit") calls (e.g. during validation loops in some PTL strategies).
@@ -234,14 +239,36 @@ class RFDETRDataModule(LightningDataModule):
         resolution = self.model_config.resolution
         ns = _namespace_from_configs(self.model_config, self.train_config)
         if stage == "fit":
+            requested_backend = self.train_config.augmentation_backend
+            # Keypoint transforms are incompatible with the Kornia GPU pipeline outright, so an
+            # explicit 'kornia'/'gpu' request is rejected here -- before the CUDA readiness check
+            # below -- so a keypoint model without CUDA still sees the keypoint error, not an
+            # unrelated "no CUDA" one.
+            if self.model_config.use_grouppose_keypoints and requested_backend in (
+                AugmentationBackend.KORNIA,
+                "kornia",
+                "gpu",
+            ):
+                raise ValueError(
+                    f"augmentation_backend={requested_backend!r} does not support keypoint transforms. "
+                    "Set augmentation_backend='cpu' or 'albumentations' when use_grouppose_keypoints=True."
+                )
+            from rfdetr.datasets.kornia_transforms import require_gpu_backend_ready
+
+            require_gpu_backend_ready(requested_backend, has_cuda=_has_cuda_device())
             # Resolve 'auto' to an actual backend before building datasets so that
             # gpu_postprocess in dataset builders always matches what the DataModule
             # will actually do in on_after_batch_transfer.  Without this, 'auto' on
             # a machine without CUDA/kornia would strip CPU Normalize from datasets
             # while _kornia_pipeline stays None, leaving training inputs unnormalized.
-            resolved = _resolve_augmentation_backend(self.train_config.augmentation_backend)
-            if resolved != self.train_config.augmentation_backend:
-                ns.augmentation_backend = resolved
+            resolved = _resolve_augmentation_backend(requested_backend)
+            if resolved != requested_backend:
+                # 'auto'/'cpu' (and legacy aliases) were resolved above only to decide the
+                # DataModule-side Kornia pipeline and AUG_CONFIG injection below. Dataset
+                # builders do their own environment-aware CPU sub-backend pick (Albumentations
+                # vs. torchvision), so forward the simplified sentinel -- not e.g. the specific
+                # TV/ALBU pick -- to stay consistent with the gpu_postprocess flag they compute.
+                ns.augmentation_backend = "kornia" if resolved == AugmentationBackend.KORNIA else "cpu"
             # ALBU forces Albumentations even when aug_config is None
             if resolved == AugmentationBackend.ALBU and ns.aug_config is None:
                 ns.aug_config = AUG_CONFIG
@@ -257,7 +284,8 @@ class RFDETRDataModule(LightningDataModule):
             # Build Kornia pipeline (once); use _kornia_setup_done so fallback paths
             # (pipeline stays None) do not re-run on repeated setup("fit") calls.
             if not self._kornia_setup_done:
-                self._setup_kornia_pipeline(resolved)
+                self._resolved_augmentation_backend = resolved
+                self._setup_kornia_pipeline()
                 self._kornia_setup_done = True
         elif stage == "validate":
             if self._dataset_val is None:
@@ -598,15 +626,16 @@ class RFDETRDataModule(LightningDataModule):
         image_info = coco.loadImgs(image_id)[0]
         return Path(image_folder) / image_info["file_name"]  # type: ignore[no-any-return]
 
-    def _setup_kornia_pipeline(self, resolved: AugmentationBackend) -> None:
-        """Build the Kornia pipeline for the given resolved backend.
+    def _setup_kornia_pipeline(self) -> None:
+        """Build the Kornia pipeline for ``self._resolved_augmentation_backend``.
 
-        ``TV`` and ``ALBU`` are no-ops.  ``KORNIA`` validates that kornia is installed then builds
-        the pipeline on whatever device the batch arrives on.
+        ``TV`` and ``ALBU`` are no-ops.  ``KORNIA`` validates that kornia is installed then builds the pipeline on
+        whatever device the batch arrives on.
 
-        Args:
-            resolved: Concrete backend returned by :func:`_resolve_augmentation_backend`.
+        ``self._resolved_augmentation_backend`` (set by :meth:`setup` just before this call) is the concrete backend
+        returned by :func:`_resolve_augmentation_backend`.
         """
+        resolved = self._resolved_augmentation_backend
         if resolved != AugmentationBackend.KORNIA:
             return
 

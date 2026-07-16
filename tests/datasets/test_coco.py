@@ -529,17 +529,12 @@ class TestBuildO365RawGpuBackend:
         """Gpu backend must raise with install hint when kornia is missing."""
         from unittest.mock import patch
 
-        original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
-
-        def _mock_import(name, *args, **kwargs):
-            if name == "kornia" or name.startswith("kornia."):
-                raise ImportError("No module named 'kornia'")
-            return original_import(name, *args, **kwargs)
+        from rfdetr.config import AugmentationBackend
 
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch("builtins.__import__", side_effect=_mock_import),
-            pytest.raises(ImportError, match="rfdetr\\[kornia\\]"),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            pytest.raises(ImportError, match="rfdetr\\[augment\\]"),
         ):
             self._call_build_o365_raw("gpu")
 
@@ -628,12 +623,12 @@ class TestBuilderGpuPostprocess:
     @pytest.mark.parametrize(
         "segmentation_head, augmentation_backend, resolved_backend, expected_gpu_postprocess",
         [
-            pytest.param(False, "cpu", "cpu", False, id="cpu_backend_no_seg"),
-            pytest.param(True, "cpu", "cpu", False, id="cpu_backend_with_seg"),
-            pytest.param(False, "gpu", "gpu", True, id="gpu_backend_no_seg"),
-            pytest.param(True, "gpu", "gpu", True, id="gpu_backend_with_seg"),
-            pytest.param(True, "auto", "gpu", True, id="auto_resolved_gpu_with_seg"),
-            pytest.param(True, "auto", "cpu", False, id="auto_resolved_cpu_with_seg"),
+            pytest.param(False, "cpu", "torchvision", False, id="cpu_backend_no_seg"),
+            pytest.param(True, "cpu", "torchvision", False, id="cpu_backend_with_seg"),
+            pytest.param(False, "gpu", "kornia", True, id="gpu_backend_no_seg"),
+            pytest.param(True, "gpu", "kornia", True, id="gpu_backend_with_seg"),
+            pytest.param(True, "auto", "kornia", True, id="auto_resolved_gpu_with_seg"),
+            pytest.param(True, "auto", "torchvision", False, id="auto_resolved_cpu_with_seg"),
         ],
     )
     def test_gpu_postprocess_flag(
