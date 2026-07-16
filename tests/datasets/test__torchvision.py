@@ -147,10 +147,10 @@ class TestCropFunction:
     """Crop() correctly filters degenerate boxes and synchronises per-instance fields."""
 
     def test_all_boxes_outside_crop_produces_empty_target(self) -> None:
-        """Boxes fully outside the crop region are removed; non-global per-instance fields follow.
+        """Boxes fully outside the crop are removed and every per-instance field is filtered to match.
 
-        ``labels`` is a global field (not per-instance filtered); ``iscrowd`` is a per-instance field and IS filtered
-        down to zero rows alongside ``boxes``.
+        ``labels``, ``iscrowd``, and ``masks`` are per-instance fields filtered down to zero rows alongside ``boxes``,
+        so box/label correspondence is preserved.
         """
         image = Image.new("RGB", (100, 100))
         target = {
@@ -164,17 +164,18 @@ class TestCropFunction:
         _, out = crop(image, target, top=50, left=50, height=50, width=50)
 
         assert out["boxes"].shape == (0, 4), "all boxes removed"
-        # labels is a global field — not filtered per-instance by design
-        assert out["labels"].shape == (1,), "labels is global and stays at original length"
+        # labels is per-instance — filtered in lockstep with boxes so lengths stay equal
+        assert out["labels"].shape[0] == out["boxes"].shape[0], "labels length matches boxes length"
+        assert out["labels"].shape == (0,), "labels filtered to zero alongside boxes"
         # iscrowd is a per-instance field — filtered to match surviving boxes
         assert out["iscrowd"].shape == (0,), "per-instance field filtered to zero"
         assert out["masks"].shape == (0, 50, 50)
 
     def test_one_box_survives_one_removed(self) -> None:
-        """Box inside crop survives; per-instance field ``area`` is filtered in sync.
+        """Box inside crop survives; per-instance fields ``labels`` and ``area`` are filtered in sync.
 
-        ``labels`` is a global field and is intentionally NOT filtered by crop. ``area`` is a per-instance field and IS
-        filtered to match surviving boxes.
+        ``labels`` and ``area`` are per-instance fields filtered to match the surviving boxes, so all three stay the
+        same length after the crop.
         """
         image = Image.new("RGB", (100, 100))
         target = {
@@ -186,8 +187,27 @@ class TestCropFunction:
         _, out = crop(image, target, top=50, left=50, height=50, width=50)
 
         assert out["boxes"].shape[0] == 1, "one surviving box"
+        # labels is a per-instance field; it must stay the same length as boxes
+        assert out["labels"].shape[0] == out["boxes"].shape[0], "labels filtered in sync with boxes"
         # area is a per-instance field; only the surviving box's area is kept
         assert out["area"].shape[0] == 1, "area filtered to one surviving instance"
+
+    def test_surviving_label_value_matches_kept_box(self) -> None:
+        """The surviving label VALUE tracks the surviving box, not merely its count.
+
+        With boxes ``[[0,0,10,10], [60,60,90,90]]`` and labels ``[5, 7]``, a crop at ``(50, 50)`` of size ``50x50``
+        keeps only the second box, so the surviving label must be ``7`` (index 1), never ``5``.
+        """
+        image = Image.new("RGB", (100, 100))
+        target = {
+            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [60.0, 60.0, 90.0, 90.0]]),
+            "labels": torch.tensor([5, 7]),
+        }
+
+        _, out = crop(image, target, top=50, left=50, height=50, width=50)
+
+        assert out["boxes"].shape[0] == 1, "only the second box survives"
+        assert out["labels"].tolist() == [7], "surviving label value tracks the kept box, not the first index"
 
     def test_all_boxes_survive_full_crop(self) -> None:
         """A crop equal to the full image leaves all boxes intact."""

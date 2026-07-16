@@ -16,6 +16,14 @@ HFLIP_TRANSFORM_NAMES: frozenset[str] = frozenset({"HorizontalFlip", "Flip", "D4
 
 CONTAINER_TRANSFORM_NAMES: frozenset[str] = frozenset({"OneOf", "SomeOf", "Sequential"})
 
+# Target-dict keys that describe the whole image rather than individual object instances.
+# Both augmentation backends (torchvision-native in ``_torchvision.py`` and Albumentations in
+# ``transforms.py``) treat these as global: they are never sliced by the per-instance keep mask
+# when boxes are dropped. Shared here so the two pipelines stay in sync on this image-level
+# subset while each keeps its own, deliberately different, per-instance-field policy (notably
+# how each handles ``labels`` — see the per-instance filter helpers in both modules).
+IMAGE_LEVEL_TARGET_FIELDS: frozenset[str] = frozenset({"orig_size", "size", "image_id"})
+
 
 def _warn_keypoint_hflip_disabled(aug_name: str, warn: Callable[..., None]) -> None:
     """Emit the standard warning for a disabled keypoint horizontal flip."""

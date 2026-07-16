@@ -692,7 +692,7 @@ def _build_torchvision_pipeline(
 
         if aug_config is None:
             warnings.warn(
-                "RF-DETR v1.8 changed the default training augmentation backend from "
+                "RF-DETR has changed the default training augmentation backend from "
                 "Albumentations (cv2 INTER_LINEAR, no antialias) to torchvision "
                 "(BILINEAR + antialias=True). Pixel values will differ slightly from "
                 "previous versions; mAP may drift on existing benchmarks. "
@@ -820,7 +820,7 @@ def make_coco_transforms(
 
             * ``None`` (default) — use the torchvision-native default augmentation
               (``RandomHorizontalFlip(p=0.5)``).  See the ``UserWarning`` emitted
-              at runtime for details of the v1.7→v1.8 behaviour change.
+              at runtime for details of this behaviour change.
             * ``{}`` (empty dict) — disable all optional training augmentation
               including the default horizontal flip.
             * non-empty dict — pass to the optional Albumentations backend;

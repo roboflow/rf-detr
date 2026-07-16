@@ -32,7 +32,7 @@ from PIL import Image
 from torch import Tensor
 from torchvision.transforms import Normalize as _TVNormalize
 
-from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
+from rfdetr.datasets._aug_utils import IMAGE_LEVEL_TARGET_FIELDS, filter_keypoint_hflip_augmentations
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
 
@@ -664,8 +664,12 @@ class AlbumentationsWrapper:
         >>> cleared["area"].shape
         torch.Size([0])
         """
-        # Fields that are global properties, not per-instance
-        global_fields = {"boxes", "labels", "orig_size", "size", "image_id"}
+        # Image-level fields shared with the torchvision backend (IMAGE_LEVEL_TARGET_FIELDS),
+        # plus ``boxes``/``labels`` which are handled separately. ``labels`` stays global here
+        # because the Albumentations pipeline re-syncs it from ``category_ids`` (its label_field)
+        # after the transform, so it must NOT be sliced by this per-instance filter — unlike the
+        # torchvision path in ``_torchvision.py``, which filters ``labels`` directly with its keep mask.
+        global_fields = {"boxes", "labels"} | IMAGE_LEVEL_TARGET_FIELDS
 
         result = {}
         for key, value in target.items():
@@ -689,8 +693,12 @@ class AlbumentationsWrapper:
         >>> filtered["area"].tolist()
         [100, 300]
         """
-        # Fields that are global properties, not per-instance
-        global_fields = {"boxes", "labels", "orig_size", "size", "image_id"}
+        # Image-level fields shared with the torchvision backend (IMAGE_LEVEL_TARGET_FIELDS),
+        # plus ``boxes``/``labels`` which are handled separately. ``labels`` stays global here
+        # because the Albumentations pipeline re-syncs it from ``category_ids`` (its label_field)
+        # after the transform, so it must NOT be sliced by this per-instance filter — unlike the
+        # torchvision path in ``_torchvision.py``, which filters ``labels`` directly with its keep mask.
+        global_fields = {"boxes", "labels"} | IMAGE_LEVEL_TARGET_FIELDS
 
         result = {}
         kept_idxs_tensor = torch.as_tensor(kept_idxs, dtype=torch.long)

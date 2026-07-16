@@ -27,7 +27,15 @@ from torchvision import tv_tensors
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional
 
-_GLOBAL_TARGET_FIELDS = frozenset({"boxes", "labels", "orig_size", "size", "image_id"})
+from rfdetr.datasets._aug_utils import IMAGE_LEVEL_TARGET_FIELDS
+
+# Fields skipped by the per-instance keep-mask filter. ``labels`` is deliberately NOT included:
+# this torchvision path filters ``labels`` directly with the keep mask (see
+# :func:`_filter_per_instance_fields`) so box/label correspondence is preserved. This differs
+# from the Albumentations backend in ``transforms.py``, which re-syncs ``labels`` from
+# Albumentations' ``category_ids`` label_field and therefore keeps ``labels`` global there.
+# ``boxes`` is global here only because it is reassigned explicitly, never sliced in the loop.
+_GLOBAL_TARGET_FIELDS = frozenset({"boxes"}) | IMAGE_LEVEL_TARGET_FIELDS
 _ImageInput: TypeAlias = Image.Image | torch.Tensor
 _Target: TypeAlias = Optional[Dict[str, Any]]
 _TransformResult: TypeAlias = Tuple[_ImageInput, _Target]
@@ -551,11 +559,13 @@ def crop(
     Note:
         ``torchvision.transforms.v2.functional.crop`` crops an image/tv_tensor but has no
         annotation-dict awareness: it doesn't drop boxes that fall entirely outside the crop,
-        filter per-instance fields (``area``, ``iscrowd``, ``masks``, ...) to match surviving
-        boxes while deliberately leaving ``labels`` un-filtered (a documented RF-DETR
-        convention — see ``tests/datasets/test__torchvision.py::TestCropFunction``), offset
-        keypoints, or update ``size``. This function wraps the native crop for image/box (via
-        :func:`_apply_to_boxes`) /mask geometry and adds that annotation bookkeeping on top.
+        filter per-instance fields (``labels``, ``area``, ``iscrowd``, ``masks``, ...) to match
+        the surviving boxes, offset keypoints, or update ``size``. In particular ``labels`` is
+        filtered per-instance alongside ``boxes`` (the ``keep`` mask is applied identically to
+        both) so box/label correspondence is preserved — see
+        ``tests/datasets/test__torchvision.py::TestCropFunction``. This function wraps the native
+        crop for image/box (via :func:`_apply_to_boxes`) /mask geometry and adds that annotation
+        bookkeeping on top.
 
     Args:
         image: Input image.
