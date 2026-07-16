@@ -983,3 +983,38 @@ class TestTrainConfigAugmentationBackendSerialization:
         config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=sentinel)
         dumped = config.model_dump()
         assert dumped["augmentation_backend"] == sentinel
+
+
+class TestTrainConfigAugmentationBackendConstruction:
+    """Construction-time validation for ``TrainConfig.augmentation_backend`` (Item #7).
+
+    The ``@field_validator(mode="before")`` only maps legacy alias strings (``"gpu"``, ``"tv"``, ``"albu"``) to their
+    current form; it never runs custom logic for non-string input, so an already-concrete ``AugmentationBackend`` member
+    must be accepted unchanged. Unrecognized strings must surface as a Pydantic ``ValidationError`` — not some other
+    exception or a silent fallback to a default backend.
+    """
+
+    def test_unrecognized_backend_string_raises_validation_error(self, tmp_path: Path) -> None:
+        """An unrecognized backend string raises ``ValidationError``, not a silent fallback."""
+        with pytest.raises(ValidationError, match="augmentation_backend"):
+            TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="not_a_real_backend")
+
+    def test_enum_member_accepted_directly_without_alias_lookup(self, tmp_path: Path) -> None:
+        """Passing a concrete ``AugmentationBackend`` member at construction bypasses the alias map."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=AugmentationBackend.ALBU)
+        assert config.augmentation_backend is AugmentationBackend.ALBU
+
+    @pytest.mark.parametrize(
+        "alias,expected",
+        [
+            pytest.param("gpu", AugmentationBackend.KORNIA, id="gpu-aliases-to-kornia"),
+            pytest.param("tv", AugmentationBackend.TV, id="tv-aliases-to-torchvision"),
+            pytest.param("albu", AugmentationBackend.ALBU, id="albu-aliases-to-albumentations"),
+        ],
+    )
+    def test_legacy_alias_string_resolves_to_current_enum_member(
+        self, tmp_path: Path, alias: str, expected: AugmentationBackend
+    ) -> None:
+        """Legacy alias strings (``"gpu"``, ``"tv"``, ``"albu"``) still resolve to their current backend."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=alias)
+        assert config.augmentation_backend is expected
