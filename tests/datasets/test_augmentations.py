@@ -16,9 +16,9 @@ from torchvision.transforms.v2 import Compose
 
 from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
 from rfdetr.datasets._develop import _SimpleDataset
+from rfdetr.datasets._torchvision import RandomHorizontalFlip
 from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
-from rfdetr.datasets.torchvision_transforms import RandomHorizontalFlip
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize, _build_albu_transform
 from rfdetr.utilities import collate_fn
 

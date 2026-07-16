@@ -30,8 +30,7 @@ from torch import Tensor
 from torchvision.transforms.v2 import ToDtype, ToImage
 
 from rfdetr.config import AugmentationBackend
-from rfdetr.datasets.aug_configs import AUG_CONFIG
-from rfdetr.datasets.torchvision_transforms import (
+from rfdetr.datasets._torchvision import (
     Compose,
     RandomChoice,
     RandomHorizontalFlip,
@@ -40,6 +39,7 @@ from rfdetr.datasets.torchvision_transforms import (
     RandomSizedCrop,
     Resize,
 )
+from rfdetr.datasets.aug_configs import AUG_CONFIG
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
 

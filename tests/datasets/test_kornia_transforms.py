@@ -377,8 +377,8 @@ class TestGpuPostprocessFlag:
 
     def test_gpu_postprocess_true_omits_aug_and_normalize_from_train(self):
         """gpu_postprocess=True: train pipeline has no CPU augmentation or Normalize."""
+        from rfdetr.datasets._torchvision import RandomHorizontalFlip
         from rfdetr.datasets.coco import make_coco_transforms
-        from rfdetr.datasets.torchvision_transforms import RandomHorizontalFlip
         from rfdetr.datasets.transforms import Normalize
 
         pipeline_gpu = make_coco_transforms("train", 560, gpu_postprocess=True)

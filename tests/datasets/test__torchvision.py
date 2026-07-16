@@ -15,8 +15,7 @@ import pytest
 import torch
 from PIL import Image
 
-from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
-from rfdetr.datasets.torchvision_transforms import (
+from rfdetr.datasets._torchvision import (
     RandomChoice,
     RandomHorizontalFlip,
     RandomResize,
@@ -24,6 +23,7 @@ from rfdetr.datasets.torchvision_transforms import (
     Resize,
     crop,
 )
+from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 
 
@@ -58,7 +58,7 @@ class TestDefaultTorchvisionTransforms:
         """Custom Albumentations configs require the augmentation extra."""
         with (
             patch("rfdetr.datasets.transforms.alb", None),
-            pytest.raises(ImportError, match=r"rfdetr\[augmentation\]"),
+            pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
         ):
             make_coco_transforms("train", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
 
@@ -141,8 +141,8 @@ class TestTrainExtraIsMinimal:
         train_deps = "\n".join(optional["train"])
         assert "albumentations" not in train_deps
         assert "kornia" not in train_deps
-        assert any(dep.startswith("albumentations") for dep in optional["augmentation"])
-        assert any(dep.startswith("kornia") for dep in optional["kornia"])
+        assert any(dep.startswith("albumentations") for dep in optional["augment"])
+        assert any(dep.startswith("kornia") for dep in optional["augment"])
 
 
 class TestCropFunction:
@@ -227,7 +227,7 @@ class TestRandomSelectBoundaries:
 
     def test_p_zero_always_selects_transform2(self) -> None:
         """p=0.0 always picks transform2."""
-        from rfdetr.datasets.torchvision_transforms import RandomSelect
+        from rfdetr.datasets._torchvision import RandomSelect
 
         def t1(img, tgt):
             return img, {"selected": 1}
@@ -243,7 +243,7 @@ class TestRandomSelectBoundaries:
 
     def test_p_one_always_selects_transform1(self) -> None:
         """p=1.0 always picks transform1."""
-        from rfdetr.datasets.torchvision_transforms import RandomSelect
+        from rfdetr.datasets._torchvision import RandomSelect
 
         def t1(img, tgt):
             return img, {"selected": 1}
@@ -327,7 +327,7 @@ class TestEdgeCaseCoverage:
 
     def test_resize_masks_zero_spatial_dim(self) -> None:
         """_resize_masks handles (0, H, W) masks returning (0, new_H, new_W) without error."""
-        from rfdetr.datasets.torchvision_transforms import _resize_masks
+        from rfdetr.datasets._torchvision import _resize_masks
 
         empty_masks = torch.zeros((0, 50, 100), dtype=torch.bool)
         result = _resize_masks(empty_masks, (200, 200))
@@ -379,7 +379,7 @@ class TestEdgeCaseCoverage:
 
     def test_mark_invisible_keypoints_empty_no_crash(self) -> None:
         """_mark_invisible_keypoints returns immediately for empty keypoints tensor."""
-        from rfdetr.datasets.torchvision_transforms import _mark_invisible_keypoints
+        from rfdetr.datasets._torchvision import _mark_invisible_keypoints
 
         empty_kps = torch.zeros((0, 17, 3))
         result = _mark_invisible_keypoints(empty_kps, height=480, width=640)
