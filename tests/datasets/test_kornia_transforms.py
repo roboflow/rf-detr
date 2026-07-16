@@ -764,10 +764,12 @@ class TestResolveAugmentationBackend:
         [
             pytest.param("kornia", "kornia", id="kornia_passthrough"),
             pytest.param("gpu", "kornia", id="gpu_alias_to_kornia"),
+            pytest.param("torchvision", "torchvision", id="torchvision_passthrough"),
+            pytest.param("tv", "torchvision", id="tv_alias_to_torchvision"),
         ],
     )
-    def test_explicit_gpu_backend_passthrough(self, value: str, expected: str) -> None:
-        """Explicit 'kornia' and legacy 'gpu' resolve to KORNIA regardless of CUDA availability."""
+    def test_explicit_backend_passthrough_regardless_of_cuda(self, value: str, expected: str) -> None:
+        """Explicit concrete backends and their legacy aliases ('gpu', 'tv') resolve regardless of CUDA."""
         from rfdetr.config import AugmentationBackend
         from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
 
