@@ -158,6 +158,12 @@ def _update_size(target: Dict[str, Any], height: int, width: int) -> Dict[str, A
 class RandomSelect:
     """Select one of two image/target transforms with probability ``p``.
 
+    Note:
+        Not a torchvision transform: ``T.RandomApply`` applies one transform or the identity
+        with probability ``p``, and ``T.RandomChoice`` picks uniformly (or by weighted ``p``
+        list) among N transforms — neither expresses "always apply exactly one of two, chosen
+        by a single coin flip", which is the original DETR augmentation combinator this mirrors.
+
     Args:
         transform1: Transform used when the sampled value is below ``p``.
         transform2: Transform used otherwise.
@@ -194,6 +200,13 @@ class RandomSelect:
 class RandomChoice:
     """Select one transform uniformly from a sequence.
 
+    Note:
+        ``torchvision.transforms.v2.RandomChoice`` does the same sampling but calls each
+        candidate as ``transform(*inputs)`` under torchvision's flexible-tree calling
+        convention. This module's transforms use an explicit ``(image, target)`` two-argument
+        signature (``target`` may be ``None``), so a thin reimplementation is needed to dispatch
+        correctly rather than adapting every transform to torchvision's convention.
+
     Args:
         transforms: Candidate transforms.
 
@@ -227,6 +240,13 @@ class RandomChoice:
 class Compose:
     """Compose RF-DETR image/target transforms.
 
+    Note:
+        ``torchvision.transforms.v2.Compose`` chains transforms called as ``transform(*inputs)``
+        over an arbitrary input tree. This module's transforms use the explicit two-argument
+        ``(image, target)`` signature instead (with ``target`` threaded through and possibly
+        ``None``), so the chaining loop is reimplemented to match that signature rather than
+        torchvision's.
+
     Args:
         transforms: Sequence of transforms accepting ``(image, target)``.
 
@@ -257,6 +277,14 @@ class Compose:
 
 class RandomResize:
     """Resize so the shortest side matches a sampled size, with an optional long-side cap.
+
+    Note:
+        ``torchvision.transforms.v2.RandomShortestSize(min_size, max_size)`` performs this same
+        sample-then-cap sizing. It isn't used directly because it only resizes an image (or a
+        single tv_tensor); it has no notion of the ``(image, target)`` dict pipeline used here
+        (keypoint scaling, ``area`` recompute, ``size``/``orig_size`` bookkeeping), so delegating
+        to it would still require the same dict-aware wrapper this class already provides via
+        :class:`Resize` — no simplification to gain, only churn on an already-tested path.
 
     Args:
         sizes: Candidate shortest-side sizes.
@@ -323,6 +351,16 @@ class RandomResize:
 class Resize:
     """Resize to a fixed ``(height, width)``.
 
+    Note:
+        ``torchvision.transforms.v2.Resize`` resizes an image (or, given tv_tensors, boxes/masks/
+        keypoints alongside it) but has no concept of this project's ``target`` dict — it doesn't
+        know about ``keypoints`` visibility semantics (no visibility channel in
+        ``tv_tensors.KeyPoints``), ``area`` recompute, or ``size``/``orig_size`` bookkeeping. This
+        class is a dict-aware wrapper that coordinates the image resize with box/mask geometry
+        (delegated to ``tv_tensors`` + native ``functional.resize`` via :func:`_apply_to_boxes` /
+        :func:`_apply_to_masks`) and manual keypoint/area/size updates — it composes torchvision's
+        resize rather than reimplementing it.
+
     Args:
         size: Output ``(height, width)``.
 
@@ -383,6 +421,14 @@ class Resize:
 class RandomSizedCrop:
     """Crop a random square-ish region and resize it to a fixed output size.
 
+    Note:
+        Not a reimplementation of an existing torchvision transform. The closest analog,
+        ``T.RandomResizedCrop``, samples crop geometry via an area-*scale* range and an
+        aspect-*ratio* range (Inception-style). This class instead samples a single square-ish
+        crop side length uniformly from a pixel range and crops at a random position — the
+        DETR/Deformable-DETR "resize-and-crop" augmentation policy, a distinct sampling strategy
+        rather than a different implementation of the same one.
+
     Args:
         min_max_height: Inclusive candidate range for the crop height.
         size: Output ``(height, width)`` after crop resizing.
@@ -422,6 +468,15 @@ class RandomSizedCrop:
 
 class RandomHorizontalFlip:
     """Horizontally flip an image/target pair with probability ``p``.
+
+    Note:
+        ``torchvision.transforms.v2.RandomHorizontalFlip`` flips an image (or tv_tensors passed
+        alongside it) but has no ``target`` dict awareness: it can't apply ``keypoint_flip_pairs``
+        (swapping e.g. left/right joint indices, a pose-estimation concept torchvision doesn't
+        model) and ``tv_tensors.KeyPoints`` has no visibility channel to mask on flip. This class
+        wraps native ``functional.horizontal_flip`` for the image/box/mask geometry (box flip via
+        :func:`_apply_to_boxes`) and adds the manual keypoint mirror + visibility handling +
+        flip-pair swap on top.
 
     Args:
         p: Flip probability.
@@ -492,6 +547,15 @@ def crop(
     width: int,
 ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
     """Crop an image and associated spatial target fields.
+
+    Note:
+        ``torchvision.transforms.v2.functional.crop`` crops an image/tv_tensor but has no
+        annotation-dict awareness: it doesn't drop boxes that fall entirely outside the crop,
+        filter per-instance fields (``area``, ``iscrowd``, ``masks``, ...) to match surviving
+        boxes while deliberately leaving ``labels`` un-filtered (a documented RF-DETR
+        convention — see ``tests/datasets/test__torchvision.py::TestCropFunction``), offset
+        keypoints, or update ``size``. This function wraps the native crop for image/box (via
+        :func:`_apply_to_boxes`) /mask geometry and adds that annotation bookkeeping on top.
 
     Args:
         image: Input image.
