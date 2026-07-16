@@ -244,9 +244,12 @@ For fine-grained control over strategy, sync batch norm, precision, and other di
 
 ## Custom Augmentations
 
-RF-DETR uses torchvision-native default augmentations during training. Advanced custom augmentation configs use the optional [Albumentations](https://albumentations.ai/) integration, which provides access to over 70 different image transformations optimized for object detection.
+RF-DETR uses torchvision-native default augmentations during training. Passing a non-empty `aug_config` switches to one of two optional backends, selected by `augmentation_backend`:
 
-Install the optional augmentation extra before using custom `aug_config` dictionaries or the built-in presets:
+- **CPU (default when `aug_config` is set):** [Albumentations](https://albumentations.ai/) integration, with access to over 70 image transformations optimized for object detection.
+- **GPU (`augmentation_backend="kornia"` or `"auto"` with CUDA):** [Kornia](https://kornia.readthedocs.io/) integration, applying augmentations on-batch on the GPU instead of per-sample on CPU workers.
+
+Both optional backends share the same `aug_config` dictionary format. Install the optional augmentation extra before using custom `aug_config` dictionaries or the built-in presets:
 
 ```bash
 pip install "rfdetr[train,augment]"
