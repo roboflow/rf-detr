@@ -137,8 +137,8 @@ def _resolve_augmentation_backend(backend: str) -> AugmentationBackend:
         backend: Value of ``TrainConfig.augmentation_backend``.
 
     Returns:
-        One of :attr:`AugmentationBackend.CPU`, :attr:`AugmentationBackend.ALBU`, or
-        :attr:`AugmentationBackend.KORNIA`.
+        One of :attr:`AugmentationBackend.CPU`, :attr:`AugmentationBackend.TV`,
+        :attr:`AugmentationBackend.ALBU`, or :attr:`AugmentationBackend.KORNIA`.
 
     Examples:
         >>> _resolve_augmentation_backend("albu")
@@ -601,7 +601,7 @@ class RFDETRDataModule(LightningDataModule):
     def _setup_kornia_pipeline(self, resolved: AugmentationBackend) -> None:
         """Build the Kornia pipeline for the given resolved backend.
 
-        ``CPU`` and ``ALBU`` are no-ops.  ``KORNIA`` validates that kornia is installed
+        ``CPU``, ``TV``, and ``ALBU`` are no-ops.  ``KORNIA`` validates that kornia is installed
         then builds the pipeline on whatever device the batch arrives on.
 
         Args:

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `scale_jitter: bool = True` on `TrainConfig` — independent control for the resize → crop → resize branch (Option B) in the training resize pipeline. Previously, disabling this branch required passing `aug_config={}`, which also disabled the entire Albumentations augmentation stack; `aug_config` now controls only that stack. Set `scale_jitter=False` to use direct resize only, with annotations near image borders never clipped.
+- `AugmentationBackend.TV` (`augmentation_backend="tv"`) — forces the torchvision-native default pipeline. Unlike `"cpu"`/`"auto"`, which auto-select the best *installed* backend (Albumentations > Kornia > torchvision) and can therefore resolve differently across environments, `"tv"` always resolves to torchvision regardless of what optional packages happen to be installed.
 
 ### Deprecated
 

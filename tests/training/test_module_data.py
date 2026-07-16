@@ -1222,6 +1222,16 @@ class TestBackendResolution:
 
         assert _resolve_augmentation_backend("albu") == AugmentationBackend.ALBU
 
+    def test_resolve_augmentation_backend_albu_missing_raises_import_error(self):
+        """_resolve_augmentation_backend fails fast with a clear hint when 'albu' is explicit but uninstalled."""
+        from rfdetr.training.module_data import _resolve_augmentation_backend
+
+        with (
+            patch("builtins.__import__", side_effect=_block_optional_imports),
+            pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
+        ):
+            _resolve_augmentation_backend("albu")
+
 
 # ---------------------------------------------------------------------------
 # TestOnAfterBatchTransfer — validates GPU-side augmentation hook

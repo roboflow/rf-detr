@@ -91,6 +91,7 @@ def resolve_augmentation_backend(backend: str) -> AugmentationBackend:
     only Albumentations is installed, and ``CPU`` otherwise.
     ``"kornia"`` passes through without a CUDA requirement — Kornia can run on CPU tensors.
     ``"albu"`` forces the Albumentations CPU path regardless of whether ``aug_config`` is set.
+    ``"tv"`` forces the torchvision-native default path and is never auto-selected.
     The legacy ``"gpu"`` string is treated as an alias for ``KORNIA``.
 
     Note:
@@ -99,25 +100,32 @@ def resolve_augmentation_backend(backend: str) -> AugmentationBackend:
         'rfdetr[augment]'``). The same ``backend`` value can therefore resolve to a different
         concrete backend across environments — e.g. CI without ``[augment]`` installed resolves
         to ``CPU`` (torchvision), while a local dev environment with Albumentations installed
-        resolves to ``ALBU``. Pass an explicit backend to guarantee identical behaviour across
-        environments.
+        resolves to ``ALBU``. Pass ``"tv"`` explicitly to guarantee torchvision regardless of
+        environment.
 
     Args:
-        backend: One of ``"cpu"``, ``"albu"``, ``"kornia"``, ``"auto"``, or legacy ``"gpu"``.
+        backend: One of ``"cpu"``, ``"tv"``, ``"albu"``, ``"kornia"``, ``"auto"``, or legacy ``"gpu"``.
 
     Returns:
         Resolved :class:`AugmentationBackend` member (never ``AUTO``).
 
     Raises:
         ValueError: When *backend* is not a recognised value.
+        ImportError: When *backend* is explicitly ``"albu"`` but Albumentations is not
+            installed.
 
     Examples:
         >>> resolve_augmentation_backend("albu")
         <AugmentationBackend.ALBU: 'albu'>
         >>> resolve_augmentation_backend("kornia")
         <AugmentationBackend.KORNIA: 'kornia'>
+        >>> resolve_augmentation_backend("tv")
+        <AugmentationBackend.TV: 'tv'>
     """
+    if backend in (AugmentationBackend.TV, "tv"):
+        return AugmentationBackend.TV
     if backend in (AugmentationBackend.ALBU, "albu"):
+        _require_albu()
         return AugmentationBackend.ALBU
     if backend in (AugmentationBackend.KORNIA, "kornia", "gpu"):
         # "gpu" accepted as legacy alias; no CUDA requirement on this path
@@ -159,7 +167,9 @@ def resolve_augmentation_backend(backend: str) -> AugmentationBackend:
         except ImportError:
             pass
         return AugmentationBackend.CPU
-    raise ValueError(f"Unknown augmentation_backend {backend!r}; expected one of 'cpu', 'albu', 'kornia', 'auto'.")
+    raise ValueError(
+        f"Unknown augmentation_backend {backend!r}; expected one of 'cpu', 'tv', 'albu', 'kornia', 'auto'."
+    )
 
 
 def _require_kornia() -> None:
@@ -172,6 +182,20 @@ def _require_kornia() -> None:
         import kornia.augmentation  # noqa: F401
     except ImportError as e:
         raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[augment]'") from e
+
+
+def _require_albu() -> None:
+    """Verify that Albumentations is importable, raising a clear error if not.
+
+    Raises:
+        ImportError: When ``albumentations`` is not installed, with an install hint.
+    """
+    try:
+        import albumentations  # noqa: F401 # type: ignore[import-untyped]
+    except ImportError as e:
+        raise ImportError(
+            "Custom Albumentations augmentations require albumentations. Install with: pip install 'rfdetr[augment]'"
+        ) from e
 
 
 # ---------------------------------------------------------------------------

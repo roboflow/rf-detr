@@ -26,9 +26,15 @@ class AugmentationBackend(str, Enum):
     ``GPU`` is a Python enum alias for ``KORNIA`` (same value ``"kornia"``); code that previously passed
     ``augmentation_backend="gpu"`` should migrate to ``"kornia"``.  A Pydantic pre-validator on ``TrainConfig`` still
     accepts the legacy ``"gpu"`` string for backward compatibility.
+
+    ``TV`` forces the torchvision-native default pipeline and is never auto-selected by ``"cpu"`` or ``"auto"``
+    resolution — those two values pick the best *installed* backend (Albumentations > Kornia > torchvision), so the
+    concrete backend they resolve to can vary across environments. Pass ``"tv"`` explicitly to guarantee torchvision
+    regardless of which optional packages happen to be installed.
     """
 
     CPU = "cpu"
+    TV = "tv"
     ALBU = "albu"
     KORNIA = "kornia"
     GPU = "kornia"  # alias for KORNIA — backward compat name
