@@ -373,6 +373,7 @@ class TestBestModelCallback:
         data = torch.load(total, map_location="cpu", weights_only=False)
         assert "model" in data
         assert "args" in data
+        assert data["best_total_source"] == "regular"
 
     def test_best_total_ema_wins(self, tmp_path: Path) -> None:
         """EMA wins when best_ema > best_regular (strict >)."""
@@ -398,8 +399,9 @@ class TestBestModelCallback:
             weights_only=False,
         )
         total_data = torch.load(total, map_location="cpu", weights_only=False)
-        # total is stripped so only model + args
+        # total is stripped but keeps provenance keys (e.g. best_total_source) beyond model + args
         assert total_data["model"] == ema_data["model"]
+        assert total_data["best_total_source"] == "ema"
 
     def test_best_total_ema_equal_uses_regular(self, tmp_path: Path) -> None:
         """When best_ema == best_regular, regular wins (strict > for EMA)."""
@@ -426,6 +428,64 @@ class TestBestModelCallback:
         )
         total_data = torch.load(total, map_location="cpu", weights_only=False)
         assert total_data["model"] == regular_data["model"]
+        assert total_data["best_total_source"] == "regular"
+
+    def test_last_ema_saved_when_ema_enabled(self, tmp_path: Path) -> None:
+        """on_fit_end writes last_ema.pth with the final EMA weights when EMA tracking is enabled."""
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
+        pl_module = _make_pl_module()
+        trainer = _make_trainer({"val/mAP_50_95": 0.6, "val/ema_mAP_50_95": 0.7})
+        cb.on_validation_end(trainer, pl_module)
+
+        cb.on_fit_end(trainer, pl_module)
+
+        assert (tmp_path / "last_ema.pth").exists()
+
+    def test_last_ema_not_saved_when_ema_disabled(self, tmp_path: Path) -> None:
+        """on_fit_end must not write last_ema.pth when EMA tracking is disabled (monitor_ema=None)."""
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema=None, run_test=False)
+        pl_module = _make_pl_module()
+        trainer = _make_trainer({"val/mAP_50_95": 0.6})
+        cb.on_validation_end(trainer, pl_module)
+
+        cb.on_fit_end(trainer, pl_module)
+
+        assert not (tmp_path / "last_ema.pth").exists()
+
+    def test_best_ema_backfilled_when_metric_never_improved(self, tmp_path: Path) -> None:
+        """When the EMA metric never beats 0.0, on_fit_end backfills checkpoint_best_ema.pth with final EMA weights."""
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
+        pl_module = _make_pl_module()
+        # EMA metric stays at 0.0 so on_validation_end never saves checkpoint_best_ema.pth.
+        trainer = _make_trainer({"val/mAP_50_95": 0.6, "val/ema_mAP_50_95": 0.0})
+        cb.on_validation_end(trainer, pl_module)
+        assert not (tmp_path / "checkpoint_best_ema.pth").exists()
+
+        cb.on_fit_end(trainer, pl_module)
+
+        assert (tmp_path / "checkpoint_best_ema.pth").exists()
+
+    def test_best_ema_not_overwritten_when_metric_improved(self, tmp_path: Path) -> None:
+        """on_fit_end must not rewrite checkpoint_best_ema.pth when a true best was saved during training."""
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
+        pl_module = _make_pl_module()
+        trainer = _make_trainer({"val/mAP_50_95": 0.5, "val/ema_mAP_50_95": 0.7})
+        cb.on_validation_end(trainer, pl_module)
+        assert (tmp_path / "checkpoint_best_ema.pth").exists()
+
+        # Spy that records each destination while delegating to the real writer.
+        written: list[str] = []
+        real_writer = cb._write_ema_checkpoint
+
+        def _spy(trainer_arg, module_arg, state_dict_arg, dest) -> None:
+            written.append(Path(dest).name)
+            real_writer(trainer_arg, module_arg, state_dict_arg, dest)
+
+        cb._write_ema_checkpoint = _spy  # type: ignore[method-assign]
+        cb.on_fit_end(trainer, pl_module)
+
+        assert "checkpoint_best_ema.pth" not in written
+        assert "last_ema.pth" in written
 
     def test_best_total_stripped_of_optimizer(self, tmp_path: Path) -> None:
         """checkpoint_best_total.pth must NOT contain optimizer or lr_scheduler keys."""
@@ -1457,8 +1517,8 @@ class TestBestEmaStatePersistence:
         """on_fit_end picks EMA winner correctly when _best_ema is properly restored.
 
         Without the fix: _best_ema=0.0 after resume, so regular (0.6) wins over the true EMA best (0.8) —
-        checkpoint_best_total.pth is built from the wrong source.  Use epoch number as a distinguisher: pre-resume EMA
-        was saved at epoch 3; regular was saved at epoch 1; total epoch must be 3 (EMA epoch) when EMA correctly wins.
+        checkpoint_best_total.pth is built from the wrong source.  The payload's ``best_total_source`` field records
+        which source won, so EMA selection is asserted directly instead of via a saved-epoch proxy.
         """
         # Pre-resume epoch 1: regular best=0.6.
         cb_pre = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
@@ -1483,16 +1543,13 @@ class TestBestEmaStatePersistence:
         total = tmp_path / "checkpoint_best_total.pth"
         assert total.exists()
         total_data = torch.load(total, map_location="cpu", weights_only=False)
-        # strip_checkpoint preserves the `loops` key.
-        # epoch_progress.current.completed == trainer.current_epoch + 1 at save time.
-        # EMA checkpoint was saved at epoch 3 → completed=4.
-        # Regular checkpoint was saved at epoch 1 → completed=2.
-        # If _best_ema was NOT restored (bug), regular wins → completed=2.
-        # If _best_ema IS restored (fix), EMA wins → completed=4.
-        completed = total_data["loops"]["fit_loop"]["epoch_progress"]["current"]["completed"]
-        assert completed == 4, (
-            "on_fit_end must select EMA (epoch 3, best=0.8) over regular (epoch 1, best=0.6); "
-            f"got epoch_completed={completed} — _best_ema not restored from state_dict"
+        # best_total_source records the winning source directly.
+        # If _best_ema was NOT restored (bug), regular wins → "regular".
+        # If _best_ema IS restored (fix), EMA wins → "ema".
+        source = total_data["best_total_source"]
+        assert source == "ema", (
+            "on_fit_end must select EMA (best=0.8) over regular (best=0.6); "
+            f"got best_total_source={source!r} — _best_ema not restored from state_dict"
         )
 
     @pytest.mark.parametrize(
