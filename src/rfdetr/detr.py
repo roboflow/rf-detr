@@ -982,7 +982,12 @@ class RFDETR:
 
         Apart from ``split``, this method accepts exactly the same keyword arguments as :meth:`train` (``dataset_dir``,
         ``device``, ``resolution``, ``batch_size``, ``output_dir``, ``num_workers``, ...); they are handled identically
-        via the shared :func:`_prepare_run_config`.
+        via the shared :func:`_prepare_run_config`. This parity is for convenience — the same kwargs dict used for
+        :meth:`train` can be reused here — not a guarantee every field has an effect. Training-only fields (``epochs``,
+        ``lr``, ``weight_decay``, ``ema``, ``early_stopping``, ``run``, ``project``, ``checkpoint_interval``,
+        ``tensorboard``/``wandb``/``mlflow``/``clearml``, and similar) are silently accepted and ignored: ``evaluate()``
+        runs through an eval-only trainer (``include_training_callbacks=False``) that never builds EMA, drop-path,
+        checkpointing, early-stopping, or logger callbacks, so those fields have nothing to attach to.
 
         Unlike :meth:`train`, this method never adapts the detection head to the dataset: the model is evaluated exactly
         as configured. If the dataset's class count differs from the model's ``num_classes`` a :class:`UserWarning` is
