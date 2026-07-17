@@ -219,14 +219,49 @@ class COCOEvalCallback(Callback):
         self._output_widget = None
 
     def on_fit_start(self, trainer: Any, pl_module: Any) -> None:
-        """Pull class names from the DataModule once the datasets are set up.
-
-        Builds a ``category_id → name`` mapping from the COCO annotation metadata so that per-class AP is logged under
-        the class name regardless of whether the dataset uses sequential or non-sequential category IDs.
+        """Resolve per-class names from the DataModule at the start of training.
 
         Args:
             trainer: The PTL Trainer.
             pl_module: The LightningModule.
+        """
+        self._resolve_class_names(trainer)
+
+    def on_validation_start(self, trainer: Any, pl_module: Any) -> None:
+        """Resolve per-class names for a standalone ``trainer.validate()`` run.
+
+        ``on_fit_start`` does not fire on validate-only runs, so per-class AP would otherwise be labelled by numeric id.
+        Skipped when names are already resolved (e.g. validation inside ``fit``).
+
+        Args:
+            trainer: The PTL Trainer.
+            pl_module: The LightningModule.
+        """
+        if not self._cat_id_to_name:
+            self._resolve_class_names(trainer)
+
+    def on_test_start(self, trainer: Any, pl_module: Any) -> None:
+        """Resolve per-class names for a standalone ``trainer.test()`` run.
+
+        ``on_fit_start`` does not fire on test-only runs (e.g. :meth:`rfdetr.detr.RFDETR.evaluate`), so per-class AP
+        would otherwise be labelled by numeric id. Skipped when names are already resolved.
+
+        Args:
+            trainer: The PTL Trainer.
+            pl_module: The LightningModule.
+        """
+        if not self._cat_id_to_name:
+            self._resolve_class_names(trainer)
+
+    def _resolve_class_names(self, trainer: Any) -> None:
+        """Build the ``category_id → name`` mapping from the DataModule's COCO metadata.
+
+        Resolves names from the first available dataset split (train, val, or test) so per-class AP is logged under the
+        class name regardless of whether the dataset uses sequential or non-sequential category IDs, and regardless of
+        which loop (fit / validate / test) is running.
+
+        Args:
+            trainer: The PTL Trainer.
         """
         dm = trainer.datamodule
         if dm is None:
@@ -234,7 +269,7 @@ class COCOEvalCallback(Callback):
         if hasattr(dm, "class_names"):
             self._class_names = dm.class_names or []
         # Build cat_id → name from the COCO annotation object when available.
-        for attr in ("_dataset_train", "_dataset_val"):
+        for attr in ("_dataset_train", "_dataset_val", "_dataset_test"):
             dataset = getattr(dm, attr, None)
             if dataset is None:
                 continue
