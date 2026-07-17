@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import importlib
 import inspect
 import math
 import random
@@ -22,7 +23,7 @@ from torch import Tensor
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr.config import ModelConfig, OptimizerParamGroupOverride, TrainConfig, _split_optimizer_name
+from rfdetr.config import ModelConfig, TrainConfig, _is_managed_optimizer_name, _split_optimizer_name
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
@@ -59,6 +60,30 @@ def _is_default_adamw_optimizer(provider: str | None, optimizer_name: str) -> bo
     return provider is None and optimizer_name == "adamw"
 
 
+def _is_builtin_fused_adamw(optimizer: object) -> bool:
+    """Return whether the config selects RF-DETR's built-in (managed, fused) AdamW path.
+
+    Args:
+        optimizer: The ``TrainConfig.optimizer`` value (string or callable).
+
+    Returns:
+        ``True`` only for the built-in ``"adamw"`` short name.
+
+    Examples:
+        >>> _is_builtin_fused_adamw("adamw")
+        True
+        >>> _is_builtin_fused_adamw("torch.optim.AdamW")
+        False
+    """
+    return isinstance(optimizer, str) and _is_default_adamw_optimizer(*_split_optimizer_name(optimizer))
+
+
+_FUSED_IGNORED_MSG = (
+    "fused_optimizer=True is ignored for optimizer=%r; the fused AdamW kernel only applies to the "
+    "built-in optimizer='adamw' path."
+)
+
+
 def _load_pytorch_optimizer(optimizer_name: str) -> _OptimizerFactory:
     """Load an optimizer class from pytorch-optimizer by name.
 
@@ -85,75 +110,66 @@ def _load_pytorch_optimizer(optimizer_name: str) -> _OptimizerFactory:
     return load_optimizer(optimizer_name)
 
 
-def _get_param_group_parameters(param_group: dict[str, Any]) -> list[torch.Tensor]:
-    """Return the tensors in a PyTorch optimizer parameter group.
-
-    RF-DETR's ``get_param_dict`` yields exactly one tensor per group, and the
-    ``requires_grad`` filter in ``configure_optimizers`` relies on that same
-    single-tensor shape, so ``params`` is either a lone ``Tensor`` or a concrete
-    sequence of tensors here — never a one-shot generator.
+def _import_optimizer_class(dotted_path: str) -> _OptimizerFactory:
+    """Import an optimizer class or factory from a dotted path.
 
     Args:
-        param_group: A PyTorch optimizer parameter group.
+        dotted_path: Fully-qualified path such as ``"torch.optim.AdamW"`` or
+            ``"pytorch_optimizer.Lion"``.
 
     Returns:
-        The group's parameters as a list of tensors.
+        The imported optimizer class or factory.
 
-    Examples:
-        >>> import torch
-        >>> t = torch.zeros(2)
-        >>> _get_param_group_parameters({"params": t}) == [t]
-        True
+    Raises:
+        ValueError: If the module or attribute cannot be imported.
     """
-    params = param_group["params"]
-    if isinstance(params, torch.Tensor):
-        return [params]
-    return list(params)
+    module_path, _, attribute = dotted_path.rpartition(".")
+    if not module_path:
+        raise ValueError(f"optimizer {dotted_path!r} is not a valid dotted import path.")
+    try:
+        module = importlib.import_module(module_path)
+        return cast(_OptimizerFactory, getattr(module, attribute))
+    except (ImportError, AttributeError) as exc:
+        raise ValueError(
+            f"Could not import optimizer {dotted_path!r}: {exc}. "
+            "Use a fully-qualified path to an importable optimizer class, e.g. 'torch.optim.AdamW'."
+        ) from exc
 
 
-def _param_group_matches_override(
-    param_group: dict[str, Any],
-    override: OptimizerParamGroupOverride,
-) -> bool:
-    """Return whether all tensors in a param group match a rank-based override."""
-    params = _get_param_group_parameters(param_group)
-    if not params:
-        return False
-    return all(
-        (override.min_ndim is None or param.ndim >= override.min_ndim)
-        and (override.max_ndim is None or param.ndim <= override.max_ndim)
-        for param in params
-    )
-
-
-def _apply_optimizer_param_group_overrides(
+def _instantiate_explicit_optimizer(
+    optimizer_class: _OptimizerFactory,
+    optimizer_name: str,
     param_dicts: list[dict[str, Any]],
-    overrides: list[OptimizerParamGroupOverride],
-) -> list[dict[str, Any]]:
-    """Apply optimizer-specific kwargs to matching parameter groups."""
-    if not overrides:
-        return param_dicts
+    optimizer_kwargs: dict[str, Any],
+) -> torch.optim.Optimizer:
+    """Instantiate an explicitly-selected optimizer from param groups and kwargs only.
 
-    matched = [False] * len(overrides)
-    updated_param_dicts = []
-    for param_group in param_dicts:
-        updated_param_group = dict(param_group)
-        for index, override in enumerate(overrides):
-            if _param_group_matches_override(updated_param_group, override):
-                updated_param_group.update(override.kwargs)
-                matched[index] = True
-        updated_param_dicts.append(updated_param_group)
+    Explicit optimizers (dotted import paths and callables) receive the RF-DETR
+    parameter groups — which already carry per-group learning rates — plus the
+    user's ``optimizer_kwargs`` verbatim. RF-DETR injects no ``lr`` or
+    ``weight_decay`` of its own.
 
-    for index, was_matched in enumerate(matched):
-        if not was_matched:
-            logger.warning(
-                "optimizer_param_group_overrides[%d] (min_ndim=%s, max_ndim=%s) matched no parameter group "
-                "and was ignored.",
-                index,
-                overrides[index].min_ndim,
-                overrides[index].max_ndim,
-            )
-    return updated_param_dicts
+    Args:
+        optimizer_class: Optimizer class or factory to instantiate.
+        optimizer_name: Name used in error messages.
+        param_dicts: RF-DETR parameter groups with layer-wise learning rates.
+        optimizer_kwargs: Keyword arguments forwarded verbatim to the constructor.
+
+    Returns:
+        Instantiated optimizer.
+
+    Raises:
+        TypeError | ValueError: Re-raised with an RF-DETR-specific hint on failure.
+    """
+    try:
+        return optimizer_class(param_dicts, **optimizer_kwargs)
+    except (TypeError, ValueError) as exc:
+        raise type(exc)(
+            f"Failed to initialize optimizer {optimizer_name!r}: {exc}. "
+            "Explicit optimizers (dotted paths and callables) are built from the RF-DETR parameter "
+            "groups plus your `optimizer_kwargs` only, with no lr/weight_decay injected. Check that the "
+            "class accepts these arguments, or pass a callable/functools.partial needing only `params`."
+        ) from exc
 
 
 def _optimizer_accepts_kwarg(optimizer_class: _OptimizerFactory, name: str) -> bool:
@@ -813,7 +829,7 @@ class RFDETRModelModule(LightningModule):
         """
         if not self._fused_adamw_env_eligible:
             return False
-        return _is_default_adamw_optimizer(*_split_optimizer_name(self.train_config.optimizer))
+        return _is_builtin_fused_adamw(self.train_config.optimizer)
 
     def configure_optimizers(self) -> OptimizerLRSchedulerConfig:
         """Build the configured optimizer with layer-wise LR decay and scheduler.
@@ -836,14 +852,10 @@ class RFDETRModelModule(LightningModule):
         param_dicts = get_param_dict(ns, model_for_params)
         param_dicts = [param_group for param_group in param_dicts if param_group["params"].requires_grad]
 
-        optimizer_provider, optimizer_name = _split_optimizer_name(tc.optimizer)
+        optimizer_cfg = tc.optimizer
         optimizer: torch.optim.Optimizer
-        if _is_default_adamw_optimizer(optimizer_provider, optimizer_name):
-            if tc.optimizer_param_group_overrides:
-                logger.warning(
-                    "optimizer_param_group_overrides is set but optimizer='adamw'; rank-based overrides are only "
-                    "applied for non-default (pytorch-optimizer) optimizers and are ignored on the built-in AdamW path."
-                )
+        if _is_builtin_fused_adamw(optimizer_cfg):
+            # Built-in managed fused AdamW path (unchanged behavior).
             try:
                 optimizer = torch.optim.AdamW(
                     param_dicts,
@@ -859,13 +871,21 @@ class RFDETRModelModule(LightningModule):
                 ) from exc
         else:
             if self._fused_adamw_env_eligible:
-                logger.warning(
-                    "fused_optimizer=True is ignored for optimizer=%r; the fused AdamW kernel only applies to the "
-                    "built-in optimizer='adamw' path.",
-                    tc.optimizer,
+                logger.warning(_FUSED_IGNORED_MSG, optimizer_cfg)
+            if not isinstance(optimizer_cfg, str):
+                # Explicit callable / functools.partial: called with param groups only.
+                callable_name = getattr(optimizer_cfg, "__qualname__", None) or repr(optimizer_cfg)
+                optimizer = _instantiate_explicit_optimizer(optimizer_cfg, callable_name, param_dicts, {})
+            elif _is_managed_optimizer_name(optimizer_cfg):
+                # Managed short-name optimizer from the pytorch-optimizer registry.
+                _, optimizer_name = _split_optimizer_name(optimizer_cfg)
+                optimizer = _build_pytorch_optimizer(optimizer_name, param_dicts, tc)
+            else:
+                # Explicit dotted import path: constructed from optimizer_kwargs only.
+                optimizer_class = _import_optimizer_class(optimizer_cfg)
+                optimizer = _instantiate_explicit_optimizer(
+                    optimizer_class, optimizer_cfg, param_dicts, tc.optimizer_kwargs
                 )
-            param_dicts = _apply_optimizer_param_group_overrides(param_dicts, tc.optimizer_param_group_overrides)
-            optimizer = _build_pytorch_optimizer(optimizer_name, param_dicts, tc)
 
         # ``trainer.estimated_stepping_batches`` is reported in *microbatch* units when
         # the keypoint path runs with ``Trainer(accumulate_grad_batches=1)`` and manages
