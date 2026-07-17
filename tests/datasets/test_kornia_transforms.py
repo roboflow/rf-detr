@@ -3,17 +3,16 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for Kornia GPU augmentation pipeline builder and bbox utilities.
 
-All tests in this module are CPU-compatible — Kornia operates on CPU tensors
-identically to GPU tensors, so no ``@pytest.mark.gpu`` is needed.
+All tests in this module are CPU-compatible — Kornia operates on CPU tensors identically to GPU tensors, so no
+``@pytest.mark.gpu`` is needed.
 """
 
 import pytest
 import torch
 
-from rfdetr.datasets.aug_config import (
+from rfdetr.datasets.aug_configs import (
     AUG_AERIAL,
     AUG_AGGRESSIVE,
     AUG_CONSERVATIVE,
@@ -27,8 +26,8 @@ from rfdetr.datasets.aug_config import (
 
 
 class TestBuildKorniaPipeline:
-    """build_kornia_pipeline returns a valid pipeline for every preset and
-    rejects unknown transform keys with a clear error."""
+    """build_kornia_pipeline returns a valid pipeline for every preset and rejects unknown transform keys with a clear
+    error."""
 
     @pytest.fixture(autouse=True)
     def _require_kornia(self):
@@ -71,6 +70,24 @@ class TestBuildKorniaPipeline:
         mixed = {"HorizontalFlip": {"p": 0.5}, "BogusTransform": {"p": 0.3}}
         with pytest.raises(ValueError, match="BogusTransform"):
             build_kornia_pipeline(mixed, 560)
+
+    def test_hflip_disabled_for_keypoint_pipeline(self):
+        """Keypoint-mode Kornia augmentation drops hflip transforms with a warning."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        config = {"HorizontalFlip": {"p": 0.5}, "VerticalFlip": {"p": 0.5}}
+        mock_warning = mock.patch.object(kornia_transforms.logger, "warning")
+
+        with mock_warning as warning:
+            pipeline = kornia_transforms.build_kornia_pipeline(config, 560, include_keypoints=True)
+
+        transform_names = [child.__class__.__name__ for child in pipeline.children()]
+        assert "RandomHorizontalFlip" not in transform_names
+        assert "RandomVerticalFlip" in transform_names
+        assert warning.called
+        assert "HorizontalFlip" in str(warning.call_args)
 
 
 # ---------------------------------------------------------------------------
@@ -359,9 +376,10 @@ class TestGpuPostprocessFlag:
     """gpu_postprocess flag controls whether aug + normalize appear in CPU pipeline."""
 
     def test_gpu_postprocess_true_omits_aug_and_normalize_from_train(self):
-        """gpu_postprocess=True: train pipeline has no Normalize; fewer AlbumentationsWrappers (no aug_wrappers)."""
+        """gpu_postprocess=True: train pipeline has no CPU augmentation or Normalize."""
+        from rfdetr.datasets._torchvision import RandomHorizontalFlip
         from rfdetr.datasets.coco import make_coco_transforms
-        from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
+        from rfdetr.datasets.transforms import Normalize
 
         pipeline_gpu = make_coco_transforms("train", 560, gpu_postprocess=True)
         pipeline_cpu = make_coco_transforms("train", 560, gpu_postprocess=False)
@@ -372,11 +390,8 @@ class TestGpuPostprocessFlag:
         normalize_gpu = [s for s in steps_gpu if isinstance(s, Normalize)]
         assert len(normalize_gpu) == 0, "gpu_postprocess=True must omit Normalize from train pipeline"
 
-        # Resize wrappers (AlbumentationsWrapper) remain; aug wrappers are removed.
-        # Default AUG_CONFIG adds 1 aug wrapper, so gpu version must have fewer wrappers.
-        n_alb_gpu = sum(isinstance(s, AlbumentationsWrapper) for s in steps_gpu)
-        n_alb_cpu = sum(isinstance(s, AlbumentationsWrapper) for s in steps_cpu)
-        assert n_alb_gpu < n_alb_cpu, "gpu_postprocess=True must remove aug AlbumentationsWrappers from train pipeline"
+        assert not any(isinstance(s, RandomHorizontalFlip) for s in steps_gpu)
+        assert any(isinstance(s, RandomHorizontalFlip) for s in steps_cpu)
 
     def test_gpu_postprocess_false_includes_aug_and_normalize_from_train(self):
         """gpu_postprocess=False (default): train pipeline includes Normalize."""
@@ -683,3 +698,133 @@ class TestUnpackBoxesWithMasks:
 
         assert "masks" in result[0], "masks key must still be present when masks_aug=None"
         assert result[0]["masks"] is original_mask, "Original masks object must be preserved unchanged"
+
+
+class TestGaussNoiseStdRangeWarning:
+    """_make_gauss_noise warns when the configured std range is non-degenerate (GPU uses a fixed upper-bound std)."""
+
+    @pytest.fixture(autouse=True)
+    def _require_kornia(self):
+        pytest.importorskip("kornia")
+
+    def test_warns_for_unequal_std_range(self):
+        """A non-degenerate std_range emits a divergence warning at build time."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_gauss_noise({"std_range": (0.01, 0.05), "p": 0.5})
+
+        mock_warning.assert_called_once()
+
+    def test_no_warning_for_degenerate_std_range(self):
+        """An equal-bound std_range matches the CPU path exactly and stays silent."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_gauss_noise({"std_range": (0.05, 0.05), "p": 0.5})
+
+        mock_warning.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestResolveAugmentationBackend — the single resolution seam that maps backend
+# strings (incl. sentinels/legacy aliases) to concrete AugmentationBackend members.
+# ---------------------------------------------------------------------------
+
+
+class TestResolveAugmentationBackend:
+    """resolve_augmentation_backend maps backend strings to concrete AugmentationBackend members."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param("auto", id="auto"),
+            pytest.param("cpu", id="cpu"),
+        ],
+    )
+    def test_falls_back_to_tv_when_no_optional_packages(self, value: str) -> None:
+        """'cpu'/'auto' resolve to torchvision when neither Albumentations nor Kornia is installed."""
+        from unittest.mock import patch
+
+        from rfdetr.config import AugmentationBackend
+        from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
+
+        with (
+            patch.object(AugmentationBackend, "_is_albu_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+        ):
+            assert resolve_augmentation_backend(value, has_cuda=False) == AugmentationBackend.TV
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            pytest.param("kornia", "kornia", id="kornia_passthrough"),
+            pytest.param("gpu", "kornia", id="gpu_alias_to_kornia"),
+            pytest.param("torchvision", "torchvision", id="torchvision_passthrough"),
+            pytest.param("tv", "torchvision", id="tv_alias_to_torchvision"),
+        ],
+    )
+    def test_explicit_backend_passthrough_regardless_of_cuda(self, value: str, expected: str) -> None:
+        """Explicit concrete backends and their legacy aliases ('gpu', 'tv') resolve regardless of CUDA."""
+        from rfdetr.config import AugmentationBackend
+        from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
+
+        assert resolve_augmentation_backend(value, has_cuda=False) == AugmentationBackend(expected)
+
+    def test_albu_passthrough_when_installed(self) -> None:
+        """Explicit legacy 'albu' resolves to ALBU when Albumentations is installed."""
+        from unittest.mock import patch
+
+        from rfdetr.config import AugmentationBackend
+        from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
+
+        with patch.object(AugmentationBackend, "_is_albu_available", return_value=True):
+            assert resolve_augmentation_backend("albu", has_cuda=False) == AugmentationBackend.ALBU
+
+    def test_albu_missing_raises_import_error(self) -> None:
+        """Explicit 'albu' fails fast with an install hint when Albumentations is not installed."""
+        from unittest.mock import patch
+
+        from rfdetr.config import AugmentationBackend
+        from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
+
+        with (
+            patch.object(AugmentationBackend, "_is_albu_available", return_value=False),
+            pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
+        ):
+            resolve_augmentation_backend("albu", has_cuda=False)
+
+
+class TestResolveBackendForBuild:
+    """resolve_backend_for_build combines the GPU readiness fail-fast with backend resolution."""
+
+    def test_resolves_concrete_backend_without_cuda(self) -> None:
+        """A concrete non-GPU backend resolves without requiring a CUDA device."""
+        from rfdetr.config import AugmentationBackend
+        from rfdetr.datasets.kornia_transforms import resolve_backend_for_build
+
+        assert resolve_backend_for_build("torchvision", has_cuda=False) == AugmentationBackend.TV
+
+    def test_gpu_without_cuda_raises_runtime_error(self) -> None:
+        """An explicit GPU request fails fast when no CUDA device is available."""
+        from rfdetr.datasets.kornia_transforms import resolve_backend_for_build
+
+        with pytest.raises(RuntimeError, match="CUDA"):
+            resolve_backend_for_build("gpu", has_cuda=False)
+
+    def test_gpu_without_kornia_raises_import_error(self) -> None:
+        """An explicit GPU request with CUDA but no Kornia fails fast with an install hint."""
+        from unittest.mock import patch
+
+        from rfdetr.config import AugmentationBackend
+        from rfdetr.datasets.kornia_transforms import resolve_backend_for_build
+
+        with (
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
+        ):
+            resolve_backend_for_build("gpu", has_cuda=True)

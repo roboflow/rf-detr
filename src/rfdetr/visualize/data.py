@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
+from supervision import BoxAnnotator, Color, ColorLookup, ColorPalette, Detections, LabelAnnotator, Position
 
 from rfdetr.utilities.logger import get_logger
 
@@ -26,75 +27,75 @@ def save_gt_predictions_visualization(
     pred_ious: list[float | None],
     save_dir: Path,
 ) -> None:
-    """
-    Save a visualization image showing both GT and prediction boxes.
+    """Save a visualization image showing both GT and prediction boxes.
 
-    Boxes are labeled with class ID and confidence (for predictions).
-    For predictions with known IoU, the IoU value is also shown.
+    Boxes are labeled with class ID and confidence (for predictions). For predictions with known IoU, the IoU value is
+    also shown.
     """
-    import supervision as sv
+    from supervision import xywh_to_xyxy
 
     save_dir.mkdir(exist_ok=True)
 
     top_padding = 60
     image = np.zeros((image_height + top_padding, image_width, 3), dtype=np.uint8)
+    scene: Image.Image = Image.fromarray(image)
 
     gt_boxes_offset = [[x, y + top_padding, w, h] for x, y, w, h in gt_boxes]
     pred_boxes_offset = [[x, y + top_padding, w, h] for x, y, w, h in pred_boxes]
 
-    gt_xyxy = sv.xywh_to_xyxy(np.array(gt_boxes_offset))
-    pred_xyxy = sv.xywh_to_xyxy(np.array(pred_boxes_offset))
+    gt_xyxy = xywh_to_xyxy(np.array(gt_boxes_offset))
+    pred_xyxy = xywh_to_xyxy(np.array(pred_boxes_offset))
 
     gt_detections = None
     pred_detections = None
 
     if len(gt_xyxy) > 0:
-        gt_detections = sv.Detections(
+        gt_detections = Detections(
             xyxy=gt_xyxy,
             class_id=np.array(gt_class_ids),
         )
 
     if len(pred_xyxy) > 0:
-        pred_detections = sv.Detections(
+        pred_detections = Detections(
             xyxy=pred_xyxy,
             class_id=np.array(pred_class_ids),
             confidence=np.array(pred_confidences),
         )
 
     # Index 0 is unused because class IDs start at 1
-    gt_colors = sv.ColorPalette(
+    gt_colors = ColorPalette(
         [
-            sv.Color(128, 128, 128),  # dummy color for index 0
-            sv.Color(0, 255, 100),
-            sv.Color(0, 200, 255),
+            Color(128, 128, 128),  # dummy color for index 0
+            Color(0, 255, 100),
+            Color(0, 200, 255),
         ]
     )
-    pred_colors = sv.ColorPalette(
+    pred_colors = ColorPalette(
         [
-            sv.Color(128, 128, 128),  # dummy color for index 0
-            sv.Color(255, 100, 50),
-            sv.Color(255, 50, 200),
+            Color(128, 128, 128),  # dummy color for index 0
+            Color(255, 100, 50),
+            Color(255, 50, 200),
         ]
     )
 
-    gt_box_annotator = sv.BoxAnnotator(color=gt_colors, thickness=3, color_lookup=sv.ColorLookup.CLASS)
-    pred_box_annotator = sv.BoxAnnotator(color=pred_colors, thickness=3, color_lookup=sv.ColorLookup.CLASS)
+    gt_box_annotator = BoxAnnotator(color=gt_colors, thickness=3, color_lookup=ColorLookup.CLASS)
+    pred_box_annotator = BoxAnnotator(color=pred_colors, thickness=3, color_lookup=ColorLookup.CLASS)
 
-    gt_label_annotator = sv.LabelAnnotator(
+    gt_label_annotator = LabelAnnotator(
         color=gt_colors,
-        text_color=sv.Color.BLACK,
+        text_color=Color.BLACK,
         text_scale=0.5,
         text_padding=3,
-        text_position=sv.Position.TOP_LEFT,
-        color_lookup=sv.ColorLookup.CLASS,
+        text_position=Position.TOP_LEFT,
+        color_lookup=ColorLookup.CLASS,
     )
-    pred_label_annotator = sv.LabelAnnotator(
+    pred_label_annotator = LabelAnnotator(
         color=pred_colors,
-        text_color=sv.Color.BLACK,
+        text_color=Color.BLACK,
         text_scale=0.5,
         text_padding=3,
-        text_position=sv.Position.TOP_RIGHT,
-        color_lookup=sv.ColorLookup.CLASS,
+        text_position=Position.TOP_RIGHT,
+        color_lookup=ColorLookup.CLASS,
     )
 
     gt_labels = [f"c{class_id}" for class_id in gt_class_ids]
@@ -107,11 +108,11 @@ def save_gt_predictions_visualization(
             pred_labels.append(f"c{class_id}\nconf={conf:.3f}")
 
     if gt_detections is not None:
-        image = gt_box_annotator.annotate(scene=image, detections=gt_detections)
-        image = gt_label_annotator.annotate(scene=image, detections=gt_detections, labels=gt_labels)
+        scene = gt_box_annotator.annotate(scene=scene, detections=gt_detections)
+        scene = gt_label_annotator.annotate(scene=scene, detections=gt_detections, labels=gt_labels)
     if pred_detections is not None:
-        image = pred_box_annotator.annotate(scene=image, detections=pred_detections)
-        image = pred_label_annotator.annotate(scene=image, detections=pred_detections, labels=pred_labels)
+        scene = pred_box_annotator.annotate(scene=scene, detections=pred_detections)
+        scene = pred_label_annotator.annotate(scene=scene, detections=pred_detections, labels=pred_labels)
 
-    Image.fromarray(image).save(save_dir / f"{scenario_name}.png")
+    scene.save(save_dir / f"{scenario_name}.png")
     logger.info(f"Saved visualization to {save_dir}/{scenario_name}.png")

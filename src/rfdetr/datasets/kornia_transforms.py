@@ -3,12 +3,10 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Kornia-based GPU augmentation pipeline for RF-DETR training.
 
-This module provides GPU-side augmentation as an alternative to the CPU-based
-Albumentations pipeline.  All transforms run on the device where the batch
-already resides (typically CUDA), avoiding a CPU-GPU round-trip per sample.
+This module provides GPU-side augmentation as an alternative to the CPU-based Albumentations pipeline.  All transforms
+run on the device where the batch already resides (typically CUDA), avoiding a CPU-GPU round-trip per sample.
 
 Supports detection (boxes only) and segmentation (boxes + instance masks).
 
@@ -48,6 +46,8 @@ from typing import Any
 import torch
 from torch import Tensor
 
+from rfdetr.config import AugmentationBackend
+from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -69,9 +69,8 @@ _MASK_BINARIZE_THRESHOLD: float = 0.5
 def _has_cuda_device() -> bool:
     """Return ``True`` when the runtime has a CUDA accelerator available.
 
-    Uses the fork-safe global ``DEVICE`` constant from ``rfdetr.config`` so that
-    the CUDA driver context is not created in the main process before forking
-    (fork-based DDP and some notebook environments).
+    Uses the fork-safe global ``DEVICE`` constant from ``rfdetr.config`` so that the CUDA driver context is not created
+    in the main process before forking (fork-based DDP and some notebook environments).
 
     Returns:
         ``True`` if at least one CUDA device is reachable; ``False`` otherwise.
@@ -85,44 +84,159 @@ def _has_cuda_device() -> bool:
     return str(DEVICE).startswith("cuda")
 
 
-def resolve_augmentation_backend(backend: str) -> str:
-    """Resolve an ``augmentation_backend`` value to a concrete ``"cpu"`` or ``"gpu"``.
+def resolve_augmentation_backend(backend: str, *, has_cuda: bool | None = None) -> AugmentationBackend:
+    """Resolve an ``augmentation_backend`` value to a concrete :class:`AugmentationBackend`.
 
-    ``"auto"`` resolves to ``"gpu"`` only when both CUDA and Kornia are available;
-    otherwise it falls back to ``"cpu"``.  Explicit ``"cpu"`` and ``"gpu"`` values
-    pass through unchanged; ``"gpu"`` is validated (CUDA + kornia presence).
+    Auto-pick priority (for ``"cpu"``/``"auto"``) is implemented by
+    :meth:`AugmentationBackend.from_str`; this function supplies the fork-safe CUDA check that
+    gates ``"auto"``'s GPU-Kornia preference and fails fast when ``"albumentations"``/``"albu"``
+    is explicitly requested but Albumentations is not installed.
+
+    This is a pure resolution step — explicit ``"kornia"``/``"gpu"`` requests always pass through
+    to :attr:`AugmentationBackend.KORNIA` regardless of *has_cuda*, so a saved/forced concrete
+    backend resolves deterministically. Callers that need to fail fast when an explicit GPU
+    request cannot actually run (no CUDA device, or Kornia not installed) should additionally call
+    :func:`require_gpu_backend_ready` before building anything that depends on the result.
+
+    Note:
+        ``"cpu"`` and ``"auto"`` resolution depends on which optional packages happen to be
+        installed (Albumentations and/or Kornia are both optional, via ``pip install
+        'rfdetr[augment]'``). The same ``backend`` value can therefore resolve to a different
+        concrete backend across environments — e.g. CI without ``[augment]`` installed resolves
+        to ``TV`` (torchvision), while a local dev environment with Albumentations installed
+        resolves to ``ALBU``. Pass ``"torchvision"`` explicitly to guarantee torchvision
+        regardless of environment.
 
     Args:
-        backend: One of ``"cpu"``, ``"auto"``, or ``"gpu"``.
+        backend: One of ``"cpu"``, ``"auto"``, ``"torchvision"``, ``"albumentations"``,
+            ``"kornia"``, or legacy ``"tv"``/``"albu"``/``"gpu"``.
+        has_cuda: Whether a CUDA device is available. When ``None`` (default), computed via this
+            module's fork-safe :func:`_has_cuda_device`. Callers with their own fork-safe CUDA
+            check (e.g. :mod:`rfdetr.training.module_data`) may pass it explicitly so patching
+            their own check affects resolution.
 
     Returns:
-        ``"cpu"`` or ``"gpu"``.
+        Resolved :class:`AugmentationBackend` member.
 
     Raises:
-        RuntimeError: When *backend* is ``"gpu"`` and no CUDA device is found.
-        ImportError: When *backend* is ``"gpu"`` and kornia is not installed.
-        ValueError: When *backend* is not one of ``"cpu"``, ``"auto"``, or ``"gpu"``.
+        ValueError: When *backend* is not a recognised value.
+        ImportError: When *backend* is explicitly ``"albumentations"``/``"albu"`` but
+            Albumentations is not installed.
 
     Examples:
-        >>> resolve_augmentation_backend("cpu")
-        'cpu'
+        >>> resolve_augmentation_backend("albumentations")
+        <AugmentationBackend.ALBU: 'albumentations'>
+        >>> resolve_augmentation_backend("kornia")
+        <AugmentationBackend.KORNIA: 'kornia'>
+        >>> resolve_augmentation_backend("torchvision")
+        <AugmentationBackend.TV: 'torchvision'>
     """
-    if backend == "cpu":
-        return "cpu"
-    if backend == "auto":
-        if not _has_cuda_device():
-            return "cpu"
-        try:
-            import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
-        except ImportError:
-            return "cpu"
-        return "gpu"
-    if backend == "gpu":
-        if not _has_cuda_device():
-            raise RuntimeError("augmentation_backend='gpu' requires a CUDA device")
-        _require_kornia()
-        return "gpu"
-    raise ValueError(f"Unknown augmentation_backend {backend!r}; expected 'cpu', 'auto', or 'gpu'.")
+    if backend in (AugmentationBackend.ALBU, "albumentations", "albu"):
+        _require_albu()
+    if has_cuda is None:
+        has_cuda = _has_cuda_device()
+    return AugmentationBackend.from_str(backend, has_cuda=has_cuda)
+
+
+def require_gpu_backend_ready(requested_backend: str, *, has_cuda: bool) -> None:
+    """Fail fast when an explicit Kornia/GPU backend request cannot run in this environment.
+
+    Only gates explicit ``"kornia"``/``"gpu"`` requests. ``"auto"``/``"cpu"`` silently fall back to
+    the best installed CPU backend elsewhere (see :func:`resolve_augmentation_backend`) and are
+    never gated here — an unavailable GPU is not an error for those sentinels, only for a backend
+    the caller explicitly pinned to Kornia.
+
+    Args:
+        requested_backend: Raw ``augmentation_backend`` value as configured by the caller, before
+            legacy-alias/auto-pick resolution.
+        has_cuda: Whether a CUDA device is available, as determined by the caller's own fork-safe
+            check.
+
+    Raises:
+        RuntimeError: ``kornia``/``gpu`` is explicitly requested but no CUDA device is available.
+        ImportError: ``kornia``/``gpu`` is explicitly requested, CUDA is available, but Kornia is
+            not installed.
+
+    Examples:
+        >>> require_gpu_backend_ready("cpu", has_cuda=False)
+    """
+    if requested_backend not in (AugmentationBackend.KORNIA, "kornia", "gpu"):
+        return
+    if not has_cuda:
+        raise RuntimeError(f"augmentation_backend={requested_backend!r} requires a CUDA device, but none is available.")
+    _require_kornia()
+
+
+def is_gpu_postprocess(resolved: AugmentationBackend) -> bool:
+    """Return ``True`` when the resolved backend defers augmentation/normalization to the GPU.
+
+    Kornia is the only on-device (GPU) backend, so a resolved backend of :attr:`AugmentationBackend.KORNIA`
+    means the CPU dataset pipeline must skip its Albumentations augmentation wrappers and ``Normalize`` step
+    (both are applied later on-device). ``TV`` and ``ALBU`` keep the full CPU pipeline.
+
+    This is the single source of truth for the ``gpu_postprocess`` flag threaded through every dataset builder;
+    call it instead of re-writing ``resolved == AugmentationBackend.KORNIA`` inline so the predicate stays in one
+    place.
+
+    Args:
+        resolved: A concrete backend as returned by :func:`resolve_augmentation_backend` or
+            :func:`resolve_backend_for_build`.
+
+    Returns:
+        ``True`` when *resolved* is Kornia (GPU postprocessing), ``False`` otherwise.
+
+    Examples:
+        >>> from rfdetr.config import AugmentationBackend
+        >>> is_gpu_postprocess(AugmentationBackend.KORNIA)
+        True
+        >>> is_gpu_postprocess(AugmentationBackend.TV)
+        False
+    """
+    return resolved == AugmentationBackend.KORNIA
+
+
+def resolve_backend_for_build(
+    requested_backend: str | AugmentationBackend,
+    *,
+    has_cuda: bool | None = None,
+) -> AugmentationBackend:
+    """Fail fast, then resolve, an ``augmentation_backend`` value in one call for dataset builders.
+
+    Bundles the two steps every dataset builder must perform before wiring ``gpu_postprocess``:
+
+    1. :func:`require_gpu_backend_ready` — raise immediately when an explicit ``"kornia"``/``"gpu"`` request
+       cannot actually run in this environment (no CUDA device, or Kornia not installed).
+    2. :func:`resolve_augmentation_backend` — map the (possibly sentinel/legacy) value to a concrete
+       :class:`AugmentationBackend` member.
+
+    Combining them here makes the fail-fast structural rather than something each builder must remember to call
+    separately, so a builder cannot silently skip the readiness check. Both steps share a single *has_cuda*
+    value, computed once.
+
+    Args:
+        requested_backend: Raw ``augmentation_backend`` value as configured by the caller, before
+            legacy-alias/auto-pick resolution — e.g. ``"cpu"``, ``"auto"``, ``"torchvision"``,
+            ``"kornia"``, or legacy ``"gpu"``/``"tv"``/``"albu"``.
+        has_cuda: Whether a CUDA device is available. When ``None`` (default), computed once via this
+            module's fork-safe :func:`_has_cuda_device` and reused for both steps.
+
+    Returns:
+        Resolved :class:`AugmentationBackend` member.
+
+    Raises:
+        RuntimeError: ``"kornia"``/``"gpu"`` is explicitly requested but no CUDA device is available.
+        ImportError: ``"kornia"``/``"gpu"`` is explicitly requested (with CUDA) but Kornia is not installed,
+            or ``"albumentations"``/``"albu"`` is explicitly requested but Albumentations is not installed.
+        ValueError: When *requested_backend* is not a recognised value.
+
+    Examples:
+        >>> resolve_backend_for_build("torchvision", has_cuda=False)
+        <AugmentationBackend.TV: 'torchvision'>
+    """
+    if has_cuda is None:
+        has_cuda = _has_cuda_device()
+    require_gpu_backend_ready(requested_backend, has_cuda=has_cuda)
+    return resolve_augmentation_backend(requested_backend, has_cuda=has_cuda)
 
 
 def _require_kornia() -> None:
@@ -131,10 +245,20 @@ def _require_kornia() -> None:
     Raises:
         ImportError: When ``kornia`` is not installed, with an install hint.
     """
-    try:
-        import kornia.augmentation  # noqa: F401
-    except ImportError as e:
-        raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'") from e
+    if not AugmentationBackend._is_kornia_available():
+        raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[augment]'")
+
+
+def _require_albu() -> None:
+    """Verify that Albumentations is importable, raising a clear error if not.
+
+    Raises:
+        ImportError: When ``albumentations`` is not installed, with an install hint.
+    """
+    if not AugmentationBackend._is_albu_available():
+        raise ImportError(
+            "Custom Albumentations augmentations require albumentations. Install with: pip install 'rfdetr[augment]'"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -180,11 +304,9 @@ def _make_rotate(params: dict[str, Any]) -> Any:
 def _make_affine(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomAffine`` from aug_config params.
 
-    Albumentations ``translate_percent`` is a ``(min, max)`` signed range
-    (e.g. ``(-0.1, 0.1)``).  Kornia ``translate`` is a non-negative
-    per-axis max fraction ``(tx, ty)`` where translation is sampled from
-    ``[-tx, tx]``.  The conversion takes ``max(|min|, |max|)`` for each
-    axis, producing a symmetric range that matches the intent.
+    Albumentations ``translate_percent`` is a ``(min, max)`` signed range (e.g. ``(-0.1, 0.1)``).  Kornia ``translate``
+    is a non-negative per-axis max fraction ``(tx, ty)`` where translation is sampled from ``[-tx, tx]``.  The
+    conversion takes ``max(|min|, |max|)`` for each axis, producing a symmetric range that matches the intent.
     """
     from kornia.augmentation import RandomAffine
 
@@ -247,9 +369,12 @@ def _make_gaussian_blur(params: dict[str, Any]) -> Any:
     if blur_limit % 2 == 0:
         blur_limit = blur_limit + 1
     blur_limit = max(3, blur_limit)
+    # Match the CPU albumentations default sigma range while allowing an explicit override via config.
+    sigma_range = params.get("sigma", (0.1, 2.0))
+    blur_sigma = tuple(sigma_range) if len(sigma_range) == 2 else (sigma_range[0], sigma_range[0])
     return RandomGaussianBlur(
         kernel_size=(blur_limit, blur_limit),
-        sigma=(0.1, 2.0),
+        sigma=blur_sigma,
         p=params.get("p", 0.5),
     )
 
@@ -257,12 +382,22 @@ def _make_gaussian_blur(params: dict[str, Any]) -> Any:
 def _make_gauss_noise(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomGaussianNoise`` from aug_config params.
 
-    Kornia takes a single ``std`` value; we use the upper bound of
-    ``std_range`` as an acceptable approximation.
+    Kornia takes a single ``std`` value, so the upper bound of ``std_range`` is used as a fixed standard deviation. When
+    the configured range is non-degenerate this diverges from the CPU (albumentations) path, which samples a fresh std
+    per call; a warning is emitted at build time so the drift is visible.
     """
     from kornia.augmentation import RandomGaussianNoise
 
     std_range = params.get("std_range", (0.01, 0.05))
+    if std_range[0] != std_range[1]:
+        logger.warning(
+            "GPU augmentation (Kornia) uses fixed std=%.3f for GaussianNoise "
+            "(Kornia does not support per-sample std ranges). "
+            "CPU augmentation (albumentations) samples from [%.3f, %.3f].",
+            std_range[1],
+            std_range[0],
+            std_range[1],
+        )
     return RandomGaussianNoise(
         std=std_range[1],
         p=params.get("p", 0.5),
@@ -290,23 +425,24 @@ def build_kornia_pipeline(
     aug_config: dict[str, dict[str, Any]],
     resolution: int,
     with_masks: bool = False,
+    include_keypoints: bool = False,
 ) -> Any:
     """Build a Kornia ``AugmentationSequential`` from an aug_config dict.
 
-    Each key in *aug_config* is looked up in ``_REGISTRY`` and instantiated
-    with the corresponding parameter dict.  Unknown keys raise ``ValueError``.
+    Each key in *aug_config* is looked up in ``_REGISTRY`` and instantiated with the corresponding parameter dict.
+    Unknown keys raise ``ValueError``.
 
     Args:
         aug_config: Mapping of augmentation names to parameter dicts, identical
-            to the format accepted by the Albumentations path (e.g.
-            ``{"HorizontalFlip": {"p": 0.5}}``).
+            to the format accepted by the Albumentations path (e.g. ``{"HorizontalFlip": {"p": 0.5}}``).
         resolution: Target image resolution in pixels (currently reserved for
             future resolution-aware augmentations).
         with_masks: When ``True``, include ``"mask"`` in ``data_keys`` so
-            instance segmentation masks are augmented in sync with images and
-            boxes.  The pipeline then expects three inputs
-            ``(img, boxes, masks)`` and returns three outputs.  Defaults to
-            ``False`` (detection-only, two inputs/outputs).
+            instance segmentation masks are augmented in sync with images and boxes.  The pipeline then expects three
+            inputs ``(img, boxes, masks)`` and returns three outputs.  Defaults to ``False`` (detection-only, two
+            inputs/outputs).
+        include_keypoints: When ``True``, keypoint-unsafe horizontal-flip
+            transforms are dropped with a warning before the Kornia pipeline is built.
 
     Returns:
         A ``kornia.augmentation.AugmentationSequential`` instance.
@@ -315,15 +451,22 @@ def build_kornia_pipeline(
         ValueError: If *aug_config* contains an unsupported augmentation key.
 
     Examples:
-        >>> from rfdetr.datasets.aug_config import AUG_CONSERVATIVE
+        >>> from rfdetr.datasets.aug_configs import AUG_CONSERVATIVE
         >>> pipeline = build_kornia_pipeline(AUG_CONSERVATIVE, resolution=560)
         >>> pipeline_seg = build_kornia_pipeline(AUG_CONSERVATIVE, resolution=560, with_masks=True)
     """
     _require_kornia()
     from kornia.augmentation import AugmentationSequential
 
+    filtered_aug_config = filter_keypoint_hflip_augmentations(
+        aug_config,
+        include_keypoints=include_keypoints,
+        warn=logger.warning,
+    )
+    assert isinstance(filtered_aug_config, dict)
+
     transforms: list[Any] = []
-    for name, params in aug_config.items():
+    for name, params in filtered_aug_config.items():
         factory = _REGISTRY.get(name)
         if factory is None:
             raise ValueError(
@@ -372,9 +515,8 @@ def collate_boxes(
 ) -> tuple[Tensor, Tensor]:
     """Pack variable-length xyxy boxes into a padded tensor and valid mask.
 
-    Kornia ``AugmentationSequential`` expects boxes as ``[B, N_max, 4]``.
-    This function zero-pads each image's boxes to the maximum count in the
-    batch and returns a boolean mask indicating which entries are real.
+    Kornia ``AugmentationSequential`` expects boxes as ``[B, N_max, 4]``. This function zero-pads each image's boxes to
+    the maximum count in the batch and returns a boolean mask indicating which entries are real.
 
     Args:
         targets: List of target dicts (one per image), each containing a
@@ -386,8 +528,7 @@ def collate_boxes(
             - ``boxes_padded`` — ``[B, N_max, 4]`` float tensor (zero-padded).
             - ``valid_mask``   — ``[B, N_max]`` bool tensor (``True`` = real box).
 
-        When ``B == 0`` or all images have zero boxes, both tensors have
-        ``N_max == 0``.
+        When ``B == 0`` or all images have zero boxes, both tensors have ``N_max == 0``.
     """
     if len(targets) == 0:
         return (
@@ -426,26 +567,23 @@ def collate_masks(
 ) -> Tensor:
     """Pack variable-length instance masks into a zero-padded ``[B, N_max, H, W]`` tensor.
 
-    Kornia ``AugmentationSequential`` expects masks as ``[B, N_max, H, W]`` when
-    ``data_keys`` includes ``"mask"``.  This function zero-pads each image's masks
-    to *n_max* channels (matching the padding used by :func:`collate_boxes`) and
-    converts boolean masks to ``float32`` for Kornia compatibility.
+    Kornia ``AugmentationSequential`` expects masks as ``[B, N_max, H, W]`` when ``data_keys`` includes ``"mask"``.
+    This function zero-pads each image's masks to *n_max* channels (matching the padding used by :func:`collate_boxes`)
+    and converts boolean masks to ``float32`` for Kornia compatibility.
 
     Args:
         targets: List of target dicts (one per image).  Each dict may optionally
-            contain a ``"masks"`` key with an ``[N_i, H, W]`` boolean tensor.
-            Dicts without the key are treated as having zero instances.
+            contain a ``"masks"`` key with an ``[N_i, H, W]`` boolean tensor. Dicts without the key are treated as
+            having zero instances.
         device: Device on which to allocate the output tensor.
         n_max: Maximum instance count across the batch — must equal
-            ``collate_boxes(targets, device)[1].shape[1]`` to keep box/mask
-            indices in sync.
+            ``collate_boxes(targets, device)[1].shape[1]`` to keep box/mask indices in sync.
         image_height: Spatial height ``H`` of each mask (pixels).
         image_width: Spatial width ``W`` of each mask (pixels).
 
     Returns:
-        Float32 tensor of shape ``[B, N_max, H, W]``, zero-padded where
-        ``N_i < N_max``.  Boolean input masks are cast to ``float32``
-        (``True → 1.0``, ``False → 0.0``).
+        Float32 tensor of shape ``[B, N_max, H, W]``, zero-padded where ``N_i < N_max``.  Boolean input masks are cast
+        to ``float32`` (``True → 1.0``, ``False → 0.0``).
 
     Examples:
         >>> import torch
@@ -478,11 +616,9 @@ def unpack_boxes(
 ) -> list[dict[str, Any]]:
     """Unpack augmented boxes (and optionally masks), clamp to image bounds, remove zero-area boxes.
 
-    After Kornia augmentation the padded ``[B, N_max, 4]`` tensor is unpacked
-    back into per-image target dicts.  Boxes are clamped to ``[0, W] x [0, H]``
-    and any that collapse to zero area are removed along with their
-    corresponding ``labels``, ``area``, ``iscrowd``, and (if provided) ``masks``
-    entries.
+    After Kornia augmentation the padded ``[B, N_max, 4]`` tensor is unpacked back into per-image target dicts.  Boxes
+    are clamped to ``[0, W] x [0, H]`` and any that collapse to zero area are removed along with their corresponding
+    ``labels``, ``area``, ``iscrowd``, and (if provided) ``masks`` entries.
 
     Args:
         boxes_aug: Augmented boxes tensor ``[B, N_max, 4]`` in xyxy format.
@@ -492,16 +628,13 @@ def unpack_boxes(
         image_height: Image height in pixels (for clamping).
         image_width: Image width in pixels (for clamping).
         masks_aug: Optional augmented masks tensor ``[B, N_max, H, W]``
-            (float32) from Kornia.  When provided, masks are filtered by the
-            same ``keep`` mask as boxes, thresholded at ``> 0.5`` to bool, and
-            stored under ``"masks"`` in each output target dict.  When
-            ``None``, any existing ``"masks"`` entry in the target dict is
-            preserved unchanged.
+            (float32) from Kornia.  When provided, masks are filtered by the same ``keep`` mask as boxes, thresholded at
+            ``> 0.5`` to bool, and stored under ``"masks"`` in each output target dict.  When ``None``, any existing
+            ``"masks"`` entry in the target dict is preserved unchanged.
 
     Returns:
-        A new list of target dicts with updated ``boxes``, ``labels``,
-        ``area``, ``iscrowd``, and (when *masks_aug* is given) ``masks``
-        entries.
+        A new list of target dicts with updated ``boxes``, ``labels``, ``area``, ``iscrowd``, and (when *masks_aug* is
+        given) ``masks`` entries.
     """
     if masks_aug is not None:
         assert masks_aug.shape[:2] == valid.shape, (
@@ -546,6 +679,9 @@ def unpack_boxes(
         if masks_aug is not None:
             masks_i = masks_aug[i, :n_orig]  # [N_orig, H, W]
             t["masks"] = masks_i[keep] > _MASK_BINARIZE_THRESHOLD
+        # TODO(keypoints): First public keypoint preview keeps keypoint coordinates unchanged through GPU augmentation
+        # to preserve existing training paths without introducing partial geometry transforms. Add keypoint-aware
+        # Kornia unpack/keep logic once augmentation parity is implemented.
 
         new_targets.append(t)
 

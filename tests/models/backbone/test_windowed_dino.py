@@ -19,8 +19,8 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
 
 
 def test_window_partition_forward_rectangular_preserves_shapes():
-    """
-    Regression test for WindowedDinov2WithRegistersEmbeddings.forward with rectangular input.
+    """Regression test for WindowedDinov2WithRegistersEmbeddings.forward with rectangular input.
+
     Ensures window partitioning logic correctly handles H != W.
     """
     # Params: H_patches=6, W_patches=4, num_windows=2 -> 3x2 patches per window
@@ -62,11 +62,10 @@ def test_window_partition_forward_rectangular_preserves_shapes():
     ],
 )
 def test_window_partition_nonsquare_does_not_raise(hp, wp, num_windows):
-    """
-    Before the fix, the reshape used num_h_patches_per_window for the width
-    dimension, so the total element count mismatched and PyTorch raised a
-    RuntimeError for any non-square image.  The fix replaces that variable
-    with num_w_patches_per_window, making the operation valid for all shapes.
+    """Before the fix, the reshape used num_h_patches_per_window for the width dimension, so the total element count
+    mismatched and PyTorch raised a RuntimeError for any non-square image.
+
+    The fix replaces that variable with num_w_patches_per_window, making the operation valid for all shapes.
     """
     hidden_size, patch_size, nr = 32, 16, 0
     h, w = hp * patch_size, wp * patch_size
@@ -90,18 +89,14 @@ def test_window_partition_nonsquare_does_not_raise(hp, wp, num_windows):
 
 
 def test_window_partition_correct_window_content():
-    """
-    Verifies that after windowing each window contains the spatially correct
-    patch tokens — not just that the shape is right.
+    """Verifies that after windowing each window contains the spatially correct patch tokens — not just that the shape
+    is right.
 
-    Layout with hp=4, wp=6, num_windows=2 (2x2 grid of windows):
-      Window (0,0): rows 0-1, cols 0-2
-      Window (0,1): rows 0-1, cols 3-5
-      Window (1,0): rows 2-3, cols 0-2
-      Window (1,1): rows 2-3, cols 3-5
+    Layout with hp=4, wp=6, num_windows=2 (2x2 grid of windows):   Window (0,0): rows 0-1, cols 0-2   Window (0,1): rows
+    0-1, cols 3-5   Window (1,0): rows 2-3, cols 0-2   Window (1,1): rows 2-3, cols 3-5
 
-    Before the fix the reshape used num_h_patches_per_window for the width dim
-    so it raised an error and never produced window content at all.
+    Before the fix the reshape used num_h_patches_per_window for the width dim so it raised an error and never produced
+    window content at all.
     """
     hidden_size, patch_size, num_windows, nr = 1, 16, 2, 0
     hp, wp = 4, 6
@@ -168,14 +163,11 @@ def test_window_partition_correct_window_content():
 
 
 def test_buggy_reshape_raises_for_nonsquare():
-    """
-    Directly demonstrates what the pre-fix code did: using num_h_patches_per_window
-    in the width position of the reshape causes a RuntimeError when the element count
-    is not divisible by the (wrong) shape.
+    """Directly demonstrates what the pre-fix code did: using num_h_patches_per_window in the width position of the
+    reshape causes a RuntimeError when the element count is not divisible by the (wrong) shape.
 
-    With hidden_size=1 and hp=4, wp=6, num_windows=2 the total elements are 24 but
-    the buggy target dims (2,2,2,2,-1) require a non-integer last dimension,
-    so PyTorch raises RuntimeError.
+    With hidden_size=1 and hp=4, wp=6, num_windows=2 the total elements are 24 but the buggy target dims (2,2,2,2,-1)
+    require a non-integer last dimension, so PyTorch raises RuntimeError.
     """
     hp, wp = 4, 6  # non-square: width > height
     num_windows = 2
@@ -210,14 +202,11 @@ def test_buggy_reshape_raises_for_nonsquare():
 
 
 def test_buggy_reshape_silent_corruption_for_nonsquare():
-    """
-    When hidden_size happens to make the total element count divisible by the
-    buggy target shape, PyTorch does NOT raise — instead the last dimension is
-    inflated, which silently corrupts the tensor layout.
+    """When hidden_size happens to make the total element count divisible by the buggy target shape, PyTorch does NOT
+    raise — instead the last dimension is inflated, which silently corrupts the tensor layout.
 
-    Pre-fix with hp=4, wp=6, hidden_size=8, num_windows=2:
-      total elements = 1*4*6*8 = 192
-      buggy fixed dims = 2*2*2*2 = 16  →  last dim inferred as 192/16 = 12 (not 8)
+    Pre-fix with hp=4, wp=6, hidden_size=8, num_windows=2:   total elements = 1*4*6*8 = 192 buggy fixed dims = 2*2*2*2 =
+    16  →  last dim inferred as 192/16 = 12 (not 8)
 
     The fix ensures the correct reshape always yields a last dim equal to hidden_size.
     """
@@ -437,8 +426,8 @@ class TestSetAttnImplementation:
 def test_forward_validates_spatial_dims(h: int, w: int, num_windows: int, should_raise: bool) -> None:
     """WindowedDinov2WithRegistersEmbeddings raises ValueError for incompatible dims.
 
-    Both H and W must be divisible by patch_size * num_windows.  The check
-    must survive Python's -O flag (assert would be silently stripped).
+    Both H and W must be divisible by patch_size * num_windows.  The check must survive Python's -O flag (assert would
+    be silently stripped).
     """
     patch_size = 16
     config = WindowedDinov2WithRegistersConfig(
@@ -455,3 +444,101 @@ def test_forward_validates_spatial_dims(h: int, w: int, num_windows: int, should
             model(pixel_values)
     else:
         model(pixel_values)  # must not raise
+
+
+def _make_small_model() -> WindowedDinov2WithRegistersModel:
+    """Return the smallest valid WindowedDinov2WithRegistersModel for unit tests."""
+    config = WindowedDinov2WithRegistersConfig(
+        hidden_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        image_size=32,
+        patch_size=16,
+        num_register_tokens=2,
+    )
+    return WindowedDinov2WithRegistersModel(config)
+
+
+class TestSetAttnImplementationPreservesWeights:
+    """set_attn_implementation must transfer trained weights to the new attention module.
+
+    Before the fix the method replaced each layer's attention with a freshly constructed (randomly initialised) module,
+    silently discarding all trained q/k/v/output weights.
+    """
+
+    @pytest.mark.parametrize(
+        "from_impl, to_impl",
+        [
+            pytest.param("sdpa", "eager", id="sdpa_to_eager"),
+            pytest.param("eager", "sdpa", id="eager_to_sdpa"),
+        ],
+    )
+    def test_query_weight_preserved_after_switch(self, from_impl: str, to_impl: str) -> None:
+        """After switching implementation the query weight tensor must be unchanged."""
+        model = _make_small_model()
+        model.set_attn_implementation(from_impl)
+
+        # Record the query weights of every layer before switching.
+        before = [layer.attention.attention.query.weight.clone() for layer in model.encoder.layer]
+
+        model.set_attn_implementation(to_impl)
+
+        after = [layer.attention.attention.query.weight for layer in model.encoder.layer]
+        for layer_idx, (w_before, w_after) in enumerate(zip(before, after)):
+            assert torch.equal(w_before, w_after), (
+                f"Layer {layer_idx}: query weight changed after set_attn_implementation({from_impl!r} → {to_impl!r})"
+            )
+
+    def test_key_and_value_weights_preserved(self) -> None:
+        """Key and value weights must also survive the implementation switch."""
+        model = _make_small_model()
+        model.set_attn_implementation("sdpa")
+
+        key_before = [layer.attention.attention.key.weight.clone() for layer in model.encoder.layer]
+        val_before = [layer.attention.attention.value.weight.clone() for layer in model.encoder.layer]
+
+        model.set_attn_implementation("eager")
+
+        for layer_idx, layer in enumerate(model.encoder.layer):
+            assert torch.equal(key_before[layer_idx], layer.attention.attention.key.weight), (
+                f"Layer {layer_idx}: key weight changed after implementation switch"
+            )
+            assert torch.equal(val_before[layer_idx], layer.attention.attention.value.weight), (
+                f"Layer {layer_idx}: value weight changed after implementation switch"
+            )
+
+    def test_output_dense_weight_preserved(self) -> None:
+        """The output projection (dense) weight must survive the implementation switch."""
+        model = _make_small_model()
+        model.set_attn_implementation("sdpa")
+
+        dense_before = [layer.attention.output.dense.weight.clone() for layer in model.encoder.layer]
+
+        model.set_attn_implementation("eager")
+
+        for layer_idx, layer in enumerate(model.encoder.layer):
+            assert torch.equal(dense_before[layer_idx], layer.attention.output.dense.weight), (
+                f"Layer {layer_idx}: output dense weight changed after implementation switch"
+            )
+
+    def test_config_updated_after_switch(self) -> None:
+        """config._attn_implementation must reflect the new implementation after switching."""
+        model = _make_small_model()
+        model.set_attn_implementation("eager")
+        assert model.config._attn_implementation == "eager"
+        model.set_attn_implementation("sdpa")
+        assert model.config._attn_implementation == "sdpa"
+
+    def test_attention_module_type_after_switch(self) -> None:
+        """After switching to eager, every layer must hold a non-SDPA attention class."""
+        model = _make_small_model()
+        model.set_attn_implementation("eager")
+        for layer in model.encoder.layer:
+            assert isinstance(layer.attention, Dinov2WithRegistersAttention)
+            assert not isinstance(layer.attention, Dinov2WithRegistersSdpaAttention)
+
+    def test_invalid_implementation_raises_value_error(self) -> None:
+        """An unknown implementation name must raise ValueError before touching any layer."""
+        model = _make_small_model()
+        with pytest.raises(ValueError, match="Unknown attn_implementation"):
+            model.set_attn_implementation("flash_attn")

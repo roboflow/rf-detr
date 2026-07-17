@@ -131,6 +131,26 @@ body {
   font-size: 0.75rem;
   justify-content: flex-end;
 }
+.header-chevron {
+  border: solid currentcolor;
+  border-width: 0 1px 1px 0;
+  display: inline-block;
+  height: 0.4rem;
+  margin-left: 0.35rem;
+  transform: rotate(45deg) translateY(-0.1rem);
+  width: 0.4rem;
+}
+#dropdown-resources:checked ~ .resources-sublist,
+#dropdown-products:checked ~ .products-sublist {
+  display: block;
+}
+body:not(:has(#dropdown-resources:checked)) .resources-sublist,
+body:not(:has(#dropdown-products:checked)) .products-sublist {
+  display: none;
+}
+.md-typeset code .na {
+  color: #4a176f !important;
+}
 .md-nav__list label, .md-nav--secondary label {
   /* text-transform: uppercase; */
   color: rgb(29, 29, 31) !important;

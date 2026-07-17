@@ -5,9 +5,8 @@
 # ------------------------------------------------------------------------
 """Concrete RF-DETR model variant classes.
 
-All classes inherit from :class:`~rfdetr.detr.RFDETR` which remains defined in
-``rfdetr.detr``. Backward-compatible access from ``rfdetr.detr`` is provided
-via lazy ``__getattr__`` re-exports, so importing ``rfdetr.variants`` no longer
+All classes inherit from :class:`~rfdetr.detr.RFDETR` which remains defined in ``rfdetr.detr``. Backward-compatible
+access from ``rfdetr.detr`` is provided via lazy ``__getattr__`` re-exports, so importing ``rfdetr.variants`` no longer
 depends on a fragile eager ``detr -> variants`` import sequence.
 """
 
@@ -15,6 +14,7 @@ from __future__ import annotations
 
 __all__ = [
     "RFDETRBase",
+    "RFDETRKeypointPreview",
     "RFDETRNano",
     "RFDETRSmall",
     "RFDETRMedium",
@@ -33,8 +33,10 @@ __all__ = [
 from deprecate import deprecated_class
 
 from rfdetr.config import (
+    KeypointTrainConfig,
     ModelConfig,
     RFDETRBaseConfig,
+    RFDETRKeypointPreviewConfig,
     RFDETRLargeConfig,
     RFDETRLargeDeprecatedConfig,
     RFDETRMediumConfig,
@@ -61,24 +63,44 @@ logger = get_logger()
     remove_in="2.0.0",
 )
 class RFDETRBase(RFDETR):
-    """RF-DETR Base model — deprecated in v1.7.0, scheduled for removal in v2.0.0."""
+    """Train an RF-DETR Base model.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``.
+    """
 
     size = "rfdetr-base"
     _model_config_class = RFDETRBaseConfig
 
 
 class RFDETRNano(RFDETR):
-    """
-    Train an RF-DETR Nano model.
+    """Train an RF-DETR Nano model.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``.
     """
 
     size = "rfdetr-nano"
     _model_config_class = RFDETRNanoConfig
 
 
-class RFDETRSmall(RFDETR):
+class RFDETRKeypointPreview(RFDETR):
+    """Train or run inference with the RF-DETR keypoint preview model.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``.
     """
-    Train an RF-DETR Small model.
+
+    size = "rfdetr-keypoint-preview"
+    _model_config_class = RFDETRKeypointPreviewConfig
+    _train_config_class = KeypointTrainConfig
+
+
+class RFDETRSmall(RFDETR):
+    """Train an RF-DETR Small model.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``.
     """
 
     size = "rfdetr-small"
@@ -86,8 +108,10 @@ class RFDETRSmall(RFDETR):
 
 
 class RFDETRMedium(RFDETR):
-    """
-    Train an RF-DETR Medium model.
+    """Train an RF-DETR Medium model.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``.
     """
 
     size = "rfdetr-medium"
@@ -100,22 +124,31 @@ class RFDETRMedium(RFDETR):
     remove_in="2.0.0",
 )
 class RFDETRLargeDeprecated(RFDETR):
-    """RF-DETR Large model (legacy config) — deprecated in v1.7.0, scheduled for removal in v2.0.0."""
+    """Train an RF-DETR Large model using the legacy config.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``.
+    """
 
     size = "rfdetr-large"
     _model_config_class = RFDETRLargeDeprecatedConfig
 
 
 class RFDETRLarge(RFDETR):
+    """Train an RF-DETR Large model.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``.
+    """
+
     size = "rfdetr-large"
 
     @staticmethod
     def _should_fallback_to_deprecated_config(exc: Exception) -> bool:
         """Return whether initialization should retry with deprecated Large config.
 
-        The fallback is only for known checkpoint/config incompatibilities from
-        deprecated Large weights. Runtime issues such as CUDA OOM must fail
-        fast and must not trigger a second initialization attempt.
+        The fallback is only for known checkpoint/config incompatibilities from deprecated Large weights. Runtime issues
+        such as CUDA OOM must fail fast and must not trigger a second initialization attempt.
 
         Args:
             exc: Exception raised by initial ``RFDETR`` initialization.
@@ -163,7 +196,7 @@ class RFDETRLarge(RFDETR):
                     "=" * 100 + "\n"
                     "WARNING: Automatically switched to deprecated model configuration,"
                     " due to using deprecated weights."
-                    " This will be removed in a future version.\n"
+                    " This will be removed in v1.9.0.\n"
                     " Please retrain your model with the new weights and configuration.\n"
                     "=" * 100 + "\n"
                 )
@@ -175,7 +208,7 @@ class RFDETRLarge(RFDETR):
                     self.init_error,
                     exc_info=retry_exc,
                 )
-                raise self.init_error from None
+                raise self.init_error from retry_exc
 
     def get_model_config(self, **kwargs) -> ModelConfig:
         if not self.is_deprecated:
@@ -185,7 +218,11 @@ class RFDETRLarge(RFDETR):
 
 
 class RFDETRSeg(RFDETR):
-    """Base class for all RF-DETR segmentation models."""
+    """Base class for all RF-DETR segmentation models.
+
+    Training accepts custom square integer ``resolution`` values. Most segmentation variants use multiples of 24;
+    ``RFDETRSegNano`` uses multiples of 12.
+    """
 
     _train_config_class = SegmentationTrainConfig
 
@@ -196,37 +233,77 @@ class RFDETRSeg(RFDETR):
     remove_in="2.0.0",
 )
 class RFDETRSegPreview(RFDETRSeg):
-    """RF-DETR Segmentation Preview model — deprecated in v1.7.0, scheduled for removal in v2.0.0."""
+    """Train an RF-DETR Segmentation Preview model.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``. Deprecated in v1.7.0, scheduled for removal in v2.0.0.
+    """
 
     size = "rfdetr-seg-preview"
     _model_config_class = RFDETRSegPreviewConfig
 
 
 class RFDETRSegNano(RFDETRSeg):
+    """Train an RF-DETR Segmentation Nano model.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``; this variant uses multiples of 12.
+    """
+
     size = "rfdetr-seg-nano"
     _model_config_class = RFDETRSegNanoConfig
 
 
 class RFDETRSegSmall(RFDETRSeg):
+    """Train an RF-DETR Segmentation Small model.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``; this variant uses multiples of 24.
+    """
+
     size = "rfdetr-seg-small"
     _model_config_class = RFDETRSegSmallConfig
 
 
 class RFDETRSegMedium(RFDETRSeg):
+    """Train an RF-DETR Segmentation Medium model.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``; this variant uses multiples of 24.
+    """
+
     size = "rfdetr-seg-medium"
     _model_config_class = RFDETRSegMediumConfig
 
 
 class RFDETRSegLarge(RFDETRSeg):
+    """Train an RF-DETR Segmentation Large model.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``; this variant uses multiples of 24.
+    """
+
     size = "rfdetr-seg-large"
     _model_config_class = RFDETRSegLargeConfig
 
 
 class RFDETRSegXLarge(RFDETRSeg):
+    """Train an RF-DETR Segmentation XLarge model.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``; this variant uses multiples of 24.
+    """
+
     size = "rfdetr-seg-xlarge"
     _model_config_class = RFDETRSegXLargeConfig
 
 
 class RFDETRSeg2XLarge(RFDETRSeg):
+    """Train an RF-DETR Segmentation 2XLarge model.
+
+    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
+    num_windows``; this variant uses multiples of 24.
+    """
+
     size = "rfdetr-seg-2xlarge"
     _model_config_class = RFDETRSeg2XLargeConfig

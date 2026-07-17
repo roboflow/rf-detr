@@ -9,12 +9,14 @@ Thank you for helping to advance RF-DETR! Your participation is invaluable in ev
 3. [Development Environment Setup](#development-environment-setup)
 4. [Test-Driven Development](#test-driven-development)
 5. [Code Quality and Linting](#code-quality-and-linting)
-6. [Building Documentation](#building-documentation)
-7. [CLA Signing](#cla-signing)
-8. [Google-Style Docstrings and Mandatory Type Hints](#google-style-docstrings-and-mandatory-type-hints)
-9. [Reporting Bugs](#reporting-bugs)
-10. [Adding a New Model](#adding-a-new-model)
-11. [License](#license)
+6. [Deprecation Policy](#deprecation-policy)
+7. [Building Documentation](#building-documentation)
+8. [CLA Signing](#cla-signing)
+9. [Google-Style Docstrings and Mandatory Type Hints](#google-style-docstrings-and-mandatory-type-hints)
+10. [Reporting Bugs](#reporting-bugs)
+11. [Adding a New Model](#adding-a-new-model)
+12. [Security Considerations](#security-considerations)
+13. [License](#license)
 
 ## How to Contribute
 
@@ -138,13 +140,18 @@ uv sync --group build      # Build tools only
 
 **Important:** Always run `uv sync` after pulling changes to ensure your dependencies are up to date.
 
+### Optional Extras
+
+- `rfdetr[train]` installs the minimal training loop dependencies and uses torchvision-native default augmentations.
+- `rfdetr[augment]` installs Albumentations (custom CPU `aug_config` dictionaries and built-in presets) and Kornia (GPU-side augmentation with `augmentation_backend="gpu"` or `"auto"`).
+
 ### Running Tests
 
 > **CI Workflows as Source of Truth:** See `.github/workflows/ci-tests-cpu.yml` and `.github/workflows/ci-tests-gpu.yml` for the exact commands used in continuous integration.
 
 ```bash
 # Run CPU tests (default for local development; mirrors CI)
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/try_instantiate_all_models.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
+uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
 
 # Run GPU tests (requires GPU; mirrors CI)
 uv run --no-sync pytest tests/ -m gpu -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
@@ -279,11 +286,21 @@ Our continuous integration tests run on:
 
 This ensures your changes work across all supported platforms and Python versions.
 
+**Key GitHub Actions workflow files** (in `.github/workflows/`):
+
+- **ci-tests-cpu.yml** — CPU tests across Ubuntu/Windows/macOS × Python 3.10–3.13
+- **ci-tests-gpu.yml** — GPU-dependent tests
+- **build-package.yml** — Build and validate distributions (`uv build` + `twine check`)
+- **ci-build-docs.yml** — Documentation build validation
+- **publish-docs.yml** — Deploy docs to GitHub Pages on release
+
+**Concurrency:** PRs cancel in-progress runs on new pushes.
+
 ### Running Tests
 
 ```bash
 # Run tests with parallel execution (recommended)
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/try_instantiate_all_models.py --timeout=240 --durations=50
+uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --timeout=240 --durations=50
 
 # Run a specific test file
 uv run --no-sync pytest tests/models/test_model.py
@@ -313,6 +330,32 @@ pre-commit run --all-files
 ```
 
 **Configuration:** See `.pre-commit-config.yaml` for all hooks and `pyproject.toml` for tool-specific settings (e.g., `[tool.ruff]`).
+
+## Deprecation Policy
+
+RF-DETR uses [pyDeprecate](https://github.com/Borda/pyDeprecate) to emit structured deprecation warnings. Use `@deprecated` for functions and methods, `@deprecated_class` for classes. The importable package name is `deprecate` (not `pyDeprecate`); refer to its docs for advanced usage.
+
+```python
+from deprecate import deprecated
+
+
+@deprecated(target=new_fn, deprecated_in="1.7.0", remove_in="1.9.0")
+def old_fn(*args, **kwargs): ...
+```
+
+**Rules:**
+
+- All version strings must be full semver: `1.7.0`, not `1.7`.
+- Minimum window: a symbol deprecated in `X.Y.0` cannot be removed before `X.(Y+2).0` (two minor releases).
+- Every new deprecation needs an entry in `docs/getting-started/migration.md` under a `### Deprecated (removal in vX.Z.0)` subsection.
+
+**Removal checklist** (when `remove_in` version arrives):
+
+1. Delete the deprecated symbol, class, or shim file.
+2. Remove any remaining `@deprecated` / `@deprecated_class` decorators.
+3. Add a breaking-change entry to `docs/getting-started/migration.md`.
+4. Search for lingering imports of the removed symbol and update them.
+5. Verify `pre-commit run --all-files` passes and tests are green.
 
 ## Building Documentation
 
@@ -345,6 +388,8 @@ Open [http://localhost:8000](http://localhost:8000) in your browser. The server 
 # Build static documentation site to the site/ directory
 uv run mkdocs build
 ```
+
+**Note:** `mkdocs.yaml` uses custom YAML tags (`!!python/name`). The `check-yaml` pre-commit hook runs with `--unsafe` to allow this — do not remove that flag.
 
 ### Documentation Structure
 
@@ -430,6 +475,13 @@ Bug reports are vital for continued improvement. When reporting an issue, please
 6. **Submit PR** with reference to the discussion issue
 
 Maintainers will guide you on specific files to modify and patterns to follow based on current project architecture.
+
+## Security Considerations
+
+- **Write secure code:** Avoid injection vulnerabilities (XSS, SQL injection, command injection)
+- **Validate inputs:** Especially for file paths, URLs, and user-provided data
+- **No credentials:** Never commit API keys, tokens, or credentials to the repository
+- **Follow OWASP best practices** for any user-facing or network-facing code
 
 ## License
 
