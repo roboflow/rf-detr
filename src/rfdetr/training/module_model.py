@@ -23,7 +23,7 @@ from torch import Tensor
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr.config import ModelConfig, TrainConfig, _is_managed_optimizer_name, _split_optimizer_name
+from rfdetr.config import ModelConfig, TrainConfig, _is_managed_optimizer_name, _resolve_native_optimizer
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
@@ -47,19 +47,6 @@ _TRAIN_PROGRESS_LOSS_ALIASES: dict[str, str] = {
 }
 
 
-def _is_default_adamw_optimizer(provider: str | None, optimizer_name: str) -> bool:
-    """Return whether the config selects RF-DETR's built-in AdamW path.
-
-    Args:
-        provider: Optional optimizer provider prefix.
-        optimizer_name: Normalized optimizer name.
-
-    Returns:
-        ``True`` when the built-in torch AdamW path should be used.
-    """
-    return provider is None and optimizer_name == "adamw"
-
-
 def _is_builtin_fused_adamw(optimizer: object) -> bool:
     """Return whether the config selects RF-DETR's built-in (managed, fused) AdamW path.
 
@@ -75,39 +62,13 @@ def _is_builtin_fused_adamw(optimizer: object) -> bool:
         >>> _is_builtin_fused_adamw("torch.optim.AdamW")
         False
     """
-    return isinstance(optimizer, str) and _is_default_adamw_optimizer(*_split_optimizer_name(optimizer))
+    return isinstance(optimizer, str) and "." not in optimizer and optimizer.strip().lower() == "adamw"
 
 
 _FUSED_IGNORED_MSG = (
     "fused_optimizer=True is ignored for optimizer=%r; the fused AdamW kernel only applies to the "
     "built-in optimizer='adamw' path."
 )
-
-
-def _load_pytorch_optimizer(optimizer_name: str) -> _OptimizerFactory:
-    """Load an optimizer class from pytorch-optimizer by name.
-
-    Args:
-        optimizer_name: Optimizer name understood by pytorch-optimizer.
-
-    Returns:
-        Optimizer class loaded from pytorch-optimizer.
-
-    Raises:
-        ImportError: If pytorch-optimizer is not installed.
-        NotImplementedError: If pytorch-optimizer does not know the optimizer.
-    """
-    try:
-        import pytorch_optimizer
-    except ModuleNotFoundError as exc:
-        if exc.name != "pytorch_optimizer":
-            raise
-        raise ImportError(
-            f"pytorch-optimizer is required for optimizer={optimizer_name!r}. "
-            "Install it with `pip install pytorch-optimizer` or install RF-DETR with the training extra."
-        ) from exc
-    load_optimizer = cast(Callable[[str], _OptimizerFactory], getattr(pytorch_optimizer, "load_optimizer"))
-    return load_optimizer(optimizer_name)
 
 
 def _import_optimizer_class(dotted_path: str) -> _OptimizerFactory:
@@ -232,37 +193,10 @@ def _instantiate_optimizer(
     except (TypeError, ValueError) as exc:
         raise type(exc)(
             f"Failed to initialize optimizer {optimizer_name!r}: {exc}. "
-            "RF-DETR passes `params`, `lr`, and (when supported) `weight_decay`, then your `optimizer_kwargs`. "
-            "This usually means an unsupported entry in `optimizer_kwargs`, or that the optimizer needs a "
-            "positional argument RF-DETR does not provide — e.g. the SAM/BSAM/GSAM/WSAM family requires a "
-            "`base_optimizer` and cannot be selected via `TrainConfig.optimizer`; override `configure_optimizers` "
-            "for those."
+            "For managed torch.optim short names, RF-DETR passes `params`, `lr`, and (when supported) "
+            "`weight_decay`, then your `optimizer_kwargs`; this usually means an unsupported entry in "
+            "`optimizer_kwargs`."
         ) from exc
-
-
-def _build_pytorch_optimizer(
-    optimizer_name: str,
-    param_dicts: list[dict[str, Any]],
-    train_config: TrainConfig,
-) -> torch.optim.Optimizer:
-    """Build a pytorch-optimizer optimizer while preserving RF-DETR param groups.
-
-    Args:
-        optimizer_name: Optimizer name to load from pytorch-optimizer.
-        param_dicts: RF-DETR parameter groups with layer-wise learning rates.
-        train_config: Training config with base optimizer hyperparameters.
-
-    Returns:
-        Instantiated optimizer.
-    """
-    try:
-        optimizer_class = _load_pytorch_optimizer(optimizer_name)
-    except NotImplementedError as exc:
-        raise ValueError(
-            f"Unsupported pytorch-optimizer optimizer {optimizer_name!r}. "
-            "Check pytorch_optimizer.get_supported_optimizers() for available names."
-        ) from exc
-    return _instantiate_optimizer(optimizer_class, f"pytorch_optimizer:{optimizer_name}", param_dicts, train_config)
 
 
 class RFDETRModelModule(LightningModule):
@@ -877,9 +811,9 @@ class RFDETRModelModule(LightningModule):
                 callable_name = getattr(optimizer_cfg, "__qualname__", None) or repr(optimizer_cfg)
                 optimizer = _instantiate_explicit_optimizer(optimizer_cfg, callable_name, param_dicts, {})
             elif _is_managed_optimizer_name(optimizer_cfg):
-                # Managed short-name optimizer from the pytorch-optimizer registry.
-                _, optimizer_name = _split_optimizer_name(optimizer_cfg)
-                optimizer = _build_pytorch_optimizer(optimizer_name, param_dicts, tc)
+                # Managed native torch.optim short name (lr + signature-aware weight_decay injected).
+                native_class: _OptimizerFactory = _resolve_native_optimizer(optimizer_cfg)
+                optimizer = _instantiate_optimizer(native_class, optimizer_cfg, param_dicts, tc)
             else:
                 # Explicit dotted import path: constructed from optimizer_kwargs only.
                 optimizer_class = _import_optimizer_class(optimizer_cfg)

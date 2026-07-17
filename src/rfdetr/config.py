@@ -227,50 +227,44 @@ DEVICE: str = _detect_device()
 _OPTIMIZER_MANAGED_KWARGS = {"params", "lr", "weight_decay", "fused"}
 
 
-def _split_optimizer_name(optimizer: str) -> tuple[str | None, str]:
-    """Split an optimizer string into optional provider and optimizer name.
+def _resolve_native_optimizer(name: str) -> type[Optimizer]:
+    """Resolve a bare optimizer short name to a ``torch.optim`` optimizer class.
+
+    Only native ``torch.optim`` optimizers may be selected by short name; the match
+    is case-insensitive (``"adamw"`` → ``torch.optim.AdamW``, ``"sgd"`` → ``torch.optim.SGD``).
+    Any other optimizer must be given as a full dotted import path or a callable.
 
     Args:
-        optimizer: Optimizer config value, optionally prefixed with
-            ``"pytorch_optimizer:"`` or ``"pytorch-optimizer:"``.
+        name: A bare optimizer name (no dotted import path).
 
     Returns:
-        Tuple of provider and normalized optimizer name. Provider is ``None``
-        when no explicit prefix was supplied.
+        The matching ``torch.optim`` optimizer class.
 
     Raises:
-        ValueError: If an unknown provider prefix is used, or a provider prefix
-            is not followed by an optimizer name.
+        ValueError: If ``name`` is not a native ``torch.optim`` optimizer.
 
     Examples:
-        >>> _split_optimizer_name("lion")
-        (None, 'lion')
-        >>> _split_optimizer_name("pytorch_optimizer:Lion")
-        ('pytorch_optimizer', 'lion')
+        >>> _resolve_native_optimizer("adamw") is torch.optim.AdamW
+        True
     """
-    optimizer_name = optimizer.strip()
-    if ":" not in optimizer_name:
-        return None, optimizer_name.lower()
-
-    provider, name = optimizer_name.split(":", 1)
-    provider = provider.strip().lower().replace("-", "_")
-    name = name.strip()
-    if provider == "pytorch_optimizer":
-        name = name.lower()
-    else:
-        raise ValueError(f"Unsupported optimizer provider {provider!r}. Use 'adamw' or 'pytorch_optimizer:<name>'.")
-    if not name:
-        raise ValueError("optimizer provider prefix must be followed by a non-empty optimizer name.")
-    return provider, name
+    target = name.strip().lower()
+    for attribute in dir(torch.optim):
+        candidate = getattr(torch.optim, attribute)
+        if isinstance(candidate, type) and issubclass(candidate, Optimizer) and attribute.lower() == target:
+            return candidate
+    raise ValueError(
+        f"Unknown native optimizer {name!r}. Short names must name a torch.optim optimizer "
+        "(e.g. 'adamw', 'sgd', 'adam'); use a full dotted import path or a callable for anything else."
+    )
 
 
 def _is_managed_optimizer_name(optimizer: object) -> bool:
     """Return whether an optimizer config selects RF-DETR's managed construction.
 
-    Managed mode covers the built-in ``"adamw"`` and bare pytorch-optimizer registry
-    names (with or without the ``pytorch_optimizer:`` prefix); RF-DETR injects ``lr``
-    and a signature-aware ``weight_decay`` there. A dotted import path or a callable
-    selects explicit mode, where the optimizer is built only from ``optimizer_kwargs``.
+    Managed mode covers bare ``torch.optim`` short names (e.g. ``"adamw"``, ``"sgd"``);
+    RF-DETR injects ``lr`` and a signature-aware ``weight_decay`` there. A dotted import
+    path or a callable selects explicit mode, where the optimizer is built only from
+    ``optimizer_kwargs`` (or the callable's own bound arguments).
 
     Args:
         optimizer: The ``TrainConfig.optimizer`` value.
@@ -279,7 +273,7 @@ def _is_managed_optimizer_name(optimizer: object) -> bool:
         ``True`` for managed short-name strings, ``False`` for dotted paths and callables.
 
     Examples:
-        >>> _is_managed_optimizer_name("lion")
+        >>> _is_managed_optimizer_name("sgd")
         True
         >>> _is_managed_optimizer_name("torch.optim.AdamW")
         False
@@ -1267,16 +1261,16 @@ class TrainConfig(BaseConfig):
     @field_validator("optimizer", mode="after")
     @classmethod
     def validate_optimizer_name(cls, v: str | Callable[..., Optimizer]) -> str | Callable[..., Optimizer]:
-        """Validate a string optimizer is non-empty with supported provider syntax."""
+        """Validate a string optimizer: a bare name must be a native torch.optim optimizer."""
         if not isinstance(v, str):
             return v
         optimizer = v.strip()
         if not optimizer:
             raise ValueError("optimizer must be a non-empty string.")
-        # Reject malformed provider syntax at config time; existence/importability checks
-        # happen lazily at train start. Dotted import paths bypass the provider-prefix DSL.
+        # Bare short names must resolve to a torch.optim optimizer (checked eagerly).
+        # Dotted import paths are validated lazily at train start (the module may be optional).
         if "." not in optimizer:
-            _split_optimizer_name(optimizer)
+            _resolve_native_optimizer(optimizer)
         return optimizer
 
     @model_validator(mode="after")
