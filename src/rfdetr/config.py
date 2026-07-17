@@ -5,18 +5,176 @@
 # ------------------------------------------------------------------------
 
 
+import functools
+import importlib
 import os
 import warnings
 from collections.abc import Mapping
+from enum import Enum
 from pathlib import Path
-from typing import Any, ClassVar, Literal, TypeAlias
+from typing import Any, ClassVar, Dict, Literal, Optional, TypeAlias
 
 import torch
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from pydantic_core import PydanticUndefined
 
 EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
 PathLikeStr: TypeAlias = str | Path
+
+__all__ = [
+    "AugmentationBackend",
+    "ModelConfig",
+    "RFDETRBaseConfig",
+    "RFDETRLargeDeprecatedConfig",
+    "RFDETRNanoConfig",
+    "RFDETRSmallConfig",
+    "RFDETRMediumConfig",
+    "RFDETRLargeConfig",
+    "RFDETRSegPreviewConfig",
+    "RFDETRSegNanoConfig",
+    "RFDETRSegSmallConfig",
+    "RFDETRSegMediumConfig",
+    "RFDETRSegLargeConfig",
+    "RFDETRSegXLargeConfig",
+    "RFDETRSeg2XLargeConfig",
+    "RFDETRKeypointPreviewConfig",
+    "TrainConfig",
+    "SegmentationTrainConfig",
+    "KeypointTrainConfig",
+]
+
+#: Legacy augmentation-backend string aliases, mapped to their current form.
+_LEGACY_AUGMENTATION_BACKEND_ALIASES: Dict[str, str] = {
+    "gpu": "kornia",
+    "tv": "torchvision",
+    "albu": "albumentations",
+}
+
+
+def _package_importable(module_name: str) -> bool:
+    """Return ``True`` when *module_name* can be imported.
+
+    Args:
+        module_name: Dotted module path to probe (e.g. ``"kornia.augmentation"``).
+
+    Returns:
+        ``True`` if the import succeeds, ``False`` on ``ImportError``.
+    """
+    try:
+        importlib.import_module(module_name)
+        return True
+    except ImportError:
+        return False
+
+
+class AugmentationBackend(str, Enum):
+    """Concrete augmentation backend selector for ``TrainConfig.augmentation_backend``.
+
+    Only holds directly-usable, concrete backends — ``TV`` (torchvision), ``ALBU`` (Albumentations), and ``KORNIA``.
+    ``GPU`` is a Python enum alias for ``KORNIA`` (same value ``"kornia"``): Kornia augmentation always runs on-device
+    (GPU), so the two names refer to the same backend; ``GPU`` exists only so legacy ``augmentation_backend="gpu"``
+    strings keep resolving correctly.
+
+    ``"cpu"`` and ``"auto"`` are accepted as *input* strings (on ``TrainConfig.augmentation_backend`` and by
+    :meth:`from_str`) but are never stored or returned as a member of this enum — they are auto-pick sentinels resolved
+    to a concrete member at :meth:`from_str` call time. Resolution stays late (re-checked at dataset-build time against
+    whatever is installed in the current environment) rather than baked into ``TrainConfig`` at construction time, so a
+    saved config using ``"cpu"``/``"auto"`` remains portable across environments with different optional packages
+    installed. Pass a concrete value (``"torchvision"``, ``"albumentations"``, or ``"kornia"``) explicitly to pin the
+    backend regardless of environment.
+    """
+
+    TV = "torchvision"
+    ALBU = "albumentations"
+    KORNIA = "kornia"
+    GPU = "kornia"  # alias for KORNIA — backward compat name; kornia is always the GPU-side path
+
+    @classmethod
+    def from_str(cls, value: str, *, has_cuda: bool = False) -> "AugmentationBackend":
+        """Resolve a string to a concrete backend, auto-picking the best installed one.
+
+        Legacy string aliases (``"gpu"``, ``"tv"``, ``"albu"``) are mapped to their current form
+        first. ``"cpu"`` auto-picks the best *installed* CPU backend: Albumentations > Kornia
+        (CPU) > torchvision. ``"auto"`` additionally prefers Kornia first when ``has_cuda=True``
+        and Kornia is installed, then falls back to the same CPU priority. The concrete backend
+        ``"cpu"``/``"auto"`` resolve to can therefore vary across environments — pass
+        ``"torchvision"`` explicitly to force torchvision regardless of what's installed.
+
+        Args:
+            value: Backend name string.
+            has_cuda: Whether a CUDA device is available. Only consulted for ``"auto"`` — callers
+                that care about CUDA-gated GPU selection (e.g. dataset builders) compute this via
+                their own fork-safe CUDA check and pass it in; this function does not probe CUDA
+                itself to avoid importing device-detection code from other modules.
+
+        Returns:
+            Concrete ``AugmentationBackend`` member.
+
+        Raises:
+            ValueError: When *value* is not a recognised backend name.
+
+        Examples:
+            >>> AugmentationBackend.from_str("torchvision")
+            <AugmentationBackend.TV: 'torchvision'>
+            >>> AugmentationBackend.from_str("gpu")
+            <AugmentationBackend.KORNIA: 'kornia'>
+        """
+        value = _LEGACY_AUGMENTATION_BACKEND_ALIASES.get(value, value)
+        if value in ("cpu", "auto"):
+            if value == "auto" and has_cuda and cls._is_kornia_available():
+                return cls.KORNIA
+            if cls._is_albu_available():
+                return cls.ALBU
+            if cls._is_kornia_available():
+                return cls.KORNIA
+            return cls.TV
+        try:
+            return cls(value)
+        except ValueError:
+            raise ValueError(
+                f"Unknown augmentation_backend {value!r}; expected one of 'cpu', 'auto', 'torchvision', "
+                "'albumentations', 'kornia'."
+            ) from None
+
+    @classmethod
+    @functools.lru_cache(maxsize=None)
+    def _is_albu_available(cls) -> bool:
+        """Return ``True`` when Albumentations is importable.
+
+        Cached for the process lifetime — package installation state does not change at runtime.
+        Tests that need to simulate "not installed" should patch this method directly (e.g.
+        ``patch.object(AugmentationBackend, "_is_albu_available", return_value=False)``) rather
+        than blocking the underlying import, since the cache is keyed on this method, not on the
+        import machinery.
+
+        Returns:
+            ``True`` if ``albumentations`` can be imported.
+        """
+        return _package_importable("albumentations")
+
+    @classmethod
+    @functools.lru_cache(maxsize=None)
+    def _is_kornia_available(cls) -> bool:
+        """Return ``True`` when Kornia's augmentation module is importable.
+
+        Cached for the process lifetime — see :meth:`_is_albu_available` for the caching and test
+        rationale.
+
+        Returns:
+            ``True`` if ``kornia.augmentation`` can be imported.
+        """
+        return _package_importable("kornia.augmentation")
+
+    @classmethod
+    def _is_tv_available(cls) -> bool:
+        """Return ``True`` — torchvision is a hard (non-optional) RF-DETR dependency.
+
+        Not cached: the result is a compile-time constant, not worth the caching machinery.
+
+        Returns:
+            Always ``True``.
+        """
+        return True
 
 
 class PretrainWeightsCompatibilityWarning(UserWarning):
@@ -803,10 +961,52 @@ class TrainConfig(BaseConfig):
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = True
-    aug_config: dict[str, Any] | None = None
-    augmentation_backend: Literal["cpu", "auto", "gpu"] = "cpu"
+    aug_config: Optional[Dict[str, Any]] = None
+    scale_jitter: bool = True
+    augmentation_backend: AugmentationBackend | Literal["cpu", "auto"] = "cpu"
     save_dataset_grids: bool = False
-    notes: Any | None = Field(
+
+    @field_validator("augmentation_backend", mode="before")
+    @classmethod
+    def _coerce_augmentation_backend(cls, v: Any) -> Any:
+        """Map legacy backend name strings (``"gpu"``, ``"tv"``, ``"albu"``) to their current form.
+
+        ``"cpu"``/``"auto"`` pass through unchanged — they are auto-pick sentinels resolved lazily by
+        :meth:`AugmentationBackend.from_str` at dataset-build time, not at config construction time, so a saved config
+        stays portable across environments. See :class:`AugmentationBackend` for the full rationale.
+        """
+        if isinstance(v, str):
+            return _LEGACY_AUGMENTATION_BACKEND_ALIASES.get(v, v)
+        return v
+
+    @field_serializer("augmentation_backend")
+    def _serialize_augmentation_backend(self, value: AugmentationBackend | str) -> str:
+        """Serialize the backend selector to its plain string form.
+
+        Returns the enum's ``.value`` for :class:`AugmentationBackend` members and passes the
+        ``"cpu"``/``"auto"`` sentinel strings through unchanged. This lets checkpoint writers call
+        plain :meth:`model_dump` and still get a JSON-safe ``str`` for this one field, instead of a
+        blanket ``model_dump(mode="json")`` that would also coerce every *other* field's serialized
+        shape (e.g. the ``int`` keypoint loss coefficients to ``float``). Applies in both python and
+        json ``model_dump`` modes, so the two checkpoint writers stay consistent.
+
+        Args:
+            value: Stored backend selector — an :class:`AugmentationBackend` member or a
+                ``"cpu"``/``"auto"`` sentinel string.
+
+        Returns:
+            The plain string form of the backend selector.
+
+        Examples:
+            >>> cfg = TrainConfig(dataset_dir="ds", augmentation_backend="torchvision")
+            >>> cfg.model_dump()["augmentation_backend"]
+            'torchvision'
+        """
+        if isinstance(value, AugmentationBackend):
+            return value.value
+        return value
+
+    notes: Optional[Any] = Field(
         default=None,
         description=(
             "User-defined provenance metadata embedded in best-model .pth checkpoints "

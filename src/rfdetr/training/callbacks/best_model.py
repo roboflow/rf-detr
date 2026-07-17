@@ -40,7 +40,12 @@ class BestModelCallback(ModelCheckpoint):
 
     At the end of training the overall winner (regular vs EMA, strict ``>`` for EMA) is copied to
     ``checkpoint_best_total.pth`` and optimizer/scheduler state is stripped via
-    :func:`rfdetr.util.misc.strip_checkpoint`.
+    :func:`rfdetr.utilities.state_dict.strip_checkpoint`.  The stripped payload records ``best_total_source``
+    (``"ema"`` or ``"regular"``) so the winning source is recoverable after reload.
+
+    When EMA tracking is enabled (``monitor_ema`` set), EMA-named checkpoints are always left on disk for clarity:
+    ``checkpoint_best_ema.pth`` (backfilled with the final EMA weights if the EMA metric never improved) and
+    ``last_ema.pth`` (final EMA weights, mirroring ``last.pth`` for the live model).
 
     Checkpoints are only updated on validation epochs where the monitor metric is actually logged.  On non-eval epochs
     (when ``eval_interval > 1`` causes COCO evaluation to be skipped) the callback is a no-op.
@@ -223,11 +228,51 @@ class BestModelCallback(ModelCheckpoint):
                 if state_dict is not None:
                     return cast("dict[str, Tensor]", state_dict)
                 break
-        logger.warning(
-            "EMA metric improved but EMA callback weights were unavailable; saving current model weights as fallback."
-        )
+        logger.warning("EMA callback weights were unavailable; saving current model weights as fallback.")
         raw = BestModelCallback._unwrap_model(pl_module)
         return raw.state_dict()
+
+    def _write_ema_checkpoint(
+        self,
+        trainer: Trainer,
+        pl_module: LightningModule,
+        ema_state_dict: dict[str, Tensor],
+        dest: Path,
+    ) -> None:
+        """Build and save an EMA checkpoint payload to ``dest``.
+
+        Enriches the training config with dataset class names so reloaded checkpoints return the correct labels
+        rather than COCO defaults (#509), then writes an unstripped PTL-compatible payload.
+
+        Args:
+            trainer: Active Lightning trainer providing epoch/step counters.
+            pl_module: The ``RFDETRModelModule`` being trained.
+            ema_state_dict: EMA model weights to persist.
+            dest: Destination checkpoint path.
+
+        Note:
+            Internal helper called by ``on_validation_end`` (best EMA) and ``on_fit_end``
+            (guaranteed ``checkpoint_best_ema.pth`` and ``last_ema.pth``).
+        """
+        ema_train_config = cast("RFDETRModelModule", pl_module).train_config
+        dataset_class_names = getattr(trainer.datamodule, "class_names", None)  # type: ignore[attr-defined]
+        if (
+            dataset_class_names is not None
+            and hasattr(ema_train_config, "model_copy")
+            and getattr(ema_train_config, "class_names", None) is None
+        ):
+            ema_train_config = ema_train_config.model_copy(update={"class_names": dataset_class_names})
+        ema_args_dict = ema_train_config.model_dump() if hasattr(ema_train_config, "model_dump") else ema_train_config
+        torch.save(
+            self._build_checkpoint_payload(
+                ema_state_dict,
+                ema_args_dict,
+                trainer,
+                model_name=self._resolve_model_name(pl_module),
+                model_config_dict=self._serialize_model_config(pl_module, ema_state_dict),
+            ),
+            dest,
+        )
 
     @staticmethod
     def _serialize_model_config(
@@ -467,31 +512,7 @@ class BestModelCallback(ModelCheckpoint):
             self._best_ema = ema_val
             self._output_dir.mkdir(parents=True, exist_ok=True)
             ema_state_dict = self._get_ema_model_state_dict(trainer, pl_module)
-            # Enrich train_config with dataset class names so reloaded checkpoints
-            # return the correct labels, not COCO defaults (#509).
-            ema_train_config = cast("RFDETRModelModule", pl_module).train_config
-            dataset_class_names = getattr(trainer.datamodule, "class_names", None)  # type: ignore[attr-defined]
-            if (
-                dataset_class_names is not None
-                and hasattr(ema_train_config, "model_copy")
-                and getattr(ema_train_config, "class_names", None) is None
-            ):
-                ema_train_config = ema_train_config.model_copy(update={"class_names": dataset_class_names})
-            ema_args_dict = (
-                ema_train_config.model_dump() if hasattr(ema_train_config, "model_dump") else ema_train_config
-            )
-            ema_model_name = self._resolve_model_name(pl_module)
-            ema_model_config_dict = self._serialize_model_config(pl_module, ema_state_dict)
-            torch.save(
-                self._build_checkpoint_payload(
-                    ema_state_dict,
-                    ema_args_dict,
-                    trainer,
-                    model_name=ema_model_name,
-                    model_config_dict=ema_model_config_dict,
-                ),
-                self._output_dir / "checkpoint_best_ema.pth",
-            )
+            self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, self._output_dir / "checkpoint_best_ema.pth")
             logger.info(
                 "Best EMA mAP improved to %.4f (epoch %d)",
                 ema_val,
@@ -529,17 +550,33 @@ class BestModelCallback(ModelCheckpoint):
 
         # Strict > for EMA to win (matches legacy behaviour).
         best_is_ema = self._best_ema > best_regular
-        best_path = ema_path if (best_is_ema and ema_path.exists()) else regular_path
+        # ``chose_ema`` reflects the source actually copied: EMA can win the comparison yet be
+        # unavailable on disk, in which case regular is used and recorded.
+        chose_ema = best_is_ema and ema_path.exists()
+        best_path = ema_path if chose_ema else regular_path
 
         if best_path and best_path.exists():
             shutil.copy2(best_path, total_path)
-            strip_checkpoint(total_path)
+            # Record the winning source in the payload so anyone reloading
+            # checkpoint_best_total.pth can tell EMA from regular weights.
+            strip_checkpoint(total_path, extra_metadata={"best_total_source": "ema" if chose_ema else "regular"})
             logger.info(
                 "Best total checkpoint saved from %s (regular=%.4f, ema=%.4f)",
-                "EMA" if best_is_ema else "regular",
+                "EMA" if chose_ema else "regular",
                 best_regular,
                 self._best_ema,
             )
+
+        # When EMA tracking is enabled, always leave EMA-named checkpoints on disk for clarity:
+        # a guaranteed checkpoint_best_ema.pth (backfilled with final EMA weights when the EMA metric
+        # never improved) and last_ema.pth (final EMA weights, mirroring last.pth for the live model).
+        if self._monitor_ema is not None:
+            self._output_dir.mkdir(parents=True, exist_ok=True)
+            ema_state_dict = self._get_ema_model_state_dict(trainer, pl_module)
+            if not ema_path.exists():
+                self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, ema_path)
+                logger.info("EMA metric never improved; saved final EMA weights as %s", ema_path.name)
+            self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, self._output_dir / "last_ema.pth")
 
         if self._run_test:
             # Only call trainer.test() when the module actually defines test_step().

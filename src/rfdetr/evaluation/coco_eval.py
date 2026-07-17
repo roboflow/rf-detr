@@ -169,7 +169,7 @@ def _resolve_keypoint_oks_sigmas(coco_gt: COCO, keypoint_oks_sigmas: list[float]
             raise ValueError(
                 f"keypoint_oks_sigmas length {sigmas.size} does not match dataset keypoint count {keypoint_count}."
             )
-        return cast(list[float], sigmas.tolist())
+        return [float(sigma) for sigma in sigmas.tolist()]
 
     if keypoint_count is None or keypoint_count == len(_COCO_PERSON_KEYPOINT_SIGMAS):
         return None

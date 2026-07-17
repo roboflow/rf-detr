@@ -421,7 +421,7 @@ class RFDETRModelModule(LightningModule):
         self.log(
             "train/loss",
             loss,
-            prog_bar=False,
+            prog_bar=True,
             on_step=train_log_on_step,
             on_epoch=True,
             sync_dist=train_log_sync_dist,
@@ -645,15 +645,22 @@ class RFDETRModelModule(LightningModule):
             loss_dict: Raw criterion loss dictionary.
             batch_size: Current batch size used by Lightning for metric reduction metadata.
         """
-        self.log(
-            "loss",
-            loss,
-            prog_bar=True,
-            logger=False,
-            on_step=True,
-            on_epoch=False,
-            batch_size=batch_size,
-        )
+        # When ``train_log_on_step`` is True, the ``train/loss`` call in ``training_step``
+        # logs with ``on_step=True, on_epoch=True``; Lightning forks that into
+        # ``train/loss_step`` + ``train/loss_epoch``, and ``train/loss_step`` already
+        # provides the live per-step progress-bar view. Emitting this separate ``loss``
+        # scalar in that case just duplicates it, so only log it on the default
+        # ``train_log_on_step=False`` path.
+        if not bool(self.train_config.train_log_on_step):
+            self.log(
+                "loss",
+                loss,
+                prog_bar=True,
+                logger=False,
+                on_step=True,
+                on_epoch=False,
+                batch_size=batch_size,
+            )
         for loss_name, progress_name in _TRAIN_PROGRESS_LOSS_ALIASES.items():
             value = loss_dict.get(loss_name)
             if value is None:

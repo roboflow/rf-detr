@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for RFDETR.optimize_for_inference()."""
+"""Tests for RFDETR.inference()."""
 
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -15,7 +15,7 @@ from rfdetr.detr import RFDETR
 
 
 class _FakeModel(torch.nn.Module):
-    """Minimal nn.Module that satisfies the optimize_for_inference contract."""
+    """Minimal nn.Module that satisfies the inference contract."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -47,7 +47,23 @@ class _FakeRFDETR(RFDETR):
         return _FakeModelContext()
 
 
-class TestOptimizeForInferenceDtype:
+class TestOptimizeForInferenceDeprecatedAlias:
+    """``optimize_for_inference`` forwards to :meth:`RFDETR.inference` with a deprecation warning."""
+
+    def test_forwards_and_warns(self) -> None:
+        """Calling the deprecated alias emits ``FutureWarning`` and still optimizes the model."""
+        rfdetr = _FakeRFDETR()
+
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            pytest.warns(FutureWarning, match="optimize_for_inference"),
+        ):
+            rfdetr.optimize_for_inference(compile=False)
+
+        assert rfdetr._is_optimized_for_inference is True
+
+
+class TestModelInferenceDtype:
     """Dtype coercion and validation tests."""
 
     def test_string_dtype_float32_is_accepted(self) -> None:
@@ -55,7 +71,7 @@ class TestOptimizeForInferenceDtype:
         rfdetr = _FakeRFDETR()
 
         with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
-            rfdetr.optimize_for_inference(compile=False, dtype="float32")
+            rfdetr.inference(compile=False, dtype="float32")
 
         assert rfdetr._optimized_dtype == torch.float32
 
@@ -64,7 +80,7 @@ class TestOptimizeForInferenceDtype:
         rfdetr = _FakeRFDETR()
 
         with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
-            rfdetr.optimize_for_inference(compile=False, dtype="float16")
+            rfdetr.inference(compile=False, dtype="float16")
 
         assert rfdetr._optimized_dtype == torch.float16
 
@@ -73,7 +89,7 @@ class TestOptimizeForInferenceDtype:
         rfdetr = _FakeRFDETR()
 
         with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
-            rfdetr.optimize_for_inference(compile=False, dtype=torch.float32)
+            rfdetr.inference(compile=False, dtype=torch.float32)
 
         assert rfdetr._optimized_dtype == torch.float32
 
@@ -82,21 +98,21 @@ class TestOptimizeForInferenceDtype:
         rfdetr = _FakeRFDETR()
 
         with pytest.raises(TypeError, match="dtype must be a torch.dtype or a string name of a dtype"):
-            rfdetr.optimize_for_inference(compile=False, dtype=42)  # type: ignore[arg-type]
+            rfdetr.inference(compile=False, dtype=42)  # type: ignore[arg-type]
 
     def test_invalid_dtype_string_raises_type_error(self) -> None:
         """Passing a non-existent dtype string should raise TypeError with a descriptive message."""
         rfdetr = _FakeRFDETR()
 
         with pytest.raises(TypeError, match="dtype must be a torch.dtype or a string name of a dtype"):
-            rfdetr.optimize_for_inference(compile=False, dtype="not_a_dtype")
+            rfdetr.inference(compile=False, dtype="not_a_dtype")
 
     def test_valid_torch_attr_that_is_not_dtype_raises_type_error(self) -> None:
         """'Tensor' is a valid torch attribute but not a torch.dtype — should raise TypeError."""
         rfdetr = _FakeRFDETR()
 
         with pytest.raises(TypeError, match="dtype must be a torch.dtype or a string name of a dtype"):
-            rfdetr.optimize_for_inference(compile=False, dtype="Tensor")  # type: ignore[arg-type]
+            rfdetr.inference(compile=False, dtype="Tensor")  # type: ignore[arg-type]
 
     @pytest.mark.parametrize("dtype_str", ["float32", "float16", "bfloat16"])
     def test_string_dtype_variants_are_accepted(self, dtype_str: str) -> None:
@@ -105,13 +121,13 @@ class TestOptimizeForInferenceDtype:
         expected = getattr(torch, dtype_str)
 
         with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
-            rfdetr.optimize_for_inference(compile=False, dtype=dtype_str)
+            rfdetr.inference(compile=False, dtype=dtype_str)
 
         assert rfdetr._optimized_dtype == expected
 
 
-class TestOptimizeForInferenceCudaDeviceContext:
-    """Verify that optimize_for_inference wraps operations in the correct device context."""
+class TestModelInferenceCudaDeviceContext:
+    """Verify that inference() wraps operations in the correct device context."""
 
     @pytest.mark.gpu
     @patch("rfdetr.detr._move_model_context_to_device")
@@ -142,7 +158,7 @@ class TestOptimizeForInferenceCudaDeviceContext:
                 pass
 
         mock_cuda_device.side_effect = _CapturingDeviceCtx
-        rfdetr.optimize_for_inference(compile=False, dtype=torch.float32)
+        rfdetr.inference(compile=False, dtype=torch.float32)
 
         assert len(entered_devices) == 1
         assert entered_devices[0] == torch.device("cuda", 0)
@@ -157,7 +173,7 @@ class TestOptimizeForInferenceCudaDeviceContext:
             patch("torch.cuda.device") as mock_cuda_device,
             patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
         ):
-            rfdetr.optimize_for_inference(compile=False, dtype=torch.float32)
+            rfdetr.inference(compile=False, dtype=torch.float32)
 
         mock_cuda_device.assert_not_called()
 
@@ -190,12 +206,12 @@ class TestOptimizeForInferenceCudaDeviceContext:
                 pass
 
         mock_cuda_device.side_effect = _CapturingCtx
-        rfdetr.optimize_for_inference(compile=False)
+        rfdetr.inference(compile=False)
 
         assert captured.get("device") == expected_device
 
 
-class TestOptimizeForInferenceCompile:
+class TestModelInferenceCompile:
     """Tests for the compile=True path (JIT trace)."""
 
     def test_compile_true_calls_jit_trace(self) -> None:
@@ -207,7 +223,7 @@ class TestOptimizeForInferenceCompile:
             patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
             patch("torch.jit.trace", return_value=mock_traced) as mock_trace,
         ):
-            rfdetr.optimize_for_inference(compile=True, batch_size=2)
+            rfdetr.inference(compile=True, batch_size=2)
 
         assert mock_trace.called
         dummy_input: torch.Tensor = mock_trace.call_args.args[1]
@@ -222,7 +238,7 @@ class TestOptimizeForInferenceCompile:
             patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
             patch("torch.jit.trace", return_value=rfdetr.model.model),
         ):
-            rfdetr.optimize_for_inference(compile=True, batch_size=4)
+            rfdetr.inference(compile=True, batch_size=4)
 
         assert rfdetr._optimized_has_been_compiled is True
         assert rfdetr._optimized_batch_size == 4
@@ -235,15 +251,15 @@ class TestOptimizeForInferenceCompile:
             patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
             patch("torch.jit.trace") as mock_trace,
         ):
-            rfdetr.optimize_for_inference(compile=False)
+            rfdetr.inference(compile=False)
 
         mock_trace.assert_not_called()
         assert rfdetr._optimized_has_been_compiled is False
         assert rfdetr._optimized_batch_size is None
 
 
-class TestOptimizeForInferenceState:
-    """Verify that optimize_for_inference correctly sets internal state flags."""
+class TestModelInferenceState:
+    """Verify that inference() correctly sets internal state flags."""
 
     def test_is_optimized_inplace_false_before_optimization(self) -> None:
         """is_optimized_inplace is False before any optimization is applied."""
@@ -255,7 +271,7 @@ class TestOptimizeForInferenceState:
         rfdetr = _FakeRFDETR()
 
         with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
-            rfdetr.optimize_for_inference(compile=False)
+            rfdetr.inference(compile=False)
 
         assert rfdetr._is_optimized_for_inference is True
 
@@ -264,7 +280,7 @@ class TestOptimizeForInferenceState:
         rfdetr = _FakeRFDETR()
 
         with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
-            rfdetr.optimize_for_inference(compile=False)
+            rfdetr.inference(compile=False)
 
         assert rfdetr.model.inference_model is not None
 
@@ -273,7 +289,7 @@ class TestOptimizeForInferenceState:
         rfdetr = _FakeRFDETR()
 
         with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
-            rfdetr.optimize_for_inference(compile=False)
+            rfdetr.inference(compile=False)
 
         rfdetr.remove_optimized_model()
 
@@ -286,7 +302,7 @@ class TestOptimizeForInferenceState:
         assert rfdetr.is_optimized_inplace is False
 
 
-class TestOptimizeForInferenceInplace:
+class TestModelInferenceInplace:
     """Tests for the low-memory in-place optimization path."""
 
     def test_inplace_false_keeps_deepcopy_behavior(self) -> None:
@@ -296,7 +312,7 @@ class TestOptimizeForInferenceInplace:
         copied_model = _FakeModel()
 
         with patch("rfdetr.detr.deepcopy", return_value=copied_model) as mock_deepcopy:
-            rfdetr.optimize_for_inference(compile=False)
+            rfdetr.inference(compile=False)
 
         mock_deepcopy.assert_called_once_with(original_model)
         assert rfdetr.model.model is original_model
@@ -310,7 +326,7 @@ class TestOptimizeForInferenceInplace:
         original_model = rfdetr.model.model
 
         with patch("rfdetr.detr.deepcopy") as mock_deepcopy:
-            rfdetr.optimize_for_inference(compile=False, inplace=True)
+            rfdetr.inference(compile=False, inplace=True)
 
         mock_deepcopy.assert_not_called()
         assert rfdetr.model.model is None
@@ -323,7 +339,7 @@ class TestOptimizeForInferenceInplace:
         rfdetr = _FakeRFDETR()
         original_model = rfdetr.model.model
 
-        rfdetr.optimize_for_inference(compile=False, inplace=True)
+        rfdetr.inference(compile=False, inplace=True)
 
         with pytest.warns(UserWarning, match="no effect after inplace optimization"):
             rfdetr.remove_optimized_model()
@@ -334,13 +350,13 @@ class TestOptimizeForInferenceInplace:
         assert rfdetr.is_optimized_inplace is True
 
     def test_second_optimize_after_inplace_raises_runtime_error(self) -> None:
-        """Calling optimize_for_inference() again after inplace=True raises RuntimeError."""
+        """Calling inference() again after inplace=True raises RuntimeError."""
         rfdetr = _FakeRFDETR()
 
-        rfdetr.optimize_for_inference(compile=False, inplace=True)
+        rfdetr.inference(compile=False, inplace=True)
 
         with pytest.raises(RuntimeError, match="base model has been cleared"):
-            rfdetr.optimize_for_inference(compile=False)
+            rfdetr.inference(compile=False)
 
     def test_inplace_true_default_dtype_float32_does_not_cast(self) -> None:
         """Inplace=True with default dtype (float32) leaves weights unchanged — no casting occurs."""
@@ -348,7 +364,7 @@ class TestOptimizeForInferenceInplace:
         original_model = rfdetr.model.model
         original_dtype = original_model.linear.weight.dtype
 
-        rfdetr.optimize_for_inference(compile=False, inplace=True)
+        rfdetr.inference(compile=False, inplace=True)
 
         assert rfdetr.model.inference_model is original_model
         assert original_model.linear.weight.dtype == original_dtype
@@ -368,7 +384,7 @@ class TestOptimizeForInferenceInplace:
         rfdetr = _FakeRFDETR()
         original_model = rfdetr.model.model
 
-        rfdetr.optimize_for_inference(compile=False, dtype=dtype, inplace=True)
+        rfdetr.inference(compile=False, dtype=dtype, inplace=True)
 
         assert rfdetr.model.model is None
         assert rfdetr.model.inference_model is original_model
@@ -385,7 +401,7 @@ class TestOptimizeForInferenceInplace:
             patch.object(original_model, "export", side_effect=RuntimeError("export failed")),
             pytest.raises(RuntimeError, match="export failed"),
         ):
-            rfdetr.optimize_for_inference(compile=False, inplace=True)
+            rfdetr.inference(compile=False, inplace=True)
 
         mock_deepcopy.assert_not_called()
         assert rfdetr.model.model is original_model
@@ -410,7 +426,7 @@ class TestOptimizeForInferenceInplace:
             patch.object(original_model, "export") as mock_export,
             pytest.raises(ValueError, match="floating-point torch.dtype"),
         ):
-            rfdetr.optimize_for_inference(compile=False, dtype=dtype, inplace=True)
+            rfdetr.inference(compile=False, dtype=dtype, inplace=True)
 
         mock_deepcopy.assert_not_called()
         mock_export.assert_not_called()
@@ -430,7 +446,7 @@ class TestOptimizeForInferenceInplace:
             patch("torch.jit.trace") as mock_trace,
             pytest.raises(ValueError, match="inplace=True.*compile=False"),
         ):
-            rfdetr.optimize_for_inference(compile=True, inplace=True)
+            rfdetr.inference(compile=True, inplace=True)
 
         mock_deepcopy.assert_not_called()
         mock_export.assert_not_called()
@@ -443,7 +459,7 @@ class TestOptimizeForInferenceInplace:
         assert rfdetr.is_optimized_inplace is False
 
 
-class TestOptimizeForInferenceExceptionRecovery:
+class TestModelInferenceExceptionRecovery:
     """Verify state consistency when optimization fails mid-execution."""
 
     def test_deepcopy_failure_leaves_clean_state(self) -> None:
@@ -457,7 +473,7 @@ class TestOptimizeForInferenceExceptionRecovery:
             patch("rfdetr.detr.deepcopy", side_effect=RuntimeError("deepcopy failed")),
             pytest.raises(RuntimeError, match="deepcopy failed"),
         ):
-            rfdetr.optimize_for_inference(compile=False)
+            rfdetr.inference(compile=False)
 
         assert rfdetr.model.inference_model is None
         assert rfdetr._is_optimized_for_inference is False
@@ -472,7 +488,7 @@ class TestOptimizeForInferenceExceptionRecovery:
             patch.object(fake_copy, "export", side_effect=RuntimeError("export failed")),
             pytest.raises(RuntimeError, match="export failed"),
         ):
-            rfdetr.optimize_for_inference(compile=False)
+            rfdetr.inference(compile=False)
 
         assert rfdetr._is_optimized_for_inference is False
 
@@ -485,7 +501,7 @@ class TestOptimizeForInferenceExceptionRecovery:
             patch("torch.jit.trace", side_effect=RuntimeError("trace failed")),
             pytest.raises(RuntimeError, match="trace failed"),
         ):
-            rfdetr.optimize_for_inference(compile=True, batch_size=2)
+            rfdetr.inference(compile=True, batch_size=2)
 
         assert rfdetr._optimized_has_been_compiled is False
         assert rfdetr._optimized_batch_size is None
@@ -499,7 +515,7 @@ class TestOptimizeForInferenceExceptionRecovery:
             patch("torch.jit.trace", side_effect=RuntimeError("trace failed")),
             pytest.raises(RuntimeError, match="trace failed"),
         ):
-            rfdetr.optimize_for_inference(compile=True)
+            rfdetr.inference(compile=True)
 
         assert rfdetr._is_optimized_for_inference is False
         assert rfdetr.model.inference_model is None
@@ -523,7 +539,7 @@ class TestOptimizeForInferenceExceptionRecovery:
             patch.object(original_model, "export", side_effect=_mutating_export),
             pytest.raises(RuntimeError, match="export failed mid-mutation"),
         ):
-            rfdetr.optimize_for_inference(compile=False, inplace=True)
+            rfdetr.inference(compile=False, inplace=True)
 
         assert rfdetr._is_optimized_for_inference is False
         assert rfdetr.is_optimized_inplace is False

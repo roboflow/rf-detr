@@ -101,7 +101,7 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
 
     Replicates ``Model.__init__`` logic: builds the nn.Module, optionally loads pretrain weights and applies LoRA.  The
     model is intentionally kept on CPU; :func:`_ensure_model_on_device` in ``detr.py`` performs the deferred
-    ``.to(device)`` on the first ``predict()`` / ``export()`` / ``optimize_for_inference()`` call.  Keeping construction
+    ``.to(device)`` on the first ``predict()`` / ``export()`` / ``inference()`` call.  Keeping construction
     CPU-only prevents CUDA initialisation during ``__init__``, which would block DDP strategies (``ddp_notebook``,
     ``ddp_spawn``) from spawning child processes in notebook environments.
 
@@ -160,7 +160,7 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
         backbone.encoder.encoder.embeddings.patch_embeddings.num_channels = model_config.num_channels
 
     device = torch.device(args.device)
-    # Keep the model on CPU here; predict() / export() / optimize_for_inference()
+    # Keep the model on CPU here; predict() / export() / inference()
     # will lazily move it to the target device on first use.  Eagerly calling
     # .to("cuda") would initialise the CUDA runtime during __init__(), which
     # prevents DDP strategies (ddp_notebook, ddp_spawn) from forking/spawning

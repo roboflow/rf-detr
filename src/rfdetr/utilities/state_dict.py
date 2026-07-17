@@ -132,7 +132,10 @@ def _make_fit_loop_state(epoch: int) -> dict[str, Any]:
     }
 
 
-def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
+def strip_checkpoint(
+    checkpoint: str | os.PathLike[str],
+    extra_metadata: dict[str, Any] | None = None,
+) -> None:
     """Strip a checkpoint file down to ``model``, ``args``, and PTL-compatible keys.
 
     Preserves ``model_name`` (when present) so that ``RFDETR.from_checkpoint()`` can still resolve the model class from
@@ -146,6 +149,18 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
 
     Args:
         checkpoint: Path to the ``.pth`` checkpoint file to strip in place.
+        extra_metadata: Optional key/value pairs merged into the stripped checkpoint. Used to record provenance that is
+            not derivable from the surviving keys (e.g. ``{"best_total_source": "ema"}`` for
+            ``checkpoint_best_total.pth``). Keys overwrite same-named preserved keys.
+
+    Examples:
+        >>> import tempfile
+        >>> import torch
+        >>> path = tempfile.NamedTemporaryFile(suffix=".pth", delete=False).name
+        >>> torch.save({"model": {}, "args": {}, "optimizer_states": [1]}, path)
+        >>> strip_checkpoint(path, extra_metadata={"best_total_source": "ema"})
+        >>> torch.load(path, weights_only=False)["best_total_source"]
+        'ema'
     """
     from pathlib import Path
 
@@ -181,6 +196,9 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
         for loop_key in ("validate_loop", "test_loop"):
             if loop_key not in loops:
                 loops[loop_key] = {"state_dict": {}}
+    # Merge caller-supplied provenance last so it wins over any preserved key of the same name.
+    if extra_metadata:
+        new_state_dict.update(extra_metadata)
     # Create the temp file in the destination directory so os.replace stays on the same filesystem (atomic).
     checkpoint_dir = os.path.dirname(os.path.abspath(os.fspath(checkpoint)))
     with tempfile.NamedTemporaryFile(dir=checkpoint_dir, delete=False) as tmp_file:
