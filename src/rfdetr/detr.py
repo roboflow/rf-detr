@@ -18,7 +18,7 @@ from collections.abc import Callable
 from copy import copy, deepcopy
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Concatenate, Literal, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, Concatenate, Literal, ParamSpec, TypeVar, cast
 from urllib.parse import urlparse
 
 import numpy as np
@@ -131,10 +131,10 @@ def _validate_shape_dims(
             dimension is not divisible by ``block_size``.
     """
     try:
-        height, width = shape  # type: ignore[misc]
+        raw_height, raw_width = cast("tuple[Any, Any]", shape)
     except (TypeError, ValueError):
         raise ValueError(f"shape must be a sequence of two positive integers (height, width), got {shape!r}.") from None
-    for dim_name, dim in (("height", height), ("width", width)):
+    for dim_name, dim in (("height", raw_height), ("width", raw_width)):
         if isinstance(dim, bool):
             raise ValueError(f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r}).")
         try:
@@ -146,7 +146,7 @@ def _validate_shape_dims(
         if dim <= 0:
             raise ValueError(f"shape must contain positive integers for height and width, got {shape!r}.")
     # Normalise to plain Python ints; also accepts numpy.int64, torch scalars, etc.
-    height, width = operator.index(height), operator.index(width)
+    height, width = operator.index(raw_height), operator.index(raw_width)
     if height % block_size != 0 or width % block_size != 0:
         raise ValueError(
             f"shape must have both dimensions divisible by {block_size} "
@@ -230,7 +230,8 @@ def _ensure_model_on_device(method: Callable[Concatenate[Any, _P], _R]) -> Calla
         _move_model_context_to_device(getattr(self, "model", None))
         return method(self, *args, **kwargs)
 
-    return wrapper
+    typed_wrapper = cast("Callable[Concatenate[Any, _P], _R]", wrapper)
+    return typed_wrapper
 
 
 def _prepare_run_config(
@@ -396,7 +397,7 @@ class RFDETR:
 
     means = [0.485, 0.456, 0.406]
     stds = [0.229, 0.224, 0.225]
-    size = None
+    size: str | None = None
     _model_config_class: type[ModelConfig] = ModelConfig
     _train_config_class: type[TrainConfig] = TrainConfig
 
@@ -414,7 +415,7 @@ class RFDETR:
         self.model_config = self.get_model_config(**kwargs)
         self.maybe_download_pretrain_weights()
         self.model = self.get_model(self.model_config)
-        self.callbacks = defaultdict(list)
+        self.callbacks: dict[str, list[Callable[..., Any]]] = defaultdict(list)
 
         self.means = list(self.means)
         self.stds = list(self.stds)
@@ -430,13 +431,13 @@ class RFDETR:
         self._is_optimized_for_inference = False
         self._has_warned_about_not_being_optimized_for_inference = False
         self._optimized_has_been_compiled = False
-        self._optimized_batch_size = None
-        self._optimized_resolution = None
-        self._optimized_dtype = None
+        self._optimized_batch_size: int | None = None
+        self._optimized_resolution: int | None = None
+        self._optimized_dtype: torch.dtype | None = None
         self._optimized_inplace = False
         self._has_been_trained = False
 
-    def maybe_download_pretrain_weights(self):
+    def maybe_download_pretrain_weights(self) -> None:
         """Download pre-trained weights if they are not already downloaded.
 
         Bare filenames (no directory component, e.g. ``rf-detr-base.pth``) are resolved to the model cache directory —
@@ -447,9 +448,9 @@ class RFDETR:
         Paths that already contain a directory component are used as-is; the parent directory is created if it does not
         yet exist.
         """
-        pretrain_weights = self.model_config.pretrain_weights
-        if pretrain_weights is None:
+        if self.model_config.pretrain_weights is None:
             return
+        pretrain_weights = str(self.model_config.pretrain_weights)
         if not os.path.dirname(pretrain_weights):
             # Field default was not processed by expand_path — resolve to cache dir.
             cache_dir = get_model_cache_dir()
@@ -458,9 +459,9 @@ class RFDETR:
         else:
             os.makedirs(os.path.dirname(pretrain_weights), exist_ok=True)
         self.model_config.pretrain_weights = pretrain_weights
-        download_pretrain_weights(self.model_config.pretrain_weights)
+        download_pretrain_weights(pretrain_weights)
 
-    def get_model_config(self, **kwargs) -> ModelConfig:
+    def get_model_config(self, **kwargs: Any) -> ModelConfig:
         """Retrieve the configuration parameters used by the model."""
         return self._model_config_class(**kwargs)
 
@@ -559,7 +560,7 @@ class RFDETR:
         # only when the caller explicitly passes trust_checkpoint=True.
         from rfdetr.util.io import _safe_torch_load
 
-        ckpt: dict[str, Any] = _safe_torch_load(path, trust=trust_checkpoint)
+        ckpt: dict[str, Any] = _safe_torch_load(str(path), trust=trust_checkpoint)
         args = ckpt["args"]
 
         _variant_name_to_class: dict[str, type[RFDETR]] = {
@@ -833,7 +834,7 @@ class RFDETR:
         )
         return None, None
 
-    def train(self, **kwargs):
+    def train(self, **kwargs: Any) -> None:
         """Train an RF-DETR model via the PyTorch Lightning stack.
 
         All keyword arguments are forwarded to :meth:`get_train_config` to build a :class:`~rfdetr.config.TrainConfig`.
@@ -927,7 +928,7 @@ class RFDETR:
                     exc_info=True,
                 )
 
-        trainer_kwargs = {"accelerator": _accelerator}
+        trainer_kwargs: dict[str, Any] = {"accelerator": _accelerator}
         if _devices is not None:
             trainer_kwargs["devices"] = _devices
         trainer = build_trainer(config, self.model_config, **trainer_kwargs)
@@ -1071,11 +1072,15 @@ class RFDETR:
         # module has consumed the weights, before the (possibly slow) datamodule/trainer setup below.
         _original_device = getattr(self.model, "device", None)
         _moved_to_cpu = _original_device is not None and str(_original_device) != "cpu"
+        source_model = self.model.model
+        if source_model is None:
+            raise RuntimeError("Cannot evaluate: the base model has been cleared by a previous inplace optimization.")
         if _moved_to_cpu:
             with torch.inference_mode(False):
-                self.model.model = self.model.model.to("cpu")
+                source_model = source_model.to("cpu")
+                self.model.model = source_model
         try:
-            source_state = self.model.model.state_dict()
+            source_state = source_model.state_dict()
             # Reconcile DINOv2 positional embeddings when a `resolution` override changed the PE grid
             # (no-op when unchanged), so the transplant works at the evaluation resolution.
             interpolate_position_embeddings(source_state, eval_model_config.positional_encoding_size)
@@ -1240,14 +1245,14 @@ class RFDETR:
 
         try:
             with cuda_ctx:
-                inference_model = self.model.model if inplace else deepcopy(self.model.model)
+                inference_model: Any = self.model.model if inplace else deepcopy(self.model.model)
                 inference_model.eval()
                 inference_model.export()
 
                 inference_model = inference_model.to(dtype=dtype)
 
                 if compile:
-                    inference_model = torch.jit.trace(
+                    inference_model = torch.jit.trace(  # type: ignore[no-untyped-call]
                         inference_model,
                         torch.randn(
                             batch_size,
@@ -1279,7 +1284,7 @@ class RFDETR:
                 self.remove_optimized_model()
             raise
 
-    @deprecated(target=inference, deprecated_in="1.9.0", remove_in="1.11.0")
+    @deprecated(target=inference, deprecated_in="1.9.0", remove_in="1.11.0")  # type: ignore[untyped-decorator]
     def optimize_for_inference(
         self,
         compile: bool = True,
@@ -1414,7 +1419,7 @@ class RFDETR:
         patch_size: int | None = None,
         format: str = "onnx",
         quantization: str | None = None,
-        calibration_data: str | np.ndarray | None = None,
+        calibration_data: str | np.ndarray[Any, Any] | None = None,
         max_images: int = 100,
         *,
         notes: object = None,
@@ -1660,8 +1665,8 @@ class RFDETR:
                 data = yaml.safe_load(f)
             if "names" in data:
                 if isinstance(data["names"], dict):
-                    return [data["names"][i] for i in sorted(data["names"].keys())]
-                return data["names"]
+                    return [str(data["names"][i]) for i in sorted(data["names"].keys())]
+                return [str(name) for name in data["names"]]
             raise ValueError(f"Found {yaml_path} but it does not contain 'names' field.")
         raise FileNotFoundError(
             f"Could not find class names in {dataset_dir}."
@@ -1898,7 +1903,7 @@ class RFDETR:
             return
 
         if not hasattr(self, "_keypoint_schema_cache"):
-            self._keypoint_schema_cache: dict = {}
+            self._keypoint_schema_cache: dict[Any, Any] = {}
 
         cache_key = (dataset_file, dataset_dir)
         if cache_key in self._keypoint_schema_cache:
@@ -1979,7 +1984,7 @@ class RFDETR:
             if model_args is not None:
                 model_args.num_keypoints_per_class = inferred_schema
 
-    def get_train_config(self, **kwargs) -> TrainConfig:
+    def get_train_config(self, **kwargs: Any) -> TrainConfig:
         """Retrieve the configuration parameters that will be used for training."""
         return self._train_config_class(**kwargs)
 
@@ -2027,13 +2032,23 @@ class RFDETR:
                 " call model.inference(dtype=torch.float16).",
             )
             self._has_warned_about_not_being_optimized_for_inference = True
-        self.model.model.eval()
+        # self.model.model is only cleared when optimized for inference (guarded by the early return above).
+        model = self.model.model
+        assert model is not None
+        model.eval()
 
     @torch.inference_mode()
-    @_ensure_model_on_device
+    # mypy can't match this signature against _ensure_model_on_device's Concatenate[Any, _P] typing without
+    # `self` being positional-only (a side effect of the trailing **kwargs); ignored rather than changing the
+    # public signature.
+    @_ensure_model_on_device  # type: ignore[arg-type]
     def predict(
         self,
-        images: str | Image.Image | np.ndarray | torch.Tensor | list[str | np.ndarray | Image.Image | torch.Tensor],
+        images: str
+        | Image.Image
+        | np.ndarray[Any, Any]
+        | torch.Tensor
+        | list[str | np.ndarray[Any, Any] | Image.Image | torch.Tensor],
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
@@ -2134,14 +2149,15 @@ class RFDETR:
         # length: a single image (path / PIL / tensor) yields a bare Detections,
         # while a list/tuple always yields a list — even when it holds one image.
         single_input = not isinstance(images, (list, tuple))
-        if single_input:
+        if not isinstance(images, (list, tuple)):
             images = [images]
 
-        orig_sizes = []
-        processed_images = []
-        source_images = [] if include_source_image else None
+        orig_sizes: list[Any] = []
+        processed_images: list[Any] = []
+        source_images: list[Any] | None = [] if include_source_image else None
 
-        for img in images:
+        for img_input in images:
+            img: Any = img_input
             if isinstance(img, str):
                 if urlparse(img).scheme in ("http", "https"):
                     resp = requests.get(img, timeout=30)
@@ -2161,10 +2177,12 @@ class RFDETR:
                     src = np.array(img)
                     if src.dtype != np.uint8:
                         src = (src * 255).clip(0, 255).astype(np.uint8)
-                    source_images.append(src)
+                    source_images.append(src)  # type: ignore[union-attr]
                 img = F.to_tensor(img)
             elif include_source_image:
-                source_images.append((img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
+                source_images.append(  # type: ignore[union-attr]
+                    (img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+                )
 
             if (img > 1).any():
                 raise ValueError(
@@ -2229,9 +2247,13 @@ class RFDETR:
                     )
 
         if self._is_optimized_for_inference:
-            predictions = self.model.inference_model(batch_tensor.to(dtype=self._optimized_dtype))
+            inference_model = self.model.inference_model
+            assert inference_model is not None, "inference_model is set whenever _is_optimized_for_inference is True."
+            predictions = inference_model(batch_tensor.to(dtype=self._optimized_dtype))
         else:
-            predictions = self.model.model(batch_tensor)
+            model = self.model.model
+            assert model is not None, "self.model.model is only cleared when optimized for inference."
+            predictions = model(batch_tensor)
         if isinstance(predictions, tuple):
             return_predictions = {
                 "pred_logits": predictions[1],
@@ -2319,7 +2341,7 @@ class RFDETR:
                 detections.data["keypoint_precision_cholesky"] = keypoint_precision.float().cpu().numpy()
 
             if include_source_image:
-                detections.metadata["source_image"] = source_images[i]
+                detections.metadata["source_image"] = source_images[i]  # type: ignore[index]
             detections.data["source_shape"] = np.tile(np.array(orig_sizes[i], dtype=np.int64), (len(detections), 1))
 
             # Attach class names so callers can map class_id → name without a
@@ -2353,7 +2375,10 @@ class RFDETR:
                 keypoint_data = dict(detections.data)
                 keypoint_data["xyxy"] = detections.xyxy.astype(np.float32)
                 if include_source_image:
-                    keypoint_data["source_image"] = [source_images[i] for _ in range(len(detections))]
+                    keypoint_data["source_image"] = [
+                        source_images[i]  # type: ignore[index]
+                        for _ in range(len(detections))
+                    ]
                 raw_precision = keypoint_data.get("keypoint_precision_cholesky")
                 raw_source_shape = keypoint_data.get("source_shape")
                 if raw_precision is not None and raw_source_shape is not None and len(detections) > 0:
@@ -2429,7 +2454,7 @@ class RFDETR:
                 raise ValueError("Set api_key=<KEY> in deploy_to_roboflow or export ROBOFLOW_API_KEY=<KEY>")
 
         rf = Roboflow(api_key=api_key)
-        workspace = rf.workspace(workspace)
+        rf_workspace = rf.workspace(workspace)
 
         if self.size is None and size is None:
             raise ValueError("Must set size for custom architectures")
@@ -2445,7 +2470,7 @@ class RFDETR:
         size = self.size if size is None else size
         with tempfile.TemporaryDirectory(prefix="roboflow_upload_") as tmp_out_dir:
             self.export_for_roboflow(tmp_out_dir)
-            project = workspace.project(project_id)
+            project = rf_workspace.project(project_id)
             project_version = project.version(version)
             project_version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")
 
@@ -2493,7 +2518,7 @@ class RFDETR:
         torch.save({"model": self.model.model.state_dict(), "args": args}, outpath)
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazily resolve legacy re-exports without creating import-order cycles."""
     if name in _VARIANT_EXPORTS:
         module = importlib.import_module("rfdetr.variants")
