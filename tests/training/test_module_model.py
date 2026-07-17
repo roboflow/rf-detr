@@ -1543,58 +1543,44 @@ class TestConfigureOptimizers:
         assert optimizer.defaults["eps"] == pytest.approx(optimizer_kwargs["eps"])
 
     @patch("rfdetr.training.module_model.get_param_dict")
-    def test_custom_optimizer_uses_pytorch_optimizer_loader(self, mock_get_param_dict, tmp_path):
-        """Non-default optimizer names are resolved through pytorch-optimizer."""
-        module, param_dicts = self._setup_module(tmp_path, optimizer="lion")
+    def test_managed_optimizer_resolves_native_class(self, mock_get_param_dict, tmp_path):
+        """Managed short names resolve to a native torch.optim class with lr/weight_decay injected."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
         mock_get_param_dict.return_value = param_dicts
 
         with patch(
-            "rfdetr.training.module_model._load_pytorch_optimizer", return_value=_RecordingOptimizer
-        ) as mock_load:
+            "rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer
+        ) as mock_resolve:
             optimizer = module.configure_optimizers()["optimizer"]
 
-        mock_load.assert_called_once_with("lion")
+        mock_resolve.assert_called_once_with("sgd")
         assert isinstance(optimizer, _RecordingOptimizer)
         assert optimizer.defaults["lr"] == pytest.approx(module.train_config.lr)
         assert optimizer.defaults["weight_decay"] == pytest.approx(module.train_config.weight_decay)
 
     @patch("rfdetr.training.module_model.get_param_dict")
-    def test_custom_optimizer_preserves_rfdetr_param_groups(self, mock_get_param_dict, tmp_path):
-        """Custom optimizers must receive RF-DETR param groups with layer-wise LR values."""
-        module, param_dicts = self._setup_module(tmp_path, optimizer="lion")
+    def test_managed_optimizer_preserves_rfdetr_param_groups(self, mock_get_param_dict, tmp_path):
+        """Managed optimizers must receive RF-DETR param groups with layer-wise LR values."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
         param_dicts[0]["lr"] = 2.5e-5
         mock_get_param_dict.return_value = param_dicts
 
-        with patch("rfdetr.training.module_model._load_pytorch_optimizer", return_value=_RecordingOptimizer):
+        with patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer):
             optimizer = module.configure_optimizers()["optimizer"]
 
         assert optimizer.param_groups[0]["initial_lr"] == pytest.approx(2.5e-5)
 
     @patch("rfdetr.training.module_model.get_param_dict")
-    def test_custom_optimizer_kwargs_forwarded(self, mock_get_param_dict, tmp_path):
-        """optimizer_kwargs are forwarded to the pytorch-optimizer constructor."""
-        optimizer_kwargs = {"betas": (0.9, 0.99), "weight_decouple": True}
-        module, param_dicts = self._setup_module(tmp_path, optimizer="lion", optimizer_kwargs=optimizer_kwargs)
+    def test_managed_optimizer_kwargs_forwarded(self, mock_get_param_dict, tmp_path):
+        """optimizer_kwargs are forwarded to a managed optimizer constructor."""
+        optimizer_kwargs = {"momentum": 0.9, "nesterov": True}
+        module, param_dicts = self._setup_module(tmp_path, optimizer="sgd", optimizer_kwargs=optimizer_kwargs)
         mock_get_param_dict.return_value = param_dicts
 
-        with patch("rfdetr.training.module_model._load_pytorch_optimizer", return_value=_RecordingOptimizer):
+        with patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer):
             optimizer = module.configure_optimizers()["optimizer"]
 
         assert optimizer.extra_kwargs == optimizer_kwargs
-
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_pytorch_optimizer_prefix_allows_adamw_from_package(self, mock_get_param_dict, tmp_path):
-        """pytorch_optimizer: prefix opts into the external AdamW implementation."""
-        module, param_dicts = self._setup_module(tmp_path, optimizer="pytorch_optimizer:adamw")
-        mock_get_param_dict.return_value = param_dicts
-
-        with patch(
-            "rfdetr.training.module_model._load_pytorch_optimizer", return_value=_RecordingOptimizer
-        ) as mock_load:
-            optimizer = module.configure_optimizers()["optimizer"]
-
-        mock_load.assert_called_once_with("adamw")
-        assert isinstance(optimizer, _RecordingOptimizer)
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_callable_optimizer_called_with_param_groups_only(self, mock_get_param_dict, tmp_path):
@@ -1623,44 +1609,22 @@ class TestConfigureOptimizers:
         assert optimizer.defaults["lr"] == pytest.approx(1e-3)
 
     @patch("rfdetr.training.module_model.get_param_dict")
-    def test_missing_pytorch_optimizer_has_install_hint(self, mock_get_param_dict, tmp_path):
-        """Selecting a custom optimizer without pytorch-optimizer installed gives a clear install hint."""
-        module, param_dicts = self._setup_module(tmp_path, optimizer="lion")
+    def test_uninstalled_import_path_optimizer_raises_value_error(self, mock_get_param_dict, tmp_path):
+        """A dotted import path that cannot be imported surfaces as a configuration error at train start."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer="pytorch_optimizer.Lion")
         mock_get_param_dict.return_value = param_dicts
 
         with (
-            patch(
-                "rfdetr.training.module_model._load_pytorch_optimizer",
-                side_effect=ImportError("Install pytorch-optimizer"),
-            ),
-            pytest.raises(ImportError, match="pytorch-optimizer"),
+            patch("rfdetr.training.module_model.importlib.import_module", side_effect=ImportError("No module")),
+            pytest.raises(ValueError, match="Could not import optimizer"),
         ):
             module.configure_optimizers()
 
     @patch("rfdetr.training.module_model.get_param_dict")
-    def test_invalid_pytorch_optimizer_name_raises_value_error(self, mock_get_param_dict, tmp_path):
-        """Unsupported optimizer names are reported as configuration errors."""
-        module, param_dicts = self._setup_module(tmp_path, optimizer="not_real")
-        mock_get_param_dict.return_value = param_dicts
-
-        with (
-            patch(
-                "rfdetr.training.module_model._load_pytorch_optimizer",
-                side_effect=NotImplementedError("not implemented optimizer : not_real"),
-            ),
-            pytest.raises(ValueError, match="not_real"),
-        ):
-            module.configure_optimizers()
-
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_real_pytorch_optimizer_lion_smoke(self, mock_get_param_dict, tmp_path):
-        """Real pytorch-optimizer Lion can be constructed when the package is installed."""
+    def test_real_import_path_optimizer_smoke(self, mock_get_param_dict, tmp_path):
+        """A real pytorch-optimizer optimizer can be built via its import path when installed."""
         pytest.importorskip("pytorch_optimizer")
-        module, param_dicts = self._setup_module(
-            tmp_path,
-            optimizer="lion",
-            optimizer_kwargs={"weight_decouple": True},
-        )
+        module, param_dicts = self._setup_module(tmp_path, optimizer="pytorch_optimizer.Lion")
         mock_get_param_dict.return_value = param_dicts
 
         optimizer = module.configure_optimizers()["optimizer"]
@@ -1670,10 +1634,10 @@ class TestConfigureOptimizers:
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_custom_optimizer_omits_weight_decay_when_unsupported(self, mock_get_param_dict, tmp_path):
         """weight_decay must not be injected into optimizers whose constructor does not accept it."""
-        module, param_dicts = self._setup_module(tmp_path, optimizer="lion")
+        module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
         mock_get_param_dict.return_value = param_dicts
 
-        with patch("rfdetr.training.module_model._load_pytorch_optimizer", return_value=_NoWeightDecayOptimizer):
+        with patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_NoWeightDecayOptimizer):
             optimizer = module.configure_optimizers()["optimizer"]
 
         assert isinstance(optimizer, _NoWeightDecayOptimizer)
@@ -1690,12 +1654,12 @@ class TestConfigureOptimizers:
         tmp_path,
     ):
         """A custom optimizer on a fused-eligible BF16/CUDA run must warn that fused_optimizer is ignored."""
-        module, param_dicts = self._setup_module(tmp_path, optimizer="lion")
+        module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
         mock_get_param_dict.return_value = param_dicts
         module._trainer.precision = "bf16-mixed"
 
         with (
-            patch("rfdetr.training.module_model._load_pytorch_optimizer", return_value=_RecordingOptimizer),
+            patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer),
             patch("rfdetr.training.module_model.logger.warning") as mock_warning,
         ):
             module.configure_optimizers()
@@ -1733,13 +1697,13 @@ class TestConfigureOptimizers:
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_pytorch_optimizer_construction_error_is_rewrapped(self, mock_get_param_dict, tmp_path):
-        """A pytorch-optimizer constructor failure must surface as an RF-DETR-specific initialization error."""
-        module, param_dicts = self._setup_module(tmp_path, optimizer="lion")
+        """A managed optimizer constructor failure must surface as an RF-DETR-specific initialization error."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
         mock_get_param_dict.return_value = param_dicts
 
         with (
-            patch("rfdetr.training.module_model._load_pytorch_optimizer", return_value=_RaisingOptimizer),
-            pytest.raises(TypeError, match="Failed to initialize optimizer 'pytorch_optimizer:lion'"),
+            patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RaisingOptimizer),
+            pytest.raises(TypeError, match="Failed to initialize optimizer 'sgd'"),
         ):
             module.configure_optimizers()
 
@@ -1747,7 +1711,7 @@ class TestConfigureOptimizers:
     @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
     def test_use_fused_optimizer_false_for_custom_optimizer(self, mock_cuda_available, mock_bf16_supported, tmp_path):
         """Fused AdamW lifecycle must not activate for custom optimizers, even on BF16/CUDA."""
-        module, _ = self._setup_module(tmp_path, optimizer="lion")
+        module, _ = self._setup_module(tmp_path, optimizer="sgd")
         module._trainer.precision = "bf16-mixed"
 
         assert module._use_fused_optimizer is False

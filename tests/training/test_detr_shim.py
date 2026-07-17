@@ -417,12 +417,12 @@ class TestRFDETRTrainPTL:
         with p_mod, p_dm, p_bt:
             RFDETR.train(
                 mock_self,
-                optimizer="pytorch_optimizer:lion",
+                optimizer="torch.optim.AdamW",
                 optimizer_kwargs=optimizer_kwargs,
             )
 
         mock_self.get_train_config.assert_called_once_with(
-            optimizer="pytorch_optimizer:lion",
+            optimizer="torch.optim.AdamW",
             optimizer_kwargs=optimizer_kwargs,
         )
 

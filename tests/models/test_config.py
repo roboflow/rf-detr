@@ -339,7 +339,7 @@ class TestTrainConfigT42PromotedFields:
             pytest.param("fp16_eval", True, id="fp16_eval"),
             pytest.param("lr_scheduler", "cosine", id="lr_scheduler_cosine"),
             pytest.param("lr_min_factor", 0.01, id="lr_min_factor"),
-            pytest.param("optimizer", "lion", id="optimizer"),
+            pytest.param("optimizer", "sgd", id="optimizer"),
             pytest.param("optimizer_kwargs", {"betas": (0.9, 0.99)}, id="optimizer_kwargs"),
             pytest.param("dont_save_weights", True, id="dont_save_weights"),
             pytest.param("run_test", True, id="run_test"),
@@ -371,15 +371,19 @@ class TestTrainConfigT42PromotedFields:
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, optimizer="  ")
 
-    def test_optimizer_rejects_unknown_provider_prefix(self, tmp_path):
-        """A provider prefix other than pytorch_optimizer is rejected at config time."""
-        with pytest.raises((ValueError, ValidationError), match="provider"):
-            self._tc(tmp_path, optimizer="badprovider:lion")
+    def test_optimizer_rejects_unknown_short_name(self, tmp_path):
+        """A bare short name that is not a torch.optim optimizer is rejected at config time."""
+        with pytest.raises((ValueError, ValidationError), match="native optimizer"):
+            self._tc(tmp_path, optimizer="lion")
 
-    def test_optimizer_rejects_empty_name_after_provider_prefix(self, tmp_path):
-        """A provider prefix with no optimizer name is rejected at config time."""
-        with pytest.raises((ValueError, ValidationError), match="non-empty optimizer name"):
-            self._tc(tmp_path, optimizer="pytorch_optimizer:")
+    def test_optimizer_rejects_non_torch_optim_short_name(self, tmp_path):
+        """Pytorch-optimizer names are not selectable by short name (use an import path)."""
+        with pytest.raises((ValueError, ValidationError), match="native optimizer"):
+            self._tc(tmp_path, optimizer="pytorch_optimizer:lion")
+
+    def test_optimizer_accepts_native_short_name(self, tmp_path):
+        """A native torch.optim short name (e.g. 'sgd') is accepted."""
+        assert self._tc(tmp_path, optimizer="sgd").optimizer == "sgd"
 
     @pytest.mark.parametrize(
         "reserved_key",
