@@ -336,7 +336,7 @@ def build_trainer(
     # early-stopping and write no checkpoints or logs to ``output_dir``.  ``COCOEvalCallback`` writes its
     # metrics in the ``*_epoch_end`` hooks while ``BestModelCallback`` / ``RFDETREarlyStopping`` read them in
     # the later ``on_validation_end`` hook, so appending it after these callbacks does not change behaviour.
-    loggers: list = []
+    loggers: list[Any] = []
     if include_training_callbacks:
         if enable_ema:
             callbacks.append(
@@ -400,7 +400,7 @@ def build_trainer(
         # always reads the raw (un-smoothed) metric value.
         callbacks.append(
             BestModelCallback(
-                output_dir=tc.output_dir,
+                output_dir=str(tc.output_dir),
                 monitor_regular=monitor_regular,
                 monitor_ema=monitor_ema,
                 run_test=tc.run_test,
@@ -467,7 +467,7 @@ def build_trainer(
                     MLFlowLogger(
                         experiment_name=tc.project or "rfdetr",
                         run_name=tc.run,
-                        save_dir=tc.output_dir,
+                        save_dir=str(tc.output_dir),
                     )
                 )
             except ModuleNotFoundError as exc:
