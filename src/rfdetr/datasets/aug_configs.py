@@ -3,7 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Augmentation presets and default configuration for RF-DETR training.
+"""Optional Albumentations augmentation presets for RF-DETR training.
+
+RF-DETR's default training augmentation path is torchvision-native and does not require Albumentations. Importing and
+passing the presets in this module as ``aug_config`` uses the optional Albumentations integration; install it with
+``pip install 'rfdetr[augment]'``.
 
 Import a preset and pass it as ``aug_config`` to your training call:
 
@@ -62,8 +66,9 @@ GEOMETRIC_TRANSFORMS = {
 
 ## Kornia GPU Backend
 
-When ``augmentation_backend="auto"`` or ``"gpu"`` is set in ``TrainConfig``, augmentations run on the GPU via Kornia
-instead of Albumentations.
+When ``augmentation_backend="kornia"`` is set in ``TrainConfig`` (or ``"auto"``/``"cpu"`` resolves to it because
+Kornia is installed and CUDA is available), augmentations run on the GPU via Kornia instead of CPU Albumentations
+or torchvision defaults. Install it with ``pip install 'rfdetr[augment]'``.
 
 **Supported transforms** (all presets):
 
@@ -78,8 +83,7 @@ instead of Albumentations.
 | ``GaussianBlur`` | ``K.RandomGaussianBlur`` | ``blur_limit`` rounded up to odd; ``sigma=(0.1, 2.0)`` |
 | ``GaussNoise`` | ``K.RandomGaussianNoise`` | Upper bound of ``std_range`` used as fixed std |
 
-**Phase 1 limitation**: Segmentation models (``segmentation_head=True``) skip GPU augmentation; CPU Albumentations are
-used instead. Mask support is planned for Phase 2.
+Segmentation models are supported by the GPU augmentation path; masks are augmented in sync with images and boxes.
 """
 
 # ---------------------------------------------------------------------------
