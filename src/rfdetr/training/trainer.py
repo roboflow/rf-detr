@@ -140,6 +140,169 @@ def _requests_multiple_devices(devices: int | str, accelerator: str | None = Non
     return False
 
 
+def _append_training_callbacks(
+    callbacks: list[Callback],
+    loggers: list[Any],
+    tc: TrainConfig,
+    model_config: ModelConfig,
+    *,
+    enable_ema: bool,
+    has_keypoints: bool,
+) -> None:
+    """Append the training-only callbacks and loggers to *callbacks* / *loggers* in place.
+
+    Called by :func:`build_trainer` only when ``include_training_callbacks=True``: EMA, drop-path, checkpointing,
+    best-model selection, early stopping, and the configured loggers (CSVLogger always; TensorBoard/WandB/MLflow
+    optionally). Extracted from ``build_trainer`` to keep the training-vs-eval mode split to a single call site
+    rather than a re-indented function body.
+
+    Args:
+        callbacks: The trainer's callback list, appended to in place.
+        loggers: The trainer's logger list, appended to in place.
+        tc: Training hyperparameter configuration.
+        model_config: Architecture configuration (used to select the best-model monitor metric).
+        enable_ema: Whether EMA is active (already resolved against sharded-strategy compatibility).
+        has_keypoints: Whether the model uses the keypoint head (selects the monitor metric).
+    """
+    if enable_ema:
+        callbacks.append(
+            RFDETREMACallback(
+                decay=tc.ema_decay,
+                tau=tc.ema_tau,
+                update_interval_steps=tc.ema_update_interval,
+            )
+        )
+
+    # Drop-path / dropout scheduling (vit_encoder_num_layers defaults to 12).
+    if tc.drop_path > 0.0:
+        callbacks.append(DropPathCallback(drop_path=tc.drop_path))
+
+    # Latest resume checkpoint — overwritten every epoch.
+    # Skip when checkpoint_interval == 1 to avoid duplicate ModelCheckpoint state_key.
+    if tc.checkpoint_interval != 1:
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=tc.output_dir,
+                filename="last",
+                every_n_epochs=1,
+                save_top_k=1,
+                enable_version_counter=False,
+                auto_insert_metric_name=False,
+                verbose=False,
+            )
+        )
+
+    # Interval archive checkpoints — kept for the full run.
+    callbacks.append(
+        ModelCheckpoint(
+            dirpath=tc.output_dir,
+            filename="checkpoint_{epoch}",
+            every_n_epochs=tc.checkpoint_interval,
+            save_top_k=-1,
+            enable_version_counter=False,
+            auto_insert_metric_name=False,
+            verbose=False,
+        )
+    )
+
+    if has_keypoints:
+        monitor_regular = "val/keypoint_map_50_95"
+        early_stopping_monitor_ema = "val/ema_keypoint_map_50_95"
+    elif model_config.segmentation_head:
+        monitor_regular = "val/segm_mAP_50_95"
+        early_stopping_monitor_ema = "val/ema_segm_mAP_50_95"
+    else:
+        monitor_regular = "val/mAP_50_95"
+        early_stopping_monitor_ema = "val/ema_mAP_50_95"
+    monitor_ema = early_stopping_monitor_ema if enable_ema else None
+
+    best_model_smooth_alpha = tc.smooth_alpha
+
+    # Best-model checkpointing — monitor EMA metric only when EMA is active and emitted.
+    # PTL _reorder_callbacks moves all Checkpoint subclasses (including BestModelCallback)
+    # to the end of the callback list; RFDETREarlyStopping (not a Checkpoint subclass) always
+    # fires BEFORE BestModelCallback on every on_validation_end, regardless of append order.
+    # The try/finally restore in BestModelCallback.on_validation_end guarantees EarlyStopping
+    # always reads the raw (un-smoothed) metric value.
+    callbacks.append(
+        BestModelCallback(
+            output_dir=str(tc.output_dir),
+            monitor_regular=monitor_regular,
+            monitor_ema=monitor_ema,
+            run_test=tc.run_test,
+            skip_best_epochs=tc.skip_best_epochs,
+            smooth_alpha=best_model_smooth_alpha,
+        )
+    )
+
+    # Optional early stopping.
+    if tc.early_stopping:
+        callbacks.append(
+            RFDETREarlyStopping(
+                patience=tc.early_stopping_patience,
+                min_delta=tc.early_stopping_min_delta,
+                use_ema=tc.early_stopping_use_ema,
+                monitor_regular=monitor_regular,
+                monitor_ema=early_stopping_monitor_ema,
+                skip_best_epochs=tc.skip_best_epochs,
+            )
+        )
+
+    # --- Build loggers ---
+    # Each logger is guarded by a try/except because tensorboard, wandb, and mlflow
+    # are optional dependencies (installed via the [loggers] extra).  A missing dep
+    # emits a UserWarning instead of crashing.
+    # CSVLogger is always enabled — no extra package required.
+    # Produces metrics.csv in output_dir so there is always a log file.
+    loggers.append(CSVLogger(save_dir=tc.output_dir, name="", version=""))
+
+    if tc.tensorboard:
+        try:
+            _try_import_tensorboard_summary_writer()
+            loggers.append(
+                TensorBoardLogger(
+                    save_dir=tc.output_dir,
+                    name="",
+                    version="",
+                )
+            )
+        except (ImportError, AttributeError) as exc:
+            _logger.warning(
+                "TensorBoard logging disabled: %s. "
+                "If using NumPy 2.x, ensure your TensorBoard installation is NumPy 2.0 compatible "
+                "(the failure can originate from tensorboard.compat.tensorflow_stub). "
+                "Install TensorBoard with: pip install tensorboard",
+                exc,
+            )
+
+    if tc.wandb:
+        try:
+            loggers.append(
+                WandbLogger(
+                    name=tc.run,
+                    project=tc.project,
+                    save_dir=tc.output_dir,
+                )
+            )
+        except ModuleNotFoundError as exc:
+            _logger.warning("WandB logging disabled: %s. Install with: pip install wandb", exc)
+
+    if tc.mlflow:
+        try:
+            loggers.append(
+                MLFlowLogger(
+                    experiment_name=tc.project or "rfdetr",
+                    run_name=tc.run,
+                    save_dir=str(tc.output_dir),
+                )
+            )
+        except ModuleNotFoundError as exc:
+            _logger.warning("MLflow logging disabled: %s. Install with: pip install mlflow", exc)
+
+    if tc.clearml:
+        raise NotImplementedError("ClearML logging is not yet supported. Remove clearml=True from TrainConfig.")
+
+
 def build_trainer(
     train_config: TrainConfig,
     model_config: ModelConfig,
@@ -338,143 +501,9 @@ def build_trainer(
     # the later ``on_validation_end`` hook, so appending it after these callbacks does not change behaviour.
     loggers: list[Any] = []
     if include_training_callbacks:
-        if enable_ema:
-            callbacks.append(
-                RFDETREMACallback(
-                    decay=tc.ema_decay,
-                    tau=tc.ema_tau,
-                    update_interval_steps=tc.ema_update_interval,
-                )
-            )
-
-        # Drop-path / dropout scheduling (vit_encoder_num_layers defaults to 12).
-        if tc.drop_path > 0.0:
-            callbacks.append(DropPathCallback(drop_path=tc.drop_path))
-
-        # Latest resume checkpoint — overwritten every epoch.
-        # Skip when checkpoint_interval == 1 to avoid duplicate ModelCheckpoint state_key.
-        if tc.checkpoint_interval != 1:
-            callbacks.append(
-                ModelCheckpoint(
-                    dirpath=tc.output_dir,
-                    filename="last",
-                    every_n_epochs=1,
-                    save_top_k=1,
-                    enable_version_counter=False,
-                    auto_insert_metric_name=False,
-                    verbose=False,
-                )
-            )
-
-        # Interval archive checkpoints — kept for the full run.
-        callbacks.append(
-            ModelCheckpoint(
-                dirpath=tc.output_dir,
-                filename="checkpoint_{epoch}",
-                every_n_epochs=tc.checkpoint_interval,
-                save_top_k=-1,
-                enable_version_counter=False,
-                auto_insert_metric_name=False,
-                verbose=False,
-            )
+        _append_training_callbacks(
+            callbacks, loggers, tc, model_config, enable_ema=enable_ema, has_keypoints=has_keypoints
         )
-
-        if has_keypoints:
-            monitor_regular = "val/keypoint_map_50_95"
-            early_stopping_monitor_ema = "val/ema_keypoint_map_50_95"
-        elif model_config.segmentation_head:
-            monitor_regular = "val/segm_mAP_50_95"
-            early_stopping_monitor_ema = "val/ema_segm_mAP_50_95"
-        else:
-            monitor_regular = "val/mAP_50_95"
-            early_stopping_monitor_ema = "val/ema_mAP_50_95"
-        monitor_ema = early_stopping_monitor_ema if enable_ema else None
-
-        best_model_smooth_alpha = tc.smooth_alpha
-
-        # Best-model checkpointing — monitor EMA metric only when EMA is active and emitted.
-        # PTL _reorder_callbacks moves all Checkpoint subclasses (including BestModelCallback)
-        # to the end of the callback list; RFDETREarlyStopping (not a Checkpoint subclass) always
-        # fires BEFORE BestModelCallback on every on_validation_end, regardless of append order.
-        # The try/finally restore in BestModelCallback.on_validation_end guarantees EarlyStopping
-        # always reads the raw (un-smoothed) metric value.
-        callbacks.append(
-            BestModelCallback(
-                output_dir=str(tc.output_dir),
-                monitor_regular=monitor_regular,
-                monitor_ema=monitor_ema,
-                run_test=tc.run_test,
-                skip_best_epochs=tc.skip_best_epochs,
-                smooth_alpha=best_model_smooth_alpha,
-            )
-        )
-
-        # Optional early stopping.
-        if tc.early_stopping:
-            callbacks.append(
-                RFDETREarlyStopping(
-                    patience=tc.early_stopping_patience,
-                    min_delta=tc.early_stopping_min_delta,
-                    use_ema=tc.early_stopping_use_ema,
-                    monitor_regular=monitor_regular,
-                    monitor_ema=early_stopping_monitor_ema,
-                    skip_best_epochs=tc.skip_best_epochs,
-                )
-            )
-
-        # --- Build loggers ---
-        # Each logger is guarded by a try/except because tensorboard, wandb, and mlflow
-        # are optional dependencies (installed via the [loggers] extra).  A missing dep
-        # emits a UserWarning instead of crashing.
-        # CSVLogger is always enabled — no extra package required.
-        # Produces metrics.csv in output_dir so there is always a log file.
-        loggers.append(CSVLogger(save_dir=tc.output_dir, name="", version=""))
-
-        if tc.tensorboard:
-            try:
-                _try_import_tensorboard_summary_writer()
-                loggers.append(
-                    TensorBoardLogger(
-                        save_dir=tc.output_dir,
-                        name="",
-                        version="",
-                    )
-                )
-            except (ImportError, AttributeError) as exc:
-                _logger.warning(
-                    "TensorBoard logging disabled: %s. "
-                    "If using NumPy 2.x, ensure your TensorBoard installation is NumPy 2.0 compatible "
-                    "(the failure can originate from tensorboard.compat.tensorflow_stub). "
-                    "Install TensorBoard with: pip install tensorboard",
-                    exc,
-                )
-
-        if tc.wandb:
-            try:
-                loggers.append(
-                    WandbLogger(
-                        name=tc.run,
-                        project=tc.project,
-                        save_dir=tc.output_dir,
-                    )
-                )
-            except ModuleNotFoundError as exc:
-                _logger.warning("WandB logging disabled: %s. Install with: pip install wandb", exc)
-
-        if tc.mlflow:
-            try:
-                loggers.append(
-                    MLFlowLogger(
-                        experiment_name=tc.project or "rfdetr",
-                        run_name=tc.run,
-                        save_dir=str(tc.output_dir),
-                    )
-                )
-            except ModuleNotFoundError as exc:
-                _logger.warning("MLflow logging disabled: %s. Install with: pip install mlflow", exc)
-
-        if tc.clearml:
-            raise NotImplementedError("ClearML logging is not yet supported. Remove clearml=True from TrainConfig.")
 
     # COCO mAP + F1 — the metric engine shared by training-time validation and standalone evaluate().
     callbacks.append(
