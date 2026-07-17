@@ -345,71 +345,67 @@ class TestEvaluateResolutionOverride:
         assert model.model_config.positional_encoding_size == original_pe
 
 
-class TestEvaluateAutoBatchSkipped:
-    """``batch_size="auto"`` is a train-only feature; evaluate() must not run the training-style probe."""
+def test_auto_batch_probe_not_invoked(nano_model: RFDETRNano, tmp_path: Path) -> None:
+    """``evaluate(batch_size="auto")`` skips the forward+backward prober and uses the default micro-batch.
 
-    def test_auto_batch_probe_not_invoked(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
-        """``evaluate(batch_size="auto")`` skips the forward+backward prober and uses the default micro-batch."""
-        from rfdetr.config import TrainConfig
+    ``batch_size="auto"`` is a train-only feature; evaluate() must not run the training-style probe.
+    """
+    from rfdetr.config import TrainConfig
 
-        trainer = _mock_trainer()
-        with (
-            patch("rfdetr.training.RFDETRModelModule"),
-            patch("rfdetr.training.RFDETRDataModule"),
-            patch("rfdetr.training.build_trainer", return_value=trainer) as mock_build_trainer,
-            patch("rfdetr.training.auto_batch.resolve_auto_batch_config") as mock_probe,
-        ):
-            nano_model.evaluate(
-                dataset_dir=str(tmp_path), split="test", batch_size="auto", output_dir=str(tmp_path / "o")
-            )
-        mock_probe.assert_not_called()
-        passed_config = mock_build_trainer.call_args.args[0]
-        assert passed_config.batch_size == TrainConfig.model_fields["batch_size"].default
+    trainer = _mock_trainer()
+    with (
+        patch("rfdetr.training.RFDETRModelModule"),
+        patch("rfdetr.training.RFDETRDataModule"),
+        patch("rfdetr.training.build_trainer", return_value=trainer) as mock_build_trainer,
+        patch("rfdetr.training.auto_batch.resolve_auto_batch_config") as mock_probe,
+    ):
+        nano_model.evaluate(dataset_dir=str(tmp_path), split="test", batch_size="auto", output_dir=str(tmp_path / "o"))
+    mock_probe.assert_not_called()
+    passed_config = mock_build_trainer.call_args.args[0]
+    assert passed_config.batch_size == TrainConfig.model_fields["batch_size"].default
 
 
-class TestEvaluateIssue1110Repro:
-    """End-to-end repro for issue #1110: evaluate() on a real trained-then-reloaded checkpoint must not raise."""
+def test_train_then_from_checkpoint_then_evaluate(synthetic_shape_dataset_dir: Path, tmp_path: Path) -> None:
+    """Train() writes a real checkpoint; from_checkpoint() reloads it; evaluate() runs without the PTL ``ckpt_path``
+    ``KeyError``.
 
-    def test_train_then_from_checkpoint_then_evaluate(self, synthetic_shape_dataset_dir: Path, tmp_path: Path) -> None:
-        """Train() writes a real checkpoint; from_checkpoint() reloads it; evaluate() runs without the PTL ``ckpt_path``
-        ``KeyError``.
+    End-to-end repro for issue #1110: evaluate() on a real trained-then-reloaded checkpoint must not raise. Issue
+    #1110's reported path was ``trainer.test(ckpt_path=...)`` against a bare ``.pth`` raising a PTL loop- state-restore
+    ``KeyError``. All other tests in this module build the state-dict transplant against an untrained in-memory model;
+    this is the only one that exercises a real checkpoint round trip (train → save → reload as a new instance →
+    evaluate), the exact case the issue asked for.
+    """
+    output_dir = tmp_path / "train_output"
+    model = RFDETRNano(
+        pretrain_weights=None,
+        num_classes=_num_classes(synthetic_shape_dataset_dir),
+        device="cpu",
+    )
+    model.train(
+        dataset_dir=str(synthetic_shape_dataset_dir),
+        epochs=1,
+        batch_size=4,
+        grad_accum_steps=1,
+        num_workers=0,
+        output_dir=str(output_dir),
+        device="cpu",
+        tensorboard=False,
+    )
+    checkpoint_path = output_dir / "checkpoint_best_total.pth"
+    assert checkpoint_path.exists(), "train() should have written checkpoint_best_total.pth"
 
-        Issue #1110's reported path was ``trainer.test(ckpt_path=...)`` against a bare ``.pth`` raising a PTL loop-
-        state-restore ``KeyError``. All other tests in this module build the state-dict transplant against an untrained
-        in-memory model; this is the only one that exercises a real checkpoint round trip (train → save → reload as a
-        new instance → evaluate), the exact case the issue asked for.
-        """
-        output_dir = tmp_path / "train_output"
-        model = RFDETRNano(
-            pretrain_weights=None,
-            num_classes=_num_classes(synthetic_shape_dataset_dir),
-            device="cpu",
-        )
-        model.train(
-            dataset_dir=str(synthetic_shape_dataset_dir),
-            epochs=1,
-            batch_size=4,
-            grad_accum_steps=1,
-            num_workers=0,
-            output_dir=str(output_dir),
-            device="cpu",
-            tensorboard=False,
-        )
-        checkpoint_path = output_dir / "checkpoint_best_total.pth"
-        assert checkpoint_path.exists(), "train() should have written checkpoint_best_total.pth"
-
-        loaded_model = RFDETR.from_checkpoint(checkpoint_path)
-        metrics = loaded_model.evaluate(
-            dataset_dir=str(synthetic_shape_dataset_dir),
-            split="test",
-            device="cpu",
-            output_dir=str(tmp_path / "eval_output"),
-            batch_size=4,
-            num_workers=0,
-            tensorboard=False,
-        )
-        assert "test/mAP_50_95" in metrics
-        assert all(torch.isfinite(torch.tensor(float(v))) for v in metrics.values())
+    loaded_model = RFDETR.from_checkpoint(checkpoint_path)
+    metrics = loaded_model.evaluate(
+        dataset_dir=str(synthetic_shape_dataset_dir),
+        split="test",
+        device="cpu",
+        output_dir=str(tmp_path / "eval_output"),
+        batch_size=4,
+        num_workers=0,
+        tensorboard=False,
+    )
+    assert "test/mAP_50_95" in metrics
+    assert all(torch.isfinite(torch.tensor(float(v))) for v in metrics.values())
 
 
 class TestEvaluateLowPriorityGaps:
@@ -460,58 +456,57 @@ class TestEvaluateLowPriorityGaps:
             assert first[key] == pytest.approx(second[key]), f"{key} differs between sequential evaluate() calls"
 
 
-class TestEvaluateParityWithManualPTLBuildingBlocks:
-    """``evaluate()`` is a convenience wrapper over the manual PTL building-block pattern documented in
+def test_evaluate_matches_manual_building_blocks_on_test_split(
+    synthetic_shape_dataset_dir: Path, tmp_path: Path
+) -> None:
+    """``evaluate(split="test")`` and the manually-assembled PTL blocks return the same metrics.
+
+    ``evaluate()`` is a convenience wrapper over the manual PTL building-block pattern documented in
     ``docs/learn/train/customization.md`` (``RFDETRModelModule`` + ``RFDETRDataModule`` + ``build_trainer`` +
     ``trainer.test``/``validate``, the same pattern exercised in ``tests/benchmarks/test_inference_coco.py::
     test_inference_detection_ptl_predict``). Asserts the two paths return identical metrics for the same model and
     dataset, so the convenience wrapper cannot silently drift from the documented decomposed pattern.
     """
+    from rfdetr.config import TrainConfig
+    from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 
-    def test_evaluate_matches_manual_building_blocks_on_test_split(
-        self, synthetic_shape_dataset_dir: Path, tmp_path: Path
-    ) -> None:
-        """``evaluate(split="test")`` and the manually-assembled PTL blocks return the same metrics."""
-        from rfdetr.config import TrainConfig
-        from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
+    num_classes = _num_classes(synthetic_shape_dataset_dir)
 
-        num_classes = _num_classes(synthetic_shape_dataset_dir)
+    # Path 1: the public evaluate() convenience API.
+    eval_model = RFDETRNano(pretrain_weights=None, num_classes=num_classes, device="cpu")
+    eval_metrics = eval_model.evaluate(
+        dataset_dir=str(synthetic_shape_dataset_dir),
+        split="test",
+        device="cpu",
+        output_dir=str(tmp_path / "evaluate_output"),
+        batch_size=4,
+        num_workers=0,
+        tensorboard=False,
+    )
 
-        # Path 1: the public evaluate() convenience API.
-        eval_model = RFDETRNano(pretrain_weights=None, num_classes=num_classes, device="cpu")
-        eval_metrics = eval_model.evaluate(
-            dataset_dir=str(synthetic_shape_dataset_dir),
-            split="test",
-            device="cpu",
-            output_dir=str(tmp_path / "evaluate_output"),
-            batch_size=4,
-            num_workers=0,
-            tensorboard=False,
+    # Path 2: the manual decomposed PTL building blocks from docs/learn/train/customization.md. Weights are
+    # synced from eval_model (evaluate() never mutates them -- TestEvaluateDoesNotMutateModel) so both paths
+    # score the exact same model.
+    tc = TrainConfig(
+        dataset_file="roboflow",
+        dataset_dir=str(synthetic_shape_dataset_dir),
+        output_dir=str(tmp_path / "manual_output"),
+        batch_size=4,
+        num_workers=0,
+        tensorboard=False,
+        wandb=False,
+        mlflow=False,
+        clearml=False,
+    )
+    module = RFDETRModelModule(eval_model.model_config, tc)
+    module.model.load_state_dict(eval_model.model.model.state_dict())
+    module.model.eval()
+    datamodule = RFDETRDataModule(eval_model.model_config, tc)
+    trainer = build_trainer(tc, eval_model.model_config, accelerator="cpu", include_training_callbacks=False)
+    (manual_metrics,) = trainer.test(module, datamodule)
+
+    assert eval_metrics.keys() == manual_metrics.keys()
+    for key in eval_metrics:
+        assert eval_metrics[key] == pytest.approx(float(manual_metrics[key])), (
+            f"{key}: evaluate()={eval_metrics[key]} manual={manual_metrics[key]}"
         )
-
-        # Path 2: the manual decomposed PTL building blocks from docs/learn/train/customization.md. Weights are
-        # synced from eval_model (evaluate() never mutates them -- TestEvaluateDoesNotMutateModel) so both paths
-        # score the exact same model.
-        tc = TrainConfig(
-            dataset_file="roboflow",
-            dataset_dir=str(synthetic_shape_dataset_dir),
-            output_dir=str(tmp_path / "manual_output"),
-            batch_size=4,
-            num_workers=0,
-            tensorboard=False,
-            wandb=False,
-            mlflow=False,
-            clearml=False,
-        )
-        module = RFDETRModelModule(eval_model.model_config, tc)
-        module.model.load_state_dict(eval_model.model.model.state_dict())
-        module.model.eval()
-        datamodule = RFDETRDataModule(eval_model.model_config, tc)
-        trainer = build_trainer(tc, eval_model.model_config, accelerator="cpu", include_training_callbacks=False)
-        (manual_metrics,) = trainer.test(module, datamodule)
-
-        assert eval_metrics.keys() == manual_metrics.keys()
-        for key in eval_metrics:
-            assert eval_metrics[key] == pytest.approx(float(manual_metrics[key])), (
-                f"{key}: evaluate()={eval_metrics[key]} manual={manual_metrics[key]}"
-            )

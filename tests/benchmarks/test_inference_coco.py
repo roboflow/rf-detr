@@ -19,7 +19,8 @@ PTL training-stack path (``RFDETR.evaluate()``)
     ``val/mAP_50`` / ``val/F1`` from the returned metrics. ``evaluate()`` is the documented convenience wrapper
     over :class:`~rfdetr.training.RFDETRModelModule` + :class:`~rfdetr.training.RFDETRDataModule` +
     :func:`~rfdetr.training.build_trainer` + ``Trainer.validate`` (parity asserted in
-    ``tests/models/test_evaluate.py::TestEvaluateParityWithManualPTLBuildingBlocks``), so this still exercises
+    ``tests/models/test_evaluate.py::test_evaluate_matches_manual_building_blocks_on_test_split``), so this still
+    exercises
     ``validation_step``, ``on_after_batch_transfer``, and :class:`~rfdetr.training.COCOEvalCallback` — the same
     code path used during training.  Tests: :func:`test_inference_detection_ptl_predict`,
     :func:`test_inference_segmentation_ptl_predict`.
