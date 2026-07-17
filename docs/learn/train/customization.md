@@ -73,18 +73,18 @@ The raw `nn.Module` is `module.model`. After training completes, `RFDETR.train()
 
 `TrainConfig.optimizer` accepts either a **name / import path** (a string) or a **callable** (a class or `functools.partial`), and selects the optimizer built in `configure_optimizers`.
 
-- **Managed short name** (the default `"adamw"`, or a [`pytorch-optimizer`](https://kozistr.tech/pytorch_optimizer/) registry name such as `"lion"`, `"adabelief"`, `"sophiah"`). RF-DETR manages construction here: it injects `lr`, a signature-aware `weight_decay`, and your `optimizer_kwargs`.
-- **Explicit import path** — a dotted string such as `"torch.optim.AdamW"` or `"pytorch_optimizer.Lion"`. The class is constructed from the RF-DETR parameter groups (which already carry per-group learning rates) plus your `optimizer_kwargs` only; RF-DETR injects no `lr` or `weight_decay`, so pass any you need in `optimizer_kwargs`.
+- **Managed short name** — a bare `torch.optim` optimizer name such as the default `"adamw"`, `"sgd"`, or `"adam"` (case-insensitive). **Only native `torch.optim` optimizers may be chosen by short name.** RF-DETR manages construction here: it injects `lr`, a signature-aware `weight_decay`, and your `optimizer_kwargs`.
+- **Explicit import path** — a dotted string such as `"torch.optim.AdamW"` or `"pytorch_optimizer.Lion"`. This is how you select any non-`torch.optim` optimizer, e.g. one from [`pytorch-optimizer`](https://kozistr.tech/pytorch_optimizer/). The class is constructed from the RF-DETR parameter groups (which already carry per-group learning rates) plus your `optimizer_kwargs` only; RF-DETR injects no `lr` or `weight_decay`, so pass any you need in `optimizer_kwargs`.
 - **Callable** — a class or `functools.partial` is called as `optimizer(param_groups)` and nothing else, so bake all hyperparameters into the callable. `optimizer_kwargs` is ignored (with a warning) in this mode. A reconstructable callable (an importable top-level class / `functools.partial` with JSON-serializable keyword arguments) is desugared to its dotted import path plus keyword arguments so the config round-trips through `training_config.json`; a lambda, locally-defined class, or non-serializable argument still trains but cannot be restored from a saved config (RF-DETR warns with a specific hint).
 
 ```python
 import functools
 
-# managed short name — RF-DETR injects lr + weight_decay
-train_config = TrainConfig(..., optimizer="lion", optimizer_kwargs={"weight_decouple": True})
+# managed native torch.optim short name — RF-DETR injects lr + weight_decay
+train_config = TrainConfig(..., optimizer="adamw")
 
-# explicit import path — supply lr/weight_decay yourself via optimizer_kwargs
-train_config = TrainConfig(..., optimizer="torch.optim.AdamW", optimizer_kwargs={"weight_decay": 1e-4})
+# explicit import path (incl. pytorch-optimizer) — supply hyperparameters via optimizer_kwargs
+train_config = TrainConfig(..., optimizer="pytorch_optimizer.Lion", optimizer_kwargs={"weight_decouple": True})
 
 # callable / functools.partial — bake arguments in; optimizer_kwargs is ignored
 train_config = TrainConfig(..., optimizer=functools.partial(torch.optim.AdamW, weight_decay=1e-4))
@@ -94,14 +94,14 @@ See [Training parameters — optimizer](training-parameters.md) for the full par
 
 `fused_optimizer` only affects the built-in `optimizer="adamw"` path; it is ignored for custom optimizers. On a BF16/CUDA run where fused AdamW would otherwise apply, RF-DETR logs a warning if `fused_optimizer=True` is combined with a non-default optimizer.
 
-!!! warning "Some pytorch-optimizer optimizers are not usable via `TrainConfig.optimizer`"
+!!! warning "Wrapper optimizers (SAM, Lookahead, …) need extra care"
 
-    Most `pytorch-optimizer` optimizers are drop-in replacements and work directly — including `"ranger"` and `"ranger21"`, which bake their slow-weights bookkeeping into a single class and take `params` first like any standard optimizer. Two groups are exceptions:
+    Non-`torch.optim` optimizers are selected by import path (e.g. `"pytorch_optimizer.Lion"`) or a callable. Most `pytorch-optimizer` optimizers are drop-in replacements and work directly — including `Lion`, `AdaBelief`, `SophiaH`, `Adan`, `Ranger`, and `Ranger21`, which take `params` first like any standard optimizer. Two groups need extra care:
 
-    - **Base-optimizer wrappers — `SAM` / `BSAM` / `GSAM` / `WSAM`.** These require a `base_optimizer` as a second positional argument (not just `params`), so selecting them by name raises a `TypeError` at training start. They also change `optimizer.step()` semantics (e.g. SAM needs two forward/backward passes per step) and are incompatible with PyTorch Lightning's default `automatic_optimization=True`. A callable/`functools.partial` can supply the `base_optimizer`, but such an optimizer will not round-trip through a saved config.
-    - **Non-selectable helpers — `Lookahead`, `PCGrad`, `GradientCentralization`.** These are not registered as selectable optimizers in `pytorch-optimizer`, so `optimizer="lookahead"` (and similar) raises a `ValueError` ("Unsupported pytorch-optimizer optimizer") before construction is ever attempted.
+    - **Base-optimizer wrappers — `SAM` / `BSAM` / `GSAM` / `WSAM`.** They require a `base_optimizer` as a second positional argument, so `optimizer="pytorch_optimizer.SAM"` raises a `TypeError` at training start (RF-DETR calls the class with the parameter groups only). They also change `optimizer.step()` semantics (SAM needs two forward/backward passes per step) and are incompatible with PyTorch Lightning's default `automatic_optimization=True`. Supply the `base_optimizer` via a `functools.partial`, but such an optimizer will not round-trip through a saved config.
+    - **`Lookahead` / `PCGrad` / `GradientCentralization`.** These wrap or post-process another optimizer and likewise cannot be built from parameter groups alone; construction with the parameter groups only raises a `TypeError`.
 
-    If you need SAM or Lookahead, override `configure_optimizers` and set `self.automatic_optimization = False` in `RFDETRModelModule.__init__`. For standard use, pick a directly-selectable optimizer such as `"lion"`, `"adabelief"`, `"sophiah"`, `"adan"`, or `"ranger"`.
+    If you need SAM or Lookahead, override `configure_optimizers` and set `self.automatic_optimization = False` in `RFDETRModelModule.__init__`. For standard use, pick a `torch.optim` optimizer by name or a drop-in `pytorch-optimizer` optimizer by import path (e.g. `"pytorch_optimizer.Lion"`).
 
 ---
 
