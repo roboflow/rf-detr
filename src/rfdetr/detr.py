@@ -1833,10 +1833,12 @@ class RFDETR:
         model.eval()
 
     @torch.inference_mode()
-    @_ensure_model_on_device
+    # mypy can't match this signature against _ensure_model_on_device's Concatenate[Any, _P] typing without
+    # `self` being positional-only (a side effect of the trailing **kwargs); ignored rather than changing the
+    # public signature.
+    @_ensure_model_on_device  # type: ignore[arg-type]
     def predict(
         self,
-        /,
         images: str
         | Image.Image
         | np.ndarray[Any, Any]
@@ -2040,13 +2042,13 @@ class RFDETR:
                     )
 
         if self._is_optimized_for_inference:
-            # self.model.inference_model is set whenever _is_optimized_for_inference is True.
-            predictions = self.model.inference_model(  # type: ignore[misc]
-                batch_tensor.to(dtype=self._optimized_dtype)
-            )
+            inference_model = self.model.inference_model
+            assert inference_model is not None, "inference_model is set whenever _is_optimized_for_inference is True."
+            predictions = inference_model(batch_tensor.to(dtype=self._optimized_dtype))
         else:
-            # self.model.model is only cleared when optimized for inference.
-            predictions = self.model.model(batch_tensor)  # type: ignore[misc]
+            model = self.model.model
+            assert model is not None, "self.model.model is only cleared when optimized for inference."
+            predictions = model(batch_tensor)
         if isinstance(predictions, tuple):
             return_predictions = {
                 "pred_logits": predictions[1],
