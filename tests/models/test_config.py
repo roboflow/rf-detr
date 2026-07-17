@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import functools
 import json
 import os
 import warnings
@@ -295,10 +296,6 @@ class TestTrainConfigT42PromotedFields:
         """optimizer_kwargs defaults to an empty dict."""
         assert self._tc(tmp_path).optimizer_kwargs == {}
 
-    def test_optimizer_param_group_overrides_default_is_empty_list(self, tmp_path):
-        """optimizer_param_group_overrides defaults to an empty list."""
-        assert self._tc(tmp_path).optimizer_param_group_overrides == []
-
     def test_lr_min_factor_default(self, tmp_path):
         """lr_min_factor defaults to 0.0."""
         assert self._tc(tmp_path).lr_min_factor == pytest.approx(0.0)
@@ -398,30 +395,44 @@ class TestTrainConfigT42PromotedFields:
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, optimizer_kwargs={reserved_key: 1})
 
-    def test_optimizer_param_group_overrides_parse_dicts(self, tmp_path):
-        """optimizer_param_group_overrides entries are parsed into validated models."""
-        tc = self._tc(
-            tmp_path,
-            optimizer_param_group_overrides=[{"min_ndim": 2, "kwargs": {"use_matrix_update": True}}],
-        )
+    def test_optimizer_accepts_dotted_import_path(self, tmp_path):
+        """A dotted import path is accepted verbatim as an explicit optimizer."""
+        assert self._tc(tmp_path, optimizer="torch.optim.AdamW").optimizer == "torch.optim.AdamW"
 
-        assert tc.optimizer_param_group_overrides[0].min_ndim == 2
-        assert tc.optimizer_param_group_overrides[0].kwargs == {"use_matrix_update": True}
+    def test_dotted_optimizer_kwargs_allow_managed_keys(self, tmp_path):
+        """Explicit (dotted) optimizers may pass otherwise-managed keys such as weight_decay."""
+        tc = self._tc(tmp_path, optimizer="torch.optim.AdamW", optimizer_kwargs={"weight_decay": 0.1})
+        assert tc.optimizer_kwargs == {"weight_decay": 0.1}
 
-    def test_optimizer_param_group_overrides_require_ndim_matcher(self, tmp_path):
-        """optimizer_param_group_overrides entries must specify a tensor-rank matcher."""
-        with pytest.raises((ValueError, ValidationError)):
-            self._tc(tmp_path, optimizer_param_group_overrides=[{"kwargs": {"use_matrix_update": True}}])
+    def test_callable_class_desugars_to_dotted_path(self, tmp_path):
+        """A plain optimizer class desugars to its canonical dotted import path for serialization."""
+        expected_path = f"{torch.optim.AdamW.__module__}.{torch.optim.AdamW.__qualname__}"
+        tc = self._tc(tmp_path, optimizer=torch.optim.AdamW)
+        assert tc.optimizer == expected_path
+        assert tc.optimizer_kwargs == {}
 
-    def test_optimizer_param_group_overrides_reject_invalid_ndim_bounds(self, tmp_path):
-        """optimizer_param_group_overrides min_ndim must be <= max_ndim."""
-        with pytest.raises((ValueError, ValidationError)):
-            self._tc(tmp_path, optimizer_param_group_overrides=[{"min_ndim": 3, "max_ndim": 2}])
+    def test_partial_optimizer_desugars_to_path_and_kwargs(self, tmp_path):
+        """A functools.partial desugars to a dotted path plus its keyword arguments."""
+        expected_path = f"{torch.optim.AdamW.__module__}.{torch.optim.AdamW.__qualname__}"
+        tc = self._tc(tmp_path, optimizer=functools.partial(torch.optim.AdamW, weight_decay=0.1))
+        assert tc.optimizer == expected_path
+        assert tc.optimizer_kwargs == {"weight_decay": 0.1}
 
-    def test_optimizer_param_group_overrides_reject_reserved_kwargs(self, tmp_path):
-        """optimizer_param_group_overrides kwargs must not replace RF-DETR-managed arguments."""
-        with pytest.raises((ValueError, ValidationError)):
-            self._tc(tmp_path, optimizer_param_group_overrides=[{"min_ndim": 2, "kwargs": {"lr": 1e-3}}])
+    def test_callable_optimizer_kwargs_are_ignored_with_warning(self, tmp_path):
+        """optimizer_kwargs are ignored (with a warning) when optimizer is a callable."""
+        with pytest.warns(UserWarning, match="optimizer_kwargs is ignored"):
+            tc = self._tc(
+                tmp_path,
+                optimizer=functools.partial(torch.optim.AdamW, weight_decay=0.1),
+                optimizer_kwargs={"betas": (0.9, 0.99)},
+            )
+        assert tc.optimizer_kwargs == {"weight_decay": 0.1}
+
+    def test_non_reconstructable_optimizer_warns(self, tmp_path):
+        """A lambda optimizer cannot be serialized and warns while staying an in-memory callable."""
+        with pytest.warns(UserWarning, match="cannot be saved"):
+            tc = self._tc(tmp_path, optimizer=lambda params: torch.optim.AdamW(params))
+        assert callable(tc.optimizer) and not isinstance(tc.optimizer, str)
 
     @pytest.mark.parametrize(
         ("field", "value"),

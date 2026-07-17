@@ -75,13 +75,11 @@ class TestNamespaceFromConfigs:
         tc = base_train_config(
             optimizer="lion",
             optimizer_kwargs={"weight_decouple": True},
-            optimizer_param_group_overrides=[{"min_ndim": 2, "kwargs": {"use_matrix_update": True}}],
         )
         args = _namespace_from_configs(base_model_config(), tc)
 
         assert not hasattr(args, "optimizer")
         assert not hasattr(args, "optimizer_kwargs")
-        assert not hasattr(args, "optimizer_param_group_overrides")
 
     def test_seed_falls_back_to_legacy_default_when_unset(self, base_model_config, base_train_config):
         """Seed defaults to 42 in the namespace when TrainConfig.seed is None."""

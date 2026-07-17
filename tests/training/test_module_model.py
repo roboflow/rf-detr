@@ -97,22 +97,6 @@ class _RecordingOptimizer(torch.optim.Optimizer):
         return None
 
 
-class _RankAwareRecordingOptimizer(torch.optim.Optimizer):
-    """Optimizer test double that rejects rank-gated flags on tensors below rank 2."""
-
-    def __init__(self, params, lr=1e-3, weight_decay=0.0, momentum=0.0, **kwargs):
-        super().__init__(params, {"lr": lr, "weight_decay": weight_decay, "momentum": momentum, **kwargs})
-        for param_group in self.param_groups:
-            if param_group.get("use_matrix_update") and any(param.ndim < 2 for param in param_group["params"]):
-                raise ValueError("use_matrix_update=True is only valid for tensors with ndim >= 2")
-
-    def step(self, closure=None):
-        """Run an optimizer step for the test double."""
-        if closure is not None:
-            return closure()
-        return None
-
-
 class _NoWeightDecayOptimizer(torch.optim.Optimizer):
     """Optimizer test double whose constructor does not accept ``weight_decay``."""
 
@@ -1612,65 +1596,31 @@ class TestConfigureOptimizers:
         mock_load.assert_called_once_with("adamw")
         assert isinstance(optimizer, _RecordingOptimizer)
 
-    @patch("rfdetr.training.module_model._load_pytorch_optimizer", return_value=_RankAwareRecordingOptimizer)
     @patch("rfdetr.training.module_model.get_param_dict")
-    def test_optimizer_param_group_overrides_apply_to_tensor_rank_matches(
-        self,
-        mock_get_param_dict,
-        mock_load_pto,
-        tmp_path,
-    ):
-        """Rank-based overrides support optimizer-specific flags only on 2D+ tensor groups."""
-        module, _ = self._setup_module(
-            tmp_path,
-            optimizer="lion",
-            optimizer_kwargs={"momentum": 0.9},
-            optimizer_param_group_overrides=[{"min_ndim": 2, "kwargs": {"use_matrix_update": True}}],
-        )
-        param_2d = nn.Parameter(torch.randn(4, 4))
-        param_1d = nn.Parameter(torch.randn(4))
-        mock_get_param_dict.return_value = [
-            {"params": param_2d, "lr": 2.5e-5},
-            {"params": param_1d, "lr": module.train_config.lr},
-        ]
-        mock_load_pto.return_value = _RankAwareRecordingOptimizer
+    def test_callable_optimizer_called_with_param_groups_only(self, mock_get_param_dict, tmp_path):
+        """A non-reconstructable callable optimizer is invoked with the param groups and nothing else."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer=lambda params: _RecordingOptimizer(params))
+        mock_get_param_dict.return_value = param_dicts
 
         optimizer = module.configure_optimizers()["optimizer"]
 
-        assert optimizer.defaults["momentum"] == pytest.approx(0.9)
-        assert optimizer.param_groups[0]["use_matrix_update"] is True
-        assert "use_matrix_update" not in optimizer.param_groups[1]
-        assert optimizer.param_groups[0]["initial_lr"] == pytest.approx(2.5e-5)
+        assert isinstance(optimizer, _RecordingOptimizer)
+        assert optimizer.extra_kwargs == {}
 
-    @patch("rfdetr.training.module_model._load_pytorch_optimizer", return_value=_RankAwareRecordingOptimizer)
     @patch("rfdetr.training.module_model.get_param_dict")
-    def test_optimizer_param_group_overrides_can_apply_false_to_low_rank_tensors(
-        self,
-        mock_get_param_dict,
-        mock_load_pto,
-        tmp_path,
-    ):
-        """Rank-based overrides can explicitly mark lower-rank tensors for hybrid optimizers."""
-        module, _ = self._setup_module(
-            tmp_path,
-            optimizer="lion",
-            optimizer_param_group_overrides=[
-                {"max_ndim": 1, "kwargs": {"use_matrix_update": False}},
-                {"min_ndim": 2, "kwargs": {"use_matrix_update": True}},
-            ],
+    def test_dotted_optimizer_built_from_kwargs_without_injection(self, mock_get_param_dict, tmp_path):
+        """A dotted-path optimizer is built from optimizer_kwargs only, with no lr/weight_decay injection."""
+        module, param_dicts = self._setup_module(
+            tmp_path, optimizer="torch.optim.AdamW", optimizer_kwargs={"weight_decay": 0.5}
         )
-        param_2d = nn.Parameter(torch.randn(4, 4))
-        param_1d = nn.Parameter(torch.randn(4))
-        mock_get_param_dict.return_value = [
-            {"params": param_2d, "lr": module.train_config.lr},
-            {"params": param_1d, "lr": module.train_config.lr},
-        ]
-        mock_load_pto.return_value = _RankAwareRecordingOptimizer
+        mock_get_param_dict.return_value = param_dicts
 
         optimizer = module.configure_optimizers()["optimizer"]
 
-        assert optimizer.param_groups[0]["use_matrix_update"] is True
-        assert optimizer.param_groups[1]["use_matrix_update"] is False
+        assert isinstance(optimizer, torch.optim.AdamW)
+        assert optimizer.defaults["weight_decay"] == pytest.approx(0.5)
+        # Explicit mode must not inject the config lr as the optimizer-level default.
+        assert optimizer.defaults["lr"] == pytest.approx(1e-3)
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_missing_pytorch_optimizer_has_install_hint(self, mock_get_param_dict, tmp_path):
@@ -1792,29 +1742,6 @@ class TestConfigureOptimizers:
             pytest.raises(TypeError, match="Failed to initialize optimizer 'pytorch_optimizer:lion'"),
         ):
             module.configure_optimizers()
-
-    def test_param_group_matches_override_false_for_empty_group(self):
-        """An override must never match a parameter group that holds no tensors."""
-        from rfdetr.config import OptimizerParamGroupOverride
-        from rfdetr.training.module_model import _param_group_matches_override
-
-        override = OptimizerParamGroupOverride(min_ndim=2, kwargs={"use_matrix_update": True})
-
-        assert _param_group_matches_override({"params": [], "lr": 1e-4}, override) is False
-
-    def test_apply_overrides_warns_on_zero_match(self):
-        """An override matching no parameter group must be left un-applied and warned about."""
-        from rfdetr.config import OptimizerParamGroupOverride
-        from rfdetr.training.module_model import _apply_optimizer_param_group_overrides
-
-        override = OptimizerParamGroupOverride(min_ndim=2, kwargs={"use_matrix_update": True})
-        param_dicts = [{"params": nn.Parameter(torch.randn(4)), "lr": 1e-4}]
-
-        with patch("rfdetr.training.module_model.logger.warning") as mock_warning:
-            result = _apply_optimizer_param_group_overrides(param_dicts, [override])
-
-        assert "use_matrix_update" not in result[0]
-        assert any("matched no parameter group" in str(call.args[0]) for call in mock_warning.call_args_list)
 
     @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
     @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
