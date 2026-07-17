@@ -458,3 +458,60 @@ class TestEvaluateLowPriorityGaps:
         assert first.keys() == second.keys()
         for key in first:
             assert first[key] == pytest.approx(second[key]), f"{key} differs between sequential evaluate() calls"
+
+
+class TestEvaluateParityWithManualPTLBuildingBlocks:
+    """``evaluate()`` is a convenience wrapper over the manual PTL building-block pattern documented in
+    ``docs/learn/train/customization.md`` (``RFDETRModelModule`` + ``RFDETRDataModule`` + ``build_trainer`` +
+    ``trainer.test``/``validate``, the same pattern exercised in ``tests/benchmarks/test_inference_coco.py::
+    test_inference_detection_ptl_predict``). Asserts the two paths return identical metrics for the same model and
+    dataset, so the convenience wrapper cannot silently drift from the documented decomposed pattern.
+    """
+
+    def test_evaluate_matches_manual_building_blocks_on_test_split(
+        self, synthetic_shape_dataset_dir: Path, tmp_path: Path
+    ) -> None:
+        """``evaluate(split="test")`` and the manually-assembled PTL blocks return the same metrics."""
+        from rfdetr.config import TrainConfig
+        from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
+
+        num_classes = _num_classes(synthetic_shape_dataset_dir)
+
+        # Path 1: the public evaluate() convenience API.
+        eval_model = RFDETRNano(pretrain_weights=None, num_classes=num_classes, device="cpu")
+        eval_metrics = eval_model.evaluate(
+            dataset_dir=str(synthetic_shape_dataset_dir),
+            split="test",
+            device="cpu",
+            output_dir=str(tmp_path / "evaluate_output"),
+            batch_size=4,
+            num_workers=0,
+            tensorboard=False,
+        )
+
+        # Path 2: the manual decomposed PTL building blocks from docs/learn/train/customization.md. Weights are
+        # synced from eval_model (evaluate() never mutates them -- TestEvaluateDoesNotMutateModel) so both paths
+        # score the exact same model.
+        tc = TrainConfig(
+            dataset_file="roboflow",
+            dataset_dir=str(synthetic_shape_dataset_dir),
+            output_dir=str(tmp_path / "manual_output"),
+            batch_size=4,
+            num_workers=0,
+            tensorboard=False,
+            wandb=False,
+            mlflow=False,
+            clearml=False,
+        )
+        module = RFDETRModelModule(eval_model.model_config, tc)
+        module.model.load_state_dict(eval_model.model.model.state_dict())
+        module.model.eval()
+        datamodule = RFDETRDataModule(eval_model.model_config, tc)
+        trainer = build_trainer(tc, eval_model.model_config, accelerator="cpu", include_training_callbacks=False)
+        (manual_metrics,) = trainer.test(module, datamodule)
+
+        assert eval_metrics.keys() == manual_metrics.keys()
+        for key in eval_metrics:
+            assert eval_metrics[key] == pytest.approx(float(manual_metrics[key])), (
+                f"{key}: evaluate()={eval_metrics[key]} manual={manual_metrics[key]}"
+            )
