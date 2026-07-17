@@ -334,3 +334,25 @@ class TestEvaluateResolutionOverride:
         assert "test/mAP_50_95" in metrics
         assert model.model_config.resolution == original_resolution
         assert model.model_config.positional_encoding_size == original_pe
+
+
+class TestEvaluateAutoBatchSkipped:
+    """``batch_size="auto"`` is a train-only feature; evaluate() must not run the training-style probe."""
+
+    def test_auto_batch_probe_not_invoked(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
+        """``evaluate(batch_size="auto")`` skips the forward+backward prober and uses the default micro-batch."""
+        from rfdetr.config import TrainConfig
+
+        trainer = _mock_trainer()
+        with (
+            patch("rfdetr.training.RFDETRModelModule"),
+            patch("rfdetr.training.RFDETRDataModule"),
+            patch("rfdetr.training.build_trainer", return_value=trainer) as mock_build_trainer,
+            patch("rfdetr.training.auto_batch.resolve_auto_batch_config") as mock_probe,
+        ):
+            nano_model.evaluate(
+                dataset_dir=str(tmp_path), split="test", batch_size="auto", output_dir=str(tmp_path / "o")
+            )
+        mock_probe.assert_not_called()
+        passed_config = mock_build_trainer.call_args.args[0]
+        assert passed_config.batch_size == TrainConfig.model_fields["batch_size"].default

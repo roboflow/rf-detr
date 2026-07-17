@@ -233,7 +233,9 @@ def _ensure_model_on_device(method: Callable[Concatenate[Any, _P], _R]) -> Calla
     return wrapper
 
 
-def _prepare_run_config(detector: RFDETR, **kwargs: Any) -> tuple[TrainConfig, str | None, list[int] | None]:
+def _prepare_run_config(
+    detector: RFDETR, *, for_eval: bool = False, **kwargs: Any
+) -> tuple[TrainConfig, str | None, list[int] | None]:
     """Absorb the special run kwargs and build a :class:`~rfdetr.config.TrainConfig`.
 
     Shared by :meth:`RFDETR.train` and :meth:`RFDETR.evaluate` so both accept exactly the same keyword arguments.
@@ -241,7 +243,8 @@ def _prepare_run_config(detector: RFDETR, **kwargs: Any) -> tuple[TrainConfig, s
     ``do_benchmark`` (warned then dropped), ``device`` (mapped to PyTorch Lightning accelerator/devices), and
     ``resolution`` (a ``ModelConfig`` field applied to ``detector.model_config`` in place, with the positional-encoding
     size and cached inference context kept in sync). Remaining kwargs are forwarded to
-    :meth:`RFDETR.get_train_config`; ``batch_size="auto"`` is resolved by auto-batch probing.
+    :meth:`RFDETR.get_train_config`; ``batch_size="auto"`` is resolved by auto-batch probing (skipped when
+    ``for_eval=True`` — see below).
     ``model_config.model_name`` is set to the concrete subclass name.
 
     Defined at module scope (rather than as a method) so that :meth:`RFDETR.train` / :meth:`RFDETR.evaluate`, which are
@@ -250,6 +253,11 @@ def _prepare_run_config(detector: RFDETR, **kwargs: Any) -> tuple[TrainConfig, s
 
     Args:
         detector: The :class:`RFDETR` instance whose ``model_config`` and model context the run targets.
+        for_eval: When ``True`` (set by :meth:`RFDETR.evaluate`), ``batch_size="auto"`` is not resolved by probing —
+            the probe forces train mode and runs a forward+backward pass to size for the *training* memory envelope
+            (retained activations and gradients), which both wastes compute on a call that never backprops and
+            under-sizes the eval batch relative to what a no-grad forward pass can actually fit. Falls back to
+            :attr:`TrainConfig.batch_size`'s default instead.
         **kwargs: Keyword arguments accepted by :meth:`RFDETR.train` / :meth:`RFDETR.evaluate`.
 
     Returns:
@@ -349,7 +357,18 @@ def _prepare_run_config(detector: RFDETR, **kwargs: Any) -> tuple[TrainConfig, s
                 if hasattr(model_args, "positional_encoding_size"):
                     model_args.positional_encoding_size = new_pe
     config = detector.get_train_config(**kwargs)
-    if config.batch_size == "auto":
+    if config.batch_size == "auto" and for_eval:
+        # The probe sizes for the *training* memory envelope (forward + retained activations +
+        # backward), which evaluate() never needs and cannot benefit from — falls back to the
+        # TrainConfig default micro-batch instead of running a wasted train-mode probe.
+        default_batch_size = TrainConfig.model_fields["batch_size"].default
+        logger.info(
+            "[auto-batch] batch_size='auto' is a train-only feature; evaluate() uses the default "
+            "micro-batch (%s) instead of probing.",
+            default_batch_size,
+        )
+        config.batch_size = default_batch_size
+    elif config.batch_size == "auto":
         # Auto-batch probing runs forward/backward on the actual model, which
         # must be on the target device (typically CUDA).  Lazy placement keeps
         # the model on CPU until first use — move it now.
@@ -1019,7 +1038,7 @@ class RFDETR:
         _orig_args_resolution = getattr(_live_args, "resolution", None) if _live_args is not None else None
         _orig_args_pe = getattr(_live_args, "positional_encoding_size", None) if _live_args is not None else None
         try:
-            config, _accelerator, _devices = _prepare_run_config(self, **kwargs)
+            config, _accelerator, _devices = _prepare_run_config(self, for_eval=True, **kwargs)
 
             # Build the module without re-loading pretrain weights, then transplant the
             # already-loaded in-memory weights into it (the reverse of train()'s final
@@ -1038,11 +1057,27 @@ class RFDETR:
                     if hasattr(_live_args, "positional_encoding_size"):
                         _live_args.positional_encoding_size = _orig_args_pe
         module = RFDETRModelModule(eval_model_config, config)
-        source_state = self.model.model.state_dict()
-        # Reconcile DINOv2 positional embeddings when a `resolution` override changed the PE grid
-        # (no-op when unchanged), so the transplant works at the evaluation resolution.
-        interpolate_position_embeddings(source_state, eval_model_config.positional_encoding_size)
-        module.model.load_state_dict(source_state)
+
+        # Free the original model's accelerator memory for the transplant -- otherwise the resident
+        # original and the freshly built (randomly initialized) eval module are both on the accelerator
+        # simultaneously (peak ~2x model memory), risking OOM on the largest variants right after train()
+        # just fit them.  state_dict() below returns references into the live parameter tensors, so this
+        # move is reflected in `source_state` regardless of call order; restored immediately once the eval
+        # module has consumed the weights, before the (possibly slow) datamodule/trainer setup below.
+        _original_device = getattr(self.model, "device", None)
+        _moved_to_cpu = _original_device is not None and str(_original_device) != "cpu"
+        if _moved_to_cpu:
+            with torch.inference_mode(False):
+                self.model.model = self.model.model.to("cpu")
+        try:
+            source_state = self.model.model.state_dict()
+            # Reconcile DINOv2 positional embeddings when a `resolution` override changed the PE grid
+            # (no-op when unchanged), so the transplant works at the evaluation resolution.
+            interpolate_position_embeddings(source_state, eval_model_config.positional_encoding_size)
+            module.model.load_state_dict(source_state)
+        finally:
+            if _moved_to_cpu:
+                _move_model_context_to_device(self.model)
         datamodule = RFDETRDataModule(self.model_config, config)
 
         # Warn (do not adapt) when the dataset class count differs from the model's head.
