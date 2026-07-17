@@ -303,7 +303,7 @@ def _prepare_run_config(
     if run_benchmark:
         warnings.warn(
             "`do_benchmark` in `.train()` is deprecated since v1.7.0 and will be removed in v1.9.0; "
-            "use `rfdetr benchmark`.",
+            "use the `rfdetr.export.benchmark` module instead.",
             DeprecationWarning,
             stacklevel=2,
         )
