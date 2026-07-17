@@ -284,6 +284,7 @@ overrides = [
     "tflite_runtime", "tflite_runtime.*",
     "tensorflow", "tensorflow.*",
     "rfdetr_plus", "rfdetr_plus.*",
+    "pytorch_optimizer", "pytorch_optimizer.*",
   ], ignore_missing_imports = true },
   # Optional-import None assignments in console.py: type: ignore[assignment, misc] is needed when
   # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the
