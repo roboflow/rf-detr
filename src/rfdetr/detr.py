@@ -1828,7 +1828,9 @@ class RFDETR:
             )
             self._has_warned_about_not_being_optimized_for_inference = True
         # self.model.model is only cleared when optimized for inference (guarded by the early return above).
-        self.model.model.eval()  # type: ignore[union-attr]
+        model = self.model.model
+        assert model is not None
+        model.eval()
 
     @torch.inference_mode()
     @_ensure_model_on_device
