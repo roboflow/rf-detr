@@ -91,7 +91,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-07-17T05:43:52">
+  <meta property="article:modified_time" content="2026-07-17T14:17:30">
   
   <script type="application/ld+json">
   {
@@ -106,7 +106,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-07-17T05:43:52",
+    "dateModified": "2026-07-17T14:17:30",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1153,6 +1153,17 @@
     <span class="md-ellipsis">
       
         Load and Run Fine-Tuned Model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evaluate-a-fine-tuned-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evaluate a Fine-Tuned Model
       
     </span>
   </a>
@@ -2527,6 +2538,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#evaluate-a-fine-tuned-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evaluate a Fine-Tuned Model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#next-steps" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2796,6 +2818,30 @@ schema so <code>RFDETR.from_checkpoint()</code> can reconstruct the same label/k
 </div>
 </div>
 </div>
+<h2 id="evaluate-a-fine-tuned-model">Evaluate a Fine-Tuned Model<a class="headerlink" href="#evaluate-a-fine-tuned-model" title="Permanent link">&para;</a></h2>
+<p><code>model.evaluate()</code> runs a single evaluation pass over a dataset split and returns (and prints) the COCO metrics — mAP,
+mAR, and the macro-F1 sweep. It works both right after <code>model.train()</code> and on a model loaded from a checkpoint; the
+weights already in memory are evaluated, so no checkpoint file is re-loaded.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">&quot;&lt;CHECKPOINT_PATH&gt;&quot;</span><span class="p">)</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">metrics</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;&lt;DATASET_PATH&gt;&quot;</span><span class="p">,</span> <span class="n">split</span><span class="o">=</span><span class="s2">&quot;test&quot;</span><span class="p">)</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">metrics</span><span class="p">[</span><span class="s2">&quot;test/mAP_50_95&quot;</span><span class="p">])</span>
+</span></code></pre></div>
+<ul>
+<li><code>split="test"</code> evaluates the <code>test/</code> folder on Roboflow-exported datasets (<code>dataset_file="roboflow"</code>, the default).
+    For other dataset formats (COCO, YOLO, Objects365) there is no dedicated test split, so <code>split="test"</code> silently
+    evaluates the <code>valid/</code> folder instead — the returned metric keys are still prefixed <code>test/*</code>, so double-check
+    <code>dataset_file</code> before treating <code>test/mAP_50_95</code> as held-out-test performance on a non-Roboflow dataset.
+    <code>split="val"</code> always evaluates <code>valid/</code> directly.</li>
+<li>The detection head is never adapted to the dataset — the model is evaluated exactly as configured. If the dataset's
+    class count differs from the model's <code>num_classes</code>, a warning is emitted and evaluation proceeds unchanged.</li>
+<li>Evaluation writes no checkpoints or logs to <code>output_dir</code>.</li>
+<li><code>evaluate()</code> accepts the same keyword arguments as <code>train()</code> for convenience, but training-only fields (<code>epochs</code>,
+    <code>lr</code>, <code>ema</code>, <code>early_stopping</code>, logger flags, etc.) have no effect — evaluation runs through an eval-only trainer
+    that never builds those callbacks.</li>
+</ul>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <p>After training your model, you can:</p>
 <ul>
@@ -2822,7 +2868,7 @@ schema so <code>RFDETR.from_checkpoint()</code> can reconstruct the same label/k
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 17, 2026 05:43:52 UTC">2026-07-17 05:43:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 17, 2026 14:17:30 UTC">2026-07-17 14:17:30</span>
   </span>
 
     

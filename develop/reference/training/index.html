@@ -2785,6 +2785,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rfdetr.training.trainer.build_trainer(include_training_callbacks)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;include_training_callbacks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rfdetr.training.trainer.build_trainer(**trainer_kwargs)" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4128,6 +4139,17 @@
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;accelerator
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.training.trainer.build_trainer(include_training_callbacks)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;include_training_callbacks
       
     </span>
   </a>
@@ -6004,6 +6026,25 @@ Defaults to <code>None</code> which reads from <code>train_config.accelerator</c
             </td>
             <td>
                   <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.training.trainer.build_trainer(include_training_callbacks)" class="doc doc-heading doc-heading-parameter">                  <code>include_training_callbacks</code>
+<a href="#rfdetr.training.trainer.build_trainer(include_training_callbacks)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>When <code>True</code> (default) the full training stack is wired (EMA, drop-path,
+checkpointing, best-model selection, early stopping) along with the configured loggers. When <code>False</code> an
+evaluation-only trainer is built that keeps just the metric callback (and the progress bar): no
+checkpoints or logs are written. Used by :meth:<code>rfdetr.detr.RFDETR.evaluate</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
             </td>
           </tr>
           <tr class="doc-section-item">
