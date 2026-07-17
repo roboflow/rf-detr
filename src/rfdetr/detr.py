@@ -1115,7 +1115,7 @@ class RFDETR:
             else:
                 results = trainer.validate(module, datamodule)
 
-        return {key: float(value) for key, value in dict(results[0]).items()} if results else {}
+        return {key: float(value) for key, value in results[0].items()} if results else {}
 
     @_ensure_model_on_device
     def inference(
