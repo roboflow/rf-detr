@@ -293,6 +293,44 @@ class TestBuildTrainerCallbacks:
         assert isinstance(trainer, __import__("pytorch_lightning").Trainer)
 
 
+class TestBuildTrainerCallbackOrdering:
+    """COCOEvalCallback is appended after BestModelCallback/RFDETREarlyStopping in source order (trainer.py),
+
+    but PTL's ``_CallbackConnector._reorder_callbacks`` moves every ``Checkpoint`` subclass — including
+    ``BestModelCallback`` — to the end of ``trainer.callbacks``, while ``RFDETREarlyStopping`` (an
+    ``EarlyStopping`` subclass, not ``Checkpoint``) keeps its relative position. Regression for the PR #1134
+    append-order move: this asserts the *actual* PTL-resolved execution order matches the safety argument in the
+    trainer.py comment, not just the raw append order.
+    """
+
+    def test_early_stopping_and_coco_eval_fire_before_best_model_checkpoint(self, tmp_path):
+        """After PTL's callback reordering, EarlyStopping and COCOEvalCallback still precede BestModelCallback."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, early_stopping=True), _mc())
+        types = [type(cb) for cb in trainer.callbacks]
+        early_stop_idx = types.index(RFDETREarlyStopping)
+        coco_eval_idx = types.index(COCOEvalCallback)
+        best_model_idx = types.index(BestModelCallback)
+        assert early_stop_idx < best_model_idx, (
+            "RFDETREarlyStopping must fire before BestModelCallback on every on_validation_end "
+            "(BestModelCallback's try/finally restore relies on EarlyStopping reading the raw metric first)"
+        )
+        assert coco_eval_idx < best_model_idx, (
+            "COCOEvalCallback must write its metrics before BestModelCallback reads them on_validation_end"
+        )
+
+    def test_best_model_callback_is_among_the_reordered_checkpoint_group(self, tmp_path):
+        """BestModelCallback (a ModelCheckpoint subclass) is moved into the trailing checkpoint group by PTL."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, early_stopping=True, checkpoint_interval=2), _mc())
+        checkpoint_types = {type(cb) for cb in trainer.callbacks if isinstance(cb, ModelCheckpoint)}
+        non_checkpoint_types = [type(cb) for cb in trainer.callbacks if not isinstance(cb, ModelCheckpoint)]
+        assert BestModelCallback in checkpoint_types
+        # None of the non-Checkpoint callbacks (EarlyStopping, COCOEvalCallback, progress bar, ...) were
+        # displaced past any ModelCheckpoint subclass by the reorder.
+        last_non_checkpoint_idx = max(i for i, cb in enumerate(trainer.callbacks) if type(cb) in non_checkpoint_types)
+        first_checkpoint_idx = min(i for i, cb in enumerate(trainer.callbacks) if isinstance(cb, ModelCheckpoint))
+        assert last_non_checkpoint_idx < first_checkpoint_idx
+
+
 class TestBuildTrainerKeypointDefaults:
     """Verify build_trainer() applies keypoint-specific defaults for noisy fine-tuning metrics."""
 
@@ -697,6 +735,20 @@ class TestBuildTrainerLoggers:
             )
         assert fake_logger in trainer.loggers
 
+    def test_wandb_logger_wired(self, tmp_path):
+        """WandbLogger is added when wandb=True (dep mocked)."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.loggers import WandbLogger
+
+        fake_logger = mock.MagicMock(spec=WandbLogger)
+        with mock.patch("rfdetr.training.trainer.WandbLogger", return_value=fake_logger):
+            trainer = build_trainer(
+                _tc(tmp_path, wandb=True, use_ema=False),
+                _mc(),
+            )
+        assert fake_logger in trainer.loggers
+
     def test_missing_tensorboard_dep_warns_not_crashes(self, tmp_path):
         """If tensorboard package is absent, a warning is logged and training continues."""
         import unittest.mock as mock
@@ -737,6 +789,46 @@ class TestBuildTrainerLoggers:
         from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
 
         assert all(not isinstance(lg, TensorBoardLogger) for lg in trainer.loggers)
+        assert any(isinstance(lg, CSVLogger) for lg in trainer.loggers)
+
+    def test_missing_wandb_dep_warns_not_crashes(self, tmp_path):
+        """If the wandb package is absent, a warning is logged and training continues."""
+        import unittest.mock as mock
+
+        with mock.patch(
+            "rfdetr.training.trainer.WandbLogger",
+            side_effect=ModuleNotFoundError("no module named 'wandb'"),
+        ):
+            with mock.patch("rfdetr.training.trainer._logger") as mock_logger:
+                trainer = build_trainer(
+                    _tc(tmp_path, wandb=True, use_ema=False),
+                    _mc(),
+                )
+        mock_logger.warning.assert_called_once()
+        assert "WandB" in mock_logger.warning.call_args[0][0]
+        from pytorch_lightning.loggers import CSVLogger, WandbLogger
+
+        assert all(not isinstance(lg, WandbLogger) for lg in trainer.loggers)
+        assert any(isinstance(lg, CSVLogger) for lg in trainer.loggers)
+
+    def test_missing_mlflow_dep_warns_not_crashes(self, tmp_path):
+        """If the mlflow package is absent, a warning is logged and training continues."""
+        import unittest.mock as mock
+
+        with mock.patch(
+            "rfdetr.training.trainer.MLFlowLogger",
+            side_effect=ModuleNotFoundError("no module named 'mlflow'"),
+        ):
+            with mock.patch("rfdetr.training.trainer._logger") as mock_logger:
+                trainer = build_trainer(
+                    _tc(tmp_path, mlflow=True, use_ema=False),
+                    _mc(),
+                )
+        mock_logger.warning.assert_called_once()
+        assert "MLflow" in mock_logger.warning.call_args[0][0]
+        from pytorch_lightning.loggers import CSVLogger, MLFlowLogger
+
+        assert all(not isinstance(lg, MLFlowLogger) for lg in trainer.loggers)
         assert any(isinstance(lg, CSVLogger) for lg in trainer.loggers)
 
     def test_clearml_flag_raises_not_implemented(self, tmp_path):
@@ -1154,3 +1246,41 @@ class TestBuildTrainerDDPFindUnusedParameters:
             build_trainer(tc, mc)
 
         assert captured["strategy"] == "auto"
+
+
+class TestBuildTrainerEvalMode:
+    """``include_training_callbacks=False`` builds a lean eval-only trainer (issue #1110).
+
+    The eval path keeps only the metric callback (and progress bar) so ``RFDETR.evaluate()`` does not write checkpoints
+    or training logs to ``output_dir`` or run training-only callbacks such as EMA and early stopping.
+    """
+
+    def test_coco_eval_callback_present(self, tmp_path):
+        """The metric callback is retained — it computes the returned COCO metrics."""
+        trainer = build_trainer(_tc(tmp_path), _mc(), include_training_callbacks=False)
+        assert any(isinstance(cb, COCOEvalCallback) for cb in trainer.callbacks)
+
+    def test_no_checkpoint_callbacks(self, tmp_path):
+        """No ModelCheckpoint — including BestModelCallback — is wired in eval mode."""
+        trainer = build_trainer(_tc(tmp_path), _mc(), include_training_callbacks=False)
+        assert not [cb for cb in trainer.callbacks if isinstance(cb, ModelCheckpoint)]
+
+    def test_no_ema_callback(self, tmp_path):
+        """EMA is a training-only concern and must be absent in eval mode."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=True), _mc(), include_training_callbacks=False)
+        assert not [cb for cb in trainer.callbacks if isinstance(cb, RFDETREMACallback)]
+
+    def test_no_early_stopping_callback(self, tmp_path):
+        """Early stopping is a training-only concern and must be absent in eval mode."""
+        trainer = build_trainer(_tc(tmp_path, early_stopping=True), _mc(), include_training_callbacks=False)
+        assert not [cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping)]
+
+    def test_loggers_disabled(self, tmp_path):
+        """No loggers are attached so no metrics.csv / lightning_logs are written."""
+        trainer = build_trainer(_tc(tmp_path), _mc(), include_training_callbacks=False)
+        assert trainer.loggers == []
+
+    def test_training_callbacks_present_by_default(self, tmp_path):
+        """The default (training) path is unchanged: BestModelCallback is still wired."""
+        trainer = build_trainer(_tc(tmp_path), _mc())
+        assert any(isinstance(cb, BestModelCallback) for cb in trainer.callbacks)
