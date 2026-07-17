@@ -38,6 +38,7 @@ __all__ = [
     "RFDETRSegXLargeConfig",
     "RFDETRSeg2XLargeConfig",
     "RFDETRKeypointPreviewConfig",
+    "OptimizerParamGroupOverride",
     "TrainConfig",
     "SegmentationTrainConfig",
     "KeypointTrainConfig",
@@ -223,6 +224,43 @@ def _detect_device() -> str:
 
 DEVICE: str = _detect_device()
 _OPTIMIZER_MANAGED_KWARGS = {"params", "lr", "weight_decay", "fused"}
+
+
+def _split_optimizer_name(optimizer: str) -> tuple[str | None, str]:
+    """Split an optimizer string into optional provider and optimizer name.
+
+    Args:
+        optimizer: Optimizer config value, optionally prefixed with
+            ``"pytorch_optimizer:"`` or ``"pytorch-optimizer:"``.
+
+    Returns:
+        Tuple of provider and normalized optimizer name. Provider is ``None``
+        when no explicit prefix was supplied.
+
+    Raises:
+        ValueError: If an unknown provider prefix is used, or a provider prefix
+            is not followed by an optimizer name.
+
+    Examples:
+        >>> _split_optimizer_name("lion")
+        (None, 'lion')
+        >>> _split_optimizer_name("pytorch_optimizer:Lion")
+        ('pytorch_optimizer', 'lion')
+    """
+    optimizer_name = optimizer.strip()
+    if ":" not in optimizer_name:
+        return None, optimizer_name.lower()
+
+    provider, name = optimizer_name.split(":", 1)
+    provider = provider.strip().lower().replace("-", "_")
+    name = name.strip()
+    if provider == "pytorch_optimizer":
+        name = name.lower()
+    else:
+        raise ValueError(f"Unsupported optimizer provider {provider!r}. Use 'adamw' or 'pytorch_optimizer:<name>'.")
+    if not name:
+        raise ValueError("optimizer provider prefix must be followed by a non-empty optimizer name.")
+    return provider, name
 
 
 class BaseConfig(BaseModel):
@@ -1151,10 +1189,13 @@ class TrainConfig(BaseConfig):
     @field_validator("optimizer", mode="after")
     @classmethod
     def validate_optimizer_name(cls, v: str) -> str:
-        """Validate optimizer is a non-empty optimizer name."""
+        """Validate optimizer is a non-empty name with a supported provider prefix."""
         optimizer = v.strip()
         if not optimizer:
             raise ValueError("optimizer must be a non-empty string.")
+        # Reject malformed provider syntax at config time; the existence check
+        # (does pytorch-optimizer know the name) still happens lazily at train start.
+        _split_optimizer_name(optimizer)
         return optimizer
 
     @field_validator("optimizer_kwargs", mode="after")
