@@ -293,6 +293,44 @@ class TestBuildTrainerCallbacks:
         assert isinstance(trainer, __import__("pytorch_lightning").Trainer)
 
 
+class TestBuildTrainerCallbackOrdering:
+    """COCOEvalCallback is appended after BestModelCallback/RFDETREarlyStopping in source order (trainer.py),
+
+    but PTL's ``_CallbackConnector._reorder_callbacks`` moves every ``Checkpoint`` subclass — including
+    ``BestModelCallback`` — to the end of ``trainer.callbacks``, while ``RFDETREarlyStopping`` (an
+    ``EarlyStopping`` subclass, not ``Checkpoint``) keeps its relative position. Regression for the PR #1134
+    append-order move: this asserts the *actual* PTL-resolved execution order matches the safety argument in the
+    trainer.py comment, not just the raw append order.
+    """
+
+    def test_early_stopping_and_coco_eval_fire_before_best_model_checkpoint(self, tmp_path):
+        """After PTL's callback reordering, EarlyStopping and COCOEvalCallback still precede BestModelCallback."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, early_stopping=True), _mc())
+        types = [type(cb) for cb in trainer.callbacks]
+        early_stop_idx = types.index(RFDETREarlyStopping)
+        coco_eval_idx = types.index(COCOEvalCallback)
+        best_model_idx = types.index(BestModelCallback)
+        assert early_stop_idx < best_model_idx, (
+            "RFDETREarlyStopping must fire before BestModelCallback on every on_validation_end "
+            "(BestModelCallback's try/finally restore relies on EarlyStopping reading the raw metric first)"
+        )
+        assert coco_eval_idx < best_model_idx, (
+            "COCOEvalCallback must write its metrics before BestModelCallback reads them on_validation_end"
+        )
+
+    def test_best_model_callback_is_among_the_reordered_checkpoint_group(self, tmp_path):
+        """BestModelCallback (a ModelCheckpoint subclass) is moved into the trailing checkpoint group by PTL."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, early_stopping=True, checkpoint_interval=2), _mc())
+        checkpoint_types = {type(cb) for cb in trainer.callbacks if isinstance(cb, ModelCheckpoint)}
+        non_checkpoint_types = [type(cb) for cb in trainer.callbacks if not isinstance(cb, ModelCheckpoint)]
+        assert BestModelCallback in checkpoint_types
+        # None of the non-Checkpoint callbacks (EarlyStopping, COCOEvalCallback, progress bar, ...) were
+        # displaced past any ModelCheckpoint subclass by the reorder.
+        last_non_checkpoint_idx = max(i for i, cb in enumerate(trainer.callbacks) if type(cb) in non_checkpoint_types)
+        first_checkpoint_idx = min(i for i, cb in enumerate(trainer.callbacks) if isinstance(cb, ModelCheckpoint))
+        assert last_non_checkpoint_idx < first_checkpoint_idx
+
+
 class TestBuildTrainerKeypointDefaults:
     """Verify build_trainer() applies keypoint-specific defaults for noisy fine-tuning metrics."""
 
