@@ -399,7 +399,7 @@ class TestBestModelCallback:
             weights_only=False,
         )
         total_data = torch.load(total, map_location="cpu", weights_only=False)
-        # total is stripped so only model + args
+        # total is stripped but keeps provenance keys (e.g. best_total_source) beyond model + args
         assert total_data["model"] == ema_data["model"]
         assert total_data["best_total_source"] == "ema"
 

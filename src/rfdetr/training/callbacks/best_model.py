@@ -40,7 +40,7 @@ class BestModelCallback(ModelCheckpoint):
 
     At the end of training the overall winner (regular vs EMA, strict ``>`` for EMA) is copied to
     ``checkpoint_best_total.pth`` and optimizer/scheduler state is stripped via
-    :func:`rfdetr.util.misc.strip_checkpoint`.  The stripped payload records ``best_total_source``
+    :func:`rfdetr.utilities.state_dict.strip_checkpoint`.  The stripped payload records ``best_total_source``
     (``"ema"`` or ``"regular"``) so the winning source is recoverable after reload.
 
     When EMA tracking is enabled (``monitor_ema`` set), EMA-named checkpoints are always left on disk for clarity:
