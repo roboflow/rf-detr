@@ -969,6 +969,11 @@ class RFDETR:
         as configured. If the dataset's class count differs from the model's ``num_classes`` a :class:`UserWarning` is
         emitted and evaluation proceeds with the model's head unchanged.
 
+        Unlike :meth:`train`, a ``resolution`` override does **not** persist: :attr:`model_config` (and any cached
+        ``model.resolution`` / ``model.args`` inference context) is restored to its pre-call values once the
+        eval-only config copy has captured the override, so a later :meth:`predict` / :meth:`export` / :meth:`train`
+        call is unaffected by an ``evaluate(resolution=...)`` call.
+
         Args:
             split: Which split to evaluate. ``"test"`` evaluates the ``test/`` folder (Roboflow datasets; falls back to
                 the validation split otherwise) via ``trainer.test``; ``"val"`` evaluates the ``valid/`` folder via
@@ -1002,14 +1007,36 @@ class RFDETR:
         if split not in ("test", "val"):
             raise ValueError(f"split must be 'test' or 'val', got {split!r}.")
 
-        # Same kwarg handling as train() (device, resolution, deprecated knobs, auto-batch).
-        config, _accelerator, _devices = _prepare_run_config(self, **kwargs)
+        # Same kwarg handling as train() (device, resolution, deprecated knobs, auto-batch).  A `resolution`
+        # override mutates `model_config`/`model.args` in place inside `_prepare_run_config` — intentional and
+        # persistent for train(), but evaluate() is documented as inspection-only, so the mutation is snapshotted
+        # here and restored once the eval-only config copy below has captured the overridden values it needs.
+        _orig_resolution = self.model_config.resolution
+        _orig_pe = self.model_config.positional_encoding_size
+        _live_model = getattr(self, "model", None)
+        _live_args = getattr(_live_model, "args", None) if _live_model is not None else None
+        _orig_model_resolution = getattr(_live_model, "resolution", None) if _live_model is not None else None
+        _orig_args_resolution = getattr(_live_args, "resolution", None) if _live_args is not None else None
+        _orig_args_pe = getattr(_live_args, "positional_encoding_size", None) if _live_args is not None else None
+        try:
+            config, _accelerator, _devices = _prepare_run_config(self, **kwargs)
 
-        # Build the module without re-loading pretrain weights, then transplant the
-        # already-loaded in-memory weights into it (the reverse of train()'s final
-        # `self.model.model = module.model`).  This evaluates the current weights and
-        # never passes ``ckpt_path``, sidestepping PTL's loop-state restore on a bare .pth.
-        eval_model_config = self.model_config.model_copy(update={"pretrain_weights": None})
+            # Build the module without re-loading pretrain weights, then transplant the
+            # already-loaded in-memory weights into it (the reverse of train()'s final
+            # `self.model.model = module.model`).  This evaluates the current weights and
+            # never passes ``ckpt_path``, sidestepping PTL's loop-state restore on a bare .pth.
+            eval_model_config = self.model_config.model_copy(update={"pretrain_weights": None})
+        finally:
+            self.model_config.resolution = _orig_resolution
+            self.model_config.positional_encoding_size = _orig_pe
+            if _live_model is not None:
+                if hasattr(_live_model, "resolution"):
+                    _live_model.resolution = _orig_model_resolution
+                if _live_args is not None:
+                    if hasattr(_live_args, "resolution"):
+                        _live_args.resolution = _orig_args_resolution
+                    if hasattr(_live_args, "positional_encoding_size"):
+                        _live_args.positional_encoding_size = _orig_args_pe
         module = RFDETRModelModule(eval_model_config, config)
         source_state = self.model.model.state_dict()
         # Reconcile DINOv2 positional embeddings when a `resolution` override changed the PE grid

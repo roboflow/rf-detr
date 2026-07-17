@@ -14,6 +14,7 @@ The split-dispatch and class-count-mismatch tests mock the PTL stack so they run
 
 import builtins
 import json
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -198,18 +199,41 @@ class TestEvaluateKwargParity:
 class TestEvaluateClassCountMismatch:
     """A dataset whose class count differs from the model warns instead of adapting the head."""
 
-    def test_mismatch_warns(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
-        """Evaluating on a dataset with a different class count emits a ``UserWarning``."""
+    def test_mismatch_warns_on_default_split(self, synthetic_shape_dataset_dir: Path, tmp_path: Path) -> None:
+        """Evaluating the default ``split="test"`` on a mismatched dataset emits a ``UserWarning`` (issue #1110).
+
+        Regression for the class-mismatch warning being dead code on the default split: ``RFDETRDataModule.
+        class_names`` previously inspected only ``_dataset_train``/``_dataset_val``, so ``setup("test")`` (which
+        builds only ``_dataset_test``) always saw ``class_names is None`` and the warning never fired. This drives
+        a real (unmocked) datamodule end to end so the fixed property is exercised, not a stub.
+        """
+        mismatched_model = RFDETRNano(pretrain_weights=None, num_classes=5, device="cpu")
+        with pytest.warns(UserWarning, match="classes"):
+            mismatched_model.evaluate(
+                dataset_dir=str(synthetic_shape_dataset_dir),
+                split="test",
+                device="cpu",
+                output_dir=str(tmp_path),
+                batch_size=4,
+                num_workers=0,
+                tensorboard=False,
+            )
+
+    def test_no_warning_when_class_names_unresolvable(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
+        """No class-mismatch ``UserWarning`` is emitted when the datamodule cannot resolve class names (the ``None``
+        branch)."""
         trainer = _mock_trainer()
         datamodule = MagicMock()
-        datamodule.class_names = ["only", "two"]  # model has 3 classes
+        datamodule.class_names = None
         with (
             patch("rfdetr.training.RFDETRModelModule"),
             patch("rfdetr.training.RFDETRDataModule", return_value=datamodule),
             patch("rfdetr.training.build_trainer", return_value=trainer),
-            pytest.warns(UserWarning, match="classes"),
+            warnings.catch_warnings(record=True) as caught,
         ):
+            warnings.simplefilter("always")
             nano_model.evaluate(dataset_dir=str(tmp_path), split="test", output_dir=str(tmp_path / "o"))
+        assert not any("classes" in str(w.message) for w in caught)
 
 
 class TestEvaluateImportGuard:
@@ -281,17 +305,18 @@ class TestEvaluateResolutionOverride:
     """A resolution override reconciles positional embeddings so the in-memory transplant still loads."""
 
     def test_resolution_override_evaluates(self, synthetic_shape_dataset_dir: Path, tmp_path: Path) -> None:
-        """evaluate(resolution=...) interpolates PE and returns metrics.
+        """evaluate(resolution=...) interpolates PE, returns metrics, and leaves model_config unchanged.
 
-        Uses a fresh model because the resolution override mutates ``model_config`` in place; the PTL trainer is mocked
-        so only the resolution-sensitive build + state-dict transplant run (the line that would raise on a PE-shape
-        mismatch if interpolation were skipped).
+        The PTL trainer is mocked so only the resolution-sensitive build + state-dict transplant run (the line that
+        would raise on a PE-shape mismatch if interpolation were skipped).
         """
         model = RFDETRNano(
             pretrain_weights=None,
             num_classes=_num_classes(synthetic_shape_dataset_dir),
             device="cpu",
         )
+        original_resolution = model.model_config.resolution
+        original_pe = model.model_config.positional_encoding_size
         block_size = model.model_config.patch_size * model.model_config.num_windows
         new_resolution = block_size * (model.model_config.resolution // block_size + 1)
         trainer = _mock_trainer()
@@ -307,3 +332,5 @@ class TestEvaluateResolutionOverride:
                 tensorboard=False,
             )
         assert "test/mAP_50_95" in metrics
+        assert model.model_config.resolution == original_resolution
+        assert model.model_config.positional_encoding_size == original_pe
