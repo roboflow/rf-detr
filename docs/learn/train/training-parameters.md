@@ -74,12 +74,12 @@ Recommended configurations for different GPUs (targeting effective batch size of
 ```python
 model.train(
     dataset_dir="path/to/dataset",
-    optimizer="lion",
+    optimizer="pytorch_optimizer.Lion",  # third-party optimizer by import path (install it yourself)
     optimizer_kwargs={"weight_decouple": True},
 )
 ```
 
-Custom optimizer names are resolved through `pytorch-optimizer` while preserving RF-DETR's parameter groups and layer-wise learning rates.
+Bare short names resolve to native `torch.optim` optimizers; any other optimizer is given by full dotted import path or a callable, always preserving RF-DETR's parameter groups and layer-wise learning rates.
 
 ## Resolution Parameters
 
