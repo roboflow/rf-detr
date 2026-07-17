@@ -702,7 +702,7 @@ class RFDETRDataModule(LightningDataModule):
         Returns:
             Sorted list of class name strings, or ``None``.
         """
-        for dataset in (self._dataset_train, self._dataset_val):
+        for dataset in (self._dataset_train, self._dataset_val, self._dataset_test):
             if dataset is None:
                 continue
             coco = getattr(dataset, "coco", None)

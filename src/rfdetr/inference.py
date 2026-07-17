@@ -48,13 +48,13 @@ class ModelContext:
         args: Any,
         class_names: list[str] | None = None,
     ) -> None:
-        self.model: torch.nn.Module | None = model
+        self.model = model
         self.postprocess = postprocess
         self.device = device
         self.resolution = resolution
         self.args = args
         self.class_names = class_names
-        self.inference_model: torch.nn.Module | None = None
+        self.inference_model = None
 
     def reinitialize_detection_head(self, num_classes: int) -> None:
         """Reinitialize the detection head for a different number of classes.
@@ -62,7 +62,6 @@ class ModelContext:
         Args:
             num_classes: New number of output classes (including background).
         """
-        assert self.model is not None, "Cannot reinitialize the detection head: model has been cleared."
         reinitialize_head = cast("Callable[[int], None]", self.model.reinitialize_detection_head)
         reinitialize_head(num_classes)
         self.args.num_classes = num_classes
