@@ -14,18 +14,22 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import torchvision
 from torch.utils.data import Dataset, Subset
 
+from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema as infer_coco_keypoint_schema
+from rfdetr.datasets._keypoint_schema import infer_yolo_keypoint_schema as infer_yolo_keypoint_schema
 from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
 from rfdetr.datasets.o365 import build_o365
 from rfdetr.datasets.yolo import YoloDetection, build_roboflow_from_yolo
 
 
-def get_coco_api_from_dataset(dataset: Dataset[Any]) -> Optional[Any]:
+def get_coco_api_from_dataset(dataset: Dataset[Any]) -> Any | None:
     for _ in range(10):
         if isinstance(dataset, Subset):
             dataset = dataset.dataset
@@ -77,13 +81,6 @@ def build_roboflow(image_set: str, args: Any, resolution: int) -> Dataset[Any]:
 
     dataset_format = detect_roboflow_format(root)
 
-    # Detection dataset args may omit the keypoint flag; missing means standard detection.
-    if getattr(args, "use_grouppose_keypoints", False) and dataset_format == "yolo":
-        raise ValueError(
-            "YOLO keypoint training is not supported yet. "
-            "Use a COCO keypoint dataset with train/_annotations.coco.json and valid/_annotations.coco.json."
-        )
-
     if dataset_format == "coco":
         return build_roboflow_from_coco(image_set, args, resolution)
     return build_roboflow_from_yolo(image_set, args, resolution)
@@ -97,11 +94,5 @@ def build_dataset(image_set: str, args: Any, resolution: int) -> Dataset[Any]:
     if args.dataset_file == "roboflow":
         return build_roboflow(image_set, args, resolution)
     if args.dataset_file == "yolo":
-        # Detection dataset args may omit the keypoint flag; missing means standard YOLO detection.
-        if getattr(args, "use_grouppose_keypoints", False):
-            raise ValueError(
-                "YOLO keypoint training is not supported yet. "
-                "Use dataset_file='roboflow' or 'coco' with COCO keypoint annotations."
-            )
         return build_roboflow_from_yolo(image_set, args, resolution)
     raise ValueError(f"dataset {args.dataset_file} not supported")

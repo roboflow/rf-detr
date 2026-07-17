@@ -19,11 +19,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any, cast
+
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
-from scipy.optimize import linear_sum_assignment
-from torch import nn
+from numpy.typing import NDArray
+from scipy.optimize import linear_sum_assignment as _linear_sum_assignment  # type: ignore[import-untyped,unused-ignore]
+from torch import Tensor, nn
 
 from rfdetr.models.heads.keypoints import compute_keypoint_matching_cost
 from rfdetr.models.heads.segmentation import point_sample
@@ -32,6 +36,9 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 _SANITIZED_COST_MARGIN = 1.0
+_FOCAL_LOSS_GAMMA = 2.0
+_LinearSumAssignment = Callable[[Any], tuple[NDArray[np.int64], NDArray[np.int64]]]
+linear_sum_assignment = cast(_LinearSumAssignment, _linear_sum_assignment)
 
 
 class HungarianMatcher(nn.Module):
@@ -40,6 +47,10 @@ class HungarianMatcher(nn.Module):
 
     Because of this, in general, there are more predictions than targets. In this case, we do a 1-to-1 matching of the
     best predictions, while the others are un-matched (and thus treated as non-objects).
+
+    Note:
+        The focal loss exponent ``gamma`` is fixed at ``_FOCAL_LOSS_GAMMA`` (2.0) and is not
+        configurable. Only ``focal_alpha`` can be adjusted at construction time.
     """
 
     def __init__(
@@ -89,7 +100,7 @@ class HungarianMatcher(nn.Module):
         self._warned_non_finite_costs = False
 
     @staticmethod
-    def _sanitize_cost_matrix(cost_matrix: torch.Tensor) -> torch.Tensor:
+    def _sanitize_cost_matrix(cost_matrix: Tensor) -> Tensor:
         """Replace non-finite cost entries with a large finite sentinel.
 
         >>> HungarianMatcher._sanitize_cost_matrix(
@@ -131,16 +142,17 @@ class HungarianMatcher(nn.Module):
     @torch.no_grad()
     def forward(
         self,
-        outputs: dict,
-        targets: list,
+        outputs: dict[str, Any],
+        targets: list[dict[str, Any]],
         group_detr: int = 1,
-    ) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    ) -> list[tuple[Tensor, Tensor]]:
         """Performs the matching
-        Params:
-            outputs: This is a dict that contains at least these entries:
+
+        Args:
+            outputs: Dict containing at least these entries:
                  "pred_logits": Tensor of dim [batch_size, num_queries, num_classes] with the classification logits
                  "pred_boxes": Tensor of dim [batch_size, num_queries, 4] with the predicted box coordinates
-            targets: This is a list of targets (len(targets) = batch_size), where each target is a dict containing:
+            targets: List of targets (len(targets) = batch_size), where each target is a dict containing:
                  "labels": Tensor of dim [num_target_boxes] (where num_target_boxes is the number of ground-truth
                            objects in the target) containing the class labels
                  "boxes": Tensor of dim [num_target_boxes, 4] containing the target box coordinates "masks": Tensor of
@@ -151,8 +163,9 @@ class HungarianMatcher(nn.Module):
             A list of size batch_size, containing tuples of (index_i, index_j) where:
                 - index_i is the indices of the selected predictions (in order)
                 - index_j is the indices of the corresponding selected targets (in order)
-            For each batch element, it holds:
-                len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
+            For each batch element, it holds len(index_i) == len(index_j). With group_detr == 1 this
+            length is min(num_queries, num_target_boxes); with group_detr > 1 the per-group matches are
+            concatenated, so the length is that quantity summed over the groups.
         """
         bs, num_queries = outputs["pred_logits"].shape[:2]
 
@@ -176,8 +189,8 @@ class HungarianMatcher(nn.Module):
         cost_giou = -giou
 
         # Compute the classification cost.
-        alpha = 0.25
-        gamma = 2.0
+        alpha = self.focal_alpha
+        gamma = _FOCAL_LOSS_GAMMA
 
         # neg_cost_class = (1 - alpha) * (out_prob ** gamma) * (-(1 - out_prob + 1e-8).log())
         # pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-(out_prob + 1e-8).log())
@@ -192,7 +205,7 @@ class HungarianMatcher(nn.Module):
         if masks_present:
             tgt_masks = torch.cat([v["masks"] for v in targets])
 
-            if isinstance(outputs["pred_masks"], torch.Tensor):
+            if isinstance(outputs["pred_masks"], Tensor):
                 out_masks = outputs["pred_masks"].flatten(0, 1)
 
                 num_points = out_masks.shape[-2] * out_masks.shape[-1] // self.mask_point_sample_ratio
@@ -274,6 +287,8 @@ class HungarianMatcher(nn.Module):
 
         sizes = [len(v["boxes"]) for v in targets]
         indices = []
+        if num_queries % group_detr != 0:
+            raise ValueError(f"num_queries ({num_queries}) must be divisible by group_detr ({group_detr})")
         g_num_queries = num_queries // group_detr
         cost_matrix_list = cost_matrix.split(g_num_queries, dim=1)
         for g_i in range(group_detr):
@@ -292,7 +307,20 @@ class HungarianMatcher(nn.Module):
         return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
 
 
-def build_matcher(args):
+def build_matcher(args: Any) -> HungarianMatcher:
+    """Build a HungarianMatcher from a training argument namespace.
+
+    Args:
+        args: Namespace supplying ``focal_alpha``, ``set_cost_class``, ``set_cost_bbox``,
+            ``set_cost_giou``, ``segmentation_head``, and optional keypoint cost
+            coefficients (``keypoint_l1_loss_coef``, ``keypoint_findable_loss_coef``,
+            ``keypoint_visible_loss_coef``, ``keypoint_nll_loss_coef``). When
+            ``segmentation_head`` is truthy, also requires ``mask_ce_loss_coef``,
+            ``mask_dice_loss_coef``, and ``mask_point_sample_ratio``.
+
+    Returns:
+        Configured HungarianMatcher instance.
+    """
     # Detection-only matcher args may omit keypoint costs; zero defaults disable keypoint matching terms.
     common_kwargs = {
         "cost_class": args.set_cost_class,

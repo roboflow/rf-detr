@@ -9,57 +9,62 @@
 # ------------------------------------------------------------------------
 """Mathematical building blocks: MLP, inverse_sigmoid, accuracy, interpolate."""
 
-from typing import List, Optional, Tuple
-
 import torch
 import torch.nn.functional as F  # noqa: N812
-import torchvision
 from torch import Tensor, nn
 
-if float(torchvision.__version__.split(".")[1]) < 7.0:
-    from torchvision.ops import _new_empty_tensor
-    from torchvision.ops.misc import _output_size
 
-
-@torch.no_grad()
-def accuracy(output: torch.Tensor, target: torch.Tensor, topk: Tuple[int, ...] = (1,)) -> List[torch.Tensor]:
+def accuracy(output: torch.Tensor, target: torch.Tensor, topk: tuple[int, ...] = (1,)) -> list[torch.Tensor]:
     """Computes the precision@k for the specified values of k."""
-    if target.numel() == 0:
-        return [torch.zeros([], device=output.device)]
-    maxk = max(topk)
-    batch_size = target.size(0)
+    # Context manager avoids mypy untyped-decorator on @torch.no_grad()
+    # Revert to decorator once torch floor >= 2.10 (pytorch/pytorch#166413)
+    with torch.no_grad():
+        if target.numel() == 0:
+            return [torch.zeros([], device=output.device)]
+        maxk = max(topk)
+        batch_size = target.size(0)
 
-    _, pred = output.topk(maxk, 1, True, True)
-    pred = pred.t()
-    correct = pred.eq(target.view(1, -1).expand_as(pred))
+        _, pred = output.topk(maxk, 1, True, True)
+        pred = pred.t()
+        correct = pred.eq(target.view(1, -1).expand_as(pred))
 
-    res = []
-    for k in topk:
-        correct_k = correct[:k].view(-1).float().sum(0)
-        res.append(correct_k.mul_(100.0 / batch_size))
-    return res
+        res = []
+        for k in topk:
+            correct_k = correct[:k].reshape(-1).float().sum(0)
+            res.append(correct_k.mul_(100.0 / batch_size))
+        return res
 
 
 def interpolate(
     input: Tensor,
-    size: Optional[List[int]] = None,
-    scale_factor: Optional[float] = None,
+    size: list[int] | None = None,
+    scale_factor: float | None = None,
     mode: str = "nearest",
-    align_corners: Optional[bool] = None,
+    align_corners: bool | None = None,
 ) -> Tensor:
-    """Equivalent to nn.functional.interpolate, but with support for empty batch sizes."""
-    if float(torchvision.__version__.split(".")[1]) < 7.0:
-        if input.numel() > 0:
-            return torch.nn.functional.interpolate(input, size, scale_factor, mode, align_corners)
+    """Equivalent to nn.functional.interpolate.
 
-        output_shape = _output_size(2, input, size, scale_factor)
-        output_shape = list(input.shape[:-2]) + list(output_shape)
-        return _new_empty_tensor(input, output_shape)
-    else:
-        return torchvision.ops.misc.interpolate(input, size, scale_factor, mode, align_corners)
+    Historically this wrapped ``torchvision`` to support empty batch sizes on old releases; modern ``torch`` (>=2.2)
+    handles empty batches natively, so this now delegates directly to :func:`torch.nn.functional.interpolate`.
+    """
+    interpolated: Tensor = F.interpolate(input, size, scale_factor, mode, align_corners)
+    return interpolated
 
 
 def inverse_sigmoid(x: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
+    """Compute element-wise logit (inverse sigmoid) of a tensor.
+
+    Clamps input to ``[0, 1]``, then returns ``log(x / (1 - x))`` with
+    numerical stability guarded by ``eps``.
+
+    Args:
+        x: Input tensor with values in the range ``[0, 1]``.
+        eps: Minimum clamp value applied to ``x`` and ``1 - x`` before the
+            log operation. Guards against ``log(0)``.
+
+    Returns:
+        Tensor of the same shape as ``x`` containing the logit values.
+    """
     x = x.clamp(min=0, max=1)
     x1 = x.clamp(min=eps)
     x2 = (1 - x).clamp(min=eps)
@@ -69,13 +74,21 @@ def inverse_sigmoid(x: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
 class MLP(nn.Module):
     """Very simple multi-layer perceptron (also called FFN)"""
 
-    def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
+    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, num_layers: int) -> None:
         super().__init__()
         self.num_layers = num_layers
         h = [hidden_dim] * (num_layers - 1)
         self.layers = nn.ModuleList(nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
+        """Apply the MLP: ReLU on all layers except the last.
+
+        Args:
+            x: Input tensor of shape ``(..., input_dim)``.
+
+        Returns:
+            Output tensor of shape ``(..., output_dim)``.
+        """
         for i, layer in enumerate(self.layers):
             x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
         return x

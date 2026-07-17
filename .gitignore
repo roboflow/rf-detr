@@ -198,8 +198,7 @@ debugging/
 docs/versions.json
 
 # do not upload python version or notebooks
-notebooks/*.py
-notebooks/output/
+notebooks/
 
 # tracking work in progress
 .codex/logs
@@ -217,4 +216,6 @@ demo_*.py
 demo_*.ipynb
 
 # original notebooks before conversion from scripts
+docs/cookbooks/datasets/
+docs/cookbooks/output/
 docs/cookbooks/*.py

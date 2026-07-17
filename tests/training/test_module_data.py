@@ -297,6 +297,98 @@ class TestPrivateShowSamples:
         with pytest.raises(ImportError, match=r"rfdetr\[visual\]"):
             dm._show_samples(1)
 
+    def test_private_show_samples_returns_figure_for_segmentation_targets(self, build_datamodule, monkeypatch):
+        """_show_samples renders mask overlays when dataset targets include instance masks."""
+        import matplotlib
+        import numpy as np
+
+        matplotlib.use("Agg", force=True)
+        from unittest.mock import MagicMock
+        from unittest.mock import patch as _patch
+
+        from matplotlib import pyplot as plt
+        from matplotlib.figure import Figure
+
+        class _SegDataset(torch.utils.data.Dataset):
+            def __len__(self) -> int:
+                return 1
+
+            def __getitem__(self, idx: int):
+                return (
+                    torch.full((3, 16, 16), 0.5, dtype=torch.float32),
+                    {
+                        "boxes": torch.tensor([[0.5, 0.5, 0.5, 0.5]], dtype=torch.float32),
+                        "labels": torch.tensor([0], dtype=torch.int64),
+                        "masks": torch.ones((1, 16, 16), dtype=torch.bool),
+                        "size": torch.tensor([16, 16], dtype=torch.int64),
+                    },
+                )
+
+        dm = build_datamodule()
+        monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _SegDataset())
+
+        mock_instance = MagicMock()
+        mock_instance.annotate.return_value = np.zeros((16, 16, 3), dtype=np.uint8)
+
+        with _patch("supervision.MaskAnnotator", return_value=mock_instance) as mock_mask_ann:
+            figure = dm._show_samples(1, split="train", columns=1)
+
+        assert isinstance(figure, Figure)
+        mock_mask_ann.assert_called_once()
+        mock_instance.annotate.assert_called_once()
+        plt.close(figure)
+
+    def test_private_show_samples_detection_only_does_not_call_mask_annotator(self, build_datamodule, monkeypatch):
+        """_show_samples skips MaskAnnotator when dataset targets have no masks key."""
+        from unittest.mock import patch as _patch
+
+        import matplotlib
+        from matplotlib import pyplot as plt
+
+        matplotlib.use("Agg", force=True)
+
+        dm = build_datamodule()
+        monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
+
+        with _patch("supervision.MaskAnnotator") as mock_mask_ann:
+            figure = dm._show_samples(1, split="train", columns=1)
+
+        mock_mask_ann.assert_not_called()
+        plt.close(figure)
+
+    def test_private_show_samples_empty_masks_skips_mask_annotator(self, build_datamodule, monkeypatch):
+        """_show_samples skips MaskAnnotator when masks tensor has zero instances (0, H, W)."""
+        from unittest.mock import patch as _patch
+
+        import matplotlib
+        from matplotlib import pyplot as plt
+
+        matplotlib.use("Agg", force=True)
+
+        class _EmptyMasksDataset(torch.utils.data.Dataset):
+            def __len__(self) -> int:
+                return 1
+
+            def __getitem__(self, idx: int):
+                return (
+                    torch.full((3, 16, 16), 0.5, dtype=torch.float32),
+                    {
+                        "boxes": torch.tensor([[0.5, 0.5, 0.5, 0.5]], dtype=torch.float32),
+                        "labels": torch.tensor([0], dtype=torch.int64),
+                        "masks": torch.zeros((0, 16, 16), dtype=torch.bool),
+                        "size": torch.tensor([16, 16], dtype=torch.int64),
+                    },
+                )
+
+        dm = build_datamodule()
+        monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _EmptyMasksDataset())
+
+        with _patch("supervision.MaskAnnotator") as mock_mask_ann:
+            figure = dm._show_samples(1, split="train", columns=1)
+
+        mock_mask_ann.assert_not_called()
+        plt.close(figure)
+
 
 class TestSetup:
     """Setup(stage) builds the correct dataset(s) for each PTL stage."""
@@ -407,7 +499,7 @@ class TestKeypointAugmentationWarning:
     def _build_dm(self, tmp_path, *, use_grouppose_keypoints: bool, augmentation_backend: str = "cpu"):
         mc = _base_model_config(
             use_grouppose_keypoints=use_grouppose_keypoints,
-            num_keypoints_per_class=[0, 17] if use_grouppose_keypoints else [],
+            num_keypoints_per_class=[17] if use_grouppose_keypoints else [],
         )
         tc = _base_train_config(tmp_path, augmentation_backend=augmentation_backend)
         from rfdetr.training.module_data import RFDETRDataModule
@@ -978,18 +1070,13 @@ class TestBackendResolution:
 
     def test_auto_no_kornia_falls_back_to_cpu(self, tmp_path):
         """Auto + CUDA available but kornia not installed: fallback to CPU."""
+        from rfdetr.config import AugmentationBackend
+
         dm = self._build_dm_with_backend(tmp_path, "auto")
-
-        original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
-
-        def _mock_import(name, *args, **kwargs):
-            if name == "kornia" or name.startswith("kornia."):
-                raise ImportError("No module named 'kornia'")
-            return original_import(name, *args, **kwargs)
 
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
-            patch("builtins.__import__", side_effect=_mock_import),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
         ):
             dm = self._setup_with_mock_build(dm)
 
@@ -1008,19 +1095,14 @@ class TestBackendResolution:
 
     def test_gpu_no_kornia_raises_import_error(self, tmp_path):
         """Gpu + CUDA but no kornia: must raise ImportError with install hint."""
+        from rfdetr.config import AugmentationBackend
+
         dm = self._build_dm_with_backend(tmp_path, "gpu")
-
-        original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
-
-        def _mock_import(name, *args, **kwargs):
-            if name == "kornia" or name.startswith("kornia."):
-                raise ImportError("No module named 'kornia'")
-            return original_import(name, *args, **kwargs)
 
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
-            patch("builtins.__import__", side_effect=_mock_import),
-            pytest.raises(ImportError, match="rfdetr\\[kornia\\]"),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            pytest.raises(ImportError, match="rfdetr\\[augment\\]"),
         ):
             self._setup_with_mock_build(dm)
 
@@ -1032,9 +1114,9 @@ class TestBackendResolution:
 
     def test_gpu_path_uses_aug_config_fallback(self, tmp_path):
         """When aug_config=None (default), GPU path passes AUG_CONFIG to build_kornia_pipeline."""
-        import sys
         from unittest.mock import MagicMock, patch
 
+        from rfdetr.config import AugmentationBackend
         from rfdetr.datasets.aug_configs import AUG_CONFIG
 
         dm = self._build_dm_with_backend(tmp_path, "auto")
@@ -1049,7 +1131,7 @@ class TestBackendResolution:
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
             patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
-            patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=True),
             patch("rfdetr.datasets.kornia_transforms.build_kornia_pipeline", side_effect=_fake_build_kornia),
             patch("rfdetr.datasets.kornia_transforms.build_normalize", return_value=MagicMock()),
         ):
@@ -1079,25 +1161,6 @@ class TestBackendResolution:
         assert captured_gpu_postprocess.get("train") == "cpu", (
             "auto + no CUDA must resolve to cpu before dataset build to preserve CPU Normalize"
         )
-
-    def test_resolve_augmentation_backend_auto_no_cuda(self):
-        """_resolve_augmentation_backend returns 'cpu' for auto when CUDA is absent."""
-        from rfdetr.training.module_data import _resolve_augmentation_backend
-
-        with patch("rfdetr.training.module_data._has_cuda_device", return_value=False):
-            assert _resolve_augmentation_backend("auto") == "cpu"
-
-    def test_resolve_augmentation_backend_cpu_passthrough(self):
-        """_resolve_augmentation_backend passes 'cpu' through unchanged."""
-        from rfdetr.training.module_data import _resolve_augmentation_backend
-
-        assert _resolve_augmentation_backend("cpu") == "cpu"
-
-    def test_resolve_augmentation_backend_gpu_passthrough(self):
-        """_resolve_augmentation_backend passes 'gpu' through unchanged."""
-        from rfdetr.training.module_data import _resolve_augmentation_backend
-
-        assert _resolve_augmentation_backend("gpu") == "gpu"
 
 
 # ---------------------------------------------------------------------------
@@ -1385,3 +1448,57 @@ class TestKorniaSetupDoneSentinel:
             dm.setup("fit")
 
         assert call_count == 1, f"_setup_kornia_pipeline called {call_count} times; expected exactly 1"
+
+
+class TestWorkerInitFn:
+    """DataLoaders seed NumPy/random per worker so augmentation streams are not duplicated across workers."""
+
+    def test_worker_init_fn_seeds_from_torch_initial_seed(self, monkeypatch):
+        """_worker_init_fn derives a reproducible NumPy/random seed from ``torch.initial_seed``."""
+        import random as py_random
+
+        import numpy as np
+
+        from rfdetr.training.module_data import _worker_init_fn
+
+        monkeypatch.setattr(torch, "initial_seed", lambda: 12345)
+        _worker_init_fn(0)
+        first = (float(np.random.rand()), py_random.random())
+
+        # worker_id is irrelevant; the seed is derived from torch's per-worker seed.
+        monkeypatch.setattr(torch, "initial_seed", lambda: 12345)
+        _worker_init_fn(3)
+        second = (float(np.random.rand()), py_random.random())
+
+        assert first == second
+
+    @pytest.mark.parametrize(
+        "loader_name",
+        [
+            pytest.param("val_dataloader", id="val"),
+            pytest.param("test_dataloader", id="test"),
+            pytest.param("predict_dataloader", id="predict"),
+        ],
+    )
+    def test_eval_dataloaders_set_worker_init_fn(self, build_datamodule, loader_name):
+        """Validation/test/predict DataLoaders wire the module-level worker seeding hook."""
+        from rfdetr.training.module_data import _worker_init_fn
+
+        dm = build_datamodule()
+        dm._dataset_val = _fake_dataset()
+        dm._dataset_test = _fake_dataset()
+
+        loader = getattr(dm, loader_name)()
+
+        assert loader.worker_init_fn is _worker_init_fn
+
+    def test_train_dataloader_sets_worker_init_fn(self, build_datamodule):
+        """The training DataLoader wires the module-level worker seeding hook."""
+        from rfdetr.training.module_data import _worker_init_fn
+
+        dm = build_datamodule()
+        dm._dataset_train = _fake_dataset()
+
+        loader = dm.train_dataloader()
+
+        assert loader.worker_init_fn is _worker_init_fn

@@ -202,3 +202,59 @@ class TestLegacyEMAResume:
         for key, expected in legacy_ema_state.items():
             assert torch.allclose(restored[key], expected)
         assert not hasattr(pl_module, "_pending_legacy_ema_state")
+
+
+class TestSuppressTestSwap:
+    """suppress_test_swap must disable the test-time EMA weight swap while leaving defaults unchanged."""
+
+    @staticmethod
+    def _make_swap_scenario() -> tuple[RFDETREMACallback, _EMAContainerModule]:
+        """Build a module at weight 7.0 with an EMA average model captured at weight 5.0."""
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        with torch.no_grad():
+            for p in pl_module.parameters():
+                p.fill_(5.0)
+        cb._average_model = AveragedModel(model=pl_module, use_buffers=True, avg_fn=cb._avg_fn)
+        with torch.no_grad():
+            for p in pl_module.parameters():
+                p.fill_(7.0)
+        return cb, pl_module
+
+    def test_default_flag_is_false(self) -> None:
+        """The suppression flag defaults to False so standalone trainer.test() keeps EMA evaluation."""
+        cb = RFDETREMACallback()
+        assert cb.suppress_test_swap is False
+
+    def test_on_test_epoch_start_swaps_by_default(self) -> None:
+        """Without suppression, the test hooks swap live weights (7.0) for EMA weights (5.0)."""
+        cb, pl_module = self._make_swap_scenario()
+        trainer = MagicMock()
+
+        cb.on_test_epoch_start(trainer, pl_module)
+
+        weight = pl_module.model.weight.detach()
+        assert torch.allclose(weight, torch.full_like(weight, 5.0))
+
+    def test_on_test_epoch_start_suppressed_keeps_live_weights(self) -> None:
+        """With suppress_test_swap=True the live weights (7.0) must stay in place during test."""
+        cb, pl_module = self._make_swap_scenario()
+        cb.suppress_test_swap = True
+        trainer = MagicMock()
+
+        cb.on_test_epoch_start(trainer, pl_module)
+
+        weight = pl_module.model.weight.detach()
+        assert torch.allclose(weight, torch.full_like(weight, 7.0))
+
+    def test_on_test_epoch_end_suppressed_does_not_swap(self) -> None:
+        """With suppression active, on_test_epoch_end must not swap EMA weights in unpaired."""
+        cb, pl_module = self._make_swap_scenario()
+        cb.suppress_test_swap = True
+        trainer = MagicMock()
+
+        cb.on_test_epoch_start(trainer, pl_module)
+        cb.on_test_epoch_end(trainer, pl_module)
+
+        weight = pl_module.model.weight.detach()
+        assert torch.allclose(weight, torch.full_like(weight, 7.0))

@@ -65,6 +65,9 @@ from rfdetr.evaluation.matching import (
 )
 from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 
+# All tests in this file download COCO val2017 (~1 GB); exclude from CPU CI with -m "not coco17".
+pytestmark = pytest.mark.coco17
+
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------

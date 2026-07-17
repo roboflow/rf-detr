@@ -16,7 +16,10 @@ from PIL import Image
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.utilities.logger import get_logger
 
-Image.MAX_IMAGE_PIXELS = None
+# O365 contains images larger than PIL's default 178M-pixel limit.
+# Set a generous but finite cap (2 billion pixels ~ a 45k x 45k image) instead of
+# disabling the guard entirely, so PIL still protects against decompression bombs.
+Image.MAX_IMAGE_PIXELS = 2_000_000_000
 
 logger = get_logger()
 
@@ -29,19 +32,20 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     }
     img_folder, ann_file = PATHS[image_set]
 
-    from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
+    from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
+    scale_jitter = getattr(args, "scale_jitter", True)
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
-    resolved_backend = resolve_augmentation_backend(augmentation_backend)
+    resolved_backend = resolve_backend_for_build(augmentation_backend)
+    gpu_postprocess = is_gpu_postprocess(resolved_backend)
 
-    if resolved_backend != "cpu":
+    if gpu_postprocess:
         logger.warning(
-            "O365 dataset does not support custom aug_config in Phase 1 GPU augmentation; "
+            "O365 dataset does not support custom aug_config with the Kornia GPU augmentation backend; "
             "Albumentations augmentation is skipped and normalization runs on GPU. "
-            "Pass augmentation_backend='cpu' for full CPU augmentation pipeline with O365."
+            "Pass augmentation_backend='cpu' or 'albumentations' for full CPU augmentation pipeline with O365."
         )
-    gpu_postprocess = resolved_backend != "cpu"
 
     if square_resize_div_64:
         dataset = CocoDetection(
@@ -52,6 +56,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 resolution,
                 multi_scale=args.multi_scale,
                 expanded_scales=args.expanded_scales,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
             ),
         )
@@ -64,6 +69,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 resolution,
                 multi_scale=args.multi_scale,
                 expanded_scales=args.expanded_scales,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
             ),
         )
@@ -77,4 +83,4 @@ def build_o365(image_set: str, args: Any, resolution: int) -> CocoDetection:
     if image_set == "val":
         val_ds = build_o365_raw("val", args, resolution=resolution)
         return val_ds
-    raise ValueError("Unknown image_set: {}".format(image_set))
+    raise ValueError(f"Unknown image_set: {image_set}")

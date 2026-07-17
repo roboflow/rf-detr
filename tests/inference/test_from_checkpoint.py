@@ -13,16 +13,26 @@ from __future__ import annotations
 
 import argparse
 import logging
+import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
 
+from rfdetr.config import PretrainWeightsCompatibilityWarning
 from rfdetr.detr import RFDETR
 from rfdetr.detr import logger as detr_logger
 from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 from rfdetr.variants import RFDETRSmall
+
+
+class _CustomObj:
+    """Module-level class that weights_only=True rejects (not in safe globals).
+
+    Must be at module scope so pickle can resolve the fully-qualified name during torch.save.  Local/nested classes
+    cannot be pickled.
+    """
 
 
 def _ns(pretrain_weights: str, num_classes: int = 80) -> dict:
@@ -169,6 +179,16 @@ class TestFromCheckpointDictArgs:
 class TestFromCheckpointEdgeCases:
     """Edge-case handling in from_checkpoint."""
 
+    def test_nonexistent_path_raises_file_not_found(self, tmp_path: Path) -> None:
+        """from_checkpoint raises FileNotFoundError when path does not exist."""
+        with pytest.raises(FileNotFoundError):
+            RFDETR.from_checkpoint(tmp_path / "nope.pth")
+
+    def test_directory_path_raises_os_error(self, tmp_path: Path) -> None:
+        """from_checkpoint raises OSError when path is a directory, not a file."""
+        with pytest.raises((OSError, IsADirectoryError)):
+            RFDETR.from_checkpoint(tmp_path)
+
     def test_characterization_unknown_pretrain_weights_raises_value_error(self, tmp_path: Path) -> None:
         """Unrecognised pretrain_weights name raises a descriptive ValueError."""
         ckpt = _ns("/my/custom/finetuned.pth")
@@ -277,6 +297,18 @@ class TestFromCheckpointEdgeCases:
             with patch("rfdetr.detr.torch.load", return_value=ckpt):
                 with pytest.raises(ImportError):
                     RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+    def test_trust_gate_rejects_custom_class_by_default(self, tmp_path: Path) -> None:
+        """from_checkpoint raises RuntimeError for custom-class checkpoints without trust_checkpoint=True.
+
+        Scenario: user calls from_checkpoint on a file containing an unrecognised Python class.
+        The default trust_checkpoint=False must reject it to prevent arbitrary code execution.
+        """
+        ckpt_path = tmp_path / "custom_obj.pth"
+        torch.save({"model": {}, "args": _CustomObj(), "model_name": "RFDETRSmall"}, ckpt_path)
+
+        with pytest.raises(RuntimeError, match="trust_checkpoint=True"):
+            RFDETR.from_checkpoint(ckpt_path)
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +467,25 @@ class TestFromCheckpointModelName:
             model = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
         assert model.__class__.__name__ == expected_class
 
+    def test_large_deprecated_model_name_resolves_to_deprecated_class(self, tmp_path: Path) -> None:
+        """Checkpoints saved with model_name='RFDETRLargeDeprecated' must load as RFDETRLargeDeprecated.
+
+        Before the fix, RFDETRLargeDeprecated was absent from _name_map; the substring matcher would pick RFDETRLarge,
+        which fails with a pydantic literal_error when the saved model_config carries encoder='dinov2_windowed_base'
+        (only valid for the deprecated Large configuration).
+        """
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-large.pth", "num_classes": 80},
+            "model_name": "RFDETRLargeDeprecated",
+            "model_config": {
+                "encoder": "dinov2_windowed_base",
+                "projector_scale": "P4",
+            },
+        }
+        result, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRLargeDeprecated")
+        mock_cls.assert_called_once()
+        assert result is mock_cls.return_value
+
     @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
     @pytest.mark.parametrize("model_name", ["RFDETRXLarge", "RFDETR2XLarge"])
     def test_plus_model_name_without_plus_raises_import_error(self, tmp_path: Path, model_name: str) -> None:
@@ -524,8 +575,10 @@ class TestFromCheckpointNumClassesProvenance:
     """
 
     def test_checkpoint_num_classes_is_not_marked_user_set(self, two_class_checkpoint: Path) -> None:
-        """from_checkpoint adopts the checkpoint class count without marking it as a user override."""
-        model = RFDETR.from_checkpoint(two_class_checkpoint)
+        """from_checkpoint adopts the checkpoint class count without warning about pretrained weights."""
+        with warnings.catch_warnings():
+            warnings.filterwarnings("error", category=PretrainWeightsCompatibilityWarning)
+            model = RFDETR.from_checkpoint(two_class_checkpoint)
 
         assert model.model_config.num_classes == 2
         assert model.model.model.class_embed.bias.shape[0] == 3, "Head must match checkpoint (2 classes + background)."
@@ -660,3 +713,145 @@ class TestFromCheckpointNumClassesProvenance:
         assert model.model.model.class_embed.bias.shape == original_bias_shape, (
             "Head must not be rebuilt when dataset class count matches checkpoint class count."
         )
+
+
+# ---------------------------------------------------------------------------
+# Weight-based schema inference
+# ---------------------------------------------------------------------------
+
+
+def _make_kp_active_mask(schema: list[int]) -> torch.Tensor:
+    """Build a bool _kp_active_mask tensor encoding *schema* (mirrors LwDetr._create_kp_active_mask).
+
+    Args:
+        schema: Keypoints-per-class list, e.g. ``[0, 33]`` for background + 33-kp class.
+
+    Returns:
+        Bool tensor of shape ``[len(schema), max(schema)]`` with True in active keypoint slots.
+    """
+    if not schema or max(schema) == 0:
+        return torch.zeros(0, 0, dtype=torch.bool)
+    max_kp = max(schema)
+    mask = torch.zeros(len(schema), max_kp, dtype=torch.bool)
+    for idx, n_kp in enumerate(schema):
+        mask[idx, :n_kp] = True
+    return mask
+
+
+class TestFromCheckpointWeightInference:
+    """from_checkpoint infers schema from checkpoint weights when model_config is absent or stale.
+
+    Regression tests for the bug where a fine-tuned 33-kp keypoint model loaded with the COCO default [0, 17] schema
+    because model_config["num_keypoints_per_class"] was never updated from the default before the checkpoint was saved.
+    The authoritative schema is embedded in the checkpoint weights via the _kp_active_mask buffer; from_checkpoint now
+    reads it directly.
+    """
+
+    def test_infers_keypoint_schema_from_kp_active_mask(self, tmp_path: Path) -> None:
+        """Stale model_config kp schema [0, 17] is overridden by weight-inferred [0, 33]."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "model_config": {"num_keypoints_per_class": [0, 17]},
+            "model": {"_kp_active_mask": _make_kp_active_mask([0, 33])},
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRKeypointPreview"
+        )
+
+        assert mock_cls.call_args.kwargs["num_keypoints_per_class"] == [0, 33]
+
+    def test_infers_keypoint_schema_when_model_config_absent(self, tmp_path: Path) -> None:
+        """num_keypoints_per_class is inferred from _kp_active_mask when model_config is missing."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "model": {"_kp_active_mask": _make_kp_active_mask([0, 33])},
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRKeypointPreview"
+        )
+
+        assert mock_cls.call_args.kwargs["num_keypoints_per_class"] == [0, 33]
+
+    def test_user_kwarg_wins_over_weight_inferred_keypoint_schema(self, tmp_path: Path) -> None:
+        """Explicit num_keypoints_per_class kwarg overrides weight-inferred [0, 33] schema."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "model": {"_kp_active_mask": _make_kp_active_mask([0, 33])},
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt,
+            tmp_path / "checkpoint_best_total.pth",
+            "rfdetr.variants.RFDETRKeypointPreview",
+            num_keypoints_per_class=[0, 17],
+        )
+
+        assert mock_cls.call_args.kwargs["num_keypoints_per_class"] == [0, 17]
+
+    def test_infers_num_classes_from_class_embed_weight(self, tmp_path: Path) -> None:
+        """Stale model_config num_classes=90 is overridden by class_embed.weight shape inference."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-small.pth"},
+            "model_name": "RFDETRSmall",
+            "model_config": {"num_classes": 90},
+            "model": {"class_embed.weight": torch.zeros(3, 256)},
+        }
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRSmall")
+
+        assert mock_cls.call_args.kwargs["num_classes"] == 2
+
+    def test_user_kwarg_wins_over_weight_inferred_num_classes(self, tmp_path: Path) -> None:
+        """Explicit num_classes kwarg overrides weight-inferred value from class_embed.weight."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-small.pth"},
+            "model_name": "RFDETRSmall",
+            "model": {"class_embed.weight": torch.zeros(3, 256)},
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt,
+            tmp_path / "checkpoint_best_total.pth",
+            "rfdetr.variants.RFDETRSmall",
+            num_classes=90,
+        )
+
+        assert mock_cls.call_args.kwargs["num_classes"] == 90
+
+    def test_infers_schema_from_ptl_ckpt_state_dict_format(self, tmp_path: Path) -> None:
+        """Weight inference works for PTL-native .ckpt format (state_dict with model.
+
+        prefix).
+        """
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "state_dict": {
+                "model._kp_active_mask": _make_kp_active_mask([0, 33]),
+                "model.class_embed.weight": torch.zeros(3, 256),
+            },
+        }
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint.ckpt", "rfdetr.variants.RFDETRKeypointPreview")
+
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["num_keypoints_per_class"] == [0, 33]
+        assert call_kwargs["num_classes"] == 2
+
+    def test_consistent_checkpoint_produces_no_override(self, tmp_path: Path) -> None:
+        """When model_config and weights agree, weight inference leaves constructor_kwargs unchanged."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth"},
+            "model_name": "RFDETRKeypointPreview",
+            "model_config": {"num_keypoints_per_class": [0, 33], "num_classes": 2},
+            "model": {
+                "_kp_active_mask": _make_kp_active_mask([0, 33]),
+                "class_embed.weight": torch.zeros(3, 256),
+            },
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRKeypointPreview"
+        )
+
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["num_keypoints_per_class"] == [0, 33]
+        assert call_kwargs["num_classes"] == 2

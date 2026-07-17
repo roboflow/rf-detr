@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import json
 import os
 import warnings
 from pathlib import Path
@@ -14,6 +15,7 @@ import torch
 from pydantic import ValidationError
 
 from rfdetr.config import (
+    AugmentationBackend,
     KeypointTrainConfig,
     ModelConfig,
     PretrainWeightsCompatibilityWarning,
@@ -208,6 +210,42 @@ class TestSegmentationTrainConfigNumSelect:
         assert config_class().num_select == expected_num_select
 
 
+class TestTrainConfigRejectsUnknownKwargs:
+    """TrainConfig must raise on unknown/typo'd kwargs instead of silently ignoring them (extra='forbid')."""
+
+    def test_typo_kwarg_raises_with_helpful_message(self, tmp_path) -> None:
+        """A typo'd kwarg (epoch instead of epochs) raises listing the unknown and available parameters."""
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'epoch'"):
+            TrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+    def test_typo_error_lists_available_parameters(self, tmp_path) -> None:
+        """The rejection message includes the available parameter list so the typo is easy to fix."""
+        with pytest.raises(ValidationError, match=r"Available parameter\(s\):.*epochs"):
+            TrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+    @pytest.mark.parametrize(
+        "config_class",
+        [
+            pytest.param(SegmentationTrainConfig, id="segmentation"),
+            pytest.param(KeypointTrainConfig, id="keypoint"),
+        ],
+    )
+    def test_subclasses_reject_unknown_kwargs(self, tmp_path, config_class) -> None:
+        """TrainConfig subclasses inherit the forbid behaviour."""
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'epoch'"):
+            config_class(dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+    def test_get_train_config_raises_for_typo_kwarg(self, tmp_path) -> None:
+        """The public RFDETR.get_train_config path surfaces the typo instead of swallowing it."""
+        from types import SimpleNamespace
+
+        from rfdetr.detr import RFDETR
+
+        stub = SimpleNamespace(_train_config_class=TrainConfig)
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'epoch'"):
+            RFDETR.get_train_config(stub, dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+
 class TestTrainConfigT42PromotedFields:
     """T4-2: Promoted fields exist with correct defaults; device field is absent."""
 
@@ -222,11 +260,10 @@ class TestTrainConfigT42PromotedFields:
         """Device must not appear in TrainConfig.model_fields (PTL auto-detects accelerator)."""
         assert "device" not in TrainConfig.model_fields
 
-    def test_device_kwarg_silently_ignored(self, tmp_path):
-        """Passing device= to TrainConfig is silently ignored (extra='ignore'); PTL absorbs it."""
-        # TrainConfig uses Pydantic default extra='ignore', so unknown kwargs don't raise.
-        tc = self._tc(tmp_path, device="cpu")
-        assert not hasattr(tc, "device")  # field not set on the instance
+    def test_device_kwarg_rejected(self, tmp_path):
+        """Passing device= directly to TrainConfig raises (extra='forbid'); RFDETR.train() pops it beforehand."""
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'device'"):
+            self._tc(tmp_path, device="cpu")
 
     # --- promoted fields: defaults ---
 
@@ -888,3 +925,96 @@ class TestBreakingListIntegrity:
         }
         stale = all_breaking - set(ModelConfig.model_fields.keys())
         assert not stale, f"Fields in breaking lists not in ModelConfig.model_fields: {stale}"
+
+
+class TestTrainConfigAugmentationBackendSerialization:
+    """Serialization contract for ``TrainConfig.augmentation_backend`` used by checkpoint writers (Item #6).
+
+    ``BestModelCallback`` serializes the training config with a plain ``model_dump()`` before writing it into the
+    ``.pth`` checkpoint's ``args``.  A ``@field_serializer`` renders the ``AugmentationBackend`` enum as its plain
+    string value so the writer stays JSON-safe without a blanket ``model_dump(mode="json")`` that would silently coerce
+    every *other* field's serialized shape (e.g. ``int`` loss coefficients to ``float``).
+    """
+
+    def test_backend_dumps_to_json_safe_string(self, tmp_path: Path) -> None:
+        """Plain ``model_dump()`` (as BestModelCallback uses) renders the enum as its ``str`` value."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        assert dumped["augmentation_backend"] == AugmentationBackend.TV.value
+        assert type(dumped["augmentation_backend"]) is str
+
+    def test_dumped_backend_survives_json_sidecar(self, tmp_path: Path) -> None:
+        """The dumped backend survives the ``json.dump(..., default=str)`` sidecar path unchanged."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        round_tripped = json.loads(json.dumps(dumped, default=str))
+        assert round_tripped["augmentation_backend"] == "torchvision"
+
+    def test_dumped_backend_reconstructs_to_enum_member(self, tmp_path: Path) -> None:
+        """Reloading a config from its dumped args restores the concrete ``AugmentationBackend`` member."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        with warnings.catch_warnings():
+            # Reconstructing from a full dump sets deprecated fields; those warnings are unrelated
+            # to the backend round-trip under test.
+            warnings.simplefilter("ignore", DeprecationWarning)
+            reloaded = TrainConfig(**dumped)
+        assert reloaded.augmentation_backend is AugmentationBackend.TV
+
+    def test_plain_dump_does_not_coerce_int_field(self, tmp_path: Path) -> None:
+        """Plain ``model_dump()`` keeps native field types — guards against a blanket ``mode="json"`` regression.
+
+        Under ``model_dump(mode="json")`` this ``int`` default is silently coerced to ``float``; the
+        ``field_serializer`` lets the writer stay on plain ``model_dump()`` so unrelated fields keep their shape.
+        """
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        assert type(dumped["keypoint_l1_loss_coef"]) is int
+
+    @pytest.mark.parametrize(
+        "sentinel",
+        [
+            pytest.param("cpu", id="cpu"),
+            pytest.param("auto", id="auto"),
+        ],
+    )
+    def test_sentinel_backend_passes_through_as_string(self, tmp_path: Path, sentinel: str) -> None:
+        """The ``"cpu"``/``"auto"`` auto-pick sentinels serialize unchanged as plain strings."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=sentinel)
+        dumped = config.model_dump()
+        assert dumped["augmentation_backend"] == sentinel
+
+
+class TestTrainConfigAugmentationBackendConstruction:
+    """Construction-time validation for ``TrainConfig.augmentation_backend`` (Item #7).
+
+    The ``@field_validator(mode="before")`` only maps legacy alias strings (``"gpu"``, ``"tv"``, ``"albu"``) to their
+    current form; it never runs custom logic for non-string input, so an already-concrete ``AugmentationBackend`` member
+    must be accepted unchanged. Unrecognized strings must surface as a Pydantic ``ValidationError`` — not some other
+    exception or a silent fallback to a default backend.
+    """
+
+    def test_unrecognized_backend_string_raises_validation_error(self, tmp_path: Path) -> None:
+        """An unrecognized backend string raises ``ValidationError``, not a silent fallback."""
+        with pytest.raises(ValidationError, match="augmentation_backend"):
+            TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="not_a_real_backend")
+
+    def test_enum_member_accepted_directly_without_alias_lookup(self, tmp_path: Path) -> None:
+        """Passing a concrete ``AugmentationBackend`` member at construction bypasses the alias map."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=AugmentationBackend.ALBU)
+        assert config.augmentation_backend is AugmentationBackend.ALBU
+
+    @pytest.mark.parametrize(
+        "alias,expected",
+        [
+            pytest.param("gpu", AugmentationBackend.KORNIA, id="gpu-aliases-to-kornia"),
+            pytest.param("tv", AugmentationBackend.TV, id="tv-aliases-to-torchvision"),
+            pytest.param("albu", AugmentationBackend.ALBU, id="albu-aliases-to-albumentations"),
+        ],
+    )
+    def test_legacy_alias_string_resolves_to_current_enum_member(
+        self, tmp_path: Path, alias: str, expected: AugmentationBackend
+    ) -> None:
+        """Legacy alias strings (``"gpu"``, ``"tv"``, ``"albu"``) still resolve to their current backend."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=alias)
+        assert config.augmentation_backend is expected

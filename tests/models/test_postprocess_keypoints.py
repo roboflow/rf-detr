@@ -87,8 +87,56 @@ def test_postprocess_keypoints_trace_alpha_rescores_active_keypoints_only() -> N
     target_sizes = torch.tensor([[100, 200]], dtype=torch.int64)
     results = postprocess(outputs, target_sizes)
 
-    expected_score = torch.tensor([0.25], dtype=torch.float32)
+    expected_score = torch.tensor([0.2], dtype=torch.float32)
     torch.testing.assert_close(results[0]["scores"], expected_score, rtol=1e-4, atol=1e-6)
+
+
+def test_postprocess_keypoints_trace_alpha_normalizes_large_fused_scores() -> None:
+    """Trace-fused keypoint scores should be bounded after empirical normalization."""
+    postprocess = PostProcess(num_select=1, num_keypoints_per_class=[1], trace_alpha=1.0)
+    outputs = {
+        "pred_logits": torch.tensor([[[10.0]]], dtype=torch.float32),
+        "pred_boxes": torch.tensor([[[0.5, 0.5, 0.5, 0.5]]], dtype=torch.float32),
+        "pred_keypoints": torch.zeros((1, 1, 1, 8), dtype=torch.float32),
+    }
+    outputs["pred_keypoints"][0, 0, 0, 2] = 10.0
+    outputs["pred_keypoints"][0, 0, 0, 4] = 2.0
+    outputs["pred_keypoints"][0, 0, 0, 5] = 0.0
+    outputs["pred_keypoints"][0, 0, 0, 6] = 2.0
+
+    target_sizes = torch.tensor([[100, 200]], dtype=torch.int64)
+    results = postprocess(outputs, target_sizes)
+
+    original_score = torch.sigmoid(torch.tensor([10.0], dtype=torch.float32))
+    mean_trace = torch.tensor([2.0], dtype=torch.float32) * torch.exp(torch.tensor([-4.0], dtype=torch.float32))
+    fused_score = original_score * mean_trace.pow(-1.0)
+    expected_score = fused_score / (1.0 + fused_score)
+    assert fused_score.item() > 1.0
+    assert 0.0 < results[0]["scores"].item() < 1.0
+    torch.testing.assert_close(results[0]["scores"], expected_score, rtol=1e-4, atol=1e-6)
+
+
+def test_postprocess_keypoints_trace_alpha_clamps_overflowing_fused_scores() -> None:
+    """Trace fusion should stay finite and strictly below 1.0 when the raw fused score overflows."""
+    postprocess = PostProcess(num_select=1, num_keypoints_per_class=[1], trace_alpha=1.0)
+    outputs = {
+        "pred_logits": torch.tensor([[[0.0]]], dtype=torch.float32),
+        "pred_boxes": torch.tensor([[[0.5, 0.5, 0.5, 0.5]]], dtype=torch.float32),
+        "pred_keypoints": torch.zeros((1, 1, 1, 8), dtype=torch.float32),
+    }
+    outputs["pred_keypoints"][0, 0, 0, 2] = 10.0
+    outputs["pred_keypoints"][0, 0, 0, 4] = 50.0
+    outputs["pred_keypoints"][0, 0, 0, 5] = 0.0
+    outputs["pred_keypoints"][0, 0, 0, 6] = 50.0
+
+    target_sizes = torch.tensor([[100, 200]], dtype=torch.int64)
+    results = postprocess(outputs, target_sizes)
+
+    score = results[0]["scores"]
+    expected_score = torch.nextafter(torch.ones_like(score), torch.zeros_like(score))
+    assert torch.isfinite(score).all()
+    assert 0.0 < score.item() < 1.0
+    torch.testing.assert_close(score, expected_score, rtol=0.0, atol=0.0)
 
 
 def test_postprocess_keypoints_trace_alpha_uses_log_space_for_extreme_trace() -> None:

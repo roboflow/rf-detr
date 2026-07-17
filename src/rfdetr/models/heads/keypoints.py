@@ -26,7 +26,7 @@ from typing import cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812 — conventional PyTorch alias
-from torch import nn
+from torch import Tensor, nn
 
 from rfdetr.utilities.logger import get_logger
 
@@ -36,7 +36,7 @@ logger = get_logger()
 KEYPOINT_PRED_DIM: int = 8
 
 
-def modulate(features: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor) -> torch.Tensor:
+def modulate(features: Tensor, scale: Tensor, shift: Tensor) -> Tensor:
     """Apply AdaLN modulation to a feature tensor.
 
     Args:
@@ -85,13 +85,13 @@ class ConditionalQueryInitializer(nn.Module):
             nn.GELU(),
             nn.Linear(dim, out_dim * 3),
         )
-        ada_ln_projection = cast(nn.Linear, self.adaLN_modulation[-1])
+        ada_ln_projection = cast("nn.Linear", self.adaLN_modulation[-1])
         nn.init.constant_(ada_ln_projection.weight, 0)
         nn.init.constant_(ada_ln_projection.bias, 0)
 
         self.out_proj = nn.Linear(out_dim, out_dim)
 
-    def forward(self, query_features: torch.Tensor) -> torch.Tensor:
+    def forward(self, query_features: Tensor) -> Tensor:
         """Return modulated query embeddings.
 
         Args:
@@ -116,19 +116,19 @@ class ConditionalQueryInitializer(nn.Module):
         """
 
         normed_query_features = self.query_norm(self.queries)
-        modulation: torch.Tensor = self.adaLN_modulation(query_features.unsqueeze(-2))
+        modulation: Tensor = self.adaLN_modulation(query_features.unsqueeze(-2))
         scale, shift, gate = modulation.chunk(3, dim=-1)
         modulated_query_features = self.out_proj(modulate(normed_query_features, scale, shift)) * gate + self.queries
-        return cast(torch.Tensor, modulated_query_features)
+        return cast("Tensor", modulated_query_features)
 
 
 def compute_l1_keypoint_loss(
-    all_pred_keypoints: torch.Tensor,
-    target_keypoints: torch.Tensor,
-    target_classes: torch.Tensor,
-    target_areas: torch.Tensor,
+    all_pred_keypoints: Tensor,
+    target_keypoints: Tensor,
+    target_classes: Tensor,
+    target_areas: Tensor,
     num_keypoints_per_class: Sequence[int],
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     """Compute the keypoint loss vector per matched target.
 
     The tensor layout follows GroupPose-style keypoints where each target class
@@ -197,6 +197,11 @@ def compute_l1_keypoint_loss(
         zeros = all_pred_keypoints.new_zeros(n_targets)
         return zeros, zeros, zeros, zeros
 
+    if total_padded_num_keypoints % num_classes != 0:
+        raise ValueError(
+            f"total_padded_num_keypoints ({total_padded_num_keypoints}) must be divisible by"
+            f" num_classes ({num_classes})"
+        )
     kpad = total_padded_num_keypoints // num_classes
     split_pred_keypoints = all_pred_keypoints.view(n_targets, num_classes, kpad, pred_dim)
     selected_pred_keypoints = split_pred_keypoints[
@@ -277,7 +282,9 @@ def compute_l1_keypoint_loss(
     gaussian_count = gaussian_loss_mask.sum(-1).to(dtype=selected_pred_keypoints.dtype)
     gaussian_valid_count = gaussian_count.clamp(min=1)
     nll_raw = 0.5 * (maha2 / area.clamp_min(area_eps).unsqueeze(1)) - (log_l11 + log_l22)
-    nll_raw = torch.nan_to_num(nll_raw, nan=0.0, posinf=0.0, neginf=torch.finfo(nll_raw.dtype).min)
+    nll_raw = torch.nan_to_num(
+        nll_raw, nan=0.0, posinf=torch.finfo(nll_raw.dtype).max / 2, neginf=torch.finfo(nll_raw.dtype).min
+    )
     nll_keypoints = nll_raw.masked_fill(~gaussian_loss_mask, 0.0)
     nll_loss = nll_keypoints.sum(-1) / gaussian_valid_count
     no_valid = gaussian_count <= 0
@@ -288,7 +295,7 @@ def compute_l1_keypoint_loss(
     return location_loss, findable_loss, visible_loss, nll_loss
 
 
-def _cdist_bce_with_logits(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+def _cdist_bce_with_logits(x: Tensor, y: Tensor) -> Tensor:
     """Compute pairwise BCE-with-logits summed along the last dim."""
     y_float = y.to(dtype=x.dtype)
     softplus = F.softplus(x).sum(dim=1, keepdim=True)
@@ -297,12 +304,12 @@ def _cdist_bce_with_logits(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
 
 
 def compute_keypoint_matching_cost(
-    all_pred_keypoints: torch.Tensor,
-    target_keypoints: torch.Tensor,
-    target_classes: torch.Tensor,
-    target_areas: torch.Tensor,
+    all_pred_keypoints: Tensor,
+    target_keypoints: Tensor,
+    target_classes: Tensor,
+    target_areas: Tensor,
     num_keypoints_per_class: Sequence[int],
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     """Compute many-to-many keypoint matching costs.
 
     Args:
@@ -464,7 +471,9 @@ def compute_keypoint_matching_cost(
         nll_k = 0.5 * (maha2 / areas.clamp_min(area_eps).view(1, n_targets_by_class, 1)) - (
             log_l11 + log_l22
         ).unsqueeze(1)
-        nll_k = torch.nan_to_num(nll_k, nan=0.0, posinf=0.0, neginf=torch.finfo(nll_k.dtype).min)
+        nll_k = torch.nan_to_num(
+            nll_k, nan=0.0, posinf=torch.finfo(nll_k.dtype).max / 2, neginf=torch.finfo(nll_k.dtype).min
+        )
         nll_k = nll_k.masked_fill(~keypoint_mask, 0.0)
         nll_sum = nll_k.sum(-1)  # (flat_bq, n_targets)
 

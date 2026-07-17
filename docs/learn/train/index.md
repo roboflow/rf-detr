@@ -8,7 +8,7 @@ description: Train RF-DETR detection and segmentation models on custom datasets.
 
     - Train detection, segmentation, or keypoint preview models with a single `model.train(dataset_dir=...)` call
     - Detection and segmentation support COCO JSON and YOLO dataset formats with automatic detection
-    - Keypoint preview training supports COCO keypoint JSON; YOLO pose training is not supported yet
+    - Keypoint preview training supports COCO keypoint JSON and Ultralytics YOLO pose datasets
     - Fine-tune from COCO-pretrained checkpoints (Nano to 2XLarge) for fastest convergence
     - Built on PyTorch Lightning — use the high-level API or access PTL primitives directly for full control
     - EMA weights, early stopping, and best-model checkpointing are included by default
@@ -29,6 +29,16 @@ RF-DETR provides two training paths:
 Both paths run the same underlying PyTorch Lightning stack. `RFDETR.train()` constructs `RFDETRModelModule`, `RFDETRDataModule`, and a `Trainer` internally; the Lightning API page shows how to do the same thing explicitly so you can modify each component.
 
 ## Quick Start
+
+!!! info "Training requires the `train` extra"
+
+    Training dependencies are not included in the base install. Install them with:
+
+    ```bash
+    pip install "rfdetr[train]"
+    ```
+
+    For experiment tracking, also add `pip install "rfdetr[train,loggers]"`.
 
 RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The format is automatically detected based on the structure of your dataset directory.
 
@@ -74,7 +84,7 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
     model = RFDETRKeypointPreview()
 
     model.train(
-        dataset_dir="<COCO_KEYPOINT_DATASET_PATH>",
+        dataset_dir="<KEYPOINT_DATASET_PATH>",
         epochs=50,
         batch_size=2,
         grad_accum_steps=8,
@@ -85,13 +95,13 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
 
 Different GPUs have different VRAM capacities, so adjust batch_size and grad_accum_steps to maintain a total batch size of 16. For example, on a powerful GPU like the A100, use `batch_size=16` and `grad_accum_steps=1`; on smaller GPUs like the T4, use `batch_size=4` and `grad_accum_steps=4`. This gradient accumulation strategy helps train effectively even with limited memory.
 
-For object detection, the RF-DETR-B checkpoint is used by default. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
+Each model class downloads its COCO-pretrained checkpoint automatically when instantiated. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
 
 ## Keypoint preview custom datasets
 
-The pretrained keypoint preview checkpoint predicts 17 COCO person keypoints. Fine-tuned keypoint preview models can use the keypoint schema from your own COCO keypoint dataset, so the output keypoint count is not limited to 17.
+The pretrained keypoint preview checkpoint predicts 17 COCO person keypoints. Fine-tuned keypoint preview models can use the keypoint schema from your own COCO or YOLO pose dataset, so the output keypoint count is not limited to 17.
 
-Use COCO keypoint JSON for custom keypoint training. Roboflow COCO exports are supported when split annotations are named `train/_annotations.coco.json`, `valid/_annotations.coco.json`, and optionally `test/_annotations.coco.json`. YOLO pose/keypoint training is not supported yet.
+Use COCO keypoint JSON or Ultralytics YOLO pose labels for custom keypoint training. Roboflow COCO exports are supported when split annotations are named `train/_annotations.coco.json`, `valid/_annotations.coco.json`, and optionally `test/_annotations.coco.json`. YOLO pose datasets use the existing RF-DETR YOLO directory layout with `data.yaml`, `train/images`, `train/labels`, `valid/images`, and `valid/labels`.
 
 The keypoint fine-tuning demo infers the class names and keypoint schema from the training annotation file, then passes those values into `RFDETRKeypointPreview` and `model.train()`:
 
@@ -127,6 +137,8 @@ model.train(
 
 Set `keypoint_flip_pairs` if horizontal flips should swap left/right keypoints for your schema.
 
+For YOLO pose datasets, use `infer_yolo_keypoint_schema(DATASET_DIR / "data.yaml")` instead. RF-DETR also infers YOLO pose schema automatically during `model.train()` when `data.yaml` declares `kpt_shape`.
+
 ## Dataset Format
 
 RF-DETR **automatically detects** whether your dataset is in COCO or YOLO format. Simply pass your dataset directory to the `train()` method and the appropriate data loader will be used.
@@ -136,8 +148,9 @@ RF-DETR **automatically detects** whether your dataset is in COCO or YOLO format
 | **COCO** | Looks for `train/_annotations.coco.json` | [COCO Format Guide](dataset-formats.md#coco-format) |
 | **YOLO** | Looks for `data.yaml` + `train/images/`  | [YOLO Format Guide](dataset-formats.md#yolo-format) |
 
-For keypoint preview training, use COCO keypoint JSON. YOLO pose/keypoint datasets are rejected with a clear error
-instead of being treated as detection-only labels.
+For keypoint preview training, use COCO keypoint JSON or YOLO pose labels. YOLO pose datasets must declare
+`kpt_shape` in `data.yaml`; detection-only YOLO datasets still fail clearly in keypoint mode instead of being treated as
+pose labels.
 
 [Roboflow](https://roboflow.com/annotate) allows you to create object detection datasets from scratch and export them in either COCO JSON or YOLO format for training. You can also explore [Roboflow Universe](https://universe.roboflow.com/) to find pre-labeled datasets for a range of use cases.
 
@@ -154,7 +167,7 @@ RF-DETR provides many configuration options to customize your training run. See 
 - [Resume training](advanced.md#resume-training) from a checkpoint
 - [Early stopping](advanced.md#early-stopping) to prevent overfitting
 - [Multi-GPU training](advanced.md#multi-gpu-training) with PyTorch Lightning DDP
-- [Custom augmentations with Albumentations](augmentations.md) - Dedicated guide
+- [Default and custom augmentations](augmentations.md) - Torchvision defaults plus optional Albumentations (CPU) or Kornia (GPU) configs
 - [Memory optimization](advanced.md#memory-optimization) with gradient checkpointing
 
 → **[Learn more about advanced training](advanced.md)**

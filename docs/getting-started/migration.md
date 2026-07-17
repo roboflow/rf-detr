@@ -18,9 +18,151 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
 
 ---
 
+## Upgrade 1.8 → 1.9
+
+### Breaking changes
+
+!!! warning "Breaking: `albumentations` and `kornia` extras merged into `augment`"
+
+    **PyPI extras renamed.** Default training/validation/prediction/export augmentations now use
+    torchvision-native transforms, so `[train]` no longer installs Albumentations. Custom CPU
+    (Albumentations) and GPU (Kornia) augmentation both live behind a single new `augment` extra.
+
+    | Old extra                                | New extra               |
+    | ---------------------------------------- | ----------------------- |
+    | `rfdetr[train]` (implied albumentations) | `rfdetr[train,augment]` |
+    | `rfdetr[kornia]`                         | `rfdetr[augment]`       |
+
+    ```bash
+    # Before
+    pip install 'rfdetr[train]'    # bundled albumentations
+    pip install 'rfdetr[kornia]'
+
+    # After
+    pip install 'rfdetr[train,augment]'   # custom aug_config or GPU backend
+    pip install 'rfdetr[augment]'
+    ```
+
+!!! note "`augmentation_backend` values renamed"
+
+    `augmentation_backend="tv"` and `"albu"` are renamed to `"torchvision"` and
+    `"albumentations"`. The old strings (and `"gpu"`) still work as aliases, so no code
+    changes are required — see [Augmentation Backend Values](../learn/train/augmentations.md#augmentation-backend-values)
+    for the full accepted set.
+
+!!! warning "Breaking: default resize interpolation changed — pixel values and mAP may shift"
+
+    The default resize backend changed from Albumentations (cv2 `INTER_LINEAR`, no antialias) to
+    torchvision (`BILINEAR` + `antialias=True`). Resized pixel values differ slightly from previous
+    versions, and mAP may drift on existing benchmarks. **This affects training as well as
+    validation, test, and export preprocessing** — not just the training split.
+
+    To restore the previous pixel-exact behaviour:
+
+    ```bash
+    pip install 'rfdetr[augment]'
+    ```
+
+    ```python
+    from rfdetr.datasets.aug_configs import AUG_CONFIG
+
+    train_config = TrainConfig(aug_config=AUG_CONFIG, ...)
+    ```
+
+    Installing `rfdetr[augment]` alone is **not** sufficient to pin this behaviour — with
+    Albumentations installed, `augmentation_backend="auto"`/`"cpu"` (the default) auto-selects
+    Albumentations for you, but identical code on a machine without `[augment]` installed silently
+    falls back to torchvision instead. The only setting that pins resize behaviour regardless of
+    what is installed is:
+
+    ```python
+    train_config = TrainConfig(augmentation_backend="torchvision", ...)
+    ```
+
+### Planned for Removal in v1.9
+
+The following APIs were deprecated in earlier releases and will be removed in v1.9. They still work in the current release (v1.8.x) but emit `DeprecationWarning`. Update your code before upgrading.
+
+!!! warning "Planned for removal: `rfdetr.util.*` and `rfdetr.deploy.*` import paths"
+
+    Deprecated since v1.6. Use the canonical replacements listed in the [Upgrade 1.5 → 1.6](#upgrade-15--16) section.
+
+    ```python
+    # These imports still work in v1.8 but emit DeprecationWarning; update before v1.9
+    from rfdetr.util.coco_classes import COCO_CLASSES  # → rfdetr.assets.coco_classes
+    from rfdetr.util.misc import get_rank  # → rfdetr.utilities
+    from rfdetr.deploy import export_onnx  # → rfdetr.export.main
+    ```
+
+!!! warning "Planned for removal: `build_namespace(model_config, train_config)`"
+
+    Deprecated since v1.7. Use `build_model_from_config` and `build_criterion_from_config` instead.
+
+!!! warning "Planned for removal: `load_pretrain_weights(nn_model, model_config, train_config)` with `train_config`"
+
+    Deprecated since v1.7. Drop the `train_config` positional argument.
+
+!!! warning "Planned for removal: `start_epoch` kwarg in `train()`"
+
+    Deprecated since v1.7. PyTorch Lightning resumes automatically via `resume=`.
+
+!!! warning "Planned for removal: `do_benchmark` kwarg in `train()`"
+
+    Deprecated since v1.7. Use the `rfdetr.export.benchmark` module instead.
+
+!!! warning "Planned for removal: `callbacks` dict kwarg in `train()`"
+
+    Deprecated since v1.7. Pass PTL `Callback` objects directly via the Lightning API instead.
+
+!!! warning "Planned for removal: misplaced config fields"
+
+    The following `TrainConfig` and `ModelConfig` fields moved to their correct config class in v1.7 and the deprecated compatibility shims will be removed in v1.9. Update any direct references:
+
+    | Field               | Removed from  | Use in        |
+    | ------------------- | ------------- | ------------- |
+    | `group_detr`        | `TrainConfig` | `ModelConfig` |
+    | `ia_bce_loss`       | `TrainConfig` | `ModelConfig` |
+    | `segmentation_head` | `TrainConfig` | `ModelConfig` |
+    | `num_select`        | `TrainConfig` | `ModelConfig` |
+    | `cls_loss_coef`     | `ModelConfig` | `TrainConfig` |
+
+### Deprecated in v1.9 → Remove in v1.11
+
+!!! note "Deprecated: `RFDETR.optimize_for_inference()` renamed to `RFDETR.inference()`"
+
+    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=...)`** — renamed to
+    `inference()` with the same signature.
+
+    ```python
+    # Before (deprecated)
+    model.optimize_for_inference(dtype=torch.float16)
+
+    # After
+    model.inference(dtype=torch.float16)
+    ```
+
+---
+
 ## Upgrade 1.7 → 1.8
 
 ### Breaking changes
+
+!!! note "Breaking in v1.8.2: default keypoint schema changed to active-first `[17]`"
+
+    New checkpoints created from v1.8.2 onwards use `class_id=0` for person. Legacy `[0, 17]` checkpoints
+    are still supported — RF-DETR auto-detects the schema from the checkpoint at load time.
+
+    If your post-processing code offsets class IDs by 1 (common for background-first models), update it:
+
+    ```python
+    # Before (background-first [0, 17]: person was at class_id=1)
+    class_name = "person" if detection.class_id == 1 else "other"
+
+    # After (active-first [17]: person is at class_id=0)
+    class_name = "person" if detection.class_id == 0 else "other"
+    ```
+
+    Use `detection.data["class_name"]` for schema-agnostic name resolution.
 
 !!! warning "Breaking: `rfdetr.datasets.aug_config` renamed to `rfdetr.datasets.aug_configs`"
 
@@ -168,23 +310,21 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
 
 !!! note "Deprecated: `RFDETRSegPreview` replaced by size-specific segmentation classes"
 
-````
-**`RFDETRSegPreview`** defaulted to the small variant and is replaced by size-specific
-segmentation classes. If you used `RFDETRSegPreview()` without arguments, switch to
-`RFDETRSegSmall()`.
+    **`RFDETRSegPreview`** defaulted to the small variant and is replaced by size-specific
+    segmentation classes. If you used `RFDETRSegPreview()` without arguments, switch to
+    `RFDETRSegSmall()`.
 
-```python
-# Before (deprecated)
-from rfdetr import RFDETRSegPreview
+    ```python
+    # Before (deprecated)
+    from rfdetr import RFDETRSegPreview
 
-model = RFDETRSegPreview()
+    model = RFDETRSegPreview()
 
-# After — pick one
-from rfdetr import RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, RFDETRSegLarge
+    # After — pick one
+    from rfdetr import RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, RFDETRSegLarge
 
-model = RFDETRSegSmall()
-```
-````
+    model = RFDETRSegSmall()
+    ```
 
 ---
 
@@ -334,5 +474,5 @@ model = RFDETRSegSmall()
     from rfdetr import OPEN_SOURCE_MODELS
 
     # After
-    from rfdetr import ModelWeights
+    from rfdetr.assets.model_weights import ModelWeights
     ```
