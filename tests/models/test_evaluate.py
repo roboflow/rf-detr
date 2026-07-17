@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from rfdetr import RFDETRNano
+from rfdetr import RFDETR, RFDETRNano
 
 
 def _num_classes(dataset_dir: Path) -> int:
@@ -150,7 +150,12 @@ class TestEvaluateSplitDispatch:
     """``split`` selects ``trainer.test`` vs ``trainer.validate`` and validates the value."""
 
     def test_split_test_calls_trainer_test(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
-        """``split='test'`` routes to ``trainer.test``."""
+        """``split='test'`` routes to ``trainer.test`` and never passes ``ckpt_path`` (issue #1110 regression).
+
+        The #1110 fix hinges on ``evaluate()`` never passing ``ckpt_path`` to ``trainer.test``/``validate`` — PTL's
+        loop-state-restore raises ``KeyError`` when ``ckpt_path`` points at a bare ``.pth``. Inspecting the actual call
+        args (not just that the call happened) catches a future regression that reintroduces ``ckpt_path=...``.
+        """
         trainer = _mock_trainer()
         with (
             patch("rfdetr.training.RFDETRModelModule"),
@@ -160,9 +165,11 @@ class TestEvaluateSplitDispatch:
             nano_model.evaluate(dataset_dir=str(tmp_path), split="test", output_dir=str(tmp_path / "o"))
         trainer.test.assert_called_once()
         trainer.validate.assert_not_called()
+        _, test_kwargs = trainer.test.call_args
+        assert "ckpt_path" not in test_kwargs
 
     def test_split_val_calls_trainer_validate(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
-        """``split='val'`` routes to ``trainer.validate``."""
+        """``split='val'`` routes to ``trainer.validate`` and never passes ``ckpt_path`` (issue #1110 regression)."""
         trainer = _mock_trainer()
         with (
             patch("rfdetr.training.RFDETRModelModule"),
@@ -172,6 +179,8 @@ class TestEvaluateSplitDispatch:
             nano_model.evaluate(dataset_dir=str(tmp_path), split="val", output_dir=str(tmp_path / "o"))
         trainer.validate.assert_called_once()
         trainer.test.assert_not_called()
+        _, validate_kwargs = trainer.validate.call_args
+        assert "ckpt_path" not in validate_kwargs
 
     def test_invalid_split_raises(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
         """An unsupported split value raises ``ValueError``."""
@@ -356,3 +365,96 @@ class TestEvaluateAutoBatchSkipped:
         mock_probe.assert_not_called()
         passed_config = mock_build_trainer.call_args.args[0]
         assert passed_config.batch_size == TrainConfig.model_fields["batch_size"].default
+
+
+class TestEvaluateIssue1110Repro:
+    """End-to-end repro for issue #1110: evaluate() on a real trained-then-reloaded checkpoint must not raise."""
+
+    def test_train_then_from_checkpoint_then_evaluate(self, synthetic_shape_dataset_dir: Path, tmp_path: Path) -> None:
+        """Train() writes a real checkpoint; from_checkpoint() reloads it; evaluate() runs without the PTL ``ckpt_path``
+        ``KeyError``.
+
+        Issue #1110's reported path was ``trainer.test(ckpt_path=...)`` against a bare ``.pth`` raising a PTL loop-
+        state-restore ``KeyError``. All other tests in this module build the state-dict transplant against an untrained
+        in-memory model; this is the only one that exercises a real checkpoint round trip (train → save → reload as a
+        new instance → evaluate), the exact case the issue asked for.
+        """
+        output_dir = tmp_path / "train_output"
+        model = RFDETRNano(
+            pretrain_weights=None,
+            num_classes=_num_classes(synthetic_shape_dataset_dir),
+            device="cpu",
+        )
+        model.train(
+            dataset_dir=str(synthetic_shape_dataset_dir),
+            epochs=1,
+            batch_size=4,
+            grad_accum_steps=1,
+            num_workers=0,
+            output_dir=str(output_dir),
+            device="cpu",
+            tensorboard=False,
+        )
+        checkpoint_path = output_dir / "checkpoint_best_total.pth"
+        assert checkpoint_path.exists(), "train() should have written checkpoint_best_total.pth"
+
+        loaded_model = RFDETR.from_checkpoint(checkpoint_path)
+        metrics = loaded_model.evaluate(
+            dataset_dir=str(synthetic_shape_dataset_dir),
+            split="test",
+            device="cpu",
+            output_dir=str(tmp_path / "eval_output"),
+            batch_size=4,
+            num_workers=0,
+            tensorboard=False,
+        )
+        assert "test/mAP_50_95" in metrics
+        assert all(torch.isfinite(torch.tensor(float(v))) for v in metrics.values())
+
+
+class TestEvaluateLowPriorityGaps:
+    """Real (non-mocked) split="val" metrics, and datamodule state across sequential evaluate() calls."""
+
+    def test_val_split_returns_real_map_key(
+        self, nano_model: RFDETRNano, synthetic_shape_dataset_dir: Path, tmp_path: Path
+    ) -> None:
+        """A real (unmocked) ``evaluate(split="val")`` run returns a genuine ``val/mAP_50_95`` key.
+
+        Every other split="val"-adjacent assertion in this module mocks the PTL stack; this exercises a real
+        ``trainer.validate`` pass end to end, mirroring the module-scoped ``evaluation_result`` fixture's split="test"
+        coverage.
+        """
+        metrics = nano_model.evaluate(
+            dataset_dir=str(synthetic_shape_dataset_dir),
+            split="val",
+            device="cpu",
+            output_dir=str(tmp_path / "val_eval_output"),
+            batch_size=4,
+            num_workers=0,
+            tensorboard=False,
+        )
+        assert "val/mAP_50_95" in metrics
+        assert torch.isfinite(torch.tensor(float(metrics["val/mAP_50_95"])))
+
+    def test_sequential_evaluate_calls_do_not_leak_state(
+        self, synthetic_shape_dataset_dir: Path, tmp_path: Path
+    ) -> None:
+        """Two sequential ``evaluate()`` calls on the same instance return consistent metrics (no state leakage)."""
+        model = RFDETRNano(
+            pretrain_weights=None,
+            num_classes=_num_classes(synthetic_shape_dataset_dir),
+            device="cpu",
+        )
+        kwargs = dict(
+            dataset_dir=str(synthetic_shape_dataset_dir),
+            split="test",
+            device="cpu",
+            batch_size=4,
+            num_workers=0,
+            tensorboard=False,
+        )
+        first = model.evaluate(output_dir=str(tmp_path / "eval_1"), **kwargs)
+        second = model.evaluate(output_dir=str(tmp_path / "eval_2"), **kwargs)
+        assert first.keys() == second.keys()
+        for key in first:
+            assert first[key] == pytest.approx(second[key]), f"{key} differs between sequential evaluate() calls"
