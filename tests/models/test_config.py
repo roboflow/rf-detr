@@ -374,6 +374,16 @@ class TestTrainConfigT42PromotedFields:
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, optimizer="  ")
 
+    def test_optimizer_rejects_unknown_provider_prefix(self, tmp_path):
+        """A provider prefix other than pytorch_optimizer is rejected at config time."""
+        with pytest.raises((ValueError, ValidationError), match="provider"):
+            self._tc(tmp_path, optimizer="badprovider:lion")
+
+    def test_optimizer_rejects_empty_name_after_provider_prefix(self, tmp_path):
+        """A provider prefix with no optimizer name is rejected at config time."""
+        with pytest.raises((ValueError, ValidationError), match="non-empty optimizer name"):
+            self._tc(tmp_path, optimizer="pytorch_optimizer:")
+
     @pytest.mark.parametrize(
         "reserved_key",
         [

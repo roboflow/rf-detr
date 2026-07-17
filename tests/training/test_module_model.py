@@ -113,6 +113,26 @@ class _RankAwareRecordingOptimizer(torch.optim.Optimizer):
         return None
 
 
+class _NoWeightDecayOptimizer(torch.optim.Optimizer):
+    """Optimizer test double whose constructor does not accept ``weight_decay``."""
+
+    def __init__(self, params, lr=1e-3, momentum=0.0):
+        super().__init__(params, {"lr": lr, "momentum": momentum})
+
+    def step(self, closure=None):
+        """Run an optimizer step for the test double."""
+        if closure is not None:
+            return closure()
+        return None
+
+
+class _RaisingOptimizer:
+    """Optimizer test double that always fails to construct."""
+
+    def __init__(self, *args, **kwargs):
+        raise TypeError("simulated optimizer construction failure")
+
+
 def _build_module(model_config=None, train_config=None, tmp_path=None):
     """Construct RFDETRModelModule with build_model_from_config and build_criterion_from_config mocked."""
     mc = model_config or _base_model_config()
@@ -1698,6 +1718,123 @@ class TestConfigureOptimizers:
         assert optimizer.__class__.__name__ == "Lion"
 
     @patch("rfdetr.training.module_model.get_param_dict")
+    def test_custom_optimizer_omits_weight_decay_when_unsupported(self, mock_get_param_dict, tmp_path):
+        """weight_decay must not be injected into optimizers whose constructor does not accept it."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer="lion")
+        mock_get_param_dict.return_value = param_dicts
+
+        with patch("rfdetr.training.module_model._load_pytorch_optimizer", return_value=_NoWeightDecayOptimizer):
+            optimizer = module.configure_optimizers()["optimizer"]
+
+        assert isinstance(optimizer, _NoWeightDecayOptimizer)
+        assert "weight_decay" not in optimizer.defaults
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    def test_fused_optimizer_warns_for_custom_optimizer_on_bf16(
+        self,
+        mock_bf16_supported,
+        mock_cuda_available,
+        mock_get_param_dict,
+        tmp_path,
+    ):
+        """A custom optimizer on a fused-eligible BF16/CUDA run must warn that fused_optimizer is ignored."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer="lion")
+        mock_get_param_dict.return_value = param_dicts
+        module._trainer.precision = "bf16-mixed"
+
+        with (
+            patch("rfdetr.training.module_model._load_pytorch_optimizer", return_value=_RecordingOptimizer),
+            patch("rfdetr.training.module_model.logger.warning") as mock_warning,
+        ):
+            module.configure_optimizers()
+
+        assert any("fused_optimizer=True is ignored" in str(call.args[0]) for call in mock_warning.call_args_list)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    def test_no_fused_warning_for_adamw_on_bf16(
+        self,
+        mock_bf16_supported,
+        mock_cuda_available,
+        mock_get_param_dict,
+        tmp_path,
+    ):
+        """The built-in AdamW path uses fused and must not emit the fused-ignored warning."""
+        module, param_dicts = self._setup_module(tmp_path)
+        mock_get_param_dict.return_value = param_dicts
+        module._trainer.precision = "bf16-mixed"
+
+        with patch("rfdetr.training.module_model.logger.warning") as mock_warning:
+            module.configure_optimizers()
+
+        assert not any("fused_optimizer=True is ignored" in str(call.args[0]) for call in mock_warning.call_args_list)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_adamw_construction_error_is_rewrapped(self, mock_get_param_dict, tmp_path):
+        """An unsupported AdamW kwarg must surface as an RF-DETR-specific initialization error."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer_kwargs={"nonexistent_adamw_kwarg": True})
+        mock_get_param_dict.return_value = param_dicts
+
+        with pytest.raises(TypeError, match="Failed to initialize optimizer 'adamw'"):
+            module.configure_optimizers()
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_pytorch_optimizer_construction_error_is_rewrapped(self, mock_get_param_dict, tmp_path):
+        """A pytorch-optimizer constructor failure must surface as an RF-DETR-specific initialization error."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer="lion")
+        mock_get_param_dict.return_value = param_dicts
+
+        with (
+            patch("rfdetr.training.module_model._load_pytorch_optimizer", return_value=_RaisingOptimizer),
+            pytest.raises(TypeError, match="Failed to initialize optimizer 'pytorch_optimizer:lion'"),
+        ):
+            module.configure_optimizers()
+
+    def test_param_group_matches_override_false_for_empty_group(self):
+        """An override must never match a parameter group that holds no tensors."""
+        from rfdetr.config import OptimizerParamGroupOverride
+        from rfdetr.training.module_model import _param_group_matches_override
+
+        override = OptimizerParamGroupOverride(min_ndim=2, kwargs={"use_matrix_update": True})
+
+        assert _param_group_matches_override({"params": [], "lr": 1e-4}, override) is False
+
+    def test_apply_overrides_warns_on_zero_match(self):
+        """An override matching no parameter group must be left un-applied and warned about."""
+        from rfdetr.config import OptimizerParamGroupOverride
+        from rfdetr.training.module_model import _apply_optimizer_param_group_overrides
+
+        override = OptimizerParamGroupOverride(min_ndim=2, kwargs={"use_matrix_update": True})
+        param_dicts = [{"params": nn.Parameter(torch.randn(4)), "lr": 1e-4}]
+
+        with patch("rfdetr.training.module_model.logger.warning") as mock_warning:
+            result = _apply_optimizer_param_group_overrides(param_dicts, [override])
+
+        assert "use_matrix_update" not in result[0]
+        assert any("matched no parameter group" in str(call.args[0]) for call in mock_warning.call_args_list)
+
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_use_fused_optimizer_false_for_custom_optimizer(self, mock_cuda_available, mock_bf16_supported, tmp_path):
+        """Fused AdamW lifecycle must not activate for custom optimizers, even on BF16/CUDA."""
+        module, _ = self._setup_module(tmp_path, optimizer="lion")
+        module._trainer.precision = "bf16-mixed"
+
+        assert module._use_fused_optimizer is False
+
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_use_fused_optimizer_true_for_adamw(self, mock_cuda_available, mock_bf16_supported, tmp_path):
+        """Fused AdamW must activate for the built-in AdamW optimizer on BF16/CUDA."""
+        module, _ = self._setup_module(tmp_path)
+        module._trainer.precision = "bf16-mixed"
+
+        assert module._use_fused_optimizer is True
+
+    @patch("rfdetr.training.module_model.get_param_dict")
     def test_scheduler_interval_is_step(self, mock_get_param_dict, tmp_path):
         """Scheduler must step per batch (not per epoch) for fine-grained warmup."""
         module, param_dicts = self._setup_module(tmp_path)
@@ -1885,6 +2022,7 @@ class TestFusedOptimizerResumeStateNormalization:
         """Resumed fused AdamW state tensors must match the live parameter layout before the first step."""
         module = RFDETRModelModule.__new__(RFDETRModelModule)
         module.model_config = SimpleNamespace(fused_optimizer=True)
+        module.train_config = SimpleNamespace(optimizer="adamw")
         trainer = MagicMock()
         trainer.precision = "bf16-mixed"
         trainer.is_global_zero = True
@@ -1922,6 +2060,7 @@ class TestFusedOptimizerResumeStateNormalization:
         """Lightning-style optimizer wrappers must still be normalized on resume."""
         module = RFDETRModelModule.__new__(RFDETRModelModule)
         module.model_config = SimpleNamespace(fused_optimizer=True)
+        module.train_config = SimpleNamespace(optimizer="adamw")
         trainer = MagicMock()
         trainer.precision = "bf16-mixed"
         trainer.is_global_zero = True
@@ -1959,6 +2098,7 @@ class TestFusedOptimizerResumeStateNormalization:
         """Fresh fused-optimizer runs with no restored state should remain a no-op."""
         module = RFDETRModelModule.__new__(RFDETRModelModule)
         module.model_config = SimpleNamespace(fused_optimizer=True)
+        module.train_config = SimpleNamespace(optimizer="adamw")
         trainer = MagicMock()
         trainer.precision = "bf16-mixed"
         trainer.is_global_zero = True
