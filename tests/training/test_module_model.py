@@ -738,10 +738,22 @@ class TestTrainingStep:
     """Tests for training_step() — covers weighted loss aggregation, per-loss logging under the train/ prefix, prog_bar
     visibility, scalar tensor output, and that losses absent from weight_dict are excluded from the total."""
 
-    def _run_step(self, tmp_path, loss_dict=None, weight_dict=None, accumulate_grad_batches=1, model_config=None):
+    def _run_step(
+        self,
+        tmp_path,
+        loss_dict=None,
+        weight_dict=None,
+        accumulate_grad_batches=1,
+        model_config=None,
+        train_log_on_step=False,
+    ):
         module, fake_model, fake_criterion, _ = _build_module(
             model_config=model_config,
-            train_config=_base_train_config(tmp_path, grad_accum_steps=accumulate_grad_batches),
+            train_config=_base_train_config(
+                tmp_path,
+                grad_accum_steps=accumulate_grad_batches,
+                train_log_on_step=train_log_on_step,
+            ),
             tmp_path=tmp_path,
         )
         samples, targets = _make_batch()
@@ -890,6 +902,45 @@ class TestTrainingStep:
         assert progress_loss_calls[0].kwargs.get("logger") is False
         assert progress_loss_calls[0].kwargs.get("on_step") is True
         assert progress_loss_calls[0].kwargs.get("on_epoch") is False
+
+    @pytest.mark.parametrize(
+        "train_log_on_step",
+        [
+            pytest.param(False, id="epoch-only"),
+            pytest.param(True, id="step-and-epoch"),
+        ],
+    )
+    def test_logs_epoch_train_loss_to_progress_bar(self, tmp_path, train_log_on_step):
+        """Canonical training loss stays epoch-aggregated, with on_step mirroring train_log_on_step."""
+        module, samples, targets, _, _ = self._run_step(tmp_path, train_log_on_step=train_log_on_step)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        epoch_loss_calls = [call for call in module.log.call_args_list if call[0][0] == "train/loss"]
+        assert len(epoch_loss_calls) == 1
+        assert epoch_loss_calls[0].kwargs.get("prog_bar") is True
+        assert epoch_loss_calls[0].kwargs.get("on_step") is train_log_on_step
+        assert epoch_loss_calls[0].kwargs.get("on_epoch") is True
+
+    @pytest.mark.parametrize(
+        "train_log_on_step,expected_live_loss_calls",
+        [
+            pytest.param(False, 1, id="default-emits-live-loss"),
+            pytest.param(True, 0, id="on-step-skips-live-loss"),
+        ],
+    )
+    def test_live_loss_key_gated_on_train_log_on_step(self, tmp_path, train_log_on_step, expected_live_loss_calls):
+        """Redundant live ``loss`` progress key is emitted only when train_log_on_step is False.
+
+        With train_log_on_step=True the ``train/loss`` call forks into a live ``train/loss_step`` progress entry, so the
+        separate ``loss`` scalar becomes redundant and is skipped.
+        """
+        module, samples, targets, _, _ = self._run_step(tmp_path, train_log_on_step=train_log_on_step)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        live_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "loss"]
+        assert len(live_loss_calls) == expected_live_loss_calls
 
     def test_logs_learning_rate_without_progress_bar(self, tmp_path):
         """Current learning rate should be logged without occupying progress-bar metric slots."""
