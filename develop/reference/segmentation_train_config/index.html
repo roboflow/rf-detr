@@ -2099,6 +2099,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#rfdetr.config.SegmentationTrainConfig.validate_optimizer_kwargs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;validate_optimizer_kwargs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.config.SegmentationTrainConfig.validate_optimizer_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;validate_optimizer_name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfdetr.config.SegmentationTrainConfig.validate_positive_intervals" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2449,6 +2471,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#rfdetr.config.SegmentationTrainConfig.validate_optimizer_kwargs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;validate_optimizer_kwargs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.config.SegmentationTrainConfig.validate_optimizer_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;validate_optimizer_name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfdetr.config.SegmentationTrainConfig.validate_positive_intervals" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2626,57 +2670,57 @@ weight). To reproduce pre-fix segmentation behaviour pass
 
               <details class="quote">
                 <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-                <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1149">1149</a></span>
-<span class="normal"><a href="#__codelineno-0-1150">1150</a></span>
-<span class="normal"><a href="#__codelineno-0-1151">1151</a></span>
-<span class="normal"><a href="#__codelineno-0-1152">1152</a></span>
-<span class="normal"><a href="#__codelineno-0-1153">1153</a></span>
-<span class="normal"><a href="#__codelineno-0-1154">1154</a></span>
-<span class="normal"><a href="#__codelineno-0-1155">1155</a></span>
-<span class="normal"><a href="#__codelineno-0-1156">1156</a></span>
-<span class="normal"><a href="#__codelineno-0-1157">1157</a></span>
-<span class="normal"><a href="#__codelineno-0-1158">1158</a></span>
-<span class="normal"><a href="#__codelineno-0-1159">1159</a></span>
-<span class="normal"><a href="#__codelineno-0-1160">1160</a></span>
-<span class="normal"><a href="#__codelineno-0-1161">1161</a></span>
-<span class="normal"><a href="#__codelineno-0-1162">1162</a></span>
-<span class="normal"><a href="#__codelineno-0-1163">1163</a></span>
-<span class="normal"><a href="#__codelineno-0-1164">1164</a></span>
-<span class="normal"><a href="#__codelineno-0-1165">1165</a></span>
-<span class="normal"><a href="#__codelineno-0-1166">1166</a></span>
-<span class="normal"><a href="#__codelineno-0-1167">1167</a></span>
-<span class="normal"><a href="#__codelineno-0-1168">1168</a></span>
-<span class="normal"><a href="#__codelineno-0-1169">1169</a></span>
-<span class="normal"><a href="#__codelineno-0-1170">1170</a></span>
-<span class="normal"><a href="#__codelineno-0-1171">1171</a></span>
-<span class="normal"><a href="#__codelineno-0-1172">1172</a></span>
-<span class="normal"><a href="#__codelineno-0-1173">1173</a></span>
-<span class="normal"><a href="#__codelineno-0-1174">1174</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1149"><a id="__codelineno-0-1149" name="__codelineno-0-1149"></a><span class="k">class</span><span class="w"> </span><span class="nc">SegmentationTrainConfig</span><span class="p">(</span><span class="n">TrainConfig</span><span class="p">):</span>
-</span><span id="__span-0-1150"><a id="__codelineno-0-1150" name="__codelineno-0-1150"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Training configuration for instance segmentation models.</span>
-</span><span id="__span-0-1151"><a id="__codelineno-0-1151" name="__codelineno-0-1151"></a>
-</span><span id="__span-0-1152"><a id="__codelineno-0-1152" name="__codelineno-0-1152"></a><span class="sd">    Extends :class:`TrainConfig` with segmentation-specific loss coefficients.</span>
-</span><span id="__span-0-1153"><a id="__codelineno-0-1153" name="__codelineno-0-1153"></a>
-</span><span id="__span-0-1154"><a id="__codelineno-0-1154" name="__codelineno-0-1154"></a><span class="sd">    Attributes:</span>
-</span><span id="__span-0-1155"><a id="__codelineno-0-1155" name="__codelineno-0-1155"></a><span class="sd">        num_select: Maximum number of predictions to keep per image. ``None`` uses</span>
-</span><span id="__span-0-1156"><a id="__codelineno-0-1156" name="__codelineno-0-1156"></a><span class="sd">            the model default.</span>
-</span><span id="__span-0-1157"><a id="__codelineno-0-1157" name="__codelineno-0-1157"></a><span class="sd">        mask_point_sample_ratio: Number of points sampled per mask for point-based</span>
-</span><span id="__span-0-1158"><a id="__codelineno-0-1158" name="__codelineno-0-1158"></a><span class="sd">            mask loss computation.</span>
-</span><span id="__span-0-1159"><a id="__codelineno-0-1159" name="__codelineno-0-1159"></a><span class="sd">        mask_ce_loss_coef: Cross-entropy loss weight for mask prediction.</span>
-</span><span id="__span-0-1160"><a id="__codelineno-0-1160" name="__codelineno-0-1160"></a><span class="sd">        mask_dice_loss_coef: Dice loss weight for mask prediction.</span>
-</span><span id="__span-0-1161"><a id="__codelineno-0-1161" name="__codelineno-0-1161"></a><span class="sd">        cls_loss_coef: Classification loss weight. Defaults to ``1.0`` to match the</span>
-</span><span id="__span-0-1162"><a id="__codelineno-0-1162" name="__codelineno-0-1162"></a><span class="sd">            effective pre-v1.7 value (the v1.7 TrainConfig ownership migration</span>
-</span><span id="__span-0-1163"><a id="__codelineno-0-1163" name="__codelineno-0-1163"></a><span class="sd">            silently activated a dormant ``5.0``; this field restores the correct</span>
-</span><span id="__span-0-1164"><a id="__codelineno-0-1164" name="__codelineno-0-1164"></a><span class="sd">            weight). To reproduce pre-fix segmentation behaviour pass</span>
-</span><span id="__span-0-1165"><a id="__codelineno-0-1165" name="__codelineno-0-1165"></a><span class="sd">            ``cls_loss_coef=5.0`` explicitly.</span>
-</span><span id="__span-0-1166"><a id="__codelineno-0-1166" name="__codelineno-0-1166"></a><span class="sd">        segmentation_head: Whether to attach the segmentation head.</span>
-</span><span id="__span-0-1167"><a id="__codelineno-0-1167" name="__codelineno-0-1167"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-1168"><a id="__codelineno-0-1168" name="__codelineno-0-1168"></a>
-</span><span id="__span-0-1169"><a id="__codelineno-0-1169" name="__codelineno-0-1169"></a>    <span class="n">num_select</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
-</span><span id="__span-0-1170"><a id="__codelineno-0-1170" name="__codelineno-0-1170"></a>    <span class="n">mask_point_sample_ratio</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span>
-</span><span id="__span-0-1171"><a id="__codelineno-0-1171" name="__codelineno-0-1171"></a>    <span class="n">mask_ce_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
-</span><span id="__span-0-1172"><a id="__codelineno-0-1172" name="__codelineno-0-1172"></a>    <span class="n">mask_dice_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
-</span><span id="__span-0-1173"><a id="__codelineno-0-1173" name="__codelineno-0-1173"></a>    <span class="n">cls_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>
-</span><span id="__span-0-1174"><a id="__codelineno-0-1174" name="__codelineno-0-1174"></a>    <span class="n">segmentation_head</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+                <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1317">1317</a></span>
+<span class="normal"><a href="#__codelineno-0-1318">1318</a></span>
+<span class="normal"><a href="#__codelineno-0-1319">1319</a></span>
+<span class="normal"><a href="#__codelineno-0-1320">1320</a></span>
+<span class="normal"><a href="#__codelineno-0-1321">1321</a></span>
+<span class="normal"><a href="#__codelineno-0-1322">1322</a></span>
+<span class="normal"><a href="#__codelineno-0-1323">1323</a></span>
+<span class="normal"><a href="#__codelineno-0-1324">1324</a></span>
+<span class="normal"><a href="#__codelineno-0-1325">1325</a></span>
+<span class="normal"><a href="#__codelineno-0-1326">1326</a></span>
+<span class="normal"><a href="#__codelineno-0-1327">1327</a></span>
+<span class="normal"><a href="#__codelineno-0-1328">1328</a></span>
+<span class="normal"><a href="#__codelineno-0-1329">1329</a></span>
+<span class="normal"><a href="#__codelineno-0-1330">1330</a></span>
+<span class="normal"><a href="#__codelineno-0-1331">1331</a></span>
+<span class="normal"><a href="#__codelineno-0-1332">1332</a></span>
+<span class="normal"><a href="#__codelineno-0-1333">1333</a></span>
+<span class="normal"><a href="#__codelineno-0-1334">1334</a></span>
+<span class="normal"><a href="#__codelineno-0-1335">1335</a></span>
+<span class="normal"><a href="#__codelineno-0-1336">1336</a></span>
+<span class="normal"><a href="#__codelineno-0-1337">1337</a></span>
+<span class="normal"><a href="#__codelineno-0-1338">1338</a></span>
+<span class="normal"><a href="#__codelineno-0-1339">1339</a></span>
+<span class="normal"><a href="#__codelineno-0-1340">1340</a></span>
+<span class="normal"><a href="#__codelineno-0-1341">1341</a></span>
+<span class="normal"><a href="#__codelineno-0-1342">1342</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1317"><a id="__codelineno-0-1317" name="__codelineno-0-1317"></a><span class="k">class</span><span class="w"> </span><span class="nc">SegmentationTrainConfig</span><span class="p">(</span><span class="n">TrainConfig</span><span class="p">):</span>
+</span><span id="__span-0-1318"><a id="__codelineno-0-1318" name="__codelineno-0-1318"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Training configuration for instance segmentation models.</span>
+</span><span id="__span-0-1319"><a id="__codelineno-0-1319" name="__codelineno-0-1319"></a>
+</span><span id="__span-0-1320"><a id="__codelineno-0-1320" name="__codelineno-0-1320"></a><span class="sd">    Extends :class:`TrainConfig` with segmentation-specific loss coefficients.</span>
+</span><span id="__span-0-1321"><a id="__codelineno-0-1321" name="__codelineno-0-1321"></a>
+</span><span id="__span-0-1322"><a id="__codelineno-0-1322" name="__codelineno-0-1322"></a><span class="sd">    Attributes:</span>
+</span><span id="__span-0-1323"><a id="__codelineno-0-1323" name="__codelineno-0-1323"></a><span class="sd">        num_select: Maximum number of predictions to keep per image. ``None`` uses</span>
+</span><span id="__span-0-1324"><a id="__codelineno-0-1324" name="__codelineno-0-1324"></a><span class="sd">            the model default.</span>
+</span><span id="__span-0-1325"><a id="__codelineno-0-1325" name="__codelineno-0-1325"></a><span class="sd">        mask_point_sample_ratio: Number of points sampled per mask for point-based</span>
+</span><span id="__span-0-1326"><a id="__codelineno-0-1326" name="__codelineno-0-1326"></a><span class="sd">            mask loss computation.</span>
+</span><span id="__span-0-1327"><a id="__codelineno-0-1327" name="__codelineno-0-1327"></a><span class="sd">        mask_ce_loss_coef: Cross-entropy loss weight for mask prediction.</span>
+</span><span id="__span-0-1328"><a id="__codelineno-0-1328" name="__codelineno-0-1328"></a><span class="sd">        mask_dice_loss_coef: Dice loss weight for mask prediction.</span>
+</span><span id="__span-0-1329"><a id="__codelineno-0-1329" name="__codelineno-0-1329"></a><span class="sd">        cls_loss_coef: Classification loss weight. Defaults to ``1.0`` to match the</span>
+</span><span id="__span-0-1330"><a id="__codelineno-0-1330" name="__codelineno-0-1330"></a><span class="sd">            effective pre-v1.7 value (the v1.7 TrainConfig ownership migration</span>
+</span><span id="__span-0-1331"><a id="__codelineno-0-1331" name="__codelineno-0-1331"></a><span class="sd">            silently activated a dormant ``5.0``; this field restores the correct</span>
+</span><span id="__span-0-1332"><a id="__codelineno-0-1332" name="__codelineno-0-1332"></a><span class="sd">            weight). To reproduce pre-fix segmentation behaviour pass</span>
+</span><span id="__span-0-1333"><a id="__codelineno-0-1333" name="__codelineno-0-1333"></a><span class="sd">            ``cls_loss_coef=5.0`` explicitly.</span>
+</span><span id="__span-0-1334"><a id="__codelineno-0-1334" name="__codelineno-0-1334"></a><span class="sd">        segmentation_head: Whether to attach the segmentation head.</span>
+</span><span id="__span-0-1335"><a id="__codelineno-0-1335" name="__codelineno-0-1335"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-1336"><a id="__codelineno-0-1336" name="__codelineno-0-1336"></a>
+</span><span id="__span-0-1337"><a id="__codelineno-0-1337" name="__codelineno-0-1337"></a>    <span class="n">num_select</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-0-1338"><a id="__codelineno-0-1338" name="__codelineno-0-1338"></a>    <span class="n">mask_point_sample_ratio</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span>
+</span><span id="__span-0-1339"><a id="__codelineno-0-1339" name="__codelineno-0-1339"></a>    <span class="n">mask_ce_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
+</span><span id="__span-0-1340"><a id="__codelineno-0-1340" name="__codelineno-0-1340"></a>    <span class="n">mask_dice_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
+</span><span id="__span-0-1341"><a id="__codelineno-0-1341" name="__codelineno-0-1341"></a>    <span class="n">cls_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>
+</span><span id="__span-0-1342"><a id="__codelineno-0-1342" name="__codelineno-0-1342"></a>    <span class="n">segmentation_head</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
 </span></code></pre></div></td></tr></table></div>
               </details>
 
@@ -2712,19 +2756,19 @@ weight). To reproduce pre-fix segmentation behaviour pass
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1126">1126</a></span>
-<span class="normal"><a href="#__codelineno-0-1127">1127</a></span>
-<span class="normal"><a href="#__codelineno-0-1128">1128</a></span>
-<span class="normal"><a href="#__codelineno-0-1129">1129</a></span>
-<span class="normal"><a href="#__codelineno-0-1130">1130</a></span>
-<span class="normal"><a href="#__codelineno-0-1131">1131</a></span>
-<span class="normal"><a href="#__codelineno-0-1132">1132</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1126"><a id="__codelineno-0-1126" name="__codelineno-0-1126"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;dataset_dir&quot;</span><span class="p">,</span> <span class="s2">&quot;output_dir&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;before&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1127"><a id="__codelineno-0-1127" name="__codelineno-0-1127"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1128"><a id="__codelineno-0-1128" name="__codelineno-0-1128"></a><span class="k">def</span><span class="w"> </span><span class="nf">expand_paths</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="n">PathLikeStr</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1129"><a id="__codelineno-0-1129" name="__codelineno-0-1129"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Expand and normalize dataset/output directory paths via ``os.fspath`` → ``expanduser`` → ``realpath``.&quot;&quot;&quot;</span>
-</span><span id="__span-0-1130"><a id="__codelineno-0-1130" name="__codelineno-0-1130"></a>    <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1131"><a id="__codelineno-0-1131" name="__codelineno-0-1131"></a>        <span class="k">return</span> <span class="n">v</span>
-</span><span id="__span-0-1132"><a id="__codelineno-0-1132" name="__codelineno-0-1132"></a>    <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">realpath</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">fspath</span><span class="p">(</span><span class="n">v</span><span class="p">)))</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1294">1294</a></span>
+<span class="normal"><a href="#__codelineno-0-1295">1295</a></span>
+<span class="normal"><a href="#__codelineno-0-1296">1296</a></span>
+<span class="normal"><a href="#__codelineno-0-1297">1297</a></span>
+<span class="normal"><a href="#__codelineno-0-1298">1298</a></span>
+<span class="normal"><a href="#__codelineno-0-1299">1299</a></span>
+<span class="normal"><a href="#__codelineno-0-1300">1300</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1294"><a id="__codelineno-0-1294" name="__codelineno-0-1294"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;dataset_dir&quot;</span><span class="p">,</span> <span class="s2">&quot;output_dir&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;before&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1295"><a id="__codelineno-0-1295" name="__codelineno-0-1295"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1296"><a id="__codelineno-0-1296" name="__codelineno-0-1296"></a><span class="k">def</span><span class="w"> </span><span class="nf">expand_paths</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="n">PathLikeStr</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1297"><a id="__codelineno-0-1297" name="__codelineno-0-1297"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Expand and normalize dataset/output directory paths via ``os.fspath`` → ``expanduser`` → ``realpath``.&quot;&quot;&quot;</span>
+</span><span id="__span-0-1298"><a id="__codelineno-0-1298" name="__codelineno-0-1298"></a>    <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1299"><a id="__codelineno-0-1299" name="__codelineno-0-1299"></a>        <span class="k">return</span> <span class="n">v</span>
+</span><span id="__span-0-1300"><a id="__codelineno-0-1300" name="__codelineno-0-1300"></a>    <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">realpath</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">fspath</span><span class="p">(</span><span class="n">v</span><span class="p">)))</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -2751,23 +2795,23 @@ weight). To reproduce pre-fix segmentation behaviour pass
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1072">1072</a></span>
-<span class="normal"><a href="#__codelineno-0-1073">1073</a></span>
-<span class="normal"><a href="#__codelineno-0-1074">1074</a></span>
-<span class="normal"><a href="#__codelineno-0-1075">1075</a></span>
-<span class="normal"><a href="#__codelineno-0-1076">1076</a></span>
-<span class="normal"><a href="#__codelineno-0-1077">1077</a></span>
-<span class="normal"><a href="#__codelineno-0-1078">1078</a></span>
-<span class="normal"><a href="#__codelineno-0-1079">1079</a></span>
-<span class="normal"><a href="#__codelineno-0-1080">1080</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1072"><a id="__codelineno-0-1072" name="__codelineno-0-1072"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;batch_size&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1073"><a id="__codelineno-0-1073" name="__codelineno-0-1073"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1074"><a id="__codelineno-0-1074" name="__codelineno-0-1074"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_batch_size</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">]:</span>
-</span><span id="__span-0-1075"><a id="__codelineno-0-1075" name="__codelineno-0-1075"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate batch_size is a positive integer or the literal &#39;auto&#39;.&quot;&quot;&quot;</span>
-</span><span id="__span-0-1076"><a id="__codelineno-0-1076" name="__codelineno-0-1076"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">==</span> <span class="s2">&quot;auto&quot;</span><span class="p">:</span>
-</span><span id="__span-0-1077"><a id="__codelineno-0-1077" name="__codelineno-0-1077"></a>        <span class="k">return</span> <span class="n">v</span>
-</span><span id="__span-0-1078"><a id="__codelineno-0-1078" name="__codelineno-0-1078"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
-</span><span id="__span-0-1079"><a id="__codelineno-0-1079" name="__codelineno-0-1079"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_size must be &gt;= 1, or &#39;auto&#39;.&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1080"><a id="__codelineno-0-1080" name="__codelineno-0-1080"></a>    <span class="k">return</span> <span class="n">v</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1177">1177</a></span>
+<span class="normal"><a href="#__codelineno-0-1178">1178</a></span>
+<span class="normal"><a href="#__codelineno-0-1179">1179</a></span>
+<span class="normal"><a href="#__codelineno-0-1180">1180</a></span>
+<span class="normal"><a href="#__codelineno-0-1181">1181</a></span>
+<span class="normal"><a href="#__codelineno-0-1182">1182</a></span>
+<span class="normal"><a href="#__codelineno-0-1183">1183</a></span>
+<span class="normal"><a href="#__codelineno-0-1184">1184</a></span>
+<span class="normal"><a href="#__codelineno-0-1185">1185</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1177"><a id="__codelineno-0-1177" name="__codelineno-0-1177"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;batch_size&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1178"><a id="__codelineno-0-1178" name="__codelineno-0-1178"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1179"><a id="__codelineno-0-1179" name="__codelineno-0-1179"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_batch_size</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">]:</span>
+</span><span id="__span-0-1180"><a id="__codelineno-0-1180" name="__codelineno-0-1180"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate batch_size is a positive integer or the literal &#39;auto&#39;.&quot;&quot;&quot;</span>
+</span><span id="__span-0-1181"><a id="__codelineno-0-1181" name="__codelineno-0-1181"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">==</span> <span class="s2">&quot;auto&quot;</span><span class="p">:</span>
+</span><span id="__span-0-1182"><a id="__codelineno-0-1182" name="__codelineno-0-1182"></a>        <span class="k">return</span> <span class="n">v</span>
+</span><span id="__span-0-1183"><a id="__codelineno-0-1183" name="__codelineno-0-1183"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+</span><span id="__span-0-1184"><a id="__codelineno-0-1184" name="__codelineno-0-1184"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_size must be &gt;= 1, or &#39;auto&#39;.&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1185"><a id="__codelineno-0-1185" name="__codelineno-0-1185"></a>    <span class="k">return</span> <span class="n">v</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -2794,19 +2838,111 @@ weight). To reproduce pre-fix segmentation behaviour pass
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1094">1094</a></span>
-<span class="normal"><a href="#__codelineno-0-1095">1095</a></span>
-<span class="normal"><a href="#__codelineno-0-1096">1096</a></span>
-<span class="normal"><a href="#__codelineno-0-1097">1097</a></span>
-<span class="normal"><a href="#__codelineno-0-1098">1098</a></span>
-<span class="normal"><a href="#__codelineno-0-1099">1099</a></span>
-<span class="normal"><a href="#__codelineno-0-1100">1100</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1094"><a id="__codelineno-0-1094" name="__codelineno-0-1094"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;auto_batch_ema_headroom&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1095"><a id="__codelineno-0-1095" name="__codelineno-0-1095"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1096"><a id="__codelineno-0-1096" name="__codelineno-0-1096"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_ema_headroom</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-</span><span id="__span-0-1097"><a id="__codelineno-0-1097" name="__codelineno-0-1097"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate auto_batch_ema_headroom is in (0, 1].&quot;&quot;&quot;</span>
-</span><span id="__span-0-1098"><a id="__codelineno-0-1098" name="__codelineno-0-1098"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="mi">0</span> <span class="o">&lt;</span> <span class="n">v</span> <span class="o">&lt;=</span> <span class="mf">1.0</span><span class="p">):</span>
-</span><span id="__span-0-1099"><a id="__codelineno-0-1099" name="__codelineno-0-1099"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;auto_batch_ema_headroom must be in (0, 1].&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1100"><a id="__codelineno-0-1100" name="__codelineno-0-1100"></a>    <span class="k">return</span> <span class="n">v</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1199">1199</a></span>
+<span class="normal"><a href="#__codelineno-0-1200">1200</a></span>
+<span class="normal"><a href="#__codelineno-0-1201">1201</a></span>
+<span class="normal"><a href="#__codelineno-0-1202">1202</a></span>
+<span class="normal"><a href="#__codelineno-0-1203">1203</a></span>
+<span class="normal"><a href="#__codelineno-0-1204">1204</a></span>
+<span class="normal"><a href="#__codelineno-0-1205">1205</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1199"><a id="__codelineno-0-1199" name="__codelineno-0-1199"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;auto_batch_ema_headroom&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1200"><a id="__codelineno-0-1200" name="__codelineno-0-1200"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1201"><a id="__codelineno-0-1201" name="__codelineno-0-1201"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_ema_headroom</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+</span><span id="__span-0-1202"><a id="__codelineno-0-1202" name="__codelineno-0-1202"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate auto_batch_ema_headroom is in (0, 1].&quot;&quot;&quot;</span>
+</span><span id="__span-0-1203"><a id="__codelineno-0-1203" name="__codelineno-0-1203"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="mi">0</span> <span class="o">&lt;</span> <span class="n">v</span> <span class="o">&lt;=</span> <span class="mf">1.0</span><span class="p">):</span>
+</span><span id="__span-0-1204"><a id="__codelineno-0-1204" name="__codelineno-0-1204"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;auto_batch_ema_headroom must be in (0, 1].&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1205"><a id="__codelineno-0-1205" name="__codelineno-0-1205"></a>    <span class="k">return</span> <span class="n">v</span>
+</span></code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rfdetr.config.SegmentationTrainConfig.validate_optimizer_kwargs" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">validate_optimizer_kwargs</span><span class="p">()</span></code>
+
+<a href="#rfdetr.config.SegmentationTrainConfig.validate_optimizer_kwargs" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Reserved optimizer kwargs are only rejected for managed (short-name) optimizers.</p>
+
+
+            <details class="quote">
+              <summary>Source code in <code>src/rfdetr/config.py</code></summary>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1276">1276</a></span>
+<span class="normal"><a href="#__codelineno-0-1277">1277</a></span>
+<span class="normal"><a href="#__codelineno-0-1278">1278</a></span>
+<span class="normal"><a href="#__codelineno-0-1279">1279</a></span>
+<span class="normal"><a href="#__codelineno-0-1280">1280</a></span>
+<span class="normal"><a href="#__codelineno-0-1281">1281</a></span>
+<span class="normal"><a href="#__codelineno-0-1282">1282</a></span>
+<span class="normal"><a href="#__codelineno-0-1283">1283</a></span>
+<span class="normal"><a href="#__codelineno-0-1284">1284</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1276"><a id="__codelineno-0-1276" name="__codelineno-0-1276"></a><span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1277"><a id="__codelineno-0-1277" name="__codelineno-0-1277"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_optimizer_kwargs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;TrainConfig&quot;</span><span class="p">:</span>
+</span><span id="__span-0-1278"><a id="__codelineno-0-1278" name="__codelineno-0-1278"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Reserved optimizer kwargs are only rejected for managed (short-name) optimizers.&quot;&quot;&quot;</span>
+</span><span id="__span-0-1279"><a id="__codelineno-0-1279" name="__codelineno-0-1279"></a>    <span class="k">if</span> <span class="n">_is_managed_optimizer_name</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="p">):</span>
+</span><span id="__span-0-1280"><a id="__codelineno-0-1280" name="__codelineno-0-1280"></a>        <span class="n">reserved_present</span> <span class="o">=</span> <span class="n">_OPTIMIZER_MANAGED_KWARGS</span><span class="o">.</span><span class="n">intersection</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">optimizer_kwargs</span><span class="p">)</span>
+</span><span id="__span-0-1281"><a id="__codelineno-0-1281" name="__codelineno-0-1281"></a>        <span class="k">if</span> <span class="n">reserved_present</span><span class="p">:</span>
+</span><span id="__span-0-1282"><a id="__codelineno-0-1282" name="__codelineno-0-1282"></a>            <span class="n">reserved</span> <span class="o">=</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">reserved_present</span><span class="p">))</span>
+</span><span id="__span-0-1283"><a id="__codelineno-0-1283" name="__codelineno-0-1283"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;optimizer_kwargs cannot include RF-DETR-managed key(s): </span><span class="si">{</span><span class="n">reserved</span><span class="si">}</span><span class="s2">.&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1284"><a id="__codelineno-0-1284" name="__codelineno-0-1284"></a>    <span class="k">return</span> <span class="bp">self</span>
+</span></code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rfdetr.config.SegmentationTrainConfig.validate_optimizer_name" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">validate_optimizer_name</span><span class="p">(</span><span class="n">v</span><span class="p">)</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+<a href="#rfdetr.config.SegmentationTrainConfig.validate_optimizer_name" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Validate a string optimizer: a bare name must be a native torch.optim optimizer.</p>
+
+
+            <details class="quote">
+              <summary>Source code in <code>src/rfdetr/config.py</code></summary>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1261">1261</a></span>
+<span class="normal"><a href="#__codelineno-0-1262">1262</a></span>
+<span class="normal"><a href="#__codelineno-0-1263">1263</a></span>
+<span class="normal"><a href="#__codelineno-0-1264">1264</a></span>
+<span class="normal"><a href="#__codelineno-0-1265">1265</a></span>
+<span class="normal"><a href="#__codelineno-0-1266">1266</a></span>
+<span class="normal"><a href="#__codelineno-0-1267">1267</a></span>
+<span class="normal"><a href="#__codelineno-0-1268">1268</a></span>
+<span class="normal"><a href="#__codelineno-0-1269">1269</a></span>
+<span class="normal"><a href="#__codelineno-0-1270">1270</a></span>
+<span class="normal"><a href="#__codelineno-0-1271">1271</a></span>
+<span class="normal"><a href="#__codelineno-0-1272">1272</a></span>
+<span class="normal"><a href="#__codelineno-0-1273">1273</a></span>
+<span class="normal"><a href="#__codelineno-0-1274">1274</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1261"><a id="__codelineno-0-1261" name="__codelineno-0-1261"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;optimizer&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1262"><a id="__codelineno-0-1262" name="__codelineno-0-1262"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1263"><a id="__codelineno-0-1263" name="__codelineno-0-1263"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_optimizer_name</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Optimizer</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Optimizer</span><span class="p">]:</span>
+</span><span id="__span-0-1264"><a id="__codelineno-0-1264" name="__codelineno-0-1264"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate a string optimizer: a bare name must be a native torch.optim optimizer.&quot;&quot;&quot;</span>
+</span><span id="__span-0-1265"><a id="__codelineno-0-1265" name="__codelineno-0-1265"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+</span><span id="__span-0-1266"><a id="__codelineno-0-1266" name="__codelineno-0-1266"></a>        <span class="k">return</span> <span class="n">v</span>
+</span><span id="__span-0-1267"><a id="__codelineno-0-1267" name="__codelineno-0-1267"></a>    <span class="n">optimizer</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+</span><span id="__span-0-1268"><a id="__codelineno-0-1268" name="__codelineno-0-1268"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">optimizer</span><span class="p">:</span>
+</span><span id="__span-0-1269"><a id="__codelineno-0-1269" name="__codelineno-0-1269"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;optimizer must be a non-empty string.&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1270"><a id="__codelineno-0-1270" name="__codelineno-0-1270"></a>    <span class="c1"># Bare short names must resolve to a torch.optim optimizer (checked eagerly).</span>
+</span><span id="__span-0-1271"><a id="__codelineno-0-1271" name="__codelineno-0-1271"></a>    <span class="c1"># Dotted import paths are validated lazily at train start (the module may be optional).</span>
+</span><span id="__span-0-1272"><a id="__codelineno-0-1272" name="__codelineno-0-1272"></a>    <span class="k">if</span> <span class="s2">&quot;.&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">optimizer</span><span class="p">:</span>
+</span><span id="__span-0-1273"><a id="__codelineno-0-1273" name="__codelineno-0-1273"></a>        <span class="n">_resolve_native_optimizer</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
+</span><span id="__span-0-1274"><a id="__codelineno-0-1274" name="__codelineno-0-1274"></a>    <span class="k">return</span> <span class="n">optimizer</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -2833,19 +2969,19 @@ weight). To reproduce pre-fix segmentation behaviour pass
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1110">1110</a></span>
-<span class="normal"><a href="#__codelineno-0-1111">1111</a></span>
-<span class="normal"><a href="#__codelineno-0-1112">1112</a></span>
-<span class="normal"><a href="#__codelineno-0-1113">1113</a></span>
-<span class="normal"><a href="#__codelineno-0-1114">1114</a></span>
-<span class="normal"><a href="#__codelineno-0-1115">1115</a></span>
-<span class="normal"><a href="#__codelineno-0-1116">1116</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1110"><a id="__codelineno-0-1110" name="__codelineno-0-1110"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;ema_update_interval&quot;</span><span class="p">,</span> <span class="s2">&quot;eval_interval&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1111"><a id="__codelineno-0-1111" name="__codelineno-0-1111"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1112"><a id="__codelineno-0-1112" name="__codelineno-0-1112"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_positive_intervals</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-</span><span id="__span-0-1113"><a id="__codelineno-0-1113" name="__codelineno-0-1113"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate interval fields are &gt;= 1.&quot;&quot;&quot;</span>
-</span><span id="__span-0-1114"><a id="__codelineno-0-1114" name="__codelineno-0-1114"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
-</span><span id="__span-0-1115"><a id="__codelineno-0-1115" name="__codelineno-0-1115"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Interval fields must be &gt;= 1.&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1116"><a id="__codelineno-0-1116" name="__codelineno-0-1116"></a>    <span class="k">return</span> <span class="n">v</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1215">1215</a></span>
+<span class="normal"><a href="#__codelineno-0-1216">1216</a></span>
+<span class="normal"><a href="#__codelineno-0-1217">1217</a></span>
+<span class="normal"><a href="#__codelineno-0-1218">1218</a></span>
+<span class="normal"><a href="#__codelineno-0-1219">1219</a></span>
+<span class="normal"><a href="#__codelineno-0-1220">1220</a></span>
+<span class="normal"><a href="#__codelineno-0-1221">1221</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1215"><a id="__codelineno-0-1215" name="__codelineno-0-1215"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;ema_update_interval&quot;</span><span class="p">,</span> <span class="s2">&quot;eval_interval&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1216"><a id="__codelineno-0-1216" name="__codelineno-0-1216"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1217"><a id="__codelineno-0-1217" name="__codelineno-0-1217"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_positive_intervals</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+</span><span id="__span-0-1218"><a id="__codelineno-0-1218" name="__codelineno-0-1218"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate interval fields are &gt;= 1.&quot;&quot;&quot;</span>
+</span><span id="__span-0-1219"><a id="__codelineno-0-1219" name="__codelineno-0-1219"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+</span><span id="__span-0-1220"><a id="__codelineno-0-1220" name="__codelineno-0-1220"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Interval fields must be &gt;= 1.&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1221"><a id="__codelineno-0-1221" name="__codelineno-0-1221"></a>    <span class="k">return</span> <span class="n">v</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -2872,27 +3008,27 @@ weight). To reproduce pre-fix segmentation behaviour pass
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1082">1082</a></span>
-<span class="normal"><a href="#__codelineno-0-1083">1083</a></span>
-<span class="normal"><a href="#__codelineno-0-1084">1084</a></span>
-<span class="normal"><a href="#__codelineno-0-1085">1085</a></span>
-<span class="normal"><a href="#__codelineno-0-1086">1086</a></span>
-<span class="normal"><a href="#__codelineno-0-1087">1087</a></span>
-<span class="normal"><a href="#__codelineno-0-1088">1088</a></span>
-<span class="normal"><a href="#__codelineno-0-1089">1089</a></span>
-<span class="normal"><a href="#__codelineno-0-1090">1090</a></span>
-<span class="normal"><a href="#__codelineno-0-1091">1091</a></span>
-<span class="normal"><a href="#__codelineno-0-1092">1092</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1082"><a id="__codelineno-0-1082" name="__codelineno-0-1082"></a><span class="nd">@field_validator</span><span class="p">(</span>
-</span><span id="__span-0-1083"><a id="__codelineno-0-1083" name="__codelineno-0-1083"></a>    <span class="s2">&quot;grad_accum_steps&quot;</span><span class="p">,</span> <span class="s2">&quot;auto_batch_target_effective&quot;</span><span class="p">,</span> <span class="s2">&quot;auto_batch_max_targets_per_image&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span>
-</span><span id="__span-0-1084"><a id="__codelineno-0-1084" name="__codelineno-0-1084"></a><span class="p">)</span>
-</span><span id="__span-0-1085"><a id="__codelineno-0-1085" name="__codelineno-0-1085"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1086"><a id="__codelineno-0-1086" name="__codelineno-0-1086"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_positive_train_steps</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-</span><span id="__span-0-1087"><a id="__codelineno-0-1087" name="__codelineno-0-1087"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate accumulation, target-effective batch, and max targets are &gt;= 1.&quot;&quot;&quot;</span>
-</span><span id="__span-0-1088"><a id="__codelineno-0-1088" name="__codelineno-0-1088"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
-</span><span id="__span-0-1089"><a id="__codelineno-0-1089" name="__codelineno-0-1089"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-</span><span id="__span-0-1090"><a id="__codelineno-0-1090" name="__codelineno-0-1090"></a>            <span class="s2">&quot;grad_accum_steps, auto_batch_target_effective, and auto_batch_max_targets_per_image must be &gt;= 1.&quot;</span>
-</span><span id="__span-0-1091"><a id="__codelineno-0-1091" name="__codelineno-0-1091"></a>        <span class="p">)</span>
-</span><span id="__span-0-1092"><a id="__codelineno-0-1092" name="__codelineno-0-1092"></a>    <span class="k">return</span> <span class="n">v</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1187">1187</a></span>
+<span class="normal"><a href="#__codelineno-0-1188">1188</a></span>
+<span class="normal"><a href="#__codelineno-0-1189">1189</a></span>
+<span class="normal"><a href="#__codelineno-0-1190">1190</a></span>
+<span class="normal"><a href="#__codelineno-0-1191">1191</a></span>
+<span class="normal"><a href="#__codelineno-0-1192">1192</a></span>
+<span class="normal"><a href="#__codelineno-0-1193">1193</a></span>
+<span class="normal"><a href="#__codelineno-0-1194">1194</a></span>
+<span class="normal"><a href="#__codelineno-0-1195">1195</a></span>
+<span class="normal"><a href="#__codelineno-0-1196">1196</a></span>
+<span class="normal"><a href="#__codelineno-0-1197">1197</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1187"><a id="__codelineno-0-1187" name="__codelineno-0-1187"></a><span class="nd">@field_validator</span><span class="p">(</span>
+</span><span id="__span-0-1188"><a id="__codelineno-0-1188" name="__codelineno-0-1188"></a>    <span class="s2">&quot;grad_accum_steps&quot;</span><span class="p">,</span> <span class="s2">&quot;auto_batch_target_effective&quot;</span><span class="p">,</span> <span class="s2">&quot;auto_batch_max_targets_per_image&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span>
+</span><span id="__span-0-1189"><a id="__codelineno-0-1189" name="__codelineno-0-1189"></a><span class="p">)</span>
+</span><span id="__span-0-1190"><a id="__codelineno-0-1190" name="__codelineno-0-1190"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1191"><a id="__codelineno-0-1191" name="__codelineno-0-1191"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_positive_train_steps</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+</span><span id="__span-0-1192"><a id="__codelineno-0-1192" name="__codelineno-0-1192"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate accumulation, target-effective batch, and max targets are &gt;= 1.&quot;&quot;&quot;</span>
+</span><span id="__span-0-1193"><a id="__codelineno-0-1193" name="__codelineno-0-1193"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+</span><span id="__span-0-1194"><a id="__codelineno-0-1194" name="__codelineno-0-1194"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+</span><span id="__span-0-1195"><a id="__codelineno-0-1195" name="__codelineno-0-1195"></a>            <span class="s2">&quot;grad_accum_steps, auto_batch_target_effective, and auto_batch_max_targets_per_image must be &gt;= 1.&quot;</span>
+</span><span id="__span-0-1196"><a id="__codelineno-0-1196" name="__codelineno-0-1196"></a>        <span class="p">)</span>
+</span><span id="__span-0-1197"><a id="__codelineno-0-1197" name="__codelineno-0-1197"></a>    <span class="k">return</span> <span class="n">v</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -2919,19 +3055,19 @@ weight). To reproduce pre-fix segmentation behaviour pass
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1118">1118</a></span>
-<span class="normal"><a href="#__codelineno-0-1119">1119</a></span>
-<span class="normal"><a href="#__codelineno-0-1120">1120</a></span>
-<span class="normal"><a href="#__codelineno-0-1121">1121</a></span>
-<span class="normal"><a href="#__codelineno-0-1122">1122</a></span>
-<span class="normal"><a href="#__codelineno-0-1123">1123</a></span>
-<span class="normal"><a href="#__codelineno-0-1124">1124</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1118"><a id="__codelineno-0-1118" name="__codelineno-0-1118"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;prefetch_factor&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1119"><a id="__codelineno-0-1119" name="__codelineno-0-1119"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1120"><a id="__codelineno-0-1120" name="__codelineno-0-1120"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_prefetch_factor</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1121"><a id="__codelineno-0-1121" name="__codelineno-0-1121"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate prefetch_factor is None or &gt;= 1.&quot;&quot;&quot;</span>
-</span><span id="__span-0-1122"><a id="__codelineno-0-1122" name="__codelineno-0-1122"></a>    <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
-</span><span id="__span-0-1123"><a id="__codelineno-0-1123" name="__codelineno-0-1123"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;prefetch_factor must be &gt;= 1 when provided.&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1124"><a id="__codelineno-0-1124" name="__codelineno-0-1124"></a>    <span class="k">return</span> <span class="n">v</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1286">1286</a></span>
+<span class="normal"><a href="#__codelineno-0-1287">1287</a></span>
+<span class="normal"><a href="#__codelineno-0-1288">1288</a></span>
+<span class="normal"><a href="#__codelineno-0-1289">1289</a></span>
+<span class="normal"><a href="#__codelineno-0-1290">1290</a></span>
+<span class="normal"><a href="#__codelineno-0-1291">1291</a></span>
+<span class="normal"><a href="#__codelineno-0-1292">1292</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1286"><a id="__codelineno-0-1286" name="__codelineno-0-1286"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;prefetch_factor&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1287"><a id="__codelineno-0-1287" name="__codelineno-0-1287"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1288"><a id="__codelineno-0-1288" name="__codelineno-0-1288"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_prefetch_factor</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1289"><a id="__codelineno-0-1289" name="__codelineno-0-1289"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate prefetch_factor is None or &gt;= 1.&quot;&quot;&quot;</span>
+</span><span id="__span-0-1290"><a id="__codelineno-0-1290" name="__codelineno-0-1290"></a>    <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+</span><span id="__span-0-1291"><a id="__codelineno-0-1291" name="__codelineno-0-1291"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;prefetch_factor must be &gt;= 1 when provided.&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1292"><a id="__codelineno-0-1292" name="__codelineno-0-1292"></a>    <span class="k">return</span> <span class="n">v</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -2958,19 +3094,19 @@ weight). To reproduce pre-fix segmentation behaviour pass
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1102">1102</a></span>
-<span class="normal"><a href="#__codelineno-0-1103">1103</a></span>
-<span class="normal"><a href="#__codelineno-0-1104">1104</a></span>
-<span class="normal"><a href="#__codelineno-0-1105">1105</a></span>
-<span class="normal"><a href="#__codelineno-0-1106">1106</a></span>
-<span class="normal"><a href="#__codelineno-0-1107">1107</a></span>
-<span class="normal"><a href="#__codelineno-0-1108">1108</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1102"><a id="__codelineno-0-1102" name="__codelineno-0-1102"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;smooth_alpha&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1103"><a id="__codelineno-0-1103" name="__codelineno-0-1103"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1104"><a id="__codelineno-0-1104" name="__codelineno-0-1104"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_smooth_alpha</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-</span><span id="__span-0-1105"><a id="__codelineno-0-1105" name="__codelineno-0-1105"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate smooth_alpha is in [0.0, 1.0).&quot;&quot;&quot;</span>
-</span><span id="__span-0-1106"><a id="__codelineno-0-1106" name="__codelineno-0-1106"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="mf">0.0</span> <span class="o">&lt;=</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mf">1.0</span><span class="p">):</span>
-</span><span id="__span-0-1107"><a id="__codelineno-0-1107" name="__codelineno-0-1107"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;smooth_alpha must be in [0.0, 1.0).&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1108"><a id="__codelineno-0-1108" name="__codelineno-0-1108"></a>    <span class="k">return</span> <span class="n">v</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1207">1207</a></span>
+<span class="normal"><a href="#__codelineno-0-1208">1208</a></span>
+<span class="normal"><a href="#__codelineno-0-1209">1209</a></span>
+<span class="normal"><a href="#__codelineno-0-1210">1210</a></span>
+<span class="normal"><a href="#__codelineno-0-1211">1211</a></span>
+<span class="normal"><a href="#__codelineno-0-1212">1212</a></span>
+<span class="normal"><a href="#__codelineno-0-1213">1213</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1207"><a id="__codelineno-0-1207" name="__codelineno-0-1207"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;smooth_alpha&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1208"><a id="__codelineno-0-1208" name="__codelineno-0-1208"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1209"><a id="__codelineno-0-1209" name="__codelineno-0-1209"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_smooth_alpha</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+</span><span id="__span-0-1210"><a id="__codelineno-0-1210" name="__codelineno-0-1210"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate smooth_alpha is in [0.0, 1.0).&quot;&quot;&quot;</span>
+</span><span id="__span-0-1211"><a id="__codelineno-0-1211" name="__codelineno-0-1211"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="mf">0.0</span> <span class="o">&lt;=</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mf">1.0</span><span class="p">):</span>
+</span><span id="__span-0-1212"><a id="__codelineno-0-1212" name="__codelineno-0-1212"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;smooth_alpha must be in [0.0, 1.0).&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1213"><a id="__codelineno-0-1213" name="__codelineno-0-1213"></a>    <span class="k">return</span> <span class="n">v</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>

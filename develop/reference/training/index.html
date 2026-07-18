@@ -5366,9 +5366,11 @@ training).</p>
 
     <div class="doc doc-contents ">
 
-        <p>Build AdamW optimizer with layer-wise LR decay and LambdaLR scheduler.</p>
+        <p>Build the configured optimizer with layer-wise LR decay and scheduler.</p>
 <p>Uses <code>trainer.estimated_stepping_batches</code> for total step count so cosine annealing covers the full training
-run regardless of dataset size or accumulation settings.</p>
+run regardless of dataset size or accumulation settings.
+<code>optimizer="adamw"</code> keeps RF-DETR's fused torch AdamW path;
+other names can be loaded from <code>pytorch-optimizer</code>.</p>
 
 
     <p><span class="doc-section-title">Returns:</span></p>

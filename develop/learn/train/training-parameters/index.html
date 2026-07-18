@@ -91,7 +91,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-07-03T14:22:23">
+  <meta property="article:modified_time" content="2026-07-18T07:36:43">
   
   <script type="application/ld+json">
   {
@@ -106,7 +106,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-07-03T14:22:23",
+    "dateModified": "2026-07-18T07:36:43",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1152,6 +1152,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Learning Rate Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#custom-optimizer-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Optimizer Example
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2604,6 +2621,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Learning Rate Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#custom-optimizer-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Optimizer Example
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2973,6 +3007,18 @@
 <td><code>1.5e-4</code></td>
 <td>Learning rate specifically for the backbone encoder. Can be set lower than <code>lr</code> if you want to fine-tune the encoder more conservatively than the rest of the model.</td>
 </tr>
+<tr>
+<td><code>optimizer</code></td>
+<td><code>str \| Callable</code></td>
+<td><code>"adamw"</code></td>
+<td>Optimizer as a native <code>torch.optim</code> short name, dotted import path, or callable. Managed short names (native <code>torch.optim</code> only, e.g. <code>"adamw"</code>, <code>"sgd"</code>) have RF-DETR inject <code>lr</code>/<code>weight_decay</code>; a dotted import path (<code>"torch.optim.AdamW"</code>, <code>"pytorch_optimizer.Lion"</code>) or callable is built from <code>optimizer_kwargs</code> / its own bound arguments only. See <a href="../customization/#custom-optimizer">Custom optimizer</a>.</td>
+</tr>
+<tr>
+<td><code>optimizer_kwargs</code></td>
+<td><code>dict</code></td>
+<td><code>{}</code></td>
+<td>Keyword arguments for the optimizer constructor. Managed short names reserve <code>params</code>/<code>lr</code>/<code>weight_decay</code>/<code>fused</code>; explicit import paths take them here; ignored (with a warning) for callables.</td>
+</tr>
 </tbody>
 </table>
 <div class="admonition tip">
@@ -2983,6 +3029,14 @@
 <li>For training from scratch (not recommended), you may need higher learning rates</li>
 </ul>
 </div>
+<h3 id="custom-optimizer-example">Custom Optimizer Example<a class="headerlink" href="#custom-optimizer-example" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">optimizer</span><span class="o">=</span><span class="s2">&quot;pytorch_optimizer.Lion&quot;</span><span class="p">,</span>  <span class="c1"># third-party optimizer by import path (install it yourself)</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">optimizer_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;weight_decouple&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">},</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>Bare short names resolve to native <code>torch.optim</code> optimizers; any other optimizer is given by full dotted import path or a callable, always preserving RF-DETR's parameter groups and layer-wise learning rates.</p>
 <h2 id="resolution-parameters">Resolution Parameters<a class="headerlink" href="#resolution-parameters" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3178,15 +3232,15 @@ keypoint AP for keypoint preview.</p>
 </tbody>
 </table>
 <h3 id="early-stopping-example">Early Stopping Example<a class="headerlink" href="#early-stopping-example" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">early_stopping</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">early_stopping_patience</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">early_stopping_min_delta</span><span class="o">=</span><span class="mf">0.005</span><span class="p">,</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">skip_best_epochs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">early_stopping</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">early_stopping_patience</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">early_stopping_min_delta</span><span class="o">=</span><span class="mf">0.005</span><span class="p">,</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">skip_best_epochs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>This configuration will:</p>
 <ul>
@@ -3239,14 +3293,14 @@ best-checkpoint selection and patience counting until the model has had time to 
 </tbody>
 </table>
 <h3 id="logging-example">Logging Example<a class="headerlink" href="#logging-example" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">tensorboard</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">wandb</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">project</span><span class="o">=</span><span class="s2">&quot;my-detection-project&quot;</span><span class="p">,</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">run</span><span class="o">=</span><span class="s2">&quot;experiment-001&quot;</span><span class="p">,</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">tensorboard</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">wandb</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">project</span><span class="o">=</span><span class="s2">&quot;my-detection-project&quot;</span><span class="p">,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">run</span><span class="o">=</span><span class="s2">&quot;experiment-001&quot;</span><span class="p">,</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="evaluation-parameters">Evaluation Parameters<a class="headerlink" href="#evaluation-parameters" title="Permanent link">&para;</a></h2>
 <table>
@@ -3369,6 +3423,18 @@ best-checkpoint selection and patience counting until the model has had time to 
 <td><code>float</code></td>
 <td><code>0.0</code></td>
 <td>Floor for the cosine scheduler, expressed as a fraction of the initial LR. Ignored when using <code>"step"</code>.</td>
+</tr>
+<tr>
+<td><code>optimizer</code></td>
+<td><code>str \| Callable</code></td>
+<td><code>"adamw"</code></td>
+<td>Optimizer name, dotted import path, or callable. See <a href="../customization/#custom-optimizer">Custom optimizer</a>.</td>
+</tr>
+<tr>
+<td><code>optimizer_kwargs</code></td>
+<td><code>dict</code></td>
+<td><code>{}</code></td>
+<td>Keyword arguments forwarded to the optimizer constructor; ignored (with a warning) for callables.</td>
 </tr>
 <tr>
 <td><code>warmup_epochs</code></td>
@@ -3720,7 +3786,7 @@ best-checkpoint selection and patience counting until the model has had time to 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 3, 2026 14:22:23 UTC">2026-07-03 14:22:23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 18, 2026 07:36:43 UTC">2026-07-18 07:36:43</span>
   </span>
 
     
