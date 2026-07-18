@@ -62,12 +62,46 @@ module = RFDETRModelModule(model_config, train_config)
 | `validation_step`          | Runs forward pass and postprocessing; returns `{results, targets}` for `COCOEvalCallback`.                                                                                                                                      |
 | `test_step`                | Same as `validation_step`, logs under `test/`.                                                                                                                                                                                  |
 | `predict_step`             | Runs inference-only forward pass and returns postprocessed detections.                                                                                                                                                          |
-| `configure_optimizers`     | Builds AdamW with layer-wise LR decay and a LambdaLR scheduler (cosine or step).                                                                                                                                                |
+| `configure_optimizers`     | Builds the configured optimizer, preserves layer-wise LR decay, applies optional parameter-group kwargs, and attaches a LambdaLR scheduler.                                                                                     |
 | `on_load_checkpoint`       | Auto-converts legacy `.pth` checkpoints to PTL format.                                                                                                                                                                          |
 
 ### Accessing the underlying model
 
 The raw `nn.Module` is `module.model`. After training completes, `RFDETR.train()` syncs it back onto `self.model.model` so `predict()` and `export()` continue to work.
+
+### Custom optimizer
+
+`TrainConfig.optimizer` accepts either a **name / import path** (a string) or a **callable** (a class or `functools.partial`), and selects the optimizer built in `configure_optimizers`.
+
+- **Managed short name** — a bare `torch.optim` optimizer name such as the default `"adamw"`, `"sgd"`, or `"adam"` (case-insensitive). **Only native `torch.optim` optimizers may be chosen by short name.** RF-DETR manages construction here: it injects `lr`, a signature-aware `weight_decay`, and your `optimizer_kwargs`.
+- **Explicit import path** — a dotted string such as `"torch.optim.AdamW"` or `"pytorch_optimizer.Lion"`. This is how you select any non-`torch.optim` optimizer, e.g. one from [`pytorch-optimizer`](https://kozistr.tech/pytorch_optimizer/) (a third-party library you install yourself — RF-DETR does not depend on it). The class is constructed from the RF-DETR parameter groups (which already carry per-group learning rates) plus your `optimizer_kwargs` only; RF-DETR injects no `lr` or `weight_decay`, so pass any you need in `optimizer_kwargs`.
+- **Callable** — a class or `functools.partial` is called as `optimizer(param_groups)` and nothing else, so bake all hyperparameters into the callable. `optimizer_kwargs` is ignored (with a warning) in this mode. A reconstructable callable (an importable top-level class / `functools.partial` with JSON-serializable keyword arguments) is desugared to its dotted import path plus keyword arguments so the config round-trips through `training_config.json`; a lambda, locally-defined class, or non-serializable argument still trains but cannot be restored from a saved config (RF-DETR warns with a specific hint).
+
+```python
+import functools
+
+# managed native torch.optim short name — RF-DETR injects lr + weight_decay
+train_config = TrainConfig(..., optimizer="adamw")
+
+# explicit import path (incl. pytorch-optimizer) — supply hyperparameters via optimizer_kwargs
+train_config = TrainConfig(..., optimizer="pytorch_optimizer.Lion", optimizer_kwargs={"weight_decouple": True})
+
+# callable / functools.partial — bake arguments in; optimizer_kwargs is ignored
+train_config = TrainConfig(..., optimizer=functools.partial(torch.optim.AdamW, weight_decay=1e-4))
+```
+
+See [Training parameters — optimizer](training-parameters.md) for the full parameter reference and examples.
+
+`fused_optimizer` only affects the built-in `optimizer="adamw"` path; it is ignored for custom optimizers. On a BF16/CUDA run where fused AdamW would otherwise apply, RF-DETR logs a warning if `fused_optimizer=True` is combined with a non-default optimizer.
+
+!!! warning "Wrapper optimizers (SAM, Lookahead, …) need extra care"
+
+    Non-`torch.optim` optimizers are selected by import path (e.g. `"pytorch_optimizer.Lion"`) or a callable. Most `pytorch-optimizer` optimizers are drop-in replacements and work directly — including `Lion`, `AdaBelief`, `SophiaH`, `Adan`, `Ranger`, and `Ranger21`, which take `params` first like any standard optimizer. Two groups need extra care:
+
+    - **Base-optimizer wrappers — `SAM` / `BSAM` / `GSAM` / `WSAM`.** They require a `base_optimizer` as a second positional argument, so `optimizer="pytorch_optimizer.SAM"` raises a `TypeError` at training start (RF-DETR calls the class with the parameter groups only). They also change `optimizer.step()` semantics (SAM needs two forward/backward passes per step) and are incompatible with PyTorch Lightning's default `automatic_optimization=True`. Supply the `base_optimizer` via a `functools.partial`, but such an optimizer will not round-trip through a saved config.
+    - **`Lookahead` / `PCGrad` / `GradientCentralization`.** These wrap or post-process another optimizer and likewise cannot be built from parameter groups alone; construction with the parameter groups only raises a `TypeError`.
+
+    If you need SAM or Lookahead, override `configure_optimizers` and set `self.automatic_optimization = False` in `RFDETRModelModule.__init__`. For standard use, pick a `torch.optim` optimizer by name or a drop-in `pytorch-optimizer` optimizer by import path (e.g. `"pytorch_optimizer.Lion"`).
 
 ---
 

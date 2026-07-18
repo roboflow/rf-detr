@@ -56,16 +56,30 @@ Recommended configurations for different GPUs (targeting effective batch size of
 
 ## Learning Rate Parameters
 
-| Parameter    | Type    | Default  | Description                                                                                                                                                          |
-| ------------ | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lr`         | `float` | `1e-4`   | Learning rate for most parts of the model.                                                                                                                           |
-| `lr_encoder` | `float` | `1.5e-4` | Learning rate specifically for the backbone encoder. Can be set lower than `lr` if you want to fine-tune the encoder more conservatively than the rest of the model. |
+| Parameter          | Type              | Default   | Description                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------ | ----------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lr`               | `float`           | `1e-4`    | Learning rate for most parts of the model.                                                                                                                                                                                                                                                                                                                                                                          |
+| `lr_encoder`       | `float`           | `1.5e-4`  | Learning rate specifically for the backbone encoder. Can be set lower than `lr` if you want to fine-tune the encoder more conservatively than the rest of the model.                                                                                                                                                                                                                                                |
+| `optimizer`        | `str \| Callable` | `"adamw"` | Optimizer as a native `torch.optim` short name, dotted import path, or callable. Managed short names (native `torch.optim` only, e.g. `"adamw"`, `"sgd"`) have RF-DETR inject `lr`/`weight_decay`; a dotted import path (`"torch.optim.AdamW"`, `"pytorch_optimizer.Lion"`) or callable is built from `optimizer_kwargs` / its own bound arguments only. See [Custom optimizer](customization.md#custom-optimizer). |
+| `optimizer_kwargs` | `dict`            | `{}`      | Keyword arguments for the optimizer constructor. Managed short names reserve `params`/`lr`/`weight_decay`/`fused`; explicit import paths take them here; ignored (with a warning) for callables.                                                                                                                                                                                                                    |
 
 !!! tip "Learning rate tips"
 
     - Start with the default values for fine-tuning
     - If the model doesn't converge, try reducing `lr` by half
     - For training from scratch (not recommended), you may need higher learning rates
+
+### Custom Optimizer Example
+
+```python
+model.train(
+    dataset_dir="path/to/dataset",
+    optimizer="pytorch_optimizer.Lion",  # third-party optimizer by import path (install it yourself)
+    optimizer_kwargs={"weight_decouple": True},
+)
+```
+
+Bare short names resolve to native `torch.optim` optimizers; any other optimizer is given by full dotted import path or a callable, always preserving RF-DETR's parameter groups and layer-wise learning rates.
 
 ## Resolution Parameters
 
@@ -217,12 +231,14 @@ The parameters below are available for fine-grained control over training behavi
 
 ### Scheduler and Regularization
 
-| Parameter       | Type    | Default  | Description                                                                                                 |
-| --------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------- |
-| `lr_scheduler`  | `str`   | `"step"` | Learning rate scheduler type. Options: `"step"` (step decay at `lr_drop`) or `"cosine"` (cosine annealing). |
-| `lr_min_factor` | `float` | `0.0`    | Floor for the cosine scheduler, expressed as a fraction of the initial LR. Ignored when using `"step"`.     |
-| `warmup_epochs` | `float` | `0.0`    | Number of epochs for linear learning rate warmup at the start of training.                                  |
-| `drop_path`     | `float` | `0.0`    | Stochastic depth drop-path rate applied to the backbone. Higher values add more regularization.             |
+| Parameter          | Type              | Default   | Description                                                                                                 |
+| ------------------ | ----------------- | --------- | ----------------------------------------------------------------------------------------------------------- |
+| `lr_scheduler`     | `str`             | `"step"`  | Learning rate scheduler type. Options: `"step"` (step decay at `lr_drop`) or `"cosine"` (cosine annealing). |
+| `lr_min_factor`    | `float`           | `0.0`     | Floor for the cosine scheduler, expressed as a fraction of the initial LR. Ignored when using `"step"`.     |
+| `optimizer`        | `str \| Callable` | `"adamw"` | Optimizer name, dotted import path, or callable. See [Custom optimizer](customization.md#custom-optimizer). |
+| `optimizer_kwargs` | `dict`            | `{}`      | Keyword arguments forwarded to the optimizer constructor; ignored (with a warning) for callables.           |
+| `warmup_epochs`    | `float`           | `0.0`     | Number of epochs for linear learning rate warmup at the start of training.                                  |
+| `drop_path`        | `float`           | `0.0`     | Stochastic depth drop-path rate applied to the backbone. Higher values add more regularization.             |
 
 ### Runtime and Accelerator
 

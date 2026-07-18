@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import functools
 import json
 import os
 import warnings
@@ -287,6 +288,14 @@ class TestTrainConfigT42PromotedFields:
         """lr_scheduler defaults to 'step'."""
         assert self._tc(tmp_path).lr_scheduler == "step"
 
+    def test_optimizer_default_is_adamw(self, tmp_path):
+        """Optimizer defaults to AdamW for backward compatibility."""
+        assert self._tc(tmp_path).optimizer == "adamw"
+
+    def test_optimizer_kwargs_default_is_empty_dict(self, tmp_path):
+        """optimizer_kwargs defaults to an empty dict."""
+        assert self._tc(tmp_path).optimizer_kwargs == {}
+
     def test_lr_min_factor_default(self, tmp_path):
         """lr_min_factor defaults to 0.0."""
         assert self._tc(tmp_path).lr_min_factor == pytest.approx(0.0)
@@ -330,6 +339,8 @@ class TestTrainConfigT42PromotedFields:
             pytest.param("fp16_eval", True, id="fp16_eval"),
             pytest.param("lr_scheduler", "cosine", id="lr_scheduler_cosine"),
             pytest.param("lr_min_factor", 0.01, id="lr_min_factor"),
+            pytest.param("optimizer", "sgd", id="optimizer"),
+            pytest.param("optimizer_kwargs", {"betas": (0.9, 0.99)}, id="optimizer_kwargs"),
             pytest.param("dont_save_weights", True, id="dont_save_weights"),
             pytest.param("run_test", True, id="run_test"),
             pytest.param("eval_interval", 3, id="eval_interval"),
@@ -354,6 +365,78 @@ class TestTrainConfigT42PromotedFields:
         """lr_scheduler must reject values other than 'step' and 'cosine'."""
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, lr_scheduler="cyclic")
+
+    def test_optimizer_rejects_empty_name(self, tmp_path):
+        """Optimizer must be a non-empty name."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, optimizer="  ")
+
+    def test_optimizer_rejects_unknown_short_name(self, tmp_path):
+        """A bare short name that is not a torch.optim optimizer is rejected at config time."""
+        with pytest.raises((ValueError, ValidationError), match="native optimizer"):
+            self._tc(tmp_path, optimizer="lion")
+
+    def test_optimizer_rejects_non_torch_optim_short_name(self, tmp_path):
+        """Pytorch-optimizer names are not selectable by short name (use an import path)."""
+        with pytest.raises((ValueError, ValidationError), match="native optimizer"):
+            self._tc(tmp_path, optimizer="pytorch_optimizer:lion")
+
+    def test_optimizer_accepts_native_short_name(self, tmp_path):
+        """A native torch.optim short name (e.g. 'sgd') is accepted."""
+        assert self._tc(tmp_path, optimizer="sgd").optimizer == "sgd"
+
+    @pytest.mark.parametrize(
+        "reserved_key",
+        [
+            pytest.param("params", id="params"),
+            pytest.param("lr", id="lr"),
+            pytest.param("weight_decay", id="weight_decay"),
+            pytest.param("fused", id="fused"),
+        ],
+    )
+    def test_optimizer_kwargs_reject_reserved_keys(self, tmp_path, reserved_key):
+        """optimizer_kwargs must not override RF-DETR-managed optimizer arguments."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, optimizer_kwargs={reserved_key: 1})
+
+    def test_optimizer_accepts_dotted_import_path(self, tmp_path):
+        """A dotted import path is accepted verbatim as an explicit optimizer."""
+        assert self._tc(tmp_path, optimizer="torch.optim.AdamW").optimizer == "torch.optim.AdamW"
+
+    def test_dotted_optimizer_kwargs_allow_managed_keys(self, tmp_path):
+        """Explicit (dotted) optimizers may pass otherwise-managed keys such as weight_decay."""
+        tc = self._tc(tmp_path, optimizer="torch.optim.AdamW", optimizer_kwargs={"weight_decay": 0.1})
+        assert tc.optimizer_kwargs == {"weight_decay": 0.1}
+
+    def test_callable_class_desugars_to_dotted_path(self, tmp_path):
+        """A plain optimizer class desugars to its canonical dotted import path for serialization."""
+        expected_path = f"{torch.optim.AdamW.__module__}.{torch.optim.AdamW.__qualname__}"
+        tc = self._tc(tmp_path, optimizer=torch.optim.AdamW)
+        assert tc.optimizer == expected_path
+        assert tc.optimizer_kwargs == {}
+
+    def test_partial_optimizer_desugars_to_path_and_kwargs(self, tmp_path):
+        """A functools.partial desugars to a dotted path plus its keyword arguments."""
+        expected_path = f"{torch.optim.AdamW.__module__}.{torch.optim.AdamW.__qualname__}"
+        tc = self._tc(tmp_path, optimizer=functools.partial(torch.optim.AdamW, weight_decay=0.1))
+        assert tc.optimizer == expected_path
+        assert tc.optimizer_kwargs == {"weight_decay": 0.1}
+
+    def test_callable_optimizer_kwargs_are_ignored_with_warning(self, tmp_path):
+        """optimizer_kwargs are ignored (with a warning) when optimizer is a callable."""
+        with pytest.warns(UserWarning, match="optimizer_kwargs is ignored"):
+            tc = self._tc(
+                tmp_path,
+                optimizer=functools.partial(torch.optim.AdamW, weight_decay=0.1),
+                optimizer_kwargs={"betas": (0.9, 0.99)},
+            )
+        assert tc.optimizer_kwargs == {"weight_decay": 0.1}
+
+    def test_non_reconstructable_optimizer_warns(self, tmp_path):
+        """A lambda optimizer cannot be serialized and warns while staying an in-memory callable."""
+        with pytest.warns(UserWarning, match="cannot be saved"):
+            tc = self._tc(tmp_path, optimizer=lambda params: torch.optim.AdamW(params))
+        assert callable(tc.optimizer) and not isinstance(tc.optimizer, str)
 
     @pytest.mark.parametrize(
         ("field", "value"),

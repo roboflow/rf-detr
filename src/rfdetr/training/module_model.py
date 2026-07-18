@@ -7,10 +7,12 @@
 
 from __future__ import annotations
 
+import importlib
+import inspect
 import math
 import random
 import warnings
-from typing import Any
+from typing import Any, Callable, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812 -- project-conventional alias (see AGENTS.md)
@@ -21,7 +23,7 @@ from torch import Tensor
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.config import ModelConfig, TrainConfig, _is_managed_optimizer_name, _resolve_native_optimizer
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
@@ -29,6 +31,8 @@ from rfdetr.training.param_groups import get_param_dict
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
+
+_OptimizerFactory = Callable[..., torch.optim.Optimizer]
 
 _TRAIN_PROGRESS_LOSS_ALIASES: dict[str, str] = {
     "loss_ce": "loss_cls",
@@ -41,6 +45,158 @@ _TRAIN_PROGRESS_LOSS_ALIASES: dict[str, str] = {
     "loss_keypoints_visible": "kp_vis",
     "loss_keypoints_nll": "kp_nll",
 }
+
+
+def _is_builtin_fused_adamw(optimizer: object) -> bool:
+    """Return whether the config selects RF-DETR's built-in (managed, fused) AdamW path.
+
+    Args:
+        optimizer: The ``TrainConfig.optimizer`` value (string or callable).
+
+    Returns:
+        ``True`` only for the built-in ``"adamw"`` short name.
+
+    Examples:
+        >>> _is_builtin_fused_adamw("adamw")
+        True
+        >>> _is_builtin_fused_adamw("torch.optim.AdamW")
+        False
+    """
+    return isinstance(optimizer, str) and "." not in optimizer and optimizer.strip().lower() == "adamw"
+
+
+_FUSED_IGNORED_MSG = (
+    "fused_optimizer=True is ignored for optimizer=%r; the fused AdamW kernel only applies to the "
+    "built-in optimizer='adamw' path."
+)
+
+
+def _import_optimizer_class(dotted_path: str) -> _OptimizerFactory:
+    """Import an optimizer class or factory from a dotted path.
+
+    Args:
+        dotted_path: Fully-qualified path such as ``"torch.optim.AdamW"`` or
+            ``"pytorch_optimizer.Lion"``.
+
+    Returns:
+        The imported optimizer class or factory.
+
+    Raises:
+        ValueError: If the module or attribute cannot be imported.
+    """
+    module_path, _, attribute = dotted_path.rpartition(".")
+    if not module_path:
+        raise ValueError(f"optimizer {dotted_path!r} is not a valid dotted import path.")
+    try:
+        module = importlib.import_module(module_path)
+        return cast(_OptimizerFactory, getattr(module, attribute))
+    except (ImportError, AttributeError) as exc:
+        raise ValueError(
+            f"Could not import optimizer {dotted_path!r}: {exc}. "
+            "Use a fully-qualified path to an importable optimizer class, e.g. 'torch.optim.AdamW'."
+        ) from exc
+
+
+def _instantiate_explicit_optimizer(
+    optimizer_class: _OptimizerFactory,
+    optimizer_name: str,
+    param_dicts: list[dict[str, Any]],
+    optimizer_kwargs: dict[str, Any],
+) -> torch.optim.Optimizer:
+    """Instantiate an explicitly-selected optimizer from param groups and kwargs only.
+
+    Explicit optimizers (dotted import paths and callables) receive the RF-DETR
+    parameter groups — which already carry per-group learning rates — plus the
+    user's ``optimizer_kwargs`` verbatim. RF-DETR injects no ``lr`` or
+    ``weight_decay`` of its own.
+
+    Args:
+        optimizer_class: Optimizer class or factory to instantiate.
+        optimizer_name: Name used in error messages.
+        param_dicts: RF-DETR parameter groups with layer-wise learning rates.
+        optimizer_kwargs: Keyword arguments forwarded verbatim to the constructor.
+
+    Returns:
+        Instantiated optimizer.
+
+    Raises:
+        TypeError | ValueError: Re-raised with an RF-DETR-specific hint on failure.
+    """
+    try:
+        return optimizer_class(param_dicts, **optimizer_kwargs)
+    except (TypeError, ValueError) as exc:
+        raise type(exc)(
+            f"Failed to initialize optimizer {optimizer_name!r}: {exc}. "
+            "Explicit optimizers (dotted paths and callables) are built from the RF-DETR parameter "
+            "groups plus your `optimizer_kwargs` only, with no lr/weight_decay injected. Check that the "
+            "class accepts these arguments, or pass a callable/functools.partial needing only `params`."
+        ) from exc
+
+
+def _optimizer_accepts_kwarg(optimizer_class: _OptimizerFactory, name: str) -> bool:
+    """Return whether an optimizer constructor accepts a given keyword argument.
+
+    Args:
+        optimizer_class: Optimizer class or factory to inspect.
+        name: Keyword-argument name to look for.
+
+    Returns:
+        ``True`` when the constructor declares ``name`` or accepts arbitrary
+        keyword arguments, or when its signature cannot be introspected (e.g. a
+        C-implemented constructor) — in which case the constructor validates the
+        call itself.
+
+    Examples:
+        >>> _optimizer_accepts_kwarg(torch.optim.SGD, "weight_decay")
+        True
+    """
+    try:
+        signature = inspect.signature(optimizer_class)
+    except (TypeError, ValueError):
+        return True
+    parameters = signature.parameters.values()
+    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters):
+        return True
+    return name in signature.parameters
+
+
+def _instantiate_optimizer(
+    optimizer_class: _OptimizerFactory,
+    optimizer_name: str,
+    param_dicts: list[dict[str, Any]],
+    train_config: TrainConfig,
+) -> torch.optim.Optimizer:
+    """Instantiate an optimizer class with RF-DETR optimizer arguments.
+
+    ``weight_decay`` is injected only when the optimizer constructor accepts it,
+    so optimizers with a different regularization API are not forced to fail.
+
+    Args:
+        optimizer_class: Optimizer class or factory to instantiate.
+        optimizer_name: Name used in error messages.
+        param_dicts: RF-DETR parameter groups with layer-wise learning rates.
+        train_config: Training config with base optimizer hyperparameters.
+
+    Returns:
+        Instantiated optimizer.
+
+    Raises:
+        TypeError | ValueError: Re-raised with an RF-DETR-specific hint when the
+            optimizer constructor rejects the supplied arguments.
+    """
+    init_kwargs: dict[str, Any] = {"lr": train_config.lr}
+    if _optimizer_accepts_kwarg(optimizer_class, "weight_decay"):
+        init_kwargs["weight_decay"] = train_config.weight_decay
+    init_kwargs.update(train_config.optimizer_kwargs)
+    try:
+        return optimizer_class(param_dicts, **init_kwargs)
+    except (TypeError, ValueError) as exc:
+        raise type(exc)(
+            f"Failed to initialize optimizer {optimizer_name!r}: {exc}. "
+            "For managed torch.optim short names, RF-DETR passes `params`, `lr`, and (when supported) "
+            "`weight_decay`, then your `optimizer_kwargs`; this usually means an unsupported entry in "
+            "`optimizer_kwargs`."
+        ) from exc
 
 
 class RFDETRModelModule(LightningModule):
@@ -565,6 +721,24 @@ class RFDETRModelModule(LightningModule):
         return {"results": results, "targets": targets}
 
     @property
+    def _fused_adamw_env_eligible(self) -> bool:
+        """Return whether the runtime would enable fused AdamW, ignoring optimizer choice.
+
+        Captures only the hardware/precision preconditions (BF16 on CUDA), so the
+        custom-optimizer path can tell whether a dropped ``fused_optimizer=True``
+        would actually have mattered.
+
+        Returns:
+            ``True`` when fused AdamW is requested and the runtime supports it.
+        """
+        return (
+            self.model_config.fused_optimizer
+            and torch.cuda.is_available()
+            and torch.cuda.is_bf16_supported()
+            and str(self.trainer.precision) in {"bf16-mixed", "bf16", "bf16-true"}
+        )
+
+    @property
     def _use_fused_optimizer(self) -> bool:
         """Return whether fused AdamW should be used for the current training configuration.
 
@@ -573,9 +747,11 @@ class RFDETRModelModule(LightningModule):
         insufficient: on Ampere+ hardware that flag is always ``True`` even when
         the trainer is configured for ``32-true``, which causes a ``params, grads, exp_avgs, and exp_avg_sqs must have
         same dtype, device, and layout`` crash in DDP because gradient bucket views have non-matching strides in FP32.
+        It additionally requires the built-in ``optimizer="adamw"`` selection: fused state normalization and gradient
+        clipping are AdamW-specific and must not fire for custom optimizers.
 
         Returns:
-            ``True`` when fused AdamW is both requested and safe to use.
+            ``True`` when fused AdamW is requested, safe, and the built-in AdamW optimizer is selected.
 
         Examples:
             >>> from unittest.mock import patch
@@ -585,18 +761,17 @@ class RFDETRModelModule(LightningModule):
             ...     module._use_fused_optimizer
             False
         """
-        return (
-            self.model_config.fused_optimizer
-            and torch.cuda.is_available()
-            and torch.cuda.is_bf16_supported()
-            and str(self.trainer.precision) in {"bf16-mixed", "bf16", "bf16-true"}
-        )
+        if not self._fused_adamw_env_eligible:
+            return False
+        return _is_builtin_fused_adamw(self.train_config.optimizer)
 
     def configure_optimizers(self) -> OptimizerLRSchedulerConfig:
-        """Build AdamW optimizer with layer-wise LR decay and LambdaLR scheduler.
+        """Build the configured optimizer with layer-wise LR decay and scheduler.
 
         Uses ``trainer.estimated_stepping_batches`` for total step count so cosine annealing covers the full training
         run regardless of dataset size or accumulation settings.
+        ``optimizer="adamw"`` keeps RF-DETR's fused torch AdamW path;
+        other names can be loaded from ``pytorch-optimizer``.
 
         Returns:
             PTL optimizer config dict with optimizer and step-interval scheduler.
@@ -609,13 +784,42 @@ class RFDETRModelModule(LightningModule):
         # name-prefix mismatches that put the same tensor in multiple groups.
         model_for_params = getattr(self.model, "_orig_mod", self.model)
         param_dicts = get_param_dict(ns, model_for_params)
-        param_dicts = [p for p in param_dicts if p["params"].requires_grad]
-        optimizer = torch.optim.AdamW(
-            param_dicts,
-            lr=tc.lr,
-            weight_decay=tc.weight_decay,
-            fused=self._use_fused_optimizer,
-        )
+        param_dicts = [param_group for param_group in param_dicts if param_group["params"].requires_grad]
+
+        optimizer_cfg = tc.optimizer
+        optimizer: torch.optim.Optimizer
+        if _is_builtin_fused_adamw(optimizer_cfg):
+            # Built-in managed fused AdamW path (unchanged behavior).
+            try:
+                optimizer = torch.optim.AdamW(
+                    param_dicts,
+                    lr=tc.lr,
+                    weight_decay=tc.weight_decay,
+                    fused=self._use_fused_optimizer,
+                    **tc.optimizer_kwargs,
+                )
+            except TypeError as exc:
+                raise TypeError(
+                    f"Failed to initialize optimizer 'adamw': {exc}. "
+                    "Check optimizer_kwargs for arguments supported by torch.optim.AdamW."
+                ) from exc
+        else:
+            if self._fused_adamw_env_eligible:
+                logger.warning(_FUSED_IGNORED_MSG, optimizer_cfg)
+            if not isinstance(optimizer_cfg, str):
+                # Explicit callable / functools.partial: called with param groups only.
+                callable_name = getattr(optimizer_cfg, "__qualname__", None) or repr(optimizer_cfg)
+                optimizer = _instantiate_explicit_optimizer(optimizer_cfg, callable_name, param_dicts, {})
+            elif _is_managed_optimizer_name(optimizer_cfg):
+                # Managed native torch.optim short name (lr + signature-aware weight_decay injected).
+                native_class: _OptimizerFactory = _resolve_native_optimizer(optimizer_cfg)
+                optimizer = _instantiate_optimizer(native_class, optimizer_cfg, param_dicts, tc)
+            else:
+                # Explicit dotted import path: constructed from optimizer_kwargs only.
+                optimizer_class = _import_optimizer_class(optimizer_cfg)
+                optimizer = _instantiate_explicit_optimizer(
+                    optimizer_class, optimizer_cfg, param_dicts, tc.optimizer_kwargs
+                )
 
         # ``trainer.estimated_stepping_batches`` is reported in *microbatch* units when
         # the keypoint path runs with ``Trainer(accumulate_grad_batches=1)`` and manages
@@ -644,7 +848,7 @@ class RFDETRModelModule(LightningModule):
             if tc.lr_scheduler == "cosine":
                 progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
                 return tc.lr_min_factor + (1 - tc.lr_min_factor) * 0.5 * (1 + math.cos(math.pi * progress))
-            # Step decay: drop by 10× after lr_drop epochs.
+            # Step decay: drop by 10x after lr_drop epochs.
             if current_step < tc.lr_drop * steps_per_epoch:
                 return 1.0
             return 0.1

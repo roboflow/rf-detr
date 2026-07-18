@@ -7,9 +7,10 @@
 
 import functools
 import importlib
+import json
 import os
 import warnings
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Literal, Optional, TypeAlias
@@ -17,6 +18,7 @@ from typing import Any, ClassVar, Dict, Literal, Optional, TypeAlias
 import torch
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from pydantic_core import PydanticUndefined
+from torch.optim import Optimizer
 
 EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
 PathLikeStr: TypeAlias = str | Path
@@ -222,6 +224,107 @@ def _detect_device() -> str:
 
 
 DEVICE: str = _detect_device()
+_OPTIMIZER_MANAGED_KWARGS = {"params", "lr", "weight_decay", "fused"}
+
+
+def _resolve_native_optimizer(name: str) -> type[Optimizer]:
+    """Resolve a bare optimizer short name to a ``torch.optim`` optimizer class.
+
+    Only native ``torch.optim`` optimizers may be selected by short name; the match
+    is case-insensitive (``"adamw"`` → ``torch.optim.AdamW``, ``"sgd"`` → ``torch.optim.SGD``).
+    Any other optimizer must be given as a full dotted import path or a callable.
+
+    Args:
+        name: A bare optimizer name (no dotted import path).
+
+    Returns:
+        The matching ``torch.optim`` optimizer class.
+
+    Raises:
+        ValueError: If ``name`` is not a native ``torch.optim`` optimizer.
+
+    Examples:
+        >>> _resolve_native_optimizer("adamw") is torch.optim.AdamW
+        True
+    """
+    target = name.strip().lower()
+    for attribute in dir(torch.optim):
+        candidate = getattr(torch.optim, attribute)
+        if isinstance(candidate, type) and issubclass(candidate, Optimizer) and attribute.lower() == target:
+            return candidate
+    raise ValueError(
+        f"Unknown native optimizer {name!r}. Short names must name a torch.optim optimizer "
+        "(e.g. 'adamw', 'sgd', 'adam'); use a full dotted import path or a callable for anything else."
+    )
+
+
+def _is_managed_optimizer_name(optimizer: object) -> bool:
+    """Return whether an optimizer config selects RF-DETR's managed construction.
+
+    Managed mode covers bare ``torch.optim`` short names (e.g. ``"adamw"``, ``"sgd"``);
+    RF-DETR injects ``lr`` and a signature-aware ``weight_decay`` there. A dotted import
+    path or a callable selects explicit mode, where the optimizer is built only from
+    ``optimizer_kwargs`` (or the callable's own bound arguments).
+
+    Args:
+        optimizer: The ``TrainConfig.optimizer`` value.
+
+    Returns:
+        ``True`` for managed short-name strings, ``False`` for dotted paths and callables.
+
+    Examples:
+        >>> _is_managed_optimizer_name("sgd")
+        True
+        >>> _is_managed_optimizer_name("torch.optim.AdamW")
+        False
+    """
+    return isinstance(optimizer, str) and "." not in optimizer
+
+
+def _desugar_optimizer_callable(
+    optimizer: Callable[..., Optimizer],
+) -> tuple[str | None, dict[str, Any] | None, str | None]:
+    """Decompose a callable optimizer into a serializable ``(dotted_path, kwargs)`` form.
+
+    Reconstructable callables — an importable top-level class or function, optionally
+    wrapped in ``functools.partial`` with JSON-serializable keyword arguments and no
+    positional arguments — desugar to a dotted import path plus keyword arguments that
+    round-trip through ``training_config.json``.
+
+    Args:
+        optimizer: A callable or ``functools.partial`` given as ``TrainConfig.optimizer``.
+
+    Returns:
+        ``(dotted_path, kwargs, None)`` when reconstructable, otherwise
+        ``(None, None, reason)`` where ``reason`` explains how to make it compatible.
+    """
+    func: Any = optimizer
+    extracted_kwargs: dict[str, Any] = {}
+    if isinstance(optimizer, functools.partial):
+        if optimizer.args:
+            return None, None, "pass every functools.partial argument as a keyword, not positionally"
+        func = optimizer.func
+        extracted_kwargs = dict(optimizer.keywords or {})
+
+    module = getattr(func, "__module__", None)
+    qualname = getattr(func, "__qualname__", None)
+    if module is None or qualname is None or "<" in qualname:
+        return (
+            None,
+            None,
+            "define the optimizer as an importable top-level class or function (no lambda or nested definition)",
+        )
+
+    try:
+        json.dumps(extracted_kwargs)
+    except (TypeError, ValueError):
+        return (
+            None,
+            None,
+            "use only JSON-serializable functools.partial keyword arguments (no tensors, modules, or callables)",
+        )
+
+    return f"{module}.{qualname}", extracted_kwargs, None
 
 
 class BaseConfig(BaseModel):
@@ -1058,6 +1161,8 @@ class TrainConfig(BaseConfig):
     fp16_eval: bool = False
     lr_scheduler: Literal["step", "cosine"] = "step"
     lr_min_factor: float = 0.0
+    optimizer: str | Callable[..., Optimizer] = "adamw"
+    optimizer_kwargs: dict[str, Any] = Field(default_factory=dict)
     dont_save_weights: bool = False
     # PTL runtime/perf tuning knobs.
     train_log_sync_dist: bool = False
@@ -1114,6 +1219,69 @@ class TrainConfig(BaseConfig):
         if v < 1:
             raise ValueError("Interval fields must be >= 1.")
         return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def _desugar_callable_optimizer(cls, data: Any) -> Any:
+        """Desugar a reconstructable callable optimizer into its serializable string form.
+
+        A callable ``optimizer`` (a class or ``functools.partial``) that can be imported is rewritten to a dotted import
+        path plus ``optimizer_kwargs`` so the config round-trips through ``training_config.json``. User-supplied
+        ``optimizer_kwargs`` are ignored for callable optimizers (bake arguments into the callable instead). Non-
+        reconstructable callables are kept as-is and only warned about.
+        """
+        if not isinstance(data, dict):
+            return data
+        optimizer = data.get("optimizer")
+        if optimizer is None or isinstance(optimizer, str) or not callable(optimizer):
+            return data
+
+        if data.get("optimizer_kwargs"):
+            warnings.warn(
+                "optimizer_kwargs is ignored when optimizer is a callable; bake arguments into the "
+                "callable (for example with functools.partial) instead.",
+                stacklevel=2,
+            )
+
+        path, kwargs, reason = _desugar_optimizer_callable(optimizer)
+        if reason is None:
+            data["optimizer"] = path
+            data["optimizer_kwargs"] = kwargs
+        else:
+            data["optimizer_kwargs"] = {}
+            label = getattr(optimizer, "__qualname__", None) or repr(optimizer)
+            warnings.warn(
+                f"optimizer callable {label!r} cannot be saved to training_config.json and restored: "
+                f"{reason}. Training proceeds with the in-memory callable; only saved-config "
+                "reproducibility is affected.",
+                stacklevel=2,
+            )
+        return data
+
+    @field_validator("optimizer", mode="after")
+    @classmethod
+    def validate_optimizer_name(cls, v: str | Callable[..., Optimizer]) -> str | Callable[..., Optimizer]:
+        """Validate a string optimizer: a bare name must be a native torch.optim optimizer."""
+        if not isinstance(v, str):
+            return v
+        optimizer = v.strip()
+        if not optimizer:
+            raise ValueError("optimizer must be a non-empty string.")
+        # Bare short names must resolve to a torch.optim optimizer (checked eagerly).
+        # Dotted import paths are validated lazily at train start (the module may be optional).
+        if "." not in optimizer:
+            _resolve_native_optimizer(optimizer)
+        return optimizer
+
+    @model_validator(mode="after")
+    def validate_optimizer_kwargs(self) -> "TrainConfig":
+        """Reserved optimizer kwargs are only rejected for managed (short-name) optimizers."""
+        if _is_managed_optimizer_name(self.optimizer):
+            reserved_present = _OPTIMIZER_MANAGED_KWARGS.intersection(self.optimizer_kwargs)
+            if reserved_present:
+                reserved = ", ".join(sorted(reserved_present))
+                raise ValueError(f"optimizer_kwargs cannot include RF-DETR-managed key(s): {reserved}.")
+        return self
 
     @field_validator("prefetch_factor", mode="after")
     @classmethod
