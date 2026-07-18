@@ -577,15 +577,26 @@ class TestTrainConfigLRScheduler:
             reloaded = TrainConfig(**dumped)
         assert reloaded.lr_scheduler_kwargs["lr_drop"] == 8
 
-    def test_deprecated_field_not_folded_for_explicit_scheduler(self, tmp_path):
-        """A deprecated field is not injected into an explicit scheduler's kwargs."""
-        tc = self._tc(
-            tmp_path,
-            lr_scheduler="torch.optim.lr_scheduler.StepLR",
-            lr_scheduler_kwargs={"step_size": 5},
-            lr_drop=80,
-        )
+    def test_deprecated_field_warns_but_not_folded_for_explicit_scheduler(self, tmp_path):
+        """A deprecated field set with an explicit scheduler warns (ignored) and is never folded into kwargs."""
+        with pytest.warns(FutureWarning, match="is ignored for the explicit"):
+            tc = self._tc(
+                tmp_path,
+                lr_scheduler="torch.optim.lr_scheduler.StepLR",
+                lr_scheduler_kwargs={"step_size": 5},
+                lr_drop=80,
+            )
         assert tc.lr_scheduler_kwargs == {"step_size": 5}
+
+    def test_managed_preset_rejects_unknown_kwargs(self, tmp_path):
+        """Managed presets reject lr_scheduler_kwargs keys they do not consume (mirrors optimizer_kwargs)."""
+        with pytest.raises((ValueError, ValidationError), match="unknown key"):
+            self._tc(tmp_path, lr_scheduler="cosine", lr_scheduler_kwargs={"minfactor": 0.1})
+
+    def test_managed_preset_accepts_consumed_kwargs(self, tmp_path):
+        """Managed presets accept the kwargs they consume (min_factor, lr_drop)."""
+        tc = self._tc(tmp_path, lr_scheduler="cosine", lr_scheduler_kwargs={"min_factor": 0.1, "lr_drop": 50})
+        assert tc.lr_scheduler_kwargs == {"min_factor": pytest.approx(0.1), "lr_drop": 50}
 
 
 class TestBuildTrainerUsesRealFields:

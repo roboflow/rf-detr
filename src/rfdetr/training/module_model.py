@@ -205,7 +205,7 @@ def _instantiate_optimizer(
         ) from exc
 
 
-_SchedulerFactory = Callable[..., torch.optim.lr_scheduler.LRScheduler]
+_SchedulerFactory = Callable[..., LRScheduler | ReduceLROnPlateau]
 
 
 def _import_scheduler_class(dotted_path: str) -> _SchedulerFactory:
@@ -239,7 +239,7 @@ def _instantiate_explicit_scheduler(
     scheduler_name: str,
     optimizer: torch.optim.Optimizer,
     scheduler_kwargs: dict[str, Any],
-) -> torch.optim.lr_scheduler.LRScheduler:
+) -> LRScheduler | ReduceLROnPlateau:
     """Instantiate an explicitly-selected LR scheduler from the optimizer and kwargs only.
 
     Explicit schedulers (dotted import paths and callables) receive the built optimizer plus the
@@ -1043,7 +1043,7 @@ class RFDETRModelModule(LightningModule):
         warmup_steps = int(steps_per_epoch * tc.warmup_epochs)
 
         scheduler_cfg = tc.lr_scheduler
-        scheduler: torch.optim.lr_scheduler.LRScheduler
+        scheduler: LRScheduler | ReduceLROnPlateau
         interval = "step"
         monitor: str | None = None
         if _is_managed_scheduler_name(scheduler_cfg):
