@@ -91,7 +91,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-07-18T07:36:43">
+  <meta property="article:modified_time" content="2026-07-18T18:16:15">
   
   <script type="application/ld+json">
   {
@@ -106,7 +106,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-07-18T07:36:43",
+    "dateModified": "2026-07-18T18:16:15",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3414,15 +3414,39 @@ best-checkpoint selection and patience counting until the model has had time to 
 <tbody>
 <tr>
 <td><code>lr_scheduler</code></td>
+<td><code>str \| Callable</code></td>
+<td><code>"step"</code></td>
+<td>Scheduler preset (<code>"step"</code>/<code>"cosine"</code>), dotted import path, or callable. See <a href="../customization/#custom-lr-scheduler">Custom LR scheduler</a>.</td>
+</tr>
+<tr>
+<td><code>lr_scheduler_kwargs</code></td>
+<td><code>dict</code></td>
+<td><code>{}</code></td>
+<td>Keyword arguments forwarded to an explicit scheduler; also carries <code>lr_drop</code> / <code>min_factor</code> for the managed presets.</td>
+</tr>
+<tr>
+<td><code>lr_scheduler_interval</code></td>
 <td><code>str</code></td>
 <td><code>"step"</code></td>
-<td>Learning rate scheduler type. Options: <code>"step"</code> (step decay at <code>lr_drop</code>) or <code>"cosine"</code> (cosine annealing).</td>
+<td>Stepping cadence for explicit schedulers: <code>"step"</code> (per optimizer step) or <code>"epoch"</code>. Managed presets always step per step.</td>
+</tr>
+<tr>
+<td><code>lr_scheduler_monitor</code></td>
+<td><code>str</code></td>
+<td><code>"val/loss"</code></td>
+<td>Metric fed to <code>ReduceLROnPlateau</code> (stepped once per epoch).</td>
 </tr>
 <tr>
 <td><code>lr_min_factor</code></td>
 <td><code>float</code></td>
 <td><code>0.0</code></td>
-<td>Floor for the cosine scheduler, expressed as a fraction of the initial LR. Ignored when using <code>"step"</code>.</td>
+<td><strong>Deprecated</strong> — pass <code>lr_scheduler_kwargs={"min_factor": ...}</code> instead. Cosine-preset floor, as a fraction of the initial LR.</td>
+</tr>
+<tr>
+<td><code>lr_drop</code></td>
+<td><code>int</code></td>
+<td><code>100</code></td>
+<td><strong>Deprecated</strong> — pass <code>lr_scheduler_kwargs={"lr_drop": ...}</code> instead. Epoch at which the <code>"step"</code> preset drops the LR by 10x.</td>
 </tr>
 <tr>
 <td><code>optimizer</code></td>
@@ -3440,7 +3464,7 @@ best-checkpoint selection and patience counting until the model has had time to 
 <td><code>warmup_epochs</code></td>
 <td><code>float</code></td>
 <td><code>0.0</code></td>
-<td>Number of epochs for linear learning rate warmup at the start of training.</td>
+<td>Epochs of linear LR warmup. For explicit schedulers this prepends a <code>SequentialLR</code> warmup ramp (skipped for <code>ReduceLROnPlateau</code>).</td>
 </tr>
 <tr>
 <td><code>drop_path</code></td>
@@ -3706,15 +3730,39 @@ best-checkpoint selection and patience counting until the model has had time to 
 </tr>
 <tr>
 <td><code>lr_scheduler</code></td>
+<td>str | Callable</td>
+<td>"step"</td>
+<td>Scheduler preset ("step"/"cosine"), dotted import path, or callable.</td>
+</tr>
+<tr>
+<td><code>lr_scheduler_kwargs</code></td>
+<td>dict</td>
+<td>{}</td>
+<td>Keyword arguments for an explicit scheduler; also carries lr_drop / min_factor for the managed presets.</td>
+</tr>
+<tr>
+<td><code>lr_scheduler_interval</code></td>
 <td>str</td>
 <td>"step"</td>
-<td>Learning rate scheduler type: "step" or "cosine".</td>
+<td>Explicit-scheduler stepping cadence: "step" or "epoch".</td>
+</tr>
+<tr>
+<td><code>lr_scheduler_monitor</code></td>
+<td>str</td>
+<td>"val/loss"</td>
+<td>Metric fed to ReduceLROnPlateau.</td>
 </tr>
 <tr>
 <td><code>lr_min_factor</code></td>
 <td>float</td>
 <td>0.0</td>
-<td>Minimum LR as a fraction of the initial LR (cosine scheduler floor).</td>
+<td>Deprecated — use lr_scheduler_kwargs["min_factor"]. Cosine-preset floor as a fraction of the initial LR.</td>
+</tr>
+<tr>
+<td><code>lr_drop</code></td>
+<td>int</td>
+<td>100</td>
+<td>Deprecated — use lr_scheduler_kwargs["lr_drop"]. Epoch at which the "step" preset drops the LR by 10x.</td>
 </tr>
 <tr>
 <td><code>warmup_epochs</code></td>
@@ -3786,7 +3834,7 @@ best-checkpoint selection and patience counting until the model has had time to 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 18, 2026 07:36:43 UTC">2026-07-18 07:36:43</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 18, 2026 18:16:15 UTC">2026-07-18 18:16:15</span>
   </span>
 
     
