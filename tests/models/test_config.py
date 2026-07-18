@@ -338,7 +338,9 @@ class TestTrainConfigT42PromotedFields:
             pytest.param("sync_bn", True, id="sync_bn"),
             pytest.param("fp16_eval", True, id="fp16_eval"),
             pytest.param("lr_scheduler", "cosine", id="lr_scheduler_cosine"),
-            pytest.param("lr_min_factor", 0.01, id="lr_min_factor"),
+            pytest.param("lr_scheduler_kwargs", {"min_factor": 0.01}, id="lr_scheduler_kwargs"),
+            pytest.param("lr_scheduler_interval", "epoch", id="lr_scheduler_interval"),
+            pytest.param("lr_scheduler_monitor", "train/loss", id="lr_scheduler_monitor"),
             pytest.param("optimizer", "sgd", id="optimizer"),
             pytest.param("optimizer_kwargs", {"betas": (0.9, 0.99)}, id="optimizer_kwargs"),
             pytest.param("dont_save_weights", True, id="dont_save_weights"),
@@ -476,6 +478,114 @@ class TestTrainConfigT42PromotedFields:
         """auto_batch_ema_headroom must be in (0, 1]."""
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, auto_batch_ema_headroom=ema_headroom)
+
+
+class TestTrainConfigLRScheduler:
+    """Configurable LR-scheduler surface: preset validation, explicit paths/callables, and deprecation folding."""
+
+    def _tc(self, tmp_path, **kwargs):
+        defaults = dict(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
+        defaults.update(kwargs)
+        return TrainConfig(**defaults)
+
+    def test_lr_scheduler_default_is_step(self, tmp_path):
+        """lr_scheduler defaults to the managed 'step' preset."""
+        assert self._tc(tmp_path).lr_scheduler == "step"
+
+    def test_lr_scheduler_kwargs_default_is_empty_dict(self, tmp_path):
+        """lr_scheduler_kwargs defaults to an empty dict."""
+        assert self._tc(tmp_path).lr_scheduler_kwargs == {}
+
+    @pytest.mark.parametrize("preset", [pytest.param("step", id="step"), pytest.param("cosine", id="cosine")])
+    def test_lr_scheduler_accepts_managed_preset(self, tmp_path, preset):
+        """Both managed presets are accepted as bare names."""
+        assert self._tc(tmp_path, lr_scheduler=preset).lr_scheduler == preset
+
+    def test_lr_scheduler_rejects_empty_name(self, tmp_path):
+        """lr_scheduler must be a non-empty name."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, lr_scheduler="  ")
+
+    def test_lr_scheduler_rejects_unknown_bare_name(self, tmp_path):
+        """A bare name that is not a managed preset is rejected (steer to a dotted path)."""
+        with pytest.raises((ValueError, ValidationError), match="managed preset"):
+            self._tc(tmp_path, lr_scheduler="StepLR")
+
+    def test_lr_scheduler_accepts_dotted_import_path(self, tmp_path):
+        """A dotted import path is accepted verbatim as an explicit scheduler."""
+        tc = self._tc(tmp_path, lr_scheduler="torch.optim.lr_scheduler.StepLR", lr_scheduler_kwargs={"step_size": 5})
+        assert tc.lr_scheduler == "torch.optim.lr_scheduler.StepLR"
+
+    def test_callable_class_desugars_to_dotted_path(self, tmp_path):
+        """A plain scheduler class desugars to its canonical dotted import path for serialization."""
+        scheduler_class = torch.optim.lr_scheduler.StepLR
+        expected_path = f"{scheduler_class.__module__}.{scheduler_class.__qualname__}"
+        tc = self._tc(tmp_path, lr_scheduler=scheduler_class)
+        assert tc.lr_scheduler == expected_path
+        assert tc.lr_scheduler_kwargs == {}
+
+    def test_partial_scheduler_desugars_to_path_and_kwargs(self, tmp_path):
+        """A functools.partial desugars to a dotted path plus its keyword arguments."""
+        scheduler_class = torch.optim.lr_scheduler.StepLR
+        expected_path = f"{scheduler_class.__module__}.{scheduler_class.__qualname__}"
+        tc = self._tc(tmp_path, lr_scheduler=functools.partial(scheduler_class, step_size=7))
+        assert tc.lr_scheduler == expected_path
+        assert tc.lr_scheduler_kwargs == {"step_size": 7}
+
+    def test_callable_scheduler_kwargs_are_ignored_with_warning(self, tmp_path):
+        """lr_scheduler_kwargs are ignored (with a warning) when lr_scheduler is a callable."""
+        with pytest.warns(UserWarning, match="lr_scheduler_kwargs is ignored"):
+            tc = self._tc(
+                tmp_path,
+                lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, step_size=7),
+                lr_scheduler_kwargs={"gamma": 0.5},
+            )
+        assert tc.lr_scheduler_kwargs == {"step_size": 7}
+
+    def test_non_reconstructable_scheduler_warns(self, tmp_path):
+        """A lambda scheduler cannot be serialized and warns while staying an in-memory callable."""
+        with pytest.warns(UserWarning, match="cannot be saved"):
+            tc = self._tc(tmp_path, lr_scheduler=lambda optimizer: torch.optim.lr_scheduler.StepLR(optimizer, 5))
+        assert callable(tc.lr_scheduler) and not isinstance(tc.lr_scheduler, str)
+
+    def test_deprecated_lr_drop_folds_into_kwargs_with_warning(self, tmp_path):
+        """A non-default lr_drop is folded into lr_scheduler_kwargs and warns (deprecation)."""
+        with pytest.warns(FutureWarning, match="lr_drop is deprecated"):
+            tc = self._tc(tmp_path, lr_drop=80)
+        assert tc.lr_scheduler_kwargs["lr_drop"] == 80
+
+    def test_deprecated_lr_min_factor_folds_into_kwargs_with_warning(self, tmp_path):
+        """A non-default lr_min_factor is folded into lr_scheduler_kwargs['min_factor'] and warns."""
+        with pytest.warns(FutureWarning, match="lr_min_factor is deprecated"):
+            tc = self._tc(tmp_path, lr_scheduler="cosine", lr_min_factor=0.2)
+        assert tc.lr_scheduler_kwargs["min_factor"] == pytest.approx(0.2)
+
+    def test_default_deprecated_field_does_not_warn(self, tmp_path):
+        """Passing a deprecated field at its default value (e.g. on config reload) must not warn."""
+        default_lr_drop = TrainConfig.model_fields["lr_drop"].default
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            self._tc(tmp_path, lr_drop=default_lr_drop)
+
+    def test_migrated_config_reload_does_not_rewarn(self, tmp_path):
+        """Reloading a dumped config that already carries the folded kwarg must not re-warn."""
+        with pytest.warns(FutureWarning):
+            original = self._tc(tmp_path, lr_scheduler="step", lr_drop=8)
+        dumped = original.model_dump()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            reloaded = TrainConfig(**dumped)
+        assert reloaded.lr_scheduler_kwargs["lr_drop"] == 8
+
+    def test_deprecated_field_not_folded_for_explicit_scheduler(self, tmp_path):
+        """A deprecated field is not injected into an explicit scheduler's kwargs."""
+        tc = self._tc(
+            tmp_path,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 5},
+            lr_drop=80,
+        )
+        assert tc.lr_scheduler_kwargs == {"step_size": 5}
 
 
 class TestBuildTrainerUsesRealFields:
