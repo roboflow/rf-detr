@@ -803,12 +803,14 @@ class RFDETRModelModule(LightningModule):
         monitor = self._lr_scheduler_monitor or "val/loss"
         metric = self.trainer.callback_metrics.get(monitor)
         if metric is None:
-            logger.warning(
-                "ReduceLROnPlateau monitor %r not found in callback_metrics; skipping scheduler step this epoch. "
-                "Ensure the monitored metric is logged (e.g. compute_val_loss=True for 'val/loss').",
-                monitor,
+            # Warn-and-continue would let the LR never reduce while training silently proceeds. Fail loud instead,
+            # mirroring Lightning's strict-monitor behavior on the automatic-optimization path.
+            raise RuntimeError(
+                f"ReduceLROnPlateau monitor {monitor!r} was not found in callback_metrics, so the learning rate "
+                "would never be reduced. Ensure the monitored metric is logged every validation epoch (e.g. set "
+                "compute_val_loss=True for the default 'val/loss' monitor), or set lr_scheduler_monitor to a metric "
+                "that is produced."
             )
-            return
         scheduler.step(metric)
 
     @staticmethod
@@ -1074,7 +1076,22 @@ class RFDETRModelModule(LightningModule):
                 # Auto-wrap explicit schedulers with a linear warmup ramp. The wrap is stepped at the same cadence as
                 # the scheduler, so size it in the scheduler's own units: optimizer steps for "step", epochs for "epoch"
                 # (otherwise a step-sized ramp stepped once per epoch would stretch across the whole run).
-                warmup_units = warmup_steps if interval == "step" else int(tc.warmup_epochs)
+                if interval == "step":
+                    warmup_units = warmup_steps
+                else:
+                    # Epoch cadence: the ramp is stepped once per epoch. ceil keeps a fractional warmup_epochs from
+                    # truncating to zero (a silently dropped warmup). A single-epoch ramp has start_factor == 1.0,
+                    # i.e. a flat no-op that looks like warmup but isn't, so a gradual epoch-granular warmup needs
+                    # >= 2 epochs; warn and skip rather than emit a degenerate ramp.
+                    warmup_units = math.ceil(tc.warmup_epochs)
+                    if tc.warmup_epochs > 0 and warmup_units < 2:
+                        logger.warning(
+                            "warmup_epochs=%s with lr_scheduler_interval='epoch' cannot form a gradual warmup ramp "
+                            "(epoch-granular warmup needs >= 2 epochs); skipping warmup. Use "
+                            "lr_scheduler_interval='step' for sub-epoch warmup, or set warmup_epochs >= 2.",
+                            tc.warmup_epochs,
+                        )
+                        warmup_units = 0
                 if warmup_units > 0:
                     scheduler = _wrap_with_warmup(scheduler, optimizer, warmup_units)
 

@@ -1865,11 +1865,11 @@ class TestConfigureOptimizers:
         assert isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
 
     @patch("rfdetr.training.module_model.get_param_dict")
-    def test_epoch_interval_warmup_sized_in_epoch_units(self, mock_get_param_dict, tmp_path):
-        """An epoch-interval explicit scheduler gets a warmup ramp sized in epochs, not optimizer steps."""
+    def test_epoch_interval_warmup_ramps_over_multiple_epochs(self, mock_get_param_dict, tmp_path):
+        """An epoch-interval explicit scheduler gets a real warmup ramp sized in whole epochs (not optimizer steps)."""
         module, param_dicts = self._setup_module(
             tmp_path,
-            warmup_epochs=1.0,
+            warmup_epochs=3.0,
             epochs=10,
             lr_scheduler="torch.optim.lr_scheduler.StepLR",
             lr_scheduler_kwargs={"step_size": 5},
@@ -1880,9 +1880,32 @@ class TestConfigureOptimizers:
 
         scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
 
-        # The warmup ramp must span 1 epoch-step, not 100 optimizer-steps (which would stretch it across the run).
+        # The ramp spans 3 epoch-steps (not 300 optimizer-steps) and actually ramps up (start_factor < 1.0).
         assert isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
-        assert scheduler._schedulers[0].total_iters == 1
+        warmup = scheduler._schedulers[0]
+        assert warmup.total_iters == 3
+        assert warmup.start_factor < 1.0
+
+    @patch("rfdetr.training.module_model.logger")
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_epoch_interval_single_epoch_warmup_warns_and_skips(self, mock_get_param_dict, mock_logger, tmp_path):
+        """A single-epoch epoch-interval warmup cannot ramp; it warns and is skipped, not silently flat."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=1.0,
+            epochs=10,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 5},
+            lr_scheduler_interval="epoch",
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+
+        # No degenerate flat SequentialLR wrap; the no-op warmup is skipped loudly instead.
+        assert not isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
+        mock_logger.warning.assert_called_once()
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_explicit_scheduler_interval_propagates(self, mock_get_param_dict, tmp_path):
@@ -2450,8 +2473,8 @@ class TestManualOptLRSchedulerStepping:
 
         scheduler.step.assert_called_once()
 
-    def test_plateau_skipped_when_monitor_metric_missing(self, tmp_path):
-        """on_validation_epoch_end skips the plateau step when the monitored metric is absent."""
+    def test_plateau_raises_when_monitor_metric_missing(self, tmp_path):
+        """on_validation_epoch_end fails loud (not silent warn) when the monitored metric is absent."""
         module = self._module(tmp_path)
         module._lr_scheduler_monitor = "val/loss"
         scheduler = MagicMock(spec=torch.optim.lr_scheduler.ReduceLROnPlateau)
@@ -2461,7 +2484,8 @@ class TestManualOptLRSchedulerStepping:
         module._trainer = trainer
         type(module).trainer = property(lambda self: self._trainer)
         with patch.object(module, "lr_schedulers", return_value=scheduler):
-            module.on_validation_epoch_end()
+            with pytest.raises(RuntimeError, match="never be reduced"):
+                module.on_validation_epoch_end()
 
         scheduler.step.assert_not_called()
 
