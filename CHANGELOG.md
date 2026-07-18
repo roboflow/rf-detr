@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
-- `TrainConfig.lr_drop` and `lr_min_factor` — pass them through `lr_scheduler_kwargs` instead (`{"lr_drop": ...}` / `{"min_factor": ...}`). The fields still work for one release and are folded into `lr_scheduler_kwargs` for the managed presets with a `FutureWarning`; default values (e.g. on config reload) do not warn.
+- `TrainConfig.lr_drop` and `lr_min_factor` — pass them through `lr_scheduler_kwargs` instead (`{"lr_drop": ...}` / `{"min_factor": ...}`). Deprecated since v1.9.0, will be removed in v1.11.0. The fields still work in the meantime and are folded into `lr_scheduler_kwargs` for the managed presets with a `FutureWarning`; default values (e.g. on config reload) do not warn. Set with an explicit (non-managed) scheduler they are inert and emit a `FutureWarning`.
 
 ### Fixed
 

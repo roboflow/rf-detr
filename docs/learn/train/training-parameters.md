@@ -301,6 +301,7 @@ Below is a summary table of all training parameters:
 | `lr_scheduler_interval`    | str                 | "step"         | Explicit-scheduler stepping cadence: "step" or "epoch".                                                                               |
 | `lr_scheduler_monitor`     | str                 | "val/loss"     | Metric fed to ReduceLROnPlateau.                                                                                                      |
 | `lr_min_factor`            | float               | 0.0            | Deprecated — use lr_scheduler_kwargs["min_factor"]. Cosine-preset floor as a fraction of the initial LR.                              |
+| `lr_drop`                  | int                 | 100            | Deprecated — use lr_scheduler_kwargs["lr_drop"]. Epoch at which the "step" preset drops the LR by 10x.                                |
 | `warmup_epochs`            | float               | 0.0            | Number of linear warmup epochs at the start of training.                                                                              |
 | `drop_path`                | float               | 0.0            | Stochastic depth drop-path rate for the backbone.                                                                                     |
 | `compute_val_loss`         | bool                | True           | Compute and log loss during validation.                                                                                               |

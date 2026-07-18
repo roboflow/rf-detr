@@ -141,6 +141,20 @@ The following APIs were deprecated in earlier releases and will be removed in v1
     model.inference(dtype=torch.float16)
     ```
 
+!!! note "Deprecated: `TrainConfig.lr_drop` and `TrainConfig.lr_min_factor`"
+
+    **`lr_drop` / `lr_min_factor`** — pass them through `lr_scheduler_kwargs` instead. For the managed
+    `"step"` / `"cosine"` presets the fields are still folded into `lr_scheduler_kwargs` (with a
+    `FutureWarning`); set with an explicit scheduler they are inert and warn.
+
+    ```python
+    # Before (deprecated)
+    TrainConfig(lr_scheduler="step", lr_drop=80, lr_min_factor=0.1)
+
+    # After
+    TrainConfig(lr_scheduler="step", lr_scheduler_kwargs={"lr_drop": 80, "min_factor": 0.1})
+    ```
+
 ---
 
 ## Upgrade 1.7 → 1.8
