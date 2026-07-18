@@ -45,7 +45,6 @@ def _base_train_config(tmp_path=None, **overrides):
         lr_encoder=1.5e-4,
         batch_size=2,
         weight_decay=1e-4,
-        lr_drop=8,
         warmup_epochs=1.0,
         drop_path=0.0,
         multi_scale=False,
@@ -1757,7 +1756,9 @@ class TestConfigureOptimizers:
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_lr_lambda_step_decay_before_drop(self, mock_get_param_dict, tmp_path):
         """Before lr_drop epoch, the LR multiplier must remain at 1.0."""
-        module, param_dicts = self._setup_module(tmp_path, warmup_epochs=0.0, epochs=10, lr_drop=8)
+        module, param_dicts = self._setup_module(
+            tmp_path, warmup_epochs=0.0, epochs=10, lr_scheduler_kwargs={"lr_drop": 8}
+        )
         module._trainer.estimated_stepping_batches = 1000
         mock_get_param_dict.return_value = param_dicts
 
@@ -1770,7 +1771,9 @@ class TestConfigureOptimizers:
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_lr_lambda_step_decay_after_drop(self, mock_get_param_dict, tmp_path):
         """After lr_drop epoch, the LR multiplier must decay to 0.1."""
-        module, param_dicts = self._setup_module(tmp_path, warmup_epochs=0.0, epochs=10, lr_drop=8)
+        module, param_dicts = self._setup_module(
+            tmp_path, warmup_epochs=0.0, epochs=10, lr_scheduler_kwargs={"lr_drop": 8}
+        )
         module._trainer.estimated_stepping_batches = 1000
         mock_get_param_dict.return_value = param_dicts
 
@@ -1782,13 +1785,13 @@ class TestConfigureOptimizers:
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_lr_lambda_cosine_reads_train_config_fields(self, mock_get_param_dict, tmp_path):
-        """Cosine scheduler must read lr_scheduler/lr_min_factor from TrainConfig."""
+        """Cosine preset must read its floor from lr_scheduler_kwargs['min_factor']."""
         module, param_dicts = self._setup_module(
             tmp_path,
             warmup_epochs=0.0,
             epochs=10,
             lr_scheduler="cosine",
-            lr_min_factor=0.2,
+            lr_scheduler_kwargs={"min_factor": 0.2},
         )
         module._trainer.estimated_stepping_batches = 1000
         mock_get_param_dict.return_value = param_dicts
@@ -1798,6 +1801,188 @@ class TestConfigureOptimizers:
 
         # At the final step, cosine schedule must end at lr_min_factor.
         assert lr_lambda(1000) == pytest.approx(0.2)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_explicit_dotted_scheduler_builds_from_kwargs(self, mock_get_param_dict, tmp_path):
+        """An explicit dotted-path lr_scheduler is built from lr_scheduler_kwargs verbatim."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 30, "gamma": 0.1},
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+
+        assert isinstance(scheduler, torch.optim.lr_scheduler.StepLR)
+        assert scheduler.step_size == 30
+        assert scheduler.gamma == pytest.approx(0.1)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_managed_preset_builds_lambda_lr(self, mock_get_param_dict, tmp_path):
+        """A managed preset still builds a LambdaLR at step interval."""
+        module, param_dicts = self._setup_module(tmp_path, lr_scheduler="step")
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        config = module.configure_optimizers()["lr_scheduler"]
+
+        assert isinstance(config["scheduler"], torch.optim.lr_scheduler.LambdaLR)
+        assert config["interval"] == "step"
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_callable_scheduler_built_from_optimizer_only(self, mock_get_param_dict, tmp_path):
+        """A non-reconstructable callable scheduler is invoked with the optimizer and nothing else."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler=lambda optimizer: torch.optim.lr_scheduler.StepLR(optimizer, step_size=11),
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+
+        assert isinstance(scheduler, torch.optim.lr_scheduler.StepLR)
+        assert scheduler.step_size == 11
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_explicit_scheduler_auto_wrapped_with_warmup(self, mock_get_param_dict, tmp_path):
+        """With warmup_epochs>0 an explicit scheduler is wrapped in a SequentialLR linear warmup."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=1.0,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 5},
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+
+        assert isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_epoch_interval_warmup_ramps_over_multiple_epochs(self, mock_get_param_dict, tmp_path):
+        """An epoch-interval explicit scheduler gets a real warmup ramp sized in whole epochs (not optimizer steps)."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=3.0,
+            epochs=10,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 5},
+            lr_scheduler_interval="epoch",
+        )
+        module._trainer.estimated_stepping_batches = 1000  # steps_per_epoch = 100
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+
+        # The ramp spans 3 epoch-steps (not 300 optimizer-steps) and actually ramps up (start_factor < 1.0).
+        assert isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
+        warmup = scheduler._schedulers[0]
+        assert warmup.total_iters == 3
+        assert warmup.start_factor < 1.0
+
+    @patch("rfdetr.training.module_model.logger")
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_epoch_interval_single_epoch_warmup_warns_and_skips(self, mock_get_param_dict, mock_logger, tmp_path):
+        """A single-epoch epoch-interval warmup cannot ramp; it warns and is skipped, not silently flat."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=1.0,
+            epochs=10,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 5},
+            lr_scheduler_interval="epoch",
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+
+        # No degenerate flat SequentialLR wrap; the no-op warmup is skipped loudly instead.
+        assert not isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
+        mock_logger.warning.assert_called_once()
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_explicit_scheduler_interval_propagates(self, mock_get_param_dict, tmp_path):
+        """lr_scheduler_interval is forwarded to the Lightning scheduler config for explicit schedulers."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 5},
+            lr_scheduler_interval="epoch",
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        assert module.configure_optimizers()["lr_scheduler"]["interval"] == "epoch"
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_reduce_on_plateau_sets_monitor_and_epoch_interval(self, mock_get_param_dict, tmp_path):
+        """A ReduceLROnPlateau scheduler is configured with its monitor and stepped per epoch."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler="torch.optim.lr_scheduler.ReduceLROnPlateau",
+            lr_scheduler_monitor="val/loss",
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        config = module.configure_optimizers()["lr_scheduler"]
+
+        assert isinstance(config["scheduler"], torch.optim.lr_scheduler.ReduceLROnPlateau)
+        assert config["monitor"] == "val/loss"
+        assert config["interval"] == "epoch"
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_uninstalled_scheduler_path_raises_value_error(self, mock_get_param_dict, tmp_path):
+        """A dotted scheduler path that cannot be imported surfaces as a configuration error at train start."""
+        module, param_dicts = self._setup_module(tmp_path, lr_scheduler="nonexistent_pkg.MyScheduler")
+        mock_get_param_dict.return_value = param_dicts
+
+        with (
+            patch("rfdetr.training.module_model.importlib.import_module", side_effect=ImportError("No module")),
+            pytest.raises(ValueError, match="Could not import lr_scheduler"),
+        ):
+            module.configure_optimizers()
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_explicit_scheduler_construction_error_is_reraised(self, mock_get_param_dict, tmp_path):
+        """A missing required scheduler kwarg surfaces as an RF-DETR configuration error, not a bare TypeError."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",  # StepLR requires step_size
+            lr_scheduler_kwargs={},
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        with pytest.raises(TypeError, match="Failed to initialize lr_scheduler"):
+            module.configure_optimizers()
+
+    @patch("rfdetr.training.module_model.logger")
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_plateau_with_warmup_warns(self, mock_get_param_dict, mock_logger, tmp_path):
+        """warmup_epochs>0 with ReduceLROnPlateau warns; a metric-driven scheduler cannot compose with a warmup ramp."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=1.0,
+            lr_scheduler="torch.optim.lr_scheduler.ReduceLROnPlateau",
+            lr_scheduler_monitor="val/loss",
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        module.configure_optimizers()
+
+        mock_logger.warning.assert_called_once()
 
     @patch("rfdetr.training.module_model.get_param_dict")
     @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
@@ -1876,7 +2061,7 @@ class TestConfigureOptimizers:
             warmup_epochs=0,
             epochs=1,
             lr_scheduler="cosine",
-            lr_min_factor=lr_min_factor,
+            lr_scheduler_kwargs={"min_factor": lr_min_factor},
         )
         module, _, _, _ = _build_module(
             model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
@@ -2264,3 +2449,89 @@ class TestOnLoadCheckpoint:
         module.on_load_checkpoint(checkpoint)
 
         assert set(checkpoint["state_dict"].keys()) == original_keys
+
+
+class TestManualOptLRSchedulerStepping:
+    """Manual-optimization (keypoint) path steps LR schedulers itself, honoring interval and plateau semantics."""
+
+    def _module(self, tmp_path, **overrides):
+        tc = _base_train_config(tmp_path, **overrides)
+        module, _, _, _ = _build_module(train_config=tc)
+        module.automatic_optimization = False
+        return module
+
+    def test_step_interval_scheduler_stepped_per_optimizer_step(self, tmp_path):
+        """A step-interval scheduler is stepped by _step_lr_scheduler."""
+        module = self._module(tmp_path)
+        module._lr_scheduler_interval = "step"
+        scheduler = MagicMock(spec=torch.optim.lr_scheduler.StepLR)
+        with patch.object(module, "lr_schedulers", return_value=scheduler):
+            module._step_lr_scheduler()
+
+        scheduler.step.assert_called_once_with()
+
+    def test_epoch_interval_scheduler_not_stepped_per_optimizer_step(self, tmp_path):
+        """An epoch-interval scheduler is not stepped by the per-optimizer-step hook."""
+        module = self._module(tmp_path)
+        module._lr_scheduler_interval = "epoch"
+        scheduler = MagicMock(spec=torch.optim.lr_scheduler.StepLR)
+        with patch.object(module, "lr_schedulers", return_value=scheduler):
+            module._step_lr_scheduler()
+
+        scheduler.step.assert_not_called()
+
+    def test_epoch_interval_scheduler_stepped_on_train_epoch_end(self, tmp_path):
+        """on_train_epoch_end steps an epoch-interval scheduler on the manual path."""
+        module = self._module(tmp_path)
+        module._lr_scheduler_interval = "epoch"
+        scheduler = MagicMock(spec=torch.optim.lr_scheduler.StepLR)
+        with patch.object(module, "lr_schedulers", return_value=scheduler):
+            module.on_train_epoch_end()
+
+        scheduler.step.assert_called_once_with()
+
+    def test_plateau_stepped_from_monitor_metric_on_validation_epoch_end(self, tmp_path):
+        """on_validation_epoch_end steps ReduceLROnPlateau with the monitored metric."""
+        module = self._module(tmp_path)
+        module._lr_scheduler_monitor = "val/loss"
+        scheduler = MagicMock(spec=torch.optim.lr_scheduler.ReduceLROnPlateau)
+        trainer = MagicMock()
+        trainer.sanity_checking = False
+        trainer.callback_metrics = {"val/loss": torch.tensor(1.23)}
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        with patch.object(module, "lr_schedulers", return_value=scheduler):
+            module.on_validation_epoch_end()
+
+        scheduler.step.assert_called_once()
+
+    def test_plateau_raises_when_monitor_metric_missing(self, tmp_path):
+        """on_validation_epoch_end fails loud (not silent warn) when the monitored metric is absent."""
+        module = self._module(tmp_path)
+        module._lr_scheduler_monitor = "val/loss"
+        scheduler = MagicMock(spec=torch.optim.lr_scheduler.ReduceLROnPlateau)
+        trainer = MagicMock()
+        trainer.sanity_checking = False
+        trainer.callback_metrics = {}
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        with patch.object(module, "lr_schedulers", return_value=scheduler):
+            with pytest.raises(RuntimeError, match="never be reduced"):
+                module.on_validation_epoch_end()
+
+        scheduler.step.assert_not_called()
+
+    def test_plateau_not_stepped_during_sanity_check(self, tmp_path):
+        """on_validation_epoch_end must not step plateau during Lightning's pre-training sanity check."""
+        module = self._module(tmp_path)
+        module._lr_scheduler_monitor = "val/loss"
+        scheduler = MagicMock(spec=torch.optim.lr_scheduler.ReduceLROnPlateau)
+        trainer = MagicMock()
+        trainer.sanity_checking = True
+        trainer.callback_metrics = {"val/loss": torch.tensor(1.23)}
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        with patch.object(module, "lr_schedulers", return_value=scheduler):
+            module.on_validation_epoch_end()
+
+        scheduler.step.assert_not_called()

@@ -19,6 +19,7 @@ import torch
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from pydantic_core import PydanticUndefined
 from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
 EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
 PathLikeStr: TypeAlias = str | Path
@@ -313,6 +314,83 @@ def _desugar_optimizer_callable(
             None,
             None,
             "define the optimizer as an importable top-level class or function (no lambda or nested definition)",
+        )
+
+    try:
+        json.dumps(extracted_kwargs)
+    except (TypeError, ValueError):
+        return (
+            None,
+            None,
+            "use only JSON-serializable functools.partial keyword arguments (no tensors, modules, or callables)",
+        )
+
+    return f"{module}.{qualname}", extracted_kwargs, None
+
+
+_MANAGED_SCHEDULER_PRESETS = {"step", "cosine"}
+_DEPRECATED_LR_FIELD_KWARGS = {"lr_drop": "lr_drop", "lr_min_factor": "min_factor"}
+# Keys the managed "step" / "cosine" presets actually consume from lr_scheduler_kwargs.
+_MANAGED_SCHEDULER_KWARGS = {"min_factor", "lr_drop"}
+
+# ReduceLROnPlateau does not subclass LRScheduler but is a supported explicit scheduler.
+SchedulerType: TypeAlias = LRScheduler | ReduceLROnPlateau
+
+
+def _is_managed_scheduler_name(lr_scheduler: object) -> bool:
+    """Return whether an lr_scheduler config selects an RF-DETR managed preset.
+
+    Managed presets are the built-in ``"step"`` and ``"cosine"`` schedules, which own warmup
+    and total-step sizing. A dotted import path or a callable instead selects an explicit
+    scheduler built from ``lr_scheduler_kwargs`` (or the callable's own bound arguments).
+
+    Args:
+        lr_scheduler: The ``TrainConfig.lr_scheduler`` value.
+
+    Returns:
+        ``True`` for managed preset short names, ``False`` for dotted paths and callables.
+
+    Examples:
+        >>> _is_managed_scheduler_name("cosine")
+        True
+        >>> _is_managed_scheduler_name("torch.optim.lr_scheduler.StepLR")
+        False
+    """
+    return isinstance(lr_scheduler, str) and lr_scheduler.strip().lower() in _MANAGED_SCHEDULER_PRESETS
+
+
+def _desugar_scheduler_callable(
+    lr_scheduler: Callable[..., SchedulerType],
+) -> tuple[str | None, dict[str, Any] | None, str | None]:
+    """Decompose a callable lr_scheduler into a serializable ``(dotted_path, kwargs)`` form.
+
+    Reconstructable callables — an importable top-level class or function, optionally wrapped in
+    ``functools.partial`` with JSON-serializable keyword arguments and no positional arguments —
+    desugar to a dotted import path plus keyword arguments that round-trip through
+    ``training_config.json``. The optimizer is supplied at build time, never baked into the callable.
+
+    Args:
+        lr_scheduler: A callable or ``functools.partial`` given as ``TrainConfig.lr_scheduler``.
+
+    Returns:
+        ``(dotted_path, kwargs, None)`` when reconstructable, otherwise
+        ``(None, None, reason)`` where ``reason`` explains how to make it compatible.
+    """
+    func: Any = lr_scheduler
+    extracted_kwargs: dict[str, Any] = {}
+    if isinstance(lr_scheduler, functools.partial):
+        if lr_scheduler.args:
+            return None, None, "pass every functools.partial argument as a keyword, not positionally"
+        func = lr_scheduler.func
+        extracted_kwargs = dict(lr_scheduler.keywords or {})
+
+    module = getattr(func, "__module__", None)
+    qualname = getattr(func, "__qualname__", None)
+    if module is None or qualname is None or "<" in qualname:
+        return (
+            None,
+            None,
+            "define the lr_scheduler as an importable top-level class or function (no lambda or nested definition)",
         )
 
     try:
@@ -1159,7 +1237,11 @@ class TrainConfig(BaseConfig):
     # Single-machine DDP users should leave this at 1 (the default).
     num_nodes: int = 1
     fp16_eval: bool = False
-    lr_scheduler: Literal["step", "cosine"] = "step"
+    lr_scheduler: str | Callable[..., SchedulerType] = "step"
+    lr_scheduler_kwargs: dict[str, Any] = Field(default_factory=dict)
+    lr_scheduler_interval: Literal["step", "epoch"] = "step"
+    lr_scheduler_monitor: str = "val/loss"
+    # Deprecated aux LR knobs — kept for one cycle; folded into lr_scheduler_kwargs (see _map_deprecated_lr_fields).
     lr_min_factor: float = 0.0
     optimizer: str | Callable[..., Optimizer] = "adamw"
     optimizer_kwargs: dict[str, Any] = Field(default_factory=dict)
@@ -1282,6 +1364,141 @@ class TrainConfig(BaseConfig):
                 reserved = ", ".join(sorted(reserved_present))
                 raise ValueError(f"optimizer_kwargs cannot include RF-DETR-managed key(s): {reserved}.")
         return self
+
+    @model_validator(mode="after")
+    def validate_lr_scheduler_kwargs(self) -> "TrainConfig":
+        """Reject unknown ``lr_scheduler_kwargs`` keys for the managed ``"step"`` / ``"cosine"`` presets.
+
+        Managed presets consume only ``min_factor`` and ``lr_drop``; any other key would be silently ignored, so surface
+        it as an error (mirroring ``validate_optimizer_kwargs``). Explicit schedulers forward their kwargs verbatim to
+        the constructor and are left unchecked here.
+        """
+        if _is_managed_scheduler_name(self.lr_scheduler):
+            unknown = set(self.lr_scheduler_kwargs) - _MANAGED_SCHEDULER_KWARGS
+            if unknown:
+                allowed = ", ".join(sorted(_MANAGED_SCHEDULER_KWARGS))
+                unknown_keys = ", ".join(sorted(unknown))
+                raise ValueError(
+                    f"lr_scheduler_kwargs for a managed preset ({self.lr_scheduler!r}) accepts only "
+                    f"{{{allowed}}}; unknown key(s): {unknown_keys}."
+                )
+        return self
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_deprecated_lr_fields(cls, data: Any) -> Any:
+        """Fold the deprecated ``lr_drop`` / ``lr_min_factor`` fields into ``lr_scheduler_kwargs``.
+
+        These loose knobs are deprecated in favor of ``lr_scheduler_kwargs``. When either is supplied with a non-default
+        value for a managed preset (``"step"`` / ``"cosine"``), it is copied into ``lr_scheduler_kwargs`` (without
+        overriding an explicit kwarg) and a ``FutureWarning`` is emitted. Default values are ignored silently so round-
+        tripping a dumped config (which always carries these fields) never warns. For explicit (dotted-path / callable)
+        schedulers the deprecated fields are preset-specific and left untouched.
+        """
+        if not isinstance(data, dict):
+            return data
+        # Only managed presets consume these knobs; default lr_scheduler ("step") is managed.
+        if not _is_managed_scheduler_name(data.get("lr_scheduler", "step")):
+            # Explicit / callable scheduler: these preset knobs are inert. Warn (never fold) when a non-default
+            # value is set so a stale lr_drop / lr_min_factor carried over from a managed config is not silently
+            # dropped — a reproducibility footgun when migrating a saved config to an explicit scheduler.
+            for field_name in _DEPRECATED_LR_FIELD_KWARGS:
+                if field_name in data and data[field_name] != cls.model_fields[field_name].default:
+                    warnings.warn(
+                        f"{field_name} is ignored for the explicit (non-managed) lr_scheduler "
+                        f"{data.get('lr_scheduler')!r}; it only applies to the managed 'step'/'cosine' presets.",
+                        FutureWarning,
+                        stacklevel=2,
+                    )
+            return data
+        kwargs = dict(data.get("lr_scheduler_kwargs") or {})
+        for field_name, kwarg_name in _DEPRECATED_LR_FIELD_KWARGS.items():
+            if field_name not in data:
+                continue
+            # A default value (common when reloading a dumped config) is a no-op: the managed builder falls back to
+            # the same default. Skip silently so serialization round-trips don't emit spurious deprecation warnings.
+            if data[field_name] == cls.model_fields[field_name].default:
+                continue
+            # Already migrated: a dumped config carries both the top-level field and the folded kwarg. If the kwarg
+            # already holds this value, the field adds nothing — skip silently so migrated-config reloads never warn.
+            if kwargs.get(kwarg_name) == data[field_name]:
+                continue
+            # Both set to different values: the kwarg wins (setdefault below is a no-op). Say so explicitly rather
+            # than implying the deprecated field was migrated, which would mislead — the field value is discarded.
+            if kwarg_name in kwargs:
+                warnings.warn(
+                    f"{field_name}={data[field_name]!r} is ignored because lr_scheduler_kwargs already sets "
+                    f"{kwarg_name!r}={kwargs[kwarg_name]!r} (the kwarg wins); remove the deprecated {field_name}.",
+                    FutureWarning,
+                    stacklevel=2,
+                )
+                continue
+            warnings.warn(
+                f"{field_name} is deprecated; pass it via lr_scheduler_kwargs={{'{kwarg_name}': ...}} instead.",
+                FutureWarning,
+                stacklevel=2,
+            )
+            kwargs[kwarg_name] = data[field_name]
+        if kwargs:
+            data["lr_scheduler_kwargs"] = kwargs
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _desugar_callable_lr_scheduler(cls, data: Any) -> Any:
+        """Desugar a reconstructable callable lr_scheduler into its serializable string form.
+
+        A callable ``lr_scheduler`` (a class or ``functools.partial``) that can be imported is rewritten to a dotted
+        import path plus ``lr_scheduler_kwargs`` so the config round-trips through ``training_config.json``. User-
+        supplied ``lr_scheduler_kwargs`` are ignored for callable schedulers (bake arguments into the callable instead).
+        Non-reconstructable callables are kept as-is and only warned about.
+        """
+        if not isinstance(data, dict):
+            return data
+        lr_scheduler = data.get("lr_scheduler")
+        if lr_scheduler is None or isinstance(lr_scheduler, str) or not callable(lr_scheduler):
+            return data
+
+        if data.get("lr_scheduler_kwargs"):
+            warnings.warn(
+                "lr_scheduler_kwargs is ignored when lr_scheduler is a callable; bake arguments into the "
+                "callable (for example with functools.partial) instead.",
+                stacklevel=2,
+            )
+
+        path, kwargs, reason = _desugar_scheduler_callable(lr_scheduler)
+        if reason is None:
+            data["lr_scheduler"] = path
+            data["lr_scheduler_kwargs"] = kwargs
+        else:
+            data["lr_scheduler_kwargs"] = {}
+            label = getattr(lr_scheduler, "__qualname__", None) or repr(lr_scheduler)
+            warnings.warn(
+                f"lr_scheduler callable {label!r} cannot be saved to training_config.json and restored: "
+                f"{reason}. Training proceeds with the in-memory callable; only saved-config "
+                "reproducibility is affected.",
+                stacklevel=2,
+            )
+        return data
+
+    @field_validator("lr_scheduler", mode="after")
+    @classmethod
+    def validate_lr_scheduler_name(cls, v: str | Callable[..., SchedulerType]) -> str | Callable[..., SchedulerType]:
+        """Validate a string lr_scheduler: a bare name must be a managed preset, else use a dotted path."""
+        if not isinstance(v, str):
+            return v
+        lr_scheduler = v.strip()
+        if not lr_scheduler:
+            raise ValueError("lr_scheduler must be a non-empty string.")
+        # Bare names must be a managed preset; dotted import paths are validated lazily at train start.
+        if "." not in lr_scheduler and not _is_managed_scheduler_name(lr_scheduler):
+            presets = ", ".join(sorted(_MANAGED_SCHEDULER_PRESETS))
+            raise ValueError(
+                f"Unknown lr_scheduler {v!r}. Bare names must be a managed preset ({presets}); "
+                "use a full dotted import path (e.g. 'torch.optim.lr_scheduler.StepLR') or a callable "
+                "for anything else."
+            )
+        return lr_scheduler
 
     @field_validator("prefetch_factor", mode="after")
     @classmethod

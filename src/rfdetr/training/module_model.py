@@ -18,12 +18,18 @@ import torch
 import torch.nn.functional as F  # noqa: N812 -- project-conventional alias (see AGENTS.md)
 from pytorch_lightning import LightningModule, seed_everything
 from pytorch_lightning.core.optimizer import LightningOptimizer
-from pytorch_lightning.utilities.types import OptimizerLRSchedulerConfig
+from pytorch_lightning.utilities.types import LRSchedulerConfigType, OptimizerLRSchedulerConfig
 from torch import Tensor
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr.config import ModelConfig, TrainConfig, _is_managed_optimizer_name, _resolve_native_optimizer
+from rfdetr.config import (
+    ModelConfig,
+    TrainConfig,
+    _is_managed_optimizer_name,
+    _is_managed_scheduler_name,
+    _resolve_native_optimizer,
+)
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
@@ -199,6 +205,146 @@ def _instantiate_optimizer(
         ) from exc
 
 
+_SchedulerFactory = Callable[..., LRScheduler | ReduceLROnPlateau]
+
+
+def _import_scheduler_class(dotted_path: str) -> _SchedulerFactory:
+    """Import an LR-scheduler class or factory from a dotted path.
+
+    Args:
+        dotted_path: Fully-qualified path such as ``"torch.optim.lr_scheduler.StepLR"`` or
+            ``"pytorch_optimizer.CosineAnnealingWarmupRestarts"``.
+
+    Returns:
+        The imported scheduler class or factory.
+
+    Raises:
+        ValueError: If the module or attribute cannot be imported.
+    """
+    module_path, _, attribute = dotted_path.rpartition(".")
+    if not module_path:
+        raise ValueError(f"lr_scheduler {dotted_path!r} is not a valid dotted import path.")
+    try:
+        module = importlib.import_module(module_path)
+        return cast(_SchedulerFactory, getattr(module, attribute))
+    except (ImportError, AttributeError) as exc:
+        raise ValueError(
+            f"Could not import lr_scheduler {dotted_path!r}: {exc}. "
+            "Use a fully-qualified path to an importable scheduler class, e.g. 'torch.optim.lr_scheduler.StepLR'."
+        ) from exc
+
+
+def _instantiate_explicit_scheduler(
+    scheduler_factory: _SchedulerFactory,
+    scheduler_name: str,
+    optimizer: torch.optim.Optimizer,
+    scheduler_kwargs: dict[str, Any],
+) -> LRScheduler | ReduceLROnPlateau:
+    """Instantiate an explicitly-selected LR scheduler from the optimizer and kwargs only.
+
+    Explicit schedulers (dotted import paths and callables) receive the built optimizer plus the
+    user's ``lr_scheduler_kwargs`` verbatim. RF-DETR injects no ``total_steps`` / ``T_max`` of its
+    own — the managed ``"step"`` / ``"cosine"`` presets remain the runtime-aware option.
+
+    Args:
+        scheduler_factory: Scheduler class or factory to instantiate.
+        scheduler_name: Name used in error messages.
+        optimizer: The optimizer the scheduler drives.
+        scheduler_kwargs: Keyword arguments forwarded verbatim to the constructor.
+
+    Returns:
+        Instantiated scheduler.
+
+    Raises:
+        TypeError | ValueError: Re-raised with an RF-DETR-specific hint on failure.
+    """
+    try:
+        return scheduler_factory(optimizer, **scheduler_kwargs)
+    except (TypeError, ValueError) as exc:
+        raise type(exc)(
+            f"Failed to initialize lr_scheduler {scheduler_name!r}: {exc}. "
+            "Explicit schedulers (dotted paths and callables) are built from the optimizer plus your "
+            "`lr_scheduler_kwargs` only, with no total_steps/T_max injected. Check that the class accepts these "
+            "arguments, or pass a callable/functools.partial needing only the optimizer."
+        ) from exc
+
+
+def _build_managed_scheduler(
+    optimizer: torch.optim.Optimizer,
+    train_config: TrainConfig,
+    total_steps: int,
+    steps_per_epoch: int,
+    warmup_steps: int,
+) -> torch.optim.lr_scheduler.LambdaLR:
+    """Build the managed ``"step"`` / ``"cosine"`` scheduler as a warmup-aware ``LambdaLR``.
+
+    Preserves RF-DETR's built-in schedule: a linear warmup ramp over ``warmup_steps`` followed by
+    either cosine annealing down to ``min_factor`` or a 10x step decay after ``lr_drop`` epochs. The
+    ``min_factor`` and ``lr_drop`` values are read from ``lr_scheduler_kwargs`` first (the current API),
+    falling back to the deprecated ``lr_min_factor`` / ``lr_drop`` fields.
+
+    Args:
+        optimizer: The optimizer the scheduler drives.
+        train_config: Training config carrying the preset name and schedule knobs.
+        total_steps: Total optimizer steps over the whole run.
+        steps_per_epoch: Optimizer steps per epoch.
+        warmup_steps: Number of optimizer steps in the linear warmup ramp.
+
+    Returns:
+        A ``LambdaLR`` implementing the managed schedule.
+    """
+    kwargs = train_config.lr_scheduler_kwargs
+    # Managed presets are always strings (guaranteed by the _is_managed_scheduler_name branch at the call site).
+    preset = cast(str, train_config.lr_scheduler).strip().lower()
+    min_factor = float(kwargs.get("min_factor", train_config.lr_min_factor))
+    lr_drop = int(kwargs.get("lr_drop", train_config.lr_drop))
+
+    def lr_lambda(current_step: int) -> float:
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        if preset == "cosine":
+            progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+            return min_factor + (1 - min_factor) * 0.5 * (1 + math.cos(math.pi * progress))
+        # Step decay: drop by 10x after lr_drop epochs.
+        if current_step < lr_drop * steps_per_epoch:
+            return 1.0
+        return 0.1
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+
+def _wrap_with_warmup(
+    scheduler: torch.optim.lr_scheduler.LRScheduler,
+    optimizer: torch.optim.Optimizer,
+    warmup_steps: int,
+) -> torch.optim.lr_scheduler.SequentialLR:
+    """Prepend a linear warmup ramp to an explicit scheduler via ``SequentialLR``.
+
+    The warmup ramps the LR from ``1 / warmup_steps`` of its base value up to full over
+    ``warmup_steps`` optimizer steps, then hands control to ``scheduler``. ``ReduceLROnPlateau`` is
+    metric-driven and cannot be composed this way — callers must skip wrapping it.
+
+    Args:
+        scheduler: The explicit scheduler to run after warmup.
+        optimizer: The optimizer both schedulers drive.
+        warmup_steps: Number of optimizer steps in the linear warmup ramp.
+
+    Returns:
+        A ``SequentialLR`` chaining the warmup ramp and ``scheduler``.
+    """
+    warmup = torch.optim.lr_scheduler.LinearLR(
+        optimizer,
+        start_factor=1.0 / max(1, warmup_steps),
+        end_factor=1.0,
+        total_iters=warmup_steps,
+    )
+    return torch.optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[warmup, scheduler],
+        milestones=[warmup_steps],
+    )
+
+
 class RFDETRModelModule(LightningModule):
     """LightningModule wrapping the RF-DETR model and training loop.
 
@@ -218,6 +364,10 @@ class RFDETRModelModule(LightningModule):
         # the pre-fix/scaling behaviour.
         self._use_manual_optimization: bool = bool(getattr(model_config, "use_grouppose_keypoints", False))
         self.automatic_optimization = not self._use_manual_optimization
+        # LR-scheduler stepping cadence resolved in configure_optimizers(); read by the manual-optimization
+        # step loop and the epoch-end hook. Defaults keep pre-configure behaviour (per-step stepping).
+        self._lr_scheduler_interval: str = "step"
+        self._lr_scheduler_monitor: str | None = None
         self._accumulated_box_normalizer: Tensor | None = None
         # Allow partial state-dict loading when resuming from a .pth checkpoint
         # (which contains only model weights, not criterion/postprocess state).
@@ -597,21 +747,71 @@ class RFDETRModelModule(LightningModule):
         self._step_lr_scheduler()
         self._accumulated_box_normalizer = None
 
-    def _step_lr_scheduler(self) -> None:
-        """Step Lightning's scheduler object when one is configured."""
+    def _current_lr_scheduler(self) -> LRScheduler | ReduceLROnPlateau | None:
+        """Return the single configured LR scheduler, or ``None`` when none is available.
+
+        Returns:
+            The scheduler object (unwrapping Lightning's single-element list), or ``None`` when no
+            scheduler is configured yet or Lightning is between fit stages.
+        """
         try:
             scheduler = self.lr_schedulers()
         except (AttributeError, RuntimeError):
+            return None
+        if isinstance(scheduler, list):
+            return scheduler[0] if scheduler else None
+        return scheduler
+
+    def _step_lr_scheduler(self) -> None:
+        """Step step-interval schedulers once per optimizer step (manual-optimization path).
+
+        Epoch-interval schedulers and metric-driven ``ReduceLROnPlateau`` are stepped at epoch boundaries by
+        ``on_train_epoch_end`` / ``on_validation_epoch_end`` instead, so they are skipped here.
+        """
+        if self._lr_scheduler_interval != "step":
             return
-        if scheduler is None:
+        scheduler = self._current_lr_scheduler()
+        if scheduler is None or isinstance(scheduler, ReduceLROnPlateau):
             return
-        schedulers = scheduler if isinstance(scheduler, list) else [scheduler]
-        for scheduler_item in schedulers:
-            if isinstance(scheduler_item, ReduceLROnPlateau):
-                # configure_optimizers() only ever configures LambdaLR; a metrics-based
-                # scheduler isn't supported by this manual-optimization step loop.
-                continue
-            scheduler_item.step()
+        scheduler.step()
+
+    def on_train_epoch_end(self) -> None:
+        """Step epoch-interval (non-plateau) schedulers on the manual-optimization path.
+
+        The automatic-optimization path leaves scheduler stepping entirely to Lightning; only the manual keypoint loop
+        steps schedulers itself.
+        """
+        if self.automatic_optimization or self._lr_scheduler_interval != "epoch":
+            return
+        scheduler = self._current_lr_scheduler()
+        if scheduler is None or isinstance(scheduler, ReduceLROnPlateau):
+            return
+        scheduler.step()
+
+    def on_validation_epoch_end(self) -> None:
+        """Step ``ReduceLROnPlateau`` from the monitored metric on the manual-optimization path.
+
+        The automatic-optimization path lets Lightning feed the monitored metric; the manual keypoint loop must read it
+        from ``trainer.callback_metrics`` and step the scheduler itself. The pre-training sanity-check validation is
+        skipped so plateau patience/cooldown bookkeeping is not seeded from the untrained model.
+        """
+        if self.automatic_optimization or self.trainer.sanity_checking:
+            return
+        scheduler = self._current_lr_scheduler()
+        if not isinstance(scheduler, ReduceLROnPlateau):
+            return
+        monitor = self._lr_scheduler_monitor or "val/loss"
+        metric = self.trainer.callback_metrics.get(monitor)
+        if metric is None:
+            # Warn-and-continue would let the LR never reduce while training silently proceeds. Fail loud instead,
+            # mirroring Lightning's strict-monitor behavior on the automatic-optimization path.
+            raise RuntimeError(
+                f"ReduceLROnPlateau monitor {monitor!r} was not found in callback_metrics, so the learning rate "
+                "would never be reduced. Ensure the monitored metric is logged every validation epoch (e.g. set "
+                "compute_val_loss=True for the default 'val/loss' monitor), or set lr_scheduler_monitor to a metric "
+                "that is produced."
+            )
+        scheduler.step(metric)
 
     @staticmethod
     def _detach_results(results: list[dict[str, Tensor]]) -> list[dict[str, Tensor]]:
@@ -842,22 +1042,68 @@ class RFDETRModelModule(LightningModule):
         steps_per_epoch = max(1, total_steps // tc.epochs)
         warmup_steps = int(steps_per_epoch * tc.warmup_epochs)
 
-        def lr_lambda(current_step: int) -> float:
-            if current_step < warmup_steps:
-                return float(current_step) / float(max(1, warmup_steps))
-            if tc.lr_scheduler == "cosine":
-                progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-                return tc.lr_min_factor + (1 - tc.lr_min_factor) * 0.5 * (1 + math.cos(math.pi * progress))
-            # Step decay: drop by 10x after lr_drop epochs.
-            if current_step < tc.lr_drop * steps_per_epoch:
-                return 1.0
-            return 0.1
+        scheduler_cfg = tc.lr_scheduler
+        scheduler: LRScheduler | ReduceLROnPlateau
+        interval = "step"
+        monitor: str | None = None
+        if _is_managed_scheduler_name(scheduler_cfg):
+            # Managed "step" / "cosine" preset — warmup + total-step sizing baked into a LambdaLR (unchanged behavior).
+            scheduler = _build_managed_scheduler(optimizer, tc, total_steps, steps_per_epoch, warmup_steps)
+        else:
+            if not isinstance(scheduler_cfg, str):
+                # Explicit callable / functools.partial: built from the optimizer only (kwargs baked in).
+                scheduler_name = getattr(scheduler_cfg, "__qualname__", None) or repr(scheduler_cfg)
+                scheduler = _instantiate_explicit_scheduler(scheduler_cfg, scheduler_name, optimizer, {})
+            else:
+                # Explicit dotted import path: constructed from lr_scheduler_kwargs only.
+                scheduler_class = _import_scheduler_class(scheduler_cfg)
+                scheduler = _instantiate_explicit_scheduler(
+                    scheduler_class, scheduler_cfg, optimizer, tc.lr_scheduler_kwargs
+                )
+            interval = tc.lr_scheduler_interval
+            if isinstance(scheduler, ReduceLROnPlateau):
+                monitor = tc.lr_scheduler_monitor
+                # The monitored metric (e.g. val/loss) is only available per epoch, so plateau always steps
+                # on the epoch boundary regardless of the configured interval.
+                interval = "epoch"
+                if warmup_steps > 0:
+                    logger.warning(
+                        "warmup_epochs=%s is ignored for ReduceLROnPlateau; a metric-driven scheduler cannot "
+                        "be composed with a linear warmup ramp.",
+                        tc.warmup_epochs,
+                    )
+            else:
+                # Auto-wrap explicit schedulers with a linear warmup ramp. The wrap is stepped at the same cadence as
+                # the scheduler, so size it in the scheduler's own units: optimizer steps for "step", epochs for "epoch"
+                # (otherwise a step-sized ramp stepped once per epoch would stretch across the whole run).
+                if interval == "step":
+                    warmup_units = warmup_steps
+                else:
+                    # Epoch cadence: the ramp is stepped once per epoch. ceil keeps a fractional warmup_epochs from
+                    # truncating to zero (a silently dropped warmup). A single-epoch ramp has start_factor == 1.0,
+                    # i.e. a flat no-op that looks like warmup but isn't, so a gradual epoch-granular warmup needs
+                    # >= 2 epochs; warn and skip rather than emit a degenerate ramp.
+                    warmup_units = math.ceil(tc.warmup_epochs)
+                    if tc.warmup_epochs > 0 and warmup_units < 2:
+                        logger.warning(
+                            "warmup_epochs=%s with lr_scheduler_interval='epoch' cannot form a gradual warmup ramp "
+                            "(epoch-granular warmup needs >= 2 epochs); skipping warmup. Use "
+                            "lr_scheduler_interval='step' for sub-epoch warmup, or set warmup_epochs >= 2.",
+                            tc.warmup_epochs,
+                        )
+                        warmup_units = 0
+                if warmup_units > 0:
+                    scheduler = _wrap_with_warmup(scheduler, optimizer, warmup_units)
 
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+        self._lr_scheduler_interval = interval
+        self._lr_scheduler_monitor = monitor
 
+        lr_scheduler_config: LRSchedulerConfigType = {"scheduler": scheduler, "interval": interval}
+        if monitor is not None:
+            lr_scheduler_config["monitor"] = monitor
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+            "lr_scheduler": lr_scheduler_config,
         }
 
     def clip_gradients(

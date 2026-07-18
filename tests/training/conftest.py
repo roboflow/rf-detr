@@ -47,7 +47,7 @@ def base_train_config(tmp_path):
             lr_encoder=1.5e-4,
             batch_size=2,
             weight_decay=1e-4,
-            lr_drop=8,
+            lr_scheduler_kwargs={"lr_drop": 8},
             warmup_epochs=1.0,
             drop_path=0.0,
             multi_scale=False,

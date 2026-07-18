@@ -231,14 +231,18 @@ The parameters below are available for fine-grained control over training behavi
 
 ### Scheduler and Regularization
 
-| Parameter          | Type              | Default   | Description                                                                                                 |
-| ------------------ | ----------------- | --------- | ----------------------------------------------------------------------------------------------------------- |
-| `lr_scheduler`     | `str`             | `"step"`  | Learning rate scheduler type. Options: `"step"` (step decay at `lr_drop`) or `"cosine"` (cosine annealing). |
-| `lr_min_factor`    | `float`           | `0.0`     | Floor for the cosine scheduler, expressed as a fraction of the initial LR. Ignored when using `"step"`.     |
-| `optimizer`        | `str \| Callable` | `"adamw"` | Optimizer name, dotted import path, or callable. See [Custom optimizer](customization.md#custom-optimizer). |
-| `optimizer_kwargs` | `dict`            | `{}`      | Keyword arguments forwarded to the optimizer constructor; ignored (with a warning) for callables.           |
-| `warmup_epochs`    | `float`           | `0.0`     | Number of epochs for linear learning rate warmup at the start of training.                                  |
-| `drop_path`        | `float`           | `0.0`     | Stochastic depth drop-path rate applied to the backbone. Higher values add more regularization.             |
+| Parameter               | Type              | Default      | Description                                                                                                                               |
+| ----------------------- | ----------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `lr_scheduler`          | `str \| Callable` | `"step"`     | Scheduler preset (`"step"`/`"cosine"`), dotted import path, or callable. See [Custom LR scheduler](customization.md#custom-lr-scheduler). |
+| `lr_scheduler_kwargs`   | `dict`            | `{}`         | Keyword arguments forwarded to an explicit scheduler; also carries `lr_drop` / `min_factor` for the managed presets.                      |
+| `lr_scheduler_interval` | `str`             | `"step"`     | Stepping cadence for explicit schedulers: `"step"` (per optimizer step) or `"epoch"`. Managed presets always step per step.               |
+| `lr_scheduler_monitor`  | `str`             | `"val/loss"` | Metric fed to `ReduceLROnPlateau` (stepped once per epoch).                                                                               |
+| `lr_min_factor`         | `float`           | `0.0`        | **Deprecated** — pass `lr_scheduler_kwargs={"min_factor": ...}` instead. Cosine-preset floor, as a fraction of the initial LR.            |
+| `lr_drop`               | `int`             | `100`        | **Deprecated** — pass `lr_scheduler_kwargs={"lr_drop": ...}` instead. Epoch at which the `"step"` preset drops the LR by 10x.             |
+| `optimizer`             | `str \| Callable` | `"adamw"`    | Optimizer name, dotted import path, or callable. See [Custom optimizer](customization.md#custom-optimizer).                               |
+| `optimizer_kwargs`      | `dict`            | `{}`         | Keyword arguments forwarded to the optimizer constructor; ignored (with a warning) for callables.                                         |
+| `warmup_epochs`         | `float`           | `0.0`        | Epochs of linear LR warmup. For explicit schedulers this prepends a `SequentialLR` warmup ramp (skipped for `ReduceLROnPlateau`).         |
+| `drop_path`             | `float`           | `0.0`        | Stochastic depth drop-path rate applied to the backbone. Higher values add more regularization.                                           |
 
 ### Runtime and Accelerator
 
@@ -292,8 +296,12 @@ Below is a summary table of all training parameters:
 | `progress_bar`             | str \| bool \| None | None           | Progress bar style: `"tqdm"`, `"rich"`, or `None`. Legacy booleans are still accepted.                                                |
 | `accelerator`              | str                 | "auto"         | PyTorch Lightning accelerator. "auto" selects GPU/MPS/CPU automatically.                                                              |
 | `seed`                     | int                 | None           | Random seed for reproducibility. None means no fixed seed.                                                                            |
-| `lr_scheduler`             | str                 | "step"         | Learning rate scheduler type: "step" or "cosine".                                                                                     |
-| `lr_min_factor`            | float               | 0.0            | Minimum LR as a fraction of the initial LR (cosine scheduler floor).                                                                  |
+| `lr_scheduler`             | str \| Callable     | "step"         | Scheduler preset ("step"/"cosine"), dotted import path, or callable.                                                                  |
+| `lr_scheduler_kwargs`      | dict                | {}             | Keyword arguments for an explicit scheduler; also carries lr_drop / min_factor for the managed presets.                               |
+| `lr_scheduler_interval`    | str                 | "step"         | Explicit-scheduler stepping cadence: "step" or "epoch".                                                                               |
+| `lr_scheduler_monitor`     | str                 | "val/loss"     | Metric fed to ReduceLROnPlateau.                                                                                                      |
+| `lr_min_factor`            | float               | 0.0            | Deprecated — use lr_scheduler_kwargs["min_factor"]. Cosine-preset floor as a fraction of the initial LR.                              |
+| `lr_drop`                  | int                 | 100            | Deprecated — use lr_scheduler_kwargs["lr_drop"]. Epoch at which the "step" preset drops the LR by 10x.                                |
 | `warmup_epochs`            | float               | 0.0            | Number of linear warmup epochs at the start of training.                                                                              |
 | `drop_path`                | float               | 0.0            | Stochastic depth drop-path rate for the backbone.                                                                                     |
 | `compute_val_loss`         | bool                | True           | Compute and log loss during validation.                                                                                               |

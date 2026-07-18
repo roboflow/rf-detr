@@ -62,7 +62,7 @@ module = RFDETRModelModule(model_config, train_config)
 | `validation_step`          | Runs forward pass and postprocessing; returns `{results, targets}` for `COCOEvalCallback`.                                                                                                                                      |
 | `test_step`                | Same as `validation_step`, logs under `test/`.                                                                                                                                                                                  |
 | `predict_step`             | Runs inference-only forward pass and returns postprocessed detections.                                                                                                                                                          |
-| `configure_optimizers`     | Builds the configured optimizer, preserves layer-wise LR decay, applies optional parameter-group kwargs, and attaches a LambdaLR scheduler.                                                                                     |
+| `configure_optimizers`     | Builds the configured optimizer, preserves layer-wise LR decay, applies optional parameter-group kwargs, and attaches the configured LR scheduler (managed preset, import path, or callable).                                   |
 | `on_load_checkpoint`       | Auto-converts legacy `.pth` checkpoints to PTL format.                                                                                                                                                                          |
 
 ### Accessing the underlying model
@@ -102,6 +102,33 @@ See [Training parameters — optimizer](training-parameters.md) for the full par
     - **`Lookahead` / `PCGrad` / `GradientCentralization`.** These wrap or post-process another optimizer and likewise cannot be built from parameter groups alone; construction with the parameter groups only raises a `TypeError`.
 
     If you need SAM or Lookahead, override `configure_optimizers` and set `self.automatic_optimization = False` in `RFDETRModelModule.__init__`. For standard use, pick a `torch.optim` optimizer by name or a drop-in `pytorch-optimizer` optimizer by import path (e.g. `"pytorch_optimizer.Lion"`).
+
+### Custom LR scheduler
+
+`TrainConfig.lr_scheduler` accepts either a **preset name / import path** (a string) or a **callable** (a class or `functools.partial`), mirroring `optimizer`, and selects the scheduler built in `configure_optimizers`.
+
+- **Managed preset** — the built-in `"step"` (10x drop after `lr_drop` epochs) or `"cosine"` (annealing to `min_factor`). These own linear warmup and full-run step sizing; pass `lr_drop` / `min_factor` via `lr_scheduler_kwargs`.
+- **Explicit import path** — a dotted string such as `"torch.optim.lr_scheduler.OneCycleLR"`. The class is constructed as `scheduler(optimizer, **lr_scheduler_kwargs)`; RF-DETR injects no `total_steps` / `T_max`, so pass any the scheduler needs in `lr_scheduler_kwargs`.
+- **Callable** — a class or `functools.partial` is called as `lr_scheduler(optimizer)` and nothing else, so bake all hyperparameters into the callable. `lr_scheduler_kwargs` is ignored (with a warning) in this mode. Reconstructable callables desugar to a dotted path plus kwargs so the config round-trips through `training_config.json`; a lambda or locally-defined class still trains but cannot be restored from a saved config.
+
+```python
+import functools, torch
+
+# managed preset — warmup + full-run sizing handled by RF-DETR
+train_config = TrainConfig(..., lr_scheduler="cosine", lr_scheduler_kwargs={"min_factor": 0.1})
+
+# explicit import path — supply scheduler arguments via lr_scheduler_kwargs
+train_config = TrainConfig(
+    ..., lr_scheduler="torch.optim.lr_scheduler.StepLR", lr_scheduler_kwargs={"step_size": 30, "gamma": 0.1}
+)
+
+# callable / functools.partial — bake arguments in; lr_scheduler_kwargs is ignored
+train_config = TrainConfig(..., lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, step_size=30))
+```
+
+With `warmup_epochs > 0`, an explicit scheduler is automatically prepended with a linear warmup ramp via `SequentialLR` (managed presets bake warmup into their own schedule). `ReduceLROnPlateau` is special: it cannot be warmup-wrapped, always steps once per epoch, and reads the metric named by `lr_scheduler_monitor` (default `"val/loss"`). Use `lr_scheduler_interval="epoch"` to step other explicit schedulers per epoch instead of per optimizer step.
+
+See [Training parameters — scheduler](training-parameters.md#scheduler-and-regularization) for the full parameter reference.
 
 ---
 
