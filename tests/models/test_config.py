@@ -621,6 +621,12 @@ class TestTrainConfigLRScheduler:
             tc = self._tc(tmp_path, lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, gamma=object()))
         assert callable(tc.lr_scheduler) and not isinstance(tc.lr_scheduler, str)
 
+    def test_conflicting_field_and_kwarg_warns_kwarg_wins(self, tmp_path):
+        """When both lr_min_factor and kwargs['min_factor'] are set to different values, the kwarg wins and warns so."""
+        with pytest.warns(FutureWarning, match="the kwarg wins"):
+            tc = self._tc(tmp_path, lr_scheduler="cosine", lr_min_factor=0.2, lr_scheduler_kwargs={"min_factor": 0.3})
+        assert tc.lr_scheduler_kwargs["min_factor"] == pytest.approx(0.3)
+
 
 class TestBuildTrainerUsesRealFields:
     """build_trainer() must read clip_max_norm, seed, sync_bn from real TrainConfig fields."""

@@ -107,6 +107,7 @@ _TC_NON_NAMESPACE_FIELDS = {
     "lr_scheduler_interval",
     "lr_scheduler_monitor",
     "lr_min_factor",
+    "lr_drop",
     "optimizer",
     "optimizer_kwargs",
     "optimizer_param_group_overrides",

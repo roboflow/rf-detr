@@ -1423,12 +1423,22 @@ class TrainConfig(BaseConfig):
             # already holds this value, the field adds nothing — skip silently so migrated-config reloads never warn.
             if kwargs.get(kwarg_name) == data[field_name]:
                 continue
+            # Both set to different values: the kwarg wins (setdefault below is a no-op). Say so explicitly rather
+            # than implying the deprecated field was migrated, which would mislead — the field value is discarded.
+            if kwarg_name in kwargs:
+                warnings.warn(
+                    f"{field_name}={data[field_name]!r} is ignored because lr_scheduler_kwargs already sets "
+                    f"{kwarg_name!r}={kwargs[kwarg_name]!r} (the kwarg wins); remove the deprecated {field_name}.",
+                    FutureWarning,
+                    stacklevel=2,
+                )
+                continue
             warnings.warn(
                 f"{field_name} is deprecated; pass it via lr_scheduler_kwargs={{'{kwarg_name}': ...}} instead.",
                 FutureWarning,
                 stacklevel=2,
             )
-            kwargs.setdefault(kwarg_name, data[field_name])
+            kwargs[kwarg_name] = data[field_name]
         if kwargs:
             data["lr_scheduler_kwargs"] = kwargs
         return data
