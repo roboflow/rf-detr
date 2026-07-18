@@ -598,6 +598,29 @@ class TestTrainConfigLRScheduler:
         tc = self._tc(tmp_path, lr_scheduler="cosine", lr_scheduler_kwargs={"min_factor": 0.1, "lr_drop": 50})
         assert tc.lr_scheduler_kwargs == {"min_factor": pytest.approx(0.1), "lr_drop": 50}
 
+    def test_explicit_scheduler_round_trips_through_model_dump(self, tmp_path):
+        """An explicit dotted scheduler and its kwargs survive a model_dump() -> reload round-trip unchanged."""
+        original = self._tc(
+            tmp_path,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 30, "gamma": 0.1},
+        )
+        reloaded = TrainConfig(**original.model_dump())
+        assert reloaded.lr_scheduler == "torch.optim.lr_scheduler.StepLR"
+        assert reloaded.lr_scheduler_kwargs == {"step_size": 30, "gamma": pytest.approx(0.1)}
+
+    def test_partial_with_positional_args_is_not_serializable(self, tmp_path):
+        """A functools.partial with positional args cannot be desugared; it warns and stays an in-memory callable."""
+        with pytest.warns(UserWarning, match="cannot be saved"):
+            tc = self._tc(tmp_path, lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, 5))
+        assert callable(tc.lr_scheduler) and not isinstance(tc.lr_scheduler, str)
+
+    def test_partial_with_non_json_kwargs_is_not_serializable(self, tmp_path):
+        """A functools.partial carrying non-JSON kwargs cannot be desugared; it warns and stays a callable."""
+        with pytest.warns(UserWarning, match="cannot be saved"):
+            tc = self._tc(tmp_path, lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, gamma=object()))
+        assert callable(tc.lr_scheduler) and not isinstance(tc.lr_scheduler, str)
+
 
 class TestBuildTrainerUsesRealFields:
     """build_trainer() must read clip_max_norm, seed, sync_bn from real TrainConfig fields."""

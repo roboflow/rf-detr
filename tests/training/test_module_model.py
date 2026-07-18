@@ -1953,6 +1953,38 @@ class TestConfigureOptimizers:
             module.configure_optimizers()
 
     @patch("rfdetr.training.module_model.get_param_dict")
+    def test_explicit_scheduler_construction_error_is_reraised(self, mock_get_param_dict, tmp_path):
+        """A missing required scheduler kwarg surfaces as an RF-DETR configuration error, not a bare TypeError."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",  # StepLR requires step_size
+            lr_scheduler_kwargs={},
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        with pytest.raises(TypeError, match="Failed to initialize lr_scheduler"):
+            module.configure_optimizers()
+
+    @patch("rfdetr.training.module_model.logger")
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_plateau_with_warmup_warns(self, mock_get_param_dict, mock_logger, tmp_path):
+        """warmup_epochs>0 with ReduceLROnPlateau warns; a metric-driven scheduler cannot compose with a warmup ramp."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=1.0,
+            lr_scheduler="torch.optim.lr_scheduler.ReduceLROnPlateau",
+            lr_scheduler_monitor="val/loss",
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        module.configure_optimizers()
+
+        mock_logger.warning.assert_called_once()
+
+    @patch("rfdetr.training.module_model.get_param_dict")
     @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
     @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
     def test_fused_optimizer_disabled_when_precision_not_bf16(
