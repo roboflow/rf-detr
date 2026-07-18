@@ -5,7 +5,6 @@
 # ------------------------------------------------------------------------
 """Tests for resuming training from checkpoint."""
 
-import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,13 +12,11 @@ from rfdetr import RFDETRNano
 
 
 def test_resume_with_completed_epochs_returns_early(tmp_path: Path) -> None:
-    """Passing start_epoch emits DeprecationWarning and still reaches trainer.fit().
+    """Training reaches trainer.fit() when resuming a run that already completed its epochs.
 
     In the legacy engine.py path, ``start_epoch=epochs`` caused the training loop to be skipped (``range(start_epoch,
-    epochs)`` was empty), which triggered an ``UnboundLocalError`` when accessing ``test_stats``.
-
-    In the PTL path, ``start_epoch`` is a deprecated kwarg that is absorbed and ignored (PTL resumes automatically via
-    ``ckpt_path``). The shim should emit the warning and still call ``trainer.fit(...)`` without raising.
+    epochs)`` was empty), which triggered an ``UnboundLocalError`` when accessing ``test_stats``. In the PTL path,
+    resuming happens automatically via ``ckpt_path`` and does not require a ``start_epoch`` kwarg.
 
     Args:
         tmp_path: Pytest temporary directory.
@@ -33,21 +30,16 @@ def test_resume_with_completed_epochs_returns_early(tmp_path: Path) -> None:
         patch("rfdetr.training.RFDETRModelModule"),
         patch("rfdetr.training.RFDETRDataModule"),
         patch("rfdetr.training.build_trainer") as mock_build_trainer,
-        warnings.catch_warnings(record=True) as caught,
     ):
-        warnings.simplefilter("always")
         model.train(
             dataset_dir=str(tmp_path),
             epochs=1,
-            start_epoch=1,
             batch_size=1,
             grad_accum_steps=1,
             output_dir=str(output_dir),
             device="cpu",
         )
 
-    depr = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert any("start_epoch" in str(w.message) for w in depr), "Expected a DeprecationWarning mentioning start_epoch"
     mock_build_trainer.return_value.fit.assert_called_once()
 
 

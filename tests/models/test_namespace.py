@@ -91,7 +91,7 @@ class TestNamespaceFieldOwnership:
 
     def test_cls_loss_coef_from_train_config(self) -> None:
         """ns.cls_loss_coef must reflect TrainConfig.cls_loss_coef, not ModelConfig."""
-        mc = RFDETRBaseConfig(num_classes=80)  # cls_loss_coef=1.0 (ModelConfig default)
+        mc = RFDETRBaseConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp", cls_loss_coef=2.5)
         ns = _namespace_from_configs(mc, tc)
         assert ns.cls_loss_coef == pytest.approx(2.5)
@@ -109,22 +109,6 @@ class TestNamespaceFieldOwnership:
         tc = SegmentationTrainConfig(dataset_dir="/tmp", cls_loss_coef=5.0)
         ns = _namespace_from_configs(mc, tc)
         assert ns.cls_loss_coef == pytest.approx(5.0)
-
-    def test_cls_loss_coef_train_config_wins_over_explicit_model_config(self) -> None:
-        """When both are explicitly set, TrainConfig.cls_loss_coef takes precedence."""
-        with pytest.warns(DeprecationWarning, match="ModelConfig\\.cls_loss_coef is deprecated"):
-            mc = RFDETRBaseConfig(num_classes=80, cls_loss_coef=0.5)
-        tc = TrainConfig(dataset_dir="/tmp", cls_loss_coef=3.0)
-        ns = _namespace_from_configs(mc, tc)
-        assert ns.cls_loss_coef == pytest.approx(3.0)
-
-    def test_cls_loss_coef_model_config_explicit_is_preserved_during_deprecation(self) -> None:
-        """Explicit ModelConfig.cls_loss_coef remains effective until removal."""
-        with pytest.warns(DeprecationWarning, match="ModelConfig\\.cls_loss_coef is deprecated"):
-            mc = RFDETRBaseConfig(num_classes=80, cls_loss_coef=2.5)
-        tc = TrainConfig(dataset_dir="/tmp")
-        ns = _namespace_from_configs(mc, tc)
-        assert ns.cls_loss_coef == pytest.approx(2.5)
 
     # --- num_select must come from ModelConfig unconditionally ---
 
@@ -148,42 +132,3 @@ class TestNamespaceFieldOwnership:
         tc = TrainConfig(dataset_dir="/tmp")
         ns = _namespace_from_configs(mc, tc)
         assert ns.num_select == expected_num_select
-
-
-class TestBuildNamespaceDeprecated:
-    """build_namespace() is a deprecated shim — verify the warning fires."""
-
-    def test_emits_deprecation_warning(self, reset_build_namespace_warning_state) -> None:
-        """Every call to build_namespace() must emit a DeprecationWarning."""
-        from rfdetr._namespace import build_namespace
-
-        mc = RFDETRBaseConfig(num_classes=80)
-        tc = TrainConfig(dataset_dir="/tmp")
-
-        with pytest.warns(FutureWarning, match="build_namespace"):
-            build_namespace(mc, tc)
-
-    def test_result_identical_to_namespace_from_configs(self, reset_build_namespace_warning_state) -> None:
-        """build_namespace output must equal _namespace_from_configs output."""
-        from rfdetr._namespace import build_namespace
-        from rfdetr.models._defaults import MODEL_DEFAULTS
-
-        mc = RFDETRBaseConfig(num_classes=80)
-        tc = TrainConfig(dataset_dir="/tmp")
-
-        with pytest.warns(FutureWarning):
-            ns_legacy = build_namespace(mc, tc)
-        ns_new = _namespace_from_configs(mc, tc, MODEL_DEFAULTS)
-
-        legacy_attrs = vars(ns_legacy)
-        new_attrs = vars(ns_new)
-
-        assert set(legacy_attrs.keys()) == set(new_attrs.keys()), (
-            f"Key mismatch: "
-            f"legacy_only={set(legacy_attrs) - set(new_attrs)}, "
-            f"new_only={set(new_attrs) - set(legacy_attrs)}"
-        )
-        for key in sorted(legacy_attrs):
-            assert legacy_attrs[key] == new_attrs[key], (
-                f"Value mismatch for '{key}': legacy={legacy_attrs[key]!r}, new={new_attrs[key]!r}"
-            )

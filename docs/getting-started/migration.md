@@ -8,7 +8,7 @@ Read each section between your current version and your target — every section
 only the delta between two adjacent releases.
 
 ```
-1.4.x  →  1.5 →  1.6  →  1.7  →  1.8
+1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9
 ```
 
 You can apply all changes in one go; working through sections one release at a time
@@ -79,44 +79,44 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     train_config = TrainConfig(augmentation_backend="torchvision", ...)
     ```
 
-### Planned for Removal in v1.9
+### Removed
 
-The following APIs were deprecated in earlier releases and will be removed in v1.9. They still work in the current release (v1.8.x) but emit `DeprecationWarning`. Update your code before upgrading.
+The following APIs were deprecated in earlier releases and are removed as of v1.9. Update your code before upgrading.
 
-!!! warning "Planned for removal: `rfdetr.util.*` and `rfdetr.deploy.*` import paths"
+!!! warning "Removed: `rfdetr.util.*` and `rfdetr.deploy.*` import paths"
 
-    Deprecated since v1.6. Use the canonical replacements listed in the [Upgrade 1.5 → 1.6](#upgrade-15--16) section.
+    Deprecated since v1.6, removed in v1.9. Use the canonical replacements listed in the [Upgrade 1.5 → 1.6](#upgrade-15--16) section.
 
     ```python
-    # These imports still work in v1.8 but emit DeprecationWarning; update before v1.9
+    # These imports now raise ImportError; update to the canonical paths
     from rfdetr.util.coco_classes import COCO_CLASSES  # → rfdetr.assets.coco_classes
     from rfdetr.util.misc import get_rank  # → rfdetr.utilities
     from rfdetr.deploy import export_onnx  # → rfdetr.export.main
     ```
 
-!!! warning "Planned for removal: `build_namespace(model_config, train_config)`"
+!!! warning "Removed: `build_namespace(model_config, train_config)`"
 
-    Deprecated since v1.7. Use `build_model_from_config` and `build_criterion_from_config` instead.
+    Deprecated since v1.7, removed in v1.9. Use `build_model_from_config` and `build_criterion_from_config` instead.
 
-!!! warning "Planned for removal: `load_pretrain_weights(nn_model, model_config, train_config)` with `train_config`"
+!!! warning "Removed: `load_pretrain_weights(nn_model, model_config, train_config)` with `train_config`"
 
-    Deprecated since v1.7. Drop the `train_config` positional argument.
+    Deprecated since v1.7, removed in v1.9. Drop the `train_config` positional argument.
 
-!!! warning "Planned for removal: `start_epoch` kwarg in `train()`"
+!!! warning "Removed: `start_epoch` kwarg in `train()`"
 
-    Deprecated since v1.7. PyTorch Lightning resumes automatically via `resume=`.
+    Deprecated since v1.7, removed in v1.9. PyTorch Lightning resumes automatically via `resume=`.
 
-!!! warning "Planned for removal: `do_benchmark` kwarg in `train()`"
+!!! warning "Removed: `do_benchmark` kwarg in `train()`"
 
-    Deprecated since v1.7. Use the `rfdetr.export.benchmark` module instead.
+    Deprecated since v1.7, removed in v1.9. Use the `rfdetr.export.benchmark` module instead.
 
-!!! warning "Planned for removal: `callbacks` dict kwarg in `train()`"
+!!! warning "Removed: `callbacks` dict kwarg in `train()`"
 
-    Deprecated since v1.7. Pass PTL `Callback` objects directly via the Lightning API instead.
+    Deprecated since v1.7, removed in v1.9. Pass PTL `Callback` objects directly via the Lightning API instead.
 
-!!! warning "Planned for removal: misplaced config fields"
+!!! warning "Removed: misplaced config fields"
 
-    The following `TrainConfig` and `ModelConfig` fields moved to their correct config class in v1.7 and the deprecated compatibility shims will be removed in v1.9. Update any direct references:
+    The following `TrainConfig` and `ModelConfig` fields moved to their correct config class in v1.7; the deprecated compatibility shims are removed in v1.9. Passing one of these fields on its old config class now raises a pydantic validation error:
 
     | Field               | Removed from  | Use in        |
     | ------------------- | ------------- | ------------- |
@@ -125,6 +125,20 @@ The following APIs were deprecated in earlier releases and will be removed in v1
     | `segmentation_head` | `TrainConfig` | `ModelConfig` |
     | `num_select`        | `TrainConfig` | `ModelConfig` |
     | `cls_loss_coef`     | `ModelConfig` | `TrainConfig` |
+
+!!! warning "Removed: `RFDETRLarge` silent fallback to deprecated Large config"
+
+    `RFDETRLarge()` no longer catches checkpoint/config incompatibility errors and silently retries with `RFDETRLargeDeprecatedConfig`. Loading legacy deprecated-Large weights through `RFDETRLarge` now raises the original `ValueError`/`RuntimeError` instead of falling back. `RFDETRLargeDeprecated` itself is unaffected — use it directly to load those checkpoints.
+
+    ```python
+    # Before (silently retried with the deprecated config and logged a warning)
+    model = RFDETRLarge(pretrain_weights="old_large_checkpoint.pth")
+
+    # After
+    from rfdetr import RFDETRLargeDeprecated
+
+    model = RFDETRLargeDeprecated(pretrain_weights="old_large_checkpoint.pth")
+    ```
 
 ### Deprecated in v1.9 → Remove in v1.11
 

@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for the ``_safe_torch_load`` helper in ``rfdetr.util.io``.
+"""Tests for the ``_safe_torch_load`` helper in ``rfdetr.utilities.io``.
 
 Covers the three-stage safe-load strategy: strict weights_only, safe-globals fallback, and opt-in pickle fallback.
 """
@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from rfdetr.util.io import _safe_torch_load
+from rfdetr.utilities.io import _safe_torch_load
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers

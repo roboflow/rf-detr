@@ -479,7 +479,7 @@ class TestLoadPretrainWeights:
         # weights.py so it is not a module-level name there). MD5 validation is intentionally
         # kept on the retry (validate_md5=False was removed in favour of rejecting
         # hash-mismatched files rather than silently accepting them).
-        with patch("rfdetr.util.io._safe_torch_load", side_effect=fake_safe_load):
+        with patch("rfdetr.utilities.io._safe_torch_load", side_effect=fake_safe_load):
             load_pretrain_weights(module.model, module.model_config)
 
         redownload_calls = [c for c in mock_download.call_args_list if c.kwargs.get("redownload") is True]
