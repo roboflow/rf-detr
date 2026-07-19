@@ -29,7 +29,7 @@ from rfdetr.models.heads.keypoints import compute_keypoint_matching_cost
 from rfdetr.models.heads.segmentation import point_sample
 from rfdetr.utilities.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.rotated_box_ops import probiou_pairwise
+from rfdetr.utilities.rotated_box_ops import obb_to_aabb, probiou_pairwise
 
 logger = get_logger()
 _SANITIZED_COST_MARGIN = 1.0
@@ -183,10 +183,18 @@ class HungarianMatcher(nn.Module):
         if keypoints_present:
             tgt_keypoints = torch.cat([v["keypoints"] for v in targets], dim=0)
 
-        if self.oriented:
+        # In oriented mode the encoder (two-stage) emits 4D proposals with no angle,
+        # while the decoder emits 5D. The target is 5D either way, so on the encoder
+        # path it must be reduced to its axis-aligned envelope — slicing [..., :4]
+        # would reuse the rotated side lengths as axis-aligned extents.
+        oriented_decoder = self.oriented and out_bbox.shape[-1] == 5
+        oriented_encoder = self.oriented and out_bbox.shape[-1] != 5 and tgt_bbox.shape[-1] == 5
+        tgt_bbox_spatial = obb_to_aabb(tgt_bbox) if oriented_encoder else tgt_bbox[..., :4]
+
+        if oriented_decoder:
             cost_giou = probiou_pairwise(out_bbox, tgt_bbox)
         else:
-            giou = generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
+            giou = generalized_box_iou(box_cxcywh_to_xyxy(out_bbox[..., :4]), box_cxcywh_to_xyxy(tgt_bbox_spatial))
             cost_giou = -giou
 
         # Compute the classification cost.
@@ -200,9 +208,8 @@ class HungarianMatcher(nn.Module):
         pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-F.logsigmoid(flat_pred_logits))
         cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
 
-        # Compute the L1 cost between boxes (spatial dims only for oriented)
+        # L1 over spatial dims only; tgt_bbox_spatial is the envelope on the encoder path.
         out_bbox_spatial = out_bbox[..., :4] if self.oriented else out_bbox
-        tgt_bbox_spatial = tgt_bbox[..., :4] if self.oriented else tgt_bbox
         cost_bbox = torch.cdist(out_bbox_spatial, tgt_bbox_spatial, p=1)
 
         if masks_present:

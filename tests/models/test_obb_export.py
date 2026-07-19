@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import math
 from unittest.mock import MagicMock
 
 import torch
@@ -19,8 +20,12 @@ def _make_exportable_oriented_lwdetr() -> LWDETR:
 
     backbone = MagicMock()
     src = torch.randn(1, hidden_dim, 4, 4)
+    mask = torch.zeros(1, 4, 4, dtype=torch.bool)
     pos = torch.randn(1, hidden_dim, 4, 4)
-    backbone.return_value = ([src], None, [pos])
+    # forward_export() calls the *exported* backbone, whose Joiner.forward_export
+    # returns (feats, masks, poss, cross_attn_feats) — 4 values, unlike the 3-value
+    # Joiner.forward used on the training path.
+    backbone.return_value = ([src], [mask], [pos], None)
 
     transformer = MagicMock()
     transformer.d_model = hidden_dim
@@ -61,4 +66,4 @@ class TestOrientedExportForward:
         dets, _ = model.forward_export(tensors)
         angles = dets[..., 4]
         assert (angles >= 0).all()
-        assert (angles < 3.2).all()
+        assert (angles <= math.pi).all()

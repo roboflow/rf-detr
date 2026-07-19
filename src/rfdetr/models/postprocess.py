@@ -155,9 +155,15 @@ class PostProcess(nn.Module):
         scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1).to(obb.dtype)
         obb[..., :4] = obb[..., :4] * scale_fct[:, None, :]
         corners = box_cxcywha_to_corners(obb)
+        # Axis-aligned xyxy envelope of each OBB — required by COCO eval callback and torchmetrics
+        x_min = corners[..., 0].min(dim=-1).values
+        y_min = corners[..., 1].min(dim=-1).values
+        x_max = corners[..., 0].max(dim=-1).values
+        y_max = corners[..., 1].max(dim=-1).values
+        boxes_xyxy = torch.stack([x_min, y_min, x_max, y_max], dim=-1)
         return [
-            {"scores": sc, "labels": lb, "boxes_obb": ob, "corners": cn}
-            for sc, lb, ob, cn in zip(scores, labels, obb, corners)
+            {"scores": sc, "labels": lb, "boxes_obb": ob, "corners": cn, "boxes": bx}
+            for sc, lb, ob, cn, bx in zip(scores, labels, obb, corners, boxes_xyxy)
         ]
 
     @staticmethod

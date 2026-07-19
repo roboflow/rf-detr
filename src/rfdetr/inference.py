@@ -164,6 +164,9 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         # Older detection-only namespaces may omit keypoint postprocess knobs; keep the ModelConfig default.
         trace_alpha=getattr(args, "postprocess_trace_alpha", 0.2),
+        # Without this an oriented checkpoint silently postprocesses as axis-aligned,
+        # dropping the angle and returning only 4 of the 5 predicted box dims.
+        oriented=getattr(args, "oriented", False),
     )
 
     return ModelContext(

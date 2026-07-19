@@ -260,6 +260,7 @@ overrides = [
   ], ignore_errors = true },
   { module = [
     "torchvision", "torchvision.*",
+    "albumentations", "albumentations.*",
     "pycocotools", "pycocotools.*",
     "timm", "timm.*",
     "einops", "einops.*",
@@ -289,7 +290,6 @@ overrides = [
     "rfdetr.config",
     "rfdetr.datasets._develop",
     "rfdetr.datasets.coco",
-    "rfdetr.datasets.dota_detection",
     "rfdetr.datasets.save_grids",
     "rfdetr.datasets.synthetic",
     "rfdetr.datasets.transforms",
@@ -309,7 +309,6 @@ overrides = [
     "rfdetr.models.backbone.dinov2_with_windowed_attn",
     "rfdetr.models.backbone.projector",
     "rfdetr.models.criterion",
-    "rfdetr.models.heads.detection",
     "rfdetr.models.heads.segmentation",
     "rfdetr.models.lwdetr",
     "rfdetr.models.matcher",

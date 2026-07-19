@@ -739,6 +739,7 @@ class TrainConfig(BaseConfig):
     dataset_file: Literal["coco", "o365", "roboflow", "yolo", "dota"] = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: PathLikeStr | None
+    dota_include_difficult: bool = False
     output_dir: PathLikeStr = "output"
     multi_scale: bool = True
     expanded_scales: bool = True

@@ -7,14 +7,14 @@
 import math
 from unittest.mock import MagicMock
 
+import pytest
 import torch
 
-from rfdetr.models.heads.detection import DetectionHead
 from rfdetr.models.lwdetr import LWDETR
 
 
-def _make_oriented_lwdetr(num_classes: int = 91) -> LWDETR:
-    """Construct a minimal oriented LWDETR for testing."""
+def _make_lwdetr(*, oriented: bool, num_classes: int = 91) -> LWDETR:
+    """Construct a minimal LWDETR for testing the angle head."""
     hidden_dim = 8
     backbone = MagicMock()
     transformer = MagicMock()
@@ -28,72 +28,67 @@ def _make_oriented_lwdetr(num_classes: int = 91) -> LWDETR:
         num_classes=num_classes,
         num_queries=4,
         group_detr=1,
-        oriented=True,
+        oriented=oriented,
     )
 
 
-class TestDetectionHeadOriented:
-    def test_standard_head_output_shape(self) -> None:
-        head = DetectionHead(hidden_dim=16, num_classes=10)
-        hs = torch.randn(2, 5, 16)
-        cls_out, coord_out = head(hs)
-        assert cls_out.shape == (2, 5, 10)
-        assert coord_out.shape == (2, 5, 4)
+def _predict_angle(model: LWDETR, hs: torch.Tensor) -> torch.Tensor:
+    """Apply the angle projection exactly as ``LWDETR.forward`` does.
 
-    def test_oriented_head_output_shape(self) -> None:
-        head = DetectionHead(hidden_dim=16, num_classes=10, oriented=True)
-        hs = torch.randn(2, 5, 16)
-        cls_out, coord_out = head(hs)
-        assert cls_out.shape == (2, 5, 10)
-        assert coord_out.shape == (2, 5, 5)
+    Mirrors lwdetr.py:532 and lwdetr.py:654, which share this expression.
+    """
+    assert model.angle_embed is not None
+    return model.angle_embed(hs).sigmoid() * math.pi
 
-    def test_oriented_angle_range(self) -> None:
-        head = DetectionHead(hidden_dim=16, num_classes=10, oriented=True)
-        hs = torch.randn(2, 5, 16)
-        _, coord_out = head(hs)
-        angles = coord_out[..., 4]
-        assert (angles >= 0).all()
-        assert (angles < math.pi + 0.01).all()
 
-    def test_oriented_has_angle_embed(self) -> None:
-        head = DetectionHead(hidden_dim=16, num_classes=10, oriented=True)
-        assert head.angle_embed is not None
+class TestLWDETRAngleHead:
+    """The angle head lives inline in LWDETR, not in a separate head module."""
 
-    def test_standard_has_no_angle_embed(self) -> None:
-        head = DetectionHead(hidden_dim=16, num_classes=10)
-        assert head.angle_embed is None
+    @pytest.mark.parametrize(
+        ("oriented", "expected"),
+        [pytest.param(True, True, id="oriented"), pytest.param(False, False, id="axis-aligned")],
+    )
+    def test_angle_embed_present_only_when_oriented(self, oriented: bool, expected: bool) -> None:
+        model = _make_lwdetr(oriented=oriented)
+        assert (model.angle_embed is not None) is expected
+        assert model.oriented is expected
 
-    def test_oriented_gradients_flow(self) -> None:
-        head = DetectionHead(hidden_dim=16, num_classes=10, oriented=True)
-        hs = torch.randn(2, 5, 16, requires_grad=True)
-        _, coord_out = head(hs)
-        loss = coord_out.sum()
-        loss.backward()
+    def test_angle_embed_is_zero_initialised(self) -> None:
+        """The final layer is zero-init'd (lwdetr.py:213-215) so training starts neutral."""
+        model = _make_lwdetr(oriented=True)
+        assert model.angle_embed is not None
+        assert torch.count_nonzero(model.angle_embed.layers[-1].weight) == 0
+        assert torch.count_nonzero(model.angle_embed.layers[-1].bias) == 0
+
+    def test_initial_angle_is_pi_over_two(self) -> None:
+        """Zero-init means sigmoid(0)*pi, i.e. every box starts at 90 degrees.
+
+        This is a consequence of the zero-init above, not an arbitrary constant: a non-zero init would bias every query
+        toward some other orientation.
+        """
+        model = _make_lwdetr(oriented=True)
+        angle = _predict_angle(model, torch.randn(2, 5, 8))
+        assert torch.allclose(angle, torch.full_like(angle, math.pi / 2), atol=1e-6)
+
+    def test_angle_output_shape(self) -> None:
+        model = _make_lwdetr(oriented=True)
+        assert _predict_angle(model, torch.randn(2, 5, 8)).shape == (2, 5, 1)
+
+    def test_angle_stays_in_range_for_extreme_features(self) -> None:
+        """The sigmoid()*pi projection bounds the angle whatever the feature magnitude."""
+        model = _make_lwdetr(oriented=True)
+        torch.nn.init.normal_(model.angle_embed.layers[-1].weight, std=10.0)  # type: ignore[union-attr]
+        angle = _predict_angle(model, torch.randn(4, 6, 8) * 100)
+        assert bool((angle >= 0).all())
+        assert bool((angle <= math.pi).all())
+
+    def test_angle_gradients_reach_the_features(self) -> None:
+        model = _make_lwdetr(oriented=True)
+        torch.nn.init.normal_(model.angle_embed.layers[-1].weight, std=0.1)  # type: ignore[union-attr]
+        hs = torch.randn(2, 5, 8, requires_grad=True)
+
+        _predict_angle(model, hs).sum().backward()
+
         assert hs.grad is not None
         assert torch.isfinite(hs.grad).all()
-
-
-class TestLWDETROriented:
-    def test_oriented_model_has_angle_embed(self) -> None:
-        model = _make_oriented_lwdetr()
-        assert model.angle_embed is not None
-        assert model.oriented is True
-
-    def test_non_oriented_model_has_no_angle_embed(self) -> None:
-        hidden_dim = 8
-        backbone = MagicMock()
-        transformer = MagicMock()
-        transformer.d_model = hidden_dim
-        transformer.decoder = MagicMock()
-        transformer.decoder.bbox_embed = None
-        model = LWDETR(
-            backbone=backbone,
-            transformer=transformer,
-            segmentation_head=None,
-            num_classes=91,
-            num_queries=4,
-            group_detr=1,
-            oriented=False,
-        )
-        assert model.angle_embed is None
-        assert model.oriented is False
+        assert torch.count_nonzero(hs.grad) > 0

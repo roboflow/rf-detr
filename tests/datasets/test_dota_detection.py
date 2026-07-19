@@ -15,11 +15,13 @@ from rfdetr.datasets.dota_detection import (
     DOTA_V1_CLASSES,
     DotaDetection,
     DotaNormalize,
+    OBBGeometricTransform,
     build_dota,
     corners_list_to_tensor,
     make_dota_transforms,
     parse_dota_annotation,
 )
+from rfdetr.utilities.rotated_box_ops import corners_to_cxcywha
 
 
 @pytest.fixture()
@@ -147,15 +149,59 @@ class TestDotaDetection:
 
 class TestDotaNormalize:
     def test_normalizes_boxes(self) -> None:
+        """Centre and size scale by width and height respectively.
+
+        Asserts exact values: a w/h scale swap would keep both components below 1.0,
+        so a bounds-only check cannot detect it.
+        """
+        normalize = DotaNormalize()
+        image = torch.rand(3, 100, 200)  # H=100, W=200
+        corners = torch.tensor([[[10, 10], [50, 10], [50, 40], [10, 40]]], dtype=torch.float32)
+        target = {"corners": corners, "boxes_obb": torch.zeros(1, 5)}
+
+        _, target_out = normalize(image, target)
+        # cx=30/200, cy=25/100, w=40/200, h=30/100
+        expected = torch.tensor([0.15, 0.25, 0.20, 0.30])
+        assert torch.allclose(target_out["boxes_obb"][0, :4], expected, atol=1e-5)
+
+    def test_boxes_alias_matches_boxes_obb(self) -> None:
+        """The ``boxes`` alias consumed by the COCO eval callback stays in sync."""
         normalize = DotaNormalize()
         image = torch.rand(3, 100, 200)
         corners = torch.tensor([[[10, 10], [50, 10], [50, 40], [10, 40]]], dtype=torch.float32)
         target = {"corners": corners, "boxes_obb": torch.zeros(1, 5)}
 
-        image_out, target_out = normalize(image, target)
-        obb = target_out["boxes_obb"]
-        assert obb[0, 0].item() < 1.0
-        assert obb[0, 1].item() < 1.0
+        _, target_out = normalize(image, target)
+        assert torch.allclose(target_out["boxes"], target_out["boxes_obb"][..., :4])
+
+    def test_zero_area_box_is_dropped(self) -> None:
+        """A box collapsed to zero area by augmentation must not reach the loss.
+
+        _obb_to_gaussian clamps degenerate sizes to a floor, so an unfiltered w=0 box trains silently against a
+        meaningless target instead of failing loudly.
+        """
+        normalize = DotaNormalize()
+        image = torch.rand(3, 100, 100)
+        corners = torch.tensor(
+            [
+                [[10, 10], [50, 10], [50, 40], [10, 40]],
+                [[0, 0], [0, 0], [0, 0], [0, 0]],
+            ],
+            dtype=torch.float32,
+        )
+        target = {"corners": corners, "boxes_obb": torch.zeros(2, 5), "labels": torch.tensor([3, 7])}
+
+        _, target_out = normalize(image, target)
+        assert target_out["boxes_obb"].shape == (1, 5)
+        assert target_out["labels"].tolist() == [3]
+        assert target_out["corners"].shape == (1, 4, 2)
+
+    def test_size_refreshed_to_post_transform_shape(self) -> None:
+        """``size`` must track the transformed image, not the original."""
+        normalize = DotaNormalize()
+        image = torch.rand(3, 64, 128)
+        _, target_out = normalize(image, {"size": torch.as_tensor([999, 999])})
+        assert target_out["size"].tolist() == [64, 128]
 
     def test_none_target_passthrough(self) -> None:
         normalize = DotaNormalize()
@@ -169,6 +215,75 @@ class TestDotaNormalize:
         target = {"corners": torch.zeros(0, 4, 2), "boxes_obb": torch.zeros(0, 5)}
         _, target_out = normalize(image, target)
         assert target_out["boxes_obb"].shape == (0, 5)
+
+
+class TestOBBGeometricTransform:
+    """Corners must survive augmentation as a rigid quadrilateral."""
+
+    def test_horizontal_flip_mirrors_x_only(self) -> None:
+        alb = pytest.importorskip("albumentations")
+        transform = OBBGeometricTransform(alb.HorizontalFlip(p=1.0))
+        image = Image.new("RGB", (100, 50))
+        corners = torch.tensor([[[10.0, 5.0], [40.0, 5.0], [40.0, 20.0], [10.0, 20.0]]])
+
+        _, out = transform(image, {"corners": corners, "labels": torch.tensor([0])})
+
+        assert torch.allclose(out["corners"][0, :, 0], torch.tensor([89.0, 59.0, 59.0, 89.0]))
+        assert torch.allclose(out["corners"][0, :, 1], corners[0, :, 1])
+
+    def test_out_of_bounds_corners_are_not_clamped(self) -> None:
+        """Clipping corners individually would deform the box.
+
+        The four corners of a rotated box are not independent, so clamping each one into the frame produces a different
+        quadrilateral rather than a cropped box.
+        """
+        alb = pytest.importorskip("albumentations")
+        transform = OBBGeometricTransform(alb.NoOp())
+        image = Image.new("RGB", (100, 100))
+        corners = torch.tensor([[[-20.0, 10.0], [60.0, -30.0], [100.0, 20.0], [20.0, 60.0]]])
+
+        _, out = transform(image, {"corners": corners, "labels": torch.tensor([0])})
+
+        assert torch.allclose(out["corners"], corners, atol=1e-4)
+
+    def test_geometry_preserved_for_box_crossing_edge(self) -> None:
+        """Width and angle of a partially out-of-frame box survive the transform."""
+        alb = pytest.importorskip("albumentations")
+        transform = OBBGeometricTransform(alb.NoOp())
+        image = Image.new("RGB", (100, 100))
+        corners = torch.tensor([[[-20.0, 10.0], [60.0, -30.0], [100.0, 20.0], [20.0, 60.0]]])
+
+        _, out = transform(image, {"corners": corners, "labels": torch.tensor([0])})
+
+        assert torch.allclose(corners_to_cxcywha(out["corners"]), corners_to_cxcywha(corners), atol=1e-4)
+
+    def test_two_boxes_keep_their_own_corners(self) -> None:
+        """Instance ids must route each corner back to the box it came from."""
+        alb = pytest.importorskip("albumentations")
+        transform = OBBGeometricTransform(alb.HorizontalFlip(p=1.0))
+        image = Image.new("RGB", (100, 100))
+        corners = torch.tensor(
+            [
+                [[0.0, 0.0], [10.0, 0.0], [10.0, 5.0], [0.0, 5.0]],
+                [[50.0, 50.0], [80.0, 50.0], [80.0, 70.0], [50.0, 70.0]],
+            ]
+        )
+
+        _, out = transform(image, {"corners": corners, "labels": torch.tensor([0, 1])})
+
+        assert torch.allclose(out["corners"][0, :, 0], torch.tensor([99.0, 89.0, 89.0, 99.0]))
+        assert torch.allclose(out["corners"][1, :, 0], torch.tensor([49.0, 19.0, 19.0, 49.0]))
+
+    def test_empty_corners_passthrough(self) -> None:
+        alb = pytest.importorskip("albumentations")
+        transform = OBBGeometricTransform(alb.HorizontalFlip(p=1.0))
+        image = Image.new("RGB", (32, 32))
+        target = {"corners": torch.zeros(0, 4, 2), "labels": torch.zeros(0, dtype=torch.int64)}
+
+        image_out, out = transform(image, target)
+
+        assert image_out.size == (32, 32)
+        assert out["corners"].shape == (0, 4, 2)
 
 
 class TestMakeDotaTransforms:
@@ -201,7 +316,7 @@ class TestBuildDota:
         """Geometric transforms must update corners; normalized box coords must be in [0, 1]."""
         import types
 
-        root = tmp_path / "split"
+        root = tmp_path / "val"
         (root / "images").mkdir(parents=True)
         (root / "labelTxt").mkdir()
         img = Image.new("RGB", (100, 100), color="green")
@@ -209,7 +324,7 @@ class TestBuildDota:
         (root / "labelTxt" / "img.txt").write_text("5 5 40 5 40 40 5 40 plane 0\n")
 
         args = types.SimpleNamespace(dataset_dir=str(tmp_path))
-        dataset = build_dota("split", args, 64)
+        dataset = build_dota("val", args, 64)
 
         image_tensor, target = dataset[0]
 

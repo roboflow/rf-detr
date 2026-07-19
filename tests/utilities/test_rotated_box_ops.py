@@ -6,6 +6,7 @@
 
 import math
 
+import pytest
 import torch
 
 from rfdetr.utilities.rotated_box_ops import (
@@ -16,6 +17,7 @@ from rfdetr.utilities.rotated_box_ops import (
     kld_loss,
     normalize_angle,
     probiou,
+    probiou_pairwise,
 )
 
 
@@ -42,6 +44,31 @@ class TestNormalizeAngle:
     def test_two_pi(self) -> None:
         result = normalize_angle(torch.tensor([2 * math.pi]))
         assert torch.allclose(result, torch.tensor([0.0]), atol=1e-6)
+
+    @pytest.mark.parametrize(
+        "angle",
+        [
+            pytest.param(-0.5, id="small_negative"),
+            pytest.param(-1e-8, id="tiny_negative_rounds_up_to_pi"),
+            pytest.param(-1e-7, id="tiny_negative_larger"),
+            pytest.param(math.pi, id="exactly_pi"),
+            pytest.param(-math.pi, id="exactly_negative_pi"),
+            pytest.param(863140.0, id="large_positive_precision_loss"),
+            pytest.param(-1e6, id="large_negative"),
+        ],
+    )
+    def test_stays_within_documented_range(self, angle: float) -> None:
+        """Output must satisfy the documented [0, pi) contract for any finite input.
+
+        Float32 rounding previously pushed tiny negative inputs up to exactly pi and large-magnitude inputs below zero.
+        """
+        result = normalize_angle(torch.tensor([angle])).item()
+        assert 0.0 <= result < math.pi, f"normalize_angle({angle}) = {result!r} escaped [0, pi)"
+
+    def test_tiny_negative_from_atan2_maps_to_zero(self) -> None:
+        """A near-axis-aligned box must normalize to ~0, not wrap around to pi."""
+        result = normalize_angle(torch.tensor([-1e-8])).item()
+        assert result == pytest.approx(0.0, abs=1e-6)
 
 
 class TestBoxCxcywhaToCorners:
@@ -83,11 +110,12 @@ class TestCornersToBoxCxcywha:
         assert torch.allclose(recovered, original, atol=1e-4)
 
     def test_roundtrip_batch(self) -> None:
+        """A batch of mixed orientations roundtrips exactly."""
         original = torch.tensor(
             [
                 [5.0, 5.0, 10.0, 4.0, 0.0],
                 [15.0, 25.0, 8.0, 6.0, 1.0],
-                [0.0, 0.0, 3.0, 7.0, 2.5],
+                [0.0, 0.0, 7.0, 3.0, 2.5],
             ]
         )
         corners = box_cxcywha_to_corners(original)
@@ -99,6 +127,43 @@ class TestCornersToBoxCxcywha:
         corners = box_cxcywha_to_corners(original)
         recovered = corners_to_cxcywha(corners)
         assert torch.allclose(recovered, original, atol=1e-4)
+
+    def test_tall_box_keeps_its_own_parameterisation(self) -> None:
+        """A w < h box is preserved as given, not swapped onto a long-edge convention."""
+        original = torch.tensor([[0.0, 0.0, 3.0, 7.0, 0.0]])
+        recovered = corners_to_cxcywha(box_cxcywha_to_corners(original))
+        assert torch.allclose(recovered, original, atol=1e-4)
+
+    def test_decoded_rectangle_is_unchanged(self) -> None:
+        """Whatever the parameterisation, the decoded corners describe the same box."""
+        original = torch.tensor([[1.0, 2.0, 3.0, 7.0, 0.4]])
+        corners = box_cxcywha_to_corners(original)
+        redecoded = box_cxcywha_to_corners(corners_to_cxcywha(corners))
+        assert torch.allclose(corners.sort(dim=-2).values, redecoded.sort(dim=-2).values, atol=1e-4)
+
+    def test_winding_changes_parameterisation(self) -> None:
+        """Regression test documenting a known limitation, not desired behaviour.
+
+        Clockwise and counter-clockwise corner order describe the *same rectangle* with different (w, h, angle) triples.
+        DOTA files contain both windings. ProbIoU is invariant to the difference, but the L1 term regresses w and h
+        directly, so this injects noise into loss_bbox.
+
+        Long-edge canonicalisation would remove it at the cost of re-parameterising ~90% of DOTA ground truth,
+        invalidating any existing checkpoint. This test pins the current behaviour so the trade-off is a deliberate
+        choice.
+        """
+        ccw = torch.tensor([[[0.0, 0.0], [10.0, 0.0], [10.0, 4.0], [0.0, 4.0]]])
+        cw = torch.tensor([[[0.0, 0.0], [0.0, 4.0], [10.0, 4.0], [10.0, 0.0]]])
+
+        assert corners_to_cxcywha(ccw)[0].tolist() == pytest.approx([5.0, 2.0, 10.0, 4.0, 0.0], abs=1e-4)
+        assert corners_to_cxcywha(cw)[0].tolist() == pytest.approx([5.0, 2.0, 4.0, 10.0, math.pi / 2], abs=1e-4)
+
+    def test_random_boxes_roundtrip_exactly(self) -> None:
+        """Encode/decode is lossless for arbitrary orientations and aspect ratios."""
+        boxes = torch.rand(64, 5) * 10 + 1
+        boxes[:, 4] = boxes[:, 4] % math.pi
+        recovered = corners_to_cxcywha(box_cxcywha_to_corners(boxes))
+        assert torch.allclose(recovered, boxes, atol=1e-4)
 
 
 class TestGwdLoss:
@@ -136,6 +201,18 @@ class TestGwdLoss:
         assert pred.grad is not None
         assert torch.isfinite(pred.grad).all()
 
+    def test_angle_receives_gradient(self) -> None:
+        """The angle component must get a non-zero gradient.
+
+        ``isfinite`` alone is satisfied by a constant loss; delivering angular gradient is the entire reason for using
+        GWD over plain L1.
+        """
+        pred = torch.tensor([[10.0, 20.0, 8.0, 2.0, 0.2]], requires_grad=True)
+        target = torch.tensor([[10.0, 20.0, 8.0, 2.0, 1.1]])
+        gwd_loss(pred, target).sum().backward()
+        assert pred.grad is not None
+        assert abs(pred.grad[0, 4].item()) > 1e-6
+
 
 class TestKldLoss:
     def test_identical_boxes_zero(self) -> None:
@@ -169,6 +246,14 @@ class TestKldLoss:
         assert pred.grad is not None
         assert torch.isfinite(pred.grad).all()
 
+    def test_angle_receives_gradient(self) -> None:
+        """A finite gradient is not enough — the angle must actually be driven."""
+        pred = torch.tensor([[10.0, 20.0, 8.0, 2.0, 0.2]], requires_grad=True)
+        target = torch.tensor([[10.0, 20.0, 8.0, 2.0, 1.1]])
+        kld_loss(pred, target).sum().backward()
+        assert pred.grad is not None
+        assert abs(pred.grad[0, 4].item()) > 1e-6
+
 
 class TestProbiou:
     def test_identical_boxes_one(self) -> None:
@@ -189,8 +274,8 @@ class TestProbiou:
         target = torch.rand(20, 5) * 10 + 1
         target[..., 4] = target[..., 4] % math.pi
         scores = probiou(pred, target)
-        assert (scores >= -0.01).all()
-        assert (scores <= 1.01).all()
+        assert bool((scores >= 0.0).all())
+        assert bool((scores <= 1.0).all())
 
     def test_batch(self) -> None:
         pred = torch.rand(8, 5) * 10 + 1
@@ -199,7 +284,63 @@ class TestProbiou:
         assert scores.shape == (8,)
 
 
+class TestProbiouPairwise:
+    """probiou_pairwise() is the Hungarian matching cost for oriented boxes.
+
+    It returns a *cost* (0 = identical, 1 = no overlap), the complement of the
+    similarity returned by probiou().
+    """
+
+    def test_output_shape(self) -> None:
+        boxes1 = torch.rand(5, 5) * 10 + 1
+        boxes2 = torch.rand(3, 5) * 10 + 1
+        boxes1[..., 4] = boxes1[..., 4] % math.pi
+        boxes2[..., 4] = boxes2[..., 4] % math.pi
+        cost = probiou_pairwise(boxes1, boxes2)
+        assert cost.shape == (5, 3)
+
+    def test_self_cost_near_zero_on_diagonal(self) -> None:
+        boxes = torch.tensor(
+            [
+                [10.0, 20.0, 6.0, 4.0, 0.5],
+                [5.0, 5.0, 3.0, 7.0, 1.2],
+            ]
+        )
+        cost = probiou_pairwise(boxes, boxes)
+        assert torch.allclose(torch.diag(cost), torch.zeros(2), atol=1e-5)
+
+    def test_diagonal_complements_paired_probiou(self) -> None:
+        """Diagonal of the cost matrix equals 1 - probiou() on the same pairs."""
+        boxes1 = torch.tensor(
+            [
+                [10.0, 20.0, 6.0, 4.0, 0.5],
+                [5.0, 5.0, 3.0, 7.0, 1.2],
+            ]
+        )
+        boxes2 = torch.tensor(
+            [
+                [11.0, 21.0, 6.0, 4.0, 0.6],
+                [5.0, 6.0, 3.5, 7.0, 1.0],
+            ]
+        )
+        cost_matrix = probiou_pairwise(boxes1, boxes2)
+        assert torch.allclose(torch.diag(cost_matrix), 1 - probiou(boxes1, boxes2), atol=1e-5)
+
+    def test_cost_in_unit_range(self) -> None:
+        boxes1 = torch.tensor([[10.0, 10.0, 5.0, 3.0, 0.0]])
+        boxes2 = torch.tensor([[500.0, 500.0, 5.0, 3.0, 1.5]])
+        cost = probiou_pairwise(boxes1, boxes2)
+        assert bool(((cost >= 0) & (cost <= 1)).all())
+
+    def test_disjoint_boxes_cost_near_one(self) -> None:
+        boxes1 = torch.tensor([[10.0, 10.0, 5.0, 3.0, 0.0]])
+        boxes2 = torch.tensor([[900.0, 900.0, 5.0, 3.0, 0.0]])
+        assert probiou_pairwise(boxes1, boxes2).item() == pytest.approx(1.0, abs=1e-4)
+
+
 class TestGwdPairwise:
+    """gwd_pairwise() is an alternative matching cost, not wired into training."""
+
     def test_output_shape(self) -> None:
         boxes1 = torch.rand(5, 5) * 10 + 1
         boxes2 = torch.rand(3, 5) * 10 + 1
@@ -209,6 +350,7 @@ class TestGwdPairwise:
         assert cost.shape == (5, 3)
 
     def test_diagonal_matches_paired(self) -> None:
+        """The pairwise diagonal must agree with the paired gwd_loss."""
         boxes = torch.tensor(
             [
                 [10.0, 20.0, 6.0, 4.0, 0.5],
