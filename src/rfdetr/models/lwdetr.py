@@ -133,6 +133,7 @@ class LWDETR(nn.Module):
         use_grouppose_keypoints: bool = False,
         num_keypoints_per_class: list[int] | None = None,
         grouppose_keypoint_dim_downscale: int = 1,
+        use_iou_head: bool = False,
     ) -> None:
         """Initializes the model.
 
@@ -170,6 +171,12 @@ class LWDETR(nn.Module):
             self.transformer.decoder.bbox_embed = None
 
         self.bbox_reparam = bbox_reparam
+        self.use_iou_head = use_iou_head
+        if self.use_iou_head:
+            self.iou_embed = MLP(hidden_dim, hidden_dim, 1, 3)
+            iou_out_layer = cast(nn.Linear, self.iou_embed.layers[-1])
+            nn.init.constant_(iou_out_layer.weight.data, 0)
+            nn.init.constant_(iou_out_layer.bias.data, 0)
 
         # GroupPose keypoint heads (group_detr style) — only if GroupPose keypoint mode is active.
         self.use_grouppose_keypoints = use_grouppose_keypoints
@@ -529,6 +536,9 @@ class LWDETR(nn.Module):
 
             outputs_class = self.class_embed(hs)
             outputs_keypoints = None
+            outputs_iou = None
+            if self.use_iou_head:
+                outputs_iou = self.iou_embed(hs)
 
             if self.use_grouppose_keypoints and self.keypoint_embed is not None:
                 if keypoint_hs is None:
@@ -558,6 +568,8 @@ class LWDETR(nn.Module):
                 outputs_masks = seg_head_fwd(features[0].tensors, hs, cast(tuple[int, int], samples.tensors.shape[-2:]))
 
             out = {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord[-1]}
+            if self.use_iou_head and outputs_iou is not None:
+                out["pred_ious"] = outputs_iou[-1]
             if self.segmentation_head is not None:
                 out["pred_masks"] = outputs_masks[-1]
             if outputs_keypoints is not None:
@@ -568,6 +580,7 @@ class LWDETR(nn.Module):
                     outputs_coord,
                     outputs_masks if self.segmentation_head is not None else None,
                     outputs_keypoints,
+                    outputs_iou if self.use_iou_head else None,
                 )
 
         if self.two_stage:
@@ -647,6 +660,9 @@ class LWDETR(nn.Module):
             else:
                 outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
             outputs_class = self.class_embed(hs)
+            outputs_iou = None
+            if self.use_iou_head:
+                outputs_iou = self.iou_embed(hs)
             if self.use_grouppose_keypoints and self.keypoint_embed is not None:
                 if keypoint_hs is None:
                     raise ValueError("use_grouppose_keypoints=True requires keypoint_hs from transformer outputs.")
@@ -694,6 +710,14 @@ class LWDETR(nn.Module):
                     skip_blocks=True,
                 )[0]
 
+        if self.use_iou_head:
+            outputs_iou_final = outputs_iou[-1] if outputs_iou is not None else torch.zeros_like(outputs_coord[..., :1])
+            if outputs_masks is not None:
+                return outputs_coord, outputs_class, outputs_masks, outputs_iou_final
+            if outputs_keypoints is not None:
+                return outputs_coord, outputs_class, outputs_keypoints, outputs_iou_final
+            return outputs_coord, outputs_class, outputs_iou_final
+
         if outputs_masks is not None:
             return outputs_coord, outputs_class, outputs_masks
         if outputs_keypoints is not None:
@@ -708,6 +732,7 @@ class LWDETR(nn.Module):
         outputs_coord: Tensor,
         outputs_masks: list[Tensor] | list[dict[str, Tensor]] | None,
         outputs_keypoints: Tensor | None = None,
+        outputs_iou: Tensor | None = None,
     ) -> list[dict[str, Any]]:
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
@@ -720,6 +745,9 @@ class LWDETR(nn.Module):
         if outputs_keypoints is not None:
             names.append("pred_keypoints")
             values.append(outputs_keypoints[:-1])
+        if outputs_iou is not None:
+            names.append("pred_ious")
+            values.append(outputs_iou[:-1])
         return [{name: value for name, value in zip(names, layer_values)} for layer_values in zip(*values)]
 
     def _get_backbone_encoder_layers(self) -> nn.ModuleList | None:
@@ -841,6 +869,7 @@ def build_model(args: "BuilderArgs") -> LWDETR | tuple[Any, None, None]:
         use_grouppose_keypoints=getattr(args, "use_grouppose_keypoints", False),
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         grouppose_keypoint_dim_downscale=getattr(args, "grouppose_keypoint_dim_downscale", 1),
+        use_iou_head=getattr(args, "use_iou_head", False),
     )
     return model
 
@@ -850,6 +879,9 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
     matcher = build_matcher(args)
     weight_dict = {"loss_ce": args.cls_loss_coef, "loss_bbox": args.bbox_loss_coef}
     weight_dict["loss_giou"] = args.giou_loss_coef
+    use_iou_head = getattr(args, "use_iou_head", False)
+    if use_iou_head:
+        weight_dict["loss_iou"] = getattr(args, "iou_loss_coef", 2.0)
     if args.segmentation_head:
         weight_dict["loss_mask_ce"] = args.mask_ce_loss_coef
         weight_dict["loss_mask_dice"] = args.mask_dice_loss_coef
@@ -874,6 +906,8 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
         losses.append("masks")
     if has_keypoints:
         losses.append("keypoints")
+    if use_iou_head:
+        losses.append("ious")
 
     sum_group_losses = getattr(args, "sum_group_losses", False)
     if args.segmentation_head:
@@ -911,6 +945,7 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         # Older detection-only namespaces may omit keypoint postprocess knobs; keep the ModelConfig default.
         trace_alpha=getattr(args, "postprocess_trace_alpha", 0.2),
+        iou_alpha=getattr(args, "iou_alpha", 0.5),
     )
 
     return criterion, postprocess

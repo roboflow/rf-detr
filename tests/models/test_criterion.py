@@ -132,3 +132,40 @@ class TestLossMasksEmptyMatch:
         assert spatial_features.grad is not None
         assert query_features.grad is not None
         assert bias.grad is not None
+
+
+class TestLossIous:
+    """Tests for SetCriterion.loss_ious."""
+
+    def test_loss_ious_computation(self):
+        """loss_ious computes correct MSE loss between predicted IoUs and actual target box IoUs."""
+        criterion = _bare_criterion()
+
+        # 1 batch, 2 queries
+        pred_boxes = torch.tensor([[[0.5, 0.5, 1.0, 1.0], [0.1, 0.1, 0.2, 0.2]]])
+        pred_ious = torch.tensor([[[-0.5], [1.5]]], requires_grad=True)
+
+        outputs = {
+            "pred_boxes": pred_boxes,
+            "pred_ious": pred_ious,
+        }
+
+        targets = [
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 1.0, 1.0]]),
+                "labels": torch.tensor([0]),
+            }
+        ]
+
+        # Match query 0 to target 0
+        indices = [(torch.tensor([0]), torch.tensor([0]))]
+
+        losses = criterion.loss_ious(outputs, targets, indices, num_boxes=torch.tensor(1.0))
+
+        assert "loss_iou" in losses
+        loss_val = losses["loss_iou"]
+        assert loss_val.item() > 0
+
+        # Verify gradient flow
+        loss_val.backward()
+        assert pred_ious.grad is not None

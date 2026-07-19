@@ -33,11 +33,13 @@ class PostProcess(nn.Module):
         num_select: int = 300,
         num_keypoints_per_class: list[int] | None = None,
         trace_alpha: float = 0.2,
+        iou_alpha: float = 0.5,
     ) -> None:
         super().__init__()
         self.num_select = num_select
         self.num_keypoints_per_class = num_keypoints_per_class or []
         self.trace_alpha = trace_alpha
+        self.iou_alpha = iou_alpha
 
     @torch.no_grad()
     def forward(self, outputs: dict[str, torch.Tensor], target_sizes: torch.Tensor) -> list[dict[str, torch.Tensor]]:
@@ -57,16 +59,24 @@ class PostProcess(nn.Module):
         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
         out_masks = outputs.get("pred_masks")
         out_keypoints = outputs.get("pred_keypoints")
+        out_ious = outputs.get("pred_ious")
         self._validate_outputs(out_logits, out_masks, out_keypoints, target_sizes)
 
-        scores, labels, topk_boxes = self._select_topk(out_logits)
+        scores, labels, topk_boxes = self._select_topk(out_logits, out_ious)
         boxes = self._gather_and_scale_boxes(out_bbox, topk_boxes, target_sizes)
 
+        predicted_ious = None
+        if out_ious is not None:
+            gathered_ious = torch.gather(out_ious, 1, topk_boxes.unsqueeze(-1)).squeeze(-1)
+            predicted_ious = gathered_ious.sigmoid()
+
         if out_masks is not None:
-            return self._postprocess_masks(out_masks, scores, labels, boxes, topk_boxes, target_sizes)
+            return self._postprocess_masks(out_masks, scores, labels, boxes, topk_boxes, target_sizes, predicted_ious)
         if out_keypoints is not None:
-            return self._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)
-        return self._postprocess_boxes(scores, labels, boxes)
+            return self._postprocess_keypoints(
+                out_keypoints, scores, labels, boxes, topk_boxes, target_sizes, predicted_ious
+            )
+        return self._postprocess_boxes(scores, labels, boxes, predicted_ious)
 
     @staticmethod
     def _validate_outputs(
@@ -95,11 +105,16 @@ class PostProcess(nn.Module):
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
 
-    def _select_topk(self, out_logits: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _select_topk(
+        self,
+        out_logits: torch.Tensor,
+        out_ious: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Select the highest scoring query/class pairs.
 
         Args:
             out_logits: Classification logits with shape ``(B, Q, C)``.
+            out_ious: Optional predicted IoU scores with shape ``(B, Q, 1)``.
 
         Returns:
             Tuple containing selected scores, class labels, and query indices.
@@ -108,6 +123,10 @@ class PostProcess(nn.Module):
             box/mask/keypoint outputs.
         """
         prob = out_logits.sigmoid()
+        if out_ious is not None:
+            iou_prob = out_ious.sigmoid()
+            prob = prob * (iou_prob**self.iou_alpha)
+
         logits_for_topk = prob.view(out_logits.shape[0], -1)
         num_to_select = min(self.num_select, logits_for_topk.shape[1])
         topk_values, topk_indexes = torch.topk(logits_for_topk, num_to_select, dim=1)
@@ -150,6 +169,7 @@ class PostProcess(nn.Module):
         boxes: torch.Tensor,
         topk_boxes: torch.Tensor,
         target_sizes: torch.Tensor,
+        predicted_ious: torch.Tensor | None = None,
     ) -> list[dict[str, torch.Tensor]]:
         """Attach resized segmentation masks for selected detections.
 
@@ -169,6 +189,8 @@ class PostProcess(nn.Module):
         results = []
         for i in range(out_masks.shape[0]):
             res_i = {"scores": scores[i], "labels": labels[i], "boxes": boxes[i]}
+            if predicted_ious is not None:
+                res_i["predicted_ious"] = predicted_ious[i]
             k_idx = topk_boxes[i]
             masks_i = torch.gather(
                 out_masks[i],
@@ -205,6 +227,7 @@ class PostProcess(nn.Module):
         boxes: torch.Tensor,
         topk_boxes: torch.Tensor,
         target_sizes: torch.Tensor,
+        predicted_ious: torch.Tensor | None = None,
     ) -> list[dict[str, torch.Tensor]]:
         """Select class-specific keypoints and optionally fuse object scores.
 
@@ -249,15 +272,16 @@ class PostProcess(nn.Module):
                     max_num_keypoints=max_num_keypoints,
                 )
 
-            results.append(
-                {
-                    "scores": scores_i,
-                    "labels": labels_i,
-                    "boxes": boxes_i,
-                    "keypoints": output_keypoints,
-                    "keypoint_precision_cholesky": output_keypoint_precision,
-                }
-            )
+            res_dict = {
+                "scores": scores_i,
+                "labels": labels_i,
+                "boxes": boxes_i,
+                "keypoints": output_keypoints,
+                "keypoint_precision_cholesky": output_keypoint_precision,
+            }
+            if predicted_ious is not None:
+                res_dict["predicted_ious"] = predicted_ious[i]
+            results.append(res_dict)
         return results
 
     @staticmethod
@@ -466,6 +490,7 @@ class PostProcess(nn.Module):
         scores: torch.Tensor,
         labels: torch.Tensor,
         boxes: torch.Tensor,
+        predicted_ious: torch.Tensor | None = None,
     ) -> list[dict[str, torch.Tensor]]:
         """Build detection-only result dictionaries.
 
@@ -473,8 +498,15 @@ class PostProcess(nn.Module):
             scores: Selected object scores with shape ``(B, K)``.
             labels: Selected class labels with shape ``(B, K)``.
             boxes: Selected absolute boxes with shape ``(B, K, 4)``.
+            predicted_ious: Optional predicted IoU scores with shape ``(B, K)``.
 
         Returns:
             One result dict per image containing scores, labels, and boxes.
         """
-        return [{"scores": score, "labels": label, "boxes": box} for score, label, box in zip(scores, labels, boxes)]
+        results = []
+        for i in range(len(scores)):
+            res = {"scores": scores[i], "labels": labels[i], "boxes": boxes[i]}
+            if predicted_ious is not None:
+                res["predicted_ious"] = predicted_ious[i]
+            results.append(res)
+        return results

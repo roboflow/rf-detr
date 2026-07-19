@@ -513,6 +513,9 @@ class ModelConfig(BaseConfig):
     fused_optimizer: bool = True
     positional_encoding_size: int
     ia_bce_loss: bool = True
+    use_iou_head: bool = False
+    iou_loss_coef: float = 2.0
+    iou_alpha: float = 0.5
     cls_loss_coef: float = 1.0
     segmentation_head: bool = False
     use_grouppose_keypoints: bool = False
@@ -682,6 +685,7 @@ class ModelConfig(BaseConfig):
             "two_stage",
             "patch_size",
             "segmentation_head",
+            "use_iou_head",
             "num_channels",
         )
         # Fields where only an *increase* above the variant default is load-breaking:

@@ -628,6 +628,56 @@ class SetCriterion(nn.Module):
             "loss_keypoints_nll": loss_nll.sum() / num_boxes,
         }
 
+    def loss_ious(
+        self,
+        outputs: dict[str, Any],
+        targets: list[dict[str, Tensor]],
+        indices: list[tuple[Tensor, Tensor]],
+        num_boxes: Tensor,
+    ) -> dict[str, Tensor]:
+        """Compute IoU prediction loss for matched positive queries.
+
+        Args:
+            outputs: Model outputs containing "pred_ious" and "pred_boxes".
+            targets: Target dictionaries containing "boxes".
+            indices: List of Hungarian matching indices for each image.
+            num_boxes: Normalization factor (number of positive targets).
+
+        Returns:
+            Dict containing the "loss_iou" tensor.
+        """
+        assert "pred_ious" in outputs
+        assert "pred_boxes" in outputs
+
+        idx = self._get_src_permutation_idx(indices)
+
+        # Predicted IoUs for matched queries
+        src_ious = outputs["pred_ious"][idx]
+        if src_ious.ndim > 1 and src_ious.shape[-1] == 1:
+            src_ious = src_ious.squeeze(-1)
+
+        # Predicted boxes & Target boxes for matched queries
+        src_boxes = outputs["pred_boxes"][idx]
+        target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+
+        # Calculate actual IoUs between matched predictions and target boxes.
+        # We detach the bounding box predictions since the IoU head is trained
+        # to predict the quality of the current box predictions, not to backprop
+        # through box regression.
+        iou_targets = torch.diag(
+            box_ops.box_iou(
+                box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
+                box_ops.box_cxcywh_to_xyxy(target_boxes),
+            )[0]
+        )
+
+        # Compute MSE loss between predicted and actual IoU values
+        # Since IoU targets are bounded in [0, 1], we pass logits through a sigmoid
+        loss_iou = F.mse_loss(src_ious.sigmoid(), iou_targets, reduction="none")
+
+        losses = {"loss_iou": loss_iou.sum() / num_boxes}
+        return losses
+
     def _get_src_permutation_idx(self, indices: list[tuple[Tensor, Tensor]]) -> tuple[Tensor, Tensor]:
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -655,6 +705,7 @@ class SetCriterion(nn.Module):
             "boxes": self.loss_boxes,
             "masks": self.loss_masks,
             "keypoints": self.loss_keypoints,
+            "ious": self.loss_ious,
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)

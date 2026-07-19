@@ -168,3 +168,63 @@ class TestPostProcessMasks:
         masks = results[0]["masks"]
         assert masks.shape == (num_select, 1, img_h, img_w)
         assert masks.dtype == torch.bool
+
+
+class TestPostProcessIoU:
+    """Tests for PostProcess with predicted IoU score calibration."""
+
+    def test_iou_calibration_and_output(self):
+        """PostProcess correctly calibrates class logits using predicted IoUs and includes predicted_ious in the
+        results."""
+        postprocess = PostProcess(num_select=2, iou_alpha=0.5)
+        # Setup synthetic logits: shape (B=1, Q=2, C=2)
+        # query 0: high logit (10.0), query 1: medium logit (5.0)
+        pred_logits = torch.tensor([[[10.0, -10.0], [5.0, -10.0]]])
+        # Setup synthetic boxes: shape (B=1, Q=2, 4)
+        pred_boxes = torch.tensor([[[0.1, 0.1, 0.2, 0.2], [0.5, 0.5, 0.3, 0.3]]])
+        # Setup predicted IoUs: shape (B=1, Q=2, 1)
+        # query 0: low predicted IoU logit (-2.0), query 1: high predicted IoU logit (3.0)
+        pred_ious = torch.tensor([[[-2.0], [3.0]]])
+
+        outputs = {
+            "pred_logits": pred_logits,
+            "pred_boxes": pred_boxes,
+            "pred_ious": pred_ious,
+        }
+        target_sizes = torch.tensor([[480, 640]])
+
+        results = postprocess(outputs, target_sizes)
+
+        # Verify that predicted_ious key exists in the output dict
+        assert "predicted_ious" in results[0]
+
+        # Check scores calibration logic:
+        # prob = logits.sigmoid() * (ious.sigmoid() ** 0.5)
+        # Let's compute manually:
+        prob0_cls = torch.tensor(10.0).sigmoid()
+        prob0_iou = torch.tensor(-2.0).sigmoid()
+        expected_score0 = prob0_cls * (prob0_iou**0.5)
+
+        prob1_cls = torch.tensor(5.0).sigmoid()
+        prob1_iou = torch.tensor(3.0).sigmoid()
+        expected_score1 = prob1_cls * (prob1_iou**0.5)
+
+        # Check that postprocess selected the correct order and correct values
+        # Since expected_score1 is computed, let's see which score is larger:
+        # prob0_cls ≈ 0.99995, prob0_iou ≈ 0.1192 → expected_score0 ≈ 0.99995 * 0.3452 ≈ 0.345
+        # prob1_cls ≈ 0.9933, prob1_iou ≈ 0.9526 → expected_score1 ≈ 0.9933 * 0.9760 ≈ 0.969
+        # So query 1 has a higher calibrated score than query 0, despite query 0 having a higher classification logit!
+        # Thus, query 1 should be selected first.
+        scores = results[0]["scores"]
+        labels = results[0]["labels"]
+        predicted_ious = results[0]["predicted_ious"]
+
+        # Best match should be query 1:
+        assert scores[0].item() == pytest.approx(expected_score1.item(), abs=1e-4)
+        assert labels[0].item() == 0  # class 0
+        assert predicted_ious[0].item() == pytest.approx(prob1_iou.item(), abs=1e-4)
+
+        # Second best should be query 0:
+        assert scores[1].item() == pytest.approx(expected_score0.item(), abs=1e-4)
+        assert labels[1].item() == 0  # class 0
+        assert predicted_ious[1].item() == pytest.approx(prob0_iou.item(), abs=1e-4)
