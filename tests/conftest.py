@@ -49,29 +49,6 @@ def reset_random_seeds() -> None:
     seed_all()
 
 
-@pytest.fixture
-def reset_build_namespace_warning_state() -> Generator[None, Any, None]:
-    """Reset ``build_namespace`` deprecation call counters before each test.
-
-    ``@deprecated(..., num_warns=1)`` emits only once per process by default. This fixture makes warning assertions
-    deterministic regardless of test order.
-    """
-    from rfdetr._namespace import build_namespace
-
-    state = build_namespace._state
-    snapshot = (state.called, state.warned_calls, dict(state.warned_args))
-
-    state.called = 0
-    state.warned_calls = 0
-    state.warned_args = {}
-    try:
-        yield
-    finally:
-        state.called = snapshot[0]
-        state.warned_calls = snapshot[1]
-        state.warned_args = snapshot[2]
-
-
 @pytest.fixture(scope="session")
 def synthetic_shape_dataset_dir(tmp_path_factory: pytest.TempPathFactory) -> Generator[Path, Any, None]:
     """Build a synthetic COCO-style dataset on disk and clean it up after tests.
