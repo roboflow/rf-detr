@@ -14,8 +14,13 @@
 # ------------------------------------------------------------------------
 """Backbone modules."""
 
+from __future__ import annotations
+
+from typing import Any
+
 import torch
 import torch.nn.functional as F  # noqa: N812
+from torch import Tensor
 
 from rfdetr.models.backbone.base import BackboneBase
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -35,11 +40,11 @@ class Backbone(BackboneBase):
         self,
         name: str,
         pretrained_encoder: str | None = None,
-        window_block_indexes: list | None = None,
-        drop_path=0.0,
-        out_channels=256,
-        out_feature_indexes: list | None = None,
-        projector_scale: list | None = None,
+        window_block_indexes: list[int] | None = None,
+        drop_path: float = 0.0,
+        out_channels: int = 256,
+        out_feature_indexes: list[int] | None = None,
+        projector_scale: list[str] | None = None,
         use_cls_token: bool = False,
         freeze_encoder: bool = False,
         layer_norm: bool = False,
@@ -52,7 +57,7 @@ class Backbone(BackboneBase):
         num_windows: int = 4,
         positional_encoding_size: int = 0,
         dual_projector: bool = False,
-    ):
+    ) -> None:
         super().__init__()
         # an example name here would be "dinov2_base" or "dinov2_registers_windowed_base"
         # if "registers" is in the name, then use_registers is set to True, otherwise it is set to False
@@ -92,7 +97,7 @@ class Backbone(BackboneBase):
                 param.requires_grad = False
 
         self.projector_scale = projector_scale
-        assert len(self.projector_scale) > 0
+        assert self.projector_scale is not None and len(self.projector_scale) > 0
         # x[0]
         assert sorted(self.projector_scale) == self.projector_scale, (
             "only support projector scale P3/P4/P5/P6 in ascending order."
@@ -121,10 +126,10 @@ class Backbone(BackboneBase):
 
         self._export = False
 
-    def export(self):
+    def export(self) -> None:
         self._export = True
         self._forward_origin = self.forward
-        self.forward = self.forward_export
+        self.forward = self.forward_export  # type: ignore[method-assign,assignment]
 
         if not hasattr(self.encoder, "merge_and_unload"):
             return
@@ -142,7 +147,7 @@ class Backbone(BackboneBase):
             logger.info("Merging and unloading LoRA weights")
             self.encoder = self.encoder.merge_and_unload()
 
-    def forward(self, tensor_list: NestedTensor):
+    def forward(self, tensor_list: NestedTensor) -> tuple[list[NestedTensor], list[NestedTensor] | None]:
         """"""
         # (H, W, B, C)
         raw_feats = self.encoder(tensor_list.tensors)
@@ -167,7 +172,7 @@ class Backbone(BackboneBase):
 
         return out, cross_attn_out
 
-    def forward_export(self, tensors: torch.Tensor):
+    def forward_export(self, tensors: Tensor) -> tuple[list[Tensor], list[Tensor], list[Tensor] | None]:
         raw_feats = self.encoder(tensors)
         feats = self.projector(raw_feats)
         out_feats = []
@@ -184,7 +189,7 @@ class Backbone(BackboneBase):
 
         return out_feats, out_masks, cross_attn_feats
 
-    def get_named_param_lr_pairs(self, args, prefix: str = "backbone.0"):
+    def get_named_param_lr_pairs(self, args: Any, prefix: str = "backbone.0") -> dict[str, dict[str, Any]]:
         num_layers = args.out_feature_indexes[-1] + 1
         backbone_key = "backbone.0.encoder"
         named_param_lr_pairs = {}
@@ -232,7 +237,7 @@ def get_dinov2_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: 
     return lr_decay_rate ** (num_layers + 1 - layer_id)
 
 
-def get_dinov2_weight_decay_rate(name, weight_decay_rate=1.0):
+def get_dinov2_weight_decay_rate(name: str, weight_decay_rate: float = 1.0) -> float:
     if (
         ("gamma" in name)
         or ("pos_embed" in name)

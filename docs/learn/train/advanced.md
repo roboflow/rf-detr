@@ -244,7 +244,16 @@ For fine-grained control over strategy, sync batch norm, precision, and other di
 
 ## Custom Augmentations
 
-RF-DETR supports advanced data augmentations using the [Albumentations](https://albumentations.ai/) library, providing access to over 70 different image transformations optimized for object detection.
+RF-DETR uses torchvision-native default augmentations during training. Passing a non-empty `aug_config` switches to one of two optional backends, selected by `augmentation_backend`:
+
+- **CPU (default when `aug_config` is set):** [Albumentations](https://albumentations.ai/) integration, with access to over 70 image transformations optimized for object detection.
+- **GPU (`augmentation_backend="kornia"` or `"auto"` with CUDA):** [Kornia](https://kornia.readthedocs.io/) integration, applying augmentations on-batch on the GPU instead of per-sample on CPU workers.
+
+Both optional backends share the same `aug_config` dictionary format. See [Augmentation Backend Values](augmentations.md#augmentation-backend-values) for the full set of accepted `augmentation_backend` strings, including `"torchvision"` to force the default pipeline regardless of what's installed. Install the optional augmentation extra before using custom `aug_config` dictionaries or the built-in presets:
+
+```bash
+pip install "rfdetr[train,augment]"
+```
 
 → **[Complete Augmentation Guide](augmentations.md)** - Configuration examples, best practices, troubleshooting, and advanced topics.
 
@@ -285,6 +294,19 @@ To disable all augmentations, pass an empty dict:
 ```python
 model.train(dataset_dir="path/to/dataset", aug_config={})
 ```
+
+`aug_config` controls only the augmentation stack (Albumentations on CPU, or the
+equivalent Kornia pipeline when `augmentation_backend="kornia"`/`"auto"`). The training
+resize pipeline's independent resize → crop → resize branch (Option B) is controlled
+separately by `scale_jitter`:
+
+```python
+# Keep aug_config's default augmentation stack, but disable random crop/scale jitter
+model.train(dataset_dir="path/to/dataset", scale_jitter=False)
+```
+
+`scale_jitter` defaults to `True`. Set it to `False` to use direct resize only —
+no random crop, so annotations near image borders are never clipped.
 
 ---
 
@@ -348,10 +370,9 @@ RF-DETR applies built-in augmentations during training:
 
 - Random resizing
 - Random cropping
-- Color jittering
 - Horizontal flipping
 
-These are automatically configured and don't require manual setup.
+These defaults are implemented with torchvision and don't require manual setup. Color jitter and other advanced transforms are available through the optional Albumentations presets and custom `aug_config` dictionaries.
 
 ---
 

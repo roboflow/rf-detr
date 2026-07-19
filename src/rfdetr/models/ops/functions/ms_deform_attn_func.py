@@ -13,18 +13,21 @@
 # ------------------------------------------------------------------------------------------------
 """ms_deform_attn_func."""
 
+from __future__ import annotations
+
 import torch
+from torch import Tensor
 
 from rfdetr.utilities.tensors import _bilinear_grid_sample
 
 
 def ms_deform_attn_core_pytorch(
-    value: torch.Tensor,
-    value_spatial_shapes: torch.Tensor,
-    sampling_locations: torch.Tensor,
-    attention_weights: torch.Tensor,
+    value: Tensor,
+    value_spatial_shapes: Tensor,
+    sampling_locations: Tensor,
+    attention_weights: Tensor,
     value_spatial_shapes_hw: list[tuple[int, int]] | None = None,
-) -> torch.Tensor:
+) -> Tensor:
     """For debug and test only, need to use cuda version instead."""
     # batch_size, n_heads, head_dim, spatial_size
     batch_size, n_heads, head_dim, _ = value.shape
@@ -33,7 +36,8 @@ def ms_deform_attn_core_pytorch(
     # since iterating over a tensor and using scalar elements as split/view sizes
     # fails during FakeTensor tracing).
     shapes = value_spatial_shapes_hw if value_spatial_shapes_hw is not None else value_spatial_shapes
-    value_list = value.split([height * width for height, width in shapes], dim=3)
+    split_sizes = [int(height) * int(width) for height, width in shapes]
+    value_list = value.split(split_sizes, dim=3)  # type: ignore[no-untyped-call]
     sampling_grids = 2 * sampling_locations - 1
     sampling_value_list = []
     for level_index, (height, width) in enumerate(shapes):
@@ -53,6 +57,6 @@ def ms_deform_attn_core_pytorch(
         batch_size * n_heads, 1, len_query, num_levels * num_points
     )
     # batch_size*n_heads, head_dim, len_query, num_levels*num_points
-    sampling_value_list = torch.stack(sampling_value_list, dim=-2).flatten(-2)
-    output = (sampling_value_list * attention_weights).sum(-1).view(batch_size, n_heads * head_dim, len_query)
+    sampling_values = torch.stack(sampling_value_list, dim=-2).flatten(-2)
+    output = (sampling_values * attention_weights).sum(-1).view(batch_size, n_heads * head_dim, len_query)
     return output.transpose(1, 2).contiguous()

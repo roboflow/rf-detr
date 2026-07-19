@@ -46,6 +46,7 @@ from typing import Any
 import torch
 from torch import Tensor
 
+from rfdetr.config import AugmentationBackend
 from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
 from rfdetr.utilities.logger import get_logger
 
@@ -83,43 +84,159 @@ def _has_cuda_device() -> bool:
     return str(DEVICE).startswith("cuda")
 
 
-def resolve_augmentation_backend(backend: str) -> str:
-    """Resolve an ``augmentation_backend`` value to a concrete ``"cpu"`` or ``"gpu"``.
+def resolve_augmentation_backend(backend: str, *, has_cuda: bool | None = None) -> AugmentationBackend:
+    """Resolve an ``augmentation_backend`` value to a concrete :class:`AugmentationBackend`.
 
-    ``"auto"`` resolves to ``"gpu"`` only when both CUDA and Kornia are available; otherwise it falls back to ``"cpu"``.
-    Explicit ``"cpu"`` and ``"gpu"`` values pass through unchanged; ``"gpu"`` is validated (CUDA + kornia presence).
+    Auto-pick priority (for ``"cpu"``/``"auto"``) is implemented by
+    :meth:`AugmentationBackend.from_str`; this function supplies the fork-safe CUDA check that
+    gates ``"auto"``'s GPU-Kornia preference and fails fast when ``"albumentations"``/``"albu"``
+    is explicitly requested but Albumentations is not installed.
+
+    This is a pure resolution step — explicit ``"kornia"``/``"gpu"`` requests always pass through
+    to :attr:`AugmentationBackend.KORNIA` regardless of *has_cuda*, so a saved/forced concrete
+    backend resolves deterministically. Callers that need to fail fast when an explicit GPU
+    request cannot actually run (no CUDA device, or Kornia not installed) should additionally call
+    :func:`require_gpu_backend_ready` before building anything that depends on the result.
+
+    Note:
+        ``"cpu"`` and ``"auto"`` resolution depends on which optional packages happen to be
+        installed (Albumentations and/or Kornia are both optional, via ``pip install
+        'rfdetr[augment]'``). The same ``backend`` value can therefore resolve to a different
+        concrete backend across environments — e.g. CI without ``[augment]`` installed resolves
+        to ``TV`` (torchvision), while a local dev environment with Albumentations installed
+        resolves to ``ALBU``. Pass ``"torchvision"`` explicitly to guarantee torchvision
+        regardless of environment.
 
     Args:
-        backend: One of ``"cpu"``, ``"auto"``, or ``"gpu"``.
+        backend: One of ``"cpu"``, ``"auto"``, ``"torchvision"``, ``"albumentations"``,
+            ``"kornia"``, or legacy ``"tv"``/``"albu"``/``"gpu"``.
+        has_cuda: Whether a CUDA device is available. When ``None`` (default), computed via this
+            module's fork-safe :func:`_has_cuda_device`. Callers with their own fork-safe CUDA
+            check (e.g. :mod:`rfdetr.training.module_data`) may pass it explicitly so patching
+            their own check affects resolution.
 
     Returns:
-        ``"cpu"`` or ``"gpu"``.
+        Resolved :class:`AugmentationBackend` member.
 
     Raises:
-        RuntimeError: When *backend* is ``"gpu"`` and no CUDA device is found.
-        ImportError: When *backend* is ``"gpu"`` and kornia is not installed.
-        ValueError: When *backend* is not one of ``"cpu"``, ``"auto"``, or ``"gpu"``.
+        ValueError: When *backend* is not a recognised value.
+        ImportError: When *backend* is explicitly ``"albumentations"``/``"albu"`` but
+            Albumentations is not installed.
 
     Examples:
-        >>> resolve_augmentation_backend("cpu")
-        'cpu'
+        >>> resolve_augmentation_backend("albumentations")
+        <AugmentationBackend.ALBU: 'albumentations'>
+        >>> resolve_augmentation_backend("kornia")
+        <AugmentationBackend.KORNIA: 'kornia'>
+        >>> resolve_augmentation_backend("torchvision")
+        <AugmentationBackend.TV: 'torchvision'>
     """
-    if backend == "cpu":
-        return "cpu"
-    if backend == "auto":
-        if not _has_cuda_device():
-            return "cpu"
-        try:
-            import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
-        except ImportError:
-            return "cpu"
-        return "gpu"
-    if backend == "gpu":
-        if not _has_cuda_device():
-            raise RuntimeError("augmentation_backend='gpu' requires a CUDA device")
-        _require_kornia()
-        return "gpu"
-    raise ValueError(f"Unknown augmentation_backend {backend!r}; expected 'cpu', 'auto', or 'gpu'.")
+    if backend in (AugmentationBackend.ALBU, "albumentations", "albu"):
+        _require_albu()
+    if has_cuda is None:
+        has_cuda = _has_cuda_device()
+    return AugmentationBackend.from_str(backend, has_cuda=has_cuda)
+
+
+def require_gpu_backend_ready(requested_backend: str, *, has_cuda: bool) -> None:
+    """Fail fast when an explicit Kornia/GPU backend request cannot run in this environment.
+
+    Only gates explicit ``"kornia"``/``"gpu"`` requests. ``"auto"``/``"cpu"`` silently fall back to
+    the best installed CPU backend elsewhere (see :func:`resolve_augmentation_backend`) and are
+    never gated here — an unavailable GPU is not an error for those sentinels, only for a backend
+    the caller explicitly pinned to Kornia.
+
+    Args:
+        requested_backend: Raw ``augmentation_backend`` value as configured by the caller, before
+            legacy-alias/auto-pick resolution.
+        has_cuda: Whether a CUDA device is available, as determined by the caller's own fork-safe
+            check.
+
+    Raises:
+        RuntimeError: ``kornia``/``gpu`` is explicitly requested but no CUDA device is available.
+        ImportError: ``kornia``/``gpu`` is explicitly requested, CUDA is available, but Kornia is
+            not installed.
+
+    Examples:
+        >>> require_gpu_backend_ready("cpu", has_cuda=False)
+    """
+    if requested_backend not in (AugmentationBackend.KORNIA, "kornia", "gpu"):
+        return
+    if not has_cuda:
+        raise RuntimeError(f"augmentation_backend={requested_backend!r} requires a CUDA device, but none is available.")
+    _require_kornia()
+
+
+def is_gpu_postprocess(resolved: AugmentationBackend) -> bool:
+    """Return ``True`` when the resolved backend defers augmentation/normalization to the GPU.
+
+    Kornia is the only on-device (GPU) backend, so a resolved backend of :attr:`AugmentationBackend.KORNIA`
+    means the CPU dataset pipeline must skip its Albumentations augmentation wrappers and ``Normalize`` step
+    (both are applied later on-device). ``TV`` and ``ALBU`` keep the full CPU pipeline.
+
+    This is the single source of truth for the ``gpu_postprocess`` flag threaded through every dataset builder;
+    call it instead of re-writing ``resolved == AugmentationBackend.KORNIA`` inline so the predicate stays in one
+    place.
+
+    Args:
+        resolved: A concrete backend as returned by :func:`resolve_augmentation_backend` or
+            :func:`resolve_backend_for_build`.
+
+    Returns:
+        ``True`` when *resolved* is Kornia (GPU postprocessing), ``False`` otherwise.
+
+    Examples:
+        >>> from rfdetr.config import AugmentationBackend
+        >>> is_gpu_postprocess(AugmentationBackend.KORNIA)
+        True
+        >>> is_gpu_postprocess(AugmentationBackend.TV)
+        False
+    """
+    return resolved == AugmentationBackend.KORNIA
+
+
+def resolve_backend_for_build(
+    requested_backend: str | AugmentationBackend,
+    *,
+    has_cuda: bool | None = None,
+) -> AugmentationBackend:
+    """Fail fast, then resolve, an ``augmentation_backend`` value in one call for dataset builders.
+
+    Bundles the two steps every dataset builder must perform before wiring ``gpu_postprocess``:
+
+    1. :func:`require_gpu_backend_ready` — raise immediately when an explicit ``"kornia"``/``"gpu"`` request
+       cannot actually run in this environment (no CUDA device, or Kornia not installed).
+    2. :func:`resolve_augmentation_backend` — map the (possibly sentinel/legacy) value to a concrete
+       :class:`AugmentationBackend` member.
+
+    Combining them here makes the fail-fast structural rather than something each builder must remember to call
+    separately, so a builder cannot silently skip the readiness check. Both steps share a single *has_cuda*
+    value, computed once.
+
+    Args:
+        requested_backend: Raw ``augmentation_backend`` value as configured by the caller, before
+            legacy-alias/auto-pick resolution — e.g. ``"cpu"``, ``"auto"``, ``"torchvision"``,
+            ``"kornia"``, or legacy ``"gpu"``/``"tv"``/``"albu"``.
+        has_cuda: Whether a CUDA device is available. When ``None`` (default), computed once via this
+            module's fork-safe :func:`_has_cuda_device` and reused for both steps.
+
+    Returns:
+        Resolved :class:`AugmentationBackend` member.
+
+    Raises:
+        RuntimeError: ``"kornia"``/``"gpu"`` is explicitly requested but no CUDA device is available.
+        ImportError: ``"kornia"``/``"gpu"`` is explicitly requested (with CUDA) but Kornia is not installed,
+            or ``"albumentations"``/``"albu"`` is explicitly requested but Albumentations is not installed.
+        ValueError: When *requested_backend* is not a recognised value.
+
+    Examples:
+        >>> resolve_backend_for_build("torchvision", has_cuda=False)
+        <AugmentationBackend.TV: 'torchvision'>
+    """
+    if has_cuda is None:
+        has_cuda = _has_cuda_device()
+    require_gpu_backend_ready(requested_backend, has_cuda=has_cuda)
+    return resolve_augmentation_backend(requested_backend, has_cuda=has_cuda)
 
 
 def _require_kornia() -> None:
@@ -128,10 +245,20 @@ def _require_kornia() -> None:
     Raises:
         ImportError: When ``kornia`` is not installed, with an install hint.
     """
-    try:
-        import kornia.augmentation  # noqa: F401
-    except ImportError as e:
-        raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'") from e
+    if not AugmentationBackend._is_kornia_available():
+        raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[augment]'")
+
+
+def _require_albu() -> None:
+    """Verify that Albumentations is importable, raising a clear error if not.
+
+    Raises:
+        ImportError: When ``albumentations`` is not installed, with an install hint.
+    """
+    if not AugmentationBackend._is_albu_available():
+        raise ImportError(
+            "Custom Albumentations augmentations require albumentations. Install with: pip install 'rfdetr[augment]'"
+        )
 
 
 # ---------------------------------------------------------------------------

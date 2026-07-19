@@ -10,12 +10,12 @@ RF-DETR is a real-time transformer architecture for object detection, instance s
 
 RF-DETR uses a DINOv2 vision transformer backbone and supports object detection, instance segmentation, and keypoint detection (preview) in a single, consistent API. Core models (Nano through Large) and all code are released under the Apache 2.0 license; XL and 2XLarge detection models require `rfdetr[plus]` and are provided under PML 1.0.
 
-Developed by Isaac Robinson, Peter Robicheaux, Fedor Popov, Deva Ramanan (CMU), and Neehar Peri (CMU) at [Roboflow](https://roboflow.com). If you use RF-DETR in your research, please cite:
+Developed by Isaac Robinson, Peter Robicheaux, Matvei Popov, Deva Ramanan (CMU), and Neehar Peri (CMU) at [Roboflow](https://roboflow.com). If you use RF-DETR in your research, please cite:
 
 ```bibtex
 @inproceedings{robinson2026rfdetr,
   title     = {RF-DETR: Real-Time Detection Transformer},
-  author    = {Robinson, Isaac and Robicheaux, Peter and Popov, Fedor and Ramanan, Deva and Peri, Neehar},
+  author    = {Robinson, Isaac and Robicheaux, Peter and Popov, Matvei and Ramanan, Deva and Peri, Neehar},
   booktitle = {International Conference on Learning Representations (ICLR)},
   year      = {2026},
   url       = {https://arxiv.org/abs/2511.09554}

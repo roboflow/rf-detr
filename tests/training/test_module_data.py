@@ -45,7 +45,7 @@ def _base_train_config(tmp_path=None, **overrides):
         lr_encoder=1.5e-4,
         batch_size=2,
         weight_decay=1e-4,
-        lr_drop=8,
+        lr_scheduler_kwargs={"lr_drop": 8},
         warmup_epochs=1.0,
         drop_path=0.0,
         multi_scale=False,
@@ -1070,18 +1070,13 @@ class TestBackendResolution:
 
     def test_auto_no_kornia_falls_back_to_cpu(self, tmp_path):
         """Auto + CUDA available but kornia not installed: fallback to CPU."""
+        from rfdetr.config import AugmentationBackend
+
         dm = self._build_dm_with_backend(tmp_path, "auto")
-
-        original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
-
-        def _mock_import(name, *args, **kwargs):
-            if name == "kornia" or name.startswith("kornia."):
-                raise ImportError("No module named 'kornia'")
-            return original_import(name, *args, **kwargs)
 
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
-            patch("builtins.__import__", side_effect=_mock_import),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
         ):
             dm = self._setup_with_mock_build(dm)
 
@@ -1100,19 +1095,14 @@ class TestBackendResolution:
 
     def test_gpu_no_kornia_raises_import_error(self, tmp_path):
         """Gpu + CUDA but no kornia: must raise ImportError with install hint."""
+        from rfdetr.config import AugmentationBackend
+
         dm = self._build_dm_with_backend(tmp_path, "gpu")
-
-        original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
-
-        def _mock_import(name, *args, **kwargs):
-            if name == "kornia" or name.startswith("kornia."):
-                raise ImportError("No module named 'kornia'")
-            return original_import(name, *args, **kwargs)
 
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
-            patch("builtins.__import__", side_effect=_mock_import),
-            pytest.raises(ImportError, match="rfdetr\\[kornia\\]"),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            pytest.raises(ImportError, match="rfdetr\\[augment\\]"),
         ):
             self._setup_with_mock_build(dm)
 
@@ -1124,9 +1114,9 @@ class TestBackendResolution:
 
     def test_gpu_path_uses_aug_config_fallback(self, tmp_path):
         """When aug_config=None (default), GPU path passes AUG_CONFIG to build_kornia_pipeline."""
-        import sys
         from unittest.mock import MagicMock, patch
 
+        from rfdetr.config import AugmentationBackend
         from rfdetr.datasets.aug_configs import AUG_CONFIG
 
         dm = self._build_dm_with_backend(tmp_path, "auto")
@@ -1141,7 +1131,7 @@ class TestBackendResolution:
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
             patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
-            patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=True),
             patch("rfdetr.datasets.kornia_transforms.build_kornia_pipeline", side_effect=_fake_build_kornia),
             patch("rfdetr.datasets.kornia_transforms.build_normalize", return_value=MagicMock()),
         ):
@@ -1171,25 +1161,6 @@ class TestBackendResolution:
         assert captured_gpu_postprocess.get("train") == "cpu", (
             "auto + no CUDA must resolve to cpu before dataset build to preserve CPU Normalize"
         )
-
-    def test_resolve_augmentation_backend_auto_no_cuda(self):
-        """_resolve_augmentation_backend returns 'cpu' for auto when CUDA is absent."""
-        from rfdetr.training.module_data import _resolve_augmentation_backend
-
-        with patch("rfdetr.training.module_data._has_cuda_device", return_value=False):
-            assert _resolve_augmentation_backend("auto") == "cpu"
-
-    def test_resolve_augmentation_backend_cpu_passthrough(self):
-        """_resolve_augmentation_backend passes 'cpu' through unchanged."""
-        from rfdetr.training.module_data import _resolve_augmentation_backend
-
-        assert _resolve_augmentation_backend("cpu") == "cpu"
-
-    def test_resolve_augmentation_backend_gpu_passthrough(self):
-        """_resolve_augmentation_backend passes 'gpu' through unchanged."""
-        from rfdetr.training.module_data import _resolve_augmentation_backend
-
-        assert _resolve_augmentation_backend("gpu") == "gpu"
 
 
 # ---------------------------------------------------------------------------

@@ -487,3 +487,15 @@ def test_coco_evaluator_skips_unmapped_labels_when_label2cat_is_present(tmp_path
     results = evaluator.coco_results["keypoints"]
     assert len(results) == 1
     assert results[0]["category_id"] == 1
+
+
+def test_patched_pycocotools_summarize_raises_on_unknown_iou_type() -> None:
+    """patched_pycocotools_summarize raises ValueError for an unrecognised iouType."""
+    from unittest.mock import MagicMock
+
+    mock_eval = MagicMock()
+    mock_eval.eval = {"precision": np.zeros((1, 1, 1, 1, 1)), "recall": np.zeros((1, 1, 1, 1))}
+    mock_eval.params.iouType = "custom"
+
+    with pytest.raises(ValueError, match="Unknown iou type custom"):
+        coco_eval_module.patched_pycocotools_summarize(mock_eval)

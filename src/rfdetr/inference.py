@@ -16,6 +16,8 @@ import torch
 
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
+from rfdetr.models.backbone.backbone import Backbone
+from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 
 if TYPE_CHECKING:
@@ -99,7 +101,7 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
 
     Replicates ``Model.__init__`` logic: builds the nn.Module, optionally loads pretrain weights and applies LoRA.  The
     model is intentionally kept on CPU; :func:`_ensure_model_on_device` in ``detr.py`` performs the deferred
-    ``.to(device)`` on the first ``predict()`` / ``export()`` / ``optimize_for_inference()`` call.  Keeping construction
+    ``.to(device)`` on the first ``predict()`` / ``export()`` / ``inference()`` call.  Keeping construction
     CPU-only prevents CUDA initialisation during ``__init__``, which would block DDP strategies (``ddp_notebook``,
     ``ddp_spawn``) from spawning child processes in notebook environments.
 
@@ -121,6 +123,9 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
     args.dataset_dir = None
     args.output_dir = "output"
     nn_model = build_model(args)
+    assert isinstance(nn_model, LWDETR), (
+        "build_model() returned a non-LWDETR result even though encoder_only/backbone_only were not set."
+    )
 
     class_names: list[str] = []
     if model_config.pretrain_weights is not None:
@@ -144,17 +149,18 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
     if model_config.num_channels != 3:
         import copy
 
-        proj = nn_model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection
+        backbone = cast(Backbone, nn_model.backbone[0])
+        proj = backbone.encoder.encoder.embeddings.patch_embeddings.projection
         new_proj = copy.deepcopy(proj)
         new_proj.in_channels = model_config.num_channels
         new_weight = _adapt_input_conv(model_config.num_channels, proj.weight)
         new_proj.weight = torch.nn.Parameter(new_weight)
         new_proj.weight.requires_grad = proj.weight.requires_grad
-        nn_model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection = new_proj
-        nn_model.backbone[0].encoder.encoder.embeddings.patch_embeddings.num_channels = model_config.num_channels
+        backbone.encoder.encoder.embeddings.patch_embeddings.projection = new_proj
+        backbone.encoder.encoder.embeddings.patch_embeddings.num_channels = model_config.num_channels
 
     device = torch.device(args.device)
-    # Keep the model on CPU here; predict() / export() / optimize_for_inference()
+    # Keep the model on CPU here; predict() / export() / inference()
     # will lazily move it to the target device on first use.  Eagerly calling
     # .to("cuda") would initialise the CUDA runtime during __init__(), which
     # prevents DDP strategies (ddp_notebook, ddp_spawn) from forking/spawning

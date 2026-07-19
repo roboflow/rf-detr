@@ -216,4 +216,6 @@ demo_*.py
 demo_*.ipynb
 
 # original notebooks before conversion from scripts
+docs/cookbooks/datasets/
+docs/cookbooks/output/
 docs/cookbooks/*.py

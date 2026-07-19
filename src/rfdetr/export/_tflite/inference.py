@@ -110,7 +110,7 @@ def _bilinear_resize_half_pixel(src: NDArray[np.float32], out_h: int, out_w: int
     return np.asarray(out, dtype=np.float32)
 
 
-def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArray[np.bool_]:
+def _decode_masks(mask_logits: NDArray[np.floating[Any]], out_size: tuple[int, int]) -> NDArray[np.bool_]:
     """Upsample mask logits to image size and threshold at zero.
 
     Matches ``PostProcess.forward``: bilinear upsample with ``align_corners=False`` followed by ``> 0``.

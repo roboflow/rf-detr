@@ -8,6 +8,8 @@
 # ------------------------------------------------------------------------
 """TensorRT export helpers: trtexec invocation and output parsing."""
 
+from __future__ import annotations
+
 import argparse
 import os
 import re

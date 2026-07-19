@@ -110,7 +110,7 @@ def _load_yaml_mapping(yaml_path: Path) -> dict[str, Any]:
         >>> sorted(_load_yaml_mapping(path))
         ['kpt_shape', 'names']
     """
-    import yaml
+    import yaml  # type: ignore[import-untyped,unused-ignore]
 
     with yaml_path.open(encoding="utf-8") as file:
         data = yaml.safe_load(file)

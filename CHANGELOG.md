@@ -5,6 +5,36 @@ All notable changes to RF-DETR are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+- Default dataset augmentations now use torchvision-native transforms **unless Albumentations is installed**, in which case `augmentation_backend="auto"`/`"cpu"` (the default) auto-selects Albumentations instead — identical user code can therefore resolve to a different resize backend (and slightly different pixel values / mAP) purely based on whether `rfdetr[augment]` is installed. Pass `augmentation_backend="torchvision"` to pin torchvision regardless of what is installed. Non-empty custom `aug_config` dictionaries use the optional Albumentations integration and Kornia GPU backend, both via `pip install 'rfdetr[augment]'`. The `[train]` extra no longer installs Albumentations or Kornia. See the migration guide's "Upgrade 1.8 → 1.9" section for remediation steps. ([#1112](https://github.com/roboflow/rf-detr/pull/1112))
+
+### Added
+
+- `scale_jitter: bool = True` on `TrainConfig` — independent control for the resize → crop → resize branch (Option B) in the training resize pipeline. Previously, disabling this branch required passing `aug_config={}`, which also disabled the entire Albumentations augmentation stack; `aug_config` now controls only that stack. Set `scale_jitter=False` to use direct resize only, with annotations near image borders never clipped.
+- `AugmentationBackend.TV` (`augmentation_backend="torchvision"`) — forces the torchvision-native default pipeline. Unlike `"cpu"`/`"auto"`, which auto-select the best *installed* backend (Albumentations > Kornia > torchvision) and can therefore resolve differently across environments, `"torchvision"` always resolves to torchvision regardless of what optional packages happen to be installed. `AugmentationBackend` now only holds concrete, directly-usable backends (`TV`, `ALBU`, `KORNIA`); `"cpu"`/`"auto"` remain accepted `augmentation_backend` input strings (resolved lazily at dataset-build time, keeping saved configs portable across environments) but are no longer enum members. `AugmentationBackend.TV`/`.ALBU` values changed from `"tv"`/`"albu"` to `"torchvision"`/`"albumentations"`; the old `"tv"`/`"albu"`/`"gpu"` strings are still accepted as legacy input aliases.
+- `TrainConfig.optimizer` (`str | Callable`) and `optimizer_kwargs` — configurable training optimizer. `optimizer="adamw"` (the default) keeps RF-DETR's built-in fused `torch.optim.AdamW` path unchanged. A bare short name selects a native `torch.optim` optimizer only (e.g. `"sgd"`, `"adam"`); any other optimizer — including third-party ones such as [`pytorch-optimizer`](https://github.com/kozistr/pytorch_optimizer) (install separately) — is selected by a full dotted import path (`"pytorch_optimizer.Lion"`) or a callable / `functools.partial` called with the RF-DETR parameter groups. `optimizer_kwargs` forwards constructor arguments (ignored for callables, which bake their own arguments in). ([#1006](https://github.com/roboflow/rf-detr/pull/1006))
+- `TrainConfig.lr_scheduler` (`str | Callable`) plus `lr_scheduler_kwargs`, `lr_scheduler_interval`, and `lr_scheduler_monitor` — configurable LR scheduler, mirroring `optimizer`. `lr_scheduler="step"`/`"cosine"` (the managed presets) keep RF-DETR's built-in warmup-aware schedules unchanged; any other scheduler is selected by a full dotted import path (`"torch.optim.lr_scheduler.OneCycleLR"`) or a callable / `functools.partial` called with the optimizer. Explicit schedulers are built from `lr_scheduler_kwargs` only (no `total_steps`/`T_max` injected), are auto-wrapped in a `SequentialLR` linear warmup when `warmup_epochs>0`, and step at `lr_scheduler_interval` (`"step"`/`"epoch"`). `ReduceLROnPlateau` is supported end-to-end: it steps once per epoch on the metric named by `lr_scheduler_monitor` (default `"val/loss"`), in both the automatic and manual (keypoint) optimization paths.
+
+### Deprecated
+
+- `TrainConfig.lr_drop` and `lr_min_factor` — pass them through `lr_scheduler_kwargs` instead (`{"lr_drop": ...}` / `{"min_factor": ...}`). Deprecated since v1.9.0, will be removed in v1.11.0. The fields still work in the meantime and are folded into `lr_scheduler_kwargs` for the managed presets with a `FutureWarning`; default values (e.g. on config reload) do not warn. Set with an explicit (non-managed) scheduler they are inert and emit a `FutureWarning`.
+
+### Fixed
+
+- Non-square Albumentations training resize (`aug_config` set, `augmentation_backend` resolving to `"albumentations"`) no longer silently inflates every image's longest side to `max_size` (1333 by default). `SmallestMaxSize` → `LongestMaxSize` always forces an exact resize in Albumentations, not a conditional cap; a new `CappedLongestMaxSize` internal transform only shrinks, never upscales, matching torchvision's `RandomResize` semantics.
+- Explicit `augmentation_backend="albumentations"` now raises a clear `ImportError` immediately if Albumentations is not installed, instead of resolving successfully and failing later, deep in dataset construction.
+
+### Deprecated
+
+- `RFDETR.optimize_for_inference()` renamed to `RFDETR.inference()` (same signature). The old name is kept as a deprecated alias that forwards to `inference()` and emits a `FutureWarning`. Deprecated since v1.9.0, will be removed in v1.11.0.
+
+### Removed
+
+- `[kornia]` extra renamed to `[augment]`. A deprecated `[kornia]` alias extra (`pip install 'rfdetr[kornia]'` → installs `rfdetr[augment]`) is kept for one release for backward compatibility.
+
+---
+
 ## [1.8.3] — 2026-06-27
 
 ### Added
@@ -112,7 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `augmentation_backend` field on `TrainConfig` (`"cpu"` / `"auto"` / `"gpu"`): opt-in GPU-side augmentation via [Kornia](https://kornia.readthedocs.io) applied in `RFDETRDataModule.on_after_batch_transfer` after the batch is resident on the GPU. CPU path is unchanged and remains the default. Install with `pip install 'rfdetr[kornia]'`. Supports detection and segmentation (see below). ([#1003](https://github.com/roboflow/rf-detr/pull/1003))
+- `augmentation_backend` field on `TrainConfig` (`"cpu"` / `"auto"` / `"gpu"`): opt-in GPU-side augmentation via [Kornia](https://kornia.readthedocs.io) applied in `RFDETRDataModule.on_after_batch_transfer` after the batch is resident on the GPU. CPU path is unchanged and remains the default. Install with `pip install 'rfdetr[augment]'`. Supports detection and segmentation (see below). ([#1003](https://github.com/roboflow/rf-detr/pull/1003))
 - Kornia GPU augmentation now supports instance segmentation: images, boxes, and per-instance masks are augmented in sync on the GPU. New public helper `collate_masks` packs `[N_i, H, W]` boolean masks into a `[B, N_max, H, W]` float32 tensor for Kornia; `build_kornia_pipeline` gains a `with_masks: bool = False` parameter; `unpack_boxes` gains an optional `masks_aug` tensor that re-binarises and filters masks in sync with boxes. Previously `augmentation_backend="gpu"/"auto"` was silently ignored for segmentation models; now it works identically to detection. **Note**: the mask buffer is `[B, N_max, H, W]` float32 — approximately 500 MB at `B=8, N_max=50, H=W=560`; use `augmentation_backend="cpu"` on cards with limited VRAM. ([#1003](https://github.com/roboflow/rf-detr/pull/1003), closes [#997](https://github.com/roboflow/rf-detr/issues/997))
 - `BuilderArgs` — a `@runtime_checkable` `typing.Protocol` documenting the minimum attribute set consumed by `build_model()`, `build_backbone()`, `build_transformer()`, and `build_criterion_and_postprocessors()`. Enables static type-checker support for custom builder integrations. Exported from `rfdetr.models`. ([#841](https://github.com/roboflow/rf-detr/pull/841))
 - `build_model_from_config(model_config, train_config=None, defaults=MODEL_DEFAULTS)` — config-native alternative to `build_model(build_namespace(mc, tc))`; accepts Pydantic config objects directly and constructs the internal namespace automatically. Exported from `rfdetr.models`. ([#845](https://github.com/roboflow/rf-detr/pull/845))

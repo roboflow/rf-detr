@@ -20,6 +20,65 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
 
 ## Upgrade 1.8 → 1.9
 
+### Breaking changes
+
+!!! warning "Breaking: `albumentations` and `kornia` extras merged into `augment`"
+
+    **PyPI extras renamed.** Default training/validation/prediction/export augmentations now use
+    torchvision-native transforms, so `[train]` no longer installs Albumentations. Custom CPU
+    (Albumentations) and GPU (Kornia) augmentation both live behind a single new `augment` extra.
+
+    | Old extra                                | New extra               |
+    | ---------------------------------------- | ----------------------- |
+    | `rfdetr[train]` (implied albumentations) | `rfdetr[train,augment]` |
+    | `rfdetr[kornia]`                         | `rfdetr[augment]`       |
+
+    ```bash
+    # Before
+    pip install 'rfdetr[train]'    # bundled albumentations
+    pip install 'rfdetr[kornia]'
+
+    # After
+    pip install 'rfdetr[train,augment]'   # custom aug_config or GPU backend
+    pip install 'rfdetr[augment]'
+    ```
+
+!!! note "`augmentation_backend` values renamed"
+
+    `augmentation_backend="tv"` and `"albu"` are renamed to `"torchvision"` and
+    `"albumentations"`. The old strings (and `"gpu"`) still work as aliases, so no code
+    changes are required — see [Augmentation Backend Values](../learn/train/augmentations.md#augmentation-backend-values)
+    for the full accepted set.
+
+!!! warning "Breaking: default resize interpolation changed — pixel values and mAP may shift"
+
+    The default resize backend changed from Albumentations (cv2 `INTER_LINEAR`, no antialias) to
+    torchvision (`BILINEAR` + `antialias=True`). Resized pixel values differ slightly from previous
+    versions, and mAP may drift on existing benchmarks. **This affects training as well as
+    validation, test, and export preprocessing** — not just the training split.
+
+    To restore the previous pixel-exact behaviour:
+
+    ```bash
+    pip install 'rfdetr[augment]'
+    ```
+
+    ```python
+    from rfdetr.datasets.aug_configs import AUG_CONFIG
+
+    train_config = TrainConfig(aug_config=AUG_CONFIG, ...)
+    ```
+
+    Installing `rfdetr[augment]` alone is **not** sufficient to pin this behaviour — with
+    Albumentations installed, `augmentation_backend="auto"`/`"cpu"` (the default) auto-selects
+    Albumentations for you, but identical code on a machine without `[augment]` installed silently
+    falls back to torchvision instead. The only setting that pins resize behaviour regardless of
+    what is installed is:
+
+    ```python
+    train_config = TrainConfig(augmentation_backend="torchvision", ...)
+    ```
+
 ### Planned for Removal in v1.9
 
 The following APIs were deprecated in earlier releases and will be removed in v1.9. They still work in the current release (v1.8.x) but emit `DeprecationWarning`. Update your code before upgrading.
@@ -66,6 +125,35 @@ The following APIs were deprecated in earlier releases and will be removed in v1
     | `segmentation_head` | `TrainConfig` | `ModelConfig` |
     | `num_select`        | `TrainConfig` | `ModelConfig` |
     | `cls_loss_coef`     | `ModelConfig` | `TrainConfig` |
+
+### Deprecated in v1.9 → Remove in v1.11
+
+!!! note "Deprecated: `RFDETR.optimize_for_inference()` renamed to `RFDETR.inference()`"
+
+    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=...)`** — renamed to
+    `inference()` with the same signature.
+
+    ```python
+    # Before (deprecated)
+    model.optimize_for_inference(dtype=torch.float16)
+
+    # After
+    model.inference(dtype=torch.float16)
+    ```
+
+!!! note "Deprecated: `TrainConfig.lr_drop` and `TrainConfig.lr_min_factor`"
+
+    **`lr_drop` / `lr_min_factor`** — pass them through `lr_scheduler_kwargs` instead. For the managed
+    `"step"` / `"cosine"` presets the fields are still folded into `lr_scheduler_kwargs` (with a
+    `FutureWarning`); set with an explicit scheduler they are inert and warn.
+
+    ```python
+    # Before (deprecated)
+    TrainConfig(lr_scheduler="step", lr_drop=80, lr_min_factor=0.1)
+
+    # After
+    TrainConfig(lr_scheduler="step", lr_scheduler_kwargs={"lr_drop": 80, "min_factor": 0.1})
+    ```
 
 ---
 

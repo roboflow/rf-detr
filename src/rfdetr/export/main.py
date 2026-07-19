@@ -8,20 +8,27 @@
 # ------------------------------------------------------------------------
 """CLI orchestrator for ONNX and TensorRT model export."""
 
+from __future__ import annotations
+
+import argparse
 import os
 import random
 import warnings
+from typing import cast
 
 import numpy as np
 import torch
+import torch.nn as nn
 from PIL import Image
-from torch import nn
+from torch import Tensor
 from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
 from rfdetr.export._onnx.exporter import export_onnx
 from rfdetr.export._tensorrt import trtexec
-from rfdetr.models import build_model
+from rfdetr.models import BuilderArgs, build_model
+from rfdetr.models.backbone.backbone import Backbone
+from rfdetr.models.lwdetr import LWDETR
 from rfdetr.utilities.distributed import get_rank
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_sha, get_version
@@ -29,7 +36,18 @@ from rfdetr.utilities.package import get_sha, get_version
 logger = get_logger()
 
 
-def make_infer_image(infer_dir, shape, batch_size, device="cuda", num_channels: int = 3):
+def _num_parameters(module: nn.Module) -> int:
+    """Count trainable and non-trainable parameters in a module."""
+    return sum(int(p.numel()) for p in module.parameters())
+
+
+def make_infer_image(
+    infer_dir: str | None,
+    shape: tuple[int, int],
+    batch_size: int,
+    device: str | torch.device = "cuda",
+    num_channels: int = 3,
+) -> Tensor:
     if infer_dir is None:
         if num_channels == 3:
             dummy = np.random.randint(0, 256, (shape[0], shape[1], 3), dtype=np.uint8)
@@ -67,13 +85,13 @@ def make_infer_image(infer_dir, shape, batch_size, device="cuda", num_channels: 
     return inps
 
 
-def no_batch_norm(model):
+def no_batch_norm(model: nn.Module) -> None:
     for module in model.modules():
         if isinstance(module, nn.BatchNorm2d):
             raise ValueError("BatchNorm2d found in the model. Please remove it.")
 
 
-def main(args):
+def main(args: argparse.Namespace) -> None:
     git_info = get_sha()
     if git_info != "unknown":
         logger.info(f"Running from git repository: {git_info}")
@@ -96,22 +114,24 @@ def main(args):
     os.environ["CUDA_VISIBLE_DEVICES"] = device_id
 
     # fix the seed for reproducibility
-    seed = args.seed + get_rank()
+    seed: int = args.seed + get_rank()
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
 
-    result = build_model(args)
-    model = result[0] if isinstance(result, tuple) else result
-    n_parameters = sum(p.numel() for p in model.parameters())
+    result = build_model(cast(BuilderArgs, args))
+    model = cast(LWDETR, result[0] if isinstance(result, tuple) else result)
+    backbone = model.backbone
+    backbone_model = cast(Backbone, backbone[0])
+    n_parameters = _num_parameters(model)
     logger.info(f"number of parameters: {n_parameters}")
-    n_backbone_parameters = sum(p.numel() for p in model.backbone.parameters())
+    n_backbone_parameters = _num_parameters(backbone)
     logger.info(f"number of backbone parameters: {n_backbone_parameters}")
-    n_projector_parameters = sum(p.numel() for p in model.backbone[0].projector.parameters())
+    n_projector_parameters = _num_parameters(backbone_model.projector)
     logger.info(f"number of projector parameters: {n_projector_parameters}")
-    n_backbone_encoder_parameters = sum(p.numel() for p in model.backbone[0].encoder.parameters())
+    n_backbone_encoder_parameters = _num_parameters(backbone_model.encoder)
     logger.info(f"number of backbone encoder parameters: {n_backbone_encoder_parameters}")
-    n_transformer_parameters = sum(p.numel() for p in model.transformer.parameters())
+    n_transformer_parameters = _num_parameters(cast(nn.Module, model.transformer))
     logger.info(f"number of transformer parameters: {n_transformer_parameters}")
     if args.resume:
         # --resume points at RF-DETR-produced checkpoints that may embed

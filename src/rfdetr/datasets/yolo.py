@@ -27,10 +27,10 @@ from rfdetr.datasets._keypoint_schema import (
     infer_yolo_keypoint_schema,
 )
 from rfdetr.datasets.coco import (
-    _resolve_runtime_augmentation_backend,
     make_coco_transforms,
     make_coco_transforms_square_div_64,
 )
+from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -980,10 +980,11 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
         image_set: Dataset split to load. One of ``"train"``, ``"val"``, or
             ``"test"``.
         args: Argument namespace. The following attributes are consumed:
-            ``dataset_dir``, ``square_resize_div_64``, ``aug_config``, ``segmentation_head``, ``multi_scale``,
-            ``expanded_scales``, ``do_random_resize_via_padding``, ``patch_size``, ``num_windows``. ``aug_config`` is
-            forwarded to the transform builder; when ``None`` the builder falls back to the default
-            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG`.
+            ``dataset_dir``, ``square_resize_div_64``, ``aug_config``, ``scale_jitter``, ``segmentation_head``,
+            ``multi_scale``, ``expanded_scales``, ``do_random_resize_via_padding``, ``patch_size``, ``num_windows``.
+            ``aug_config`` is forwarded to the transform builder; when ``None`` the builder uses torchvision-native
+            defaults. ``scale_jitter`` independently controls the resize-crop branch (Option B) and defaults to
+            ``True`` when absent.
         resolution: Target square resolution in pixels.
 
     Returns:
@@ -1005,13 +1006,14 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     patch_size = getattr(args, "patch_size", 16)
     num_windows = getattr(args, "num_windows", 4)
     aug_config = getattr(args, "aug_config", None)
+    scale_jitter = getattr(args, "scale_jitter", True)
     include_keypoints = getattr(args, "use_grouppose_keypoints", False)
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
     keypoint_flip_pairs: list[int] | None = (
         (getattr(args, "keypoint_flip_pairs", []) or []) if include_keypoints else None
     )
-    resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
-    gpu_postprocess = resolved_augmentation_backend != "cpu"
+    resolved_augmentation_backend = resolve_backend_for_build(getattr(args, "augmentation_backend", "cpu"))
+    gpu_postprocess = is_gpu_postprocess(resolved_augmentation_backend)
 
     if include_keypoints:
         try:
@@ -1035,6 +1037,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             ),
@@ -1056,6 +1059,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             ),

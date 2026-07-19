@@ -22,6 +22,7 @@ jobs:
       - name: 🐍 Install uv and set Python version ${{ inputs.python-version }}
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
         with:
+          version: "0.9.26"
           python-version: ${{ inputs.python-version }}
           activate-environment: true
 

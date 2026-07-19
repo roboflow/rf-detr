@@ -29,7 +29,7 @@
 - [Training Parameters](https://rfdetr.roboflow.com/latest/learn/train/training-parameters/): RF-DETR hyperparameters and TrainConfig options
 - [Advanced Training](https://rfdetr.roboflow.com/latest/learn/train/advanced/): Resume, early stopping, multi-GPU DDP, and memory optimization
 - [Custom Training API](https://rfdetr.roboflow.com/latest/learn/train/customization/): PyTorch Lightning training primitives
-- [Augmentations](https://rfdetr.roboflow.com/latest/learn/train/augmentations/): Albumentations presets and custom transforms
+- [Augmentations](https://rfdetr.roboflow.com/latest/learn/train/augmentations/): torchvision defaults plus optional Albumentations (CPU) or Kornia (GPU) custom transforms
 - [Training Loggers](https://rfdetr.roboflow.com/latest/learn/train/loggers/): TensorBoard, Weights and Biases, MLflow, and a ClearML workaround
 
 ## Export and Deploy

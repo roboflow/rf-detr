@@ -15,6 +15,7 @@ from torch import nn
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
+from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.tensors import NestedTensor
 
 # ---------------------------------------------------------------------------
@@ -44,7 +45,6 @@ def _base_train_config(tmp_path=None, **overrides):
         lr_encoder=1.5e-4,
         batch_size=2,
         weight_decay=1e-4,
-        lr_drop=8,
         warmup_epochs=1.0,
         drop_path=0.0,
         multi_scale=False,
@@ -80,6 +80,40 @@ def _fake_criterion():
 def _fake_postprocess():
     """Return a callable MagicMock for postprocess."""
     return MagicMock(return_value=[{"boxes": torch.zeros(1, 4), "scores": torch.ones(1), "labels": torch.zeros(1)}])
+
+
+class _RecordingOptimizer(torch.optim.Optimizer):
+    """Optimizer test double that records constructor defaults and kwargs."""
+
+    def __init__(self, params, lr=1e-3, weight_decay=0.0, **kwargs):
+        self.extra_kwargs = dict(kwargs)
+        super().__init__(params, {"lr": lr, "weight_decay": weight_decay, **kwargs})
+
+    def step(self, closure=None):
+        """Run an optimizer step for the test double."""
+        if closure is not None:
+            return closure()
+        return None
+
+
+class _NoWeightDecayOptimizer(torch.optim.Optimizer):
+    """Optimizer test double whose constructor does not accept ``weight_decay``."""
+
+    def __init__(self, params, lr=1e-3, momentum=0.0):
+        super().__init__(params, {"lr": lr, "momentum": momentum})
+
+    def step(self, closure=None):
+        """Run an optimizer step for the test double."""
+        if closure is not None:
+            return closure()
+        return None
+
+
+class _RaisingOptimizer:
+    """Optimizer test double that always fails to construct."""
+
+    def __init__(self, *args, **kwargs):
+        raise TypeError("simulated optimizer construction failure")
 
 
 def _build_module(model_config=None, train_config=None, tmp_path=None):
@@ -737,10 +771,22 @@ class TestTrainingStep:
     """Tests for training_step() — covers weighted loss aggregation, per-loss logging under the train/ prefix, prog_bar
     visibility, scalar tensor output, and that losses absent from weight_dict are excluded from the total."""
 
-    def _run_step(self, tmp_path, loss_dict=None, weight_dict=None, accumulate_grad_batches=1, model_config=None):
+    def _run_step(
+        self,
+        tmp_path,
+        loss_dict=None,
+        weight_dict=None,
+        accumulate_grad_batches=1,
+        model_config=None,
+        train_log_on_step=False,
+    ):
         module, fake_model, fake_criterion, _ = _build_module(
             model_config=model_config,
-            train_config=_base_train_config(tmp_path, grad_accum_steps=accumulate_grad_batches),
+            train_config=_base_train_config(
+                tmp_path,
+                grad_accum_steps=accumulate_grad_batches,
+                train_log_on_step=train_log_on_step,
+            ),
             tmp_path=tmp_path,
         )
         samples, targets = _make_batch()
@@ -889,6 +935,45 @@ class TestTrainingStep:
         assert progress_loss_calls[0].kwargs.get("logger") is False
         assert progress_loss_calls[0].kwargs.get("on_step") is True
         assert progress_loss_calls[0].kwargs.get("on_epoch") is False
+
+    @pytest.mark.parametrize(
+        "train_log_on_step",
+        [
+            pytest.param(False, id="epoch-only"),
+            pytest.param(True, id="step-and-epoch"),
+        ],
+    )
+    def test_logs_epoch_train_loss_to_progress_bar(self, tmp_path, train_log_on_step):
+        """Canonical training loss stays epoch-aggregated, with on_step mirroring train_log_on_step."""
+        module, samples, targets, _, _ = self._run_step(tmp_path, train_log_on_step=train_log_on_step)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        epoch_loss_calls = [call for call in module.log.call_args_list if call[0][0] == "train/loss"]
+        assert len(epoch_loss_calls) == 1
+        assert epoch_loss_calls[0].kwargs.get("prog_bar") is True
+        assert epoch_loss_calls[0].kwargs.get("on_step") is train_log_on_step
+        assert epoch_loss_calls[0].kwargs.get("on_epoch") is True
+
+    @pytest.mark.parametrize(
+        "train_log_on_step,expected_live_loss_calls",
+        [
+            pytest.param(False, 1, id="default-emits-live-loss"),
+            pytest.param(True, 0, id="on-step-skips-live-loss"),
+        ],
+    )
+    def test_live_loss_key_gated_on_train_log_on_step(self, tmp_path, train_log_on_step, expected_live_loss_calls):
+        """Redundant live ``loss`` progress key is emitted only when train_log_on_step is False.
+
+        With train_log_on_step=True the ``train/loss`` call forks into a live ``train/loss_step`` progress entry, so the
+        separate ``loss`` scalar becomes redundant and is skipped.
+        """
+        module, samples, targets, _, _ = self._run_step(tmp_path, train_log_on_step=train_log_on_step)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        live_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "loss"]
+        assert len(live_loss_calls) == expected_live_loss_calls
 
     def test_logs_learning_rate_without_progress_bar(self, tmp_path):
         """Current learning rate should be logged without occupying progress-bar metric slots."""
@@ -1258,7 +1343,7 @@ class TestValidationStep:
 
     def test_postprocess_called_with_orig_sizes(self, tmp_path):
         """Postprocessor must receive original image sizes to rescale predictions."""
-        result, fake_pp, _ = self._run_val_step(tmp_path)
+        _result, fake_pp, _ = self._run_val_step(tmp_path)
         fake_pp.assert_called_once()
         orig_sizes = fake_pp.call_args[0][1]
         assert orig_sizes.shape == (2, 2)
@@ -1357,7 +1442,7 @@ class TestTestStep:
 
     def test_postprocess_called_with_orig_sizes(self, tmp_path):
         """Postprocessor must receive original image sizes to rescale predictions."""
-        result, fake_pp, _ = self._run_test_step(tmp_path)
+        _result, fake_pp, _ = self._run_test_step(tmp_path)
         fake_pp.assert_called_once()
         orig_sizes = fake_pp.call_args[0][1]
         assert orig_sizes.shape == (2, 2)
@@ -1445,6 +1530,201 @@ class TestConfigureOptimizers:
         assert isinstance(module.configure_optimizers()["optimizer"], torch.optim.AdamW)
 
     @patch("rfdetr.training.module_model.get_param_dict")
+    def test_adamw_optimizer_kwargs_forwarded(self, mock_get_param_dict, tmp_path):
+        """optimizer_kwargs are forwarded to RF-DETR's default AdamW optimizer."""
+        optimizer_kwargs = {"betas": (0.8, 0.95), "eps": 1e-7}
+        module, param_dicts = self._setup_module(tmp_path, optimizer_kwargs=optimizer_kwargs)
+        mock_get_param_dict.return_value = param_dicts
+
+        optimizer = module.configure_optimizers()["optimizer"]
+
+        assert optimizer.defaults["betas"] == optimizer_kwargs["betas"]
+        assert optimizer.defaults["eps"] == pytest.approx(optimizer_kwargs["eps"])
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_managed_optimizer_resolves_native_class(self, mock_get_param_dict, tmp_path):
+        """Managed short names resolve to a native torch.optim class with lr/weight_decay injected."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
+        mock_get_param_dict.return_value = param_dicts
+
+        with patch(
+            "rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer
+        ) as mock_resolve:
+            optimizer = module.configure_optimizers()["optimizer"]
+
+        mock_resolve.assert_called_once_with("sgd")
+        assert isinstance(optimizer, _RecordingOptimizer)
+        assert optimizer.defaults["lr"] == pytest.approx(module.train_config.lr)
+        assert optimizer.defaults["weight_decay"] == pytest.approx(module.train_config.weight_decay)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_managed_optimizer_preserves_rfdetr_param_groups(self, mock_get_param_dict, tmp_path):
+        """Managed optimizers must receive RF-DETR param groups with layer-wise LR values."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
+        param_dicts[0]["lr"] = 2.5e-5
+        mock_get_param_dict.return_value = param_dicts
+
+        with patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer):
+            optimizer = module.configure_optimizers()["optimizer"]
+
+        assert optimizer.param_groups[0]["initial_lr"] == pytest.approx(2.5e-5)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_managed_optimizer_kwargs_forwarded(self, mock_get_param_dict, tmp_path):
+        """optimizer_kwargs are forwarded to a managed optimizer constructor."""
+        optimizer_kwargs = {"momentum": 0.9, "nesterov": True}
+        module, param_dicts = self._setup_module(tmp_path, optimizer="sgd", optimizer_kwargs=optimizer_kwargs)
+        mock_get_param_dict.return_value = param_dicts
+
+        with patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer):
+            optimizer = module.configure_optimizers()["optimizer"]
+
+        assert optimizer.extra_kwargs == optimizer_kwargs
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_callable_optimizer_called_with_param_groups_only(self, mock_get_param_dict, tmp_path):
+        """A non-reconstructable callable optimizer is invoked with the param groups and nothing else."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer=lambda params: _RecordingOptimizer(params))
+        mock_get_param_dict.return_value = param_dicts
+
+        optimizer = module.configure_optimizers()["optimizer"]
+
+        assert isinstance(optimizer, _RecordingOptimizer)
+        assert optimizer.extra_kwargs == {}
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_dotted_optimizer_built_from_kwargs_without_injection(self, mock_get_param_dict, tmp_path):
+        """A dotted-path optimizer is built from optimizer_kwargs only, with no lr/weight_decay injection."""
+        module, param_dicts = self._setup_module(
+            tmp_path, optimizer="torch.optim.AdamW", optimizer_kwargs={"weight_decay": 0.5}
+        )
+        mock_get_param_dict.return_value = param_dicts
+
+        optimizer = module.configure_optimizers()["optimizer"]
+
+        assert isinstance(optimizer, torch.optim.AdamW)
+        assert optimizer.defaults["weight_decay"] == pytest.approx(0.5)
+        # Explicit mode must not inject the config lr as the optimizer-level default.
+        assert optimizer.defaults["lr"] == pytest.approx(1e-3)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_uninstalled_import_path_optimizer_raises_value_error(self, mock_get_param_dict, tmp_path):
+        """A dotted import path that cannot be imported surfaces as a configuration error at train start."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer="pytorch_optimizer.Lion")
+        mock_get_param_dict.return_value = param_dicts
+
+        with (
+            patch("rfdetr.training.module_model.importlib.import_module", side_effect=ImportError("No module")),
+            pytest.raises(ValueError, match="Could not import optimizer"),
+        ):
+            module.configure_optimizers()
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_real_import_path_optimizer_smoke(self, mock_get_param_dict, tmp_path):
+        """A real pytorch-optimizer optimizer can be built via its import path when installed."""
+        pytest.importorskip("pytorch_optimizer")
+        module, param_dicts = self._setup_module(tmp_path, optimizer="pytorch_optimizer.Lion")
+        mock_get_param_dict.return_value = param_dicts
+
+        optimizer = module.configure_optimizers()["optimizer"]
+
+        assert optimizer.__class__.__name__ == "Lion"
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_custom_optimizer_omits_weight_decay_when_unsupported(self, mock_get_param_dict, tmp_path):
+        """weight_decay must not be injected into optimizers whose constructor does not accept it."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
+        mock_get_param_dict.return_value = param_dicts
+
+        with patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_NoWeightDecayOptimizer):
+            optimizer = module.configure_optimizers()["optimizer"]
+
+        assert isinstance(optimizer, _NoWeightDecayOptimizer)
+        assert "weight_decay" not in optimizer.defaults
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    def test_fused_optimizer_warns_for_custom_optimizer_on_bf16(
+        self,
+        mock_bf16_supported,
+        mock_cuda_available,
+        mock_get_param_dict,
+        tmp_path,
+    ):
+        """A custom optimizer on a fused-eligible BF16/CUDA run must warn that fused_optimizer is ignored."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
+        mock_get_param_dict.return_value = param_dicts
+        module._trainer.precision = "bf16-mixed"
+
+        with (
+            patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer),
+            patch("rfdetr.training.module_model.logger.warning") as mock_warning,
+        ):
+            module.configure_optimizers()
+
+        assert any("fused_optimizer=True is ignored" in str(call.args[0]) for call in mock_warning.call_args_list)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    def test_no_fused_warning_for_adamw_on_bf16(
+        self,
+        mock_bf16_supported,
+        mock_cuda_available,
+        mock_get_param_dict,
+        tmp_path,
+    ):
+        """The built-in AdamW path uses fused and must not emit the fused-ignored warning."""
+        module, param_dicts = self._setup_module(tmp_path)
+        mock_get_param_dict.return_value = param_dicts
+        module._trainer.precision = "bf16-mixed"
+
+        with patch("rfdetr.training.module_model.logger.warning") as mock_warning:
+            module.configure_optimizers()
+
+        assert not any("fused_optimizer=True is ignored" in str(call.args[0]) for call in mock_warning.call_args_list)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_adamw_construction_error_is_rewrapped(self, mock_get_param_dict, tmp_path):
+        """An unsupported AdamW kwarg must surface as an RF-DETR-specific initialization error."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer_kwargs={"nonexistent_adamw_kwarg": True})
+        mock_get_param_dict.return_value = param_dicts
+
+        with pytest.raises(TypeError, match="Failed to initialize optimizer 'adamw'"):
+            module.configure_optimizers()
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_pytorch_optimizer_construction_error_is_rewrapped(self, mock_get_param_dict, tmp_path):
+        """A managed optimizer constructor failure must surface as an RF-DETR-specific initialization error."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
+        mock_get_param_dict.return_value = param_dicts
+
+        with (
+            patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RaisingOptimizer),
+            pytest.raises(TypeError, match="Failed to initialize optimizer 'sgd'"),
+        ):
+            module.configure_optimizers()
+
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_use_fused_optimizer_false_for_custom_optimizer(self, mock_cuda_available, mock_bf16_supported, tmp_path):
+        """Fused AdamW lifecycle must not activate for custom optimizers, even on BF16/CUDA."""
+        module, _ = self._setup_module(tmp_path, optimizer="sgd")
+        module._trainer.precision = "bf16-mixed"
+
+        assert module._use_fused_optimizer is False
+
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_use_fused_optimizer_true_for_adamw(self, mock_cuda_available, mock_bf16_supported, tmp_path):
+        """Fused AdamW must activate for the built-in AdamW optimizer on BF16/CUDA."""
+        module, _ = self._setup_module(tmp_path)
+        module._trainer.precision = "bf16-mixed"
+
+        assert module._use_fused_optimizer is True
+
+    @patch("rfdetr.training.module_model.get_param_dict")
     def test_scheduler_interval_is_step(self, mock_get_param_dict, tmp_path):
         """Scheduler must step per batch (not per epoch) for fine-grained warmup."""
         module, param_dicts = self._setup_module(tmp_path)
@@ -1476,7 +1756,9 @@ class TestConfigureOptimizers:
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_lr_lambda_step_decay_before_drop(self, mock_get_param_dict, tmp_path):
         """Before lr_drop epoch, the LR multiplier must remain at 1.0."""
-        module, param_dicts = self._setup_module(tmp_path, warmup_epochs=0.0, epochs=10, lr_drop=8)
+        module, param_dicts = self._setup_module(
+            tmp_path, warmup_epochs=0.0, epochs=10, lr_scheduler_kwargs={"lr_drop": 8}
+        )
         module._trainer.estimated_stepping_batches = 1000
         mock_get_param_dict.return_value = param_dicts
 
@@ -1489,7 +1771,9 @@ class TestConfigureOptimizers:
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_lr_lambda_step_decay_after_drop(self, mock_get_param_dict, tmp_path):
         """After lr_drop epoch, the LR multiplier must decay to 0.1."""
-        module, param_dicts = self._setup_module(tmp_path, warmup_epochs=0.0, epochs=10, lr_drop=8)
+        module, param_dicts = self._setup_module(
+            tmp_path, warmup_epochs=0.0, epochs=10, lr_scheduler_kwargs={"lr_drop": 8}
+        )
         module._trainer.estimated_stepping_batches = 1000
         mock_get_param_dict.return_value = param_dicts
 
@@ -1501,13 +1785,13 @@ class TestConfigureOptimizers:
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_lr_lambda_cosine_reads_train_config_fields(self, mock_get_param_dict, tmp_path):
-        """Cosine scheduler must read lr_scheduler/lr_min_factor from TrainConfig."""
+        """Cosine preset must read its floor from lr_scheduler_kwargs['min_factor']."""
         module, param_dicts = self._setup_module(
             tmp_path,
             warmup_epochs=0.0,
             epochs=10,
             lr_scheduler="cosine",
-            lr_min_factor=0.2,
+            lr_scheduler_kwargs={"min_factor": 0.2},
         )
         module._trainer.estimated_stepping_batches = 1000
         mock_get_param_dict.return_value = param_dicts
@@ -1517,6 +1801,188 @@ class TestConfigureOptimizers:
 
         # At the final step, cosine schedule must end at lr_min_factor.
         assert lr_lambda(1000) == pytest.approx(0.2)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_explicit_dotted_scheduler_builds_from_kwargs(self, mock_get_param_dict, tmp_path):
+        """An explicit dotted-path lr_scheduler is built from lr_scheduler_kwargs verbatim."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 30, "gamma": 0.1},
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+
+        assert isinstance(scheduler, torch.optim.lr_scheduler.StepLR)
+        assert scheduler.step_size == 30
+        assert scheduler.gamma == pytest.approx(0.1)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_managed_preset_builds_lambda_lr(self, mock_get_param_dict, tmp_path):
+        """A managed preset still builds a LambdaLR at step interval."""
+        module, param_dicts = self._setup_module(tmp_path, lr_scheduler="step")
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        config = module.configure_optimizers()["lr_scheduler"]
+
+        assert isinstance(config["scheduler"], torch.optim.lr_scheduler.LambdaLR)
+        assert config["interval"] == "step"
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_callable_scheduler_built_from_optimizer_only(self, mock_get_param_dict, tmp_path):
+        """A non-reconstructable callable scheduler is invoked with the optimizer and nothing else."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler=lambda optimizer: torch.optim.lr_scheduler.StepLR(optimizer, step_size=11),
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+
+        assert isinstance(scheduler, torch.optim.lr_scheduler.StepLR)
+        assert scheduler.step_size == 11
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_explicit_scheduler_auto_wrapped_with_warmup(self, mock_get_param_dict, tmp_path):
+        """With warmup_epochs>0 an explicit scheduler is wrapped in a SequentialLR linear warmup."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=1.0,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 5},
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+
+        assert isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_epoch_interval_warmup_ramps_over_multiple_epochs(self, mock_get_param_dict, tmp_path):
+        """An epoch-interval explicit scheduler gets a real warmup ramp sized in whole epochs (not optimizer steps)."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=3.0,
+            epochs=10,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 5},
+            lr_scheduler_interval="epoch",
+        )
+        module._trainer.estimated_stepping_batches = 1000  # steps_per_epoch = 100
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+
+        # The ramp spans 3 epoch-steps (not 300 optimizer-steps) and actually ramps up (start_factor < 1.0).
+        assert isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
+        warmup = scheduler._schedulers[0]
+        assert warmup.total_iters == 3
+        assert warmup.start_factor < 1.0
+
+    @patch("rfdetr.training.module_model.logger")
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_epoch_interval_single_epoch_warmup_warns_and_skips(self, mock_get_param_dict, mock_logger, tmp_path):
+        """A single-epoch epoch-interval warmup cannot ramp; it warns and is skipped, not silently flat."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=1.0,
+            epochs=10,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 5},
+            lr_scheduler_interval="epoch",
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+
+        # No degenerate flat SequentialLR wrap; the no-op warmup is skipped loudly instead.
+        assert not isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
+        mock_logger.warning.assert_called_once()
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_explicit_scheduler_interval_propagates(self, mock_get_param_dict, tmp_path):
+        """lr_scheduler_interval is forwarded to the Lightning scheduler config for explicit schedulers."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 5},
+            lr_scheduler_interval="epoch",
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        assert module.configure_optimizers()["lr_scheduler"]["interval"] == "epoch"
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_reduce_on_plateau_sets_monitor_and_epoch_interval(self, mock_get_param_dict, tmp_path):
+        """A ReduceLROnPlateau scheduler is configured with its monitor and stepped per epoch."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler="torch.optim.lr_scheduler.ReduceLROnPlateau",
+            lr_scheduler_monitor="val/loss",
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        config = module.configure_optimizers()["lr_scheduler"]
+
+        assert isinstance(config["scheduler"], torch.optim.lr_scheduler.ReduceLROnPlateau)
+        assert config["monitor"] == "val/loss"
+        assert config["interval"] == "epoch"
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_uninstalled_scheduler_path_raises_value_error(self, mock_get_param_dict, tmp_path):
+        """A dotted scheduler path that cannot be imported surfaces as a configuration error at train start."""
+        module, param_dicts = self._setup_module(tmp_path, lr_scheduler="nonexistent_pkg.MyScheduler")
+        mock_get_param_dict.return_value = param_dicts
+
+        with (
+            patch("rfdetr.training.module_model.importlib.import_module", side_effect=ImportError("No module")),
+            pytest.raises(ValueError, match="Could not import lr_scheduler"),
+        ):
+            module.configure_optimizers()
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_explicit_scheduler_construction_error_is_reraised(self, mock_get_param_dict, tmp_path):
+        """A missing required scheduler kwarg surfaces as an RF-DETR configuration error, not a bare TypeError."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",  # StepLR requires step_size
+            lr_scheduler_kwargs={},
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        with pytest.raises(TypeError, match="Failed to initialize lr_scheduler"):
+            module.configure_optimizers()
+
+    @patch("rfdetr.training.module_model.logger")
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_plateau_with_warmup_warns(self, mock_get_param_dict, mock_logger, tmp_path):
+        """warmup_epochs>0 with ReduceLROnPlateau warns; a metric-driven scheduler cannot compose with a warmup ramp."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=1.0,
+            lr_scheduler="torch.optim.lr_scheduler.ReduceLROnPlateau",
+            lr_scheduler_monitor="val/loss",
+        )
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        module.configure_optimizers()
+
+        mock_logger.warning.assert_called_once()
 
     @patch("rfdetr.training.module_model.get_param_dict")
     @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
@@ -1595,7 +2061,7 @@ class TestConfigureOptimizers:
             warmup_epochs=0,
             epochs=1,
             lr_scheduler="cosine",
-            lr_min_factor=lr_min_factor,
+            lr_scheduler_kwargs={"min_factor": lr_min_factor},
         )
         module, _, _, _ = _build_module(
             model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
@@ -1617,6 +2083,113 @@ class TestConfigureOptimizers:
         # If total_steps were wrongly 100, lr at step 25 would still be ~0.87 (near peak).
         lr_at_decay_end = lr_lambda(expected_total_steps)
         assert lr_at_decay_end == pytest.approx(lr_min_factor, abs=1e-6)
+
+
+class TestFusedOptimizerResumeStateNormalization:
+    """Tests for resume-time fused AdamW state normalization."""
+
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_on_train_start_normalizes_restored_fused_optimizer_state(
+        self,
+        mock_cuda_available,
+        mock_bf16_supported,
+    ) -> None:
+        """Resumed fused AdamW state tensors must match the live parameter layout before the first step."""
+        module = RFDETRModelModule.__new__(RFDETRModelModule)
+        module.model_config = SimpleNamespace(fused_optimizer=True)
+        module.train_config = SimpleNamespace(optimizer="adamw")
+        trainer = MagicMock()
+        trainer.precision = "bf16-mixed"
+        trainer.is_global_zero = True
+        module._trainer = trainer
+        module.optimizers = MagicMock()
+
+        optimizer_param = nn.Parameter(torch.arange(6.0, dtype=torch.bfloat16).reshape(2, 3).t())
+        optimizer = torch.optim.AdamW([optimizer_param], lr=1e-3)
+        optimizer.state[optimizer_param] = {
+            "exp_avg": torch.full((3, 2), 2.0, dtype=torch.float32),
+            "exp_avg_sq": torch.full((3, 2), 3.0, dtype=torch.float64),
+        }
+        module.optimizers.return_value = optimizer
+
+        with patch.object(type(module), "trainer", new_callable=PropertyMock) as trainer_prop:
+            trainer_prop.return_value = trainer
+            module.on_train_start()
+
+        module.optimizers.assert_called_once_with(use_pl_optimizer=False)
+        state = optimizer.state[optimizer_param]
+        assert state["exp_avg"].dtype == optimizer_param.dtype
+        assert state["exp_avg"].stride() == optimizer_param.stride()
+        assert state["exp_avg_sq"].dtype == optimizer_param.dtype
+        assert state["exp_avg_sq"].stride() == optimizer_param.stride()
+        torch.testing.assert_close(state["exp_avg"], torch.full_like(optimizer_param, 2.0))
+        torch.testing.assert_close(state["exp_avg_sq"], torch.full_like(optimizer_param, 3.0))
+
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_on_train_start_unwraps_optimizer_wrapper(
+        self,
+        mock_cuda_available,
+        mock_bf16_supported,
+    ) -> None:
+        """Lightning-style optimizer wrappers must still be normalized on resume."""
+        module = RFDETRModelModule.__new__(RFDETRModelModule)
+        module.model_config = SimpleNamespace(fused_optimizer=True)
+        module.train_config = SimpleNamespace(optimizer="adamw")
+        trainer = MagicMock()
+        trainer.precision = "bf16-mixed"
+        trainer.is_global_zero = True
+        module._trainer = trainer
+        module.optimizers = MagicMock()
+
+        optimizer_param = nn.Parameter(torch.arange(6.0, dtype=torch.bfloat16).reshape(2, 3).t())
+        optimizer = torch.optim.AdamW([optimizer_param], lr=1e-3)
+        optimizer.state[optimizer_param] = {
+            "exp_avg": torch.full((3, 2), 4.0, dtype=torch.float32),
+            "exp_avg_sq": torch.full((3, 2), 5.0, dtype=torch.float64),
+        }
+        module.optimizers.return_value = SimpleNamespace(optimizer=optimizer)
+
+        with patch.object(type(module), "trainer", new_callable=PropertyMock) as trainer_prop:
+            trainer_prop.return_value = trainer
+            module.on_train_start()
+
+        module.optimizers.assert_called_once_with(use_pl_optimizer=False)
+        state = optimizer.state[optimizer_param]
+        assert state["exp_avg"].dtype == optimizer_param.dtype
+        assert state["exp_avg"].stride() == optimizer_param.stride()
+        assert state["exp_avg_sq"].dtype == optimizer_param.dtype
+        assert state["exp_avg_sq"].stride() == optimizer_param.stride()
+        torch.testing.assert_close(state["exp_avg"], torch.full_like(optimizer_param, 4.0))
+        torch.testing.assert_close(state["exp_avg_sq"], torch.full_like(optimizer_param, 5.0))
+
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_on_train_start_leaves_empty_optimizer_state_untouched(
+        self,
+        mock_cuda_available,
+        mock_bf16_supported,
+    ) -> None:
+        """Fresh fused-optimizer runs with no restored state should remain a no-op."""
+        module = RFDETRModelModule.__new__(RFDETRModelModule)
+        module.model_config = SimpleNamespace(fused_optimizer=True)
+        module.train_config = SimpleNamespace(optimizer="adamw")
+        trainer = MagicMock()
+        trainer.precision = "bf16-mixed"
+        trainer.is_global_zero = True
+        module._trainer = trainer
+        module.optimizers = MagicMock()
+
+        optimizer_param = nn.Parameter(torch.ones((2, 2), dtype=torch.bfloat16))
+        optimizer = torch.optim.AdamW([optimizer_param], lr=1e-3)
+        module.optimizers.return_value = optimizer
+
+        with patch.object(type(module), "trainer", new_callable=PropertyMock) as trainer_prop:
+            trainer_prop.return_value = trainer
+            module.on_train_start()
+
+        assert optimizer.state == {}
 
 
 class TestClipGradients:
@@ -1680,7 +2253,7 @@ class TestClipGradients:
         module.clip_gradients(MagicMock(), gradient_clip_val=0.5)
 
         mock_clip_grad_norm.assert_called_once()
-        _, call_kwargs = mock_clip_grad_norm.call_args
+        _, _call_kwargs = mock_clip_grad_norm.call_args
         # Positional arg[1] is max_norm
         assert mock_clip_grad_norm.call_args[0][1] == pytest.approx(0.5)
 
@@ -1876,3 +2449,89 @@ class TestOnLoadCheckpoint:
         module.on_load_checkpoint(checkpoint)
 
         assert set(checkpoint["state_dict"].keys()) == original_keys
+
+
+class TestManualOptLRSchedulerStepping:
+    """Manual-optimization (keypoint) path steps LR schedulers itself, honoring interval and plateau semantics."""
+
+    def _module(self, tmp_path, **overrides):
+        tc = _base_train_config(tmp_path, **overrides)
+        module, _, _, _ = _build_module(train_config=tc)
+        module.automatic_optimization = False
+        return module
+
+    def test_step_interval_scheduler_stepped_per_optimizer_step(self, tmp_path):
+        """A step-interval scheduler is stepped by _step_lr_scheduler."""
+        module = self._module(tmp_path)
+        module._lr_scheduler_interval = "step"
+        scheduler = MagicMock(spec=torch.optim.lr_scheduler.StepLR)
+        with patch.object(module, "lr_schedulers", return_value=scheduler):
+            module._step_lr_scheduler()
+
+        scheduler.step.assert_called_once_with()
+
+    def test_epoch_interval_scheduler_not_stepped_per_optimizer_step(self, tmp_path):
+        """An epoch-interval scheduler is not stepped by the per-optimizer-step hook."""
+        module = self._module(tmp_path)
+        module._lr_scheduler_interval = "epoch"
+        scheduler = MagicMock(spec=torch.optim.lr_scheduler.StepLR)
+        with patch.object(module, "lr_schedulers", return_value=scheduler):
+            module._step_lr_scheduler()
+
+        scheduler.step.assert_not_called()
+
+    def test_epoch_interval_scheduler_stepped_on_train_epoch_end(self, tmp_path):
+        """on_train_epoch_end steps an epoch-interval scheduler on the manual path."""
+        module = self._module(tmp_path)
+        module._lr_scheduler_interval = "epoch"
+        scheduler = MagicMock(spec=torch.optim.lr_scheduler.StepLR)
+        with patch.object(module, "lr_schedulers", return_value=scheduler):
+            module.on_train_epoch_end()
+
+        scheduler.step.assert_called_once_with()
+
+    def test_plateau_stepped_from_monitor_metric_on_validation_epoch_end(self, tmp_path):
+        """on_validation_epoch_end steps ReduceLROnPlateau with the monitored metric."""
+        module = self._module(tmp_path)
+        module._lr_scheduler_monitor = "val/loss"
+        scheduler = MagicMock(spec=torch.optim.lr_scheduler.ReduceLROnPlateau)
+        trainer = MagicMock()
+        trainer.sanity_checking = False
+        trainer.callback_metrics = {"val/loss": torch.tensor(1.23)}
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        with patch.object(module, "lr_schedulers", return_value=scheduler):
+            module.on_validation_epoch_end()
+
+        scheduler.step.assert_called_once()
+
+    def test_plateau_raises_when_monitor_metric_missing(self, tmp_path):
+        """on_validation_epoch_end fails loud (not silent warn) when the monitored metric is absent."""
+        module = self._module(tmp_path)
+        module._lr_scheduler_monitor = "val/loss"
+        scheduler = MagicMock(spec=torch.optim.lr_scheduler.ReduceLROnPlateau)
+        trainer = MagicMock()
+        trainer.sanity_checking = False
+        trainer.callback_metrics = {}
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        with patch.object(module, "lr_schedulers", return_value=scheduler):
+            with pytest.raises(RuntimeError, match="never be reduced"):
+                module.on_validation_epoch_end()
+
+        scheduler.step.assert_not_called()
+
+    def test_plateau_not_stepped_during_sanity_check(self, tmp_path):
+        """on_validation_epoch_end must not step plateau during Lightning's pre-training sanity check."""
+        module = self._module(tmp_path)
+        module._lr_scheduler_monitor = "val/loss"
+        scheduler = MagicMock(spec=torch.optim.lr_scheduler.ReduceLROnPlateau)
+        trainer = MagicMock()
+        trainer.sanity_checking = True
+        trainer.callback_metrics = {"val/loss": torch.tensor(1.23)}
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        with patch.object(module, "lr_schedulers", return_value=scheduler):
+            module.on_validation_epoch_end()
+
+        scheduler.step.assert_not_called()

@@ -26,7 +26,7 @@ from typing import cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812 — conventional PyTorch alias
-from torch import nn
+from torch import Tensor, nn
 
 from rfdetr.utilities.logger import get_logger
 
@@ -36,7 +36,7 @@ logger = get_logger()
 KEYPOINT_PRED_DIM: int = 8
 
 
-def modulate(features: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor) -> torch.Tensor:
+def modulate(features: Tensor, scale: Tensor, shift: Tensor) -> Tensor:
     """Apply AdaLN modulation to a feature tensor.
 
     Args:
@@ -91,7 +91,7 @@ class ConditionalQueryInitializer(nn.Module):
 
         self.out_proj = nn.Linear(out_dim, out_dim)
 
-    def forward(self, query_features: torch.Tensor) -> torch.Tensor:
+    def forward(self, query_features: Tensor) -> Tensor:
         """Return modulated query embeddings.
 
         Args:
@@ -116,19 +116,19 @@ class ConditionalQueryInitializer(nn.Module):
         """
 
         normed_query_features = self.query_norm(self.queries)
-        modulation: torch.Tensor = self.adaLN_modulation(query_features.unsqueeze(-2))
+        modulation: Tensor = self.adaLN_modulation(query_features.unsqueeze(-2))
         scale, shift, gate = modulation.chunk(3, dim=-1)
         modulated_query_features = self.out_proj(modulate(normed_query_features, scale, shift)) * gate + self.queries
-        return cast("torch.Tensor", modulated_query_features)
+        return cast("Tensor", modulated_query_features)
 
 
 def compute_l1_keypoint_loss(
-    all_pred_keypoints: torch.Tensor,
-    target_keypoints: torch.Tensor,
-    target_classes: torch.Tensor,
-    target_areas: torch.Tensor,
+    all_pred_keypoints: Tensor,
+    target_keypoints: Tensor,
+    target_classes: Tensor,
+    target_areas: Tensor,
     num_keypoints_per_class: Sequence[int],
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     """Compute the keypoint loss vector per matched target.
 
     The tensor layout follows GroupPose-style keypoints where each target class
@@ -295,7 +295,7 @@ def compute_l1_keypoint_loss(
     return location_loss, findable_loss, visible_loss, nll_loss
 
 
-def _cdist_bce_with_logits(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+def _cdist_bce_with_logits(x: Tensor, y: Tensor) -> Tensor:
     """Compute pairwise BCE-with-logits summed along the last dim."""
     y_float = y.to(dtype=x.dtype)
     softplus = F.softplus(x).sum(dim=1, keepdim=True)
@@ -304,12 +304,12 @@ def _cdist_bce_with_logits(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
 
 
 def compute_keypoint_matching_cost(
-    all_pred_keypoints: torch.Tensor,
-    target_keypoints: torch.Tensor,
-    target_classes: torch.Tensor,
-    target_areas: torch.Tensor,
+    all_pred_keypoints: Tensor,
+    target_keypoints: Tensor,
+    target_classes: Tensor,
+    target_areas: Tensor,
     num_keypoints_per_class: Sequence[int],
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     """Compute many-to-many keypoint matching costs.
 
     Args:

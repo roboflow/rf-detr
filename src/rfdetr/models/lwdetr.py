@@ -17,20 +17,21 @@
 # ------------------------------------------------------------------------
 """LW-DETR model and criterion classes."""
 
+from __future__ import annotations
+
 import copy
 import math
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
-from torch import nn
+from torch import Tensor, nn
 
 if TYPE_CHECKING:
     from rfdetr.config import ModelConfig, TrainConfig
 
 from rfdetr.models._defaults import MODEL_DEFAULTS, ModelDefaults
 from rfdetr.models._types import BuilderArgs
-from rfdetr.models.backbone import build_backbone
+from rfdetr.models.backbone import Joiner, build_backbone
 
 # Backward-compat re-exports: loss functions that used to live in this module
 from rfdetr.models.criterion import (  # noqa: F401 — backward compat
@@ -47,7 +48,7 @@ from rfdetr.models.heads.segmentation import SegmentationHead
 from rfdetr.models.matcher import build_matcher
 from rfdetr.models.math import MLP
 from rfdetr.models.postprocess import PostProcess
-from rfdetr.models.transformer import build_transformer
+from rfdetr.models.transformer import Transformer, build_transformer
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import NestedTensor, nested_tensor_from_tensor_list
 
@@ -119,21 +120,21 @@ class LWDETR(nn.Module):
 
     def __init__(
         self,
-        backbone,
-        transformer,
-        segmentation_head,
-        num_classes,
-        num_queries,
-        aux_loss=False,
-        group_detr=1,
-        two_stage=False,
-        lite_refpoint_refine=False,
-        bbox_reparam=False,
-        use_grouppose_keypoints=False,
+        backbone: Joiner,
+        transformer: Transformer,
+        segmentation_head: SegmentationHead | None,
+        num_classes: int,
+        num_queries: int,
+        aux_loss: bool = False,
+        group_detr: int = 1,
+        two_stage: bool = False,
+        lite_refpoint_refine: bool = False,
+        bbox_reparam: bool = False,
+        use_grouppose_keypoints: bool = False,
         num_keypoints_per_class: list[int] | None = None,
         grouppose_keypoint_dim_downscale: int = 1,
-        oriented=False,
-    ):
+        oriented: bool = False,
+    ) -> None:
         """Initializes the model.
 
         Parameters:
@@ -186,6 +187,7 @@ class LWDETR(nn.Module):
             )
         # Flag to ensure the zero-pad warning in ``_aggregate_keypoint_class_logits`` is emitted at most once.
         self._kp_zero_pad_warned = False
+        self.keypoint_embed: MLP | None
         if self.use_grouppose_keypoints:
             self.keypoint_embed = MLP(
                 hidden_dim // self.grouppose_keypoint_dim_downscale,
@@ -194,11 +196,13 @@ class LWDETR(nn.Module):
                 3,
             )
             # Initialize keypoint head to near-identity behavior around zero delta.
-            nn.init.constant_(self.keypoint_embed.layers[-1].weight.data, 0)
-            nn.init.constant_(self.keypoint_embed.layers[-1].bias.data, 0)
+            keypoint_out_layer = cast(nn.Linear, self.keypoint_embed.layers[-1])
+            nn.init.constant_(keypoint_out_layer.weight.data, 0)
+            nn.init.constant_(keypoint_out_layer.bias.data, 0)
         else:
             self.keypoint_embed = None
 
+        self._kp_active_mask: Tensor
         self.register_buffer("_kp_active_mask", self._create_kp_active_mask(self.num_keypoints_per_class))
 
         # init prior_prob setting for focal loss
@@ -207,12 +211,14 @@ class LWDETR(nn.Module):
         self.class_embed.bias.data = torch.ones(num_classes) * bias_value
 
         # init bbox_mebed
-        nn.init.constant_(self.bbox_embed.layers[-1].weight.data, 0)
-        nn.init.constant_(self.bbox_embed.layers[-1].bias.data, 0)
+        bbox_out_layer = cast(nn.Linear, self.bbox_embed.layers[-1])
+        nn.init.constant_(bbox_out_layer.weight.data, 0)
+        nn.init.constant_(bbox_out_layer.bias.data, 0)
 
         if self.angle_embed is not None:
-            nn.init.constant_(self.angle_embed.layers[-1].weight.data, 0)
-            nn.init.constant_(self.angle_embed.layers[-1].bias.data, 0)
+            angle_out_layer = cast(nn.Linear, self.angle_embed.layers[-1])
+            nn.init.constant_(angle_out_layer.weight.data, 0)
+            nn.init.constant_(angle_out_layer.bias.data, 0)
 
         # two_stage
         self.two_stage = two_stage
@@ -245,12 +251,13 @@ class LWDETR(nn.Module):
         self.class_embed = _resize_linear(self.class_embed, num_classes)
 
         if self.two_stage:
+            assert self.transformer.enc_out_class_embed is not None
             self.transformer.enc_out_class_embed = nn.ModuleList(
-                [_resize_linear(m, num_classes) for m in self.transformer.enc_out_class_embed]
+                [_resize_linear(cast(nn.Linear, m), num_classes) for m in self.transformer.enc_out_class_embed]
             )
 
     @staticmethod
-    def _create_kp_active_mask(num_keypoints_per_class: list[int]) -> torch.Tensor:
+    def _create_kp_active_mask(num_keypoints_per_class: list[int]) -> Tensor:
         """Create a compact class-by-keypoint active mask for a keypoint schema."""
         if not num_keypoints_per_class:
             return torch.zeros(0, 0, dtype=torch.bool)
@@ -262,7 +269,7 @@ class LWDETR(nn.Module):
         return kp_active
 
     @staticmethod
-    def _create_keypoint_class_mask(num_keypoints_per_class: list[int]) -> torch.Tensor:
+    def _create_keypoint_class_mask(num_keypoints_per_class: list[int]) -> Tensor:
         """Create an attention mask that blocks cross-class keypoint interactions."""
         # NOTE: near-duplicate of TransformerDecoder._create_keypoint_class_mask in transformer.py
         # (same mask logic; that one reads self.num_keypoints_per_class and registers a buffer,
@@ -292,10 +299,10 @@ class LWDETR(nn.Module):
         return [int(num_keypoints) for num_keypoints in self._kp_active_mask.sum(dim=1).tolist()]
 
     @staticmethod
-    def get_num_keypoints_per_class_from_checkpoint(state_dict: dict[str, torch.Tensor]) -> list[int] | None:
+    def get_num_keypoints_per_class_from_checkpoint(state_dict: dict[str, Tensor]) -> list[int] | None:
         """Infer the keypoint schema stored in a checkpoint state dict."""
         active_mask = state_dict.get("_kp_active_mask")
-        if not isinstance(active_mask, torch.Tensor) or active_mask.ndim != 2:
+        if not isinstance(active_mask, Tensor) or active_mask.ndim != 2:
             return None
         return [int(num_keypoints) for num_keypoints in active_mask.sum(dim=1).tolist()]
 
@@ -328,7 +335,7 @@ class LWDETR(nn.Module):
         for initializer_name in ("keypoint_query_initializer", "keypoint_query_initializer_enc"):
             initializer = getattr(self.transformer, initializer_name, None)
             queries = getattr(initializer, "queries", None)
-            if isinstance(queries, nn.Parameter):
+            if initializer is not None and isinstance(queries, nn.Parameter):
                 initializer.queries = _resize_parameter_rows(queries, total_keypoints)
 
     def reset_keypoint_gaussian_parameters(self) -> None:
@@ -349,20 +356,20 @@ class LWDETR(nn.Module):
             for keypoint_embed in enc_keypoint_embed:
                 _reset_keypoint_gaussian_output_rows(keypoint_embed)
 
-    def export(self):
+    def export(self) -> None:
         self._export = True
         self._forward_origin = self.forward
-        self.forward = self.forward_export
+        self.forward = self.forward_export  # type: ignore[method-assign,assignment]
         for name, m in self.named_modules():
-            if hasattr(m, "export") and isinstance(m.export, Callable) and hasattr(m, "_export") and not m._export:
+            if hasattr(m, "export") and callable(m.export) and hasattr(m, "_export") and not m._export:
                 m.export()
 
     def _format_keypoint_output(
         self,
-        keypoints_compact: torch.Tensor,
+        keypoints_compact: Tensor,
         batch_size_expected: int,
         num_queries_expected: int,
-    ) -> torch.Tensor:
+    ) -> Tensor:
         """Convert compact GroupPose keypoints to class-padded keypoint layout."""
         if not self.use_grouppose_keypoints or not self.num_keypoints_per_class:
             return keypoints_compact
@@ -408,7 +415,7 @@ class LWDETR(nn.Module):
                 compact_idx += 1
         return padded
 
-    def _aggregate_keypoint_class_logits(self, keypoint_predictions: torch.Tensor) -> torch.Tensor:
+    def _aggregate_keypoint_class_logits(self, keypoint_predictions: Tensor) -> Tensor:
         """Aggregate keypoint class-logit contributions into detection-class logits."""
         if not self.num_keypoints_per_class:
             return torch.zeros(
@@ -458,7 +465,7 @@ class LWDETR(nn.Module):
             class_boost = class_boost[..., :detection_num_classes]
         return class_boost
 
-    def forward(self, samples: NestedTensor, targets=None):
+    def forward(self, samples: NestedTensor, targets: list[dict[str, Tensor]] | None = None) -> dict[str, Any]:
         """The forward expects a NestedTensor, which consists of:
 
            - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
@@ -474,7 +481,7 @@ class LWDETR(nn.Module):
            - "aux_outputs": Optional, only returned when auxiliary losses are activated. It is a list of
                             dictionaries containing the two above keys for each decoder layer.
         """
-        if isinstance(samples, (list, torch.Tensor)):
+        if isinstance(samples, (list, Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
         features, poss, cross_attn_features = self.backbone(samples)
 
@@ -519,7 +526,7 @@ class LWDETR(nn.Module):
             keypoint_hs = None
             enc_kp_predictions = None
 
-        out: dict = {}
+        out: dict[str, Any] = {}
         if hs is not None:
             if self.bbox_reparam:
                 outputs_coord_delta = self.bbox_embed(hs)
@@ -561,7 +568,7 @@ class LWDETR(nn.Module):
                 outputs_class = outputs_class + self._aggregate_keypoint_class_logits(outputs_keypoints)
 
             if self.segmentation_head is not None:
-                outputs_masks = seg_head_fwd(features[0].tensors, hs, samples.tensors.shape[-2:])
+                outputs_masks = seg_head_fwd(features[0].tensors, hs, cast(tuple[int, int], samples.tensors.shape[-2:]))
 
             out = {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord[-1]}
             if self.segmentation_head is not None:
@@ -577,14 +584,15 @@ class LWDETR(nn.Module):
                 )
 
         if self.two_stage:
+            assert self.transformer.enc_out_class_embed is not None
             group_detr = self.group_detr if self.training else 1
             hs_enc_list = hs_enc.chunk(group_detr, dim=1)
-            cls_enc = []
+            cls_enc_list = []
             for g_idx in range(group_detr):
                 cls_enc_gidx = self.transformer.enc_out_class_embed[g_idx](hs_enc_list[g_idx])
-                cls_enc.append(cls_enc_gidx)
+                cls_enc_list.append(cls_enc_gidx)
 
-            cls_enc = torch.cat(cls_enc, dim=1)
+            cls_enc = torch.cat(cls_enc_list, dim=1)
             keypoints_enc = None
             if self.use_grouppose_keypoints and enc_kp_predictions is not None:
                 keypoints_enc = self._format_keypoint_output(
@@ -600,7 +608,7 @@ class LWDETR(nn.Module):
                     [
                         hs_enc,
                     ],
-                    samples.tensors.shape[-2:],
+                    cast(tuple[int, int], samples.tensors.shape[-2:]),
                     skip_blocks=True,
                 )[0]
 
@@ -619,7 +627,7 @@ class LWDETR(nn.Module):
 
         return out
 
-    def forward_export(self, tensors):
+    def forward_export(self, tensors: Tensor) -> tuple[Tensor, ...]:
         srcs, _, poss, cross_attn_srcs = self.backbone(tensors)
         # only use one group in inference
         refpoint_embed_weight = self.refpoint_embed.weight[: self.num_queries]
@@ -682,6 +690,7 @@ class LWDETR(nn.Module):
                 )[0]
         else:
             assert self.two_stage, "if not using decoder, two_stage must be True"
+            assert self.transformer.enc_out_class_embed is not None
             outputs_class = self.transformer.enc_out_class_embed[0](hs_enc)
             outputs_coord = ref_enc
             if self.use_grouppose_keypoints and enc_kp_predictions is not None:
@@ -711,16 +720,16 @@ class LWDETR(nn.Module):
     @torch.jit.unused
     def _set_aux_loss(
         self,
-        outputs_class: torch.Tensor,
-        outputs_coord: torch.Tensor,
-        outputs_masks: torch.Tensor | None,
-        outputs_keypoints: torch.Tensor | None = None,
-    ):
+        outputs_class: Tensor,
+        outputs_coord: Tensor,
+        outputs_masks: list[Tensor] | list[dict[str, Tensor]] | None,
+        outputs_keypoints: Tensor | None = None,
+    ) -> list[dict[str, Any]]:
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
         names = ["pred_logits", "pred_boxes"]
-        values = [outputs_class[:-1], outputs_coord[:-1]]
+        values: list[Any] = [outputs_class[:-1], outputs_coord[:-1]]
         if outputs_masks is not None:
             names.append("pred_masks")
             values.append(outputs_masks[:-1])
@@ -742,11 +751,11 @@ class LWDETR(nn.Module):
         """
         enc = self.backbone[0].encoder
         if hasattr(enc, "blocks"):
-            return enc.blocks
+            return cast(nn.ModuleList, enc.blocks)
         if hasattr(enc, "trunk") and hasattr(enc.trunk, "blocks"):
-            return enc.trunk.blocks
+            return cast(nn.ModuleList, enc.trunk.blocks)
         if hasattr(enc, "encoder") and hasattr(enc.encoder, "encoder") and hasattr(enc.encoder.encoder, "layer"):
-            return enc.encoder.encoder.layer
+            return cast(nn.ModuleList, enc.encoder.encoder.layer)
         return None
 
     def update_drop_path(self, drop_path_rate: float, vit_encoder_num_layers: int) -> None:
@@ -766,15 +775,15 @@ class LWDETR(nn.Module):
         dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, n)]
         for i in range(n):
             if hasattr(layers[i], "drop_path") and hasattr(layers[i].drop_path, "drop_prob"):
-                layers[i].drop_path.drop_prob = dp_rates[i]
+                layers[i].drop_path.drop_prob = dp_rates[i]  # type: ignore[union-attr]
 
-    def update_dropout(self, drop_rate):
+    def update_dropout(self, drop_rate: float) -> None:
         for module in self.transformer.modules():
             if isinstance(module, nn.Dropout):
                 module.p = drop_rate
 
 
-def build_model(args: "BuilderArgs"):
+def build_model(args: "BuilderArgs") -> LWDETR | tuple[Any, None, None]:
     # the `num_classes` naming here is somewhat misleading.
     # it indeed corresponds to `max_obj_id + 1`, where max_obj_id
     # is the maximum id for a class in your dataset. For example,
@@ -820,7 +829,7 @@ def build_model(args: "BuilderArgs"):
     if args.backbone_only:
         return backbone, None, None
 
-    args.num_feature_levels = len(args.projector_scale)
+    args.num_feature_levels = len(args.projector_scale)  # type: ignore[attr-defined]
     transformer = build_transformer(args)
 
     segmentation_head = (
@@ -853,7 +862,7 @@ def build_model(args: "BuilderArgs"):
     return model
 
 
-def build_criterion_and_postprocessors(args: "BuilderArgs"):
+def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterion, PostProcess]:
     device = torch.device(args.device)
     matcher = build_matcher(args)
     weight_dict = {"loss_ce": args.cls_loss_coef, "loss_bbox": args.bbox_loss_coef}
@@ -932,7 +941,7 @@ def build_criterion_and_postprocessors(args: "BuilderArgs"):
 
 def build_model_from_config(
     model_config: "ModelConfig",
-    train_config: Optional["TrainConfig"] = None,
+    train_config: "TrainConfig" | None = None,
     defaults: ModelDefaults = MODEL_DEFAULTS,
 ) -> LWDETR:
     """Build an LWDETR model directly from a ModelConfig.
@@ -971,7 +980,11 @@ def build_model_from_config(
         train_config = TrainConfig(dataset_dir=".", output_dir=".")
 
     ns = _namespace_from_configs(model_config, train_config, defaults)
-    return build_model(ns)
+    model = build_model(ns)
+    assert isinstance(model, LWDETR), (
+        "build_model() returned a non-LWDETR result even though encoder_only/backbone_only were False."
+    )
+    return model
 
 
 def build_criterion_from_config(

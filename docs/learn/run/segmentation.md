@@ -63,7 +63,7 @@ calling `predict()`. Pass `dtype="float16"` to halve weight memory in addition t
 This operation is irreversible — to restore the original model, create a new `RFDETR` instance:
 
 ```python
-model.optimize_for_inference(compile=False, inplace=True, dtype="float16")
+model.inference(compile=False, inplace=True, dtype="float16")
 ```
 
 ## Run on video, webcam, or RTSP stream

@@ -33,6 +33,7 @@ class BuilderArgs(Protocol):
     # --- Architecture ---
     encoder: str
     out_feature_indexes: list[int]
+    drop_path: float
     dec_layers: int
     freeze_encoder: bool
     backbone_lora: bool

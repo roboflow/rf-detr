@@ -32,7 +32,7 @@ from PIL import Image
 from torch import Tensor
 from torchvision.transforms import Normalize as _TVNormalize
 
-from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
+from rfdetr.datasets._aug_utils import IMAGE_LEVEL_TARGET_FIELDS, filter_keypoint_hflip_augmentations
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
 
@@ -137,6 +137,7 @@ GEOMETRIC_TRANSFORMS = {
     "Resize",
     "SmallestMaxSize",
     "LongestMaxSize",
+    "CappedLongestMaxSize",
     "RandomScale",
     "Downscale",
     # Padding and symmetry
@@ -147,6 +148,37 @@ GEOMETRIC_TRANSFORMS = {
 
 # Albumentations container/meta transforms that hold nested transforms
 ALBUMENTATIONS_CONTAINERS = frozenset({"OneOf", "SomeOf", "Sequential"})
+
+# Config name for the conditional-cap resize transform built by _capped_longest_max_size_cls().
+_CAPPED_LONGEST_MAX_SIZE_NAME = "CappedLongestMaxSize"
+
+
+@cache
+def _capped_longest_max_size_cls() -> type:
+    """Build a ``LongestMaxSize`` subclass that only shrinks, never upscales.
+
+    Standard ``alb.LongestMaxSize`` always forces the longest side to exactly ``max_size``, scaling the image up
+    when its current longest side is smaller than the target. Chained after ``SmallestMaxSize`` (as in RF-DETR's
+    non-square training resize), this silently inflates every image whose aspect ratio keeps the long side below
+    ``max_size`` — the common case, since ``max_size`` defaults to the DETR-style 1333 cap while typical training
+    resolutions are far smaller.
+
+    This subclass clamps the resolved scale factor to ``<= 1.0``, giving it torchvision
+    ``RandomResize``-style conditional-cap semantics: a no-op when the image already fits within ``max_size``, a
+    shrink when it doesn't. Lazily defined (not at module scope) so importing this module never requires
+    Albumentations to be installed.
+
+    Returns:
+        A ``LongestMaxSize`` subclass with capped (never-upscale) resize behaviour.
+    """
+
+    class CappedLongestMaxSize(alb.LongestMaxSize):
+        def get_params_dependent_on_data(self, params: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+            resolved = super().get_params_dependent_on_data(params, data)
+            resolved["scale"] = min(resolved["scale"], 1.0)
+            return resolved
+
+    return CappedLongestMaxSize
 
 
 def _is_geometric_transform(transform: alb.BasicTransform) -> bool:
@@ -214,8 +246,8 @@ def _build_albu_transform(name: str, params: dict[str, Any]) -> alb.BasicTransfo
     """
     if alb is None:
         raise ImportError(
-            "Albumentations is required to build RF-DETR dataset transforms. "
-            "Install the project dependencies with `uv sync --all-groups` or install albumentations."
+            "Custom Albumentations augmentations require the optional augmentation extra. "
+            "Install with: pip install 'rfdetr[augment]'"
         )
 
     if name in ALBUMENTATIONS_CONTAINERS:
@@ -250,7 +282,7 @@ def _build_albu_transform(name: str, params: dict[str, Any]) -> alb.BasicTransfo
             raise ValueError(f"Unknown Albumentations container: {name!r}")
         return container_cls(transforms=nested_transforms, **other_params)
 
-    aug_cls = getattr(alb, name, None)
+    aug_cls = _capped_longest_max_size_cls() if name == _CAPPED_LONGEST_MAX_SIZE_NAME else getattr(alb, name, None)
     if aug_cls is None:
         raise ValueError(f"Unknown Albumentations transform: {name!r}")
     return aug_cls(**_normalize_albu_params(name, params, aug_cls))
@@ -397,9 +429,18 @@ class AlbumentationsWrapper:
 
     Note:
         For custom geometric transforms, add the transform class name to the GEOMETRIC_TRANSFORMS set at module level.
+
+    Raises:
+        ImportError: If Albumentations is not installed.
     """
 
     def __init__(self, transform: alb.BasicTransform, keypoint_flip_pairs: list[int] | None = None) -> None:
+        if alb is None:
+            raise ImportError(
+                "Custom Albumentations augmentations require the optional augmentation extra. "
+                "Install with: pip install 'rfdetr[augment]'"
+            )
+
         # Auto-detect if transform is geometric (recursively for containers)
         self._is_geometric = _is_geometric_transform(transform)
         self._keypoint_flip_pairs = list(keypoint_flip_pairs or [])
@@ -623,8 +664,12 @@ class AlbumentationsWrapper:
         >>> cleared["area"].shape
         torch.Size([0])
         """
-        # Fields that are global properties, not per-instance
-        global_fields = {"boxes", "labels", "orig_size", "size", "image_id"}
+        # Image-level fields shared with the torchvision backend (IMAGE_LEVEL_TARGET_FIELDS),
+        # plus ``boxes``/``labels`` which are handled separately. ``labels`` stays global here
+        # because the Albumentations pipeline re-syncs it from ``category_ids`` (its label_field)
+        # after the transform, so it must NOT be sliced by this per-instance filter — unlike the
+        # torchvision path in ``_torchvision.py``, which filters ``labels`` directly with its keep mask.
+        global_fields = {"boxes", "labels"} | IMAGE_LEVEL_TARGET_FIELDS
 
         result = {}
         for key, value in target.items():
@@ -648,8 +693,12 @@ class AlbumentationsWrapper:
         >>> filtered["area"].tolist()
         [100, 300]
         """
-        # Fields that are global properties, not per-instance
-        global_fields = {"boxes", "labels", "orig_size", "size", "image_id"}
+        # Image-level fields shared with the torchvision backend (IMAGE_LEVEL_TARGET_FIELDS),
+        # plus ``boxes``/``labels`` which are handled separately. ``labels`` stays global here
+        # because the Albumentations pipeline re-syncs it from ``category_ids`` (its label_field)
+        # after the transform, so it must NOT be sliced by this per-instance filter — unlike the
+        # torchvision path in ``_torchvision.py``, which filters ``labels`` directly with its keep mask.
+        global_fields = {"boxes", "labels"} | IMAGE_LEVEL_TARGET_FIELDS
 
         result = {}
         kept_idxs_tensor = torch.as_tensor(kept_idxs, dtype=torch.long)
@@ -974,8 +1023,8 @@ class AlbumentationsWrapper:
 
         if alb is None:
             raise ImportError(
-                "Albumentations is required to build RF-DETR dataset transforms. "
-                "Install the project dependencies with `uv sync --all-groups` or install albumentations."
+                "Custom Albumentations augmentations require the optional augmentation extra. "
+                "Install with: pip install 'rfdetr[augment]'"
             )
 
         transforms = []

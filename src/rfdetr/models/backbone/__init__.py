@@ -7,10 +7,9 @@
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 
-from collections.abc import Callable
+from typing import Any
 
-import torch
-from torch import nn
+from torch import Tensor, nn
 
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.position_encoding import build_position_encoding
@@ -18,11 +17,11 @@ from rfdetr.utilities.tensors import NestedTensor
 
 
 class Joiner(nn.Sequential):
-    def __init__(self, backbone, position_embedding):
+    def __init__(self, backbone: Backbone, position_embedding: nn.Module) -> None:
         super().__init__(backbone, position_embedding)
         self._export = False
 
-    def forward(self, tensor_list: NestedTensor):
+    def forward(self, tensor_list: NestedTensor) -> tuple[list[NestedTensor], list[Tensor], list[NestedTensor] | None]:
         """"""
         result = self[0](tensor_list)
         if isinstance(result, tuple):
@@ -34,15 +33,15 @@ class Joiner(nn.Sequential):
             pos.append(self[1](x_, align_dim_orders=False).to(x_.tensors.dtype))
         return x, pos, cross_attn_x
 
-    def export(self):
+    def export(self) -> None:
         self._export = True
         self._forward_origin = self.forward
-        self.forward = self.forward_export
+        self.forward = self.forward_export  # type: ignore[method-assign,assignment]
         for name, m in self.named_modules():
-            if hasattr(m, "export") and isinstance(m.export, Callable) and hasattr(m, "_export") and not m._export:
+            if hasattr(m, "export") and callable(m.export) and hasattr(m, "_export") and not m._export:
                 m.export()
 
-    def forward_export(self, inputs: torch.Tensor):
+    def forward_export(self, inputs: Tensor) -> tuple[list[Tensor], list[Tensor], list[Tensor], list[Tensor] | None]:
         result = self[0](inputs)
         if len(result) == 3:
             feats, masks, cross_attn_feats = result
@@ -59,30 +58,30 @@ class Joiner(nn.Sequential):
 
 
 def build_backbone(
-    encoder,
-    vit_encoder_num_layers,
-    pretrained_encoder,
-    window_block_indexes,
-    drop_path,
-    out_channels,
-    out_feature_indexes,
-    projector_scale,
-    use_cls_token,
-    hidden_dim,
-    position_embedding,
-    freeze_encoder,
-    layer_norm,
-    target_shape,
-    rms_norm,
-    backbone_lora,
-    force_no_pretrain,
-    gradient_checkpointing,
-    load_dinov2_weights,
-    patch_size,
-    num_windows,
-    positional_encoding_size,
+    encoder: str,
+    vit_encoder_num_layers: int,
+    pretrained_encoder: str | None,
+    window_block_indexes: list[Any] | None,
+    drop_path: float,
+    out_channels: int,
+    out_feature_indexes: list[Any] | None,
+    projector_scale: list[Any] | None,
+    use_cls_token: bool,
+    hidden_dim: int,
+    position_embedding: str,
+    freeze_encoder: bool,
+    layer_norm: bool,
+    target_shape: tuple[int, int],
+    rms_norm: bool,
+    backbone_lora: bool,
+    force_no_pretrain: bool,
+    gradient_checkpointing: bool,
+    load_dinov2_weights: bool,
+    patch_size: int,
+    num_windows: int,
+    positional_encoding_size: int,
     dual_projector: bool = False,
-):
+) -> Joiner:
     """
     Useful args:
         - encoder: encoder name
@@ -91,7 +90,7 @@ def build_backbone(
         - use_checkpoint: for swin only for now
 
     """
-    position_embedding = build_position_encoding(hidden_dim, position_embedding)
+    position_embedding_module = build_position_encoding(hidden_dim, position_embedding)
 
     backbone = Backbone(
         encoder,
@@ -115,5 +114,5 @@ def build_backbone(
         dual_projector=dual_projector,
     )
 
-    model = Joiner(backbone, position_embedding)
+    model = Joiner(backbone, position_embedding_module)
     return model

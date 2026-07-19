@@ -104,7 +104,14 @@ _TC_NON_NAMESPACE_FIELDS = {
     "pin_memory",
     "persistent_workers",
     "lr_scheduler",
+    "lr_scheduler_kwargs",
+    "lr_scheduler_interval",
+    "lr_scheduler_monitor",
     "lr_min_factor",
+    "lr_drop",
+    "optimizer",
+    "optimizer_kwargs",
+    "optimizer_param_group_overrides",
     # Dataset class labels.
     "class_names",
 }

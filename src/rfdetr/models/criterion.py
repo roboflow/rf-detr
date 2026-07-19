@@ -11,11 +11,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from torch import nn
+from torch import Tensor, nn
 
 from rfdetr.models.heads.keypoints import compute_l1_keypoint_loss
 from rfdetr.models.heads.segmentation import (
@@ -23,13 +24,22 @@ from rfdetr.models.heads.segmentation import (
     get_uncertain_point_coords_with_randomness,
     point_sample,
 )
+from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.math import accuracy
 from rfdetr.utilities import box_ops
 from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
 from rfdetr.utilities.rotated_box_ops import obb_to_aabb, probiou
 
+_LossFunction = Callable[..., dict[str, Tensor]]
 
-def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
+
+def sigmoid_focal_loss(
+    inputs: Tensor,
+    targets: Tensor,
+    num_boxes: Tensor,
+    alpha: float = 0.25,
+    gamma: float = 2,
+) -> Tensor:
     """
     Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
 
@@ -56,10 +66,17 @@ def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: f
         alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
         loss = alpha_t * loss
 
-    return loss.mean(1).sum() / num_boxes
+    result: Tensor = loss.mean(1).sum() / num_boxes
+    return result
 
 
-def sigmoid_varifocal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
+def sigmoid_varifocal_loss(
+    inputs: Tensor,
+    targets: Tensor,
+    num_boxes: Tensor,
+    alpha: float = 0.25,
+    gamma: float = 2,
+) -> Tensor:
     prob = inputs.sigmoid()
     focal_weight = (
         targets * (targets > 0.0).float() + (1 - alpha) * (prob - targets).abs().pow(gamma) * (targets <= 0.0).float()
@@ -70,7 +87,13 @@ def sigmoid_varifocal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamm
     return loss.mean(1).sum() / num_boxes
 
 
-def position_supervised_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
+def position_supervised_loss(
+    inputs: Tensor,
+    targets: Tensor,
+    num_boxes: Tensor,
+    alpha: float = 0.25,
+    gamma: float = 2,
+) -> Tensor:
     prob = inputs.sigmoid()
     ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
     loss = ce_loss * (torch.abs(targets - prob) ** gamma)
@@ -83,10 +106,10 @@ def position_supervised_loss(inputs, targets, num_boxes, alpha: float = 0.25, ga
 
 
 def dice_loss(
-    inputs: torch.Tensor,
-    targets: torch.Tensor,
+    inputs: Tensor,
+    targets: Tensor,
     num_masks: float,
-):
+) -> Tensor:
     """Compute the DICE loss, similar to generalized IOU for masks.
 
     Args:
@@ -101,17 +124,18 @@ def dice_loss(
     numerator = 2 * (inputs * targets).sum(-1)
     denominator = inputs.sum(-1) + targets.sum(-1)
     loss = 1 - (numerator + 1) / (denominator + 1)
-    return loss.sum() / num_masks
+    result: Tensor = loss.sum() / num_masks
+    return result
 
 
-dice_loss_jit = torch.jit.script(dice_loss)  # type: torch.jit.ScriptModule
+dice_loss_jit = torch.jit.script(dice_loss)  # type: torch.jit.ScriptFunction[Any, Any]
 
 
 def sigmoid_ce_loss(
-    inputs: torch.Tensor,
-    targets: torch.Tensor,
+    inputs: Tensor,
+    targets: Tensor,
     num_masks: float,
-):
+) -> Tensor:
     """
     Args:
         inputs: A float tensor of arbitrary shape.
@@ -128,7 +152,7 @@ def sigmoid_ce_loss(
     return loss.mean(1).sum() / num_masks
 
 
-sigmoid_ce_loss_jit = torch.jit.script(sigmoid_ce_loss)  # type: torch.jit.ScriptModule
+sigmoid_ce_loss_jit = torch.jit.script(sigmoid_ce_loss)  # type: torch.jit.ScriptFunction[Any, Any]
 
 
 class SetCriterion(nn.Module):
@@ -147,19 +171,19 @@ class SetCriterion(nn.Module):
 
     def __init__(
         self,
-        num_classes,
-        matcher,
-        weight_dict,
-        focal_alpha,
-        losses,
-        group_detr=1,
-        sum_group_losses=False,
-        use_varifocal_loss=False,
-        use_position_supervised_loss=False,
-        ia_bce_loss=False,
+        num_classes: int,
+        matcher: HungarianMatcher,
+        weight_dict: dict[str, float],
+        focal_alpha: float,
+        losses: list[str],
+        group_detr: int = 1,
+        sum_group_losses: bool = False,
+        use_varifocal_loss: bool = False,
+        use_position_supervised_loss: bool = False,
+        ia_bce_loss: bool = False,
         mask_point_sample_ratio: int = 16,
         num_keypoints_per_class: list[int] | None = None,
-    ):
+    ) -> None:
         """Create the criterion.
 
         Parameters:
@@ -207,8 +231,8 @@ class SetCriterion(nn.Module):
     def num_boxes_for_targets(
         self,
         outputs: dict[str, Any],
-        targets: list[dict[str, torch.Tensor]],
-    ) -> torch.Tensor:
+        targets: list[dict[str, Tensor]],
+    ) -> Tensor:
         """Compute the distributed target-box denominator for a target batch.
 
         The denominator is the total number of ground-truth boxes in the batch, multiplied by the active number of
@@ -258,7 +282,14 @@ class SetCriterion(nn.Module):
             torch.distributed.all_reduce(num_boxes_tensor)
         return torch.clamp(num_boxes_tensor / get_world_size(), min=1.0)
 
-    def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
+    def loss_labels(
+        self,
+        outputs: dict[str, Any],
+        targets: list[dict[str, Tensor]],
+        indices: list[tuple[Tensor, Tensor]],
+        num_boxes: Tensor,
+        log: bool = True,
+    ) -> dict[str, Tensor]:
         """Classification loss (Binary focal loss) targets dicts must contain the key "labels" containing a tensor of
         dim [nb_target_boxes]"""
         assert "pred_logits" in outputs
@@ -414,7 +445,13 @@ class SetCriterion(nn.Module):
         return losses
 
     @torch.no_grad()
-    def loss_cardinality(self, outputs, targets, indices, num_boxes):
+    def loss_cardinality(
+        self,
+        outputs: dict[str, Any],
+        targets: list[dict[str, Tensor]],
+        indices: list[tuple[Tensor, Tensor]],
+        num_boxes: Tensor,
+    ) -> dict[str, Tensor]:
         """Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes This is not
         really a loss, it is intended for logging purposes only.
 
@@ -429,8 +466,20 @@ class SetCriterion(nn.Module):
         losses = {"cardinality_error": card_err}
         return losses
 
-    def loss_boxes(self, outputs, targets, indices, num_boxes):
-        """Compute bounding box losses: L1 regression and GIoU (or ProbIoU for oriented boxes)."""
+    def loss_boxes(
+        self,
+        outputs: dict[str, Any],
+        targets: list[dict[str, Tensor]],
+        indices: list[tuple[Tensor, Tensor]],
+        num_boxes: Tensor,
+    ) -> dict[str, Tensor]:
+        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss targets dicts must
+        contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4] The target boxes are expected in format
+        (center_x, center_y, w, h), normalized by the image size.
+
+        In oriented mode the targets are read from "boxes_obb" instead, with dim [nb_target_boxes, 5] as (center_x,
+        center_y, w, h, angle), and the GIoU term is replaced by ProbIoU under the "loss_kld" key.
+        """
         assert "pred_boxes" in outputs
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs["pred_boxes"][idx]
@@ -461,7 +510,13 @@ class SetCriterion(nn.Module):
 
         return losses
 
-    def loss_masks(self, outputs, targets, indices, num_boxes):
+    def loss_masks(
+        self,
+        outputs: dict[str, Any],
+        targets: list[dict[str, Tensor]],
+        indices: list[tuple[Tensor, Tensor]],
+        num_boxes: Tensor,
+    ) -> dict[str, Tensor]:
         """Compute BCE-with-logits and Dice losses for segmentation masks on matched pairs.
 
         Expects outputs to contain 'pred_masks' of shape [B, Q, H, W] and targets with key 'masks'.
@@ -470,7 +525,7 @@ class SetCriterion(nn.Module):
         idx = self._get_src_permutation_idx(indices)
         pred_masks = outputs["pred_masks"]  # [B, Q, H, W]
 
-        if isinstance(pred_masks, torch.Tensor):
+        if isinstance(pred_masks, Tensor):
             # gather matched prediction masks
             # handle no matches
             src_masks = pred_masks[idx]  # [N, H, W]
@@ -486,7 +541,7 @@ class SetCriterion(nn.Module):
                 return {"loss_mask_ce": zero, "loss_mask_dice": zero}
             else:
                 batched_selected_masks = []
-                per_batch_counts = idx[0].unique(return_counts=True)[1]
+                per_batch_counts = idx[0].unique(return_counts=True)[1]  # type: ignore[no-untyped-call]
                 batch_indices = torch.cat((torch.zeros_like(per_batch_counts[:1]), per_batch_counts), dim=0).cumsum(0)
 
                 for i in range(per_batch_counts.shape[0]):
@@ -572,11 +627,11 @@ class SetCriterion(nn.Module):
 
     def loss_keypoints(
         self,
-        outputs: dict,
-        targets: list,
-        indices: list,
-        num_boxes: float,
-    ) -> dict[str, torch.Tensor]:
+        outputs: dict[str, Any],
+        targets: list[dict[str, Tensor]],
+        indices: list[tuple[Tensor, Tensor]],
+        num_boxes: Tensor,
+    ) -> dict[str, Tensor]:
         """Compute keypoint losses on matched prediction/target pairs."""
         assert "pred_keypoints" in outputs
         idx = self._get_src_permutation_idx(indices)
@@ -601,20 +656,28 @@ class SetCriterion(nn.Module):
             "loss_keypoints_nll": loss_nll.sum() / num_boxes,
         }
 
-    def _get_src_permutation_idx(self, indices):
+    def _get_src_permutation_idx(self, indices: list[tuple[Tensor, Tensor]]) -> tuple[Tensor, Tensor]:
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
         src_idx = torch.cat([src for (src, _) in indices])
         return batch_idx, src_idx
 
-    def _get_tgt_permutation_idx(self, indices):
+    def _get_tgt_permutation_idx(self, indices: list[tuple[Tensor, Tensor]]) -> tuple[Tensor, Tensor]:
         # permute targets following indices
         batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
         return batch_idx, tgt_idx
 
-    def get_loss(self, loss, outputs, targets, indices, num_boxes, **kwargs):
-        loss_map = {
+    def get_loss(
+        self,
+        loss: str,
+        outputs: dict[str, Any],
+        targets: list[dict[str, Tensor]],
+        indices: list[tuple[Tensor, Tensor]],
+        num_boxes: Tensor,
+        **kwargs: Any,
+    ) -> dict[str, Tensor]:
+        loss_map: dict[str, _LossFunction] = {
             "labels": self.loss_labels,
             "cardinality": self.loss_cardinality,
             "boxes": self.loss_boxes,
@@ -627,9 +690,9 @@ class SetCriterion(nn.Module):
     def forward(
         self,
         outputs: dict[str, Any],
-        targets: list[dict[str, torch.Tensor]],
-        num_boxes: torch.Tensor | float | None = None,
-    ) -> dict[str, torch.Tensor]:
+        targets: list[dict[str, Tensor]],
+        num_boxes: Tensor | float | None = None,
+    ) -> dict[str, Tensor]:
         """Compute every configured loss for one (outputs, targets) pair.
 
         The Hungarian matcher is invoked on the last layer's outputs and reused for the auxiliary intermediate layers
@@ -654,7 +717,7 @@ class SetCriterion(nn.Module):
                   and used verbatim. Passing ``1.0`` yields *unnormalized* loss
                   numerators (used by the manual-optimization path so the caller
                   can apply its own accumulated denominator).
-                - ``torch.Tensor``: moved to the model output device and used
+                - ``Tensor``: moved to the model output device and used
                   verbatim. The caller is responsible for any cross-rank reduction;
                   no extra all-reduce is performed in this branch.
 

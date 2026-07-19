@@ -72,6 +72,85 @@ class TestPredictReturnTypes:
         assert all(isinstance(result, sv.KeyPoints) for result in batch)
 
 
+class _TupleOutputModelContext:
+    """Model context whose forward returns a 3-tuple, mirroring ``forward_export()`` after ``inference()``.
+
+    Regression fixture for GitHub #1208: ``predict()`` mislabels the tuple's third element as ``pred_masks`` instead of
+    ``pred_keypoints`` because it reads a nonexistent ``model.model_config`` attribute instead of ``model.args``.
+    """
+
+    def __init__(self) -> None:
+        self.device = torch.device("cpu")
+        self.resolution = 28
+        self.class_names = ["object"]
+        self.args = SimpleNamespace(use_grouppose_keypoints=True, num_keypoints_per_class=[17])
+        self.model = torch.nn.Identity()
+        self.inference_model = self._forward
+        self.captured_predictions: dict[str, torch.Tensor] | None = None
+
+    def _forward(self, batch_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch = batch_tensor.shape[0]
+        boxes = torch.tensor([[[0.5, 0.5, 0.2, 0.2]]] * batch)
+        logits = torch.full((batch, 1, 1), 10.0)
+        keypoints = torch.full((batch, 1, 17, 3), 0.5)
+        return boxes, logits, keypoints
+
+    def postprocess(
+        self, predictions: dict[str, torch.Tensor], target_sizes: torch.Tensor
+    ) -> list[dict[str, torch.Tensor]]:
+        self.captured_predictions = predictions
+        batch = target_sizes.shape[0]
+        results = []
+        for _ in range(batch):
+            result: dict[str, torch.Tensor] = {
+                "scores": torch.tensor([0.9]),
+                "labels": torch.tensor([0]),
+                "boxes": torch.tensor([[0.0, 0.0, 1.0, 1.0]]),
+            }
+            if "pred_keypoints" in predictions:
+                result["keypoints"] = torch.full((1, 17, 3), 0.5)
+            results.append(result)
+        return results
+
+
+def _make_optimized_keypoint_model() -> tuple[RFDETR, _TupleOutputModelContext]:
+    """Build a ``_DummyRFDETR`` wired to look like it already ran ``inference()``."""
+    model = _DummyRFDETR()
+    stub = _TupleOutputModelContext()
+    model.model = stub
+    model._is_optimized_for_inference = True
+    model._optimized_resolution = stub.resolution
+    model._optimized_has_been_compiled = False
+    model._optimized_dtype = torch.float32
+    return model, stub
+
+
+class TestPredictOptimizedInferenceKeypoints:
+    """Regression tests for GitHub #1208: inference() breaks keypoint predict()."""
+
+    def test_tuple_output_labels_third_slot_as_keypoints_not_masks(self) -> None:
+        """The 3rd tuple slot must be labeled pred_keypoints, not pred_masks, when use_grouppose_keypoints=True."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model, stub = _make_optimized_keypoint_model()
+
+        model.predict(img)
+
+        assert stub.captured_predictions is not None
+        assert "pred_keypoints" in stub.captured_predictions
+        assert "pred_masks" not in stub.captured_predictions
+
+    def test_optimized_keypoint_model_predict_returns_sv_keypoints(self) -> None:
+        """Predict() must return sv.KeyPoints, not sv.Detections, for an optimized keypoint model."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model, _stub = _make_optimized_keypoint_model()
+
+        result = model.predict(img)
+
+        assert isinstance(result, sv.KeyPoints), (
+            f"expected sv.KeyPoints for optimized keypoint model, got {type(result)}"
+        )
+
+
 def test_predict_accepts_image_url() -> None:
     if not _is_online(_HTTP_HOST, _HTTP_PORT):
         pytest.skip("Offline environment, skipping HTTP predict URL test.")
@@ -455,6 +534,38 @@ class TestPredictShape:
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
         with pytest.raises(ValueError, match="shape"):
             model.predict(img, shape=bad_shape)  # type: ignore[arg-type]
+
+
+class TestPredictResizeMatchesTrainingInterpolation:
+    """Verify ``predict()`` resize matches the training-time interpolation.
+
+    Regression test for https://github.com/roboflow/rf-detr/issues/1203.
+
+    Training/validation uses Albumentations ``Resize`` (cv2 bilinear, no
+    antialiasing). torchvision's ``F.resize`` defaults to antialiased
+    bilinear, which drifts bbox/confidence values relative to the
+    pretrained checkpoints' reference preprocessing. ``predict()`` must
+    disable antialiasing to match the training resize.
+    """
+
+    def test_predict_resize_disables_antialias(self) -> None:
+        """``predict()`` calls ``F.resize`` with ``antialias=False``."""
+        from unittest.mock import patch
+
+        import torchvision.transforms.functional as F  # noqa: N812
+
+        model = _DummyRFDETR()
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+
+        with patch("rfdetr.detr.F.resize", wraps=F.resize) as mock_resize:
+            model.predict(img)
+
+        assert mock_resize.call_args.kwargs.get("antialias") is False, (
+            "predict() must resize with antialias=False to match the antialias-free "
+            "bilinear resize (cv2.INTER_LINEAR) used during training. Antialiasing "
+            "on drifts bbox/confidence values away from the pretrained checkpoints' "
+            "reference preprocessing."
+        )
 
 
 class TestPredictPatchSize:
@@ -915,6 +1026,9 @@ class TestPredictKeypointClassNameMapping:
             # Active-first schemas (no leading zero) — fallback path must stay correct
             pytest.param(["person"], [0], [25], "person", id="active-first-single-class-slot-0-maps-to-person"),
             pytest.param(
+                ["person"], [1], [25], "__background__", id="active-first-single-class-slot-1-maps-to-background"
+            ),
+            pytest.param(
                 ["person", "bicycle"], [0], [17, 4], "person", id="active-first-multi-class-slot-0-maps-to-person"
             ),
         ],
@@ -1093,20 +1207,20 @@ class TestPredictInputTypeReturnShape:
 
 
 class TestExportInplaceOptimizeGuards:
-    """Roboflow export methods raise a clear error after ``optimize_for_inference(inplace=True)``."""
+    """Roboflow export methods raise a clear error after ``inference(inplace=True)``."""
 
     def test_export_for_roboflow_raises_after_inplace_optimize(self, tmp_path) -> None:
         """``export_for_roboflow`` raises ``RuntimeError`` once the model has been cleared."""
         model = _DummyRFDETR()
         model._optimized_inplace = True
-        with pytest.raises(RuntimeError, match="optimize_for_inference"):
+        with pytest.raises(RuntimeError, match="inference"):
             model.export_for_roboflow(str(tmp_path))
 
     def test_deploy_to_roboflow_raises_after_inplace_optimize(self) -> None:
         """``deploy_to_roboflow`` raises ``RuntimeError`` before any auth/network calls."""
         model = _DummyRFDETR()
         model._optimized_inplace = True
-        with pytest.raises(RuntimeError, match="optimize_for_inference"):
+        with pytest.raises(RuntimeError, match="inference"):
             model.deploy_to_roboflow("ws", "proj", 1)
 
 

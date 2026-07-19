@@ -13,15 +13,19 @@ It offers reliable measurements of inference latency using ONNX Runtime or Tenso
 """
 
 import contextlib
+import importlib
 import json
 import os
 import os.path as osp
 import time
 from collections import OrderedDict, namedtuple
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Protocol, cast
 
 import numpy as np
 import torch
 from PIL import Image
+from torch import Tensor
 from tqdm.auto import tqdm
 
 try:
@@ -39,13 +43,21 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
-def get_image_list(ann_file):
+class _JsonArgparseCLI(Protocol):
+    """Minimal jsonargparse CLI callable interface used by this script."""
+
+    def __call__(self, component: Callable[..., Any]) -> Any:
+        """Run jsonargparse CLI for a callable component."""
+        ...
+
+
+def get_image_list(ann_file: str) -> list[dict[str, Any]]:
     with open(ann_file) as fin:
         data = json.load(fin)
-    return data["images"]
+    return list(data["images"])
 
 
-def load_image(file_path):
+def load_image(file_path: str) -> Image.Image:
     return Image.open(file_path).convert("RGB")
 
 
@@ -53,7 +65,7 @@ _DEFAULT_INPUT_SIZE = (640, 640)
 _DEFAULT_NUM_QUERIES = 300
 
 
-def _static_dim(value, fallback: int) -> int:
+def _static_dim(value: Any, fallback: int) -> int:
     """Coerce a tensor-shape entry to a positive int, falling back for dynamic/unknown axes.
 
     ONNX Runtime and TensorRT report dynamic axes as strings (e.g. ``"height"``), ``None``, or ``-1``. Such values
@@ -73,7 +85,7 @@ def _static_dim(value, fallback: int) -> int:
     return dim if dim > 0 else fallback
 
 
-def infer_transforms(size: tuple[int, int] = _DEFAULT_INPUT_SIZE):
+def infer_transforms(size: tuple[int, int] = _DEFAULT_INPUT_SIZE) -> Any:
     """Build the benchmark preprocessing pipeline for a given model input size.
 
     Args:
@@ -97,7 +109,7 @@ def infer_transforms(size: tuple[int, int] = _DEFAULT_INPUT_SIZE):
     )
 
 
-def box_cxcywh_to_xyxy(x):
+def box_cxcywh_to_xyxy(x: Tensor) -> Tensor:
     x_c, y_c, w, h = x.unbind(-1)
     b = [
         (x_c - 0.5 * w.clamp(min=0.0)),
@@ -108,7 +120,9 @@ def box_cxcywh_to_xyxy(x):
     return torch.stack(b, dim=-1)
 
 
-def post_process(outputs, target_sizes, num_queries: int = _DEFAULT_NUM_QUERIES):
+def post_process(
+    outputs: Mapping[str, Tensor], target_sizes: Tensor, num_queries: int = _DEFAULT_NUM_QUERIES
+) -> list[dict[str, Tensor]]:
     out_logits, out_bbox = outputs["labels"], outputs["dets"]
 
     assert len(out_logits) == len(target_sizes)
@@ -136,7 +150,15 @@ def post_process(outputs, target_sizes, num_queries: int = _DEFAULT_NUM_QUERIES)
     return results
 
 
-def infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device, repeats=1):
+def infer_onnx(
+    sess: Any,
+    coco_evaluator: Any,
+    time_profile: "TimeProfiler",
+    prefix: str,
+    img_list: Sequence[dict[str, Any]],
+    device: str | torch.device,
+    repeats: int = 1,
+) -> None:
     input_shape = sess.get_inputs()[0].shape
     # fallback for dynamic-axis models (dynamic H/W report as strings or None)
     input_h = _static_dim(input_shape[2] if len(input_shape) > 3 else None, _DEFAULT_INPUT_SIZE[0])
@@ -181,7 +203,15 @@ def infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device, rep
         logger.info(stats)
 
 
-def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, repeats=1):
+def infer_engine(
+    model: "TRTInference",
+    coco_evaluator: Any,
+    time_profile: "TimeProfiler",
+    prefix: str,
+    img_list: Sequence[dict[str, Any]],
+    device: str | torch.device,
+    repeats: int = 1,
+) -> None:
     input_shape = list(model.bindings[model.input_names[0]].shape)
     # fallback for dynamic-axis models
     input_h = _static_dim(input_shape[2] if len(input_shape) > 3 else None, _DEFAULT_INPUT_SIZE[0])
@@ -230,8 +260,13 @@ class TRTInference:
     """TensorRT inference engine."""
 
     def __init__(
-        self, engine_path="dino.engine", device="cuda:0", sync_mode: bool = False, max_batch_size=32, verbose=False
-    ):
+        self,
+        engine_path: str = "dino.engine",
+        device: str | torch.device = "cuda:0",
+        sync_mode: bool = False,
+        max_batch_size: int = 32,
+        verbose: bool = False,
+    ) -> None:
         if not trt:
             raise ImportError("TensorRT is not installed. Please install TensorRT to use TRTInference.")
 
@@ -262,41 +297,39 @@ class TRTInference:
             self.stream = cuda.Stream()
 
         # self.time_profile = TimeProfiler()
-        self.time_profile = None
+        self.time_profile = TimeProfiler()
 
-    def get_dummy_input(self, batch_size: int):
-        blob = {}
+    def get_dummy_input(self, batch_size: int) -> dict[str, Tensor]:
+        blob: dict[str, Tensor] = {}
         for name, binding in self.bindings.items():
             if self.engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
                 logger.info(f"make dummy input {name} with shape {binding.shape}")
                 blob[name] = torch.rand(batch_size, *binding.shape[1:]).float().to("cuda:0")
         return blob
 
-    def load_engine(self, path):
+    def load_engine(self, path: str) -> Any:
         """Load engine."""
         trt.init_libnvinfer_plugins(self.logger, "")
         with open(path, "rb") as f, trt.Runtime(self.logger) as runtime:
             return runtime.deserialize_cuda_engine(f.read())
 
-    def get_input_names(
-        self,
-    ):
-        names = []
+    def get_input_names(self) -> list[str]:
+        names: list[str] = []
         for _, name in enumerate(self.engine):
             if self.engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
                 names.append(name)
         return names
 
-    def get_output_names(
-        self,
-    ):
-        names = []
+    def get_output_names(self) -> list[str]:
+        names: list[str] = []
         for _, name in enumerate(self.engine):
             if self.engine.get_tensor_mode(name) == trt.TensorIOMode.OUTPUT:
                 names.append(name)
         return names
 
-    def get_bindings(self, engine, context, max_batch_size=32, device=None):
+    def get_bindings(
+        self, engine: Any, context: Any, max_batch_size: int = 32, device: str | torch.device | None = None
+    ) -> OrderedDict[str, Any]:
         """Build binddings."""
         Binding = namedtuple("Binding", ("name", "dtype", "shape", "data", "ptr"))
         bindings = OrderedDict()
@@ -314,29 +347,29 @@ class TRTInference:
 
         return bindings
 
-    def run_sync(self, blob):
+    def run_sync(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
         self.bindings_addr.update({n: blob[n].data_ptr() for n in self.input_names})
         self.context.execute_v2(list(self.bindings_addr.values()))
         outputs = {n: self.bindings[n].data for n in self.output_names}
         return outputs
 
-    def run_async(self, blob):
+    def run_async(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
         self.bindings_addr.update({n: blob[n].data_ptr() for n in self.input_names})
         bindings_addr = [int(v) for _, v in self.bindings_addr.items()]
+        if self.stream is None:
+            raise RuntimeError("Async TensorRT inference requires a CUDA stream.")
         self.context.execute_async_v2(bindings=bindings_addr, stream_handle=self.stream.handle)
         outputs = {n: self.bindings[n].data for n in self.output_names}
         self.stream.synchronize()
         return outputs
 
-    def __call__(self, blob):
+    def __call__(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
         if self.sync_mode:
             return self.run_sync(blob)
         else:
             return self.run_async(blob)
 
-    def synchronize(
-        self,
-    ):
+    def synchronize(self) -> None:
         if self.sync_mode:
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
@@ -347,14 +380,14 @@ class TRTInference:
         elif torch.cuda.is_available():
             torch.cuda.synchronize()
 
-    def speed(self, blob, n):
+    def speed(self, blob: Mapping[str, Tensor], n: int) -> float:
         self.time_profile.reset()
         with self.time_profile:
             for _ in range(n):
                 _ = self(blob)
         return self.time_profile.total / n
 
-    def build_engine(self, onnx_file_path, engine_file_path, max_batch_size=32):
+    def build_engine(self, onnx_file_path: str, engine_file_path: str, max_batch_size: int = 32) -> Any:
         """Takes an ONNX file and creates a TensorRT engine to run inference with
         http://gitlab.baidu.com/paddle-inference/benchmark/blob/main/backend_trt.py#L57
         """
@@ -383,28 +416,21 @@ class TRTInference:
 
 
 class TimeProfiler(contextlib.ContextDecorator):
-    def __init__(
-        self,
-    ):
-        self.total = 0
+    def __init__(self) -> None:
+        self.total = 0.0
+        self.start = 0.0
 
-    def __enter__(
-        self,
-    ):
+    def __enter__(self) -> "TimeProfiler":
         self.start = self.time()
         return self
 
-    def __exit__(self, type, value, traceback):
+    def __exit__(self, type: Any, value: Any, traceback: Any) -> None:
         self.total += self.time() - self.start
 
-    def reset(
-        self,
-    ):
-        self.total = 0
+    def reset(self) -> None:
+        self.total = 0.0
 
-    def time(
-        self,
-    ):
+    def time(self) -> float:
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         return time.perf_counter()
@@ -447,7 +473,7 @@ def main(
     if not disable_eval:
         from rfdetr.evaluation.coco_eval import CocoEvaluator
 
-        coco_evaluator = CocoEvaluator(coco_gt, ("bbox",))
+        coco_evaluator = CocoEvaluator(coco_gt, ["bbox"])
     else:
         coco_evaluator = None
     time_profile = TimeProfiler()
@@ -465,6 +491,6 @@ def main(
 
 
 if __name__ == "__main__":
-    from jsonargparse import CLI
+    jsonargparse = importlib.import_module("jsonargparse")
 
-    CLI(main)
+    cast(_JsonArgparseCLI, getattr(jsonargparse, "CLI"))(main)

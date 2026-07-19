@@ -9,9 +9,12 @@
 # ------------------------------------------------------------------------
 """Drop-path / dropout schedule utilities."""
 
+from __future__ import annotations
+
 from typing import Literal
 
 import numpy as np
+from numpy.typing import NDArray
 
 
 def drop_scheduler(
@@ -21,7 +24,7 @@ def drop_scheduler(
     cutoff_epoch: int = 0,
     mode: Literal["standard", "early", "late"] = "standard",
     schedule: Literal["constant", "linear"] = "constant",
-) -> np.ndarray:
+) -> NDArray[np.float64]:
     """Build a per-iteration drop-path or dropout rate schedule.
 
     ``"standard"`` mode: every iteration uses the same ``drop_rate``; ignored ``cutoff_epoch``, ``schedule``.

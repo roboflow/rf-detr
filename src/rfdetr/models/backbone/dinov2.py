@@ -4,14 +4,17 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from __future__ import annotations
+
 import json
 import math
 import os
 import types
+from typing import Any, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from torch import nn
+from torch import Tensor, nn
 from transformers import AutoBackbone
 
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
@@ -42,35 +45,35 @@ size_to_config_with_registers = {
 }
 
 
-def get_config(size, use_registers):
+def get_config(size: str, use_registers: bool) -> dict[str, Any]:
     config_dict = size_to_config_with_registers if use_registers else size_to_config
     current_dir = os.path.dirname(os.path.abspath(__file__))
     configs_dir = os.path.join(current_dir, "dinov2_configs")
     config_path = os.path.join(configs_dir, config_dict[size])
     with open(config_path) as f:
-        dino_config = json.load(f)
+        dino_config: dict[str, Any] = json.load(f)
     return dino_config
 
 
 class DinoV2(nn.Module):
     def __init__(
         self,
-        shape=(640, 640),
-        out_feature_indexes: tuple[int, ...] | None = None,
-        size="base",
-        use_registers=True,
-        use_windowed_attn=True,
-        gradient_checkpointing=False,
-        load_dinov2_weights=True,
-        patch_size=14,
-        num_windows=4,
-        positional_encoding_size=37,
-        drop_path_rate=0.0,
-    ):
+        shape: tuple[int, int] = (640, 640),
+        out_feature_indexes: list[int] | None = None,
+        size: str = "base",
+        use_registers: bool = True,
+        use_windowed_attn: bool = True,
+        gradient_checkpointing: bool = False,
+        load_dinov2_weights: bool = True,
+        patch_size: int = 14,
+        num_windows: int = 4,
+        positional_encoding_size: int = 37,
+        drop_path_rate: float = 0.0,
+    ) -> None:
         super().__init__()
 
         if out_feature_indexes is None:
-            out_feature_indexes = (2, 4, 5, 9)
+            out_feature_indexes = [2, 4, 5, 9]
 
         name = f"facebook/dinov2-with-registers-{size}" if use_registers else f"facebook/dinov2-{size}"
 
@@ -88,15 +91,15 @@ class DinoV2(nn.Module):
                     "drop_path_rate > 0.0 is not supported for non-windowed DinoV2 backbones."
                     " drop_path will be ignored."
                 )
-            self.encoder = AutoBackbone.from_pretrained(
+            self.encoder = AutoBackbone.from_pretrained(  # type: ignore[no-untyped-call]
                 name,
                 out_features=[f"stage{i}" for i in out_feature_indexes],
                 return_dict=False,
             )
         else:
-            window_block_indexes = set(range(out_feature_indexes[-1] + 1))
-            window_block_indexes.difference_update(out_feature_indexes)
-            window_block_indexes = list(window_block_indexes)
+            window_block_indexes_set = set(range(out_feature_indexes[-1] + 1))
+            window_block_indexes_set.difference_update(out_feature_indexes)
+            window_block_indexes = list(window_block_indexes_set)
 
             dino_config = get_config(size, use_registers)
 
@@ -151,13 +154,15 @@ class DinoV2(nn.Module):
         self._out_feature_channels = [size_to_width[size]] * len(out_feature_indexes)
         self._export = False
 
-    def export(self):
+    def export(self) -> None:
         if self._export:
             return
         self._export = True
         shape = self.shape
 
-        def make_new_interpolated_pos_encoding(position_embeddings, patch_size, height, width):
+        def make_new_interpolated_pos_encoding(
+            position_embeddings: Tensor, patch_size: int, height: int, width: int
+        ) -> Tensor:
 
             num_positions = position_embeddings.shape[1] - 1
             dim = position_embeddings.shape[-1]
@@ -198,19 +203,20 @@ class DinoV2(nn.Module):
         # Create a new Parameter with the new size
         old_interpolate_pos_encoding = self.encoder.embeddings.interpolate_pos_encoding
 
-        def new_interpolate_pos_encoding(self_mod, embeddings, height, width):
+        def new_interpolate_pos_encoding(self_mod: Any, embeddings: Tensor, height: int, width: int) -> Tensor:
             num_patches = embeddings.shape[1] - 1
             num_positions = self_mod.position_embeddings.shape[1] - 1
-            if num_patches == num_positions and height == width:
-                return self_mod.position_embeddings
-            return old_interpolate_pos_encoding(embeddings, height, width)
+            # The precomputed table is valid only for this exact static export grid.
+            if num_patches == num_positions and (height, width) == shape:
+                return cast(Tensor, self_mod.position_embeddings)
+            return cast(Tensor, old_interpolate_pos_encoding(embeddings, height, width))
 
         self.encoder.embeddings.position_embeddings = nn.Parameter(new_positions)
         self.encoder.embeddings.interpolate_pos_encoding = types.MethodType(
             new_interpolate_pos_encoding, self.encoder.embeddings
         )
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> list[Tensor]:
         block_size = self.patch_size * self.num_windows
         assert x.shape[2] % block_size == 0 and x.shape[3] % block_size == 0, (
             f"Backbone requires input shape to be divisible by {block_size}, but got {x.shape}"

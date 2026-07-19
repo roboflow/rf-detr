@@ -491,3 +491,17 @@ class TestStripCheckpoint:
         strip_checkpoint(ckpt_path)
         result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         assert "loops" not in result
+
+    def test_strip_writes_extra_metadata(self, tmp_path) -> None:
+        """extra_metadata key/value pairs are merged into the stripped checkpoint."""
+        ckpt_path = self._make_minimal_ckpt(tmp_path)
+        strip_checkpoint(ckpt_path, extra_metadata={"best_total_source": "ema"})
+        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        assert result["best_total_source"] == "ema"
+
+    def test_strip_extra_metadata_overrides_preserved_key(self, tmp_path) -> None:
+        """extra_metadata wins over a preserved same-named key."""
+        ckpt_path = self._make_minimal_ckpt(tmp_path, extra={"rfdetr_version": "1.0.0"})
+        strip_checkpoint(ckpt_path, extra_metadata={"rfdetr_version": "override"})
+        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        assert result["rfdetr_version"] == "override"

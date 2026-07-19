@@ -4,6 +4,8 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import functools
+import json
 import os
 import warnings
 from pathlib import Path
@@ -14,6 +16,7 @@ import torch
 from pydantic import ValidationError
 
 from rfdetr.config import (
+    AugmentationBackend,
     KeypointTrainConfig,
     ModelConfig,
     PretrainWeightsCompatibilityWarning,
@@ -285,6 +288,14 @@ class TestTrainConfigT42PromotedFields:
         """lr_scheduler defaults to 'step'."""
         assert self._tc(tmp_path).lr_scheduler == "step"
 
+    def test_optimizer_default_is_adamw(self, tmp_path):
+        """Optimizer defaults to AdamW for backward compatibility."""
+        assert self._tc(tmp_path).optimizer == "adamw"
+
+    def test_optimizer_kwargs_default_is_empty_dict(self, tmp_path):
+        """optimizer_kwargs defaults to an empty dict."""
+        assert self._tc(tmp_path).optimizer_kwargs == {}
+
     def test_lr_min_factor_default(self, tmp_path):
         """lr_min_factor defaults to 0.0."""
         assert self._tc(tmp_path).lr_min_factor == pytest.approx(0.0)
@@ -327,7 +338,11 @@ class TestTrainConfigT42PromotedFields:
             pytest.param("sync_bn", True, id="sync_bn"),
             pytest.param("fp16_eval", True, id="fp16_eval"),
             pytest.param("lr_scheduler", "cosine", id="lr_scheduler_cosine"),
-            pytest.param("lr_min_factor", 0.01, id="lr_min_factor"),
+            pytest.param("lr_scheduler_kwargs", {"min_factor": 0.01}, id="lr_scheduler_kwargs"),
+            pytest.param("lr_scheduler_interval", "epoch", id="lr_scheduler_interval"),
+            pytest.param("lr_scheduler_monitor", "train/loss", id="lr_scheduler_monitor"),
+            pytest.param("optimizer", "sgd", id="optimizer"),
+            pytest.param("optimizer_kwargs", {"betas": (0.9, 0.99)}, id="optimizer_kwargs"),
             pytest.param("dont_save_weights", True, id="dont_save_weights"),
             pytest.param("run_test", True, id="run_test"),
             pytest.param("eval_interval", 3, id="eval_interval"),
@@ -352,6 +367,78 @@ class TestTrainConfigT42PromotedFields:
         """lr_scheduler must reject values other than 'step' and 'cosine'."""
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, lr_scheduler="cyclic")
+
+    def test_optimizer_rejects_empty_name(self, tmp_path):
+        """Optimizer must be a non-empty name."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, optimizer="  ")
+
+    def test_optimizer_rejects_unknown_short_name(self, tmp_path):
+        """A bare short name that is not a torch.optim optimizer is rejected at config time."""
+        with pytest.raises((ValueError, ValidationError), match="native optimizer"):
+            self._tc(tmp_path, optimizer="lion")
+
+    def test_optimizer_rejects_non_torch_optim_short_name(self, tmp_path):
+        """Pytorch-optimizer names are not selectable by short name (use an import path)."""
+        with pytest.raises((ValueError, ValidationError), match="native optimizer"):
+            self._tc(tmp_path, optimizer="pytorch_optimizer:lion")
+
+    def test_optimizer_accepts_native_short_name(self, tmp_path):
+        """A native torch.optim short name (e.g. 'sgd') is accepted."""
+        assert self._tc(tmp_path, optimizer="sgd").optimizer == "sgd"
+
+    @pytest.mark.parametrize(
+        "reserved_key",
+        [
+            pytest.param("params", id="params"),
+            pytest.param("lr", id="lr"),
+            pytest.param("weight_decay", id="weight_decay"),
+            pytest.param("fused", id="fused"),
+        ],
+    )
+    def test_optimizer_kwargs_reject_reserved_keys(self, tmp_path, reserved_key):
+        """optimizer_kwargs must not override RF-DETR-managed optimizer arguments."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, optimizer_kwargs={reserved_key: 1})
+
+    def test_optimizer_accepts_dotted_import_path(self, tmp_path):
+        """A dotted import path is accepted verbatim as an explicit optimizer."""
+        assert self._tc(tmp_path, optimizer="torch.optim.AdamW").optimizer == "torch.optim.AdamW"
+
+    def test_dotted_optimizer_kwargs_allow_managed_keys(self, tmp_path):
+        """Explicit (dotted) optimizers may pass otherwise-managed keys such as weight_decay."""
+        tc = self._tc(tmp_path, optimizer="torch.optim.AdamW", optimizer_kwargs={"weight_decay": 0.1})
+        assert tc.optimizer_kwargs == {"weight_decay": 0.1}
+
+    def test_callable_class_desugars_to_dotted_path(self, tmp_path):
+        """A plain optimizer class desugars to its canonical dotted import path for serialization."""
+        expected_path = f"{torch.optim.AdamW.__module__}.{torch.optim.AdamW.__qualname__}"
+        tc = self._tc(tmp_path, optimizer=torch.optim.AdamW)
+        assert tc.optimizer == expected_path
+        assert tc.optimizer_kwargs == {}
+
+    def test_partial_optimizer_desugars_to_path_and_kwargs(self, tmp_path):
+        """A functools.partial desugars to a dotted path plus its keyword arguments."""
+        expected_path = f"{torch.optim.AdamW.__module__}.{torch.optim.AdamW.__qualname__}"
+        tc = self._tc(tmp_path, optimizer=functools.partial(torch.optim.AdamW, weight_decay=0.1))
+        assert tc.optimizer == expected_path
+        assert tc.optimizer_kwargs == {"weight_decay": 0.1}
+
+    def test_callable_optimizer_kwargs_are_ignored_with_warning(self, tmp_path):
+        """optimizer_kwargs are ignored (with a warning) when optimizer is a callable."""
+        with pytest.warns(UserWarning, match="optimizer_kwargs is ignored"):
+            tc = self._tc(
+                tmp_path,
+                optimizer=functools.partial(torch.optim.AdamW, weight_decay=0.1),
+                optimizer_kwargs={"betas": (0.9, 0.99)},
+            )
+        assert tc.optimizer_kwargs == {"weight_decay": 0.1}
+
+    def test_non_reconstructable_optimizer_warns(self, tmp_path):
+        """A lambda optimizer cannot be serialized and warns while staying an in-memory callable."""
+        with pytest.warns(UserWarning, match="cannot be saved"):
+            tc = self._tc(tmp_path, optimizer=lambda params: torch.optim.AdamW(params))
+        assert callable(tc.optimizer) and not isinstance(tc.optimizer, str)
 
     @pytest.mark.parametrize(
         ("field", "value"),
@@ -391,6 +478,154 @@ class TestTrainConfigT42PromotedFields:
         """auto_batch_ema_headroom must be in (0, 1]."""
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, auto_batch_ema_headroom=ema_headroom)
+
+
+class TestTrainConfigLRScheduler:
+    """Configurable LR-scheduler surface: preset validation, explicit paths/callables, and deprecation folding."""
+
+    def _tc(self, tmp_path, **kwargs):
+        defaults = dict(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
+        defaults.update(kwargs)
+        return TrainConfig(**defaults)
+
+    def test_lr_scheduler_default_is_step(self, tmp_path):
+        """lr_scheduler defaults to the managed 'step' preset."""
+        assert self._tc(tmp_path).lr_scheduler == "step"
+
+    def test_lr_scheduler_kwargs_default_is_empty_dict(self, tmp_path):
+        """lr_scheduler_kwargs defaults to an empty dict."""
+        assert self._tc(tmp_path).lr_scheduler_kwargs == {}
+
+    @pytest.mark.parametrize("preset", [pytest.param("step", id="step"), pytest.param("cosine", id="cosine")])
+    def test_lr_scheduler_accepts_managed_preset(self, tmp_path, preset):
+        """Both managed presets are accepted as bare names."""
+        assert self._tc(tmp_path, lr_scheduler=preset).lr_scheduler == preset
+
+    def test_lr_scheduler_rejects_empty_name(self, tmp_path):
+        """lr_scheduler must be a non-empty name."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, lr_scheduler="  ")
+
+    def test_lr_scheduler_rejects_unknown_bare_name(self, tmp_path):
+        """A bare name that is not a managed preset is rejected (steer to a dotted path)."""
+        with pytest.raises((ValueError, ValidationError), match="managed preset"):
+            self._tc(tmp_path, lr_scheduler="StepLR")
+
+    def test_lr_scheduler_accepts_dotted_import_path(self, tmp_path):
+        """A dotted import path is accepted verbatim as an explicit scheduler."""
+        tc = self._tc(tmp_path, lr_scheduler="torch.optim.lr_scheduler.StepLR", lr_scheduler_kwargs={"step_size": 5})
+        assert tc.lr_scheduler == "torch.optim.lr_scheduler.StepLR"
+
+    def test_callable_class_desugars_to_dotted_path(self, tmp_path):
+        """A plain scheduler class desugars to its canonical dotted import path for serialization."""
+        scheduler_class = torch.optim.lr_scheduler.StepLR
+        expected_path = f"{scheduler_class.__module__}.{scheduler_class.__qualname__}"
+        tc = self._tc(tmp_path, lr_scheduler=scheduler_class)
+        assert tc.lr_scheduler == expected_path
+        assert tc.lr_scheduler_kwargs == {}
+
+    def test_partial_scheduler_desugars_to_path_and_kwargs(self, tmp_path):
+        """A functools.partial desugars to a dotted path plus its keyword arguments."""
+        scheduler_class = torch.optim.lr_scheduler.StepLR
+        expected_path = f"{scheduler_class.__module__}.{scheduler_class.__qualname__}"
+        tc = self._tc(tmp_path, lr_scheduler=functools.partial(scheduler_class, step_size=7))
+        assert tc.lr_scheduler == expected_path
+        assert tc.lr_scheduler_kwargs == {"step_size": 7}
+
+    def test_callable_scheduler_kwargs_are_ignored_with_warning(self, tmp_path):
+        """lr_scheduler_kwargs are ignored (with a warning) when lr_scheduler is a callable."""
+        with pytest.warns(UserWarning, match="lr_scheduler_kwargs is ignored"):
+            tc = self._tc(
+                tmp_path,
+                lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, step_size=7),
+                lr_scheduler_kwargs={"gamma": 0.5},
+            )
+        assert tc.lr_scheduler_kwargs == {"step_size": 7}
+
+    def test_non_reconstructable_scheduler_warns(self, tmp_path):
+        """A lambda scheduler cannot be serialized and warns while staying an in-memory callable."""
+        with pytest.warns(UserWarning, match="cannot be saved"):
+            tc = self._tc(tmp_path, lr_scheduler=lambda optimizer: torch.optim.lr_scheduler.StepLR(optimizer, 5))
+        assert callable(tc.lr_scheduler) and not isinstance(tc.lr_scheduler, str)
+
+    def test_deprecated_lr_drop_folds_into_kwargs_with_warning(self, tmp_path):
+        """A non-default lr_drop is folded into lr_scheduler_kwargs and warns (deprecation)."""
+        with pytest.warns(FutureWarning, match="lr_drop is deprecated"):
+            tc = self._tc(tmp_path, lr_drop=80)
+        assert tc.lr_scheduler_kwargs["lr_drop"] == 80
+
+    def test_deprecated_lr_min_factor_folds_into_kwargs_with_warning(self, tmp_path):
+        """A non-default lr_min_factor is folded into lr_scheduler_kwargs['min_factor'] and warns."""
+        with pytest.warns(FutureWarning, match="lr_min_factor is deprecated"):
+            tc = self._tc(tmp_path, lr_scheduler="cosine", lr_min_factor=0.2)
+        assert tc.lr_scheduler_kwargs["min_factor"] == pytest.approx(0.2)
+
+    def test_default_deprecated_field_does_not_warn(self, tmp_path):
+        """Passing a deprecated field at its default value (e.g. on config reload) must not warn."""
+        default_lr_drop = TrainConfig.model_fields["lr_drop"].default
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            self._tc(tmp_path, lr_drop=default_lr_drop)
+
+    def test_migrated_config_reload_does_not_rewarn(self, tmp_path):
+        """Reloading a dumped config that already carries the folded kwarg must not re-warn."""
+        with pytest.warns(FutureWarning):
+            original = self._tc(tmp_path, lr_scheduler="step", lr_drop=8)
+        dumped = original.model_dump()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            reloaded = TrainConfig(**dumped)
+        assert reloaded.lr_scheduler_kwargs["lr_drop"] == 8
+
+    def test_deprecated_field_warns_but_not_folded_for_explicit_scheduler(self, tmp_path):
+        """A deprecated field set with an explicit scheduler warns (ignored) and is never folded into kwargs."""
+        with pytest.warns(FutureWarning, match="is ignored for the explicit"):
+            tc = self._tc(
+                tmp_path,
+                lr_scheduler="torch.optim.lr_scheduler.StepLR",
+                lr_scheduler_kwargs={"step_size": 5},
+                lr_drop=80,
+            )
+        assert tc.lr_scheduler_kwargs == {"step_size": 5}
+
+    def test_managed_preset_rejects_unknown_kwargs(self, tmp_path):
+        """Managed presets reject lr_scheduler_kwargs keys they do not consume (mirrors optimizer_kwargs)."""
+        with pytest.raises((ValueError, ValidationError), match="unknown key"):
+            self._tc(tmp_path, lr_scheduler="cosine", lr_scheduler_kwargs={"minfactor": 0.1})
+
+    def test_managed_preset_accepts_consumed_kwargs(self, tmp_path):
+        """Managed presets accept the kwargs they consume (min_factor, lr_drop)."""
+        tc = self._tc(tmp_path, lr_scheduler="cosine", lr_scheduler_kwargs={"min_factor": 0.1, "lr_drop": 50})
+        assert tc.lr_scheduler_kwargs == {"min_factor": pytest.approx(0.1), "lr_drop": 50}
+
+    def test_explicit_scheduler_round_trips_through_model_dump(self, tmp_path):
+        """An explicit dotted scheduler and its kwargs survive a model_dump() -> reload round-trip unchanged."""
+        original = self._tc(
+            tmp_path,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 30, "gamma": 0.1},
+        )
+        reloaded = TrainConfig(**original.model_dump())
+        assert reloaded.lr_scheduler == "torch.optim.lr_scheduler.StepLR"
+        assert reloaded.lr_scheduler_kwargs == {"step_size": 30, "gamma": pytest.approx(0.1)}
+
+    def test_partial_with_positional_args_is_not_serializable(self, tmp_path):
+        """A functools.partial with positional args cannot be desugared; it warns and stays an in-memory callable."""
+        with pytest.warns(UserWarning, match="cannot be saved"):
+            tc = self._tc(tmp_path, lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, 5))
+        assert callable(tc.lr_scheduler) and not isinstance(tc.lr_scheduler, str)
+
+    def test_partial_with_non_json_kwargs_is_not_serializable(self, tmp_path):
+        """A functools.partial carrying non-JSON kwargs cannot be desugared; it warns and stays a callable."""
+        with pytest.warns(UserWarning, match="cannot be saved"):
+            tc = self._tc(tmp_path, lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, gamma=object()))
+        assert callable(tc.lr_scheduler) and not isinstance(tc.lr_scheduler, str)
+
+    def test_conflicting_field_and_kwarg_warns_kwarg_wins(self, tmp_path):
+        """When both lr_min_factor and kwargs['min_factor'] are set to different values, the kwarg wins and warns so."""
+        with pytest.warns(FutureWarning, match="the kwarg wins"):
+            tc = self._tc(tmp_path, lr_scheduler="cosine", lr_min_factor=0.2, lr_scheduler_kwargs={"min_factor": 0.3})
+        assert tc.lr_scheduler_kwargs["min_factor"] == pytest.approx(0.3)
 
 
 class TestBuildTrainerUsesRealFields:
@@ -923,3 +1158,96 @@ class TestBreakingListIntegrity:
         }
         stale = all_breaking - set(ModelConfig.model_fields.keys())
         assert not stale, f"Fields in breaking lists not in ModelConfig.model_fields: {stale}"
+
+
+class TestTrainConfigAugmentationBackendSerialization:
+    """Serialization contract for ``TrainConfig.augmentation_backend`` used by checkpoint writers (Item #6).
+
+    ``BestModelCallback`` serializes the training config with a plain ``model_dump()`` before writing it into the
+    ``.pth`` checkpoint's ``args``.  A ``@field_serializer`` renders the ``AugmentationBackend`` enum as its plain
+    string value so the writer stays JSON-safe without a blanket ``model_dump(mode="json")`` that would silently coerce
+    every *other* field's serialized shape (e.g. ``int`` loss coefficients to ``float``).
+    """
+
+    def test_backend_dumps_to_json_safe_string(self, tmp_path: Path) -> None:
+        """Plain ``model_dump()`` (as BestModelCallback uses) renders the enum as its ``str`` value."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        assert dumped["augmentation_backend"] == AugmentationBackend.TV.value
+        assert type(dumped["augmentation_backend"]) is str
+
+    def test_dumped_backend_survives_json_sidecar(self, tmp_path: Path) -> None:
+        """The dumped backend survives the ``json.dump(..., default=str)`` sidecar path unchanged."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        round_tripped = json.loads(json.dumps(dumped, default=str))
+        assert round_tripped["augmentation_backend"] == "torchvision"
+
+    def test_dumped_backend_reconstructs_to_enum_member(self, tmp_path: Path) -> None:
+        """Reloading a config from its dumped args restores the concrete ``AugmentationBackend`` member."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        with warnings.catch_warnings():
+            # Reconstructing from a full dump sets deprecated fields; those warnings are unrelated
+            # to the backend round-trip under test.
+            warnings.simplefilter("ignore", DeprecationWarning)
+            reloaded = TrainConfig(**dumped)
+        assert reloaded.augmentation_backend is AugmentationBackend.TV
+
+    def test_plain_dump_does_not_coerce_int_field(self, tmp_path: Path) -> None:
+        """Plain ``model_dump()`` keeps native field types — guards against a blanket ``mode="json"`` regression.
+
+        Under ``model_dump(mode="json")`` this ``int`` default is silently coerced to ``float``; the
+        ``field_serializer`` lets the writer stay on plain ``model_dump()`` so unrelated fields keep their shape.
+        """
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        assert type(dumped["keypoint_l1_loss_coef"]) is int
+
+    @pytest.mark.parametrize(
+        "sentinel",
+        [
+            pytest.param("cpu", id="cpu"),
+            pytest.param("auto", id="auto"),
+        ],
+    )
+    def test_sentinel_backend_passes_through_as_string(self, tmp_path: Path, sentinel: str) -> None:
+        """The ``"cpu"``/``"auto"`` auto-pick sentinels serialize unchanged as plain strings."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=sentinel)
+        dumped = config.model_dump()
+        assert dumped["augmentation_backend"] == sentinel
+
+
+class TestTrainConfigAugmentationBackendConstruction:
+    """Construction-time validation for ``TrainConfig.augmentation_backend`` (Item #7).
+
+    The ``@field_validator(mode="before")`` only maps legacy alias strings (``"gpu"``, ``"tv"``, ``"albu"``) to their
+    current form; it never runs custom logic for non-string input, so an already-concrete ``AugmentationBackend`` member
+    must be accepted unchanged. Unrecognized strings must surface as a Pydantic ``ValidationError`` — not some other
+    exception or a silent fallback to a default backend.
+    """
+
+    def test_unrecognized_backend_string_raises_validation_error(self, tmp_path: Path) -> None:
+        """An unrecognized backend string raises ``ValidationError``, not a silent fallback."""
+        with pytest.raises(ValidationError, match="augmentation_backend"):
+            TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="not_a_real_backend")
+
+    def test_enum_member_accepted_directly_without_alias_lookup(self, tmp_path: Path) -> None:
+        """Passing a concrete ``AugmentationBackend`` member at construction bypasses the alias map."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=AugmentationBackend.ALBU)
+        assert config.augmentation_backend is AugmentationBackend.ALBU
+
+    @pytest.mark.parametrize(
+        "alias,expected",
+        [
+            pytest.param("gpu", AugmentationBackend.KORNIA, id="gpu-aliases-to-kornia"),
+            pytest.param("tv", AugmentationBackend.TV, id="tv-aliases-to-torchvision"),
+            pytest.param("albu", AugmentationBackend.ALBU, id="albu-aliases-to-albumentations"),
+        ],
+    )
+    def test_legacy_alias_string_resolves_to_current_enum_member(
+        self, tmp_path: Path, alias: str, expected: AugmentationBackend
+    ) -> None:
+        """Legacy alias strings (``"gpu"``, ``"tv"``, ``"albu"``) still resolve to their current backend."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=alias)
+        assert config.augmentation_backend is expected

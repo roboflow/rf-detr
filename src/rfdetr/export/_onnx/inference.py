@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 from PIL import Image as PILImage
 from supervision import Detections
 
@@ -81,7 +82,7 @@ def _preprocess_pil_to_nchw(
     height: int,
     width: int,
     channels: int = 3,
-) -> np.ndarray:
+) -> NDArray[np.float32]:
     """Resize and normalise a PIL image to an ``(1, C, H, W)`` float32 NCHW tensor.
 
     Resizes using ``BILINEAR`` to match ``torchvision.transforms.functional.resize()`` (PIL's default is ``BICUBIC``

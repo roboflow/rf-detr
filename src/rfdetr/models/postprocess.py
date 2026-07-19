@@ -272,8 +272,8 @@ class PostProcess(nn.Module):
             One result dict per image containing postprocessed object scores,
             labels, boxes, pixel-space keypoints, and raw precision-Cholesky
             parameters. When ``trace_alpha > 0``, scores for valid keypoint
-            classes are multiplied by an uncertainty penalty derived from the
-            active keypoints of the predicted class.
+            classes are fused with uncertainty from the active keypoints of the
+            predicted class and normalized to ``[0, 1)``.
         """
         results = []
         max_num_keypoints = max(self.num_keypoints_per_class, default=0)
@@ -444,9 +444,10 @@ class PostProcess(nn.Module):
 
         Returns:
             A score tensor where valid keypoint detections are multiplied by
-            ``exp(-trace_alpha * log_mean_trace)``. The trace is the
-            findability-weighted mean expected squared localization error
-            implied by the predicted precision-Cholesky parameters.
+            ``exp(-trace_alpha * log_mean_trace)`` and then normalized to
+            ``[0, 1)``. The trace is the findability-weighted mean expected
+            squared localization error implied by the predicted
+            precision-Cholesky parameters.
         """
         num_keypoint_classes = len(self.num_keypoints_per_class)
         log_mean_traces = selected_keypoints.new_zeros(selected_labels.shape[0])
@@ -469,7 +470,14 @@ class PostProcess(nn.Module):
             log_mean_traces[class_mask] = self._keypoint_log_mean_trace(active_keypoints)
 
         scores_i = scores_i.clone()
-        scores_i[valid_indices] = scores_i[valid_indices] * torch.exp(-self.trace_alpha * log_mean_traces)
+        log_fused_scores = torch.log(scores_i[valid_indices]) - self.trace_alpha * log_mean_traces
+        normalized_scores = torch.sigmoid(log_fused_scores)
+        # Keep the public contract strictly below 1.0 even when the log-fused score saturates.
+        max_score = torch.nextafter(
+            torch.ones_like(normalized_scores),
+            torch.zeros_like(normalized_scores),
+        )
+        scores_i[valid_indices] = torch.minimum(normalized_scores, max_score)
         return scores_i
 
     @staticmethod

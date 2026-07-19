@@ -140,6 +140,11 @@ uv sync --group build      # Build tools only
 
 **Important:** Always run `uv sync` after pulling changes to ensure your dependencies are up to date.
 
+### Optional Extras
+
+- `rfdetr[train]` installs the minimal training loop dependencies and uses torchvision-native default augmentations.
+- `rfdetr[augment]` installs Albumentations (custom CPU `aug_config` dictionaries and built-in presets) and Kornia (GPU-side augmentation with `augmentation_backend="gpu"` or `"auto"`).
+
 ### Running Tests
 
 > **CI Workflows as Source of Truth:** See `.github/workflows/ci-tests-cpu.yml` and `.github/workflows/ci-tests-gpu.yml` for the exact commands used in continuous integration.
