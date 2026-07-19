@@ -141,7 +141,7 @@ def main(args: argparse.Namespace) -> None:
         # compatibility, since --resume is a developer/ops flag).  Setting
         # args.trust_checkpoint=False enforces safe-tensors-only loading and
         # raises if the checkpoint needs pickle.
-        from rfdetr.util.io import _safe_torch_load
+        from rfdetr.utilities.io import _safe_torch_load
 
         trust_checkpoint = getattr(args, "trust_checkpoint", True)
         if trust_checkpoint:

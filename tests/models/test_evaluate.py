@@ -188,23 +188,6 @@ class TestEvaluateSplitDispatch:
             nano_model.evaluate(dataset_dir=str(tmp_path), split="train")  # type: ignore[arg-type]
 
 
-class TestEvaluateKwargParity:
-    """``evaluate()`` accepts and handles the same kwargs as ``train()`` (shared preprocessing)."""
-
-    def test_shares_train_kwarg_handling(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
-        """A deprecated train kwarg (``do_benchmark``) is absorbed and warned, proving shared handling."""
-        trainer = _mock_trainer()
-        with (
-            patch("rfdetr.training.RFDETRModelModule"),
-            patch("rfdetr.training.RFDETRDataModule"),
-            patch("rfdetr.training.build_trainer", return_value=trainer),
-            pytest.warns(DeprecationWarning, match="do_benchmark"),
-        ):
-            nano_model.evaluate(
-                dataset_dir=str(tmp_path), split="test", do_benchmark=True, output_dir=str(tmp_path / "o")
-            )
-
-
 class TestEvaluateClassCountMismatch:
     """A dataset whose class count differs from the model warns instead of adapting the head."""
 

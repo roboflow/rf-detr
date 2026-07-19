@@ -72,31 +72,6 @@ def _make_checkpoint(num_classes=91, num_queries=300, group_detr=13):
     return {"model": state, "args": ckpt_args}
 
 
-def _make_train_config():
-    """Return a minimal TrainConfig for use in load_pretrain_weights.
-
-    Returns:
-        Minimal TrainConfig with placeholder dataset and output dirs.
-    """
-    return TrainConfig(
-        dataset_dir="/nonexistent/dataset",
-        output_dir="/nonexistent/output",
-        epochs=10,
-        lr=1e-4,
-        lr_encoder=1.5e-4,
-        batch_size=2,
-        weight_decay=1e-4,
-        lr_scheduler_kwargs={"lr_drop": 8},
-        warmup_epochs=1.0,
-        drop_path=0.0,
-        multi_scale=False,
-        expanded_scales=False,
-        do_random_resize_via_padding=False,
-        grad_accum_steps=1,
-        tensorboard=False,
-    )
-
-
 def _suppress_pretrain_io(monkeypatch) -> None:
     """Suppress download/validate/file-existence side effects on the canonical load path."""
     monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
@@ -533,25 +508,6 @@ class TestL1FacadePEInterpolationEndToEnd:
             f"Backbone PE was not interpolated to the requested resolution; "
             f"got shape {tuple(loaded_pe.shape)}, expected [1, {expected_pe_grid**2 + 1}, {pe_dim}]."
         )
-
-
-# ---------------------------------------------------------------------------
-# Deprecation: train_config argument
-# ---------------------------------------------------------------------------
-
-
-class TestLoadPretrainWeightsDeprecation:
-    """Passing train_config must emit a DeprecationWarning."""
-
-    def test_emits_deprecation_warning_when_train_config_passed(self, monkeypatch):
-        """Any non-None train_config triggers a DeprecationWarning."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu")
-        tc = _make_train_config()
-
-        with pytest.warns(FutureWarning, match="train_config.*deprecated"):
-            load_pretrain_weights(MagicMock(), mc, tc)
 
 
 # ---------------------------------------------------------------------------

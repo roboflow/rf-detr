@@ -20,7 +20,6 @@ import json
 import os
 import sys
 import warnings
-from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -30,7 +29,7 @@ import pytest
 import torch
 
 from rfdetr.config import RFDETRBaseConfig, RFDETRKeypointPreviewConfig, RFDETRSmallConfig, TrainConfig
-from rfdetr.detr import RFDETR, RFDETRLarge
+from rfdetr.detr import RFDETR
 from rfdetr.detr import logger as detr_logger
 from rfdetr.training.auto_batch import AutoBatchResult
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
@@ -308,89 +307,6 @@ class TestRFDETRTrainPTL:
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
         mock_self.get_train_config.assert_called_once_with()
 
-    def test_callbacks_none_no_warning(self, tmp_path, patch_lit):
-        """Callbacks=None produces no DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=None)
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    def test_callbacks_empty_dict_no_warning(self, tmp_path, patch_lit):
-        """Callbacks={} (falsy dict) produces no DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks={})
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    def test_callbacks_all_empty_lists_no_warning(self, tmp_path, patch_lit):
-        """Callbacks dict with all-empty lists produces no DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        callbacks = defaultdict(list)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=callbacks)
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    def test_callbacks_non_empty_emits_deprecation_warning(self, tmp_path, patch_lit):
-        """Callbacks dict with a non-empty list emits DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        callbacks = {"on_fit_epoch_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=callbacks)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(depr) >= 1
-        assert "PTL" in str(depr[0].message)
-
-    def test_callbacks_mixed_emits_deprecation_warning(self, tmp_path, patch_lit):
-        """Mixed callbacks (some empty, some non-empty) triggers DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        callbacks = {"on_fit_epoch_end": [], "on_train_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=callbacks)
-        assert any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    def test_do_benchmark_false_no_warning(self, tmp_path, patch_lit):
-        """do_benchmark=False (default) emits no DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, do_benchmark=False)
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    @pytest.mark.parametrize(
-        "truthy_value",
-        [pytest.param(True, id="bool_true"), pytest.param(1, id="int_1"), pytest.param("yes", id="str_yes")],
-    )
-    def test_do_benchmark_truthy_emits_deprecation_warning(self, tmp_path, truthy_value, patch_lit):
-        """Any truthy do_benchmark value emits DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, do_benchmark=truthy_value)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(depr) >= 1
-        assert "rfdetr.export.benchmark" in str(depr[0].message)
-
-    def test_do_benchmark_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
-        """do_benchmark is popped before calling get_train_config."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, do_benchmark=True)
-        mock_self.get_train_config.assert_called_once_with()
-
     def test_device_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
         """Device= is popped and not passed on to get_train_config."""
         mock_self = _make_rfdetr_self(tmp_path)
@@ -544,39 +460,6 @@ class TestRFDETRTrainPTLAbsorption:
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, callbacks={})  # must not raise
-
-    def test_callbacks_non_empty_emits_deprecation_warning(self, tmp_path, patch_lit):
-        """Callbacks with non-empty lists emits DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        callbacks = {"on_fit_epoch_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=callbacks)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(depr) >= 1
-
-    def test_start_epoch_emits_deprecation_warning(self, tmp_path, patch_lit):
-        """start_epoch=1 emits DeprecationWarning and is dropped."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, start_epoch=1)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert any("start_epoch" in str(d.message) for d in depr)
-        # start_epoch must not reach get_train_config
-        assert "start_epoch" not in mock_self.get_train_config.call_args.kwargs
-
-    def test_do_benchmark_true_emits_deprecation_warning(self, tmp_path, patch_lit):
-        """do_benchmark=True emits DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, do_benchmark=True)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert any("do_benchmark" in str(d.message) or "rfdetr benchmark" in str(d.message) for d in depr)
 
     def test_returns_none(self, tmp_path, patch_lit):
         """RFDETR.train() returns None."""
@@ -1166,7 +1049,7 @@ class TestPublicAPIExports:
 
 
 class TestRemovedLegacyModuleAliases:
-    """Removed legacy modules resolve via shims today and via migration hints after removal."""
+    """Removed legacy modules raise migration-hint ImportErrors on any access."""
 
     @staticmethod
     def _simulate_missing_removed_module_specs(monkeypatch: pytest.MonkeyPatch, *names: str) -> None:
@@ -1188,18 +1071,6 @@ class TestRemovedLegacyModuleAliases:
         root_names = {name.removeprefix("rfdetr.").split(".", maxsplit=1)[0] for name in names}
         for root_name in root_names:
             monkeypatch.delitem(rfdetr.__dict__, root_name, raising=False)
-
-    def test_removed_util_alias_resolves_via_package_attribute(self) -> None:
-        """PEP 562 lookup resolves rfdetr.util while the shim package exists."""
-        import rfdetr
-
-        assert rfdetr.util.__name__ == "rfdetr.util"
-
-    def test_removed_deploy_alias_resolves_via_package_attribute(self) -> None:
-        """PEP 562 lookup resolves rfdetr.deploy while the shim package exists."""
-        import rfdetr
-
-        assert rfdetr.deploy.__name__ == "rfdetr.deploy"
 
     def test_removed_shim_missing_raises_importerror_with_getattr(self) -> None:
         """Missing removed shim should raise ImportError with migration hint."""
@@ -1235,7 +1106,7 @@ class TestRemovedLegacyModuleAliases:
         """Dotted legacy imports get a migration hint once the util shim package is removed."""
         self._simulate_missing_removed_module_specs(monkeypatch, "rfdetr.util")
 
-        with pytest.raises(ImportError, match=r"rfdetr\.util will be removed in v1\.9"):
+        with pytest.raises(ImportError, match=r"rfdetr\.util was removed in v1\.9"):
             importlib.import_module("rfdetr.util")
 
     def test_removed_deploy_submodule_import_raises_migration_hint_when_shim_is_deleted(
@@ -1245,7 +1116,7 @@ class TestRemovedLegacyModuleAliases:
         """Dotted legacy submodule imports get a migration hint once the deploy shim is removed."""
         self._simulate_missing_removed_module_specs(monkeypatch, "rfdetr.deploy", "rfdetr.deploy.benchmark")
 
-        with pytest.raises(ImportError, match=r"rfdetr\.deploy will be removed in v1\.9"):
+        with pytest.raises(ImportError, match=r"rfdetr\.deploy was removed in v1\.9"):
             importlib.import_module("rfdetr.deploy.benchmark")
 
     def test_find_spec_ignores_non_rfdetr_top_level_imports(self) -> None:
@@ -1270,112 +1141,7 @@ class TestRemovedLegacyModuleAliases:
 
 
 # ---------------------------------------------------------------------------
-# 6. RFDETRLarge deprecated-config fallback behaviour
-# ---------------------------------------------------------------------------
-
-
-class TestRFDETRLargeFallback:
-    """RFDETRLarge retries only for deprecated-weight compatibility errors."""
-
-    def test_cuda_oom_runtime_error_does_not_retry(self, monkeypatch, patch_lit):
-        """CUDA OOM should fail fast without deprecated-config retry."""
-        call_count = 0
-
-        def _raise_oom(self, **kwargs):
-            del self, kwargs
-            nonlocal call_count
-            call_count += 1
-            raise RuntimeError("CUDA out of memory. Tried to allocate 16.00 MiB.")
-
-        monkeypatch.setattr(RFDETR, "__init__", _raise_oom)
-
-        with pytest.raises(RuntimeError, match="out of memory"):
-            RFDETRLarge()
-
-        assert call_count == 1
-
-    def test_state_dict_runtime_error_retries_once_with_deprecated_config(self, monkeypatch, patch_lit):
-        """State-dict mismatch errors trigger exactly one deprecated-config retry."""
-        call_count = 0
-
-        def _raise_then_succeed(self, **kwargs):
-            del kwargs
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("Error(s) in loading state_dict for Model: size mismatch for backbone.weight")
-            self.model = MagicMock()
-
-        monkeypatch.setattr(RFDETR, "__init__", _raise_then_succeed)
-        warn_spy = MagicMock()
-        monkeypatch.setattr("rfdetr.detr.logger.warning", warn_spy)
-
-        model = RFDETRLarge()
-
-        assert model.is_deprecated is True
-        assert call_count == 2
-        warn_spy.assert_called_once()
-
-    def test_pe_size_mismatch_with_custom_resolution_does_not_retry(self, monkeypatch, patch_lit):
-        """Custom resolution= must not trigger deprecated-config fallback on PE size mismatch.
-
-        Regression for #960: when ``resolution=`` is explicitly passed, a positional embedding size mismatch is caused
-        by the resolution change — not by deprecated weights.  The fallback must be suppressed so the error surfaces to
-        the caller rather than silently loading the wrong model architecture.
-        """
-        call_count = 0
-
-        def _raise_pe_mismatch(self, **kwargs):
-            del self
-            nonlocal call_count
-            call_count += 1
-            raise RuntimeError(
-                "Error(s) in loading state_dict for LWDETR:\n\t"
-                "size mismatch for backbone.0.encoder.encoder.embeddings.position_embeddings: "
-                "copying a param with shape torch.Size([1, 577, 384]) from checkpoint, "
-                "the shape in current model is torch.Size([1, 1601, 384])."
-            )
-
-        monkeypatch.setattr(RFDETR, "__init__", _raise_pe_mismatch)
-
-        with pytest.raises(RuntimeError, match="size mismatch"):
-            RFDETRLarge(resolution=640)
-
-        assert call_count == 1, (
-            f"Expected no deprecated-config retry when resolution= is set, but __init__ was called {call_count} times."
-        )
-
-    def test_retry_reraises_only_first_error(self, monkeypatch, patch_lit):
-        """When both attempts fail, re-raise only the first compatibility error without exception chaining."""
-        call_count = 0
-
-        def _raise_patch_size_mismatch(_self, **_kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise ValueError(
-                    "The checkpoint was trained with patch_size=14, but the current model uses patch_size=12."
-                )
-            raise ValueError("The checkpoint was trained with patch_size=16, but the current model uses patch_size=12.")
-
-        monkeypatch.setattr(RFDETR, "__init__", _raise_patch_size_mismatch)
-        warn_spy = MagicMock()
-        exception_spy = MagicMock()
-        monkeypatch.setattr("rfdetr.variants.logger.warning", warn_spy)
-        monkeypatch.setattr("rfdetr.variants.logger.exception", exception_spy)
-
-        with pytest.raises(ValueError, match=r"patch_size=14.*patch_size=12") as exc_info:
-            RFDETRLarge(resolution=704)
-
-        assert call_count == 2
-        assert "patch_size=16" not in str(exc_info.value)
-        assert exc_info.value.__suppress_context__ is True
-        warn_spy.assert_not_called()
-        exception_spy.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# 7. _load_pretrain_weights_into — detr.py path (the non-PTL scenario from #806)
+# 6. _load_pretrain_weights_into — detr.py path (the non-PTL scenario from #806)
 # ---------------------------------------------------------------------------
 
 

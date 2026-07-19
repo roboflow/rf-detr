@@ -240,8 +240,8 @@ def _prepare_run_config(
     """Absorb the special run kwargs and build a :class:`~rfdetr.config.TrainConfig`.
 
     Shared by :meth:`RFDETR.train` and :meth:`RFDETR.evaluate` so both accept exactly the same keyword arguments.
-    Handles the kwargs that are not plain ``TrainConfig`` fields: the deprecated ``callbacks`` / ``start_epoch`` /
-    ``do_benchmark`` (warned then dropped), ``device`` (mapped to PyTorch Lightning accelerator/devices), and
+    Handles the kwargs that are not plain ``TrainConfig`` fields: ``device`` (mapped to PyTorch Lightning
+    accelerator/devices), and
     ``resolution`` (a ``ModelConfig`` field applied to ``detector.model_config`` in place, with the positional-encoding
     size and cached inference context kept in sync). Remaining kwargs are forwarded to
     :meth:`RFDETR.get_train_config`; ``batch_size="auto"`` is resolved by auto-batch probing (skipped when
@@ -273,41 +273,10 @@ def _prepare_run_config(
     # submodule surfaces its original ModuleNotFoundError here rather than being masked.
     from rfdetr.training.auto_batch import resolve_auto_batch_config
 
-    # Absorb legacy `callbacks` dict — warn if non-empty, then discard.
-    callbacks_dict = kwargs.pop("callbacks", None)
-    if callbacks_dict and any(callbacks_dict.values()):
-        warnings.warn(
-            "Custom callbacks dict is not forwarded to PTL. "
-            "Deprecated since v1.7.0, will be removed in v1.9.0. "
-            "Use PTL Callback objects instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
     # Parse `device` kwarg and map it to PTL accelerator/devices.
     # Supports torch-style strings and torch.device (e.g. "cuda:1").
     _device = kwargs.pop("device", None)
     _accelerator, _devices = RFDETR._resolve_trainer_device_kwargs(_device)
-
-    # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
-    if "start_epoch" in kwargs:
-        warnings.warn(
-            "`start_epoch` is deprecated since v1.7.0 and will be removed in v1.9.0; "
-            "PTL resumes automatically via `resume`.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        kwargs.pop("start_epoch")
-
-    # Pop `do_benchmark`; benchmarking via `.train()` is deprecated.
-    run_benchmark = bool(kwargs.pop("do_benchmark", False))
-    if run_benchmark:
-        warnings.warn(
-            "`do_benchmark` in `.train()` is deprecated since v1.7.0 and will be removed in v1.9.0; "
-            "use the `rfdetr.export.benchmark` module instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
 
     # Apply resolution override to model_config before building the train config.
     # resolution is a ModelConfig field, not a TrainConfig field, so we pop it
@@ -558,7 +527,7 @@ class RFDETR:
         # Use the safe-load helper which tries weights_only=True first (with
         # legacy argparse.Namespace safe globals), falling back to full pickle
         # only when the caller explicitly passes trust_checkpoint=True.
-        from rfdetr.util.io import _safe_torch_load
+        from rfdetr.utilities.io import _safe_torch_load
 
         ckpt: dict[str, Any] = _safe_torch_load(str(path), trust=trust_checkpoint)
         args = ckpt["args"]
@@ -851,11 +820,6 @@ class RFDETR:
           Lightning trainer arguments. ``"cpu"`` becomes ``accelerator="cpu"``; ``"cuda"`` and ``"cuda:N"`` become
           ``accelerator="gpu"`` and optionally ``devices=[N]``; ``"mps"`` becomes ``accelerator="mps"``. Other valid
           torch device types fall back to PTL auto-detection and emit a :class:`UserWarning`.
-        * ``callbacks`` — if the dict contains any non-empty lists a
-          :class:`DeprecationWarning` is emitted; the dict is then discarded. Use PTL
-          :class:`~pytorch_lightning.Callback` objects passed via :func:`~rfdetr.training.build_trainer` instead.
-        * ``start_epoch`` — emits :class:`DeprecationWarning` and is dropped.
-        * ``do_benchmark`` — emits :class:`DeprecationWarning` and is dropped.
         * ``notes`` — optional user-defined metadata (string, dict, list, or
           any JSON-serialisable value) stored under the ``"notes"`` key in every ``.pth`` checkpoint produced during
           training.  The value is also available inside ``args["notes"]`` for full provenance.  Pass the same value to

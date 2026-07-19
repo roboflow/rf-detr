@@ -166,7 +166,7 @@ def strip_checkpoint(
 
     import torch
 
-    from rfdetr.util.io import _safe_torch_load
+    from rfdetr.utilities.io import _safe_torch_load
 
     # `checkpoint_best_total.pth` is produced by local RF-DETR training and can
     # contain non-tensor metadata under "args" (e.g. `types.SimpleNamespace`).

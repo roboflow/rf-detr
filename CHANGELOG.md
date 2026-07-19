@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - `[kornia]` extra renamed to `[augment]`. A deprecated `[kornia]` alias extra (`pip install 'rfdetr[kornia]'` → installs `rfdetr[augment]`) is kept for one release for backward compatibility.
+- `rfdetr.util.*` and `rfdetr.deploy` import paths, deprecated since v1.6.0 with `remove_in="1.9.0"`. Use `rfdetr.utilities.*`, `rfdetr.assets.coco_classes`, `rfdetr.training.drop_schedule`, `rfdetr.training.param_groups`, `rfdetr.visualize.data`, `rfdetr.models.heads.segmentation`, and `rfdetr.export` instead.
+- `rfdetr._namespace.build_namespace(model_config, train_config)`, deprecated since v1.7.0 with `remove_in="1.9.0"`. Use `rfdetr.models.build_model_from_config` and `build_criterion_from_config` instead.
+- The `train_config` argument to `load_pretrain_weights(nn_model, model_config, train_config)`, deprecated since v1.7.0 with `remove_in="1.9.0"`. Call it with just `(nn_model, model_config)`.
+- The `start_epoch`, `do_benchmark`, and `callbacks` keyword arguments to `.train()`/`.evaluate()`, deprecated since v1.7.0 with `remove_in="1.9.0"`. PTL resumes automatically via `resume=`; use the `rfdetr.export.benchmark` module for benchmarking; pass PTL `Callback` objects directly instead of a `callbacks` dict.
+- `TrainConfig.group_detr`, `TrainConfig.ia_bce_loss`, `TrainConfig.segmentation_head`, `TrainConfig.num_select`, and `ModelConfig.cls_loss_coef`, deprecated since v1.7.0 with `remove_in="1.9.0"`. `group_detr`, `ia_bce_loss`, `segmentation_head`, and `num_select` now live only on `ModelConfig`; `cls_loss_coef` now lives only on `TrainConfig`.
+- `RFDETRLarge`'s automatic silent fallback to `RFDETRLargeDeprecatedConfig` on checkpoint/config incompatibility errors. Loading legacy deprecated-Large weights through `RFDETRLarge` now raises the original error instead of retrying; use `RFDETRLargeDeprecated` directly to load those checkpoints.
 
 ---
 

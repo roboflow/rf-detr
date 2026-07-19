@@ -24,10 +24,9 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
-from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.config import ModelConfig
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.lwdetr import LWDETR
-from rfdetr.utilities.decorators import TargetMode, deprecated
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.state_dict import _ckpt_args_get, remap_projector_to_cross_attn, validate_checkpoint_compatibility
 
@@ -262,17 +261,9 @@ def interpolate_position_embeddings(
         )
 
 
-@deprecated(  # type: ignore[untyped-decorator,unused-ignore]
-    target=TargetMode.ARGS_REMAP,
-    args_mapping={"train_config": None},
-    deprecated_in="1.7.0",
-    remove_in="1.9.0",
-    num_warns=-1,
-)
 def load_pretrain_weights(
     nn_model: LWDETR,
     model_config: ModelConfig,
-    train_config: TrainConfig | None = None,
 ) -> list[str]:
     """Load pretrained checkpoint weights into *nn_model* in-place.
 
@@ -296,9 +287,6 @@ def load_pretrain_weights(
         nn_model: The model whose weights will be updated in-place.
         model_config: Pydantic ``ModelConfig`` instance. Must have
             ``pretrain_weights``, ``num_classes``, ``num_queries``, and ``group_detr`` attributes.
-        train_config: Deprecated since v1.7.0 — no longer used internally.
-            Passing a non-``None`` value emits a ``DeprecationWarning``.
-            Omit the argument; it will be removed in v1.9.0.
 
     Returns:
         List of class name strings from the checkpoint, or an empty list if none are present or if
@@ -315,7 +303,7 @@ def load_pretrain_weights(
     pretrain_weights = str(mc.pretrain_weights)
     class_names: list[str] = []
 
-    from rfdetr.util.io import _safe_torch_load
+    from rfdetr.utilities.io import _safe_torch_load
 
     # Download first (no-op if already present and hash is valid).
     download_pretrain_weights(pretrain_weights)

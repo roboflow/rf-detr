@@ -134,17 +134,6 @@ class TestNamespaceFromConfigs:
 
         assert args.cls_loss_coef == pytest.approx(5.0)
 
-    def test_segmentation_num_select_none_falls_back_to_model_config(self, base_model_config, seg_train_config) -> None:
-        """SegmentationTrainConfig(num_select=None) must not overwrite ModelConfig.num_select."""
-        mc = base_model_config(segmentation_head=True, num_select=200)
-        # Explicitly passing num_select=None triggers the deprecation warning (Item #3).
-        with pytest.warns(DeprecationWarning, match="TrainConfig.num_select is deprecated"):
-            tc = seg_train_config(num_select=None)
-
-        args = _namespace_from_configs(mc, tc)
-
-        assert args.num_select == 200
-
     def test_segmentation_extras_default_for_plain_config(self, base_model_config, base_train_config):
         """mask_* attributes default to 5.0 for a plain TrainConfig (not segmentation)."""
         args = _namespace_from_configs(base_model_config(), base_train_config())
@@ -156,12 +145,3 @@ class TestNamespaceFromConfigs:
         mc = base_model_config(segmentation_head=True)
         args = _namespace_from_configs(mc, base_train_config())
         assert args.segmentation_head is True
-
-    def test_build_namespace_emits_deprecation_warning(
-        self, base_model_config, base_train_config, reset_build_namespace_warning_state
-    ):
-        """build_namespace() must emit a DeprecationWarning on every call."""
-        from rfdetr._namespace import build_namespace
-
-        with pytest.warns(FutureWarning, match="build_namespace"):
-            build_namespace(base_model_config(), base_train_config())

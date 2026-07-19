@@ -52,9 +52,6 @@ from rfdetr.config import (
     SegmentationTrainConfig,
 )
 from rfdetr.detr import RFDETR
-from rfdetr.utilities.logger import get_logger
-
-logger = get_logger()
 
 
 @deprecated_class(
@@ -143,78 +140,8 @@ class RFDETRLarge(RFDETR):
 
     size = "rfdetr-large"
 
-    @staticmethod
-    def _should_fallback_to_deprecated_config(exc: Exception) -> bool:
-        """Return whether initialization should retry with deprecated Large config.
-
-        The fallback is only for known checkpoint/config incompatibilities from deprecated Large weights. Runtime issues
-        such as CUDA OOM must fail fast and must not trigger a second initialization attempt.
-
-        Args:
-            exc: Exception raised by initial ``RFDETR`` initialization.
-
-        Returns:
-            ``True`` when retrying with deprecated config is expected to help.
-        """
-        message = str(exc).lower()
-        if "out of memory" in message:
-            return False
-        if isinstance(exc, ValueError):
-            return "patch_size" in message
-        if isinstance(exc, RuntimeError):
-            incompatible_state_dict_markers = (
-                "error(s) in loading state_dict",
-                "size mismatch",
-                "missing key(s) in state_dict",
-                "unexpected key(s) in state_dict",
-            )
-            return any(marker in message for marker in incompatible_state_dict_markers)
-        return False
-
-    def __init__(self, **kwargs):
-        self.init_error = None
-        self.is_deprecated = False
-        # When the user explicitly sets a custom resolution, a PE size mismatch
-        # is caused by the resolution change — not by deprecated weights.  Guard
-        # against the fallback heuristic misclassifying it as deprecated weights.
-        # Only suppress the fallback when the provided resolution genuinely differs
-        # from the class default; passing resolution=<default> explicitly (e.g. from
-        # a serialised config round-trip) must still allow the deprecated-weights retry.
-        _default_resolution = RFDETRLargeConfig.model_fields["resolution"].default
-        _custom_resolution = "resolution" in kwargs and kwargs.get("resolution") != _default_resolution
-        try:
-            super().__init__(**kwargs)
-        except (ValueError, RuntimeError) as exc:
-            if _custom_resolution or not self._should_fallback_to_deprecated_config(exc):
-                raise
-            self.init_error = exc
-            self.is_deprecated = True
-            try:
-                super().__init__(**kwargs)
-                logger.warning(
-                    "\n"
-                    "=" * 100 + "\n"
-                    "WARNING: Automatically switched to deprecated model configuration,"
-                    " due to using deprecated weights."
-                    " This will be removed in v1.9.0.\n"
-                    " Please retrain your model with the new weights and configuration.\n"
-                    "=" * 100 + "\n"
-                )
-            except Exception as retry_exc:
-                logger.exception(
-                    "Retry with deprecated RF-DETR Large configuration failed; "
-                    "re-raising the original initialization error for compatibility. "
-                    "Original error: %s",
-                    self.init_error,
-                    exc_info=retry_exc,
-                )
-                raise self.init_error from retry_exc
-
     def get_model_config(self, **kwargs) -> ModelConfig:
-        if not self.is_deprecated:
-            return RFDETRLargeConfig(**kwargs)
-        else:
-            return RFDETRLargeDeprecatedConfig(**kwargs)
+        return RFDETRLargeConfig(**kwargs)
 
 
 class RFDETRSeg(RFDETR):

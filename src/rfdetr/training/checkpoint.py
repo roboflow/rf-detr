@@ -46,7 +46,7 @@ def convert_legacy_checkpoint(old_path: str, new_path: str) -> None:
     """
     # trust=True: this function converts internally-produced legacy .pth files;
     # allow pickle fallback if safe deserialization fails due to non-tensor/custom objects.
-    from rfdetr.util.io import _safe_torch_load
+    from rfdetr.utilities.io import _safe_torch_load
 
     old: dict[str, Any] = _safe_torch_load(old_path, trust=True)
 

@@ -492,9 +492,7 @@ class ModelConfig(BaseConfig):
     ca_nheads: int
     dec_n_points: int
     num_queries: int = 300
-    # NOTE:
-    # - ModelConfig is the authoritative source of `num_select` for PTL/inference; it is read via `build_namespace`.
-    # - Any `num_select` field on TrainConfig / SegmentationTrainConfig is deprecated and ignored by PTL/inference.
+    # ModelConfig is the sole owner of `num_select` for PTL/inference; it is read via `_namespace_from_configs`.
     num_select: int = 300
     postprocess_trace_alpha: float = Field(default=0.2, ge=0.0)
     bbox_reparam: bool = True
@@ -516,7 +514,6 @@ class ModelConfig(BaseConfig):
     use_iou_head: bool = False
     iou_loss_coef: float = 2.0
     iou_alpha: float = 0.5
-    cls_loss_coef: float = 1.0
     segmentation_head: bool = False
     use_grouppose_keypoints: bool = False
     keypoint_cross_attn: bool = True
@@ -539,26 +536,6 @@ class ModelConfig(BaseConfig):
             "without inspecting ``pretrain_weights``."
         ),
     )
-
-    @model_validator(mode="after")
-    def _warn_deprecated_model_config_fields(self) -> "ModelConfig":
-        """Emit DeprecationWarning when cls_loss_coef is explicitly set on ModelConfig.
-
-        ``cls_loss_coef`` ownership is moving to ``TrainConfig`` (Item #3, v1.7). Setting it on ``ModelConfig`` is
-        deprecated.  Use ``TrainConfig(cls_loss_coef=...)`` instead.
-        """
-        if "cls_loss_coef" in self.model_fields_set:
-            # stacklevel=2 points into Pydantic internals rather than the user call
-            # site — this is unavoidable with @model_validator(mode="after") in
-            # Pydantic v2.  The warning still fires correctly; the origin frame is
-            # less precise than ideal.
-            warnings.warn(
-                "ModelConfig.cls_loss_coef is deprecated since v1.7.0 and will be removed in v1.9.0. "
-                "Set cls_loss_coef on TrainConfig instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        return self
 
     @model_validator(mode="after")
     def _sync_pe_with_resolution(self) -> "ModelConfig":
@@ -1068,10 +1045,7 @@ class TrainConfig(BaseConfig):
     lr_vit_layer_decay: float = 0.8
     lr_component_decay: float = 0.7
     drop_path: float = 0.0
-    group_detr: int = 13
-    ia_bce_loss: bool = True
     cls_loss_coef: float = 1.0
-    num_select: int = 300
     keypoint_flip_pairs: list[int] = Field(default_factory=list)
     keypoint_l1_loss_coef: float = 0
     keypoint_findable_loss_coef: float = 0
@@ -1112,7 +1086,6 @@ class TrainConfig(BaseConfig):
     run: str | None = None
     class_names: list[str] | None = None
     run_test: bool = False
-    segmentation_head: bool = False
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = True
@@ -1171,32 +1144,6 @@ class TrainConfig(BaseConfig):
             "all other types are JSON-encoded."
         ),
     )
-
-    @model_validator(mode="after")
-    def _warn_deprecated_train_config_fields(self) -> "TrainConfig":
-        """Emit DeprecationWarning for fields whose ownership is moving to ModelConfig.
-
-        The following fields are duplicated between ``ModelConfig`` and ``TrainConfig`` but ``ModelConfig`` is the
-        authoritative source (Item #3, v1.7.0).  Setting them on ``TrainConfig`` is deprecated.  The fields will be
-        removed in v1.9.0.
-
-        - ``group_detr``: query group count is an architecture decision → ``ModelConfig``
-        - ``ia_bce_loss``: loss type is tied to architecture family → ``ModelConfig``
-        - ``segmentation_head``: architecture flag → ``ModelConfig``
-        - ``num_select``: postprocessor count is an architecture decision → ``ModelConfig``
-        """
-        _deprecated = ("group_detr", "ia_bce_loss", "segmentation_head", "num_select")
-        for field in _deprecated:
-            if field in self.model_fields_set:
-                # stacklevel=2 points into Pydantic internals; unavoidable with
-                # @model_validator(mode="after") in Pydantic v2.
-                warnings.warn(
-                    f"TrainConfig.{field} is deprecated since v1.7.0 and will be removed in v1.9.0. "
-                    f"Set {field} on ModelConfig instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-        return self
 
     @field_validator("progress_bar", mode="before")
     @classmethod
@@ -1541,8 +1488,6 @@ class SegmentationTrainConfig(TrainConfig):
     Extends :class:`TrainConfig` with segmentation-specific loss coefficients.
 
     Attributes:
-        num_select: Maximum number of predictions to keep per image. ``None`` uses
-            the model default.
         mask_point_sample_ratio: Number of points sampled per mask for point-based
             mask loss computation.
         mask_ce_loss_coef: Cross-entropy loss weight for mask prediction.
@@ -1552,15 +1497,12 @@ class SegmentationTrainConfig(TrainConfig):
             silently activated a dormant ``5.0``; this field restores the correct
             weight). To reproduce pre-fix segmentation behaviour pass
             ``cls_loss_coef=5.0`` explicitly.
-        segmentation_head: Whether to attach the segmentation head.
     """
 
-    num_select: int | None = None
     mask_point_sample_ratio: int = 16
     mask_ce_loss_coef: float = 5.0
     mask_dice_loss_coef: float = 5.0
     cls_loss_coef: float = 1.0
-    segmentation_head: bool = True
 
 
 class KeypointTrainConfig(TrainConfig):
