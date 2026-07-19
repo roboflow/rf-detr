@@ -163,8 +163,11 @@ class TestLossIous:
         losses = criterion.loss_ious(outputs, targets, indices, num_boxes=torch.tensor(1.0))
 
         assert "loss_iou" in losses
+        assert "iou_mae" in losses
         loss_val = losses["loss_iou"]
+        mae_val = losses["iou_mae"]
         assert loss_val.item() > 0
+        assert mae_val.item() > 0
 
         # Verify gradient flow
         loss_val.backward()

@@ -674,8 +674,12 @@ class SetCriterion(nn.Module):
         # Compute MSE loss between predicted and actual IoU values
         # Since IoU targets are bounded in [0, 1], we pass logits through a sigmoid
         loss_iou = F.mse_loss(src_ious.sigmoid(), iou_targets, reduction="none")
+        iou_mae = F.l1_loss(src_ious.sigmoid(), iou_targets, reduction="none")
 
-        losses = {"loss_iou": loss_iou.sum() / num_boxes}
+        losses = {
+            "loss_iou": loss_iou.sum() / num_boxes,
+            "iou_mae": iou_mae.sum() / num_boxes,
+        }
         return losses
 
     def _get_src_permutation_idx(self, indices: list[tuple[Tensor, Tensor]]) -> tuple[Tensor, Tensor]:
