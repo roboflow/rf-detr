@@ -281,10 +281,10 @@ class _DeviceTrackingCoreModel(_DummyCoreModel):
         return self
 
 
-def _make_tensorrt_export_model() -> types.SimpleNamespace:
+def _make_tensorrt_export_model(*, device: str = "cpu") -> types.SimpleNamespace:
     """Build the minimal `self`-like fake `RFDETR.export()` needs for the tensorrt=True branch."""
     return types.SimpleNamespace(
-        model=types.SimpleNamespace(model=_DeviceTrackingCoreModel(), device="cpu", resolution=14),
+        model=types.SimpleNamespace(model=_DeviceTrackingCoreModel(), device=device, resolution=14),
         model_config=types.SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False, num_channels=3),
         size=None,
     )
@@ -328,7 +328,10 @@ def test_rfdetr_export_tensorrt_failure_restores_device(monkeypatch: pytest.Monk
     Regression test for the try/finally around the CPU-move .. TensorRT-conversion span in `RFDETR.export()` — a
     `trtexec` failure previously (pre-merge) could strand the model on CPU.
     """
-    model = _make_tensorrt_export_model()
+    # Deliberately distinct from the "cpu" staging move inside export() — if this were "cpu" too, the
+    # assertion below would pass even with the `finally` restore deleted (both moves would look identical).
+    original_device = "original-device"
+    model = _make_tensorrt_export_model(device=original_device)
     onnx_output = str(tmp_path / "inference_model.onnx")
 
     def _raise_trtexec(*_args, **_kwargs):
@@ -336,16 +339,17 @@ def test_rfdetr_export_tensorrt_failure_restores_device(monkeypatch: pytest.Monk
 
     monkeypatch.setattr("rfdetr.export.main.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
     monkeypatch.setattr("rfdetr.export.main.export_onnx", lambda *_a, **_kw: onnx_output)
-    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+    # Real deepcopy (not identity) — the exported `model` local must be a distinct object from
+    # `self.model.model` so only the latter's `.to()` calls are tracked, matching production behavior.
     monkeypatch.setattr("rfdetr.export._tensorrt.trtexec", _raise_trtexec)
 
     with pytest.raises(subprocess.CalledProcessError):
         _detr_module.RFDETR.export(model, output_dir=str(tmp_path), tensorrt=True, shape=(14, 14))
 
     core_model = model.model.model
-    assert core_model.to_calls[-1] == "cpu", (
-        f"model must be restored to its original device ('cpu') even when trtexec raises, "
-        f"got device move sequence {core_model.to_calls!r}"
+    assert core_model.to_calls == ["cpu", original_device], (
+        f"expected exactly one staging move to 'cpu' then one restore to {original_device!r} even though "
+        f"trtexec raised, got device move sequence {core_model.to_calls!r}"
     )
 
 

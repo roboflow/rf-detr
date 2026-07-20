@@ -157,17 +157,9 @@ This exports `output/inference_model.onnx` first and then produces `output/infer
 ### Python API Conversion
 
 ```python
-from argparse import Namespace
-
 from rfdetr.export._tensorrt import trtexec
 
-args = Namespace(
-    verbose=True,
-    profile=False,
-    dry_run=False,
-)
-
-engine_path = trtexec("output/inference_model.onnx", args)
+engine_path = trtexec("output/inference_model.onnx", verbose=True, profile=False, dry_run=False)
 ```
 
 `trtexec` returns the path to the generated `.engine` file. If `profile=True`, it also writes an Nsight Systems report (`.nsys-rep`).

@@ -91,6 +91,21 @@ def test_trtexec_dry_run_returns_engine_path(monkeypatch) -> None:
         pytest.param("/output/rfdetr.onnx", "/output/rfdetr.engine", id="plain-path"),
         pytest.param("/path with spaces/model.onnx", "/path with spaces/model.engine", id="path-with-spaces"),
         pytest.param("/model;rm -rf /.onnx", "/model;rm -rf /.onnx.engine", id="shell-metachar"),
+        pytest.param(
+            "/data/my.onnx.backup/model.onnx",
+            "/data/my.onnx.backup/model.engine",
+            id="earlier-onnx-segment-in-dir",
+        ),
+        pytest.param(
+            "/output/model_v1.onnx.old.onnx",
+            "/output/model_v1.onnx.old.engine",
+            id="double-onnx-in-filename",
+        ),
+        pytest.param(
+            "/output/model_without_extension",
+            "/output/model_without_extension.engine",
+            id="no-onnx-extension",
+        ),
     ],
 )
 def test_trtexec_argv_contains_no_shell_string(monkeypatch, onnx_path: str, expected_engine: str) -> None:
