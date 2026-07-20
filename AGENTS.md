@@ -217,6 +217,13 @@ uv run twine check --strict dist/*
 - Underlying PyTorch module: `self.model.model`
 - Segmentation models return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
 
+**Model Selection (examples, docs, tests, defaults):**
+
+- **Default to `RFDETRSmall` / `"rfdetr-small"`.** Use it wherever an example needs a concrete detection model.
+- **Never use base models** (`RFDETRBase` / `"rfdetr-base"`) in new examples, docs, or tests — treat as deprecated; substitute `small`.
+- **Released detection sizes** — `nano`, `small`, `medium`, `large` (plus `xlarge`/`2xlarge` Plus models). Always pick one of these for plain object detection; never a `-preview` variant.
+- **`-preview` variants** (`RFDETRSegPreview` / `"rfdetr-seg-preview"`, `RFDETRKeypointPreview` / `"rfdetr-keypoint-preview"`) are for capabilities that have **no released sized version yet** (segmentation, keypoints). Use a preview variant **only** for those tasks — not as a stand-in for detection.
+
 **Imports:**
 
 ```python
