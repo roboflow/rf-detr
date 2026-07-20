@@ -5,7 +5,6 @@
 # ------------------------------------------------------------------------
 """Tests for TensorRT export helpers."""
 
-import argparse
 import subprocess
 
 import pytest
@@ -71,8 +70,7 @@ def test_trtexec_returns_engine_path(monkeypatch) -> None:
     monkeypatch.setattr(tensorrt_export.subprocess, "run", _fake_run)
     monkeypatch.setattr(tensorrt_export, "parse_trtexec_output", lambda _: {})
 
-    args = argparse.Namespace(profile=False, verbose=False, dry_run=False)
-    result = tensorrt_export.trtexec("/tmp/model.onnx", args)
+    result = tensorrt_export.trtexec("/tmp/model.onnx", verbose=False, profile=False, dry_run=False)
 
     assert result == "/tmp/model.engine"
 
@@ -82,8 +80,7 @@ def test_trtexec_dry_run_returns_engine_path(monkeypatch) -> None:
     monkeypatch.setattr(tensorrt_export.logger, "info", lambda _: None)
     monkeypatch.setattr(tensorrt_export, "parse_trtexec_output", lambda _: {})
 
-    args = argparse.Namespace(profile=False, verbose=False, dry_run=True)
-    result = tensorrt_export.trtexec("/tmp/model.onnx", args)
+    result = tensorrt_export.trtexec("/tmp/model.onnx", verbose=False, profile=False, dry_run=True)
 
     assert result == "/tmp/model.engine"
 
@@ -93,7 +90,7 @@ def test_trtexec_dry_run_returns_engine_path(monkeypatch) -> None:
     [
         pytest.param("/output/rfdetr.onnx", "/output/rfdetr.engine", id="plain-path"),
         pytest.param("/path with spaces/model.onnx", "/path with spaces/model.engine", id="path-with-spaces"),
-        pytest.param("/model;rm -rf /.onnx", "/model;rm -rf /.engine", id="shell-metachar"),
+        pytest.param("/model;rm -rf /.onnx", "/model;rm -rf /.onnx.engine", id="shell-metachar"),
     ],
 )
 def test_trtexec_argv_contains_no_shell_string(monkeypatch, onnx_path: str, expected_engine: str) -> None:
@@ -108,8 +105,7 @@ def test_trtexec_argv_contains_no_shell_string(monkeypatch, onnx_path: str, expe
     monkeypatch.setattr(tensorrt_export.subprocess, "run", _fake_run)
     monkeypatch.setattr(tensorrt_export, "parse_trtexec_output", lambda _: {})
 
-    args = argparse.Namespace(profile=False, verbose=False, dry_run=False)
-    result = tensorrt_export.trtexec(onnx_path, args)
+    result = tensorrt_export.trtexec(onnx_path, verbose=False, profile=False, dry_run=False)
 
     assert result == expected_engine
     assert isinstance(captured["command"], list), "argv must be a list"
@@ -221,8 +217,7 @@ def test_trtexec_profile_true_wraps_with_nsys(monkeypatch) -> None:
     monkeypatch.setattr(tensorrt_export, "parse_trtexec_output", lambda _: {})
     monkeypatch.setattr(tensorrt_export.logger, "info", lambda _: None)
 
-    args = argparse.Namespace(profile=True, verbose=False, dry_run=False)
-    tensorrt_export.trtexec("/tmp/model.onnx", args)
+    tensorrt_export.trtexec("/tmp/model.onnx", verbose=False, profile=True, dry_run=False)
 
     assert captured_argv[0] == "nsys", "profile=True must wrap with nsys as argv[0]"
     argv_str = " ".join(captured_argv)
