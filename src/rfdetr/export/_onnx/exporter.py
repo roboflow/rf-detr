@@ -6,44 +6,150 @@
 # Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
-
-"""
-ONNX export, simplification, and OnnxOptimizer.
-"""
+"""ONNX export, simplification, and OnnxOptimizer."""
 
 import inspect
+import json
 import os
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from os import PathLike
+from typing import Any, Protocol, TypeVar, cast
 
 import numpy as np
 import torch
 
+from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
+from rfdetr.utilities.logger import get_logger
+
+_DependencyT = TypeVar("_DependencyT")
+
+
+class _OnnxModule(Protocol):
+    """Minimal ONNX module interface used by this exporter."""
+
+    def load(self, model_path: str, *args: Any, **kwargs: Any) -> Any:
+        """Load an ONNX model from disk."""
+        ...
+
+    def save(self, model: Any, model_path: str, *args: Any, **kwargs: Any) -> None:
+        """Save an ONNX model to disk."""
+        ...
+
+
+class _ShapeInferenceModule(Protocol):
+    """Minimal ONNX shape inference interface used by this exporter."""
+
+    def infer_shapes(self, model: Any, *args: Any, **kwargs: Any) -> Any:
+        """Infer ONNX graph shapes."""
+        ...
+
+
+class _GraphSurgeonModule(Protocol):
+    """Minimal ONNX GraphSurgeon module interface used by the optimizer."""
+
+    def import_onnx(self, model: Any) -> Any:
+        """Import an ONNX model into a GraphSurgeon graph."""
+        ...
+
+    def export_onnx(self, graph: Any) -> Any:
+        """Export a GraphSurgeon graph into an ONNX model."""
+        ...
+
+
+class _GraphSurgeonLogger(Protocol):
+    """Minimal GraphSurgeon logger interface used by the optimizer."""
+
+    INFO: Any
+    severity: Any
+
+    def info(self, message: str) -> None:
+        """Log an informational message."""
+        ...
+
+    def verbose(self, message: str) -> None:
+        """Log a verbose message."""
+        ...
+
+
+class _FoldConstants(Protocol):
+    """Callable Polygraphy constant-folding interface used by the optimizer."""
+
+    def __call__(self, model: Any, *args: Any, **kwargs: Any) -> Any:
+        """Fold constants in an ONNX model."""
+        ...
+
+
+onnx: _OnnxModule | None
+shape_inference: _ShapeInferenceModule | None
 try:
-    import onnx
-    from onnx import shape_inference
+    import onnx as _onnx
+    from onnx import shape_inference as _shape_inference
 except ImportError:
-    onnx = None  # type: ignore[assignment]
-    shape_inference = None  # type: ignore[assignment]
+    onnx = None
+    shape_inference = None
+else:
+    onnx = cast(_OnnxModule, _onnx)
+    shape_inference = cast(_ShapeInferenceModule, _shape_inference)
 
 try:
     import onnx_graphsurgeon as gs
     from onnx_graphsurgeon.logger.logger import G_LOGGER
 except ImportError:
-    gs = None  # type: ignore[assignment]
-    G_LOGGER = None  # type: ignore[assignment]
+    gs = None
+    G_LOGGER = None
 
 try:
     from polygraphy.backend.onnx.loader import fold_constants
 except ImportError:
-    fold_constants = None  # type: ignore[assignment]
-
-from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
-from rfdetr.utilities.logger import get_logger
+    fold_constants = None
 
 logger = get_logger()
+
+
+def _onnx_dependency_error(missing_deps: Sequence[str]) -> ImportError:
+    """Build the shared ONNX optional-dependency error."""
+    missing_str = ", ".join(missing_deps)
+    return ImportError(f"ONNX export dependencies are missing ({missing_str}). Install with: pip install rfdetr[onnx]")
+
+
+def _require_dependency(dependency: _DependencyT | None, name: str) -> _DependencyT:
+    """Return a dependency after narrowing it away from ``None``."""
+    if dependency is None:
+        raise _onnx_dependency_error([name])
+    return dependency
+
+
+def _require_onnx_optimizer_dependencies() -> tuple[
+    _OnnxModule,
+    _ShapeInferenceModule,
+    _GraphSurgeonModule,
+    _GraphSurgeonLogger,
+    _FoldConstants,
+]:
+    """Resolve optional ONNX optimizer dependencies as non-optional typed handles."""
+    graphsurgeon = cast(_GraphSurgeonModule | None, gs)
+    graphsurgeon_logger = cast(_GraphSurgeonLogger | None, G_LOGGER)
+    constant_folder = cast(_FoldConstants | None, fold_constants)
+    missing_deps = []
+    if onnx is None:
+        missing_deps.append("onnx")
+    if shape_inference is None:
+        missing_deps.append("onnx.shape_inference")
+    if graphsurgeon is None or graphsurgeon_logger is None:
+        missing_deps.append("onnx_graphsurgeon")
+    if constant_folder is None:
+        missing_deps.append("polygraphy.backend.onnx.loader.fold_constants")
+    if missing_deps:
+        raise _onnx_dependency_error(missing_deps)
+    return (
+        _require_dependency(onnx, "onnx"),
+        _require_dependency(shape_inference, "onnx.shape_inference"),
+        _require_dependency(graphsurgeon, "onnx_graphsurgeon"),
+        _require_dependency(graphsurgeon_logger, "onnx_graphsurgeon"),
+        _require_dependency(constant_folder, "polygraphy.backend.onnx.loader.fold_constants"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +167,9 @@ def export_onnx(
     backbone_only: bool = False,
     verbose: bool = True,
     opset_version: int = 17,
+    variant_name: str | None = None,
+    *,
+    notes: object = None,
 ) -> str:
     """Export a model to ONNX.
 
@@ -74,18 +183,31 @@ def export_onnx(
         backbone_only: Whether to export backbone-only graph naming.
         verbose: Whether ONNX exporter should emit verbose logs.
         opset_version: ONNX opset version.
+        variant_name: Model variant identifier (e.g. ``"rfdetr-medium"``).
+            When provided, the exported file is named ``{variant_name}.onnx`` or ``{variant_name}-backbone.onnx`` (when
+            ``backbone_only=True``) instead of the generic ``inference_model.onnx`` or ``backbone_model.onnx``.
+        notes: Optional user-defined metadata (string, dict, list, or any
+            JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata property.
+            Ignored when ``None``. String values are stored verbatim; all other types are JSON-encoded, so consumers
+            must call ``json.loads()`` to recover a dict or list.
 
     Returns:
         Path to the exported ONNX model.
     """
-    export_name = "backbone_model" if backbone_only else "inference_model"
+    if variant_name:
+        # Sanitize against path traversal (e.g. "foo/bar" → "bar", "/tmp/x" → "x")
+        variant_name = os.path.splitext(os.path.basename(variant_name))[0]
+        export_name = f"{variant_name}-backbone" if backbone_only else variant_name
+    else:
+        export_name = "backbone_model" if backbone_only else "inference_model"
     output_file = os.path.join(output_dir, f"{export_name}.onnx")
 
     # Prepare model for export
-    if hasattr(model, "export"):
-        model.export()
+    export_method = getattr(model, "export", None)
+    if callable(export_method):
+        export_method()
 
-    export_kwargs = {}
+    export_kwargs: dict[str, Any] = {}
     if "dynamo" in inspect.signature(torch.onnx.export).parameters:
         # Torch 2.10+ may default to the dynamo exporter which requires extra deps
         # (e.g. onnxscript). Use the legacy path for compatibility.
@@ -93,7 +215,7 @@ def export_onnx(
 
     torch.onnx.export(
         model,
-        input_tensors,
+        (input_tensors,) if isinstance(input_tensors, torch.Tensor) else tuple(input_tensors),
         output_file,
         input_names=input_names,
         output_names=output_names,
@@ -105,6 +227,22 @@ def export_onnx(
         dynamic_axes=dynamic_axes,
         **export_kwargs,
     )
+
+    if notes is not None and onnx is not None:
+        # torch.onnx.export writes to disk only; no in-memory handle is available,
+        # so we reload and resave to inject metadata (~1-2 s on large models).
+        onnx_model = onnx.load(output_file)
+        # Strings stored as-is so readers can consume without JSON-decoding;
+        # non-strings go through json.dumps to survive the round-trip.
+        notes_value = notes if isinstance(notes, str) else json.dumps(notes, allow_nan=False)
+        existing = next((p for p in onnx_model.metadata_props if p.key == "rfdetr_notes"), None)
+        if existing is not None:
+            existing.value = notes_value
+        else:
+            meta = onnx_model.metadata_props.add()
+            meta.key = "rfdetr_notes"
+            meta.value = notes_value
+        onnx.save(onnx_model, output_file)
 
     logger.info(f"\nSuccessfully exported ONNX model: {output_file}")
     return output_file
@@ -159,105 +297,101 @@ def onnx_simplify(
 
 
 class OnnxOptimizer:
-    def __init__(self, input, severity=None):
-        missing_deps = []
-        if onnx is None:
-            missing_deps.append("onnx")
-        if shape_inference is None:
-            missing_deps.append("onnx.shape_inference")
-        if gs is None or G_LOGGER is None:
-            missing_deps.append("onnx_graphsurgeon")
-        if fold_constants is None:
-            missing_deps.append("polygraphy.backend.onnx.loader.fold_constants")
-        if missing_deps:
-            missing_str = ", ".join(missing_deps)
-            raise ImportError(
-                f"ONNX export dependencies are missing ({missing_str}). Install with: pip install rfdetr[onnx]"
-            )
+    def __init__(self, input: object, severity: object | None = None) -> None:
+        onnx_module, shape_inference_module, graphsurgeon, graphsurgeon_logger, constant_folder = (
+            _require_onnx_optimizer_dependencies()
+        )
+        self._gs = graphsurgeon
+        self._onnx_logger = graphsurgeon_logger
+        self._fold_constants = constant_folder
+        self._shape_inference = shape_inference_module
+        self._onnx = onnx_module
         if severity is None:
-            severity = G_LOGGER.INFO
-        if isinstance(input, str):
+            severity = self._onnx_logger.INFO
+        if isinstance(input, (str, PathLike)):
             onnx_graph = self.load_onnx(input)
         else:
             onnx_graph = input
-        self.graph = gs.import_onnx(onnx_graph)
+        self.graph = self._gs.import_onnx(onnx_graph)
         self.severity = severity
         self.set_severity(severity)
 
-    def set_severity(self, severity):
-        G_LOGGER.severity = severity
+    def set_severity(self, severity: object) -> None:
+        self._onnx_logger.severity = severity
 
-    def load_onnx(self, onnx_path: str):
-        """Load onnx from file"""
-        assert os.path.isfile(onnx_path), f"not found onnx file: {onnx_path}"
-        onnx_graph = onnx.load(onnx_path)
-        G_LOGGER.info(f"load onnx file: {onnx_path}")
+    def load_onnx(self, onnx_path: str | PathLike[str]) -> Any:
+        """Load onnx from file."""
+        path = os.fspath(onnx_path)
+        assert os.path.isfile(path), f"not found onnx file: {path}"
+        onnx_graph = self._onnx.load(path)
+        self._onnx_logger.info(f"load onnx file: {path}")
         return onnx_graph
 
-    def save_onnx(self, onnx_path: str):
-        onnx_graph = gs.export_onnx(self.graph)
-        G_LOGGER.info(f"save onnx file: {onnx_path}")
-        onnx.save(onnx_graph, onnx_path)
+    def save_onnx(self, onnx_path: str) -> None:
+        onnx_graph = self._gs.export_onnx(self.graph)
+        self._onnx_logger.info(f"save onnx file: {onnx_path}")
+        self._onnx.save(onnx_graph, onnx_path)
 
-    def info(self, prefix=""):
-        G_LOGGER.verbose(
+    def info(self, prefix: str = "") -> None:
+        self._onnx_logger.verbose(
             f"{prefix} .. {len(self.graph.nodes)} nodes, "
             f"{len(self.graph.tensors().keys())} tensors, "
             f"{len(self.graph.inputs)} inputs, {len(self.graph.outputs)} outputs"
         )
 
-    def cleanup(self, return_onnx=False):
+    def cleanup(self, return_onnx: bool = False) -> Any | None:
         self.graph.cleanup().toposort()
         if return_onnx:
-            return gs.export_onnx(self.graph)
+            return self._gs.export_onnx(self.graph)
+        return None
 
-    def select_outputs(self, keep, names=None):
+    def select_outputs(self, keep: Sequence[int], names: Sequence[str] | None = None) -> None:
         self.graph.outputs = [self.graph.outputs[o] for o in keep]
         if names:
             for i, name in enumerate(names):
                 self.graph.outputs[i].name = name
 
-    def find_node_input(self, node, name: str = None, value=None) -> int:
+    def find_node_input(self, node: Any, name: str | None = None, value: Any = None) -> int:
+        index = -1
         for i, inp in enumerate(node.inputs):
-            if isinstance(name, str) and inp.name == name:
+            if isinstance(name, str) and inp.name == name or inp == value:
                 index = i
-            elif inp == value:
-                index = i
-        assert index >= 0, f"not found {name}({value}) in node.inputs"
+        if index < 0:
+            raise ValueError(f"not found {name}({value}) in node.inputs")
         return index
 
-    def find_node_output(self, node, name: str = None, value=None) -> int:
+    def find_node_output(self, node: Any, name: str | None = None, value: Any = None) -> int:
+        index = -1
         for i, inp in enumerate(node.outputs):
-            if isinstance(name, str) and inp.name == name:
+            if isinstance(name, str) and inp.name == name or inp == value:
                 index = i
-            elif inp == value:
-                index = i
-        assert index >= 0, f"not found {name}({value}) in node.outputs"
+        if index < 0:
+            raise ValueError(f"not found {name}({value}) in node.outputs")
         return index
 
-    def common_opt(self, return_onnx=False):
+    def common_opt(self, return_onnx: bool = False) -> Any | None:
         for fn in CustomOpSymbolicRegistry._OPTIMIZER:
             fn(self)
             self.cleanup()
-        onnx_graph = fold_constants(gs.export_onnx(self.graph), allow_onnxruntime_shape_inference=False)
+        onnx_graph = self._fold_constants(self._gs.export_onnx(self.graph), allow_onnxruntime_shape_inference=False)
         if onnx_graph.ByteSize() > 2147483648:
             raise TypeError("ERROR: model size exceeds supported 2GB limit")
         else:
-            onnx_graph = shape_inference.infer_shapes(onnx_graph)
-        self.graph = gs.import_onnx(onnx_graph)
+            onnx_graph = self._shape_inference.infer_shapes(onnx_graph)
+        self.graph = self._gs.import_onnx(onnx_graph)
         self.cleanup()
         if return_onnx:
             return onnx_graph
+        return None
 
-    def resize_fix(self):
+    def resize_fix(self) -> int:
+        """This function loops through the graph looking for Resize nodes that uses scales for resize (has 3 inputs).
+
+        It substitutes found Resize with Resize that takes the size of the output tensor instead of scales. It adds
+        Shape->Slice->Concat         Shape->Slice----^     subgraph to the graph to extract the shape of the output
+        tensor. This fix is required for the dynamic shape support.
         """
-        This function loops through the graph looking for Resize nodes that uses scales for resize (has 3 inputs).
-        It substitutes found Resize with Resize that takes the size of the output tensor instead of scales.
-        It adds Shape->Slice->Concat
-                Shape->Slice----^     subgraph to the graph to extract the shape of the output tensor.
-        This fix is required for the dynamic shape support.
-        """
-        mResizeNodes = 0
+        resized_node_count = 0
         for node in self.graph.nodes:
             if node.op == "Resize" and len(node.inputs) == 3:
                 name = node.name + "/"
@@ -319,26 +453,26 @@ class OnnxOptimizer:
                 node.inputs = []
                 node.outputs = []
 
-                mResizeNodes += 1
+                resized_node_count += 1
 
         self.cleanup()
-        return mResizeNodes
+        return resized_node_count
 
-    def adjustAddNode(self):
-        nAdjustAddNode = 0
+    def adjustAddNode(self) -> int:  # noqa: N802
+        adjusted_add_node_count = 0
         for node in self.graph.nodes:
             # Change the bias const to the second input to allow Gemm+BiasAdd fusion in TRT.
             if node.op in ["Add"] and isinstance(node.inputs[0], gs.ir.tensor.Constant):
                 tensor = node.inputs[1]
                 bias = node.inputs[0]
                 node.inputs = [tensor, bias]
-                nAdjustAddNode += 1
+                adjusted_add_node_count += 1
 
         self.cleanup()
-        return nAdjustAddNode
+        return adjusted_add_node_count
 
-    def decompose_instancenorms(self):
-        nRemoveInstanceNorm = 0
+    def decompose_instancenorms(self) -> int:
+        removed_instance_norm_count = 0
         for node in self.graph.nodes:
             if node.op == "InstanceNormalization":
                 name = node.name + "/"
@@ -388,33 +522,33 @@ class OnnxOptimizer:
                 div_node = gs.Node(
                     op="Div", name=name + "div_node", attrs={}, inputs=[sub_out, sqrt_out], outputs=[div_out]
                 )
-                constantScale = gs.Constant(
-                    "InstanceNormScaleV-" + str(nRemoveInstanceNorm),
+                constant_scale = gs.Constant(
+                    "InstanceNormScaleV-" + str(removed_instance_norm_count),
                     np.ascontiguousarray(node.inputs[1].inputs[0].attrs["value"].values.reshape(1, 32, 1)),
                 )
-                constantBias = gs.Constant(
-                    "InstanceBiasV-" + str(nRemoveInstanceNorm),
+                constant_bias = gs.Constant(
+                    "InstanceBiasV-" + str(removed_instance_norm_count),
                     np.ascontiguousarray(node.inputs[2].inputs[0].attrs["value"].values.reshape(1, 32, 1)),
                 )
                 mul_out = gs.Variable(name=name + "mul_out")
                 mul_node = gs.Node(
-                    op="Mul", name=name + "mul_node", attrs={}, inputs=[div_out, constantScale], outputs=[mul_out]
+                    op="Mul", name=name + "mul_node", attrs={}, inputs=[div_out, constant_scale], outputs=[mul_out]
                 )
                 add_node = gs.Node(
-                    op="Add", name=name + "add_node", attrs={}, inputs=[mul_out, constantBias], outputs=[output_tensor]
+                    op="Add", name=name + "add_node", attrs={}, inputs=[mul_out, constant_bias], outputs=[output_tensor]
                 )
                 self.graph.nodes.extend(
                     [mean_node, sub_node, pow_node, mean2_node, epsilon_node, sqrt_node, div_node, mul_node, add_node]
                 )
                 node.inputs = []
                 node.outputs = []
-                nRemoveInstanceNorm += 1
+                removed_instance_norm_count += 1
 
         self.cleanup()
-        return nRemoveInstanceNorm
+        return removed_instance_norm_count
 
-    def insert_groupnorm_plugin(self):
-        nGroupNormPlugin = 0
+    def insert_groupnorm_plugin(self) -> int:
+        group_norm_plugin_count = 0
         for node in self.graph.nodes:
             if (
                 node.op == "Reshape"
@@ -428,57 +562,59 @@ class OnnxOptimizer:
             ):
                 # "node.outputs != []" is added for VAE
 
-                inputTensor = node.inputs[0]
+                input_tensor = node.inputs[0]
 
-                gammaNode = node.o().o().o().o().o().o().o().o().o().o().o()
-                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in gammaNode.inputs].index(True)
-                gamma = np.array(deepcopy(gammaNode.inputs[index].values.tolist()), dtype=np.float32)
-                constantGamma = gs.Constant(
-                    "groupNormGamma-" + str(nGroupNormPlugin), np.ascontiguousarray(gamma.reshape(-1))
+                gamma_node = node.o().o().o().o().o().o().o().o().o().o().o()
+                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in gamma_node.inputs].index(True)
+                gamma = np.array(deepcopy(gamma_node.inputs[index].values.tolist()), dtype=np.float32)
+                constant_gamma = gs.Constant(
+                    "groupNormGamma-" + str(group_norm_plugin_count), np.ascontiguousarray(gamma.reshape(-1))
                 )  # MUST use np.ascontiguousarray, or TRT will regard the shape of this Constant as (0) !!!
 
-                betaNode = gammaNode.o()
-                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in betaNode.inputs].index(True)
-                beta = np.array(deepcopy(betaNode.inputs[index].values.tolist()), dtype=np.float32)
-                constantBeta = gs.Constant(
-                    "groupNormBeta-" + str(nGroupNormPlugin), np.ascontiguousarray(beta.reshape(-1))
+                beta_node = gamma_node.o()
+                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in beta_node.inputs].index(True)
+                beta = np.array(deepcopy(beta_node.inputs[index].values.tolist()), dtype=np.float32)
+                constant_beta = gs.Constant(
+                    "groupNormBeta-" + str(group_norm_plugin_count), np.ascontiguousarray(beta.reshape(-1))
                 )
 
                 epsilon = node.o().o().o().o().o().inputs[1].values.tolist()[0]
 
-                if betaNode.o().op == "Sigmoid":  # need Swish
-                    bSwish = True
-                    lastNode = betaNode.o().o()  # Mul node of Swish
+                if beta_node.o().op == "Sigmoid":  # need Swish
+                    use_swish = True
+                    last_node = beta_node.o().o()  # Mul node of Swish
                 else:
-                    bSwish = False
-                    lastNode = betaNode  # Cast node after Group Norm
+                    use_swish = False
+                    last_node = beta_node  # Cast node after Group Norm
 
-                if lastNode.o().op == "Cast":
-                    lastNode = lastNode.o()
-                inputList = [inputTensor, constantGamma, constantBeta]
-                groupNormV = gs.Variable("GroupNormV-" + str(nGroupNormPlugin), np.dtype(np.float16), inputTensor.shape)
-                groupNormN = gs.Node(
-                    "GroupNorm",
-                    "GroupNormN-" + str(nGroupNormPlugin),
-                    inputs=inputList,
-                    outputs=[groupNormV],
-                    attrs=OrderedDict([("epsilon", epsilon), ("bSwish", int(bSwish))]),
+                if last_node.o().op == "Cast":
+                    last_node = last_node.o()
+                input_list = [input_tensor, constant_gamma, constant_beta]
+                group_norm_v = gs.Variable(
+                    "GroupNormV-" + str(group_norm_plugin_count), np.dtype(np.float16), input_tensor.shape
                 )
-                self.graph.nodes.append(groupNormN)
+                group_norm_n = gs.Node(
+                    "GroupNorm",
+                    "GroupNormN-" + str(group_norm_plugin_count),
+                    inputs=input_list,
+                    outputs=[group_norm_v],
+                    attrs=OrderedDict([("epsilon", epsilon), ("bSwish", int(use_swish))]),
+                )
+                self.graph.nodes.append(group_norm_n)
 
-                for subNode in self.graph.nodes:
-                    if lastNode.outputs[0] in subNode.inputs:
-                        index = subNode.inputs.index(lastNode.outputs[0])
-                        subNode.inputs[index] = groupNormV
+                for sub_node in self.graph.nodes:
+                    if last_node.outputs[0] in sub_node.inputs:
+                        index = sub_node.inputs.index(last_node.outputs[0])
+                        sub_node.inputs[index] = group_norm_v
                 node.inputs = []
-                lastNode.outputs = []
-                nGroupNormPlugin += 1
+                last_node.outputs = []
+                group_norm_plugin_count += 1
 
         self.cleanup()
-        return nGroupNormPlugin
+        return group_norm_plugin_count
 
-    def insert_layernorm_plugin(self):
-        nLayerNormPlugin = 0
+    def insert_layernorm_plugin(self) -> int:
+        layer_norm_plugin_count = 0
         for node in self.graph.nodes:
             if (
                 node.op == "ReduceMean"
@@ -496,79 +632,86 @@ class OnnxOptimizer:
                 and len(node.o().o(0).o().o().o().o().o().inputs[1].values.shape) == 1
             ):
                 if node.i().op == "Add":
-                    inputTensor = node.inputs[0]  # CLIP
+                    input_tensor = node.inputs[0]  # CLIP
                 else:
-                    inputTensor = node.i().inputs[0]  # UNet and VAE
+                    input_tensor = node.i().inputs[0]  # UNet and VAE
 
-                gammaNode = node.o().o().o().o().o().o().o()
-                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in gammaNode.inputs].index(True)
-                gamma = np.array(deepcopy(gammaNode.inputs[index].values.tolist()), dtype=np.float32)
-                constantGamma = gs.Constant(
-                    "LayerNormGamma-" + str(nLayerNormPlugin), np.ascontiguousarray(gamma.reshape(-1))
+                gamma_node = node.o().o().o().o().o().o().o()
+                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in gamma_node.inputs].index(True)
+                gamma = np.array(deepcopy(gamma_node.inputs[index].values.tolist()), dtype=np.float32)
+                constant_gamma = gs.Constant(
+                    "LayerNormGamma-" + str(layer_norm_plugin_count), np.ascontiguousarray(gamma.reshape(-1))
                 )  # MUST use np.ascontiguousarray, or TRT will regard the shape of this Constant as (0) !!!
 
-                betaNode = gammaNode.o()
-                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in betaNode.inputs].index(True)
-                beta = np.array(deepcopy(betaNode.inputs[index].values.tolist()), dtype=np.float32)
-                constantBeta = gs.Constant(
-                    "LayerNormBeta-" + str(nLayerNormPlugin), np.ascontiguousarray(beta.reshape(-1))
+                beta_node = gamma_node.o()
+                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in beta_node.inputs].index(True)
+                beta = np.array(deepcopy(beta_node.inputs[index].values.tolist()), dtype=np.float32)
+                constant_beta = gs.Constant(
+                    "LayerNormBeta-" + str(layer_norm_plugin_count), np.ascontiguousarray(beta.reshape(-1))
                 )
 
-                inputList = [inputTensor, constantGamma, constantBeta]
-                layerNormV = gs.Variable("LayerNormV-" + str(nLayerNormPlugin), np.dtype(np.float32), inputTensor.shape)
-                layerNormN = gs.Node(
+                input_list = [input_tensor, constant_gamma, constant_beta]
+                layer_norm_v = gs.Variable(
+                    "LayerNormV-" + str(layer_norm_plugin_count), np.dtype(np.float32), input_tensor.shape
+                )
+                layer_norm_n = gs.Node(
                     "LayerNorm",
-                    "LayerNormN-" + str(nLayerNormPlugin),
-                    inputs=inputList,
+                    "LayerNormN-" + str(layer_norm_plugin_count),
+                    inputs=input_list,
                     attrs=OrderedDict([("epsilon", 1.0e-5)]),
-                    outputs=[layerNormV],
+                    outputs=[layer_norm_v],
                 )
-                self.graph.nodes.append(layerNormN)
-                nLayerNormPlugin += 1
+                self.graph.nodes.append(layer_norm_n)
+                layer_norm_plugin_count += 1
 
-                if betaNode.outputs[0] in self.graph.outputs:
-                    index = self.graph.outputs.index(betaNode.outputs[0])
-                    self.graph.outputs[index] = layerNormV
+                if beta_node.outputs[0] in self.graph.outputs:
+                    index = self.graph.outputs.index(beta_node.outputs[0])
+                    self.graph.outputs[index] = layer_norm_v
                 else:
-                    if betaNode.o().op == "Cast":
-                        lastNode = betaNode.o()
+                    if beta_node.o().op == "Cast":
+                        last_node = beta_node.o()
                     else:
-                        lastNode = betaNode
-                    for subNode in self.graph.nodes:
-                        if lastNode.outputs[0] in subNode.inputs:
-                            index = subNode.inputs.index(lastNode.outputs[0])
-                            subNode.inputs[index] = layerNormV
-                    lastNode.outputs = []
+                        last_node = beta_node
+                    for sub_node in self.graph.nodes:
+                        if last_node.outputs[0] in sub_node.inputs:
+                            index = sub_node.inputs.index(last_node.outputs[0])
+                            sub_node.inputs[index] = layer_norm_v
+                    last_node.outputs = []
 
         self.cleanup()
-        return nLayerNormPlugin
+        return layer_norm_plugin_count
 
-    def fuse_kv(self, node_k, node_v, fused_kv_idx, heads, num_dynamic=0):
+    def fuse_kv(self, node_k: Any, node_v: Any, fused_kv_idx: int, heads: int, num_dynamic: int = 0) -> Any:
         # Get weights of K
         weights_k = node_k.inputs[1].values
         # Get weights of V
         weights_v = node_v.inputs[1].values
         # Input number of channels to K and V
-        C = weights_k.shape[0]
+        channel_count = weights_k.shape[0]
         # Number of heads
-        H = heads
+        num_heads = heads
         # Dimension per head
-        D = weights_k.shape[1] // H
+        head_dim = weights_k.shape[1] // num_heads
 
         # Concat and interleave weights such that the output of fused KV GEMM has [b, s_kv, h, 2, d] shape
-        weights_kv = np.dstack([weights_k.reshape(C, H, D), weights_v.reshape(C, H, D)]).reshape(C, 2 * H * D)
+        weights_kv = np.dstack(
+            [
+                weights_k.reshape(channel_count, num_heads, head_dim),
+                weights_v.reshape(channel_count, num_heads, head_dim),
+            ]
+        ).reshape(channel_count, 2 * num_heads * head_dim)
 
         # K and V have the same input
         input_tensor = node_k.inputs[0]
         # K and V must have the same output which we feed into fmha plugin
         output_tensor_k = node_k.outputs[0]
         # Create tensor
-        constant_weights_kv = gs.Constant("Weights_KV_{}".format(fused_kv_idx), np.ascontiguousarray(weights_kv))
+        constant_weights_kv = gs.Constant(f"Weights_KV_{fused_kv_idx}", np.ascontiguousarray(weights_kv))
 
         # Create fused KV node
         fused_kv_node = gs.Node(
             op="MatMul",
-            name="MatMul_KV_{}".format(fused_kv_idx),
+            name=f"MatMul_KV_{fused_kv_idx}",
             inputs=[input_tensor, constant_weights_kv],
             outputs=[output_tensor_k],
         )
@@ -590,7 +733,9 @@ class OnnxOptimizer:
         self.cleanup()
         return fused_kv_node
 
-    def insert_fmhca(self, node_q, node_kv, final_tranpose, mhca_idx, heads, num_dynamic=0):
+    def insert_fmhca(
+        self, node_q: Any, node_kv: Any, final_tranpose: Any, mhca_idx: int, heads: int, num_dynamic: int = 0
+    ) -> None:
         # Get inputs and outputs for the fMHCA plugin
         # We take an output of reshape that follows the Q GEMM
         output_q = node_q.o(num_dynamic).o().inputs[0]
@@ -610,23 +755,21 @@ class OnnxOptimizer:
 
         # Reshape dims
         shape = gs.Constant(
-            "Shape_KV_{}".format(mhca_idx),
+            f"Shape_KV_{mhca_idx}",
             np.ascontiguousarray(np.array([0, 0, heads, 2, dims_per_head], dtype=np.int64)),
         )
 
         # Reshape output tensor
-        output_reshape = gs.Variable("ReshapeKV_{}".format(mhca_idx), np.dtype(np.float16), None)
+        output_reshape = gs.Variable(f"ReshapeKV_{mhca_idx}", np.dtype(np.float16), None)
         # Create fMHA plugin
-        reshape = gs.Node(
-            op="Reshape", name="Reshape_{}".format(mhca_idx), inputs=[output_kv, shape], outputs=[output_reshape]
-        )
+        reshape = gs.Node(op="Reshape", name=f"Reshape_{mhca_idx}", inputs=[output_kv, shape], outputs=[output_reshape])
         # Insert node
         self.graph.nodes.append(reshape)
 
         # Create fMHCA plugin
         fmhca = gs.Node(
             op="fMHCA",
-            name="fMHCA_{}".format(mhca_idx),
+            name=f"fMHCA_{mhca_idx}",
             inputs=[output_q, output_reshape],
             outputs=[output_final_tranpose],
         )
@@ -637,10 +780,10 @@ class OnnxOptimizer:
         node_q.o(num_dynamic).outputs[0] = output_q
 
         if num_dynamic > 0:
-            reshape2_input1_out = gs.Variable("Reshape2_fmhca{}_out".format(mhca_idx), np.dtype(np.int64), None)
+            reshape2_input1_out = gs.Variable(f"Reshape2_fmhca{mhca_idx}_out", np.dtype(np.int64), None)
             reshape2_input1_shape = gs.Node(
                 "Shape",
-                "Reshape2_fmhca{}_shape".format(mhca_idx),
+                f"Reshape2_fmhca{mhca_idx}_shape",
                 inputs=[node_q.inputs[0]],
                 outputs=[reshape2_input1_out],
             )
@@ -652,7 +795,9 @@ class OnnxOptimizer:
 
         self.cleanup()
 
-    def fuse_qkv(self, node_q, node_k, node_v, fused_qkv_idx, heads, num_dynamic=0):
+    def fuse_qkv(
+        self, node_q: Any, node_k: Any, node_v: Any, fused_qkv_idx: int, heads: int, num_dynamic: int = 0
+    ) -> Any:
         # Get weights of Q
         weights_q = node_q.inputs[1].values
         # Get weights of K
@@ -661,27 +806,31 @@ class OnnxOptimizer:
         weights_v = node_v.inputs[1].values
 
         # Input number of channels to Q, K and V
-        C = weights_k.shape[0]
+        channel_count = weights_k.shape[0]
         # Number of heads
-        H = heads
+        num_heads = heads
         # Hidden dimension per head
-        D = weights_k.shape[1] // H
+        head_dim = weights_k.shape[1] // num_heads
 
         # Concat and interleave weights such that the output of fused QKV GEMM has [b, s, h, 3, d] shape
         weights_qkv = np.dstack(
-            [weights_q.reshape(C, H, D), weights_k.reshape(C, H, D), weights_v.reshape(C, H, D)]
-        ).reshape(C, 3 * H * D)
+            [
+                weights_q.reshape(channel_count, num_heads, head_dim),
+                weights_k.reshape(channel_count, num_heads, head_dim),
+                weights_v.reshape(channel_count, num_heads, head_dim),
+            ]
+        ).reshape(channel_count, 3 * num_heads * head_dim)
 
         input_tensor = node_k.inputs[0]  # K and V have the same input
         # Q, K and V must have the same output which we feed into fmha plugin
         output_tensor_k = node_k.outputs[0]
         # Concat and interleave weights such that the output of fused QKV GEMM has [b, s, h, 3, d] shape
-        constant_weights_qkv = gs.Constant("Weights_QKV_{}".format(fused_qkv_idx), np.ascontiguousarray(weights_qkv))
+        constant_weights_qkv = gs.Constant(f"Weights_QKV_{fused_qkv_idx}", np.ascontiguousarray(weights_qkv))
 
         # Created a fused node
         fused_qkv_node = gs.Node(
             op="MatMul",
-            name="MatMul_QKV_{}".format(fused_qkv_idx),
+            name=f"MatMul_QKV_{fused_qkv_idx}",
             inputs=[input_tensor, constant_weights_qkv],
             outputs=[output_tensor_k],
         )
@@ -708,7 +857,7 @@ class OnnxOptimizer:
         self.cleanup()
         return fused_qkv_node
 
-    def insert_fmha(self, node_qkv, final_tranpose, mha_idx, heads, num_dynamic=0):
+    def insert_fmha(self, node_qkv: Any, final_tranpose: Any, mha_idx: int, heads: int, num_dynamic: int = 0) -> None:
         # Get inputs and outputs for the fMHA plugin
         output_qkv = node_qkv.o().inputs[0]
         output_final_tranpose = final_tranpose.outputs[0]
@@ -724,30 +873,26 @@ class OnnxOptimizer:
 
         # Reshape dims
         shape = gs.Constant(
-            "Shape_QKV_{}".format(mha_idx),
+            f"Shape_QKV_{mha_idx}",
             np.ascontiguousarray(np.array([0, 0, heads, 3, dims_per_head], dtype=np.int64)),
         )
 
         # Reshape output tensor
-        output_shape = gs.Variable("ReshapeQKV_{}".format(mha_idx), np.dtype(np.float16), None)
+        output_shape = gs.Variable(f"ReshapeQKV_{mha_idx}", np.dtype(np.float16), None)
         # Create fMHA plugin
-        reshape = gs.Node(
-            op="Reshape", name="Reshape_{}".format(mha_idx), inputs=[output_qkv, shape], outputs=[output_shape]
-        )
+        reshape = gs.Node(op="Reshape", name=f"Reshape_{mha_idx}", inputs=[output_qkv, shape], outputs=[output_shape])
         # Insert node
         self.graph.nodes.append(reshape)
 
         # Create fMHA plugin
-        fmha = gs.Node(
-            op="fMHA_V2", name="fMHA_{}".format(mha_idx), inputs=[output_shape], outputs=[output_final_tranpose]
-        )
+        fmha = gs.Node(op="fMHA_V2", name=f"fMHA_{mha_idx}", inputs=[output_shape], outputs=[output_final_tranpose])
         # Insert node
         self.graph.nodes.append(fmha)
 
         if num_dynamic > 0:
-            reshape2_input1_out = gs.Variable("Reshape2_{}_out".format(mha_idx), np.dtype(np.int64), None)
+            reshape2_input1_out = gs.Variable(f"Reshape2_{mha_idx}_out", np.dtype(np.int64), None)
             reshape2_input1_shape = gs.Node(
-                "Shape", "Reshape2_{}_shape".format(mha_idx), inputs=[node_qkv.inputs[0]], outputs=[reshape2_input1_out]
+                "Shape", f"Reshape2_{mha_idx}_shape", inputs=[node_qkv.inputs[0]], outputs=[reshape2_input1_out]
             )
             self.graph.nodes.append(reshape2_input1_shape)
             final_tranpose.o().inputs[1] = reshape2_input1_out
@@ -757,7 +902,7 @@ class OnnxOptimizer:
 
         self.cleanup()
 
-    def mha_mhca_detected(self, node, mha):
+    def mha_mhca_detected(self, node: Any, mha: bool) -> tuple[bool, int, int, Any, Any, Any, Any]:
         # Go from V GEMM down to the S*V MatMul and all way up to K GEMM
         # If we are looking for MHCA inputs of two matmuls (K and V) must be equal.
         # If we are looking for MHA inputs (K and V) must be not equal.
@@ -808,7 +953,7 @@ class OnnxOptimizer:
                     return True, num_dynamic_q, num_dynamic_kv, node_q, node_k, node_v, final_tranpose
         return False, 0, 0, None, None, None, None
 
-    def fuse_kv_insert_fmhca(self, heads, mhca_index, sm):
+    def fuse_kv_insert_fmhca(self, heads: int, mhca_index: int, sm: int) -> bool:
         nodes = self.graph.nodes
         # Iterate over graph and search for MHCA pattern
         for idx, _ in enumerate(nodes):
@@ -832,7 +977,7 @@ class OnnxOptimizer:
                 return True
         return False
 
-    def fuse_qkv_insert_fmha(self, heads, mha_index):
+    def fuse_qkv_insert_fmha(self, heads: int, mha_index: int) -> bool:
         nodes = self.graph.nodes
         # Iterate over graph and search for MHA pattern
         for idx, _ in enumerate(nodes):
@@ -853,13 +998,13 @@ class OnnxOptimizer:
                 return True
         return False
 
-    def insert_fmhca_plugin(self, num_heads, sm):
+    def insert_fmhca_plugin(self, num_heads: int, sm: int) -> int:
         mhca_index = 0
         while self.fuse_kv_insert_fmhca(num_heads, mhca_index, sm):
             mhca_index += 1
         return mhca_index
 
-    def insert_fmha_plugin(self, num_heads):
+    def insert_fmha_plugin(self, num_heads: int) -> int:
         mha_index = 0
         while self.fuse_qkv_insert_fmha(num_heads, mha_index):
             mha_index += 1

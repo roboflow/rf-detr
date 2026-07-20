@@ -3,17 +3,27 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+"""Tests for rfdetr.utilities.tensors.
 
-"""Parity tests for _bilinear_grid_sample: manual gather path vs F.grid_sample."""
+Covers:
+- ``_bilinear_grid_sample`` parity (manual gather path vs ``F.grid_sample``).
+- ``nested_tensor_from_tensor_list`` with ``block_size`` (backbone-aware batch rounding).
+- ``make_collate_fn`` factory.
+"""
 
+import pickle
 from unittest.mock import patch
 
 import pytest
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 import torch.testing
 
-from rfdetr.utilities.tensors import _bilinear_grid_sample
+from rfdetr.utilities.tensors import (
+    _bilinear_grid_sample,
+    make_collate_fn,
+    nested_tensor_from_tensor_list,
+)
 
 
 def _grid_sample_reference(
@@ -40,9 +50,8 @@ def _call_manual_path(
 ) -> torch.Tensor:
     """Force the manual gather-based code path by mocking input.device.type.
 
-    The function checks ``input.device.type != "mps"`` to decide which branch
-    to take.  We patch ``torch.Tensor.device`` to return an object whose
-    ``.type`` is ``"mps"`` so the manual path runs on a normal CPU tensor.
+    The function checks ``input.device.type != "mps"`` to decide which branch to take.  We patch ``torch.Tensor.device``
+    to return an object whose ``.type`` is ``"mps"`` so the manual path runs on a normal CPU tensor.
     """
 
     class _FakeMPSDevice:
@@ -378,8 +387,7 @@ class TestBilinearGridSampleRealUseCases:
     def test_ms_deform_attn_pattern(self, seed):
         """Matches ms_deform_attn_func: padding_mode='zeros', align_corners=False.
 
-        The attention function passes (B*n_heads, head_dim, H, W) input and
-        (B*n_heads, Len_q, P, 2) grid.
+        The attention function passes (B*n_heads, head_dim, H, W) input and (B*n_heads, Len_q, P, 2) grid.
         """
         # Simulate B=2, n_heads=8, head_dim=32
         input = torch.randn(16, 32, 14, 14)
@@ -393,8 +401,7 @@ class TestBilinearGridSampleRealUseCases:
     def test_point_sample_pattern(self, seed):
         """Matches point_sample in segmentation: padding_mode='border', align_corners=False.
 
-        point_sample transforms point_coords via ``2.0 * point_coords - 1.0`` to
-        map [0, 1] -> [-1, 1].
+        point_sample transforms point_coords via ``2.0 * point_coords - 1.0`` to map [0, 1] -> [-1, 1].
         """
         input = torch.randn(4, 256, 28, 28)
         # Simulate point_coords in [0, 1], transformed to [-1, 1]
@@ -405,3 +412,149 @@ class TestBilinearGridSampleRealUseCases:
         actual = _call_manual_path(input, grid, "border", False)
 
         torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+
+
+class TestNestedTensorBlockSize:
+    """``nested_tensor_from_tensor_list`` with block_size rounds batch max H/W up.
+
+    This is the collator-level pad for backbone divisibility.  The rounded-up strip must be marked as padding in the
+    mask so downstream attention skips it.  See
+    https://github.com/roboflow/rf-detr/issues/983
+    for context.
+    """
+
+    @staticmethod
+    def _image(c: int, h: int, w: int, fill: float = 1.0) -> torch.Tensor:
+        """Return a ``(C, H, W)`` float32 tensor filled with the given value."""
+        return torch.full((c, h, w), fill, dtype=torch.float32)
+
+    def test_block_size_none_preserves_old_behavior(self) -> None:
+        """Without block_size, the batch tensor is exactly batch-max H/W."""
+        images = [self._image(3, 100, 200), self._image(3, 150, 180)]
+        nested = nested_tensor_from_tensor_list(images)
+        _, _, h, w = nested.tensors.shape
+        assert (h, w) == (150, 200)
+        # Mask reflects per-image sizes (no block rounding).
+        assert nested.mask[0, :100, :200].any().item() is False
+        assert nested.mask[0, 100:, :].all().item() is True
+        assert nested.mask[1, :150, :180].any().item() is False
+        assert nested.mask[1, :, 180:].all().item() is True
+
+    def test_block_size_rounds_up(self) -> None:
+        """Batch-max is rounded up to the next multiple of block_size."""
+        images = [self._image(3, 100, 200), self._image(3, 150, 180)]
+        nested = nested_tensor_from_tensor_list(images, block_size=32)
+        _, _, h, w = nested.tensors.shape
+        # max_h=150 -> 160, max_w=200 -> 224
+        assert (h, w) == (160, 224)
+
+    def test_block_size_equal_to_max_is_noop(self) -> None:
+        """When batch max already matches a multiple of block_size, no extra rounding."""
+        images = [self._image(3, 128, 256)]
+        nested = nested_tensor_from_tensor_list(images, block_size=32)
+        _, _, h, w = nested.tensors.shape
+        assert (h, w) == (128, 256)
+
+    def test_divisor_pad_marked_in_mask(self) -> None:
+        """All padded cells (both batch-level and divisor round-up) are marked True in the mask."""
+        images = [self._image(3, 100, 200)]
+        nested = nested_tensor_from_tensor_list(images, block_size=32)
+        tensor = nested.tensors[0]
+        mask = nested.mask[0]
+
+        # Content region is the original 100x200; mask[:100, :200] must be False.
+        assert mask[:100, :200].any().item() is False
+        # The rounded-up strip (100:128 rows, 200:224 cols) must be True.
+        assert mask[100:, :].all().item() is True
+        assert mask[:, 200:].all().item() is True
+
+        # Content region is the original fill; pad region is zero.
+        assert torch.all(tensor[:, :100, :200] == 1.0)
+        assert torch.all(tensor[:, 100:, :] == 0.0)
+        assert torch.all(tensor[:, :, 200:] == 0.0)
+
+    @pytest.mark.parametrize(
+        "block_size,shape,expected",
+        [
+            pytest.param(32, (100, 100), (128, 128), id="both-rounded"),
+            pytest.param(32, (128, 200), (128, 224), id="h-aligned-w-rounded"),
+            pytest.param(32, (100, 256), (128, 256), id="h-rounded-w-aligned"),
+            pytest.param(56, (100, 100), (112, 112), id="patch14-num-windows4"),
+            pytest.param(64, (100, 100), (128, 128), id="block-size-64"),
+        ],
+    )
+    def test_single_image_rounding_parametrized(self, block_size: int, shape: tuple, expected: tuple) -> None:
+        """Single-image batch; round-up applied correctly for various block sizes."""
+        images = [self._image(3, shape[0], shape[1])]
+        nested = nested_tensor_from_tensor_list(images, block_size=block_size)
+        _, _, h, w = nested.tensors.shape
+        assert (h, w) == expected
+
+
+class TestMakeCollateFn:
+    """``make_collate_fn`` returns a picklable collate callable with block_size rounding baked in."""
+
+    @staticmethod
+    def _batch(*shapes: tuple[int, ...]) -> list[tuple[torch.Tensor, dict]]:
+        """Build a list of ``(tensor, target_dict)`` pairs with given shapes.
+
+        Args:
+            *shapes: Variadic sequence of ``(C, H, W)`` shapes, one per image.
+
+        Returns:
+            List of ``(image_tensor, target_dict)`` pairs ready to pass to a collate callable.
+        """
+        batch = []
+        for shape in shapes:
+            img = torch.full(shape, 1.0, dtype=torch.float32)
+            target = {"boxes": torch.zeros((0, 4)), "labels": torch.zeros((0,), dtype=torch.long)}
+            batch.append((img, target))
+        return batch
+
+    def test_default_block_size_none_behaves_like_collate_fn(self) -> None:
+        """With block_size=None, the factory returns a collate equivalent to the default."""
+        collate = make_collate_fn()  # block_size=None
+        samples, targets = collate(self._batch((3, 100, 200), (3, 150, 180)))
+        _, _, h, w = samples.tensors.shape
+        assert (h, w) == (150, 200)  # exact batch max
+        assert len(targets) == 2
+
+    def test_block_size_rounds_up_batch_max(self) -> None:
+        """Factory with block_size=32 rounds batch-max up to 32-multiples."""
+        collate = make_collate_fn(block_size=32)
+        samples, _ = collate(self._batch((3, 100, 200), (3, 150, 180)))
+        _, _, h, w = samples.tensors.shape
+        assert (h, w) == (160, 224)
+
+    def test_targets_passed_through(self) -> None:
+        """Factory collator preserves the list-of-targets second element."""
+        collate = make_collate_fn(block_size=32)
+        samples, targets = collate(self._batch((3, 100, 200), (3, 150, 180)))
+        assert isinstance(targets, tuple)
+        assert len(targets) == 2
+        for t in targets:
+            assert set(t.keys()) == {"boxes", "labels"}
+
+    def test_mixed_landscape_portrait_batch_masked_correctly(self) -> None:
+        """Mixed-orientation batch: all pad (batch + divisor) correctly marked True in mask."""
+        # landscape (H=100, W=200) and portrait (H=200, W=100).  block_size=32 rounds
+        # batch max (200, 200) to (224, 224).
+        collate = make_collate_fn(block_size=32)
+        samples, _ = collate(self._batch((3, 100, 200), (3, 200, 100)))
+        _, _, h, w = samples.tensors.shape
+        assert (h, w) == (224, 224)
+
+        # Each image's content region equals its original shape; everything else is pad.
+        mask_a = samples.mask[0]
+        mask_b = samples.mask[1]
+        assert mask_a[:100, :200].any().item() is False
+        assert mask_a[100:, :].all().item() is True
+        assert mask_a[:, 200:].all().item() is True
+        assert mask_b[:200, :100].any().item() is False
+        assert mask_b[200:, :].all().item() is True
+        assert mask_b[:, 100:].all().item() is True
+
+    def test_make_collate_fn_is_picklable(self) -> None:
+        """make_collate_fn returns a functools.partial picklable for num_workers > 0."""
+        collate = make_collate_fn(block_size=32)
+        assert pickle.dumps(collate) is not None

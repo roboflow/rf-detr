@@ -1,0 +1,34 @@
+User-agent: *
+Allow: /
+# Block numeric-versioned paths (/0.x/, /1.x/, etc.) — canonical URL is /latest/
+# robots.txt has no character classes, so one Disallow per leading digit is required.
+Disallow: /0.*/
+Disallow: /1.*/
+Disallow: /2.*/
+Disallow: /3.*/
+Disallow: /4.*/
+Disallow: /5.*/
+Disallow: /6.*/
+Disallow: /7.*/
+Disallow: /8.*/
+Disallow: /9.*/
+
+# AI crawlers — explicitly allow all paths including numeric-versioned ones.
+# Named groups are independent of User-agent: * — they do NOT inherit its Disallow rules.
+# Listing Allow: / here is sufficient; no Disallow needed.
+User-agent: GPTBot
+User-agent: ClaudeBot
+User-agent: PerplexityBot
+User-agent: CCBot
+User-agent: Google-Extended
+User-agent: Bytespider
+User-agent: GoogleOther
+User-agent: OAI-SearchBot
+User-agent: ChatGPT-User
+User-agent: Amazonbot
+User-agent: FacebookBot
+User-agent: Cohere-ai
+User-agent: Applebot-Extended
+Allow: /
+
+Sitemap: https://rfdetr.roboflow.com/sitemap.xml

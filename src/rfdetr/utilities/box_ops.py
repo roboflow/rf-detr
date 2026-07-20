@@ -14,15 +14,17 @@
 # Copied from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
-
 """Utilities for bounding box manipulation and GIoU."""
 
+from __future__ import annotations
+
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
+from torch import Tensor
 from torchvision.ops.boxes import box_area
 
 
-def box_cxcywh_to_xyxy(x: torch.Tensor) -> torch.Tensor:
+def box_cxcywh_to_xyxy(x: Tensor) -> Tensor:
     x_c, y_c, w, h = x.unbind(-1)
     b = [
         (x_c - 0.5 * w.clamp(min=0.0)),
@@ -33,14 +35,14 @@ def box_cxcywh_to_xyxy(x: torch.Tensor) -> torch.Tensor:
     return torch.stack(b, dim=-1)
 
 
-def box_xyxy_to_cxcywh(x: torch.Tensor) -> torch.Tensor:
+def box_xyxy_to_cxcywh(x: Tensor) -> Tensor:
     x0, y0, x1, y1 = x.unbind(-1)
     b = [(x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0), (y1 - y0)]
     return torch.stack(b, dim=-1)
 
 
 # modified from torchvision to also return the union
-def box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def box_iou(boxes1: Tensor, boxes2: Tensor) -> tuple[Tensor, Tensor]:
     """Compute pairwise IoU and union for two sets of boxes.
 
     Returns:
@@ -60,20 +62,21 @@ def box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> tuple[torch.Tensor, t
 
     union = area1[:, None] + area2 - inter
 
-    iou = inter / union
+    eps = 1e-7
+    # Clamp only the degenerate (union==0) case so identical non-degenerate boxes
+    # yield IoU==1.0 exactly; adding eps unconditionally would break that identity.
+    iou = inter / union.clamp(min=eps)
     return iou, union
 
 
-def generalized_box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
+def generalized_box_iou(boxes1: Tensor, boxes2: Tensor) -> Tensor:
     """Generalized IoU from https://giou.stanford.edu/
 
     The boxes should be in [x0, y0, x1, y1] format.
 
-    Returns a [N, M] pairwise matrix, where N = len(boxes1)
-    and M = len(boxes2).
+    Returns a [N, M] pairwise matrix, where N = len(boxes1) and M = len(boxes2).
     """
-    # degenerate boxes gives inf / nan results
-    # so do an early check
+    # Degenerate (zero-area) boxes would divide 0/0; eps in the denominators keeps results finite.
     iou, union = box_iou(boxes1, boxes2)
 
     lt = torch.min(boxes1[:, None, :2], boxes2[:, :2])
@@ -82,14 +85,15 @@ def generalized_box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Ten
     wh = (rb - lt).clamp(min=0)  # [N,M,2]
     area = wh[:, :, 0] * wh[:, :, 1]
 
-    return iou - (area - union) / area
+    eps = 1e-7
+    # Clamp only when enclosing area is zero (degenerate enclosing box) so normal boxes remain exact.
+    return iou - (area - union) / area.clamp(min=eps)
 
 
-def masks_to_boxes(masks: torch.Tensor) -> torch.Tensor:
+def masks_to_boxes(masks: Tensor) -> Tensor:
     """Compute the bounding boxes around the provided masks.
 
-    The masks should be in format [N, H, W] where N is the number of masks,
-    (H, W) are the spatial dimensions.
+    The masks should be in format [N, H, W] where N is the number of masks, (H, W) are the spatial dimensions.
 
     Returns a [N, 4] tensor, with the boxes in xyxy format.
     """
@@ -110,37 +114,39 @@ def masks_to_boxes(masks: torch.Tensor) -> torch.Tensor:
     y_max = y_mask.flatten(1).max(-1)[0]
     y_min = y_mask.masked_fill(~(masks.bool()), 1e8).flatten(1).min(-1)[0]
 
-    return torch.stack([x_min, y_min, x_max, y_max], 1)
+    boxes = torch.stack([x_min, y_min, x_max, y_max], 1)
+
+    keep = masks.flatten(1).any(-1)
+    boxes[~keep] = boxes.new_zeros(4)
+    return boxes
 
 
-def batch_dice_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+def batch_dice_loss(inputs: Tensor, targets: Tensor) -> Tensor:
     """Compute the DICE loss, similar to generalized IOU for masks.
 
     Args:
         inputs: A float tensor of arbitrary shape. The predictions for each example.
         targets: A float tensor with the same shape as inputs. Stores the binary
-            classification label for each element in inputs
-            (0 for the negative class and 1 for the positive class).
+            classification label for each element in inputs (0 for the negative class and 1 for the positive class).
     """
     inputs = inputs.sigmoid()
     inputs = inputs.flatten(1)
     numerator = 2 * torch.einsum("nc,mc->nm", inputs, targets)
     denominator = inputs.sum(-1)[:, None] + targets.sum(-1)[None, :]
-    loss: torch.Tensor = 1 - (numerator + 1) / (denominator + 1)
+    loss: Tensor = 1 - (numerator + 1) / (denominator + 1)
     return loss
 
 
 batch_dice_loss_jit = torch.jit.script(batch_dice_loss)
 
 
-def batch_sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+def batch_sigmoid_ce_loss(inputs: Tensor, targets: Tensor) -> Tensor:
     """Compute sigmoid cross-entropy loss for mask predictions.
 
     Args:
         inputs: A float tensor of arbitrary shape. The predictions for each example.
         targets: A float tensor with the same shape as inputs. Stores the binary
-            classification label for each element in inputs
-            (0 for the negative class and 1 for the positive class).
+            classification label for each element in inputs (0 for the negative class and 1 for the positive class).
 
     Returns:
         Loss tensor.

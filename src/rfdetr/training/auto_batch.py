@@ -7,14 +7,14 @@
 
 Probe assumptions (worst-case so training does not OOM):
 - Resolution: When multi_scale is True we use the maximum of the multi-scale
-  augmentation scales (same as compute_multi_scale_scales). Otherwise we use
-  model resolution. This ensures the step uses the max resolution seen in training.
+  augmentation scales (same as compute_multi_scale_scales). Otherwise we use model resolution. This ensures the step
+  uses the max resolution seen in training.
 - Targets: Memory grows with number of targets per image. We use
-  auto_batch_max_targets_per_image (config) to synthesize that many targets per
-  image so the probe reflects worst-case matcher and loss memory.
+  auto_batch_max_targets_per_image (config) to synthesize that many targets per image so the probe reflects worst-case
+  matcher and loss memory.
 - EMA: When use_ema is True, an EMA copy of the model is kept in memory. We
-  apply auto_batch_ema_headroom (e.g. 0.7) to the probed batch size so the
-  effective safe batch leaves room for the EMA model.
+  apply auto_batch_ema_headroom (e.g. 0.7) to the probed batch size so the effective safe batch leaves room for the EMA
+  model.
 """
 
 from __future__ import annotations
@@ -63,14 +63,14 @@ def _make_synthetic_batch(
     num_classes: int,
     segmentation_head: bool = False,
     max_targets_per_image: int = 1,
+    num_channels: int = 3,
 ) -> tuple[NestedTensor, list[dict[str, torch.Tensor]]]:
     """Build a minimal (samples, targets) batch for probing.
 
-    Uses max_targets_per_image targets per image so memory reflects worst-case
-    matcher and loss. When segmentation_head is True, each target dict includes
-    "masks" of shape (max_targets_per_image, resolution, resolution).
+    Uses max_targets_per_image targets per image so memory reflects worst-case matcher and loss. When segmentation_head
+    is True, each target dict includes "masks" of shape (max_targets_per_image, resolution, resolution).
     """
-    tensors = torch.randn(micro_batch_size, 3, resolution, resolution, device=device)
+    tensors = torch.randn(micro_batch_size, num_channels, resolution, resolution, device=device)
     mask = torch.zeros(micro_batch_size, resolution, resolution, dtype=torch.bool, device=device)
     samples = NestedTensor(tensors, mask)
 
@@ -108,6 +108,8 @@ def _probe_step(
     amp: bool,
     segmentation_head: bool = False,
     max_targets_per_image: int = 1,
+    num_channels: int = 3,
+    autocast_dtype: torch.dtype | None = None,
 ) -> bool:
     """Run one forward + loss + backward; return True if successful, False on OOM."""
     try:
@@ -120,18 +122,23 @@ def _probe_step(
             num_classes=num_classes,
             segmentation_head=segmentation_head,
             max_targets_per_image=max_targets_per_image,
+            num_channels=num_channels,
         )
 
-        with torch.autocast(device_type="cuda", enabled=amp):
+        autocast_kwargs: dict[str, Any] = {"device_type": "cuda", "enabled": amp}
+        if autocast_dtype is not None:
+            autocast_kwargs["dtype"] = autocast_dtype
+        with torch.autocast(**autocast_kwargs):
             outputs = model(samples, targets)
-            loss_dict = cast(dict[str, torch.Tensor], criterion(outputs, targets))
-            weight_dict = cast(dict[str, float], getattr(criterion, "weight_dict"))
+            loss_dict = cast("dict[str, torch.Tensor]", criterion(outputs, targets))
+            weight_dict = cast("dict[str, float]", criterion.weight_dict)
             weighted_losses = [loss_dict[name] * weight_dict[name] for name in loss_dict if name in weight_dict]
-            loss = (
-                torch.stack(weighted_losses).sum()
-                if weighted_losses
-                else torch.tensor(0.0, dtype=torch.float32, device=device)
-            )
+            if not weighted_losses:
+                raise RuntimeError(
+                    "auto-batch probe could not build weighted losses: no overlap between criterion loss_dict and "
+                    "weight_dict keys.",
+                )
+            loss = torch.stack(weighted_losses).sum()
 
         if not torch.isfinite(loss):
             raise RuntimeError("auto-batch probe produced a non-finite training loss.")
@@ -158,13 +165,14 @@ def probe_max_micro_batch(
     max_targets_per_image: int = 1,
     safety_margin: float = 0.9,
     max_micro_batch: int = 128,
+    num_channels: int = 3,
+    autocast_dtype: torch.dtype | None = None,
 ) -> int:
     """Find the largest per-device batch size that fits in memory for one train step.
 
-    Uses exponential search (1, 2, 4, ...) up to the first failure, then binary search
-    between the last successful size and the first failure to get the exact maximum.
-    The returned value is floor(max_ok * safety_margin), so safety_margin in (0, 1]
-    scales down the result for headroom (e.g. 0.9 keeps 10% margin).
+    Uses exponential search (1, 2, 4, ...) up to the first failure, then binary search between the last successful size
+    and the first failure to get the exact maximum. The returned value is floor(max_ok * safety_margin), so
+    safety_margin in (0, 1] scales down the result for headroom (e.g. 0.9 keeps 10% margin).
 
     Args:
         model: The model to probe (will be set to train mode).
@@ -177,6 +185,7 @@ def probe_max_micro_batch(
         max_targets_per_image: Number of synthetic targets per image (worst-case memory).
         safety_margin: Fraction of max batch to return (0 < safety_margin <= 1).
         max_micro_batch: Cap on batch size to try.
+        num_channels: Number of input image channels (for synthetic probe images).
 
     Returns:
         Safe micro-batch size (>= 1).
@@ -213,6 +222,8 @@ def probe_max_micro_batch(
                 amp,
                 segmentation_head,
                 max_targets_per_image,
+                num_channels,
+                autocast_dtype,
             ):
                 lower_ok = candidate
                 candidate *= 2
@@ -243,6 +254,8 @@ def probe_max_micro_batch(
                 amp,
                 segmentation_head,
                 max_targets_per_image,
+                num_channels,
+                autocast_dtype,
             ):
                 lower_ok = mid
                 lo = mid + 1
@@ -289,11 +302,10 @@ def resolve_auto_batch_config(
 ) -> AutoBatchResult:
     """Resolve batch_size='auto' into concrete batch_size and grad_accum_steps using a probe.
 
-    Expects model_context to have attributes: .device (torch.device) and .model (nn.Module).
-    Runs probe_max_micro_batch on the current model/criterion, then recommend_grad_accum_steps
-    using train_config.auto_batch_target_effective. Logs device, segmentation flag, resolution,
-    and the chosen values; also logs that the probe is train-step-only and that eval/test
-    may use more memory.
+    Expects model_context to have attributes: .device (torch.device) and .model (nn.Module). Runs probe_max_micro_batch
+    on the current model/criterion, then recommend_grad_accum_steps using train_config.auto_batch_target_effective. Logs
+    device, segmentation flag, resolution, and the chosen values; also logs that the probe is train-step-only and that
+    eval/test may use more memory.
 
     Args:
         model_context: Object with .device and .model (e.g. RFDETR.model from get_model()).
@@ -303,8 +315,7 @@ def resolve_auto_batch_config(
         max_micro_batch: Upper bound on batch size to try (passed to probe_max_micro_batch).
 
     Returns:
-        AutoBatchResult with safe_micro_batch, recommended_grad_accum_steps,
-        effective_batch_size, and device_name.
+        AutoBatchResult with safe_micro_batch, recommended_grad_accum_steps, effective_batch_size, and device_name.
 
     Raises:
         RuntimeError: If CUDA is not available or model_context.device is not CUDA.
@@ -335,17 +346,30 @@ def resolve_auto_batch_config(
     criterion, _ = build_criterion_from_config(model_config, train_config)
     criterion = criterion.to(device)
 
+    amp_enabled = bool(model_config.amp)
+    amp_dtype_str = getattr(train_config, "amp_dtype", "auto")
+    if amp_enabled:
+        if amp_dtype_str == "fp16":
+            probe_autocast_dtype: torch.dtype | None = torch.float16
+        else:
+            # "bf16" or "auto" — both use bf16 on capable hardware, fp16 as fallback
+            probe_autocast_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    else:
+        probe_autocast_dtype = None
+
     safe_micro_batch = probe_max_micro_batch(
         model=model_context.model,
         criterion=criterion,
         resolution=probe_resolution,
         device=device,
         num_classes=model_config.num_classes,
-        amp=bool(model_config.amp),
+        amp=amp_enabled,
         segmentation_head=model_config.segmentation_head,
         max_targets_per_image=max_targets_per_image,
         safety_margin=safety_margin,
         max_micro_batch=max_micro_batch,
+        num_channels=getattr(model_config, "num_channels", 3),
+        autocast_dtype=probe_autocast_dtype,
     )
 
     use_ema = getattr(train_config, "use_ema", False)

@@ -3,11 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for Chapter 5 / Phase 7+8 (updated Phase 3):
 
 1. ``TestRFDETRTrainPTL``           — RFDETR.train() delegates to PTL build_trainer().fit()
 2. ``TestRFDETRTrainPTLAbsorption`` — Legacy kwargs absorbed by RFDETR.train()
+2b. ``TestResolutionKwarg``         — resolution= kwarg validation, sync, and PE update
 3. ``TestConvertLegacyCheckpoint``  — convert_legacy_checkpoint() round-trip
 4. ``TestOnLoadCheckpoint``         — RFDETRModule.on_load_checkpoint() auto-detect
 5. ``TestPublicAPIExports``         — rfdetr.__init__ exports RFDETRModule/DataModule/build_trainer
@@ -20,7 +20,6 @@ import json
 import os
 import sys
 import warnings
-from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -29,8 +28,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from rfdetr.config import RFDETRBaseConfig, TrainConfig
-from rfdetr.detr import RFDETR, RFDETRLarge
+from rfdetr.config import RFDETRBaseConfig, RFDETRKeypointPreviewConfig, RFDETRSmallConfig, TrainConfig
+from rfdetr.detr import RFDETR
+from rfdetr.detr import logger as detr_logger
 from rfdetr.training.auto_batch import AutoBatchResult
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
 from rfdetr.training.module_model import RFDETRModelModule
@@ -60,8 +60,7 @@ def _make_train_config(tmp_path, **overrides):
 def _make_rfdetr_self(tmp_path, **train_overrides):
     """Return a MagicMock shaped like RFDETR with real config objects.
 
-    No spec is used because RFDETR.model is set in __init__ (instance attr)
-    and spec=RFDETR would block access to it.
+    No spec is used because RFDETR.model is set in __init__ (instance attr) and spec=RFDETR would block access to it.
     """
     mock = MagicMock()
     mock.model_config = _make_model_config()
@@ -70,8 +69,9 @@ def _make_rfdetr_self(tmp_path, **train_overrides):
     return mock
 
 
-def _patch_lit():
-    """Context manager that patches all three rfdetr.training entry points."""
+@pytest.fixture
+def patch_lit():
+    """Provide patched rfdetr.training entry points for tests."""
     mock_module_cls = MagicMock(name="RFDETRModule_cls")
     mock_dm_cls = MagicMock(name="RFDETRDataModule_cls")
     mock_build_trainer = MagicMock(name="build_trainer")
@@ -94,20 +94,20 @@ def _patch_lit():
 class TestRFDETRTrainPTL:
     """RFDETR.train() delegates to PTL build_trainer().fit()."""
 
-    def test_build_trainer_called_with_config_and_model_config(self, tmp_path):
+    def test_build_trainer_called_with_config_and_model_config(self, tmp_path, patch_lit):
         """build_trainer receives (train_config, model_config) in the right order."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator=None)
 
-    def test_trainer_fit_called_with_module_and_datamodule(self, tmp_path):
+    def test_trainer_fit_called_with_module_and_datamodule(self, tmp_path, patch_lit):
         """trainer.fit() is called with (module_instance, datamodule_instance)."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, mcls, dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, mcls, dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
@@ -116,31 +116,31 @@ class TestRFDETRTrainPTL:
         assert fit_args[0][0] is mcls.return_value  # module instance
         assert fit_args[0][1] is dmcls.return_value  # datamodule instance
 
-    def test_ckpt_path_none_when_resume_not_set(self, tmp_path):
+    def test_ckpt_path_none_when_resume_not_set(self, tmp_path, patch_lit):
         """trainer.fit receives ckpt_path=None when config.resume is None."""
         mock_self = _make_rfdetr_self(tmp_path)  # resume defaults to None
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
         trainer = mock_bt.return_value
         trainer.fit.assert_called_once_with(_mcls.return_value, _dmcls.return_value, ckpt_path=None)
 
-    def test_ckpt_path_forwarded_when_resume_set(self, tmp_path):
+    def test_ckpt_path_forwarded_when_resume_set(self, tmp_path, patch_lit):
         """trainer.fit receives ckpt_path when config.resume is a path string."""
         mock_self = _make_rfdetr_self(tmp_path, resume="/some/checkpoint.ckpt")
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
         trainer = mock_bt.return_value
         trainer.fit.assert_called_once_with(_mcls.return_value, _dmcls.return_value, ckpt_path="/some/checkpoint.ckpt")
 
-    def test_ckpt_path_none_when_resume_is_empty_string(self, tmp_path):
+    def test_ckpt_path_none_when_resume_is_empty_string(self, tmp_path, patch_lit):
         """config.resume='' is coerced to ckpt_path=None via `resume or None`."""
         mock_self = _make_rfdetr_self(tmp_path, resume="")
 
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
@@ -148,10 +148,10 @@ class TestRFDETRTrainPTL:
         _, fit_kwargs = trainer.fit.call_args
         assert fit_kwargs["ckpt_path"] is None
 
-    def test_model_model_synced_back_by_identity(self, tmp_path):
+    def test_model_model_synced_back_by_identity(self, tmp_path, patch_lit):
         """self.model.model is reassigned to module.model (identity, not copy)."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, mcls, _dmcls, mock_bt = patch_lit
         sentinel_nn_module = object()
         mcls.return_value.model = sentinel_nn_module
 
@@ -160,15 +160,15 @@ class TestRFDETRTrainPTL:
 
         assert mock_self.model.model is sentinel_nn_module
 
-    def test_returns_none(self, tmp_path):
+    def test_returns_none(self, tmp_path, patch_lit):
         """RFDETR.train() has no return value."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             result = RFDETR.train(mock_self)
         assert result is None
 
-    def test_missing_training_extra_raises_install_hint(self, tmp_path, monkeypatch):
+    def test_missing_training_extra_raises_install_hint(self, tmp_path, monkeypatch, patch_lit):
         """Missing training dependencies should raise ImportError with extras install hint."""
         mock_self = _make_rfdetr_self(tmp_path)
         real_import = builtins.__import__
@@ -186,10 +186,12 @@ class TestRFDETRTrainPTL:
 
     @pytest.mark.parametrize(
         "missing_name",
-        ["rfdetr.training", "rfdetr.training.auto_batch"],
-        ids=["training-package", "training-submodule"],
+        [
+            pytest.param("rfdetr.training", id="training-package"),
+            pytest.param("rfdetr.training.auto_batch", id="training-submodule"),
+        ],
     )
-    def test_internal_training_module_import_error_preserved(self, tmp_path, monkeypatch, missing_name):
+    def test_internal_training_module_import_error_preserved(self, tmp_path, monkeypatch, missing_name, patch_lit):
         """Missing internal training modules should keep original ModuleNotFoundError."""
         mock_self = _make_rfdetr_self(tmp_path)
         real_import = builtins.__import__
@@ -204,15 +206,14 @@ class TestRFDETRTrainPTL:
         with pytest.raises(ModuleNotFoundError, match=missing_name.replace(".", r"\.")):
             RFDETR.train(mock_self)
 
-    def test_class_names_synced_from_datamodule_after_training(self, tmp_path):
+    def test_class_names_synced_from_datamodule_after_training(self, tmp_path, patch_lit):
         """self.model.class_names is set from RFDETRDataModule.class_names after train().
 
-        Regression test for #509: custom class names were not synced back from
-        RFDETRDataModule after training, causing predict() to return COCO labels
-        instead of the dataset's class labels.
+        Regression test for #509: custom class names were not synced back from RFDETRDataModule after training, causing
+        predict() to return COCO labels instead of the dataset's class labels.
         """
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit
         custom_class_names = ["cat", "dog", "bird"]
         dmcls.return_value.class_names = custom_class_names
 
@@ -221,16 +222,16 @@ class TestRFDETRTrainPTL:
 
         assert mock_self.model.class_names == custom_class_names
 
-    def test_class_names_not_synced_when_datamodule_returns_none(self, tmp_path):
+    def test_class_names_not_synced_when_datamodule_returns_none(self, tmp_path, patch_lit):
         """self.model.class_names is NOT overwritten when datamodule.class_names is None.
 
-        Ensures the sync-back guard does not clobber existing class names
-        when the datamodule has no class information (e.g. custom dataset format).
+        Ensures the sync-back guard does not clobber existing class names when the datamodule has no class information
+        (e.g. custom dataset format).
         """
         mock_self = _make_rfdetr_self(tmp_path)
         sentinel_names = ["existing_class"]
         mock_self.model.class_names = sentinel_names
-        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit
         dmcls.return_value.class_names = None  # datamodule has no class names
 
         with p_mod, p_dm, p_bt:
@@ -238,7 +239,7 @@ class TestRFDETRTrainPTL:
 
         assert mock_self.model.class_names == sentinel_names
 
-    def test_empty_class_names_synced_from_datamodule_after_training(self, tmp_path):
+    def test_empty_class_names_synced_from_datamodule_after_training(self, tmp_path, patch_lit):
         """Empty class name lists are synced and overwrite stale model labels.
 
         Empty list is a valid explicit value and should not be treated as missing.
@@ -246,7 +247,7 @@ class TestRFDETRTrainPTL:
         mock_self = _make_rfdetr_self(tmp_path)
         sentinel_names = ["stale_label"]
         mock_self.model.class_names = sentinel_names
-        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit
         dmcls.return_value.class_names = []
 
         with p_mod, p_dm, p_bt:
@@ -254,126 +255,94 @@ class TestRFDETRTrainPTL:
 
         assert mock_self.model.class_names == []
 
-    def test_device_kwarg_cpu_no_warning(self, tmp_path):
-        """device='cpu' is consumed without a DeprecationWarning."""
+    def test_model_args_synced_from_train_config_after_training(self, tmp_path, patch_lit):
+        """self.model.args reflects effective training and model config after train().
+
+        Regression test for #1199: model.model.__dict__['args'] retained the construction-time defaults (lr=0.0001,
+        lr_encoder=0.00015) instead of the overrides passed to train(), because ``self.model.args`` was built once at
+        model-construction time from a dummy config and never refreshed after ``train()`` completed.
+        """
+        mock_self = _make_rfdetr_self(tmp_path, lr=5e-5, lr_encoder=1e-4, batch_size=7)
+        mock_self.model_config.num_classes = 7
+        mock_self.model.args = SimpleNamespace(lr=0.0001, lr_encoder=0.00015, resolution=560)
+        p_mod, p_dm, p_bt, *_ = patch_lit
+
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model.args.lr == 5e-5
+        assert mock_self.model.args.lr_encoder == 1e-4
+        assert mock_self.model.args.batch_size == 7
+        assert mock_self.model.args.num_classes == 7
+        assert mock_self.model.args.dataset_dir == str(tmp_path / "ds")
+        assert mock_self.model.args.output_dir == str(tmp_path / "out")
+
+    def test_device_kwarg_cpu_no_warning(self, tmp_path, patch_lit):
+        """Device='cpu' is consumed without a DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, device="cpu")
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
         mock_self.get_train_config.assert_called_once_with()
 
-    def test_device_kwarg_cuda_forwards_gpu_accelerator_without_devices(self, tmp_path):
-        """device='cuda' is mapped to accelerator='gpu' without explicit devices override."""
+    def test_device_kwarg_cuda_forwards_gpu_accelerator_without_devices(self, tmp_path, patch_lit):
+        """Device='cuda' is mapped to accelerator='gpu' without explicit devices override."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, device="cuda")
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
         mock_self.get_train_config.assert_called_once_with()
 
-    def test_device_kwarg_torch_device_cuda_index_forwards_gpu_accelerator_and_devices(self, tmp_path):
+    def test_device_kwarg_torch_device_cuda_index_forwards_gpu_accelerator_and_devices(self, tmp_path, patch_lit):
         """torch.device('cuda:1') is mapped to accelerator='gpu' and devices=[1]."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, device=torch.device("cuda:1"))
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
         mock_self.get_train_config.assert_called_once_with()
 
-    def test_callbacks_none_no_warning(self, tmp_path):
-        """callbacks=None produces no DeprecationWarning."""
+    def test_device_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
+        """Device= is popped and not passed on to get_train_config."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=None)
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    def test_callbacks_empty_dict_no_warning(self, tmp_path):
-        """callbacks={} (falsy dict) produces no DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks={})
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    def test_callbacks_all_empty_lists_no_warning(self, tmp_path):
-        """Callbacks dict with all-empty lists produces no DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        callbacks = defaultdict(list)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=callbacks)
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    def test_callbacks_non_empty_emits_deprecation_warning(self, tmp_path):
-        """Callbacks dict with a non-empty list emits DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        callbacks = {"on_fit_epoch_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=callbacks)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(depr) >= 1
-        assert "PTL" in str(depr[0].message)
-
-    def test_callbacks_mixed_emits_deprecation_warning(self, tmp_path):
-        """Mixed callbacks (some empty, some non-empty) triggers DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        callbacks = {"on_fit_epoch_end": [], "on_train_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=callbacks)
-        assert any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    def test_do_benchmark_false_no_warning(self, tmp_path):
-        """do_benchmark=False (default) emits no DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, do_benchmark=False)
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-
-    @pytest.mark.parametrize("truthy_value", [True, 1, "yes"], ids=["bool_true", "int_1", "str_yes"])
-    def test_do_benchmark_truthy_emits_deprecation_warning(self, tmp_path, truthy_value):
-        """Any truthy do_benchmark value emits DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, do_benchmark=truthy_value)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(depr) >= 1
-        assert "rfdetr benchmark" in str(depr[0].message)
-
-    def test_do_benchmark_not_forwarded_to_get_train_config(self, tmp_path):
-        """do_benchmark is popped before calling get_train_config."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, do_benchmark=True)
-        mock_self.get_train_config.assert_called_once_with()
-
-    def test_device_not_forwarded_to_get_train_config(self, tmp_path):
-        """device= is popped and not passed on to get_train_config."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device="cpu")
         # get_train_config must have been called without device=
         assert "device" not in mock_self.get_train_config.call_args.kwargs
 
-    def test_batch_size_auto_resolved_before_module_and_datamodule_build(self, tmp_path):
+    def test_skip_best_epochs_forwarded_to_get_train_config(self, tmp_path, patch_lit):
+        """Non-absorbed training kwargs must reach get_train_config unchanged."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, skip_best_epochs=3)
+
+        mock_self.get_train_config.assert_called_once_with(skip_best_epochs=3)
+
+    def test_optimizer_config_forwarded_to_get_train_config(self, tmp_path, patch_lit):
+        """Optimizer training kwargs must reach get_train_config unchanged."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        optimizer_kwargs = {"weight_decouple": True}
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(
+                mock_self,
+                optimizer="torch.optim.AdamW",
+                optimizer_kwargs=optimizer_kwargs,
+            )
+
+        mock_self.get_train_config.assert_called_once_with(
+            optimizer="torch.optim.AdamW",
+            optimizer_kwargs=optimizer_kwargs,
+        )
+
+    def test_batch_size_auto_resolved_before_module_and_datamodule_build(self, tmp_path, patch_lit):
         """batch_size='auto' is resolved to ints before module/datamodule init."""
         mock_self = _make_rfdetr_self(tmp_path, batch_size="auto", grad_accum_steps=99)
         auto_result = AutoBatchResult(
@@ -382,7 +351,7 @@ class TestRFDETRTrainPTL:
             effective_batch_size=18,
             device_name="Fake GPU",
         )
-        p_mod, p_dm, p_bt, mcls, dmcls, _mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, mcls, dmcls, _mock_bt = patch_lit
         with p_mod, p_dm, p_bt, patch("rfdetr.training.auto_batch.resolve_auto_batch_config", return_value=auto_result):
             RFDETR.train(mock_self)
 
@@ -392,7 +361,7 @@ class TestRFDETRTrainPTL:
         mcls.assert_called_once_with(mock_self.model_config, config)
         dmcls.assert_called_once_with(mock_self.model_config, config)
 
-    def test_batch_size_auto_calls_resolver_with_expected_context(self, tmp_path):
+    def test_batch_size_auto_calls_resolver_with_expected_context(self, tmp_path, patch_lit):
         """Auto-batch resolver receives model context, model config, and train config."""
         mock_self = _make_rfdetr_self(tmp_path, batch_size="auto")
         auto_result = AutoBatchResult(
@@ -401,7 +370,7 @@ class TestRFDETRTrainPTL:
             effective_batch_size=16,
             device_name="Fake GPU",
         )
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with (
             p_mod,
             p_dm,
@@ -426,47 +395,47 @@ class TestRFDETRTrainPTL:
 class TestRFDETRTrainPTLAbsorption:
     """RFDETR.train() absorbs legacy kwargs and routes through PTL build_trainer()."""
 
-    def test_device_cpu_absorbed_as_accelerator_cpu(self, tmp_path):
-        """device='cpu' is absorbed and forwarded to build_trainer as accelerator='cpu'."""
+    def test_device_cpu_absorbed_as_accelerator_cpu(self, tmp_path, patch_lit):
+        """Device='cpu' is absorbed and forwarded to build_trainer as accelerator='cpu'."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device="cpu")
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="cpu")
 
-    def test_device_cuda_absorbed_as_accelerator_gpu(self, tmp_path):
-        """device='cuda' forwards accelerator='gpu' without a devices kwarg."""
+    def test_device_cuda_absorbed_as_accelerator_gpu(self, tmp_path, patch_lit):
+        """Device='cuda' forwards accelerator='gpu' without a devices kwarg."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device="cuda")
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu")
         assert "devices" not in mock_bt.call_args.kwargs
 
-    def test_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path):
-        """device='cuda:1' forwards accelerator='gpu' and devices=[1]."""
+    def test_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path, patch_lit):
+        """Device='cuda:1' forwards accelerator='gpu' and devices=[1]."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device="cuda:1")
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu", devices=[1])
 
-    def test_device_torch_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path):
+    def test_device_torch_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path, patch_lit):
         """device=torch.device('cuda:2') forwards accelerator='gpu' and devices=[2]."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device=torch.device("cuda:2"))
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu", devices=[2])
 
-    def test_device_invalid_raises_value_error_with_expected_message(self, tmp_path):
+    def test_device_invalid_raises_value_error_with_expected_message(self, tmp_path, patch_lit):
         """Invalid device strings raise a ValueError with the train() device hint."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with (
             p_mod,
             p_dm,
@@ -475,63 +444,227 @@ class TestRFDETRTrainPTLAbsorption:
         ):
             RFDETR.train(mock_self, device="notadevice")
 
-    def test_device_unmapped_valid_type_warns_and_falls_back_to_auto_detection(self, tmp_path):
+    def test_device_unmapped_valid_type_warns_and_falls_back_to_auto_detection(self, tmp_path, patch_lit):
         """Valid but unmapped torch device types warn and use PTL auto-detection."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt, pytest.warns(UserWarning, match="auto-detection"):
             RFDETR.train(mock_self, device="meta")
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator=None)
         assert "devices" not in mock_bt.call_args.kwargs
 
-    def test_callbacks_empty_dict_no_error(self, tmp_path):
-        """callbacks={} is accepted without error."""
+    def test_callbacks_empty_dict_no_error(self, tmp_path, patch_lit):
+        """Callbacks={} is accepted without error."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, callbacks={})  # must not raise
 
-    def test_callbacks_non_empty_emits_deprecation_warning(self, tmp_path):
-        """Callbacks with non-empty lists emits DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        callbacks = {"on_fit_epoch_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, callbacks=callbacks)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(depr) >= 1
-
-    def test_start_epoch_emits_deprecation_warning(self, tmp_path):
-        """start_epoch=1 emits DeprecationWarning and is dropped."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, start_epoch=1)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert any("start_epoch" in str(d.message) for d in depr)
-        # start_epoch must not reach get_train_config
-        assert "start_epoch" not in mock_self.get_train_config.call_args.kwargs
-
-    def test_do_benchmark_true_emits_deprecation_warning(self, tmp_path):
-        """do_benchmark=True emits DeprecationWarning."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, do_benchmark=True)
-        depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert any("do_benchmark" in str(d.message) or "rfdetr benchmark" in str(d.message) for d in depr)
-
-    def test_returns_none(self, tmp_path):
+    def test_returns_none(self, tmp_path, patch_lit):
         """RFDETR.train() returns None."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             result = RFDETR.train(mock_self)
         assert result is None
+
+    def test_save_dataset_grids_true_calls_grid_saver(self, tmp_path, patch_lit):
+        """save_dataset_grids=True triggers DatasetGridSaver.save_grid() for train and val."""
+        mock_self = _make_rfdetr_self(tmp_path, save_dataset_grids=True)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, _mock_bt = patch_lit
+        mock_saver_cls = MagicMock(name="DatasetGridSaver")
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch("rfdetr.datasets.save_grids.DatasetGridSaver", mock_saver_cls),
+        ):
+            RFDETR.train(mock_self)
+
+        # DatasetGridSaver must be constructed twice (train + val) and save_grid called on each
+        assert mock_saver_cls.call_count == 2
+        assert mock_saver_cls.return_value.save_grid.call_count == 2
+
+        # setup("fit") must be called on the datamodule before training
+        dm_instance = _dmcls.return_value
+        dm_instance.setup.assert_called_with("fit")
+
+    def test_save_dataset_grids_false_skips_grid_saver(self, tmp_path, patch_lit):
+        """save_dataset_grids=False (default) must not call DatasetGridSaver at all."""
+        mock_self = _make_rfdetr_self(tmp_path)  # default save_dataset_grids=False
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        mock_saver_cls = MagicMock(name="DatasetGridSaver")
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch("rfdetr.datasets.save_grids.DatasetGridSaver", mock_saver_cls),
+        ):
+            RFDETR.train(mock_self)
+
+        mock_saver_cls.assert_not_called()
+
+    def test_save_dataset_grids_uses_output_dir_subdir(self, tmp_path, patch_lit):
+        """Grid images are saved to <output_dir>/dataset_grids."""
+        from pathlib import Path
+
+        mock_self = _make_rfdetr_self(tmp_path, save_dataset_grids=True)
+        config = mock_self.get_train_config.return_value
+        p_mod, p_dm, p_bt, _mcls, _dmcls, _mock_bt = patch_lit
+        mock_saver_cls = MagicMock(name="DatasetGridSaver")
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch("rfdetr.datasets.save_grids.DatasetGridSaver", mock_saver_cls),
+        ):
+            RFDETR.train(mock_self)
+
+        expected_output_dir = Path(config.output_dir) / "dataset_grids"
+        called_dirs = [call.args[1] for call in mock_saver_cls.call_args_list]
+        assert all(d == expected_output_dir for d in called_dirs)
+
+    def test_save_dataset_grids_failure_does_not_abort_training(self, tmp_path, patch_lit):
+        """A save_grid() failure must not abort training — trainer.fit() must still be called."""
+        mock_self = _make_rfdetr_self(tmp_path, save_dataset_grids=True)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
+        mock_saver_cls = MagicMock(name="DatasetGridSaver")
+        mock_saver_cls.return_value.save_grid.side_effect = OSError("disk full")
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch("rfdetr.datasets.save_grids.DatasetGridSaver", mock_saver_cls),
+        ):
+            # Must not raise even though save_grid() fails
+            RFDETR.train(mock_self)
+
+        # Training must proceed regardless of the grid-save failure
+        mock_bt.return_value.fit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# 2b. resolution= kwarg handling
+# ---------------------------------------------------------------------------
+
+
+class TestResolutionKwarg:
+    """RFDETR.train(resolution=...) applies, validates, and syncs the resolution override."""
+
+    def test_updates_model_config_resolution(self, tmp_path, patch_lit):
+        """Resolution kwarg is applied to model_config.resolution before training."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        valid_resolution = block_size * 11  # guaranteed divisible and different from default
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=valid_resolution)
+        assert mock_self.model_config.resolution == valid_resolution
+
+    def test_does_not_implicitly_update_positional_encoding_size(self, tmp_path, patch_lit):
+        """Pretrained-specific PE (RFDETRBase DINOv2=37) is preserved when resolution is overridden."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        # RFDETRBaseConfig: PE=37 (DINOv2 native 518//14), resolution=560, patch_size=14.
+        # PE != resolution // patch_size, so the smart PE guard leaves PE unchanged.
+        original_pe = mock_self.model_config.positional_encoding_size
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        valid_override_resolution = block_size * 11  # different from default 560
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=valid_override_resolution)
+        assert mock_self.model_config.positional_encoding_size == original_pe
+
+    def test_updates_positional_encoding_size_for_formula_derived_config(self, tmp_path, patch_lit):
+        """For configs where PE == resolution // patch_size, resolution override updates PE."""
+        # RFDETRSmallConfig: patch_size=16, num_windows=2, resolution=512, PE=32=512//16.
+        mock_self = _make_rfdetr_self(tmp_path)
+        mock_self.model_config = RFDETRSmallConfig(pretrain_weights=None, num_classes=3, device="cpu")
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        new_resolution = block_size * 21  # 672 for Small — valid and different from default 512
+        expected_pe = new_resolution // mock_self.model_config.patch_size
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=new_resolution)
+        assert mock_self.model_config.positional_encoding_size == expected_pe
+
+    def test_does_not_reach_get_train_config(self, tmp_path, patch_lit):
+        """Resolution kwarg is popped before get_train_config is called."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=block_size * 10)
+        assert "resolution" not in mock_self.get_train_config.call_args.kwargs
+
+    def test_indivisible_raises_value_error(self, tmp_path, patch_lit):
+        """Resolution not divisible by patch_size * num_windows raises ValueError."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        indivisible = block_size * 10 + 1  # guaranteed not divisible by block_size
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, pytest.raises(ValueError, match=f"resolution={indivisible}"):
+            RFDETR.train(mock_self, resolution=indivisible)
+
+    def test_none_leaves_model_config_unchanged(self, tmp_path, patch_lit):
+        """Omitting resolution leaves model_config.resolution unchanged."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        original_resolution = mock_self.model_config.resolution
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+        assert mock_self.model_config.resolution == original_resolution
+
+    @pytest.mark.parametrize(
+        "bad_resolution",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(-56, id="negative"),
+            pytest.param(True, id="bool_true"),
+            pytest.param(False, id="bool_false"),
+            pytest.param(1.5, id="non_integer_float"),
+            pytest.param(560.0, id="whole_number_float"),
+            pytest.param("560", id="string"),
+        ],
+    )
+    def test_invalid_type_or_value_raises_value_error(self, tmp_path, patch_lit, bad_resolution):
+        """Non-positive, bool, or non-integer resolution raises ValueError before divisibility check."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, pytest.raises(ValueError, match="resolution must be a positive integer"):
+            RFDETR.train(mock_self, resolution=bad_resolution)
+
+    def test_syncs_model_resolution_attribute(self, tmp_path, patch_lit):
+        """Resolution kwarg sets model.resolution so predict()/export() see the new resolution.
+
+        Regression test for #952 — keeps the cached inference/export context in sync after a resolution override in
+        train().
+        """
+        mock_self = _make_rfdetr_self(tmp_path)
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        new_resolution = block_size * 11
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=new_resolution)
+        assert mock_self.model.resolution == new_resolution
+
+    def test_syncs_model_args_resolution_and_pe(self, tmp_path, patch_lit):
+        """Resolution kwarg updates model.args.resolution and model.args.positional_encoding_size.
+
+        For formula-derived configs (PE == resolution // patch_size), both fields in model.args must be kept consistent
+        with model_config so export/deployment pipelines use the correct values.  Regression test for #952.
+        """
+        mock_self = _make_rfdetr_self(tmp_path)
+        # RFDETRSmallConfig: formula-derived PE (512 // 16 == 32), so PE updates with resolution.
+        mock_self.model_config = RFDETRSmallConfig(pretrain_weights=None, num_classes=3, device="cpu")
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        new_resolution = block_size * 21  # 672 for Small — valid, different from default 512
+        expected_pe = new_resolution // mock_self.model_config.patch_size
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=new_resolution)
+        assert mock_self.model.args.resolution == new_resolution
+        assert mock_self.model.args.positional_encoding_size == expected_pe
 
 
 # ---------------------------------------------------------------------------
@@ -577,7 +710,7 @@ def _make_legacy_pth(tmp_path, epoch=5, include_ema=False, args_value="namespace
 class TestConvertLegacyCheckpoint:
     """convert_legacy_checkpoint() produces a valid PTL .ckpt file."""
 
-    def test_state_dict_keys_prefixed_with_model(self, tmp_path):
+    def test_state_dict_keys_prefixed_with_model(self, tmp_path, patch_lit):
         """All state_dict keys must be prefixed with 'model.'."""
         src = _make_legacy_pth(tmp_path)
         dst = str(tmp_path / "out.ckpt")
@@ -585,7 +718,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert all(k.startswith("model.") for k in ckpt["state_dict"])
 
-    def test_state_dict_keys_dot_containing_names_prefixed_once(self, tmp_path):
+    def test_state_dict_keys_dot_containing_names_prefixed_once(self, tmp_path, patch_lit):
         """Keys already containing dots are prefixed exactly once."""
         path = str(tmp_path / "dot_keys.pth")
         torch.save({"model": {"backbone.layer.weight": torch.zeros(1)}, "epoch": 0}, path)
@@ -595,7 +728,7 @@ class TestConvertLegacyCheckpoint:
         assert "model.backbone.layer.weight" in ckpt["state_dict"]
         assert "model.model.backbone.layer.weight" not in ckpt["state_dict"]
 
-    def test_epoch_preserved(self, tmp_path):
+    def test_epoch_preserved(self, tmp_path, patch_lit):
         """Epoch value is copied from the source checkpoint."""
         src = _make_legacy_pth(tmp_path, epoch=42)
         dst = str(tmp_path / "out.ckpt")
@@ -603,7 +736,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["epoch"] == 42
 
-    def test_epoch_defaults_to_zero_when_missing(self, tmp_path):
+    def test_epoch_defaults_to_zero_when_missing(self, tmp_path, patch_lit):
         """Missing epoch key in source defaults to 0."""
         path = str(tmp_path / "no_epoch.pth")
         torch.save({"model": {"w": torch.zeros(1)}}, path)
@@ -612,7 +745,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["epoch"] == 0
 
-    def test_global_step_always_zero(self, tmp_path):
+    def test_global_step_always_zero(self, tmp_path, patch_lit):
         """global_step is always written as 0."""
         src = _make_legacy_pth(tmp_path)
         dst = str(tmp_path / "out.ckpt")
@@ -620,7 +753,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["global_step"] == 0
 
-    def test_legacy_checkpoint_format_flag_set(self, tmp_path):
+    def test_legacy_checkpoint_format_flag_set(self, tmp_path, patch_lit):
         """legacy_checkpoint_format is always True in output."""
         src = _make_legacy_pth(tmp_path)
         dst = str(tmp_path / "out.ckpt")
@@ -628,7 +761,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["legacy_checkpoint_format"] is True
 
-    def test_args_as_namespace_converted_to_dict(self, tmp_path):
+    def test_args_as_namespace_converted_to_dict(self, tmp_path, patch_lit):
         """argparse.Namespace args are converted to a plain dict via vars()."""
         src = _make_legacy_pth(tmp_path, args_value="namespace")
         dst = str(tmp_path / "out.ckpt")
@@ -637,7 +770,7 @@ class TestConvertLegacyCheckpoint:
         assert isinstance(ckpt["hyper_parameters"], dict)
         assert ckpt["hyper_parameters"]["lr"] == pytest.approx(1e-4)
 
-    def test_args_as_dict_kept_as_dict(self, tmp_path):
+    def test_args_as_dict_kept_as_dict(self, tmp_path, patch_lit):
         """Plain dict args is preserved as-is."""
         src = _make_legacy_pth(tmp_path, args_value="dict")
         dst = str(tmp_path / "out.ckpt")
@@ -645,15 +778,15 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["hyper_parameters"] == {"lr": pytest.approx(1e-4), "epochs": 100}
 
-    def test_args_none_gives_empty_hyper_parameters(self, tmp_path):
-        """args=None produces an empty hyper_parameters dict."""
+    def test_args_none_gives_empty_hyper_parameters(self, tmp_path, patch_lit):
+        """Args=None produces an empty hyper_parameters dict."""
         src = _make_legacy_pth(tmp_path, args_value=None)
         dst = str(tmp_path / "out.ckpt")
         convert_legacy_checkpoint(src, dst)
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["hyper_parameters"] == {}
 
-    def test_args_missing_key_gives_empty_hyper_parameters(self, tmp_path):
+    def test_args_missing_key_gives_empty_hyper_parameters(self, tmp_path, patch_lit):
         """No 'args' key at all also produces empty hyper_parameters."""
         src = _make_legacy_pth(tmp_path, args_value="missing")
         dst = str(tmp_path / "out.ckpt")
@@ -661,7 +794,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["hyper_parameters"] == {}
 
-    def test_args_custom_object_with_dict_converted_via_vars(self, tmp_path):
+    def test_args_custom_object_with_dict_converted_via_vars(self, tmp_path, patch_lit):
         """A custom object with __dict__ is converted via vars()."""
         opts = _CustomArgs()
         opts.lr = 2e-4
@@ -674,7 +807,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["hyper_parameters"]["lr"] == pytest.approx(2e-4)
 
-    def test_ema_model_preserved_as_legacy_ema_state_dict(self, tmp_path):
+    def test_ema_model_preserved_as_legacy_ema_state_dict(self, tmp_path, patch_lit):
         """ema_model present in source is written as legacy_ema_state_dict."""
         src = _make_legacy_pth(tmp_path, include_ema=True)
         dst = str(tmp_path / "out.ckpt")
@@ -683,7 +816,7 @@ class TestConvertLegacyCheckpoint:
         assert "legacy_ema_state_dict" in ckpt
         assert "layer.weight" in ckpt["legacy_ema_state_dict"]
 
-    def test_no_ema_model_no_legacy_ema_state_dict(self, tmp_path):
+    def test_no_ema_model_no_legacy_ema_state_dict(self, tmp_path, patch_lit):
         """No ema_model in source means legacy_ema_state_dict is absent."""
         src = _make_legacy_pth(tmp_path, include_ema=False)
         dst = str(tmp_path / "out.ckpt")
@@ -691,11 +824,11 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert "legacy_ema_state_dict" not in ckpt
 
-    def test_round_trip_with_on_load_checkpoint(self, tmp_path):
+    def test_round_trip_with_on_load_checkpoint(self, tmp_path, patch_lit):
         """convert_legacy_checkpoint output is handled correctly by on_load_checkpoint.
 
-        After conversion, loading the .ckpt via on_load_checkpoint must NOT
-        re-apply the 'model.' prefix because 'state_dict' already exists.
+        After conversion, loading the .ckpt via on_load_checkpoint must NOT re-apply the 'model.' prefix because
+        'state_dict' already exists.
         """
         src = _make_legacy_pth(tmp_path, include_ema=True)
         dst = str(tmp_path / "out.ckpt")
@@ -703,7 +836,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
 
         class _FakeModule:
-            pass
+            model_config = SimpleNamespace(positional_encoding_size=36)
 
         fake = _FakeModule()
         original_state_dict = dict(ckpt["state_dict"])  # copy before mutation
@@ -715,7 +848,7 @@ class TestConvertLegacyCheckpoint:
         # EMA stashed
         assert hasattr(fake, "_pending_legacy_ema_state")
 
-    def test_missing_model_key_raises_value_error(self, tmp_path):
+    def test_missing_model_key_raises_value_error(self, tmp_path, patch_lit):
         """Source file with no 'model' key raises ValueError with a clear message."""
         path = str(tmp_path / "no_model.pth")
         torch.save({"epoch": 5}, path)
@@ -724,7 +857,7 @@ class TestConvertLegacyCheckpoint:
         with pytest.raises(ValueError, match="'model' key"):
             convert_legacy_checkpoint(path, dst)
 
-    def test_args_primitive_type_falls_back_to_empty_dict(self, tmp_path):
+    def test_args_primitive_type_falls_back_to_empty_dict(self, tmp_path, patch_lit):
         """Args of a non-dict, non-Namespace type (e.g. string) falls back to {} with a warning."""
         path = str(tmp_path / "prim_args.pth")
         torch.save({"model": {"w": torch.zeros(1)}, "args": "legacy_string_value"}, path)
@@ -743,11 +876,13 @@ class TestConvertLegacyCheckpoint:
 class _FakeModule:
     """Minimal object supporting attribute assignment for on_load_checkpoint tests."""
 
+    model_config = SimpleNamespace(positional_encoding_size=36)
+
 
 class TestOnLoadCheckpoint:
     """RFDETRModule.on_load_checkpoint auto-detects legacy formats."""
 
-    def test_raw_pth_writes_state_dict_with_prefix(self):
+    def test_raw_pth_writes_state_dict_with_prefix(self, patch_lit):
         """'model' key without 'state_dict' → state_dict written with 'model.' prefix."""
         fake = _FakeModule()
         ckpt = {"model": {"backbone.weight": torch.zeros(2)}}
@@ -755,21 +890,21 @@ class TestOnLoadCheckpoint:
         assert "state_dict" in ckpt
         assert "model.backbone.weight" in ckpt["state_dict"]
 
-    def test_raw_pth_original_model_key_preserved(self):
+    def test_raw_pth_original_model_key_preserved(self, patch_lit):
         """Original 'model' key is not deleted after state_dict is written."""
         fake = _FakeModule()
         ckpt = {"model": {"w": torch.zeros(1)}}
         RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert "model" in ckpt  # PTL may inspect it; must not be deleted
 
-    def test_empty_model_dict_produces_empty_state_dict(self):
+    def test_empty_model_dict_produces_empty_state_dict(self, patch_lit):
         """Empty 'model' dict without 'state_dict' → empty state_dict written."""
         fake = _FakeModule()
         ckpt = {"model": {}}
         RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert ckpt["state_dict"] == {}
 
-    def test_native_ptl_format_no_op(self):
+    def test_native_ptl_format_no_op(self, patch_lit):
         """Native PTL checkpoint (has 'state_dict', no 'model') → no mutation."""
         fake = _FakeModule()
         sentinel = {"model.layer.weight": torch.zeros(1)}
@@ -778,7 +913,7 @@ class TestOnLoadCheckpoint:
         assert ckpt["state_dict"] is sentinel  # not replaced
         assert not hasattr(fake, "_pending_legacy_ema_state")
 
-    def test_both_model_and_state_dict_present_state_dict_not_overwritten(self):
+    def test_both_model_and_state_dict_present_state_dict_not_overwritten(self, patch_lit):
         """'state_dict' is NOT overwritten when both 'model' and 'state_dict' exist."""
         fake = _FakeModule()
         existing_sd = {"model.existing": torch.zeros(1)}
@@ -790,7 +925,7 @@ class TestOnLoadCheckpoint:
         assert ckpt["state_dict"] is existing_sd
         assert "model.new_key" not in ckpt["state_dict"]
 
-    def test_legacy_ema_state_dict_stashed(self):
+    def test_legacy_ema_state_dict_stashed(self, patch_lit):
         """'legacy_ema_state_dict' in checkpoint → stashed on _pending_legacy_ema_state."""
         fake = _FakeModule()
         ema_weights = {"layer.weight": torch.ones(2)}
@@ -801,14 +936,14 @@ class TestOnLoadCheckpoint:
         RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert fake._pending_legacy_ema_state is ema_weights
 
-    def test_no_legacy_ema_attribute_not_set(self):
+    def test_no_legacy_ema_attribute_not_set(self, patch_lit):
         """No 'legacy_ema_state_dict' → _pending_legacy_ema_state not set on module."""
         fake = _FakeModule()
         ckpt = {"state_dict": {"model.w": torch.zeros(1)}}
         RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert not hasattr(fake, "_pending_legacy_ema_state")
 
-    def test_empty_checkpoint_is_noop(self):
+    def test_empty_checkpoint_is_noop(self, patch_lit):
         """Completely empty checkpoint {} triggers no mutation and no error."""
         fake = _FakeModule()
         ckpt: dict[str, Any] = {}
@@ -816,7 +951,7 @@ class TestOnLoadCheckpoint:
         assert ckpt == {}
         assert not hasattr(fake, "_pending_legacy_ema_state")
 
-    def test_second_call_overwrites_pending_ema(self):
+    def test_second_call_overwrites_pending_ema(self, patch_lit):
         """Calling on_load_checkpoint twice with EMA overwrites the stash."""
         fake = _FakeModule()
         first_ema = {"w": torch.zeros(1)}
@@ -825,7 +960,7 @@ class TestOnLoadCheckpoint:
         RFDETRModelModule.on_load_checkpoint(fake, {"state_dict": {}, "legacy_ema_state_dict": second_ema})
         assert fake._pending_legacy_ema_state is second_ema
 
-    def test_second_call_without_ema_leaves_first_stash(self):
+    def test_second_call_without_ema_leaves_first_stash(self, patch_lit):
         """Second call without 'legacy_ema_state_dict' does not clear the stash."""
         fake = _FakeModule()
         first_ema = {"w": torch.zeros(1)}
@@ -844,10 +979,13 @@ class TestPublicAPIExports:
 
     @pytest.mark.parametrize(
         "name",
-        ["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
-        ids=["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
+        [
+            pytest.param("RFDETRModelModule", id="RFDETRModelModule"),
+            pytest.param("RFDETRDataModule", id="RFDETRDataModule"),
+            pytest.param("build_trainer", id="build_trainer"),
+        ],
     )
-    def test_symbol_importable_from_rfdetr(self, name):
+    def test_symbol_importable_from_rfdetr(self, name, patch_lit):
         """Each PTL export is accessible as rfdetr.<name> via lazy __getattr__."""
         import rfdetr
 
@@ -855,30 +993,33 @@ class TestPublicAPIExports:
 
     @pytest.mark.parametrize(
         "name",
-        ["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
-        ids=["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
+        [
+            pytest.param("RFDETRModelModule", id="RFDETRModelModule"),
+            pytest.param("RFDETRDataModule", id="RFDETRDataModule"),
+            pytest.param("build_trainer", id="build_trainer"),
+        ],
     )
-    def test_symbol_is_same_object_as_rfdetr_training(self, name):
+    def test_symbol_is_same_object_as_rfdetr_training(self, name, patch_lit):
         """rfdetr.<name> is the identical object to rfdetr.training.<name>."""
         import rfdetr
         import rfdetr.training
 
         assert getattr(rfdetr, name) is getattr(rfdetr.training, name)
 
-    def test_ptl_names_not_in_all(self):
+    def test_ptl_names_not_in_all(self, patch_lit):
         """PTL exports are optional (rfdetr[train]) and must not be in rfdetr.__all__."""
         import rfdetr
 
         for name in ("RFDETRModelModule", "RFDETRDataModule", "build_trainer"):
             assert name not in rfdetr.__all__, f"{name} must not be in __all__ (optional extra)"
 
-    def test_rfdetr_all_no_duplicates(self):
+    def test_rfdetr_all_no_duplicates(self, patch_lit):
         """rfdetr.__all__ contains no duplicate names."""
         import rfdetr
 
         assert len(rfdetr.__all__) == len(set(rfdetr.__all__))
 
-    def test_plus_symbol_resolution_does_not_mutate_all(self, monkeypatch):
+    def test_plus_symbol_resolution_does_not_mutate_all(self, monkeypatch, patch_lit):
         """Top-level __all__ remains static when plus-only symbols resolve lazily."""
         import rfdetr
         import rfdetr.platform.models
@@ -891,14 +1032,14 @@ class TestPublicAPIExports:
         assert rfdetr.RFDETRXLarge is sentinel
         assert rfdetr.__all__ == original_all
 
-    def test_existing_exports_still_present(self):
+    def test_existing_exports_still_present(self, patch_lit):
         """Original RFDETR* class exports are unchanged."""
         import rfdetr
 
         for name in ["RFDETRNano", "RFDETRSmall", "RFDETRMedium", "RFDETRLarge"]:
             assert hasattr(rfdetr, name), f"rfdetr.{name} unexpectedly missing"
 
-    def test_convert_legacy_checkpoint_not_in_rfdetr_namespace(self):
+    def test_convert_legacy_checkpoint_not_in_rfdetr_namespace(self, patch_lit):
         """convert_legacy_checkpoint is in rfdetr.training but not the top-level rfdetr namespace."""
         import rfdetr
         from rfdetr.training import convert_legacy_checkpoint  # noqa: F401
@@ -908,7 +1049,7 @@ class TestPublicAPIExports:
 
 
 class TestRemovedLegacyModuleAliases:
-    """Removed legacy modules resolve via shims today and via migration hints after removal."""
+    """Removed legacy modules raise migration-hint ImportErrors on any access."""
 
     @staticmethod
     def _simulate_missing_removed_module_specs(monkeypatch: pytest.MonkeyPatch, *names: str) -> None:
@@ -931,18 +1072,6 @@ class TestRemovedLegacyModuleAliases:
         for root_name in root_names:
             monkeypatch.delitem(rfdetr.__dict__, root_name, raising=False)
 
-    def test_removed_util_alias_resolves_via_package_attribute(self) -> None:
-        """PEP 562 lookup resolves rfdetr.util while the shim package exists."""
-        import rfdetr
-
-        assert rfdetr.util.__name__ == "rfdetr.util"
-
-    def test_removed_deploy_alias_resolves_via_package_attribute(self) -> None:
-        """PEP 562 lookup resolves rfdetr.deploy while the shim package exists."""
-        import rfdetr
-
-        assert rfdetr.deploy.__name__ == "rfdetr.deploy"
-
     def test_removed_shim_missing_raises_importerror_with_getattr(self) -> None:
         """Missing removed shim should raise ImportError with migration hint."""
         import rfdetr
@@ -950,7 +1079,7 @@ class TestRemovedLegacyModuleAliases:
         missing_name = "rfdetr.missing_removed_shim"
         missing_exc = ModuleNotFoundError(f"No module named '{missing_name}'", name=missing_name)
         with (
-            patch.dict(rfdetr._REMOVED_IN_V17, {"missing_removed_shim": "migration hint"}),
+            patch.dict(rfdetr._REMOVE_IN_VERSION_1_9, {"missing_removed_shim": "migration hint"}),
             patch("rfdetr.importlib.import_module", side_effect=missing_exc),
             pytest.raises(ImportError, match="migration hint"),
         ):
@@ -961,7 +1090,7 @@ class TestRemovedLegacyModuleAliases:
         import rfdetr
 
         with (
-            patch.dict(rfdetr._REMOVED_IN_V17, {"missing_dep_shim": "migration hint"}),
+            patch.dict(rfdetr._REMOVE_IN_VERSION_1_9, {"missing_dep_shim": "migration hint"}),
             patch(
                 "rfdetr.importlib.import_module",
                 side_effect=ModuleNotFoundError("No module named 'torchvision_ops'", name="torchvision_ops"),
@@ -977,7 +1106,7 @@ class TestRemovedLegacyModuleAliases:
         """Dotted legacy imports get a migration hint once the util shim package is removed."""
         self._simulate_missing_removed_module_specs(monkeypatch, "rfdetr.util")
 
-        with pytest.raises(ImportError, match=r"rfdetr\.util was removed in v1\.7"):
+        with pytest.raises(ImportError, match=r"rfdetr\.util was removed in v1\.9"):
             importlib.import_module("rfdetr.util")
 
     def test_removed_deploy_submodule_import_raises_migration_hint_when_shim_is_deleted(
@@ -987,7 +1116,7 @@ class TestRemovedLegacyModuleAliases:
         """Dotted legacy submodule imports get a migration hint once the deploy shim is removed."""
         self._simulate_missing_removed_module_specs(monkeypatch, "rfdetr.deploy", "rfdetr.deploy.benchmark")
 
-        with pytest.raises(ImportError, match=r"rfdetr\.deploy was removed in v1\.7"):
+        with pytest.raises(ImportError, match=r"rfdetr\.deploy was removed in v1\.9"):
             importlib.import_module("rfdetr.deploy.benchmark")
 
     def test_find_spec_ignores_non_rfdetr_top_level_imports(self) -> None:
@@ -1012,55 +1141,7 @@ class TestRemovedLegacyModuleAliases:
 
 
 # ---------------------------------------------------------------------------
-# 6. RFDETRLarge deprecated-config fallback behaviour
-# ---------------------------------------------------------------------------
-
-
-class TestRFDETRLargeFallback:
-    """RFDETRLarge retries only for deprecated-weight compatibility errors."""
-
-    def test_cuda_oom_runtime_error_does_not_retry(self, monkeypatch):
-        """CUDA OOM should fail fast without deprecated-config retry."""
-        call_count = 0
-
-        def _raise_oom(self, **kwargs):
-            del self, kwargs
-            nonlocal call_count
-            call_count += 1
-            raise RuntimeError("CUDA out of memory. Tried to allocate 16.00 MiB.")
-
-        monkeypatch.setattr(RFDETR, "__init__", _raise_oom)
-
-        with pytest.raises(RuntimeError, match="out of memory"):
-            RFDETRLarge()
-
-        assert call_count == 1
-
-    def test_state_dict_runtime_error_retries_once_with_deprecated_config(self, monkeypatch):
-        """State-dict mismatch errors trigger exactly one deprecated-config retry."""
-        call_count = 0
-
-        def _raise_then_succeed(self, **kwargs):
-            del kwargs
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("Error(s) in loading state_dict for Model: size mismatch for backbone.weight")
-            self.model = MagicMock()
-
-        monkeypatch.setattr(RFDETR, "__init__", _raise_then_succeed)
-        warn_spy = MagicMock()
-        monkeypatch.setattr("rfdetr.detr.logger.warning", warn_spy)
-
-        model = RFDETRLarge()
-
-        assert model.is_deprecated is True
-        assert call_count == 2
-        warn_spy.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# 7. _load_pretrain_weights_into — detr.py path (the non-PTL scenario from #806)
+# 6. _load_pretrain_weights_into — detr.py path (the non-PTL scenario from #806)
 # ---------------------------------------------------------------------------
 
 
@@ -1106,9 +1187,8 @@ def _make_detr_checkpoint(
 
 
 class TestLoadPretrainWeightsInto:
-    """Tests for load_pretrain_weights (models/weights.py) — checkpoint compatibility
-    validation exercised when RFDETRNano(pretrain_weights=...) is called (issue #806).
-    """
+    """Tests for load_pretrain_weights (models/weights.py) — checkpoint compatibility validation exercised when
+    RFDETRNano(pretrain_weights=...) is called (issue #806)."""
 
     @pytest.fixture(autouse=True)
     def _patch_download(self, monkeypatch):
@@ -1117,7 +1197,7 @@ class TestLoadPretrainWeightsInto:
         monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
         monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
 
-    def test_seg_ckpt_into_detection_model_raises_via_detr_path(self, monkeypatch, tmp_path):
+    def test_seg_ckpt_into_detection_model_raises_via_detr_path(self, monkeypatch, tmp_path, patch_lit):
         """Segmentation checkpoint must raise ValueError when loaded into a detection model."""
         from rfdetr.models.weights import load_pretrain_weights
 
@@ -1130,7 +1210,7 @@ class TestLoadPretrainWeightsInto:
         with pytest.raises(ValueError, match="segmentation head"):
             load_pretrain_weights(fake_model, mc)
 
-    def test_patch_size_mismatch_raises_via_detr_path(self, monkeypatch, tmp_path):
+    def test_patch_size_mismatch_raises_via_detr_path(self, monkeypatch, tmp_path, patch_lit):
         """patch_size mismatch must raise ValueError via the load_pretrain_weights path."""
         from rfdetr.models.weights import load_pretrain_weights
 
@@ -1152,13 +1232,12 @@ class TestLoadPretrainWeightsInto:
 class TestClassNamesProperty:
     """RFDETR.class_names property returns List[str] (0-indexed)."""
 
-    def test_empty_class_names_returns_empty_list_not_coco(self):
+    def test_empty_class_names_returns_empty_list_not_coco(self, patch_lit):
         """class_names property returns [] when model.class_names is [], NOT COCO fallback.
 
-        Regression test for #509: the truthiness check `and self.model.class_names:`
-        treated [] as falsy and fell through to return COCO_CLASSES, defeating the
-        detr.py sync-back even after training on a dataset that reports empty names.
-        The fix uses `is not None` so that [] is preserved.
+        Regression test for #509: the truthiness check `and self.model.class_names:` treated [] as falsy and fell
+        through to return COCO_CLASSES, defeating the detr.py sync-back even after training on a dataset that reports
+        empty names. The fix uses `is not None` so that [] is preserved.
         """
         mock_self = MagicMock()
         mock_self.model.class_names = []
@@ -1167,7 +1246,7 @@ class TestClassNamesProperty:
 
         assert result == [], "class_names=[] must return [] (empty list), not COCO fallback"
 
-    def test_none_class_names_returns_coco(self):
+    def test_none_class_names_returns_coco(self, patch_lit):
         """class_names property falls back to COCO_CLASS_NAMES when model.class_names is None."""
         from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 
@@ -1179,7 +1258,7 @@ class TestClassNamesProperty:
         assert result == COCO_CLASS_NAMES
         assert result is not COCO_CLASS_NAMES, "COCO fallback must return a copy, not the mutable global"
 
-    def test_custom_class_names_returned_as_list(self):
+    def test_custom_class_names_returned_as_list(self, patch_lit):
         """Non-empty class_names are returned as a 0-indexed list."""
         mock_self = MagicMock()
         mock_self.model.class_names = ["cat", "dog"]
@@ -1188,7 +1267,7 @@ class TestClassNamesProperty:
 
         assert result == ["cat", "dog"]
 
-    def test_custom_class_names_returns_shallow_copy(self):
+    def test_custom_class_names_returns_shallow_copy(self, patch_lit):
         """Mutating the returned class_names list must not mutate model state."""
         mock_self = MagicMock()
         mock_self.model.class_names = ["cat", "dog"]
@@ -1208,15 +1287,16 @@ class TestClassNamesProperty:
 class TestDeployToRoboflow:
     """deploy_to_roboflow writes class_names.txt and embeds class_names in args.
 
-    Regression tests for the bug where RFDETRSeg models (and any model whose
-    args namespace lacks a ``class_names`` attribute) failed to upload to
-    Roboflow with a FileNotFoundError from the Roboflow client library.
+    Regression tests for the bug where RFDETRSeg models (and any model whose args namespace lacks a ``class_names``
+    attribute) failed to upload to Roboflow with a FileNotFoundError from the Roboflow client library.
     """
 
-    def _make_mock_self(self, class_names, size="rfdetr-small"):
-        """Return a minimal RFDETR-like mock suitable for deploy_to_roboflow."""
+    @pytest.fixture
+    def mock_self(self):
+        """Return a minimal RFDETR-like mock for deploy_to_roboflow tests."""
+        class_names = ["cat", "dog"]
         mock_self = MagicMock(spec=RFDETR)
-        mock_self.size = size
+        mock_self.size = "rfdetr-small"
         mock_self.class_names = class_names  # the property, resolved to a plain list
         # `model` is an instance attribute (set in __init__), not a class attribute, so
         # MagicMock(spec=RFDETR).__getattr__ would raise AttributeError for it.  Assign
@@ -1224,9 +1304,19 @@ class TestDeployToRoboflow:
         mock_self.model = MagicMock()
         mock_self.model.model.state_dict.return_value = {}
         mock_self.model.args = SimpleNamespace(num_classes=len(class_names))
+        # deploy_to_roboflow now delegates bundle-writing to export_for_roboflow; bind the
+        # real method so these end-to-end tests exercise it (a bare MagicMock attribute
+        # would no-op the class_names.txt / torch.save side effects).
+        mock_self.export_for_roboflow = lambda output_dir: RFDETR.export_for_roboflow(mock_self, output_dir)
         return mock_self
 
-    def test_class_names_txt_written_with_correct_content(self, tmp_path, monkeypatch):
+    @staticmethod
+    def _set_class_names(mock_self: MagicMock, class_names: list[str]) -> None:
+        """Update class names and keep args.num_classes in sync."""
+        mock_self.class_names = class_names
+        mock_self.model.args.num_classes = len(class_names)
+
+    def test_class_names_txt_written_with_correct_content(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """deploy_to_roboflow must write class_names.txt with one name per line.
 
         Regression: RFDETRSeg models were failing with FileNotFoundError from
@@ -1235,14 +1325,14 @@ class TestDeployToRoboflow:
         monkeypatch.chdir(tmp_path)
 
         class_names = ["cat", "dog", "bird"]
-        mock_self = self._make_mock_self(class_names)
+        self._set_class_names(mock_self, class_names)
         mock_rf = MagicMock()
 
         captured: dict = {}
 
         def deploy_side_effect(model_type, model_path, filename, **kwargs):
             # Inspect class_names.txt while the temp dir still exists (before cleanup).
-            f = (tmp_path / model_path / "class_names.txt").resolve()
+            f = (Path(model_path) / "class_names.txt").resolve()
             if f.exists():
                 captured["content"] = f.read_text()
 
@@ -1260,7 +1350,7 @@ class TestDeployToRoboflow:
         assert "content" in captured, "class_names.txt was not present in the upload directory during deploy"
         assert captured["content"] == "cat\ndog\nbird"
 
-    def test_args_class_names_set_in_checkpoint(self, tmp_path, monkeypatch):
+    def test_args_class_names_set_in_checkpoint(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """The saved checkpoint args must contain class_names when args lacks it.
 
         Regression: args.class_names was absent after switching to PTL training,
@@ -1269,7 +1359,6 @@ class TestDeployToRoboflow:
         monkeypatch.chdir(tmp_path)
 
         class_names = ["cat", "dog"]
-        mock_self = self._make_mock_self(class_names)
         # Ensure class_names is absent from args (mimics the regression scenario).
         assert not hasattr(mock_self.model.args, "class_names")
 
@@ -1298,12 +1387,11 @@ class TestDeployToRoboflow:
         assert hasattr(saved_args, "class_names"), "class_names must be present in saved args"
         assert saved_args.class_names == class_names
 
-    def test_args_class_names_set_when_none_in_checkpoint(self, tmp_path, monkeypatch):
+    def test_args_class_names_set_when_none_in_checkpoint(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """class_names must be set when args has the attribute but its value is None."""
         monkeypatch.chdir(tmp_path)
 
         class_names = ["cat", "dog"]
-        mock_self = self._make_mock_self(class_names)
         # Simulate the case where args has class_names but it is explicitly None.
         mock_self.model.args.class_names = None
 
@@ -1328,12 +1416,11 @@ class TestDeployToRoboflow:
         saved_args = saved_checkpoints[0]["args"]
         assert saved_args.class_names == class_names, "class_names must be populated when args.class_names is None"
 
-    def test_existing_args_class_names_not_overwritten(self, tmp_path, monkeypatch):
+    def test_existing_args_class_names_not_overwritten(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """If args already has class_names set, deploy_to_roboflow must not overwrite it."""
         monkeypatch.chdir(tmp_path)
 
         existing_names = ["existing_cat", "existing_dog"]
-        mock_self = self._make_mock_self(["cat", "dog"])
         mock_self.model.args.class_names = existing_names
 
         saved_checkpoints: list = []
@@ -1357,13 +1444,18 @@ class TestDeployToRoboflow:
         saved_args = saved_checkpoints[0]["args"]
         assert saved_args.class_names == existing_names, "existing args.class_names must not be overwritten"
 
-    def test_temp_dir_cleaned_up_after_deploy(self, tmp_path, monkeypatch):
+    def test_temp_dir_cleaned_up_after_deploy(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """The temporary upload directory must be removed after a successful deploy."""
         monkeypatch.chdir(tmp_path)
 
-        mock_self = self._make_mock_self(["cat"])
+        self._set_class_names(mock_self, ["cat"])
         mock_rf = MagicMock()
-        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.return_value = None
+        deployed_paths: list[Path] = []
+
+        def deploy_side_effect(model_type, model_path, filename, **kwargs):
+            deployed_paths.append(Path(model_path))
+
+        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.side_effect = deploy_side_effect
 
         with patch("roboflow.Roboflow", return_value=mock_rf):
             RFDETR.deploy_to_roboflow(
@@ -1374,17 +1466,23 @@ class TestDeployToRoboflow:
                 api_key="dummy-key",
             )
 
-        assert not (tmp_path / ".roboflow_temp_upload").exists(), "Temp upload dir must be removed after deploy"
+        assert deployed_paths, "deploy must receive a temporary model_path"
+        assert not deployed_paths[0].exists(), "Temporary upload dir must be removed after deploy"
+        assert not (tmp_path / ".roboflow_temp_upload").exists(), "Fixed-name temp dir must not be created"
 
-    def test_temp_dir_cleaned_up_after_deploy_failure(self, tmp_path, monkeypatch):
+    def test_temp_dir_cleaned_up_after_deploy_failure(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """Temp upload dir must be removed even when deploy() raises an exception."""
         monkeypatch.chdir(tmp_path)
 
-        mock_self = self._make_mock_self(["cat"])
+        self._set_class_names(mock_self, ["cat"])
         mock_rf = MagicMock()
-        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.side_effect = RuntimeError(
-            "upload failed",
-        )
+        deployed_paths: list[Path] = []
+
+        def deploy_side_effect(model_type, model_path, filename, **kwargs):
+            deployed_paths.append(Path(model_path))
+            raise RuntimeError("upload failed")
+
+        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.side_effect = deploy_side_effect
 
         with patch("roboflow.Roboflow", return_value=mock_rf), pytest.raises(RuntimeError, match="upload failed"):
             RFDETR.deploy_to_roboflow(
@@ -1395,9 +1493,61 @@ class TestDeployToRoboflow:
                 api_key="dummy-key",
             )
 
-        assert not (tmp_path / ".roboflow_temp_upload").exists(), (
-            "Temp upload dir must be removed even after a failed deploy"
-        )
+        assert deployed_paths, "deploy must receive a temporary model_path"
+        assert not deployed_paths[0].exists(), "Temporary upload dir must be removed even after a failed deploy"
+        assert not (tmp_path / ".roboflow_temp_upload").exists(), "Fixed-name temp dir must not be created"
+
+    @staticmethod
+    def _deploy(mock_self, size=None):
+        """Call deploy_to_roboflow with a mocked Roboflow client; return the captured deploy mock."""
+        mock_rf = MagicMock()
+        deploy_mock = mock_rf.workspace.return_value.project.return_value.version.return_value.deploy
+        kwargs = {} if size is None else {"size": size}
+        with patch("roboflow.Roboflow", return_value=mock_rf):
+            RFDETR.deploy_to_roboflow(
+                mock_self,
+                workspace="test-workspace",
+                project_id="test-project",
+                version=1,
+                api_key="dummy-key",
+                **kwargs,
+            )
+        return deploy_mock
+
+    def test_explicit_size_overrides_model_size(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """An explicitly passed size must win over self.size (documented precedence).
+
+        Regression: ``size = self.size or size`` inverted the precedence, silently ignoring the user's argument.
+        """
+        monkeypatch.chdir(tmp_path)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            deploy_mock = self._deploy(mock_self, size="rfdetr-medium")
+
+        assert deploy_mock.call_args.kwargs["model_type"] == "rfdetr-medium"
+
+    def test_size_defaults_to_model_size_when_not_provided(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """Without an explicit size the model's own size is deployed."""
+        monkeypatch.chdir(tmp_path)
+        deploy_mock = self._deploy(mock_self)
+
+        assert deploy_mock.call_args.kwargs["model_type"] == "rfdetr-small"
+
+    def test_warns_when_explicit_size_differs_from_model_size(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """A UserWarning is emitted when the explicit size conflicts with the model's own size."""
+        monkeypatch.chdir(tmp_path)
+        with pytest.warns(UserWarning, match="rfdetr-medium.*rfdetr-small"):
+            self._deploy(mock_self, size="rfdetr-medium")
+
+    def test_no_warning_when_explicit_size_matches_model_size(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """No size-conflict warning is emitted when the explicit size equals the model's own size."""
+        monkeypatch.chdir(tmp_path)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            self._deploy(mock_self, size="rfdetr-small")
+
+        conflict_warnings = [w for w in caught if "deploy_to_roboflow" in str(w.message)]
+        assert not conflict_warnings
 
 
 # ---------------------------------------------------------------------------
@@ -1408,61 +1558,545 @@ class TestDeployToRoboflow:
 class TestSaveTrainingConfig:
     """RFDETR.train() writes training_config.json to output_dir after training."""
 
-    def _run_train(self, tmp_path, class_names=None, **train_overrides):
+    def _run_train(self, tmp_path, patch_lit, class_names=None, **train_overrides):
         """Run RFDETR.train() with patched PTL; return (mock_self, output_dir path).
 
-        class_names is injected via the datamodule mock (the path RFDETR.train uses
-        to sync self.model.class_names after trainer.fit completes).
+        class_names is injected via the datamodule mock (the path RFDETR.train uses to sync self.model.class_names after
+        trainer.fit completes).
         """
         if class_names is None:
             class_names = ["cat", "dog", "bird"]
         mock_self = _make_rfdetr_self(tmp_path, **train_overrides)
-        p_mod, p_dm, p_bt, _, dmcls, _ = _patch_lit()
+        p_mod, p_dm, p_bt, _, dmcls, _ = patch_lit
         dmcls.return_value.class_names = class_names
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
         config = mock_self.get_train_config.return_value
         return mock_self, config.output_dir
 
-    def test_training_config_json_created(self, tmp_path):
+    def test_training_config_json_created(self, tmp_path, patch_lit):
         """training_config.json is written to output_dir after train() completes."""
-        _, output_dir = self._run_train(tmp_path)
+        _, output_dir = self._run_train(tmp_path, patch_lit)
         assert os.path.exists(os.path.join(output_dir, "training_config.json"))
 
-    def test_training_config_json_has_required_keys(self, tmp_path):
+    def test_training_config_json_has_required_keys(self, tmp_path, patch_lit):
         """Saved JSON contains all expected top-level keys."""
-        _, output_dir = self._run_train(tmp_path)
+        _, output_dir = self._run_train(tmp_path, patch_lit)
         with open(os.path.join(output_dir, "training_config.json")) as f:
             saved = json.load(f)
         assert set(saved.keys()) == {"train_config", "model_config", "model_config_type", "class_names", "num_classes"}
 
-    def test_training_config_json_class_names_and_num_classes(self, tmp_path):
+    def test_training_config_json_class_names_and_num_classes(self, tmp_path, patch_lit):
         """class_names and num_classes in saved JSON match model state after training."""
-        _, output_dir = self._run_train(tmp_path)
+        _, output_dir = self._run_train(tmp_path, patch_lit)
         with open(os.path.join(output_dir, "training_config.json")) as f:
             saved = json.load(f)
         assert saved["class_names"] == ["cat", "dog", "bird"]
         assert saved["num_classes"] == 3
 
-    def test_model_config_type_reflects_class_name(self, tmp_path):
+    def test_model_config_type_reflects_class_name(self, tmp_path, patch_lit):
         """model_config_type field matches the actual model config class name."""
-        _, output_dir = self._run_train(tmp_path)
+        _, output_dir = self._run_train(tmp_path, patch_lit)
         with open(os.path.join(output_dir, "training_config.json")) as f:
             saved = json.load(f)
         assert saved["model_config_type"] == "RFDETRBaseConfig"
 
-    def test_non_serializable_value_coerced_not_raises(self, tmp_path):
+    def test_non_serializable_value_coerced_not_raises(self, tmp_path, patch_lit):
         """Non-JSON-serializable values are coerced via default=str, not raising TypeError."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _, dmcls, _ = _patch_lit()
+        p_mod, p_dm, p_bt, _, dmcls, _ = patch_lit
         dmcls.return_value.class_names = [Path("/some/class"), None]
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)  # must not raise TypeError
         config = mock_self.get_train_config.return_value
         assert os.path.exists(os.path.join(config.output_dir, "training_config.json"))
 
-    def test_output_dir_created_when_missing(self, tmp_path):
+    def test_output_dir_created_when_missing(self, tmp_path, patch_lit):
         """output_dir is created by makedirs if it does not exist before training."""
         nested_dir = str(tmp_path / "new" / "nested" / "output")
-        _, output_dir = self._run_train(tmp_path, output_dir=nested_dir)
+        _, output_dir = self._run_train(tmp_path, patch_lit, output_dir=nested_dir)
         assert os.path.exists(os.path.join(output_dir, "training_config.json"))
+
+
+# ---------------------------------------------------------------------------
+# TestRFDETRTrainNumClassesAutoDetect
+# ---------------------------------------------------------------------------
+
+
+class TestRFDETRTrainNumClassesAutoDetect:
+    """RFDETR.train() auto-detects num_classes from the training dataset.
+
+    When the user did not explicitly override ``num_classes`` (or passed the class-config default), the model's
+    ``num_classes`` is automatically aligned to the dataset's class count before ``RFDETRModelModule`` is constructed.
+
+    When the user *did* explicitly set a non-default ``num_classes`` that differs from the dataset, the configured value
+    is preserved and a warning is logged.
+
+    Dataset detection is best-effort: if ``_load_classes`` raises any of the expected exceptions (``FileNotFoundError``,
+    ``ValueError``, ``KeyError``, ``OSError``), training proceeds unaffected without raising.
+    """
+
+    _FOUR_CLASS_NAMES = ["ball", "goalkeeper", "referee", "player"]
+
+    @pytest.fixture
+    def mock_self(self, tmp_path):
+        """Return a RFDETR-like mock for num_classes auto-detect tests."""
+        mock = MagicMock()
+        mock.model_config = RFDETRBaseConfig(pretrain_weights=None, device="cpu")
+        mock.model = MagicMock()
+        mock.get_train_config.return_value = _make_train_config(tmp_path)
+        # Bind the real instance method so train()'s self._align_num_classes_from_dataset
+        # call exercises actual logic rather than a no-op MagicMock.
+        mock._align_num_classes_from_dataset = lambda ds: RFDETR._align_num_classes_from_dataset(mock, ds)
+        return mock
+
+    def _write_coco_categories(self, dataset_dir: Path, categories: list[dict[str, Any]]) -> None:
+        """Write a minimal COCO annotation file with provided categories."""
+        (dataset_dir / "train").mkdir(parents=True, exist_ok=True)
+        with (dataset_dir / "train" / "_annotations.coco.json").open("w", encoding="utf-8") as f:
+            json.dump({"images": [], "annotations": [], "categories": categories}, f)
+
+    def _write_roboflow_keypoint_categories(self, dataset_dir: Path, keypoint_count: int) -> None:
+        """Write a minimal Roboflow COCO keypoint annotation file."""
+        keypoint_names = [f"kp_{idx}" for idx in range(keypoint_count)]
+        self._write_coco_categories(
+            dataset_dir,
+            categories=[
+                {
+                    "id": 0,
+                    "name": "person",
+                    "supercategory": "none",
+                    "keypoints": keypoint_names,
+                    "skeleton": [],
+                }
+            ],
+        )
+
+    def test_auto_adjusts_num_classes_when_not_overridden(self, mock_self, patch_lit):
+        """When user did not set num_classes, auto-adjust to the dataset class count.
+
+        Scenario: model built without explicit num_classes → default=90.
+        Dataset has 4 classes.  Expected: model_config.num_classes becomes 4.
+        """
+        assert "num_classes" not in mock_self.model_config.model_fields_set
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES)
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 4
+
+    def test_coco_auto_detect_uses_full_category_mapping_not_leaf_only_names(self, mock_self, patch_lit):
+        """COCO class-count detection must follow ``coco.cats`` semantics.
+
+        Regression test for hierarchical COCO datasets where leaf-only class names can undercount categories relative to
+        label remapping.
+        """
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_coco_categories(
+            dataset_dir,
+            categories=[
+                {"id": 1, "name": "animal", "supercategory": "none"},
+                {"id": 2, "name": "dog", "supercategory": "animal"},
+                {"id": 3, "name": "cat", "supercategory": "animal"},
+            ],
+        )
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["dog", "cat"])
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3
+
+    def test_keypoint_coco_auto_detect_uses_active_first_schema_slots(self, mock_self, patch_lit):
+        """Keypoint COCO class-count detection should count active-first RF-DETR schema slots."""
+        mock_self.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_coco_categories(
+            dataset_dir,
+            categories=[
+                {
+                    "id": 0,
+                    "name": "person",
+                    "keypoints": ["nose", "left_eye"],
+                    "skeleton": [],
+                },
+            ],
+        )
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 1
+        assert mock_self.model.args.num_classes == 1
+
+    def test_preserves_explicit_default_num_classes_when_dataset_differs(
+        self,
+        caplog,
+        mock_self,
+        monkeypatch,
+        patch_lit,
+    ):
+        """An explicitly-passed num_classes is preserved even when it equals the default.
+
+        Scenario: user passes num_classes=90 (the ModelConfig default) explicitly.  Dataset has
+        4 classes.  Expected: model_config.num_classes stays at 90 and a warning is logged —
+        identical to the non-default case below, so an explicit setting always wins regardless of
+        whether it happens to equal the class default.
+        """
+        default_nc = RFDETRBaseConfig.model_fields["num_classes"].default
+        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=default_nc)
+        mock_self.model_config = mc
+        # num_classes equals the class default but was set explicitly.
+        assert "num_classes" in mock_self.model_config.model_fields_set
+        dataset_dir = mock_self.get_train_config.return_value.dataset_dir
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES)
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            with caplog.at_level("WARNING", logger="rf-detr"):
+                RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == default_nc
+        expected_fragment = (
+            f"Dataset '{dataset_dir}' has 4 classes but model was initialized with num_classes={default_nc}"
+        )
+        assert any(record.levelname == "WARNING" and expected_fragment in record.message for record in caplog.records)
+
+    def test_preserves_explicit_non_default_num_classes_when_dataset_differs(
+        self,
+        tmp_path,
+        caplog,
+        mock_self,
+        monkeypatch,
+        patch_lit,
+    ):
+        """When user explicitly set a non-default num_classes, it is preserved.
+
+        Scenario: user passes num_classes=10 (non-default).  Dataset has 4 classes.
+        Expected: model_config.num_classes stays at 10.
+        """
+        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=10)
+        mock_self.model_config = mc
+        dataset_dir = mock_self.get_train_config.return_value.dataset_dir
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES)
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            with caplog.at_level("WARNING", logger="rf-detr"):
+                RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 10
+        expected_fragment = f"Dataset '{dataset_dir}' has 4 classes but model was initialized with num_classes=10"
+        assert any(record.levelname == "WARNING" and expected_fragment in record.message for record in caplog.records)
+
+    def test_auto_adjust_syncs_model_args_num_classes(self, mock_self, patch_lit):
+        """When auto-adjusting, keep ModelContext args.num_classes in sync."""
+        mock_self.model.args = SimpleNamespace(num_classes=90)
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES)
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 4
+        assert mock_self.model.args.num_classes == 4
+
+    def test_keypoint_schema_inferred_when_not_explicitly_overridden(self, mock_self, patch_lit):
+        """Roboflow keypoint metadata should populate model_config.num_keypoints_per_class."""
+        mock_self.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[17])
+        mock_self._align_keypoint_schema_from_dataset = lambda config: RFDETR._align_keypoint_schema_from_dataset(
+            mock_self, config
+        )
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_roboflow_keypoint_categories(dataset_dir, keypoint_count=25)
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_keypoints_per_class == [25]
+        assert mock_self.model.args.num_keypoints_per_class == [25]
+        assert mock_self.model_config.num_classes == 1
+
+    def test_keypoint_flip_pairs_inferred_from_roboflow_coco_metadata(self, mock_self, patch_lit):
+        """Roboflow COCO keypoint names should populate train_config.keypoint_flip_pairs."""
+        mock_self.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[17])
+        mock_self._align_keypoint_schema_from_dataset = lambda config: RFDETR._align_keypoint_schema_from_dataset(
+            mock_self, config
+        )
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_coco_categories(
+            dataset_dir,
+            categories=[
+                {
+                    "id": 0,
+                    "name": "person",
+                    "supercategory": "none",
+                    "keypoints": ["nose", "left_eye", "right_eye"],
+                    "skeleton": [],
+                }
+            ],
+        )
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.get_train_config.return_value.keypoint_flip_pairs == [1, 2]
+
+    def test_keypoint_schema_and_flip_pairs_inferred_from_native_coco_metadata(self, tmp_path: Path) -> None:
+        """Native COCO person-keypoint annotations should use the same symmetry inference as Roboflow COCO."""
+        annotation_dir = tmp_path / "annotations"
+        annotation_dir.mkdir(parents=True)
+        annotation_path = annotation_dir / "person_keypoints_train2017.json"
+        annotation_path.write_text(
+            json.dumps(
+                {
+                    "images": [],
+                    "annotations": [],
+                    "categories": [
+                        {
+                            "id": 1,
+                            "name": "person",
+                            "supercategory": "person",
+                            "keypoints": ["nose", "left_eye", "right_eye"],
+                            "skeleton": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        from rfdetr.config import KeypointTrainConfig
+
+        model = object.__new__(RFDETR)
+        model.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        model.model = SimpleNamespace(args=SimpleNamespace(num_classes=90, num_keypoints_per_class=[17]))
+        train_config = KeypointTrainConfig(dataset_dir=str(tmp_path), dataset_file="coco", tensorboard=False)
+
+        model._align_keypoint_schema_from_dataset(train_config)
+
+        assert model.model_config.num_keypoints_per_class == [3]
+        assert model.model.args.num_keypoints_per_class == [3]
+        assert train_config.keypoint_flip_pairs == [1, 2]
+
+    def test_explicit_keypoint_flip_pairs_are_preserved_when_dataset_metadata_has_pairs(self, tmp_path: Path) -> None:
+        """Dataset-inferred pairs must not override an explicit user mapping."""
+        annotation_path = tmp_path / "train" / "_annotations.coco.json"
+        annotation_path.parent.mkdir(parents=True)
+        annotation_path.write_text(
+            json.dumps(
+                {
+                    "images": [],
+                    "annotations": [],
+                    "categories": [
+                        {
+                            "id": 0,
+                            "name": "person",
+                            "supercategory": "person",
+                            "keypoints": ["nose", "left_eye", "right_eye"],
+                            "skeleton": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        from rfdetr.config import KeypointTrainConfig
+
+        model = object.__new__(RFDETR)
+        model.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        model.model = SimpleNamespace(args=SimpleNamespace(num_classes=90, num_keypoints_per_class=[17]))
+        train_config = KeypointTrainConfig(
+            dataset_dir=str(tmp_path),
+            dataset_file="roboflow",
+            tensorboard=False,
+            keypoint_flip_pairs=[2, 0],
+        )
+
+        model._align_keypoint_schema_from_dataset(train_config)
+
+        assert model.model_config.num_keypoints_per_class == [3]
+        assert model.model.args.num_keypoints_per_class == [3]
+        assert train_config.keypoint_flip_pairs == [2, 0]
+
+    def test_explicit_keypoint_schema_mismatch_warns_and_uses_dataset(self, mock_self, patch_lit, caplog):
+        """Explicit num_keypoints_per_class mismatches should warn and use dataset metadata."""
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+            num_keypoints_per_class=[17],
+        )
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[17])
+        mock_self._align_keypoint_schema_from_dataset = lambda config: RFDETR._align_keypoint_schema_from_dataset(
+            mock_self, config
+        )
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_roboflow_keypoint_categories(dataset_dir, keypoint_count=25)
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        previous_propagate = detr_logger.propagate
+        detr_logger.propagate = True
+        try:
+            with p_mod, p_dm, p_bt, caplog.at_level("WARNING", logger="rf-detr"):
+                RFDETR.train(mock_self)
+        finally:
+            detr_logger.propagate = previous_propagate
+
+        assert mock_self.model_config.num_keypoints_per_class == [25]
+        assert mock_self.model.args.num_keypoints_per_class == [25]
+        assert any(
+            record.levelname == "WARNING"
+            and "Configured num_keypoints_per_class=[17]" in record.message
+            and "dataset keypoint metadata [25]" in record.message
+            for record in caplog.records
+        )
+
+    def test_no_adjustment_when_num_classes_already_matches_dataset(self, mock_self, patch_lit):
+        """No adjustment when the model's num_classes already equals the dataset count.
+
+        Scenario: user passes num_classes=4 and dataset has 4 classes.
+        Expected: model_config.num_classes remains 4 (no log noise, no error).
+        """
+        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=4)
+        mock_self.model_config = mc
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES)
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 4
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            pytest.param(FileNotFoundError("no such dataset"), id="file-not-found"),
+            pytest.param(ValueError("bad dataset"), id="value-error"),
+            pytest.param(KeyError("missing key"), id="key-error"),
+            pytest.param(OSError("io error"), id="os-error"),
+        ],
+    )
+    def test_no_crash_when_dataset_detection_raises(self, exc, mock_self, patch_lit):
+        """Training proceeds even if _load_classes raises a known exception.
+
+        Dataset detection is best-effort; errors must not block training.
+        """
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        load_classes_patch = patch.object(RFDETR, "_load_classes", side_effect=exc)
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)  # must not raise
+
+    def test_no_crash_when_dataset_dir_is_none(self, mock_self, patch_lit):
+        """Training proceeds when config.dataset_dir resolves to None.
+
+        Guards against AttributeError if getattr returns None.
+        """
+        # Override dataset_dir to None on the train config mock.
+        object.__setattr__(mock_self.get_train_config.return_value, "dataset_dir", None)
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)  # must not raise
+
+    def test_keypoint_schema_padded_when_num_classes_bumped_for_custom_dataset(self, mock_self, patch_lit):
+        """num_keypoints_per_class is zero-padded when auto-adjust bumps num_classes beyond schema length.
+
+        Regression test for the warning "Keypoint class-logit boost has N classes but detection head has M" on custom
+        (non-Roboflow) datasets.  Root cause: _align_num_classes_from_dataset bumped num_classes but did not pad the
+        keypoint schema.  After the fix the schema length equals num_classes and _aggregate_keypoint_class_logits no
+        longer fires the mismatch warning.
+        """
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+            num_keypoints_per_class=[17, 0],
+        )
+        mock_self.model.args = SimpleNamespace(num_classes=2, num_keypoints_per_class=[17, 0])
+
+        # Dataset has 3 classes; schema covers 2 → triggers the padding path.
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball", "referee"])
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3
+        assert mock_self.model_config.num_keypoints_per_class == [17, 0, 0]
+        assert mock_self.model.args.num_keypoints_per_class == [17, 0, 0]
+
+    def test_keypoint_schema_not_padded_when_already_covers_all_classes(self, mock_self, patch_lit):
+        """Schema is left untouched when it already spans all detection classes.
+
+        Scenario: schema [17, 0, 14] (len=3), dataset has 2 classes.  The schema expansion at
+        max(2, len(schema))=3 sets dataset_num_classes=3, auto-adjust fires (90→3), then the
+        padding guard len(3)<3 evaluates False and the schema is preserved unchanged.
+        Using a 2-class dataset (not 3) ensures the guard is actually reached and evaluated
+        rather than being vacuously bypassed by an early return.
+        """
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+            num_keypoints_per_class=[17, 0, 14],
+        )
+        mock_self.model.args = SimpleNamespace(num_classes=3, num_keypoints_per_class=[17, 0, 14])
+
+        # 2-class dataset so max(2, 3)=3; auto-adjust fires (90→3); guard 3<3=False (no padding).
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball"])
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3
+        assert mock_self.model_config.num_keypoints_per_class == [17, 0, 14]
+        assert mock_self.model.args.num_keypoints_per_class == [17, 0, 14]
+
+    def test_keypoint_schema_padded_when_model_args_absent(self, mock_self, patch_lit):
+        """model_config schema is padded even when model.args is absent (model_args=None path).
+
+        Scenario: schema [17, 0], 3-class dataset, model has no args attribute.
+        Expected: model_config.num_keypoints_per_class padded to [17, 0, 0]; no AttributeError.
+        """
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+            num_keypoints_per_class=[17, 0],
+        )
+        mock_self.model = MagicMock(spec=[])  # no 'args' attr → getattr(model, "args", None) = None
+
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball", "referee"])
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3
+        assert mock_self.model_config.num_keypoints_per_class == [17, 0, 0]
+
+    def test_keypoint_schema_not_padded_when_schema_empty(self, mock_self, patch_lit):
+        """Padding is skipped when num_keypoints_per_class is an empty list.
+
+        Scenario: use_grouppose_keypoints=True but schema is [], 3-class dataset.
+        Expected: auto-adjust fires (90→3) but schema stays [] — the truthiness guard
+        ``if keypoint_schema and ...`` short-circuits before evaluating the length check.
+        """
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None,
+            device="cpu",
+        )
+        mock_self.model_config.num_keypoints_per_class = []  # override default [17]
+        mock_self.model.args = SimpleNamespace(num_classes=90, num_keypoints_per_class=[])
+
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["player", "ball", "referee"])
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3  # auto-adjust still fires
+        assert mock_self.model_config.num_keypoints_per_class == []  # empty schema not padded

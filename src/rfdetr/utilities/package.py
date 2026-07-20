@@ -3,8 +3,9 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Package version and git-status helpers."""
+
+from __future__ import annotations
 
 import os
 import subprocess
@@ -15,12 +16,10 @@ def get_version(package_name: str = "rfdetr") -> str | None:
     """Get the current version of the specified package.
 
     Args:
-        package_name: The name of the package to get the version for.
-            Defaults to ``'rfdetr'``.
+        package_name: The name of the package to get the version for. Defaults to ``'rfdetr'``.
 
     Returns:
-        The version string of the specified package, or ``None`` if the version
-        cannot be determined.
+        The version string of the specified package, or ``None`` if the version cannot be determined.
     """
     try:
         return version(package_name)

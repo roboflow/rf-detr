@@ -1,3 +1,7 @@
+---
+description: RF-DETR dataset format guide for COCO JSON and YOLO. Auto-detection, directory structure, annotation schemas, and format conversion.
+---
+
 # Dataset Formats
 
 RF-DETR supports training on datasets in two popular formats: **COCO** and **YOLO**. The format is automatically detected based on your dataset's directory structure—simply pass your dataset directory to the `train()` method.
@@ -140,6 +144,64 @@ The `segmentation` field contains a list of polygons, where each polygon is a fl
 
 ---
 
+### Keypoint Annotations
+
+For training the keypoint preview model, use COCO JSON keypoint annotations. Roboflow-style COCO exports are supported
+when the split files are named `train/_annotations.coco.json` and `valid/_annotations.coco.json`.
+
+Each keypoint annotation must include a bounding box plus COCO keypoint fields:
+
+```json
+{
+  "id": 1,
+  "image_id": 1,
+  "category_id": 0,
+  "bbox": [
+    100,
+    150,
+    200,
+    180
+  ],
+  "area": 36000,
+  "iscrowd": 0,
+  "num_keypoints": 17,
+  "keypoints": [
+    110,
+    160,
+    2,
+    125,
+    158,
+    2
+  ]
+}
+```
+
+The category should declare the keypoint schema:
+
+```json
+{
+  "id": 0,
+  "name": "person",
+  "supercategory": "person",
+  "keypoints": [
+    "nose",
+    "left_eye",
+    "right_eye"
+  ],
+  "skeleton": []
+}
+```
+
+The `keypoints` array above is shortened for readability. In a valid COCO person-keypoint annotation it contains
+`17 * 3` values: `x`, `y`, and visibility for each keypoint.
+
+The keypoint preview model is pretrained on COCO person-style keypoints. Its default COCO schema is `[17]`, so
+keypoint-bearing categories are mapped onto the active keypoint label slot during COCO loading. Legacy checkpoints may
+still report a background-first `[0, 17]` schema, which RF-DETR accepts for compatibility. Custom keypoint training can
+also use YOLO pose labels, described below.
+
+---
+
 ## YOLO Format
 
 YOLO format uses separate text files for each image's annotations and a `data.yaml` configuration file that defines class names.
@@ -257,6 +319,74 @@ For segmentation, YOLO format extends the label format with polygon coordinates:
 ```
 
 The coordinates after the class ID represent the polygon vertices in normalized format.
+
+---
+
+### Pose Labels (YOLO Pose)
+
+For keypoint preview training, RF-DETR supports Ultralytics YOLO pose labels in the same directory layout shown above.
+The `data.yaml` file must declare `kpt_shape`:
+
+```yaml
+names:
+  0: person
+
+kpt_shape: [17, 3] # [number_of_keypoints, dimensions]; dimensions must be 2 or 3
+flip_idx: [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15]
+kpt_names:
+  0:
+    - nose
+    - left_eye
+    - right_eye
+```
+
+`kpt_names` is optional. When omitted, RF-DETR creates placeholder names such as `keypoint_0`. `flip_idx` is an
+Ultralytics-style length-`K` permutation used to infer RF-DETR's flat `keypoint_flip_pairs` for horizontal-flip
+augmentation.
+
+Each pose label row contains a bounding box followed by keypoints:
+
+```text
+<class_id> <x_center> <y_center> <width> <height> <px1> <py1> <v1> ... <pxK> <pyK> <vK>
+```
+
+For `kpt_shape: [K, 2]`, omit the visibility value:
+
+```text
+<class_id> <x_center> <y_center> <width> <height> <px1> <py1> ... <pxK> <pyK>
+```
+
+All box and keypoint coordinates are normalized to `[0, 1]`. RF-DETR converts keypoints to COCO-style `(x, y, visibility)` tensors internally. For `[K, 3]`, the visibility values are preserved. For `[K, 2]`, visibility is
+synthesized: nonzero points are marked visible (`2`) and `(0, 0)` points are marked absent (`0`).
+
+Use the YOLO schema helper when you want to configure a model explicitly:
+
+```python
+from pathlib import Path
+
+from rfdetr import RFDETRKeypointPreview
+from rfdetr.datasets._keypoint_schema import infer_yolo_keypoint_schema
+
+DATASET_DIR = Path("/path/to/yolo-pose-dataset")
+schema = infer_yolo_keypoint_schema(DATASET_DIR / "data.yaml")
+
+model = RFDETRKeypointPreview(
+    num_classes=len(schema.class_names),
+    num_keypoints_per_class=schema.num_keypoints_per_class,
+)
+
+model.train(
+    dataset_file="yolo",
+    dataset_dir=str(DATASET_DIR),
+    class_names=schema.class_names,
+    keypoint_oks_sigmas=schema.keypoint_oks_sigmas,
+)
+```
+
+!!! note "flip_idx and keypoint_flip_pairs"
+
+    `flip_idx` is a permutation, while `keypoint_flip_pairs` is a flat pair list. During `model.train()`, RF-DETR infers
+    the pair list automatically from `flip_idx` when no explicit `keypoint_flip_pairs` is provided.
 
 ---
 

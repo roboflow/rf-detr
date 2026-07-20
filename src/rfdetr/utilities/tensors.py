@@ -10,14 +10,37 @@
 # Copied from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
-
 """Tensor utilities: NestedTensor, collate_fn, and helpers."""
 
+from __future__ import annotations
+
+from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 import torch
 import torchvision
 from torch import Tensor
+
+
+def _round_up_to_multiple(value: int, multiple: int) -> int:
+    """Round *value* up to the next multiple of *multiple*.
+
+    Args:
+        value: Non-negative integer to round.
+        multiple: Positive integer divisor.
+
+    Returns:
+        The smallest integer greater than or equal to *value* that is an exact multiple of *multiple*.
+
+    Raises:
+        ValueError: If ``value`` is negative or ``multiple`` is not positive.
+    """
+    if value < 0:
+        raise ValueError(f"value must be non-negative, got {value}")
+    if multiple <= 0:
+        raise ValueError(f"multiple must be a positive integer, got {multiple}")
+    return ((value + multiple - 1) // multiple) * multiple
 
 
 def _max_by_axis(the_list: list[list[int]]) -> list[int]:
@@ -29,7 +52,7 @@ def _max_by_axis(the_list: list[list[int]]) -> list[int]:
     Returns:
         List of per-position maximums.
     """
-    maxes = the_list[0]
+    maxes = list(the_list[0])
     for sublist in the_list[1:]:
         for index, item in enumerate(sublist):
             maxes[index] = max(maxes[index], item)
@@ -50,8 +73,7 @@ class NestedTensor:
         """Move tensors and mask to *device*.
 
         Args:
-            device: Target device.
-            **kwargs: Additional arguments forwarded to ``Tensor.to``.
+            device: Target device. **kwargs: Additional arguments forwarded to ``Tensor.to``.
 
         Returns:
             New NestedTensor on *device*.
@@ -88,24 +110,35 @@ class NestedTensor:
         return str(self.tensors)
 
 
-def nested_tensor_from_tensor_list(tensor_list: list[Tensor]) -> NestedTensor:
+def nested_tensor_from_tensor_list(
+    tensor_list: list[Tensor],
+    block_size: int | None = None,
+) -> NestedTensor:
     """Pad a list of variable-size tensors into a single NestedTensor.
 
     Args:
         tensor_list: List of 3-D tensors (C, H, W) with possibly different H, W.
+        block_size: When set, round the padded ``H`` and ``W`` up to the next
+            multiple of *block_size* before allocating the batch tensor.  Used to satisfy backbone divisibility
+            requirements (e.g. windowed-attention backbones require ``H % (patch_size * num_windows) == 0``).  The
+            rounded-up strip is explicitly tracked in the ``mask`` as padding.
 
     Returns:
-        NestedTensor with all images padded to the maximum spatial dimensions.
+        NestedTensor with all images padded to the maximum spatial dimensions (rounded up to *block_size* when
+        provided).
     """
     # TODO make this more general
     if tensor_list[0].ndim == 3:
         if torchvision._is_tracing():
             # nested_tensor_from_tensor_list() does not export well to ONNX
             # call _onnx_nested_tensor_from_tensor_list() instead
-            return _onnx_nested_tensor_from_tensor_list(tensor_list)
+            return _onnx_nested_tensor_from_tensor_list(tensor_list, block_size=block_size)
 
         # TODO make it support different-sized images
         max_size = _max_by_axis([list(img.shape) for img in tensor_list])
+        if block_size is not None:
+            max_size[1] = _round_up_to_multiple(max_size[1], block_size)
+            max_size[2] = _round_up_to_multiple(max_size[2], block_size)
         # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
         batch_shape = [len(tensor_list)] + max_size
         b, c, h, w = batch_shape
@@ -124,20 +157,34 @@ def nested_tensor_from_tensor_list(tensor_list: list[Tensor]) -> NestedTensor:
 # _onnx_nested_tensor_from_tensor_list() is an implementation of
 # nested_tensor_from_tensor_list() that is supported by ONNX tracing.
 @torch.jit.unused
-def _onnx_nested_tensor_from_tensor_list(tensor_list: list[Tensor]) -> NestedTensor:
+def _onnx_nested_tensor_from_tensor_list(
+    tensor_list: list[Tensor],
+    block_size: int | None = None,
+) -> NestedTensor:
     """ONNX-tracing-compatible variant of ``nested_tensor_from_tensor_list``.
 
     Args:
         tensor_list: List of 3-D tensors (C, H, W).
+        block_size: When set, round ``H`` and ``W`` up to the next multiple of
+            this value before padding.  See :func:`nested_tensor_from_tensor_list`.
 
     Returns:
         Padded NestedTensor suitable for ONNX export.
     """
-    max_size = []
+    max_size: list[Tensor] = []
     for i in range(tensor_list[0].dim()):
-        max_size_i = torch.max(torch.stack([img.shape[i] for img in tensor_list]).to(torch.float32)).to(torch.int64)
+        # ``img.shape[i]`` is a symbolic Tensor under ONNX tracing (not the plain
+        # int mypy infers for the untraced case); ``as_tensor`` is a no-op on the
+        # traced Tensor and correctly wraps the untraced int.
+        dim_sizes = torch.stack([torch.as_tensor(img.shape[i]) for img in tensor_list]).to(torch.float32)
+        max_size_i = torch.max(dim_sizes).to(torch.int64)
         max_size.append(max_size_i)
-    max_size = tuple(max_size)
+    if block_size is not None:
+        # Spatial dimensions are indices 1 (H) and 2 (W); index 0 is channels.
+        bs = torch.as_tensor(block_size, dtype=torch.int64)
+        max_size[1] = ((max_size[1] + bs - 1) // bs) * bs
+        max_size[2] = ((max_size[2] + bs - 1) // bs) * bs
+    max_size_tuple = tuple(max_size)
 
     # work around for
     # pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
@@ -146,12 +193,14 @@ def _onnx_nested_tensor_from_tensor_list(tensor_list: list[Tensor]) -> NestedTen
     padded_imgs = []
     padded_masks = []
     for img in tensor_list:
-        padding = [(s1 - s2) for s1, s2 in zip(max_size, tuple(img.shape))]
-        padded_img = torch.nn.functional.pad(img, (0, padding[2], 0, padding[1], 0, padding[0]))
+        padding = [(s1 - s2) for s1, s2 in zip(max_size_tuple, tuple(img.shape))]
+        # ``F.pad``'s size argument is typed as Sequence[int], but during ONNX tracing
+        # these are symbolic Tensors so the padded size stays dynamic in the exported graph.
+        padded_img = torch.nn.functional.pad(img, (0, padding[2], 0, padding[1], 0, padding[0]))  # type: ignore[arg-type]
         padded_imgs.append(padded_img)
 
         m = torch.zeros_like(img[0], dtype=torch.int, device=img.device)
-        padded_mask = torch.nn.functional.pad(m, (0, padding[2], 0, padding[1]), "constant", 1)
+        padded_mask = torch.nn.functional.pad(m, (0, padding[2], 0, padding[1]), "constant", 1)  # type: ignore[arg-type]
         padded_masks.append(padded_mask.to(torch.bool))
 
     tensor = torch.stack(padded_imgs)
@@ -161,33 +210,29 @@ def _onnx_nested_tensor_from_tensor_list(tensor_list: list[Tensor]) -> NestedTen
 
 
 def _bilinear_grid_sample(
-    input: torch.Tensor,
-    grid: torch.Tensor,
+    input: Tensor,
+    grid: Tensor,
     padding_mode: str = "zeros",
     align_corners: bool = False,
-) -> torch.Tensor:
+) -> Tensor:
     """Bilinear grid sampling compatible with all PyTorch backends including MPS.
 
-    Drop-in replacement for ``F.grid_sample(input, grid, mode='bilinear', ...)``.
-    On MPS, ``F.grid_sample`` backward (``grid_sampler_2d_backward``) is not yet
-    implemented and silently falls back to CPU.  This function uses gather-based
-    index arithmetic — natively supported on every backend — for the MPS path,
-    while delegating to ``F.grid_sample`` on CUDA/CPU where its fused kernel is
-    faster.  The two paths are numerically identical, so model accuracy is
-    unaffected.
+    Drop-in replacement for ``F.grid_sample(input, grid, mode='bilinear', ...)``. On MPS, ``F.grid_sample`` backward
+    (``grid_sampler_2d_backward``) is not yet implemented and silently falls back to CPU.  This function uses
+    gather-based index arithmetic — natively supported on every backend — for the MPS path, while delegating to
+    ``F.grid_sample`` on CUDA/CPU where its fused kernel is faster.  The two paths are numerically identical, so model
+    accuracy is unaffected.
 
     Args:
         input: Feature map of shape ``(N, C, H, W)``.
         grid: Sampling grid of shape ``(N, Hg, Wg, 2)`` with values in ``[-1, 1]``.
-        padding_mode: ``"zeros"`` returns 0 for out-of-bounds samples;
-            ``"border"`` clamps to the nearest border pixel.
-        align_corners: If ``True``, grid extremes ``±1`` map to pixel centres at
-            positions ``0`` and ``H-1``/``W-1``.
+        padding_mode: ``"zeros"`` returns 0 for out-of-bounds samples; ``"border"`` clamps to the nearest border pixel.
+        align_corners: If ``True``, grid extremes ``±1`` map to pixel centres at positions ``0`` and ``H-1``/``W-1``.
 
     Returns:
         Sampled tensor of shape ``(N, C, Hg, Wg)``.
     """
-    import torch.nn.functional as F
+    import torch.nn.functional as F  # noqa: N812
 
     if input.device.type != "mps":
         return F.grid_sample(input, grid, mode="bilinear", padding_mode=padding_mode, align_corners=align_corners)
@@ -199,16 +244,16 @@ def _bilinear_grid_sample(
         )
         raise ValueError(msg)
 
-    N, C, H, W = input.shape
-    Hg, Wg = grid.shape[1], grid.shape[2]
+    batch_size, channels, height, width = input.shape
+    grid_height, grid_width = grid.shape[1], grid.shape[2]
 
     # Unnormalize [-1, 1] → floating-point pixel coordinates
     if align_corners:
-        ix = (grid[..., 0] + 1) * (W - 1) / 2  # [N, Hg, Wg]
-        iy = (grid[..., 1] + 1) * (H - 1) / 2
+        ix = (grid[..., 0] + 1) * (width - 1) / 2  # [batch_size, grid_height, grid_width]
+        iy = (grid[..., 1] + 1) * (height - 1) / 2
     else:
-        ix = (grid[..., 0] + 1) * W / 2 - 0.5
-        iy = (grid[..., 1] + 1) * H / 2 - 0.5
+        ix = (grid[..., 0] + 1) * width / 2 - 0.5
+        iy = (grid[..., 1] + 1) * height / 2 - 0.5
 
     ix0 = ix.floor().long()  # top-left corner
     iy0 = iy.floor().long()
@@ -224,25 +269,26 @@ def _bilinear_grid_sample(
     wy0 = one - wy1
 
     if padding_mode == "border":
-        ix0 = ix0.clamp(0, W - 1)
-        iy0 = iy0.clamp(0, H - 1)
-        ix1 = ix1.clamp(0, W - 1)
-        iy1 = iy1.clamp(0, H - 1)
+        ix0 = ix0.clamp(0, width - 1)
+        iy0 = iy0.clamp(0, height - 1)
+        ix1 = ix1.clamp(0, width - 1)
+        iy1 = iy1.clamp(0, height - 1)
     else:  # zeros: record which corners fall inside the image before clamping
-        in_x0 = (ix0 >= 0) & (ix0 < W)  # [N, Hg, Wg]
-        in_x1 = (ix1 >= 0) & (ix1 < W)
-        in_y0 = (iy0 >= 0) & (iy0 < H)
-        in_y1 = (iy1 >= 0) & (iy1 < H)
-        ix0 = ix0.clamp(0, W - 1)
-        iy0 = iy0.clamp(0, H - 1)
-        ix1 = ix1.clamp(0, W - 1)
-        iy1 = iy1.clamp(0, H - 1)
+        in_x0 = (ix0 >= 0) & (ix0 < width)  # [batch_size, grid_height, grid_width]
+        in_x1 = (ix1 >= 0) & (ix1 < width)
+        in_y0 = (iy0 >= 0) & (iy0 < height)
+        in_y1 = (iy1 >= 0) & (iy1 < height)
+        ix0 = ix0.clamp(0, width - 1)
+        iy0 = iy0.clamp(0, height - 1)
+        ix1 = ix1.clamp(0, width - 1)
+        iy1 = iy1.clamp(0, height - 1)
 
-    flat = input.flatten(2)  # [N, C, H*W]
+    # MPS path: GatherElements(axis=2) — correct on MPS at runtime.
+    flat = input.flatten(2)  # (N, C, H*W)
 
-    def _gather(iy_: torch.Tensor, ix_: torch.Tensor) -> torch.Tensor:
-        idx = (iy_ * W + ix_).flatten(1).unsqueeze(1).expand(N, C, -1)  # [N, C, Hg*Wg]
-        return flat.gather(2, idx).view(N, C, Hg, Wg)
+    def _gather(iy_: Tensor, ix_: Tensor) -> Tensor:
+        idx = (iy_ * width + ix_).flatten(1).unsqueeze(1).expand(batch_size, channels, -1)
+        return flat.gather(2, idx).view(batch_size, channels, grid_height, grid_width)
 
     v00 = _gather(iy0, ix0)  # top-left
     v10 = _gather(iy0, ix1)  # top-right
@@ -258,15 +304,61 @@ def _bilinear_grid_sample(
     return wx0 * wy0 * v00 + wx1 * wy0 * v10 + wx0 * wy1 * v01 + wx1 * wy1 * v11
 
 
+def _collate_with_block_size(
+    batch: list[tuple[Any, ...]],
+    block_size: int | None = None,
+) -> tuple[Any, ...]:
+    """Module-level collate helper used as the base for :func:`make_collate_fn`.
+
+    Defined at module scope (rather than as a closure inside :func:`make_collate_fn`) so that the resulting
+    :class:`functools.partial` is picklable for multi-process DataLoaders and DDP spawn workers.
+
+    Args:
+        batch: List of ``(image, target)`` pairs from a dataset.
+        block_size: When set, round batch ``H`` and ``W`` up to the next multiple of this value before padding.  See
+            :func:`nested_tensor_from_tensor_list`.
+
+    Returns:
+        Tuple of ``(NestedTensor_of_images, tuple_of_targets)``.
+    """
+    columns = list(zip(*batch))
+    images = nested_tensor_from_tensor_list(list(columns[0]), block_size=block_size)
+    return (images, *columns[1:])
+
+
 def collate_fn(batch: list[tuple[Any, ...]]) -> tuple[Any, ...]:
     """Collate a list of (image, target) pairs into a batched NestedTensor.
+
+    Uses :func:`nested_tensor_from_tensor_list` with no ``block_size`` rounding. For DataLoaders that need
+    backbone-aware rounding (e.g. windowed attention requires divisibility by ``patch_size * num_windows``), use
+    :func:`make_collate_fn` instead to obtain a parameterised collate callable.
 
     Args:
         batch: List of ``(image, target)`` pairs from a dataset.
 
     Returns:
-        Tuple of ``(NestedTensor_of_images, list_of_targets)``.
+        Tuple of ``(NestedTensor_of_images, tuple_of_targets)``.
     """
-    batch = list(zip(*batch))
-    batch[0] = nested_tensor_from_tensor_list(batch[0])
-    return tuple(batch)
+    return _collate_with_block_size(batch, block_size=None)
+
+
+def make_collate_fn(
+    block_size: int | None = None,
+) -> Callable[[list[tuple[Any, ...]]], tuple[Any, ...]]:
+    """Build a collate function that rounds batch ``H``/``W`` up to *block_size*.
+
+    Used by the training DataModule to ensure that batched inputs satisfy the backbone's spatial divisibility
+    requirement (``patch_size * num_windows``). Passing ``block_size=None`` produces a callable equivalent to
+    :func:`collate_fn`.
+
+    The returned callable is a :class:`functools.partial`, not a closure, so it is picklable and safe to use with
+    multi-process DataLoaders (``num_workers > 0``) and DDP spawn workers.
+
+    Args:
+        block_size: When set, batch ``H`` and ``W`` are rounded up to the next
+            multiple of this value before padding.  The rounded-up strip is marked as padding in the NestedTensor mask.
+
+    Returns:
+        A collate callable suitable for ``torch.utils.data.DataLoader``.
+    """
+    return partial(_collate_with_block_size, block_size=block_size)

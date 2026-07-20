@@ -3,12 +3,10 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Package-level pytest fixtures for tests/training/.
 
-Provides cross-test cleanup that prevents class-level state from leaking
-between individual tests in the training/ test package, plus shared config
-factory fixtures used across multiple test modules.
+Provides cross-test cleanup that prevents class-level state from leaking between individual tests in the training/ test
+package, plus shared config factory fixtures used across multiple test modules.
 """
 
 import pytest
@@ -49,7 +47,7 @@ def base_train_config(tmp_path):
             lr_encoder=1.5e-4,
             batch_size=2,
             weight_decay=1e-4,
-            lr_drop=8,
+            lr_scheduler_kwargs={"lr_drop": 8},
             warmup_epochs=1.0,
             drop_path=0.0,
             multi_scale=False,
@@ -101,15 +99,13 @@ def seg_train_config(tmp_path):
 def _restore_rfdetr_module_trainer_property():
     """Restore RFDETRModelModule.trainer to the LightningModule parent property after each test.
 
-    Several unit tests in test_module_model.py patch the ``trainer`` property directly
-    on the ``RFDETRModelModule`` class (``type(module).trainer = property(...)``).
-    Without cleanup this mutates the class for the remainder of the session and
-    breaks ``Trainer.fit()`` calls in smoke tests (PTL cannot set ``.trainer``
-    on the module because the patched property has no setter).
+    Several unit tests in test_module_model.py patch the ``trainer`` property directly on the ``RFDETRModelModule``
+    class (``type(module).trainer = property(...)``). Without cleanup this mutates the class for the remainder of the
+    session and breaks ``Trainer.fit()`` calls in smoke tests (PTL cannot set ``.trainer`` on the module because the
+    patched property has no setter).
 
-    This fixture deletes any class-level override from ``RFDETRModelModule.__dict__``
-    after every test, so the next test starts with a clean class that inherits
-    PTL's read/write ``trainer`` descriptor from ``LightningModule``.
+    This fixture deletes any class-level override from ``RFDETRModelModule.__dict__`` after every test, so the next test
+    starts with a clean class that inherits PTL's read/write ``trainer`` descriptor from ``LightningModule``.
     """
     yield
     # Lazy import so the fixture does not force module import at collection time.
@@ -117,3 +113,20 @@ def _restore_rfdetr_module_trainer_property():
 
     if "trainer" in RFDETRModelModule.__dict__:
         delattr(RFDETRModelModule, "trainer")
+
+
+@pytest.fixture(autouse=True)
+def _restore_rfdetr_datamodule_trainer_property():
+    """Restore RFDETRDataModule.trainer to the LightningDataModule parent property after each test.
+
+    Tests that mock the ``trainer`` property on ``RFDETRDataModule`` (e.g. for ``on_after_batch_transfer`` tests) patch
+    it at the class level.  Without cleanup this mutates the class for the remainder of the session.
+
+    This fixture deletes any class-level override from ``RFDETRDataModule.__dict__`` after every test, mirroring the
+    ``_restore_rfdetr_module_trainer_property`` pattern above.
+    """
+    yield
+    from rfdetr.training.module_data import RFDETRDataModule
+
+    if "trainer" in RFDETRDataModule.__dict__:
+        delattr(RFDETRDataModule, "trainer")

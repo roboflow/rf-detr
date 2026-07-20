@@ -3,26 +3,27 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Drop-path / dropout schedule callback for RF-DETR Lightning training."""
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
+from numpy.typing import NDArray
 from pytorch_lightning import Callback, LightningModule, Trainer
 
 from rfdetr.training.drop_schedule import drop_scheduler
+
+if TYPE_CHECKING:
+    from rfdetr.training.module_model import RFDETRModelModule
 
 
 class DropPathCallback(Callback):
     """Applies per-step drop-path and dropout rate schedules to the model.
 
-    Computes the full schedule array in ``on_train_start`` using
-    :func:`rfdetr.util.drop_scheduler.drop_scheduler`, then indexes into it
-    on every training batch to update the model's stochastic-depth and
-    dropout rates.
+    Computes the full schedule array in ``on_train_start`` using :func:`rfdetr.util.drop_scheduler.drop_scheduler`, then
+    indexes into it on every training batch to update the model's stochastic-depth and dropout rates.
 
     Args:
         drop_path: Peak drop-path rate.  ``0.0`` disables the schedule.
@@ -51,8 +52,8 @@ class DropPathCallback(Callback):
         self._schedule = schedule
         self._vit_encoder_num_layers = vit_encoder_num_layers
 
-        self._dp_schedule: Optional[np.ndarray] = None
-        self._do_schedule: Optional[np.ndarray] = None
+        self._dp_schedule: NDArray[np.float64] | None = None
+        self._do_schedule: NDArray[np.float64] | None = None
 
     def on_train_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Build per-step rate arrays from trainer metadata.
@@ -61,7 +62,8 @@ class DropPathCallback(Callback):
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
         """
-        epochs: int = pl_module.train_config.epochs
+        module = cast("RFDETRModelModule", pl_module)
+        epochs: int = module.train_config.epochs
         total_steps = int(trainer.estimated_stepping_batches)
         steps_per_epoch = max(1, total_steps // epochs)
 
@@ -101,9 +103,10 @@ class DropPathCallback(Callback):
             batch_idx: Index of the current batch within the epoch (unused).
         """
         step: int = trainer.global_step
+        module = cast("RFDETRModelModule", pl_module)
 
         if self._dp_schedule is not None and step < len(self._dp_schedule):
-            pl_module.model.update_drop_path(self._dp_schedule[step], self._vit_encoder_num_layers)
+            module.model.update_drop_path(self._dp_schedule[step], self._vit_encoder_num_layers)
 
         if self._do_schedule is not None and step < len(self._do_schedule):
-            pl_module.model.update_dropout(self._do_schedule[step])
+            module.model.update_dropout(self._do_schedule[step])

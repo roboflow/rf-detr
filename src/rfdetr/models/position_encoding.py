@@ -12,26 +12,29 @@
 # Copied from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
+"""Various positional encodings for the transformer."""
 
-"""
-Various positional encodings for the transformer.
-"""
+from __future__ import annotations
 
 import math
 
 import torch
-from torch import nn
+from torch import Tensor, nn
 
 from rfdetr.utilities.tensors import NestedTensor
 
 
 class PositionEmbeddingSine(nn.Module):
-    """
-    This is a more standard version of the position embedding, very similar to the one
-    used by the Attention is all you need paper, generalized to work on images.
-    """
+    """This is a more standard version of the position embedding, very similar to the one used by the Attention is all
+    you need paper, generalized to work on images."""
 
-    def __init__(self, num_pos_feats=64, temperature=10000, normalize=False, scale=None):
+    def __init__(
+        self,
+        num_pos_feats: int = 64,
+        temperature: int = 10000,
+        normalize: bool = False,
+        scale: float | None = None,
+    ) -> None:
         super().__init__()
         self.num_pos_feats = num_pos_feats
         self.temperature = temperature
@@ -43,12 +46,12 @@ class PositionEmbeddingSine(nn.Module):
         self.scale = scale
         self._export = False
 
-    def export(self):
+    def export(self) -> None:
         self._export = True
         self._forward_origin = self.forward
-        self.forward = self.forward_export
+        self.forward = self.forward_export  # type: ignore[method-assign,assignment]
 
-    def forward(self, tensor_list: NestedTensor, align_dim_orders=True):
+    def forward(self, tensor_list: NestedTensor, align_dim_orders: bool = True) -> Tensor:
         x = tensor_list.tensors
         mask = tensor_list.mask
         assert mask is not None
@@ -75,7 +78,7 @@ class PositionEmbeddingSine(nn.Module):
             # return: (bs, C, H, W)
         return pos
 
-    def forward_export(self, mask: torch.Tensor, align_dim_orders=True):
+    def forward_export(self, mask: Tensor, align_dim_orders: bool = True) -> Tensor:
         assert mask is not None
         not_mask = ~mask
         y_embed = not_mask.cumsum(1, dtype=torch.float32)
@@ -102,25 +105,23 @@ class PositionEmbeddingSine(nn.Module):
 
 
 class PositionEmbeddingLearned(nn.Module):
-    """
-    Absolute pos embedding, learned.
-    """
+    """Absolute pos embedding, learned."""
 
-    def __init__(self, num_pos_feats=256):
+    def __init__(self, num_pos_feats: int = 256) -> None:
         super().__init__()
         self.row_embed = nn.Embedding(50, num_pos_feats)
         self.col_embed = nn.Embedding(50, num_pos_feats)
         self.reset_parameters()
         self._export = False
 
-    def export(self):
+    def export(self) -> None:
         raise NotImplementedError
 
-    def reset_parameters(self):
+    def reset_parameters(self) -> None:
         nn.init.uniform_(self.row_embed.weight)
         nn.init.uniform_(self.col_embed.weight)
 
-    def forward(self, tensor_list: NestedTensor):
+    def forward(self, tensor_list: NestedTensor) -> Tensor:
         x = tensor_list.tensors
         h, w = x.shape[:2]
         i = torch.arange(w, device=x.device)
@@ -142,14 +143,42 @@ class PositionEmbeddingLearned(nn.Module):
         return pos
 
 
-def build_position_encoding(hidden_dim, position_embedding):
-    N_steps = hidden_dim // 2
+def build_position_encoding(hidden_dim: int, position_embedding: str) -> nn.Module:
+    """Build a positional encoding module.
+
+    Args:
+        hidden_dim: Transformer hidden dimension. Half of this value is used as the number
+            of positional feature dimensions for the sine encoding.
+        position_embedding: Encoding variant to construct.  Supported values:
+            ``"sine"`` / ``"v2"`` — standard sine/cosine positional encoding (recommended).
+            The aliases ``"learned"`` / ``"v3"`` are **not supported** and raise
+            :exc:`ValueError`; their implementation had two bugs (wrong ``forward`` signature
+            and wrong shape unpacking) and are rejected early rather than silently producing
+            incorrect results.
+
+    Returns:
+        Positional encoding module.
+
+    Raises:
+        ValueError: If *position_embedding* is not a recognised and supported variant.
+
+    Examples:
+        >>> import torch
+        >>> from rfdetr.models.position_encoding import build_position_encoding
+        >>> enc = build_position_encoding(256, "sine")
+        >>> enc  # doctest: +ELLIPSIS
+        PositionEmbeddingSine(...)
+    """
+    num_steps = hidden_dim // 2
     if position_embedding in ("v2", "sine"):
         # TODO find a better way of exposing other arguments
-        position_embedding = PositionEmbeddingSine(N_steps, normalize=True)
-    elif position_embedding in ("v3", "learned"):
-        position_embedding = PositionEmbeddingLearned(N_steps)
-    else:
-        raise ValueError(f"not supported {position_embedding}")
-
-    return position_embedding
+        return PositionEmbeddingSine(num_steps, normalize=True)
+    if position_embedding in ("v3", "learned"):
+        raise ValueError(
+            f"position_embedding={position_embedding!r} is not supported. "
+            "The 'learned'/'v3' implementation has two bugs: the forward() signature "
+            "is incompatible with Joiner.forward(), and the shape unpacking uses "
+            "x.shape[:2] (batch, channels) instead of x.shape[-2:] (height, width). "
+            "Use 'sine' or 'v2' instead."
+        )
+    raise ValueError(f"position_embedding={position_embedding!r} is not supported. Supported values: 'sine', 'v2'.")

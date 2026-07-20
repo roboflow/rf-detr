@@ -7,19 +7,20 @@
 #
 """Synthetic dataset generation with COCO formatting."""
 
+from __future__ import annotations
+
 import json
 import logging
 import math
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import Literal
 
-import cv2
 import numpy as np
-import supervision as sv
+from PIL import Image
+from supervision import Color, Detections, box_iou_batch, draw_filled_polygon
 from tqdm.auto import tqdm
-from typing_extensions import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class DatasetSplitRatios:
         if not 0.99 <= total <= 1.01:
             raise ValueError(f"Split ratios must sum to 1.0, got {total}")
 
-    def to_dict(self) -> Dict[str, float]:
+    def to_dict(self) -> dict[str, float]:
         """Convert to dictionary, filtering out zero ratios."""
         return {k: v for k, v in {"train": self.train, "val": self.val, "test": self.test}.items() if v > 0}
 
@@ -61,10 +62,10 @@ DEFAULT_SPLIT_RATIOS = DatasetSplitRatios()  # 70/20/10 split
 
 
 # Type alias for split ratios parameter
-SplitRatiosType = Union[DatasetSplitRatios, Tuple[float, ...], Dict[str, float]]
+SplitRatiosType = DatasetSplitRatios | tuple[float, ...] | dict[str, float]
 
 
-def _normalize_split_ratios(split_ratios: SplitRatiosType) -> Dict[str, float]:
+def _normalize_split_ratios(split_ratios: SplitRatiosType) -> dict[str, float]:
     """Normalize split ratios parameter to a dictionary.
 
     Args:
@@ -113,16 +114,15 @@ def _normalize_split_ratios(split_ratios: SplitRatiosType) -> Dict[str, float]:
 # Available shapes for synthetic dataset generation
 SYNTHETIC_SHAPES = ["square", "triangle", "circle"]
 # Available colors for synthetic dataset generation (RGB format)
-SYNTHETIC_COLORS = {"red": sv.Color.RED, "green": sv.Color.GREEN, "blue": sv.Color.BLUE}
+SYNTHETIC_COLORS = {"red": Color.RED, "green": Color.GREEN, "blue": Color.BLUE}
 
 
 def draw_synthetic_shape(
-    img: np.ndarray, shape: str, color: sv.Color, center: Tuple[int, int], size: int
-) -> Tuple[np.ndarray, List[float]]:
+    img: np.ndarray, shape: str, color: Color, center: tuple[int, int], size: int
+) -> tuple[np.ndarray, list[float]]:
     """Draw a geometric shape on an image and return its COCO polygon.
 
-    The polygon is computed first, then used for both rendering and annotation,
-    so the two are always identical.
+    The polygon is computed first, then used for both rendering and annotation, so the two are always identical.
 
     Args:
         img: Input image array to draw on.
@@ -132,9 +132,8 @@ def draw_synthetic_shape(
         size: Size of the shape.
 
     Returns:
-        Tuple of ``(image_with_shape, polygon)`` where ``polygon`` is a flat
-        list ``[x1, y1, x2, y2, …]`` suitable for the COCO ``segmentation``
-        field.  Returns an empty polygon list for unknown shape names.
+        Tuple of ``(image_with_shape, polygon)`` where ``polygon`` is a flat list ``[x1, y1, x2, y2, …]`` suitable for
+        the COCO ``segmentation`` field.  Returns an empty polygon list for unknown shape names.
     """
     cx, cy = center
     half_size = size // 2
@@ -161,7 +160,7 @@ def draw_synthetic_shape(
     else:
         return img, []
 
-    img = sv.draw_filled_polygon(scene=img, polygon=np.array(pts, dtype=np.int32), color=color)
+    img = draw_filled_polygon(scene=img, polygon=np.array(pts, dtype=np.int32), color=color)
     polygon = [float(v) for pt in pts for v in pt]
     return img, polygon
 
@@ -174,8 +173,8 @@ def calculate_boundary_overlap(bbox: np.ndarray, img_size: int) -> float:
         img_size: Size of the image.
 
     Returns:
-        Overlap fraction in ``[0, 1]``: ``0.0`` means the box is fully inside
-        the image; ``1.0`` means it is fully outside.
+        Overlap fraction in ``[0, 1]``: ``0.0`` means the box is fully inside the image; ``1.0`` means it is fully
+        outside.
     """
     x_min, y_min, x_max, y_max = bbox
 
@@ -201,7 +200,7 @@ def generate_synthetic_sample(
     min_size_ratio: float = 0.1,
     max_size_ratio: float = 0.3,
     overlap_threshold: float = 0.1,
-) -> Tuple[np.ndarray, sv.Detections]:
+) -> tuple[np.ndarray, Detections]:
     """Generate a single synthetic image and its detections.
 
     Args:
@@ -216,11 +215,9 @@ def generate_synthetic_sample(
             a placement attempt is rejected.
 
     Returns:
-        Tuple of ``(image, detections)`` where ``image`` is an
-        ``(img_size, img_size, 3)`` uint8 array and ``detections`` is an
-        :class:`sv.Detections` instance whose ``data["polygons"]`` field
-        contains one flat ``[x1, y1, x2, y2, …]`` polygon list per detection,
-        matching the geometry returned by :func:`draw_synthetic_shape`.
+        Tuple of ``(image, detections)`` where ``image`` is an ``(img_size, img_size, 3)`` uint8 array and
+        ``detections`` is an :class:`Detections` instance whose ``data["polygons"]`` field contains one flat ``[x1,
+        y1, x2, y2, …]`` polygon list per detection, matching the geometry returned by :func:`draw_synthetic_shape`.
     """
     img = np.ones((img_size, img_size, 3), dtype=np.uint8) * 128
     color_names = list(SYNTHETIC_COLORS.keys())
@@ -228,7 +225,7 @@ def generate_synthetic_sample(
 
     xyxys = []
     class_ids = []
-    polygons: List[List[float]] = []
+    polygons: list[list[float]] = []
     failed_attempts = 0
     max_failed_attempts = 3  # Allow some failures before reducing target count
 
@@ -260,7 +257,7 @@ def generate_synthetic_sample(
                 continue
 
             if len(xyxys) > 0:
-                ious = sv.box_iou_batch(np.array([bbox]), np.array(xyxys))[0]
+                ious = box_iou_batch(np.array([bbox]), np.array(xyxys))[0]
                 if np.any(ious > overlap_threshold):
                     continue
 
@@ -290,7 +287,7 @@ def generate_synthetic_sample(
     for i, poly in enumerate(polygons):
         polygon_data[i] = poly
 
-    detections = sv.Detections(
+    detections = Detections(
         xyxy=np.array(xyxys) if xyxys else np.empty((0, 4)),
         class_id=np.array(class_ids) if class_ids else np.empty((0,), dtype=int),
         data={"polygons": polygon_data},
@@ -298,7 +295,7 @@ def generate_synthetic_sample(
     return img, detections
 
 
-def _calculate_polygon_area(polygon: List[float]) -> float:
+def _calculate_polygon_area(polygon: list[float]) -> float:
     """Calculate polygon area from COCO-style flat coordinates."""
     if len(polygon) < 6 or len(polygon) % 2 != 0:
         return 0.0
@@ -311,17 +308,16 @@ def _calculate_polygon_area(polygon: List[float]) -> float:
 
 def _write_coco_json(
     annotations_path: Path,
-    classes: List[str],
-    file_paths: List[str],
-    detections_list: List[sv.Detections],
+    classes: list[str],
+    file_paths: list[str],
+    detections_list: list[Detections],
     img_size: int,
     with_segmentation: bool = False,
 ) -> None:
     """Write a synthetic COCO JSON file.
 
-    Category IDs use sparse 1-based encoding (index * 2 + 1 → 1, 3, 5, …) so
-    synthetic data exercises the same ``cat2label`` remapping path that real
-    COCO datasets use.
+    Category IDs use sparse 1-based encoding (index * 2 + 1 → 1, 3, 5, …) so synthetic data exercises the same
+    ``cat2label`` remapping path that real COCO datasets use.
 
     Args:
         annotations_path: Destination path for the JSON file.
@@ -330,9 +326,8 @@ def _write_coco_json(
         detections_list: Detections for each image in the same order.
         img_size: Side length of the square images (width = height = img_size).
         with_segmentation: When ``True`` each annotation includes a
-            ``segmentation`` polygon taken from ``detections.data["polygons"]``
-            (populated by :func:`generate_synthetic_sample`).  When ``False``
-            the field is an empty list.
+            ``segmentation`` polygon taken from ``detections.data["polygons"]`` (populated by
+            :func:`generate_synthetic_sample`).  When ``False`` the field is an empty list.
 
     Raises:
         ValueError: If ``file_paths`` and ``detections_list`` have different
@@ -385,15 +380,9 @@ def _write_coco_json(
             class_id = int(detections.class_id[det_idx])
             if class_id < 0 or class_id >= len(classes):
                 raise ValueError(
-                    "Invalid class_id {class_id} for detection index {det_idx} "
-                    "in image index {img_id} (file: {file_path}); "
-                    "expected 0 <= class_id < {num_classes}".format(
-                        class_id=class_id,
-                        det_idx=det_idx,
-                        img_id=img_id,
-                        file_path=file_path,
-                        num_classes=len(classes),
-                    )
+                    f"Invalid class_id {class_id} for detection index {det_idx} "
+                    f"in image index {img_id} (file: {file_path}); "
+                    f"expected 0 <= class_id < {len(classes)}"
                 )
             category_id = class_id * 2 + 1
             annotation_area = w * h_box
@@ -451,9 +440,8 @@ def generate_coco_dataset(
             - Tuple of 3 floats for train/val/test (e.g., (0.7, 0.2, 0.1))
             - Dictionary (legacy support, e.g., {"train": 0.7, "val": 0.2, "test": 0.1})
         with_segmentation: If ``True``, include COCO polygon ``segmentation``
-            fields derived from the exact geometry of each drawn shape.
-            Requires the COCO dataset reader to be loaded with
-            ``include_masks=True`` (i.e. ``args.segmentation_head=True``).
+            fields derived from the exact geometry of each drawn shape. Requires the COCO dataset reader to be loaded
+            with ``include_masks=True`` (i.e. ``args.segmentation_head=True``).
     """
     # Normalize split_ratios to dictionary
     split_ratios_dict = _normalize_split_ratios(split_ratios)
@@ -491,8 +479,8 @@ def generate_coco_dataset(
         split_dir.mkdir(parents=True, exist_ok=True)
         annotations_path = split_dir / "_annotations.coco.json"
 
-        file_paths_ordered: List[str] = []
-        detections_ordered: List[sv.Detections] = []
+        file_paths_ordered: list[str] = []
+        detections_ordered: list[Detections] = []
 
         logger.info(f"Generating {split} split with {len(split_indices)} images...")
         for i in tqdm(split_indices, desc=f"Generating {split} split"):
@@ -505,7 +493,9 @@ def generate_coco_dataset(
 
             file_name = f"{i:06d}.jpg"
             file_path = str(split_dir / file_name)
-            cv2.imwrite(file_path, img)
+            # ``supervision.draw_filled_polygon`` paints colors in BGR order (via ``cv2.fillPoly``);
+            # flip the last axis so PIL writes a true RGB JPEG that downstream loaders read correctly.
+            Image.fromarray(img[..., ::-1]).save(file_path)
 
             file_paths_ordered.append(file_path)
             detections_ordered.append(detections)

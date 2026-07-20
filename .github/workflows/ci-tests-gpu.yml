@@ -2,7 +2,7 @@ name: GPU tests Workflow
 
 on:
   push:
-    branches: ["main", "release/*", "develop"]
+    branches: ["main", "release/*", "develop", "feat/*"]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
@@ -36,17 +36,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake
       - name: 📥 Checkout the repository
-        uses: actions/checkout@v6.0.1
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: 🐍 Install uv and set Python version
-        uses: astral-sh/setup-uv@v7.2.0
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
         with:
+          version: "0.9.26"
           python-version: ${{ env.PYTHON_VERSION }}
           activate-environment: true
 
       - name: 🚀 Install Packages
         timeout-minutes: 5
-        run: uv sync --group tests --group ci-gpu-pin --extra onnx --extra plus --extra train --extra visual
+        # Use uv pip install (not uv sync) to avoid universal lock resolution failing on
+        # extras that require Python>=3.12 (e.g. tflite/onnx2tf) when project supports >=3.10.
+        # UV_TORCH_BACKEND=auto (set above) works only with uv pip, not uv sync.
+        run: uv pip install -e ".[onnx,plus,train,augment,visual]" --group tests --group ci-gpu-pin
 
       - name: 🧪 Run the Test
         run: |
@@ -59,7 +63,7 @@ jobs:
           --durations=20
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: "coverage.xml"

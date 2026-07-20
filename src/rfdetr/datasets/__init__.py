@@ -14,18 +14,22 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import torchvision
 from torch.utils.data import Dataset, Subset
 
+from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema as infer_coco_keypoint_schema
+from rfdetr.datasets._keypoint_schema import infer_yolo_keypoint_schema as infer_yolo_keypoint_schema
 from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
 from rfdetr.datasets.o365 import build_o365
 from rfdetr.datasets.yolo import YoloDetection, build_roboflow_from_yolo
 
 
-def get_coco_api_from_dataset(dataset: Dataset[Any]) -> Optional[Any]:
+def get_coco_api_from_dataset(dataset: Dataset[Any]) -> Any | None:
     for _ in range(10):
         if isinstance(dataset, Subset):
             dataset = dataset.dataset
@@ -70,8 +74,7 @@ def detect_roboflow_format(dataset_dir: Path) -> str:
 def build_roboflow(image_set: str, args: Any, resolution: int) -> Dataset[Any]:
     """Build a Roboflow dataset, auto-detecting COCO or YOLO format.
 
-    This function detects the dataset format and delegates to the
-    appropriate builder function.
+    This function detects the dataset format and delegates to the appropriate builder function.
     """
     root = Path(args.dataset_dir)
     assert root.exists(), f"provided Roboflow path {root} does not exist"

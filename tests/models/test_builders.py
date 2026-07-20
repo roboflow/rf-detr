@@ -3,12 +3,10 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Characterization tests for config-native builder functions.
 
-These tests validate build_model_from_config() and build_criterion_from_config()
-which accept Pydantic config objects directly instead of requiring a pre-built
-SimpleNamespace. If these functions cannot be imported, all tests skip via the
+These tests validate build_model_from_config() and build_criterion_from_config() which accept Pydantic config objects
+directly instead of requiring a pre-built SimpleNamespace. If these functions cannot be imported, all tests skip via the
 module-level pytestmark.
 """
 

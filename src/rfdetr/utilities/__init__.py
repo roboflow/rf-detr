@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Utility functions and helpers."""
 
 from rfdetr.utilities import box_ops
@@ -16,6 +15,10 @@ from rfdetr.utilities.distributed import (
     reduce_dict,
     save_on_master,
 )
+from rfdetr.utilities.keypoints import (
+    precision_cholesky_to_pixel_covariance,
+    schemas_semantically_equal,
+)
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_sha, get_version
 from rfdetr.utilities.reproducibility import seed_all
@@ -23,6 +26,7 @@ from rfdetr.utilities.state_dict import clean_state_dict, strip_checkpoint
 from rfdetr.utilities.tensors import (
     NestedTensor,
     collate_fn,
+    make_collate_fn,
     nested_tensor_from_tensor_list,
 )
 
@@ -38,6 +42,7 @@ __all__ = [
     # tensors
     "NestedTensor",
     "collate_fn",
+    "make_collate_fn",
     "nested_tensor_from_tensor_list",
     # box_ops (submodule)
     "box_ops",
@@ -46,6 +51,9 @@ __all__ = [
     # package
     "get_sha",
     "get_version",
+    # keypoints
+    "schemas_semantically_equal",
+    "precision_cholesky_to_pixel_covariance",
     # reproducibility
     "seed_all",
     # state_dict

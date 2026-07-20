@@ -1,3 +1,7 @@
+---
+description: Run RF-DETR instance segmentation on images, video, and streams. Mask predictions with 3.4-21.8 ms latency using DINOv2 backbone.
+---
+
 # Run an RF-DETR Instance Segmentation Model
 
 RF-DETR is a real-time transformer architecture for instance segmentation, built on a DINOv2 vision transformer backbone. The base models are trained on the Microsoft COCO dataset and achieve strong accuracy and latency trade-offs.
@@ -32,7 +36,7 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
 
     labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
 
-    annotated_image = sv.MaskAnnotator().annotate(detections.data["source_image"], detections)
+    annotated_image = sv.MaskAnnotator().annotate(detections.metadata["source_image"], detections)
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
     ```
 
@@ -53,6 +57,14 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
     annotated_image = sv.MaskAnnotator().annotate(image, detections)
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
     ```
+
+For memory-constrained inference-only deployments with the `rfdetr` package, optimize the loaded model in place before
+calling `predict()`. Pass `dtype="float16"` to halve weight memory in addition to clearing the base model reference.
+This operation is irreversible — to restore the original model, create a new `RFDETR` instance:
+
+```python
+model.inference(compile=False, inplace=True, dtype="float16")
+```
 
 ## Run on video, webcam, or RTSP stream
 
