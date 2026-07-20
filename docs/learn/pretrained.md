@@ -154,7 +154,7 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
     cv2.destroyAllWindows()
     ```
 
-You can change the RF-DETR model that the code snippet above uses. To do so, update `rfdetr-base` to any of the following values:
+You can change the RF-DETR model that the code snippet above uses. To do so, update `rfdetr-small` to any of the following values:
 
 - `rfdetr-nano`
 - `rfdetr-small`

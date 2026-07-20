@@ -189,7 +189,7 @@ import cv2
 from inference_models import AutoModel
 
 # Automatically selects the best available backend for your environment
-model = AutoModel.from_pretrained("rfdetr-base")
+model = AutoModel.from_pretrained("rfdetr-small")
 
 image = cv2.imread("image.jpg")
 predictions = model(image)
@@ -208,7 +208,7 @@ from inference_models import AutoModel
 # Load from a local .pth checkpoint (same file used by rfdetr for training)
 model = AutoModel.from_pretrained(
     "/path/to/checkpoint.pth",
-    model_type="rfdetr-base",  # specify the architecture variant
+    model_type="rfdetr-small",  # specify the architecture variant
 )
 
 image = cv2.imread("image.jpg")
@@ -222,7 +222,7 @@ import cv2
 from inference_models import AutoModel, BackendType
 
 # Explicitly request TensorRT — requires TRT to be installed
-model = AutoModel.from_pretrained("rfdetr-base", backend=BackendType.TRT)
+model = AutoModel.from_pretrained("rfdetr-small", backend=BackendType.TRT)
 
 image = cv2.imread("image.jpg")
 predictions = model(image)
