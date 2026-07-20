@@ -298,8 +298,17 @@ def _make_mock_infer_tensor() -> MagicMock:
     return mock_tensor
 
 
-def test_rfdetr_export_tensorrt_calls_trtexec_with_onnx_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """`RFDETR.export(format="tensorrt")` must call `trtexec` once with the ONNX output path.
+@pytest.mark.parametrize(
+    "export_format",
+    [
+        pytest.param("tensorrt", id="canonical"),
+        pytest.param("trt", id="alias"),
+    ],
+)
+def test_rfdetr_export_tensorrt_calls_trtexec_with_onnx_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, export_format: str
+) -> None:
+    """`RFDETR.export(format="tensorrt")` — and its `"trt"` alias — must call `trtexec` once with the ONNX path.
 
     Covers the public-API wrapper directly (as opposed to the CLI `main()` path, which
     `TestCliExportMain.test_tensorrt_flag_calls_trtexec` already covers).
@@ -313,7 +322,7 @@ def test_rfdetr_export_tensorrt_calls_trtexec_with_onnx_path(monkeypatch: pytest
     monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
     monkeypatch.setattr("rfdetr.export._tensorrt.trtexec", mock_trtexec)
 
-    result = _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="tensorrt", shape=(14, 14))
+    result = _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format=export_format, shape=(14, 14))
 
     mock_trtexec.assert_called_once()
     assert mock_trtexec.call_args.args == (onnx_output,), (

@@ -1406,7 +1406,7 @@ class RFDETR:
             patch_size: Backbone patch size. Defaults to the value stored in
                 ``model_config.patch_size`` (typically 14 or 16). When provided explicitly it must match the
                 instantiated model's patch size. Shape divisibility is validated against ``patch_size * num_windows``.
-            format: Export format — ``"onnx"`` (default), ``"tflite"``, or ``"tensorrt"``.
+            format: Export format — ``"onnx"`` (default), ``"tflite"``, or ``"tensorrt"`` (alias: ``"trt"``).
                 ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: ``"tflite"`` via
                 ``onnx2tf`` (requires ``pip install rfdetr[onnx,tflite]``); ``"tensorrt"`` via ``trtexec``
                 (requires TensorRT to be installed and ``trtexec`` available on ``PATH``).  Unlike ``"onnx"``/
@@ -1444,9 +1444,11 @@ class RFDETR:
             Path to the exported model file (``.onnx``, ``.tflite``, or ``.trt``).
         """
         logger.info("Exporting model to ONNX format")
-        _valid_formats = ("onnx", "tflite", "tensorrt")
+        _valid_formats = ("onnx", "tflite", "tensorrt", "trt")
         if format not in _valid_formats:
             raise ValueError(f"Unsupported export format {format!r}. Choose from: {_valid_formats}")
+        if format == "trt":  # "trt" is an alias for "tensorrt"
+            format = "tensorrt"
         try:
             from rfdetr.export.main import export_onnx, make_infer_image
         except ImportError:
