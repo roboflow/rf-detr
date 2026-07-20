@@ -1385,7 +1385,6 @@ class RFDETR:
         quantization: str | None = None,
         calibration_data: str | np.ndarray[Any, Any] | None = None,
         max_images: int = 100,
-        tensorrt: bool = False,
         *,
         notes: object = None,
     ) -> Path:
@@ -1407,9 +1406,12 @@ class RFDETR:
             patch_size: Backbone patch size. Defaults to the value stored in
                 ``model_config.patch_size`` (typically 14 or 16). When provided explicitly it must match the
                 instantiated model's patch size. Shape divisibility is validated against ``patch_size * num_windows``.
-            format: Export format — ``"onnx"`` (default) or ``"tflite"``.
-                When ``"tflite"`` is selected the model is first exported to ONNX then converted to TFLite via
-                ``onnx2tf``.  Requires ``pip install rfdetr[onnx,tflite]``.
+            format: Export format — ``"onnx"`` (default), ``"tflite"``, or ``"tensorrt"``.
+                ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: ``"tflite"`` via
+                ``onnx2tf`` (requires ``pip install rfdetr[onnx,tflite]``); ``"tensorrt"`` via ``trtexec``
+                (requires TensorRT to be installed and ``trtexec`` available on ``PATH``).  Unlike ``"onnx"``/
+                ``"tflite"`` portable serialization, ``"tensorrt"`` performs target-specific compilation at export
+                time and produces a non-portable ``.engine`` tied to the build machine's GPU and TensorRT version.
 
                 .. warning::
                     TFLite export is experimental and subject to change; upstream dependency instabilities (``onnx2tf``,
@@ -1431,11 +1433,6 @@ class RFDETR:
                 accuracy.
             max_images: Maximum number of images to load from a calibration directory.  Defaults to ``100``.  Only used
                 when *calibration_data* is a directory path.
-            tensorrt: When ``True``, convert the exported ONNX model to a TensorRT ``.engine`` file using ``trtexec``.
-                Requires TensorRT to be installed and ``trtexec`` available on ``PATH``.  Ignored when
-                ``format="tflite"``.  Unlike the rest of :meth:`export`, this performs target-specific compilation
-                (requiring a GPU, TensorRT, and ``trtexec`` at export time) that produces a non-portable engine tied
-                to the build machine's GPU and TensorRT version, rather than portable, device-agnostic serialization.
             notes: Optional user-defined metadata (string, dict, list, or
                 any JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata
                 property.  When ``None`` no metadata entry is written.  String values are stored verbatim; all other
@@ -1447,7 +1444,7 @@ class RFDETR:
             Path to the exported model file (``.onnx``, ``.tflite``, or ``.engine``).
         """
         logger.info("Exporting model to ONNX format")
-        _valid_formats = ("onnx", "tflite")
+        _valid_formats = ("onnx", "tflite", "tensorrt")
         if format not in _valid_formats:
             raise ValueError(f"Unsupported export format {format!r}. Choose from: {_valid_formats}")
         try:
@@ -1597,7 +1594,7 @@ class RFDETR:
                 logger.info(f"Successfully exported TFLite model to: {tflite_path}")
                 return tflite_path
 
-            if tensorrt:
+            if format == "tensorrt":
                 from rfdetr.export._tensorrt import trtexec
 
                 logger.info("Converting ONNX model to TensorRT engine")

@@ -282,7 +282,7 @@ class _DeviceTrackingCoreModel(_DummyCoreModel):
 
 
 def _make_tensorrt_export_model(*, device: str = "cpu") -> types.SimpleNamespace:
-    """Build the minimal `self`-like fake `RFDETR.export()` needs for the tensorrt=True branch."""
+    """Build the minimal `self`-like fake `RFDETR.export()` needs for the format="tensorrt" branch."""
     return types.SimpleNamespace(
         model=types.SimpleNamespace(model=_DeviceTrackingCoreModel(), device=device, resolution=14),
         model_config=types.SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False, num_channels=3),
@@ -299,7 +299,7 @@ def _make_mock_infer_tensor() -> MagicMock:
 
 
 def test_rfdetr_export_tensorrt_calls_trtexec_with_onnx_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """`RFDETR.export(tensorrt=True)` must call `trtexec` once with the ONNX output path.
+    """`RFDETR.export(format="tensorrt")` must call `trtexec` once with the ONNX output path.
 
     Covers the public-API wrapper directly (as opposed to the CLI `main()` path, which
     `TestCliExportMain.test_tensorrt_flag_calls_trtexec` already covers).
@@ -313,7 +313,7 @@ def test_rfdetr_export_tensorrt_calls_trtexec_with_onnx_path(monkeypatch: pytest
     monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
     monkeypatch.setattr("rfdetr.export._tensorrt.trtexec", mock_trtexec)
 
-    result = _detr_module.RFDETR.export(model, output_dir=str(tmp_path), tensorrt=True, shape=(14, 14))
+    result = _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="tensorrt", shape=(14, 14))
 
     mock_trtexec.assert_called_once()
     assert mock_trtexec.call_args.args == (onnx_output,), (
@@ -344,7 +344,7 @@ def test_rfdetr_export_tensorrt_failure_restores_device(monkeypatch: pytest.Monk
     monkeypatch.setattr("rfdetr.export._tensorrt.trtexec", _raise_trtexec)
 
     with pytest.raises(subprocess.CalledProcessError):
-        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), tensorrt=True, shape=(14, 14))
+        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="tensorrt", shape=(14, 14))
 
     core_model = model.model.model
     assert core_model.to_calls == ["cpu", original_device], (

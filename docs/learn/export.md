@@ -59,7 +59,7 @@ The `export()` method accepts several parameters to customize the export process
 | Parameter          | Default    | Description                                                                                                                                                                                     |
 | ------------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `output_dir`       | `"output"` | Directory where the exported model will be saved.                                                                                                                                               |
-| `format`           | `"onnx"`   | Export format: `"onnx"` or `"tflite"`.                                                                                                                                                          |
+| `format`           | `"onnx"`   | Export format: `"onnx"`, `"tflite"`, or `"tensorrt"`.                                                                                                                                           |
 | `quantization`     | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`.                                                                                             |
 | `calibration_data` | `None`     | Calibration data for TFLite export. Image directory, `.npy` file path, NumPy array, or `None`. See [TFLite Export](#tflite-export).                                                             |
 | `max_images`       | `100`      | Maximum number of images to load from a calibration directory for TFLite INT8 quantization. Ignored for other calibration data formats.                                                         |
@@ -72,7 +72,6 @@ The `export()` method accepts several parameters to customize the export process
 | `dynamic_batch`    | `False`    | If `True`, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime.                                                                                     |
 | `patch_size`       | `None`     | Backbone patch size override. Defaults to the value from `model_config.patch_size`. Must match the instantiated model's patch size when provided.                                               |
 | `notes`            | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the `"rfdetr_notes"` metadata property.                           |
-| `tensorrt`         | `False`    | When `True`, convert the exported ONNX model to a TensorRT `.engine` file. Requires TensorRT (`trtexec`) to be installed.                                                                       |
 
 ## Advanced Export Examples
 
@@ -130,27 +129,27 @@ If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX mode
 
 ### Export Directly to TensorRT
 
-Pass `tensorrt=True` to `export()` to export ONNX and convert to a TensorRT engine in one step:
+Pass `format="tensorrt"` to `export()` to export ONNX and convert to a TensorRT engine in one step:
 
 ```python
 from rfdetr import RFDETRMedium
 
 model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 
-model.export(tensorrt=True)
+model.export(format="tensorrt")
 ```
 
 This exports `output/inference_model.onnx` first and then produces `output/inference_model.engine`.
 
 !!! note "Who consumes the `.engine`?"
 
-    The `.engine` produced by `tensorrt=True` is a standalone artifact for raw
+    The `.engine` produced by `format="tensorrt"` is a standalone artifact for raw
     TensorRT / `trtexec` deployment. It is locked to the GPU architecture and
     TensorRT version of the machine that built it, so it is not portable across
     different GPUs or TensorRT releases.
 
     If you plan to run inference with [`inference-models`](#run-inference-with-inference-models)
-    (the recommended path below), do **not** pass `tensorrt=True` — `inference-models`
+    (the recommended path below), do **not** pass `format="tensorrt"` — `inference-models`
     builds and manages its own TensorRT engine internally and does not consume this file.
     Export a plain ONNX model instead and let `inference-models` handle the backend.
 
