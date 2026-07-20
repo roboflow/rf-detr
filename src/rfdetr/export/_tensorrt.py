@@ -76,7 +76,7 @@ def trtexec(onnx_path: str, *, verbose: bool = False, profile: bool = False, dry
         dry_run: Log the command that *would* run without executing it.
 
     Returns:
-        Path to the generated ``.engine`` file.
+        Path to the generated ``.trt`` engine file.
 
     Raises:
         subprocess.CalledProcessError: If ``trtexec`` (or ``nsys profile``) exits
@@ -84,7 +84,7 @@ def trtexec(onnx_path: str, *, verbose: bool = False, profile: bool = False, dry
     """
     # Swap only the final suffix so paths with an earlier ".onnx" segment (or no
     # ".onnx" at all) are not corrupted and never alias the input path.
-    engine_dir = str(Path(onnx_path).with_suffix(".engine"))
+    engine_dir = str(Path(onnx_path).with_suffix(".trt"))
 
     # Build trtexec argv — list form prevents shell-injection via paths.
     trt_argv: list[str] = [

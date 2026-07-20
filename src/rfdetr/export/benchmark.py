@@ -261,7 +261,7 @@ class TRTInference:
 
     def __init__(
         self,
-        engine_path: str = "dino.engine",
+        engine_path: str = "dino.trt",
         device: str | torch.device = "cuda:0",
         sync_mode: bool = False,
         max_batch_size: int = 32,
@@ -446,7 +446,7 @@ def main(
     """Performance benchmark tool for ONNX/TRT models.
 
     Args:
-        path: Engine file path (.onnx or .engine).
+        path: Engine file path (.onnx or .trt/.engine).
         coco_path: COCO dataset path.
         device: CUDA device index.
         run_benchmark: Repeat inference 10x to measure latency.
@@ -483,11 +483,11 @@ def main(
 
         sess = nxrun.InferenceSession(path, providers=["CUDAExecutionProvider"])
         infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats)
-    elif path.endswith(".engine"):
+    elif path.endswith((".trt", ".engine")):
         model = TRTInference(path, sync_mode=True, device=f"cuda:{device}")
         infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats)
     else:
-        raise NotImplementedError('Only model file names ending with ".onnx" and ".engine" are supported.')
+        raise NotImplementedError('Only model file names ending with ".onnx", ".trt", or ".engine" are supported.')
 
 
 if __name__ == "__main__":

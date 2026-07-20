@@ -1411,7 +1411,7 @@ class RFDETR:
                 ``onnx2tf`` (requires ``pip install rfdetr[onnx,tflite]``); ``"tensorrt"`` via ``trtexec``
                 (requires TensorRT to be installed and ``trtexec`` available on ``PATH``).  Unlike ``"onnx"``/
                 ``"tflite"`` portable serialization, ``"tensorrt"`` performs target-specific compilation at export
-                time and produces a non-portable ``.engine`` tied to the build machine's GPU and TensorRT version.
+                time and produces a non-portable ``.trt`` engine tied to the build machine's GPU and TensorRT version.
 
                 .. warning::
                     TFLite export is experimental and subject to change; upstream dependency instabilities (``onnx2tf``,
@@ -1441,7 +1441,7 @@ class RFDETR:
                 information.
 
         Returns:
-            Path to the exported model file (``.onnx``, ``.tflite``, or ``.engine``).
+            Path to the exported model file (``.onnx``, ``.tflite``, or ``.trt``).
         """
         logger.info("Exporting model to ONNX format")
         _valid_formats = ("onnx", "tflite", "tensorrt")

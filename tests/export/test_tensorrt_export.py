@@ -60,7 +60,7 @@ def test_run_command_shell_dry_run_does_not_invoke_subprocess(monkeypatch) -> No
 
 
 def test_trtexec_returns_engine_path(monkeypatch) -> None:
-    """Trtexec() must return the .engine path, not None."""
+    """Trtexec() must return the .trt engine path, not None."""
     captured_argv = []
 
     def _fake_run(command, **kwargs):
@@ -72,7 +72,7 @@ def test_trtexec_returns_engine_path(monkeypatch) -> None:
 
     result = tensorrt_export.trtexec("/tmp/model.onnx", verbose=False, profile=False, dry_run=False)
 
-    assert result == "/tmp/model.engine"
+    assert result == "/tmp/model.trt"
 
 
 def test_trtexec_dry_run_returns_engine_path(monkeypatch) -> None:
@@ -82,28 +82,28 @@ def test_trtexec_dry_run_returns_engine_path(monkeypatch) -> None:
 
     result = tensorrt_export.trtexec("/tmp/model.onnx", verbose=False, profile=False, dry_run=True)
 
-    assert result == "/tmp/model.engine"
+    assert result == "/tmp/model.trt"
 
 
 @pytest.mark.parametrize(
     ("onnx_path", "expected_engine"),
     [
-        pytest.param("/output/rfdetr.onnx", "/output/rfdetr.engine", id="plain-path"),
-        pytest.param("/path with spaces/model.onnx", "/path with spaces/model.engine", id="path-with-spaces"),
-        pytest.param("/model;rm -rf /.onnx", "/model;rm -rf /.onnx.engine", id="shell-metachar"),
+        pytest.param("/output/rfdetr.onnx", "/output/rfdetr.trt", id="plain-path"),
+        pytest.param("/path with spaces/model.onnx", "/path with spaces/model.trt", id="path-with-spaces"),
+        pytest.param("/model;rm -rf /.onnx", "/model;rm -rf /.onnx.trt", id="shell-metachar"),
         pytest.param(
             "/data/my.onnx.backup/model.onnx",
-            "/data/my.onnx.backup/model.engine",
+            "/data/my.onnx.backup/model.trt",
             id="earlier-onnx-segment-in-dir",
         ),
         pytest.param(
             "/output/model_v1.onnx.old.onnx",
-            "/output/model_v1.onnx.old.engine",
+            "/output/model_v1.onnx.old.trt",
             id="double-onnx-in-filename",
         ),
         pytest.param(
             "/output/model_without_extension",
-            "/output/model_without_extension.engine",
+            "/output/model_without_extension.trt",
             id="no-onnx-extension",
         ),
     ],

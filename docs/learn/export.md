@@ -139,11 +139,11 @@ model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 model.export(format="tensorrt")
 ```
 
-This exports `output/inference_model.onnx` first and then produces `output/inference_model.engine`.
+This exports `output/inference_model.onnx` first and then produces `output/inference_model.trt`.
 
-!!! note "Who consumes the `.engine`?"
+!!! note "Who consumes the `.trt` engine?"
 
-    The `.engine` produced by `format="tensorrt"` is a standalone artifact for raw
+    The `.trt` engine produced by `format="tensorrt"` is a standalone artifact for raw
     TensorRT / `trtexec` deployment. It is locked to the GPU architecture and
     TensorRT version of the machine that built it, so it is not portable across
     different GPUs or TensorRT releases.
@@ -161,7 +161,7 @@ from rfdetr.export._tensorrt import trtexec
 engine_path = trtexec("output/inference_model.onnx", verbose=True, profile=False, dry_run=False)
 ```
 
-`trtexec` returns the path to the generated `.engine` file. If `profile=True`, it also writes an Nsight Systems report (`.nsys-rep`).
+`trtexec` returns the path to the generated `.trt` engine file. If `profile=True`, it also writes an Nsight Systems report (`.nsys-rep`).
 
 ## Run Inference with `inference-models`
 

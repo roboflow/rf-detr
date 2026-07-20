@@ -306,7 +306,7 @@ def test_rfdetr_export_tensorrt_calls_trtexec_with_onnx_path(monkeypatch: pytest
     """
     model = _make_tensorrt_export_model()
     onnx_output = str(tmp_path / "inference_model.onnx")
-    mock_trtexec = MagicMock(return_value=str(tmp_path / "inference_model.engine"))
+    mock_trtexec = MagicMock(return_value=str(tmp_path / "inference_model.trt"))
 
     monkeypatch.setattr("rfdetr.export.main.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
     monkeypatch.setattr("rfdetr.export.main.export_onnx", lambda *_a, **_kw: onnx_output)
@@ -319,7 +319,7 @@ def test_rfdetr_export_tensorrt_calls_trtexec_with_onnx_path(monkeypatch: pytest
     assert mock_trtexec.call_args.args == (onnx_output,), (
         f"ONNX path must be passed positionally, got {mock_trtexec.call_args.args!r}"
     )
-    assert str(result) == str(tmp_path / "inference_model.engine")
+    assert str(result) == str(tmp_path / "inference_model.trt")
 
 
 def test_rfdetr_export_tensorrt_failure_restores_device(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -636,7 +636,7 @@ class TestCliExportMain:
 
         def fake_trtexec(onnx_path: str, **_kwargs) -> str:
             trtexec_calls.append(onnx_path)
-            return onnx_path.replace(".onnx", ".engine")
+            return onnx_path.replace(".onnx", ".trt")
 
         args = self._make_args(output_dir=output_dir, tensorrt=True)
         onnx_output = str(args.output_dir) + "/inference_model.onnx"
@@ -692,7 +692,7 @@ class TestCliExportMain:
         mock_tensor = MagicMock()
         mock_tensor.to.return_value = mock_tensor
         mock_tensor.cpu.return_value = mock_tensor
-        mock_trtexec = MagicMock(return_value=str(args.output_dir) + "/inference_model.engine")
+        mock_trtexec = MagicMock(return_value=str(args.output_dir) + "/inference_model.trt")
 
         with (
             patch.object(_cli_export_module, "build_model", return_value=(mock_model, MagicMock(), MagicMock())),
@@ -711,7 +711,7 @@ class TestCliExportMain:
 
         def fake_trtexec(onnx_path: str, **_kwargs) -> str:
             trtexec_calls.append(onnx_path)
-            return onnx_path.replace(".onnx", ".engine")
+            return onnx_path.replace(".onnx", ".trt")
 
         args = self._make_args(output_dir=output_dir, tensorrt=False)
 
