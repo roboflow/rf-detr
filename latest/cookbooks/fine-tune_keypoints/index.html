@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/roboflow-logo.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
   
@@ -33,7 +33,7 @@
   
 
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -63,6 +63,16 @@
     
     
   
+  
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-5M220DKLMB"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){window.dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-5M220DKLMB');
+  </script>
   <link rel="preconnect" href="https://storage.googleapis.com">
 
   
@@ -87,7 +97,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-06-16T15:17:17">
+  <meta property="article:modified_time" content="2026-06-24T15:19:04">
   
   <script type="application/ld+json">
   {
@@ -102,7 +112,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-06-16T15:17:17",
+    "dateModified": "2026-06-24T15:19:04",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2371,10 +2381,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#11-visualize-inference-and-keypoint-table" class="md-nav__link">
+  <a href="#11-visualize-inference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        11 - Visualize inference and keypoint table
+        11 - Visualize inference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-keypoint-prediction-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12 - Keypoint prediction table
       
     </span>
   </a>
@@ -3123,31 +3144,65 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </style>
 <!-- End of mermaid configuration --><div class="jupyter-wrapper">
 <div class="jp-Notebook" data-jp-theme-light="true" data-jp-theme-name="JupyterLab Light">
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=faa5686c">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7e465973">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h1 id="rf-detr-keypoint-training-demo-on-multiple-roboflow-universe-datasets">RF-DETR keypoint training demo on multiple Roboflow Universe datasets<a class="anchor-link" href="#rf-detr-keypoint-training-demo-on-multiple-roboflow-universe-datasets">¶</a></h1><p>Select one dataset with <code>DATASET_KEY</code>, then run the same fine-tuning, plotting, checkpoint loading, and inference cells.</p>
-<p>RF-DETR is a real-time detection transformer that extends bounding-box detection to predict structured keypoint skeletons — useful for human pose estimation, sports field calibration, product inspection, and any task where <em>where</em> matters as much as <em>what</em>. This cookbook walks you through the full cycle from raw dataset to a deployable checkpoint using four ready-made Roboflow Universe datasets: darts (<code>"dart"</code>), human body pose (<code>"human_pose"</code>), a basketball court (<code>"basketball_court"</code>), and a football pitch (<code>"football_field"</code>). Change <code>DATASET_KEY</code> in the configuration cell and every subsequent cell adapts automatically. By the end you will have a fine-tuned model, training curves, and annotated inference images with optional uncertainty ellipses.</p>
+<p>RF-DETR extends bounding-box detection to predict structured keypoint skeletons — useful for human pose
+estimation, sports field calibration, product inspection, and any task where <em>where</em> matters as much as <em>what</em>.</p>
+<p><strong>Datasets</strong> — set <code>DATASET_KEY</code> to one of:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Dataset</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"dart"</code></td>
+<td>Darts Detection</td>
+</tr>
+<tr>
+<td><code>"human_pose"</code></td>
+<td>Human Body Pose</td>
+</tr>
+<tr>
+<td><code>"basketball_court"</code></td>
+<td>Basketball Court Detection</td>
+</tr>
+<tr>
+<td><code>"football_field"</code></td>
+<td>Football Field Detection</td>
+</tr>
+<tr>
+<td><code>"tennis_court"</code></td>
+<td>Tennis Court Keypoint</td>
+</tr>
+</tbody>
+</table>
+<p>Every subsequent cell (fine-tuning, plotting, checkpoint loading, inference) adapts automatically.
+By the end you will have a fine-tuned model, training curves, and annotated inference images with
+optional uncertainty ellipses.</p>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=4fb73557">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=6d361242">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="setup">Setup<a class="anchor-link" href="#setup">¶</a></h2><p>Install the RF-DETR release candidate before importing <code>rfdetr</code>. If an older version was already imported, restart the runtime after this cell.</p>
-<p>The <code>train</code> extra pulls in the training loop dependencies (PyTorch Lightning, COCO evaluation tools, and data augmentation libraries), while <code>visual</code> adds the visualisation helpers used later in the notebook. The <code>roboflow</code> package handles dataset download; <code>pandas</code> and <code>seaborn</code> are needed for the metrics table and optional plot styling. If you hit an <code>ImportError</code> after running this cell, the most likely cause is a stale in-memory import — restart the Python runtime once and re-run from the top.</p>
+<h2 id="setup">Setup<a class="anchor-link" href="#setup">¶</a></h2><p>Install <code>rfdetr</code> with the <code>train</code> and <code>visual</code> extras. The <code>train</code> extra pulls in the training loop dependencies (PyTorch Lightning, COCO evaluation tools, and data augmentation libraries), while <code>visual</code> adds the visualisation helpers used later in the notebook. The <code>roboflow</code> package handles dataset download; <code>pandas</code> and <code>seaborn</code> are needed for the metrics table and optional plot styling. If you hit an <code>ImportError</code> after running this cell, the most likely cause is a stale in-memory import — restart the Python runtime once and re-run from the top.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f7ea56d7a98aea36">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ca1b5461">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3165,16 +3220,16 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="o">%</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[train,visual]==1.8.0"</span> <span class="n">roboflow</span> <span class="n">pandas</span> <span class="n">seaborn</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[train,visual]==1.8.2"</span> <span class="n">roboflow</span> <span class="n">pandas</span> <span class="n">seaborn</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">%pip install -q "rfdetr[train,visual]==1.8.0" roboflow pandas seaborn</div>
+<div class="clipboard-copy-txt" id="cell-1">!pip install -q "rfdetr[train,visual]==1.8.2" roboflow pandas seaborn</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=5964c1295fbe27ce">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d89771c9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3192,7 +3247,9 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="sd">"""Shared RF-DETR keypoint fine-tuning demo for several Roboflow COCO keypoint exports."""</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
@@ -3209,14 +3266,16 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRKeypointPreview</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">KeypointTrainConfig</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.datasets._keypoint_schema</span><span class="w"> </span><span class="kn">import</span> <span class="n">infer_coco_keypoint_schema</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.datasets._keypoint_schema</span><span class="w"> </span><span class="kn">import</span> <span class="n">infer_coco_keypoint_schema</span><span class="p">,</span> <span class="n">infer_yolo_keypoint_schema</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRDataModule</span><span class="p">,</span> <span class="n">RFDETRModelModule</span><span class="p">,</span> <span class="n">build_trainer</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training.callbacks.best_model</span><span class="w"> </span><span class="kn">import</span> <span class="n">BestModelCallback</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.utilities.reproducibility</span><span class="w"> </span><span class="kn">import</span> <span class="n">seed_all</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.visualize.keypoints</span><span class="w"> </span><span class="kn">import</span> <span class="n">_key_points_for_display</span><span class="p">,</span> <span class="n">_keypoint_prediction_records</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.visualize.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">plot_loss_metrics</span><span class="p">,</span> <span class="n">plot_map_metrics</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-2">import json
+<div class="clipboard-copy-txt" id="cell-2">"""Shared RF-DETR keypoint fine-tuning demo for several Roboflow COCO keypoint exports."""
+
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -3233,7 +3292,7 @@ from roboflow import Roboflow
 
 from rfdetr import RFDETRKeypointPreview
 from rfdetr.config import KeypointTrainConfig
-from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema
+from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema, infer_yolo_keypoint_schema
 from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 from rfdetr.training.callbacks.best_model import BestModelCallback
 from rfdetr.utilities.reproducibility import seed_all
@@ -3245,7 +3304,7 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=8a5759eb">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0b7de4e2">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3264,8 +3323,11 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">PROJECT_ROOT</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span><span class="o">.</span><span class="n">parent</span> <span class="k">if</span> <span class="s2">"__file__"</span> <span class="ow">in</span> <span class="nb">globals</span><span class="p">()</span> <span class="k">else</span> <span class="n">Path</span><span class="o">.</span><span class="n">cwd</span><span class="p">()</span>
-<span class="n">DATASETS_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"datasets"</span><span class="p">)</span>
+<span class="n">DATASETS_DIR</span> <span class="o">=</span> <span class="n">PROJECT_ROOT</span> <span class="o">/</span> <span class="s2">"datasets"</span>
 
+<span class="c1"># Resolution must be divisible by the model patch_size (12 for RFDETRKeypointPreview).</span>
+<span class="c1"># Larger resolutions improve fine-grained keypoint localisation at the cost of GPU memory</span>
+<span class="c1"># and training time. Recommended choices per dataset are annotated below.</span>
 <span class="n">DATASETS</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{</span>
     <span class="s2">"dart"</span><span class="p">:</span> <span class="p">{</span>
         <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Darts Detection"</span><span class="p">,</span>
@@ -3275,6 +3337,9 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
         <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/dartdetection-vfgjd/darts_detection-yp7lt"</span><span class="p">,</span>
         <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"keypoint_darts_detection_demo"</span><span class="p">,</span>
         <span class="s2">"keypoint_flip_pairs"</span><span class="p">:</span> <span class="p">[],</span>
+        <span class="c1"># 576 — close-up shots where the dart tip occupies a large fraction of the frame;</span>
+        <span class="c1"># default resolution provides sufficient detail for tip localisation.</span>
+        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">576</span><span class="p">,</span>
     <span class="p">},</span>
     <span class="s2">"human_pose"</span><span class="p">:</span> <span class="p">{</span>
         <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Dataset Ridimensionato"</span><span class="p">,</span>
@@ -3283,7 +3348,11 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
         <span class="s2">"version"</span><span class="p">:</span> <span class="mi">65</span><span class="p">,</span>
         <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/poseestimation-wzidb/dataset-ridimensionato/dataset/65"</span><span class="p">,</span>
         <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"keypoint_dataset_ridimensionato_demo"</span><span class="p">,</span>
+        <span class="s2">"format"</span><span class="p">:</span> <span class="s2">"yolo"</span><span class="p">,</span>
         <span class="s2">"keypoint_flip_pairs"</span><span class="p">:</span> <span class="p">[],</span>
+        <span class="c1"># 768 — body joints (wrists, ankles) require fine localisation across a range of</span>
+        <span class="c1"># person scales; a larger canvas reduces positional error for distant people.</span>
+        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">768</span><span class="p">,</span>
     <span class="p">},</span>
     <span class="s2">"basketball_court"</span><span class="p">:</span> <span class="p">{</span>
         <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Basketball Court Detection 2"</span><span class="p">,</span>
@@ -3293,33 +3362,57 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
         <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/roboflow-jvuqo/basketball-court-detection-2"</span><span class="p">,</span>
         <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"keypoint_basketball_court_detection_demo"</span><span class="p">,</span>
         <span class="s2">"keypoint_flip_pairs"</span><span class="p">:</span> <span class="p">[],</span>
+        <span class="c1"># 576 — court lines are coarse features that fill the frame; the default resolution</span>
+        <span class="c1"># is sufficient to locate corners and centre-circle keypoints accurately.</span>
+        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">576</span><span class="p">,</span>
     <span class="p">},</span>
     <span class="s2">"football_field"</span><span class="p">:</span> <span class="p">{</span>
         <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Football Field Detection"</span><span class="p">,</span>
         <span class="s2">"workspace"</span><span class="p">:</span> <span class="s2">"roboflow-jvuqo"</span><span class="p">,</span>
         <span class="s2">"project"</span><span class="p">:</span> <span class="s2">"football-field-detection-f07vi"</span><span class="p">,</span>
-        <span class="s2">"version"</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="s2">"version"</span><span class="p">:</span> <span class="mi">18</span><span class="p">,</span>
         <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/roboflow-jvuqo/football-field-detection-f07vi"</span><span class="p">,</span>
         <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"keypoint_football_field_detection_demo"</span><span class="p">,</span>
         <span class="s2">"keypoint_flip_pairs"</span><span class="p">:</span> <span class="p">[],</span>
+        <span class="c1"># 768 — a full football pitch captured in a single frame compresses many line</span>
+        <span class="c1"># intersections into a small pixel area; the higher resolution separates</span>
+        <span class="c1"># closely spaced markings and reduces keypoint confusion near the centre circle.</span>
+        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">768</span><span class="p">,</span>
+    <span class="p">},</span>
+    <span class="s2">"tennis_court"</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Tennis Court Keypoint"</span><span class="p">,</span>
+        <span class="s2">"workspace"</span><span class="p">:</span> <span class="s2">"shj-pk1wt"</span><span class="p">,</span>
+        <span class="s2">"project"</span><span class="p">:</span> <span class="s2">"tennis_court_keypoint"</span><span class="p">,</span>
+        <span class="s2">"version"</span><span class="p">:</span> <span class="mi">6</span><span class="p">,</span>
+        <span class="s2">"source_url"</span><span class="p">:</span> <span class="s2">"https://universe.roboflow.com/shj-pk1wt/tennis_court_keypoint"</span><span class="p">,</span>
+        <span class="s2">"output_name"</span><span class="p">:</span> <span class="s2">"keypoint_tennis_court_demo"</span><span class="p">,</span>
+        <span class="s2">"format"</span><span class="p">:</span> <span class="s2">"yolo"</span><span class="p">,</span>
+        <span class="s2">"keypoint_flip_pairs"</span><span class="p">:</span> <span class="p">[],</span>
+        <span class="c1"># 768 — a full court viewed from broadcast angles packs many line intersections</span>
+        <span class="c1"># into a small pixel area; the higher resolution reduces confusion between</span>
+        <span class="c1"># closely spaced baseline and service-box corners.</span>
+        <span class="s2">"resolution"</span><span class="p">:</span> <span class="mi">768</span><span class="p">,</span>
     <span class="p">},</span>
 <span class="p">}</span>
 
 <span class="n">DATASET_KEY</span> <span class="o">=</span> <span class="s2">"dart"</span>
 <span class="n">DATASET_INFO</span> <span class="o">=</span> <span class="n">DATASETS</span><span class="p">[</span><span class="n">DATASET_KEY</span><span class="p">]</span>
+<span class="n">DATASET_FORMAT</span> <span class="o">=</span> <span class="n">DATASET_INFO</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"format"</span><span class="p">,</span> <span class="s2">"coco"</span><span class="p">)</span>  <span class="c1"># "coco" or "yolo"</span>
 
 <span class="n">OUTPUT_DIR</span> <span class="o">=</span> <span class="n">PROJECT_ROOT</span> <span class="o">/</span> <span class="s2">"output"</span> <span class="o">/</span> <span class="nb">str</span><span class="p">(</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s2">"output_name"</span><span class="p">])</span>
 <span class="n">METRICS_CSV</span> <span class="o">=</span> <span class="n">OUTPUT_DIR</span> <span class="o">/</span> <span class="s2">"metrics.csv"</span>
 <span class="n">VALIDATION_METRICS_JSON</span> <span class="o">=</span> <span class="n">OUTPUT_DIR</span> <span class="o">/</span> <span class="s2">"validation_metrics.json"</span>
 <span class="n">FINAL_CHECKPOINT_PATH</span> <span class="o">=</span> <span class="n">OUTPUT_DIR</span> <span class="o">/</span> <span class="s2">"checkpoint_final_demo.pth"</span>
 
+<span class="n">RESOLUTION</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s2">"resolution"</span><span class="p">])</span>
+
 <span class="n">SEED</span> <span class="o">=</span> <span class="mi">7</span>
 <span class="n">EPOCHS</span> <span class="o">=</span> <span class="mi">50</span>
 <span class="n">BATCH_SIZE</span> <span class="o">=</span> <span class="mi">8</span>
 <span class="n">GRAD_ACCUM_STEPS</span> <span class="o">=</span> <span class="mi">2</span>
 <span class="n">NUM_WORKERS</span> <span class="o">=</span> <span class="mi">8</span>
-<span class="n">LR</span> <span class="o">=</span> <span class="mf">2e-5</span>
-<span class="n">LR_ENCODER</span> <span class="o">=</span> <span class="mf">2e-5</span>
+<span class="n">LR</span> <span class="o">=</span> <span class="mf">1e-4</span>
+<span class="n">LR_ENCODER</span> <span class="o">=</span> <span class="mf">1e-4</span>
 <span class="n">SAMPLE_PREVIEW_COUNT</span> <span class="o">=</span> <span class="mi">6</span>
 <span class="n">SAMPLE_PREVIEW_COLUMNS</span> <span class="o">=</span> <span class="mi">3</span>
 <span class="n">SAMPLE_PREVIEW_FIGURE_SIZE</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
@@ -3334,11 +3427,16 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
 
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"dataset_key=</span><span class="si">{</span><span class="n">DATASET_KEY</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"dataset=</span><span class="si">{</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s1">'name'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"dataset_format=</span><span class="si">{</span><span class="n">DATASET_FORMAT</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"source_url=</span><span class="si">{</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s1">'source_url'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"resolution=</span><span class="si">{</span><span class="n">RESOLUTION</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-3">PROJECT_ROOT = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
-DATASETS_DIR = Path("datasets")
+DATASETS_DIR = PROJECT_ROOT / "datasets"
 
+# Resolution must be divisible by the model patch_size (12 for RFDETRKeypointPreview).
+# Larger resolutions improve fine-grained keypoint localisation at the cost of GPU memory
+# and training time. Recommended choices per dataset are annotated below.
 DATASETS: dict[str, dict[str, Any]] = {
     "dart": {
         "name": "Darts Detection",
@@ -3348,6 +3446,9 @@ DATASETS: dict[str, dict[str, Any]] = {
         "source_url": "https://universe.roboflow.com/dartdetection-vfgjd/darts_detection-yp7lt",
         "output_name": "keypoint_darts_detection_demo",
         "keypoint_flip_pairs": [],
+        # 576 — close-up shots where the dart tip occupies a large fraction of the frame;
+        # default resolution provides sufficient detail for tip localisation.
+        "resolution": 576,
     },
     "human_pose": {
         "name": "Dataset Ridimensionato",
@@ -3356,7 +3457,11 @@ DATASETS: dict[str, dict[str, Any]] = {
         "version": 65,
         "source_url": "https://universe.roboflow.com/poseestimation-wzidb/dataset-ridimensionato/dataset/65",
         "output_name": "keypoint_dataset_ridimensionato_demo",
+        "format": "yolo",
         "keypoint_flip_pairs": [],
+        # 768 — body joints (wrists, ankles) require fine localisation across a range of
+        # person scales; a larger canvas reduces positional error for distant people.
+        "resolution": 768,
     },
     "basketball_court": {
         "name": "Basketball Court Detection 2",
@@ -3366,33 +3471,57 @@ DATASETS: dict[str, dict[str, Any]] = {
         "source_url": "https://universe.roboflow.com/roboflow-jvuqo/basketball-court-detection-2",
         "output_name": "keypoint_basketball_court_detection_demo",
         "keypoint_flip_pairs": [],
+        # 576 — court lines are coarse features that fill the frame; the default resolution
+        # is sufficient to locate corners and centre-circle keypoints accurately.
+        "resolution": 576,
     },
     "football_field": {
         "name": "Football Field Detection",
         "workspace": "roboflow-jvuqo",
         "project": "football-field-detection-f07vi",
-        "version": 1,
+        "version": 18,
         "source_url": "https://universe.roboflow.com/roboflow-jvuqo/football-field-detection-f07vi",
         "output_name": "keypoint_football_field_detection_demo",
         "keypoint_flip_pairs": [],
+        # 768 — a full football pitch captured in a single frame compresses many line
+        # intersections into a small pixel area; the higher resolution separates
+        # closely spaced markings and reduces keypoint confusion near the centre circle.
+        "resolution": 768,
+    },
+    "tennis_court": {
+        "name": "Tennis Court Keypoint",
+        "workspace": "shj-pk1wt",
+        "project": "tennis_court_keypoint",
+        "version": 6,
+        "source_url": "https://universe.roboflow.com/shj-pk1wt/tennis_court_keypoint",
+        "output_name": "keypoint_tennis_court_demo",
+        "format": "yolo",
+        "keypoint_flip_pairs": [],
+        # 768 — a full court viewed from broadcast angles packs many line intersections
+        # into a small pixel area; the higher resolution reduces confusion between
+        # closely spaced baseline and service-box corners.
+        "resolution": 768,
     },
 }
 
 DATASET_KEY = "dart"
 DATASET_INFO = DATASETS[DATASET_KEY]
+DATASET_FORMAT = DATASET_INFO.get("format", "coco")  # "coco" or "yolo"
 
 OUTPUT_DIR = PROJECT_ROOT / "output" / str(DATASET_INFO["output_name"])
 METRICS_CSV = OUTPUT_DIR / "metrics.csv"
 VALIDATION_METRICS_JSON = OUTPUT_DIR / "validation_metrics.json"
 FINAL_CHECKPOINT_PATH = OUTPUT_DIR / "checkpoint_final_demo.pth"
 
+RESOLUTION = int(DATASET_INFO["resolution"])
+
 SEED = 7
 EPOCHS = 50
 BATCH_SIZE = 8
 GRAD_ACCUM_STEPS = 2
 NUM_WORKERS = 8
-LR = 2e-5
-LR_ENCODER = 2e-5
+LR = 1e-4
+LR_ENCODER = 1e-4
 SAMPLE_PREVIEW_COUNT = 6
 SAMPLE_PREVIEW_COLUMNS = 3
 SAMPLE_PREVIEW_FIGURE_SIZE: tuple[float, float] | None = None
@@ -3407,25 +3536,27 @@ MAX_ELLIPSE_RADIUS = 36.0
 
 print(f"dataset_key={DATASET_KEY}")
 print(f"dataset={DATASET_INFO['name']}")
-print(f"source_url={DATASET_INFO['source_url']}")</div>
+print(f"dataset_format={DATASET_FORMAT}")
+print(f"source_url={DATASET_INFO['source_url']}")
+print(f"resolution={RESOLUTION}")</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=cd0d4604">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3d1ca469">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="notebook-display">Notebook display<a class="anchor-link" href="#notebook-display">¶</a></h2><p>Enable inline matplotlib so figures render beneath each cell.</p>
+<h2 id="notebook-display">Notebook display<a class="anchor-link" href="#notebook-display">¶</a></h2><p>This helper registers the <code>%matplotlib inline</code> magic so figures render directly beneath each cell when you run the notebook in Jupyter or Google Colab. If you are running this file as a plain Python script the function detects the absence of an IPython kernel and exits silently, so it is always safe to call.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3606868c">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b7920201">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3443,18 +3574,38 @@ print(f"source_url={DATASET_INFO['source_url']}")</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="o">%</span><span class="n">matplotlib</span> <span class="n">inline</span>
-<span class="o">%</span><span class="n">config</span> <span class="n">InlineBackend</span><span class="o">.</span><span class="n">close_figures</span> <span class="o">=</span> <span class="kc">True</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">_enable_notebook_inline_matplotlib</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Enable inline matplotlib figures when running in IPython."""</span>
+    <span class="n">get_ipython_func</span> <span class="o">=</span> <span class="nb">globals</span><span class="p">()</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"get_ipython"</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">callable</span><span class="p">(</span><span class="n">get_ipython_func</span><span class="p">):</span>
+        <span class="k">return</span>
+    <span class="n">ipython</span> <span class="o">=</span> <span class="n">get_ipython_func</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">ipython</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ipython</span><span class="o">.</span><span class="n">run_line_magic</span><span class="p">(</span><span class="s2">"matplotlib"</span><span class="p">,</span> <span class="s2">"inline"</span><span class="p">)</span>
+        <span class="n">ipython</span><span class="o">.</span><span class="n">run_line_magic</span><span class="p">(</span><span class="s2">"config"</span><span class="p">,</span> <span class="s2">"InlineBackend.close_figures = True"</span><span class="p">)</span>
+
+
+<span class="n">_enable_notebook_inline_matplotlib</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-4">%matplotlib inline
-%config InlineBackend.close_figures = True</div>
+<div class="clipboard-copy-txt" id="cell-4">def _enable_notebook_inline_matplotlib() -&gt; None:
+    """Enable inline matplotlib figures when running in IPython."""
+    get_ipython_func = globals().get("get_ipython")
+    if not callable(get_ipython_func):
+        return
+    ipython = get_ipython_func()
+    if ipython is not None:
+        ipython.run_line_magic("matplotlib", "inline")
+        ipython.run_line_magic("config", "InlineBackend.close_figures = True")
+
+
+_enable_notebook_inline_matplotlib()</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=fcc9561c">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=08de3f94">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3465,7 +3616,7 @@ print(f"source_url={DATASET_INFO['source_url']}")</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=68c741ec">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b2109a1e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3486,43 +3637,71 @@ print(f"source_url={DATASET_INFO['source_url']}")</div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">try</span><span class="p">:</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">google.colab</span><span class="w"> </span><span class="kn">import</span> <span class="n">userdata</span>
 
-    <span class="n">ROBOFLOW_API_KEY</span> <span class="o">=</span> <span class="n">userdata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"ROBOFLOW_API_KEY"</span><span class="p">)</span> <span class="ow">or</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"ROBOFLOW_API_KEY"</span><span class="p">]</span>
-<span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
-    <span class="n">ROBOFLOW_API_KEY</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"ROBOFLOW_API_KEY"</span><span class="p">]</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">ROBOFLOW_API_KEY</span> <span class="o">=</span> <span class="n">userdata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"ROBOFLOW_API_KEY"</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">""</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+        <span class="n">ROBOFLOW_API_KEY</span> <span class="o">=</span> <span class="s2">""</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="n">ROBOFLOW_API_KEY</span> <span class="o">=</span> <span class="s2">""</span>
+
+<span class="k">if</span> <span class="ow">not</span> <span class="n">ROBOFLOW_API_KEY</span><span class="p">:</span>
+    <span class="n">ROBOFLOW_API_KEY</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"ROBOFLOW_API_KEY"</span><span class="p">,</span> <span class="s2">""</span><span class="p">)</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">ROBOFLOW_API_KEY</span><span class="p">:</span>
+    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+        <span class="s2">"ROBOFLOW_API_KEY not found. "</span>
+        <span class="s2">"In Colab: add it via Secrets (key icon). "</span>
+        <span class="s2">"Locally: set the environment variable before running."</span>
+    <span class="p">)</span>
 
 <span class="n">rf</span> <span class="o">=</span> <span class="n">Roboflow</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="n">ROBOFLOW_API_KEY</span><span class="p">)</span>
+<span class="n">_rf_format</span> <span class="o">=</span> <span class="s2">"yolov8"</span> <span class="k">if</span> <span class="n">DATASET_FORMAT</span> <span class="o">==</span> <span class="s2">"yolo"</span> <span class="k">else</span> <span class="s2">"coco"</span>
 <span class="n">dataset</span> <span class="o">=</span> <span class="p">(</span>
     <span class="n">rf</span><span class="o">.</span><span class="n">workspace</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s2">"workspace"</span><span class="p">]))</span>
     <span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s2">"project"</span><span class="p">]))</span>
     <span class="o">.</span><span class="n">version</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">DATASET_INFO</span><span class="p">[</span><span class="s2">"version"</span><span class="p">]))</span>
-    <span class="o">.</span><span class="n">download</span><span class="p">(</span><span class="s2">"coco"</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASETS_DIR</span> <span class="o">/</span> <span class="n">DATASET_KEY</span><span class="p">))</span>
+    <span class="o">.</span><span class="n">download</span><span class="p">(</span><span class="n">_rf_format</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASETS_DIR</span> <span class="o">/</span> <span class="n">DATASET_KEY</span><span class="p">))</span>
 <span class="p">)</span>
 <span class="n">DATASET_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">dataset</span><span class="o">.</span><span class="n">location</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"dataset_dir=</span><span class="si">{</span><span class="n">DATASET_DIR</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"rf_format=</span><span class="si">{</span><span class="n">_rf_format</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-5">try:
     from google.colab import userdata
 
-    ROBOFLOW_API_KEY = userdata.get("ROBOFLOW_API_KEY") or os.environ["ROBOFLOW_API_KEY"]
-except Exception:
-    ROBOFLOW_API_KEY = os.environ["ROBOFLOW_API_KEY"]
+    try:
+        ROBOFLOW_API_KEY = userdata.get("ROBOFLOW_API_KEY") or ""
+    except Exception:
+        ROBOFLOW_API_KEY = ""
+except ImportError:
+    ROBOFLOW_API_KEY = ""
+
+if not ROBOFLOW_API_KEY:
+    ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY", "")
+if not ROBOFLOW_API_KEY:
+    raise RuntimeError(
+        "ROBOFLOW_API_KEY not found. "
+        "In Colab: add it via Secrets (key icon). "
+        "Locally: set the environment variable before running."
+    )
 
 rf = Roboflow(api_key=ROBOFLOW_API_KEY)
+_rf_format = "yolov8" if DATASET_FORMAT == "yolo" else "coco"
 dataset = (
     rf.workspace(str(DATASET_INFO["workspace"]))
     .project(str(DATASET_INFO["project"]))
     .version(int(DATASET_INFO["version"]))
-    .download("coco", location=str(DATASETS_DIR / DATASET_KEY))
+    .download(_rf_format, location=str(DATASETS_DIR / DATASET_KEY))
 )
 DATASET_DIR = Path(dataset.location)
-print(f"dataset_dir={DATASET_DIR}")</div>
+print(f"dataset_dir={DATASET_DIR}")
+print(f"rf_format={_rf_format}")</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=6febe5dd">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=2f59cc9e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3533,7 +3712,7 @@ print(f"dataset_dir={DATASET_DIR}")</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=29686813">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3111b71a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3551,15 +3730,30 @@ print(f"dataset_dir={DATASET_DIR}")</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">TRAIN_ANNOTATIONS</span> <span class="o">=</span> <span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"train"</span> <span class="o">/</span> <span class="s2">"_annotations.coco.json"</span>
-<span class="n">schema</span> <span class="o">=</span> <span class="n">infer_coco_keypoint_schema</span><span class="p">(</span><span class="n">TRAIN_ANNOTATIONS</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">if</span> <span class="n">DATASET_FORMAT</span> <span class="o">==</span> <span class="s2">"yolo"</span><span class="p">:</span>
+    <span class="n">schema</span> <span class="o">=</span> <span class="n">infer_yolo_keypoint_schema</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"data.yaml"</span><span class="p">)</span>
+    <span class="n">_flip_idx</span> <span class="o">=</span> <span class="n">schema</span><span class="o">.</span><span class="n">flip_idx</span>
+    <span class="n">_pairs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">_seen</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">_i</span><span class="p">,</span> <span class="n">_j</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">_flip_idx</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">_i</span> <span class="ow">in</span> <span class="n">_seen</span> <span class="ow">or</span> <span class="n">_j</span> <span class="ow">in</span> <span class="n">_seen</span> <span class="ow">or</span> <span class="n">_i</span> <span class="o">==</span> <span class="n">_j</span><span class="p">:</span>
+            <span class="n">_seen</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">_i</span><span class="p">)</span>
+            <span class="k">continue</span>
+        <span class="k">if</span> <span class="n">_j</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">_flip_idx</span><span class="p">)</span> <span class="ow">and</span> <span class="n">_flip_idx</span><span class="p">[</span><span class="n">_j</span><span class="p">]</span> <span class="o">==</span> <span class="n">_i</span><span class="p">:</span>
+            <span class="n">_pairs</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="n">_i</span><span class="p">,</span> <span class="n">_j</span><span class="p">])</span>
+            <span class="n">_seen</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="n">_i</span><span class="p">,</span> <span class="n">_j</span><span class="p">})</span>
+    <span class="n">KEYPOINT_FLIP_PAIRS</span> <span class="o">=</span> <span class="n">_pairs</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">TRAIN_ANNOTATIONS</span> <span class="o">=</span> <span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"train"</span> <span class="o">/</span> <span class="s2">"_annotations.coco.json"</span>
+    <span class="n">schema</span> <span class="o">=</span> <span class="n">infer_coco_keypoint_schema</span><span class="p">(</span><span class="n">TRAIN_ANNOTATIONS</span><span class="p">)</span>  <span class="c1"># type: ignore[assignment]</span>
+    <span class="n">KEYPOINT_FLIP_PAIRS</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">DATASET_INFO</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"keypoint_flip_pairs"</span><span class="p">,</span> <span class="p">[]))</span>
+
 <span class="n">CLASS_NAMES</span> <span class="o">=</span> <span class="n">schema</span><span class="o">.</span><span class="n">class_names</span>
 <span class="n">NUM_KEYPOINTS_PER_CLASS</span> <span class="o">=</span> <span class="n">schema</span><span class="o">.</span><span class="n">num_keypoints_per_class</span>
 <span class="n">NUM_CLASSES</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">CLASS_NAMES</span><span class="p">)</span>
 <span class="n">KEYPOINT_OKS_SIGMAS</span> <span class="o">=</span> <span class="n">schema</span><span class="o">.</span><span class="n">keypoint_oks_sigmas</span>
 <span class="n">ACTIVE_KEYPOINT_COUNTS</span> <span class="o">=</span> <span class="p">[</span><span class="n">count</span> <span class="k">for</span> <span class="n">count</span> <span class="ow">in</span> <span class="n">NUM_KEYPOINTS_PER_CLASS</span> <span class="k">if</span> <span class="n">count</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
 <span class="n">VALIDATE_KEYPOINT_METRICS</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">ACTIVE_KEYPOINT_COUNTS</span><span class="p">))</span> <span class="o">&lt;=</span> <span class="mi">1</span>
-<span class="n">KEYPOINT_FLIP_PAIRS</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">DATASET_INFO</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"keypoint_flip_pairs"</span><span class="p">,</span> <span class="p">[]))</span>
 
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"class_names=</span><span class="si">{</span><span class="n">CLASS_NAMES</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"num_keypoints_per_class=</span><span class="si">{</span><span class="n">NUM_KEYPOINTS_PER_CLASS</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
@@ -3570,15 +3764,30 @@ print(f"dataset_dir={DATASET_DIR}")</div>
 <span class="k">else</span><span class="p">:</span>
     <span class="nb">print</span><span class="p">(</span><span class="s2">"keypoint_oks_validation=skipped because COCO OKS requires one keypoint count across categories"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">TRAIN_ANNOTATIONS = DATASET_DIR / "train" / "_annotations.coco.json"
-schema = infer_coco_keypoint_schema(TRAIN_ANNOTATIONS)
+<div class="clipboard-copy-txt" id="cell-6">if DATASET_FORMAT == "yolo":
+    schema = infer_yolo_keypoint_schema(DATASET_DIR / "data.yaml")
+    _flip_idx = schema.flip_idx
+    _pairs: list[int] = []
+    _seen: set[int] = set()
+    for _i, _j in enumerate(_flip_idx):
+        if _i in _seen or _j in _seen or _i == _j:
+            _seen.add(_i)
+            continue
+        if _j &lt; len(_flip_idx) and _flip_idx[_j] == _i:
+            _pairs.extend([_i, _j])
+            _seen.update({_i, _j})
+    KEYPOINT_FLIP_PAIRS = _pairs
+else:
+    TRAIN_ANNOTATIONS = DATASET_DIR / "train" / "_annotations.coco.json"
+    schema = infer_coco_keypoint_schema(TRAIN_ANNOTATIONS)  # type: ignore[assignment]
+    KEYPOINT_FLIP_PAIRS = list(DATASET_INFO.get("keypoint_flip_pairs", []))
+
 CLASS_NAMES = schema.class_names
 NUM_KEYPOINTS_PER_CLASS = schema.num_keypoints_per_class
 NUM_CLASSES = len(CLASS_NAMES)
 KEYPOINT_OKS_SIGMAS = schema.keypoint_oks_sigmas
 ACTIVE_KEYPOINT_COUNTS = [count for count in NUM_KEYPOINTS_PER_CLASS if count &gt; 0]
 VALIDATE_KEYPOINT_METRICS = len(set(ACTIVE_KEYPOINT_COUNTS)) &lt;= 1
-KEYPOINT_FLIP_PAIRS = list(DATASET_INFO.get("keypoint_flip_pairs", []))
 
 print(f"class_names={CLASS_NAMES}")
 print(f"num_keypoints_per_class={NUM_KEYPOINTS_PER_CLASS}")
@@ -3594,7 +3803,7 @@ else:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e9d524c2">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=4c9b5a6b">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3605,7 +3814,7 @@ else:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3e340c7d">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e0bd03c1">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3672,7 +3881,7 @@ else:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=8bc88b23">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=f516409d">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3683,7 +3892,7 @@ else:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=77458c24">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=80f4317b">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3730,7 +3939,7 @@ else:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7a8128e7">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=80f50cd8">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3741,7 +3950,7 @@ else:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=354dbef6">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=51734ce1">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3802,7 +4011,7 @@ else:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=4801d8c8">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=2e548c8c">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3813,7 +4022,7 @@ else:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4aa3f873">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=757c151a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3880,7 +4089,7 @@ else:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=a6049319">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=105aefc9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3891,7 +4100,7 @@ else:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3eb9aa14">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=fe060e29">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3913,11 +4122,12 @@ else:
 <span class="n">variant</span> <span class="o">=</span> <span class="n">RFDETRKeypointPreview</span><span class="p">(</span>  <span class="c1"># type: ignore[no-untyped-call]</span>
     <span class="n">num_classes</span><span class="o">=</span><span class="n">NUM_CLASSES</span><span class="p">,</span>
     <span class="n">num_keypoints_per_class</span><span class="o">=</span><span class="n">NUM_KEYPOINTS_PER_CLASS</span><span class="p">,</span>
+    <span class="n">resolution</span><span class="o">=</span><span class="n">RESOLUTION</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="n">variant</span><span class="o">.</span><span class="n">model_config</span><span class="o">.</span><span class="n">model_name</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">variant</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span>
 
 <span class="n">train_config</span> <span class="o">=</span> <span class="n">KeypointTrainConfig</span><span class="p">(</span>
-    <span class="n">dataset_file</span><span class="o">=</span><span class="s2">"roboflow"</span><span class="p">,</span>
+    <span class="n">dataset_file</span><span class="o">=</span><span class="s2">"yolo"</span> <span class="k">if</span> <span class="n">DATASET_FORMAT</span> <span class="o">==</span> <span class="s2">"yolo"</span> <span class="k">else</span> <span class="s2">"roboflow"</span><span class="p">,</span>
     <span class="n">dataset_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASET_DIR</span><span class="p">),</span>
     <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">OUTPUT_DIR</span><span class="p">),</span>
     <span class="n">epochs</span><span class="o">=</span><span class="n">EPOCHS</span><span class="p">,</span>
@@ -3963,11 +4173,12 @@ else:
 variant = RFDETRKeypointPreview(  # type: ignore[no-untyped-call]
     num_classes=NUM_CLASSES,
     num_keypoints_per_class=NUM_KEYPOINTS_PER_CLASS,
+    resolution=RESOLUTION,
 )
 variant.model_config.model_name = type(variant).__name__
 
 train_config = KeypointTrainConfig(
-    dataset_file="roboflow",
+    dataset_file="yolo" if DATASET_FORMAT == "yolo" else "roboflow",
     dataset_dir=str(DATASET_DIR),
     output_dir=str(OUTPUT_DIR),
     epochs=EPOCHS,
@@ -4014,7 +4225,7 @@ trainer = build_trainer(train_config, variant.model_config)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=6485a3ca">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=4cdfa696">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4025,7 +4236,7 @@ trainer = build_trainer(train_config, variant.model_config)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=be85e121">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=df126db6">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4066,7 +4277,7 @@ plt.close(sample_figure)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=762acc31">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=76be07a3">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4077,7 +4288,7 @@ plt.close(sample_figure)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=6236f709">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=71d28853">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4106,7 +4317,7 @@ print(f"output_dir={OUTPUT_DIR}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3a0816a1">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e1e72b80">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4117,7 +4328,7 @@ print(f"output_dir={OUTPUT_DIR}")</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c3c921cb">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=5a052495">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4146,18 +4357,19 @@ print(f"saved_checkpoint_model={final_checkpoint}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=f87253a7">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=1482fa79">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="7-validate-metrics">7 - Validate metrics<a class="anchor-link" href="#7-validate-metrics">¶</a></h2><p>The validation pass that runs at the end of every training epoch uses the best weights seen so far and applies augmentation. This cell runs a clean post-training validation: no augmentation, the best checkpoint loaded via <code>BestModelCallback</code>, and results serialised to JSON for downstream comparison. Two metrics are most important to inspect here. <code>bbox/map</code> is the standard COCO bounding-box mAP at IoU 0.50:0.95 — it tells you how reliably the detector finds and bounds each object. <code>keypoint/oks</code> is the OKS-based mAP — it measures how precisely the model places each joint within the detected bounding boxes. A model can have a high <code>bbox/map</code> but a low <code>keypoint/oks</code> if it finds objects well but struggles to localise their joints; addressing that usually means more labelled data or tighter OKS sigmas.</p>
+<h2 id="7-validate-metrics">7 - Validate metrics<a class="anchor-link" href="#7-validate-metrics">¶</a></h2><p>The validation pass that runs at the end of every training epoch uses the best weights seen so far and applies augmentation. This cell runs a clean post-training validation: no augmentation, the best checkpoint loaded from <code>checkpoint_best_total.pth</code> written by <code>BestModelCallback</code>, and results serialised to JSON for downstream comparison. Two metrics are most important to inspect here. <code>bbox/map</code> is the standard COCO bounding-box mAP at IoU 0.50:0.95 — it tells you how reliably the detector finds and bounds each object. <code>keypoint/oks</code> is the OKS-based mAP — it measures how precisely the model places each joint within the detected bounding boxes. A model can have a high <code>bbox/map</code> but a low <code>keypoint/oks</code> if it finds objects well but struggles to localise their joints; addressing that usually means more labelled data or tighter OKS sigmas.</p>
+<p><strong>Note:</strong> <code>checkpoint_best_total.pth</code> is written after the first completed validation epoch. If training was interrupted before any epoch finished, this file will not exist and the cell below will raise <code>FileNotFoundError</code>.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4f5a7717">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7aa26516">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4175,7 +4387,14 @@ print(f"saved_checkpoint_model={final_checkpoint}")</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">validation_results</span> <span class="o">=</span> <span class="n">trainer</span><span class="o">.</span><span class="n">validate</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">datamodule</span><span class="o">=</span><span class="n">datamodule</span><span class="p">,</span> <span class="n">ckpt_path</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="c1"># checkpoint_best_total.pth stores plain model weights under key "model", not a full</span>
+<span class="c1"># PTL checkpoint.  Passing it as ckpt_path to trainer.validate() triggers a KeyError</span>
+<span class="c1"># on "validate_loop" because PTL tries to restore loop state that isn't present.</span>
+<span class="c1"># Load the weights directly and run validate without ckpt_path instead.</span>
+<span class="n">_ckpt</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">OUTPUT_DIR</span> <span class="o">/</span> <span class="s2">"checkpoint_best_total.pth"</span><span class="p">,</span> <span class="n">map_location</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="n">weights_only</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">_ckpt</span><span class="p">[</span><span class="s2">"model"</span><span class="p">],</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">del</span> <span class="n">_ckpt</span>
+<span class="n">validation_results</span> <span class="o">=</span> <span class="n">trainer</span><span class="o">.</span><span class="n">validate</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">datamodule</span><span class="o">=</span><span class="n">datamodule</span><span class="p">)</span>
 <span class="n">validation_metrics</span> <span class="o">=</span> <span class="p">{</span><span class="n">key</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">validation_results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span> <span class="k">if</span> <span class="n">validation_results</span> <span class="k">else</span> <span class="p">{}</span>
 <span class="k">if</span> <span class="ow">not</span> <span class="n">VALIDATE_KEYPOINT_METRICS</span><span class="p">:</span>
     <span class="n">validation_metrics</span><span class="p">[</span><span class="s2">"keypoint_oks_skipped_mixed_keypoint_counts"</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span>
@@ -4183,7 +4402,14 @@ print(f"saved_checkpoint_model={final_checkpoint}")</div>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"validation_metrics=</span><span class="si">{</span><span class="n">validation_metrics</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"validation_metrics_json=</span><span class="si">{</span><span class="n">VALIDATION_METRICS_JSON</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-15">validation_results = trainer.validate(model, datamodule=datamodule, ckpt_path=None)
+<div class="clipboard-copy-txt" id="cell-15"># checkpoint_best_total.pth stores plain model weights under key "model", not a full
+# PTL checkpoint.  Passing it as ckpt_path to trainer.validate() triggers a KeyError
+# on "validate_loop" because PTL tries to restore loop state that isn't present.
+# Load the weights directly and run validate without ckpt_path instead.
+_ckpt = torch.load(OUTPUT_DIR / "checkpoint_best_total.pth", map_location="cpu", weights_only=False)
+model.model.load_state_dict(_ckpt["model"], strict=True)
+del _ckpt
+validation_results = trainer.validate(model, datamodule=datamodule)
 validation_metrics = {key: float(value) for key, value in validation_results[0].items()} if validation_results else {}
 if not VALIDATE_KEYPOINT_METRICS:
     validation_metrics["keypoint_oks_skipped_mixed_keypoint_counts"] = 1.0
@@ -4196,7 +4422,7 @@ print(f"validation_metrics_json={VALIDATION_METRICS_JSON}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=35bd8879">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=0aa1a943">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4207,7 +4433,7 @@ print(f"validation_metrics_json={VALIDATION_METRICS_JSON}")</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=5d0fcc26">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=37589b33">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4240,7 +4466,7 @@ plt.close(loss_figure)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e778f49b">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a5608045">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4271,7 +4497,7 @@ plt.close(map_figure)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=305b07ab">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=690a200a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4282,7 +4508,7 @@ plt.close(map_figure)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7e6a41e9">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c8d75b0f">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4309,7 +4535,7 @@ plt.close(map_figure)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e75598c8">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7bee8d28">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4320,7 +4546,7 @@ plt.close(map_figure)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ce59867f">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a5182f47">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4338,24 +4564,44 @@ plt.close(map_figure)</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">validation_image_paths</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">((</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"test"</span><span class="p">)</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.jpg"</span><span class="p">))</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">_IMAGE_EXTS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">".jpg"</span><span class="p">,</span> <span class="s2">".jpeg"</span><span class="p">,</span> <span class="s2">".png"</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_find_images</span><span class="p">(</span><span class="n">directory</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]:</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">directory</span><span class="o">.</span><span class="n">is_dir</span><span class="p">():</span>
+        <span class="k">return</span> <span class="p">[]</span>
+    <span class="c1"># Iterate through all subfolders to find images</span>
+    <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">directory</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"**/*"</span><span class="p">)</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">is_file</span><span class="p">()</span> <span class="ow">and</span> <span class="n">p</span><span class="o">.</span><span class="n">suffix</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="n">_IMAGE_EXTS</span><span class="p">)</span>
+
+
+<span class="n">validation_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"test"</span><span class="p">)</span>
 <span class="k">if</span> <span class="ow">not</span> <span class="n">validation_image_paths</span><span class="p">:</span>
-    <span class="n">validation_image_paths</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">((</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"valid"</span><span class="p">)</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.jpg"</span><span class="p">))</span>
+    <span class="n">validation_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"valid"</span><span class="p">)</span>
 <span class="k">if</span> <span class="ow">not</span> <span class="n">validation_image_paths</span><span class="p">:</span>
-    <span class="n">validation_image_paths</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">((</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"train"</span><span class="p">)</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.jpg"</span><span class="p">))</span>
+    <span class="n">validation_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"train"</span><span class="p">)</span>
 <span class="k">if</span> <span class="ow">not</span> <span class="n">validation_image_paths</span><span class="p">:</span>
-    <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"No JPG images found under </span><span class="si">{</span><span class="n">DATASET_DIR</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"No images (</span><span class="si">{</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_IMAGE_EXTS</span><span class="p">))</span><span class="si">}</span><span class="s2">) found under </span><span class="si">{</span><span class="n">DATASET_DIR</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
 <span class="n">inference_image_paths</span> <span class="o">=</span> <span class="n">validation_image_paths</span><span class="p">[:</span><span class="n">INFERENCE_COUNT</span><span class="p">]</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"inference_images=</span><span class="si">{</span><span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">inference_image_paths</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-19">validation_image_paths = sorted((DATASET_DIR / "test").glob("*.jpg"))
+<div class="clipboard-copy-txt" id="cell-19">_IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
+
+
+def _find_images(directory: Path) -&gt; list[Path]:
+    if not directory.is_dir():
+        return []
+    # Iterate through all subfolders to find images
+    return sorted(p for p in directory.glob("**/*") if p.is_file() and p.suffix.lower() in _IMAGE_EXTS)
+
+
+validation_image_paths = _find_images(DATASET_DIR / "test")
 if not validation_image_paths:
-    validation_image_paths = sorted((DATASET_DIR / "valid").glob("*.jpg"))
+    validation_image_paths = _find_images(DATASET_DIR / "valid")
 if not validation_image_paths:
-    validation_image_paths = sorted((DATASET_DIR / "train").glob("*.jpg"))
+    validation_image_paths = _find_images(DATASET_DIR / "train")
 if not validation_image_paths:
-    raise FileNotFoundError(f"No JPG images found under {DATASET_DIR}")
+    raise FileNotFoundError(f"No images ({', '.join(sorted(_IMAGE_EXTS))}) found under {DATASET_DIR}")
 
 inference_image_paths = validation_image_paths[:INFERENCE_COUNT]
 print(f"inference_images={[str(path) for path in inference_image_paths]}")</div>
@@ -4365,18 +4611,18 @@ print(f"inference_images={[str(path) for path in inference_image_paths]}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=2175b026">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=1c7654a9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="11-visualize-inference-and-keypoint-table">11 - Visualize inference and keypoint table<a class="anchor-link" href="#11-visualize-inference-and-keypoint-table">¶</a></h2><p>Two thresholds control what you see in this cell and they operate at different levels. <code>INFERENCE_THRESHOLD</code> is a detection confidence threshold: only object detections whose bounding-box score exceeds this value are shown at all. Raise it to suppress false positives; lower it to surface low-confidence detections you might want to investigate. <code>KEYPOINT_THRESHOLD</code> operates within each accepted detection: individual keypoints whose confidence falls below this value are treated as not visible and omitted from the overlay. The uncertainty ellipses (drawn when <code>DRAW_UNCERTAINTY_ELLIPSES = True</code>) visualise the predicted covariance for each keypoint — a larger ellipse means the model is less certain about that joint's exact location. Below the image grid, the keypoint table gives you the raw coordinates and per-keypoint confidence scores in a format that is easy to copy into a spreadsheet or feed into downstream analysis.</p>
+<h2 id="11-visualize-inference">11 - Visualize inference<a class="anchor-link" href="#11-visualize-inference">¶</a></h2><p>Two thresholds control what you see here. <code>INFERENCE_THRESHOLD</code> is a detection confidence threshold: only detections whose bounding-box score exceeds this value are shown. Raise it to suppress false positives; lower it to surface low-confidence detections. <code>KEYPOINT_THRESHOLD</code> operates within each accepted detection: individual keypoints whose confidence falls below this value are treated as not visible and omitted from the overlay. The uncertainty ellipses (drawn when <code>DRAW_UNCERTAINTY_ELLIPSES = True</code>) visualise the predicted covariance for each keypoint — a larger ellipse means the model is less certain about that joint's exact location.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d718efc9">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e520b84c">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4414,8 +4660,6 @@ print(f"inference_images={[str(path) for path in inference_image_paths]}")</div>
     <span class="n">figure</span> <span class="o">=</span> <span class="n">_keypoint_grid_figure</span><span class="p">(</span><span class="n">inference_grid_items</span><span class="p">,</span> <span class="n">columns</span><span class="o">=</span><span class="n">INFERENCE_COLUMNS</span><span class="p">)</span>
     <span class="n">display</span><span class="p">(</span><span class="n">figure</span><span class="p">)</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="n">figure</span><span class="p">)</span>
-
-<span class="n">_display_keypoint_records</span><span class="p">(</span><span class="n">keypoint_rows</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-20">inference_grid_items = []
 keypoint_rows = []
@@ -4436,9 +4680,45 @@ for image_path in inference_image_paths:
 if inference_grid_items:
     figure = _keypoint_grid_figure(inference_grid_items, columns=INFERENCE_COLUMNS)
     display(figure)
-    plt.close(figure)
-
-_display_keypoint_records(keypoint_rows)</div>
+    plt.close(figure)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=93df94eb">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="12-keypoint-prediction-table">12 - Keypoint prediction table<a class="anchor-link" href="#12-keypoint-prediction-table">¶</a></h2><p>The table below gives you the raw coordinates and per-keypoint confidence scores for every detection in the grid above. Fields that are constant across all keypoints in an image (filename, detection score) are printed once as a header line rather than repeated in every row. This format is easy to copy into a spreadsheet or feed into downstream analysis.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=de9b2707">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-21">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">_display_keypoint_records</span><span class="p">(</span><span class="n">keypoint_rows</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-21">_display_keypoint_records(keypoint_rows)</div>
 </div>
 </div>
 </div>
@@ -4472,7 +4752,7 @@ _display_keypoint_records(keypoint_rows)</div>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 16, 2026 15:17:17 UTC">2026-06-16 15:17:17</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 24, 2026 15:19:04 UTC">2026-06-24 15:19:04</span>
   </span>
 
     
@@ -4580,7 +4860,7 @@ _display_keypoint_records(keypoint_rows)</div>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

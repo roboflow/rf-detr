@@ -12,7 +12,7 @@
         <meta name="author" content="Roboflow">
       
       
-        <link rel="canonical" href="https://rfdetr.roboflow.com/latest/cookbooks/custom-augmentations/">
+        <link rel="canonical" href="https://rfdetr.roboflow.com/latest/cookbooks/inference-latency-benchmark/">
       
       
       
@@ -27,7 +27,7 @@
   
     
       
-        <title>Custom Augmentations and Live Training Progress - RF-DETR</title>
+        <title>RF-DETR Inference Latency Benchmark - RF-DETR</title>
       
     
   
@@ -78,10 +78,10 @@
   
   
   
-  <meta property="og:title" content="Custom Augmentations and Live Training Progress - RF-DETR">
+  <meta property="og:title" content="RF-DETR Inference Latency Benchmark - RF-DETR">
   <meta property="og:description" content="Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10.">
   <meta property="og:type" content="article">
-  <meta property="og:url" content="https://rfdetr.roboflow.com/latest/cookbooks/custom-augmentations/">
+  <meta property="og:url" content="https://rfdetr.roboflow.com/latest/cookbooks/inference-latency-benchmark/">
   <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
   <meta property="og:image:width" content="840">
   <meta property="og:image:height" content="630">
@@ -89,7 +89,7 @@
   
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@roboflow">
-  <meta name="twitter:title" content="Custom Augmentations and Live Training Progress - RF-DETR">
+  <meta name="twitter:title" content="RF-DETR Inference Latency Benchmark - RF-DETR">
   <meta name="twitter:description" content="Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10.">
   <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
 
@@ -97,26 +97,26 @@
   
   
   
-  <meta property="article:modified_time" content="2026-06-13T09:02:21">
+  <meta property="article:modified_time" content="2026-06-23T19:51:04">
   
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "Custom Augmentations and Live Training Progress",
+    "headline": "RF-DETR Inference Latency Benchmark",
     "description": "Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python \u22653.10.",
-    "url": "https://rfdetr.roboflow.com/latest/cookbooks/custom-augmentations/",
+    "url": "https://rfdetr.roboflow.com/latest/cookbooks/inference-latency-benchmark/",
     "isPartOf": {"@id": "https://rfdetr.roboflow.com/latest#website"},
     "about": {"@id": "https://rfdetr.roboflow.com/latest#software"},
     "proficiencyLevel": "Beginner to advanced",
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-06-13T09:02:21",
+    "dateModified": "2026-06-23T19:51:04",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
-    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/latest/cookbooks/custom-augmentations/"},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/latest/cookbooks/inference-latency-benchmark/"},
     "speakable": {
       "@type": "SpeakableSpecification",
       "cssSelector": [".md-content h1", ".md-typeset > p:first-child"]
@@ -138,8 +138,8 @@
       {
         "@type": "ListItem",
         "position": 2,
-        "name": "Custom Augmentations and Live Training Progress",
-        "item": "https://rfdetr.roboflow.com/latest/cookbooks/custom-augmentations/"
+        "name": "RF-DETR Inference Latency Benchmark",
+        "item": "https://rfdetr.roboflow.com/latest/cookbooks/inference-latency-benchmark/"
       }
       
     ]
@@ -160,7 +160,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#custom-augmentations-and-live-training-progress" class="md-skip">
+        <a href="#rf-detr-inference-latency-benchmark" class="md-skip">
           Skip to content
         </a>
       
@@ -228,7 +228,7 @@
 
             </a>
             
-              Custom Augmentations and Live Training Progress
+              RF-DETR Inference Latency Benchmark
             
           </span>
         </div>
@@ -2249,10 +2249,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-install-rf-detr-150" class="md-nav__link">
+  <a href="#1-install" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Install RF-DETR 1.5.0
+        1. Install
       
     </span>
   </a>
@@ -2260,10 +2260,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-check-gpu-availability" class="md-nav__link">
+  <a href="#2-config" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Check GPU availability
+        2. Config
       
     </span>
   </a>
@@ -2271,38 +2271,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-download-coco-2017" class="md-nav__link">
+  <a href="#3-sample-images" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Download COCO 2017
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. Download COCO 2017">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#set-up-the-dataset-directory-structure" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Set up the dataset directory structure
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-explore-the-built-in-augmentation-presets" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Explore the built-in augmentation presets
+        3. Sample images
       
     </span>
   </a>
@@ -2310,38 +2282,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-inspect-augmented-samples-before-training" class="md-nav__link">
+  <a href="#4-latency-helpers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Inspect augmented samples before training
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="5. Inspect augmented samples before training">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#display-the-saved-grids-inline" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Display the saved grids inline
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-choose-your-augmentation-config" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. Choose your augmentation config
+        4. Latency helpers
       
     </span>
   </a>
@@ -2349,10 +2293,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#7-train-with-augmentations" class="md-nav__link">
+  <a href="#5-per-config-benchmark-functions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        7. Train with augmentations
+        5. Per-config benchmark functions
       
     </span>
   </a>
@@ -2360,10 +2304,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#8-run-inference" class="md-nav__link">
+  <a href="#6-model-benchmark-runner" class="md-nav__link">
     <span class="md-ellipsis">
       
-        8. Run inference
+        6. Model benchmark runner
       
     </span>
   </a>
@@ -2371,10 +2315,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#9-next-steps" class="md-nav__link">
+  <a href="#7-benchmark-loop-detection-segmentation-keypoint" class="md-nav__link">
     <span class="md-ellipsis">
       
-        9. Next steps
+        7. Benchmark loop — detection · segmentation · keypoint
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Summary
       
     </span>
   </a>
@@ -3123,49 +3078,8 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </style>
 <!-- End of mermaid configuration --><div class="jupyter-wrapper">
 <div class="jp-Notebook" data-jp-theme-light="true" data-jp-theme-name="JupyterLab Light">
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=0f72b166">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h1 id="custom-augmentations-and-live-training-progress">Custom Augmentations and Live Training Progress<a class="anchor-link" href="#custom-augmentations-and-live-training-progress">¶</a></h1><p><a href="https://colab.research.google.com/github/roboflow/rf-detr/blob/develop/docs/cookbooks/custom-augmentations.ipynb"><img alt="Open In Colab" src="https://colab.research.google.com/assets/colab-badge.svg"/></a></p>
-<p><strong>RF-DETR</strong> is a real-time object detection model that combines the accuracy of
-transformer-based detectors with inference speeds suitable for production.
-1.5.0 brings two headline additions:</p>
-<ol>
-<li><strong>Custom training augmentations via Albumentations</strong> — a flexible system that
-lets you control exactly how images are transformed during training, with bounding
-boxes and segmentation masks kept in sync automatically.  Four ready-made presets
-cover the most common scenarios out of the box.</li>
-<li><strong>Live progress bars and structured epoch logs</strong> — per-epoch rich / tqdm progress
-so you can monitor batch-level metrics without parsing raw log output.</li>
-</ol>
-<p>You will learn how to:</p>
-<ul>
-<li>Explore and compare the four built-in augmentation presets</li>
-<li>Visually inspect augmented samples <em>before</em> committing to a full training run</li>
-<li>Define a fully custom augmentation pipeline</li>
-<li>Train RF-DETR with your chosen augmentation config</li>
-<li>Run inference with the trained model</li>
-</ul>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=49ad10f9">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="1-install-rf-detr-150">1. Install RF-DETR 1.5.0<a class="anchor-link" href="#1-install-rf-detr-150">¶</a></h2><p><code>rfdetr</code> includes the augmentation system and progress-bar support introduced in
-this release.  <code>supervision</code> handles visualization.</p>
-</div>
-</div>
-</div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=5c1df817">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a5720dea">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3183,29 +3097,72 @@ this release.  <code>supervision</code> handles visualization.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="n">rfdetr</span><span class="o">==</span><span class="mf">1.5.0</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="c1"># ------------------------------------------------------------------------</span>
+<span class="c1"># RF-DETR</span>
+<span class="c1"># Copyright (c) 2025 Roboflow. All Rights Reserved.</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 [see LICENSE for details]</span>
+<span class="c1"># ------------------------------------------------------------------------</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">!pip install -q rfdetr==1.5.0</div>
+<div class="clipboard-copy-txt" id="cell-1"># ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=075cf0b4">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=66c62889">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="2-check-gpu-availability">2. Check GPU availability<a class="anchor-link" href="#2-check-gpu-availability">¶</a></h2><p>RF-DETR trains on GPU when one is available and falls back to CPU otherwise.
-The cell below detects your device and prints VRAM size — a useful sanity check
-before choosing batch size.</p>
+<h1 id="rf-detr-inference-latency-benchmark">RF-DETR Inference Latency Benchmark<a class="anchor-link" href="#rf-detr-inference-latency-benchmark">¶</a></h1><p>Measures inference latency for three RF-DETR families across three configs:</p>
+<table>
+<thead>
+<tr>
+<th>Config</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>FP32</strong></td>
+<td><code>predict()</code> — unoptimized baseline</td>
+</tr>
+<tr>
+<td><strong>FP16+JIT</strong></td>
+<td><code>optimize_for_inference(dtype=torch.float16)</code></td>
+</tr>
+<tr>
+<td><strong>ONNX</strong></td>
+<td>exported <code>.onnx</code> via <code>onnxruntime-gpu</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d1568b82">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h2><p>We need <code>onnxruntime-gpu</code> built against CUDA 12 — the default PyPI wheel targets CUDA 11.8 and silently
+falls back to CPU on modern GPUs.  The Microsoft CUDA-12 package index ships the correct build.</p>
+<blockquote>
+<p><strong>Colab</strong>: after running this cell, go to <strong>Runtime → Restart session</strong>, then run from the next cell.</p>
+</blockquote>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d005aa12">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=6a116013">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3223,77 +3180,33 @@ before choosing batch size.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-
-<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
-
-<span class="n">device</span> <span class="o">=</span> <span class="s2">"cuda"</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s2">"cpu"</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Using device: </span><span class="si">{</span><span class="n">device</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-<span class="k">if</span> <span class="n">device</span> <span class="o">==</span> <span class="s2">"cuda"</span><span class="p">:</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"GPU: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"VRAM: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_properties</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">total_memory</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mf">1e9</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> GB"</span><span class="p">)</span>
-
-<span class="c1"># Scale data-loader workers with available CPUs so the GPU is kept fed.</span>
-<span class="n">num_workers</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">()</span> <span class="ow">or</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Data loader workers: </span><span class="si">{</span><span class="n">num_workers</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">uninstall</span> <span class="o">-</span><span class="n">y</span> <span class="n">onnxruntime</span> <span class="n">onnxruntime</span><span class="o">-</span><span class="n">gpu</span>
+<span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[onnx]"</span> <span class="n">pillow</span> <span class="n">pandas</span>
+<span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="n">onnxruntime</span><span class="o">-</span><span class="n">gpu</span> <span class="o">--</span><span class="n">extra</span><span class="o">-</span><span class="n">index</span><span class="o">-</span><span class="n">url</span> <span class="n">https</span><span class="p">:</span><span class="o">//</span><span class="n">aiinfra</span><span class="o">.</span><span class="n">pkgs</span><span class="o">.</span><span class="n">visualstudio</span><span class="o">.</span><span class="n">com</span><span class="o">/</span><span class="n">PublicPackages</span><span class="o">/</span><span class="n">_packaging</span><span class="o">/</span><span class="n">onnxruntime</span><span class="o">-</span><span class="n">cuda</span><span class="o">-</span><span class="mi">12</span><span class="o">/</span><span class="n">pypi</span><span class="o">/</span><span class="n">simple</span><span class="o">/</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-2">import os
-
-import torch
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {device}")
-if device == "cuda":
-    print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
-
-# Scale data-loader workers with available CPUs so the GPU is kept fed.
-num_workers = max(os.cpu_count() or 0, 2)
-print(f"Data loader workers: {num_workers}")</div>
+<div class="clipboard-copy-txt" id="cell-2">!pip uninstall -y onnxruntime onnxruntime-gpu
+!pip install -q "rfdetr[onnx]" pillow pandas
+!pip install -q onnxruntime-gpu --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=c926124e">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=1ca0838b">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="3-download-coco-2017">3. Download COCO 2017<a class="anchor-link" href="#3-download-coco-2017">¶</a></h2><p>We use the official train/val splits — no manual splitting needed.</p>
-<table>
-<thead>
-<tr>
-<th>Split</th>
-<th>Images</th>
-<th>Size</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>train2017</code></td>
-<td>~118 000</td>
-<td>~18 GB</td>
-</tr>
-<tr>
-<td><code>val2017</code></td>
-<td>5 000</td>
-<td>~1 GB</td>
-</tr>
-<tr>
-<td>annotations</td>
-<td>—</td>
-<td>~241 MB</td>
-</tr>
-</tbody>
-</table>
+<h2 id="2-config">2. Config<a class="anchor-link" href="#2-config">¶</a></h2><p><code>WARMUP_RUNS</code> discards the first N inferences — GPU kernels are JIT-compiled on first use, so early timings
+are outliers.  <code>MEASURE_RUNS</code> then collects the steady-state distribution.  20 + 100 is a reasonable balance
+between statistical stability and total wall-clock time per model.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a3cc746d">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0e47b983">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3311,20 +3224,78 @@ print(f"Data loader workers: {num_workers}")</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">wget</span> <span class="o">-</span><span class="n">q</span> <span class="o">--</span><span class="n">show</span><span class="o">-</span><span class="n">progress</span> <span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="n">images</span><span class="o">.</span><span class="n">cocodataset</span><span class="o">.</span><span class="n">org</span><span class="o">/</span><span class="n">zips</span><span class="o">/</span><span class="n">train2017</span><span class="o">.</span><span class="n">zip</span> <span class="o">-</span><span class="n">O</span> <span class="n">train2017</span><span class="o">.</span><span class="n">zip</span>
-<span class="err">!</span><span class="n">wget</span> <span class="o">-</span><span class="n">q</span> <span class="o">--</span><span class="n">show</span><span class="o">-</span><span class="n">progress</span> <span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="n">images</span><span class="o">.</span><span class="n">cocodataset</span><span class="o">.</span><span class="n">org</span><span class="o">/</span><span class="n">zips</span><span class="o">/</span><span class="n">val2017</span><span class="o">.</span><span class="n">zip</span> <span class="o">-</span><span class="n">O</span> <span class="n">val2017</span><span class="o">.</span><span class="n">zip</span>
-<span class="err">!</span><span class="n">wget</span> <span class="o">-</span><span class="n">q</span> <span class="o">--</span><span class="n">show</span><span class="o">-</span><span class="n">progress</span> <span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="n">images</span><span class="o">.</span><span class="n">cocodataset</span><span class="o">.</span><span class="n">org</span><span class="o">/</span><span class="n">annotations</span><span class="o">/</span><span class="n">annotations_trainval2017</span><span class="o">.</span><span class="n">zip</span> <span class="o">-</span><span class="n">O</span> <span class="n">annotations</span><span class="o">.</span><span class="n">zip</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">NamedTuple</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+
+<span class="n">WARMUP_RUNS</span> <span class="o">=</span> <span class="mi">20</span>
+<span class="n">MEASURE_RUNS</span> <span class="o">=</span> <span class="mi">100</span>
+<span class="n">EXPORT_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"benchmark_output"</span><span class="p">)</span>
+<span class="n">EXPORT_DIR</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
+    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"This benchmark requires a CUDA GPU."</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"GPU: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">onnxruntime</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ort</span>
+
+<span class="n">_ort_providers</span> <span class="o">=</span> <span class="n">ort</span><span class="o">.</span><span class="n">get_available_providers</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ORT </span><span class="si">{</span><span class="n">ort</span><span class="o">.</span><span class="n">__version__</span><span class="si">}</span><span class="s2">, providers: </span><span class="si">{</span><span class="n">_ort_providers</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="k">if</span> <span class="s2">"CUDAExecutionProvider"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_ort_providers</span><span class="p">:</span>
+    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">"onnxruntime-gpu with CUDA support required. Available providers: </span><span class="si">{</span><span class="n">_ort_providers</span><span class="si">}</span><span class="s2">. "</span>
+        <span class="s2">"Fix: reinstall from the CUDA-12 index (see install cell) then restart runtime."</span>
+    <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-3">!wget -q --show-progress http://images.cocodataset.org/zips/train2017.zip -O train2017.zip
-!wget -q --show-progress http://images.cocodataset.org/zips/val2017.zip -O val2017.zip
-!wget -q --show-progress http://images.cocodataset.org/annotations/annotations_trainval2017.zip -O annotations.zip</div>
+<div class="clipboard-copy-txt" id="cell-3">from collections.abc import Callable
+from pathlib import Path
+from typing import Any, NamedTuple
+
+import numpy as np
+import torch
+from PIL import Image
+
+WARMUP_RUNS = 20
+MEASURE_RUNS = 100
+EXPORT_DIR = Path("benchmark_output")
+EXPORT_DIR.mkdir(exist_ok=True)
+
+if not torch.cuda.is_available():
+    raise RuntimeError("This benchmark requires a CUDA GPU.")
+print(f"GPU: {torch.cuda.get_device_name(0)}")
+
+import onnxruntime as ort
+
+_ort_providers = ort.get_available_providers()
+print(f"ORT {ort.__version__}, providers: {_ort_providers}")
+if "CUDAExecutionProvider" not in _ort_providers:
+    raise RuntimeError(
+        f"onnxruntime-gpu with CUDA support required. Available providers: {_ort_providers}. "
+        "Fix: reinstall from the CUDA-12 index (see install cell) then restart runtime."
+    )</div>
 </div>
 </div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=2ccdc87e">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="3-sample-images">3. Sample images<a class="anchor-link" href="#3-sample-images">¶</a></h2><p>Latency depends on resolution, not pixel content, so synthetic noise images are equivalent to real photos
+for benchmarking purposes.  Using a fixed seed makes results reproducible across runs.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=985d1e18">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=06a16bb0">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3342,35 +3313,34 @@ print(f"Data loader workers: {num_workers}")</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">unzip</span> <span class="o">-</span><span class="n">q</span> <span class="n">train2017</span><span class="o">.</span><span class="n">zip</span>
-<span class="err">!</span><span class="n">unzip</span> <span class="o">-</span><span class="n">q</span> <span class="n">val2017</span><span class="o">.</span><span class="n">zip</span>
-<span class="err">!</span><span class="n">unzip</span> <span class="o">-</span><span class="n">q</span> <span class="n">annotations</span><span class="o">.</span><span class="n">zip</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+<span class="n">images</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">Image</span><span class="o">.</span><span class="n">fromarray</span><span class="p">(</span><span class="n">rng</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="p">(</span><span class="mi">640</span><span class="p">,</span> <span class="mi">640</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">))</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">)]</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Generated </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">images</span><span class="p">)</span><span class="si">}</span><span class="s2"> synthetic 640×640 RGB images"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-4">!unzip -q train2017.zip
-!unzip -q val2017.zip
-!unzip -q annotations.zip</div>
+<div class="clipboard-copy-txt" id="cell-4">rng = np.random.default_rng(42)
+images: list[Image.Image] = [Image.fromarray(rng.integers(0, 256, (640, 640, 3), dtype=np.uint8)) for _ in range(10)]
+print(f"Generated {len(images)} synthetic 640×640 RGB images")</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=27b7ae27">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=db0d3d7c">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h3 id="set-up-the-dataset-directory-structure">Set up the dataset directory structure<a class="anchor-link" href="#set-up-the-dataset-directory-structure">¶</a></h3><p><code>model.train()</code> expects:</p>
-<pre><code>dataset/
-  train/  _annotations.coco.json  + images
-  valid/  _annotations.coco.json  + images
-</code></pre>
+<h2 id="4-latency-helpers">4. Latency helpers<a class="anchor-link" href="#4-latency-helpers">¶</a></h2><p>GPU kernels execute asynchronously — <code>time.perf_counter()</code> returns before the GPU finishes, giving
+misleadingly low numbers.  CUDA events are inserted directly into the GPU command stream and timestamped
+on the device, so <code>elapsed_time()</code> measures actual kernel execution.  <code>torch.cuda.synchronize()</code> after
+each run flushes the stream and ensures the event fires before we read it.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=da25896a">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7f928319">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3388,64 +3358,106 @@ print(f"Data loader workers: {num_workers}")</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">mkdir</span> <span class="o">-</span><span class="n">p</span> <span class="n">coco_demo</span>
-<span class="err">!</span><span class="n">mv</span> <span class="n">train2017</span> <span class="n">coco_demo</span><span class="o">/</span><span class="n">train</span>
-<span class="err">!</span><span class="n">mv</span> <span class="n">val2017</span>   <span class="n">coco_demo</span><span class="o">/</span><span class="n">valid</span>
-<span class="err">!</span><span class="n">cp</span> <span class="n">annotations</span><span class="o">/</span><span class="n">instances_train2017</span><span class="o">.</span><span class="n">json</span> <span class="n">coco_demo</span><span class="o">/</span><span class="n">train</span><span class="o">/</span><span class="n">_annotations</span><span class="o">.</span><span class="n">coco</span><span class="o">.</span><span class="n">json</span>
-<span class="err">!</span><span class="n">cp</span> <span class="n">annotations</span><span class="o">/</span><span class="n">instances_val2017</span><span class="o">.</span><span class="n">json</span>   <span class="n">coco_demo</span><span class="o">/</span><span class="n">valid</span><span class="o">/</span><span class="n">_annotations</span><span class="o">.</span><span class="n">coco</span><span class="o">.</span><span class="n">json</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">BenchmarkResult</span><span class="p">(</span><span class="n">NamedTuple</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Single benchmark measurement."""</span>
+
+    <span class="n">label</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">mean_ms</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">std_ms</span><span class="p">:</span> <span class="nb">float</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fps</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Frames per second."""</span>
+        <span class="k">return</span> <span class="mf">1000.0</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">mean_ms</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">measure_latency_gpu</span><span class="p">(</span>
+    <span class="n">fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="nb">object</span><span class="p">],</span>
+    <span class="n">warmup</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">WARMUP_RUNS</span><span class="p">,</span>
+    <span class="n">runs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">MEASURE_RUNS</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Return (mean_ms, std_ms) using CUDA events."""</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">warmup</span><span class="p">):</span>
+        <span class="n">fn</span><span class="p">()</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">timings</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">runs</span><span class="p">):</span>
+        <span class="n">start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+        <span class="n">fn</span><span class="p">()</span>
+        <span class="n">end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+        <span class="n">timings</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">end</span><span class="p">))</span>
+    <span class="n">arr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">timings</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">arr</span><span class="o">.</span><span class="n">mean</span><span class="p">()),</span> <span class="nb">float</span><span class="p">(</span><span class="n">arr</span><span class="o">.</span><span class="n">std</span><span class="p">())</span>
+
+
+<span class="n">_measure</span> <span class="o">=</span> <span class="n">measure_latency_gpu</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-5">!mkdir -p coco_demo
-!mv train2017 coco_demo/train
-!mv val2017   coco_demo/valid
-!cp annotations/instances_train2017.json coco_demo/train/_annotations.coco.json
-!cp annotations/instances_val2017.json   coco_demo/valid/_annotations.coco.json</div>
+<div class="clipboard-copy-txt" id="cell-5">class BenchmarkResult(NamedTuple):
+    """Single benchmark measurement."""
+
+    label: str
+    mean_ms: float
+    std_ms: float
+
+    @property
+    def fps(self) -&gt; float:
+        """Frames per second."""
+        return 1000.0 / self.mean_ms
+
+
+def measure_latency_gpu(
+    fn: Callable[[], object],
+    warmup: int = WARMUP_RUNS,
+    runs: int = MEASURE_RUNS,
+) -&gt; tuple[float, float]:
+    """Return (mean_ms, std_ms) using CUDA events."""
+    for _ in range(warmup):
+        fn()
+    torch.cuda.synchronize()
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    timings: list[float] = []
+    for _ in range(runs):
+        start.record()
+        fn()
+        end.record()
+        torch.cuda.synchronize()
+        timings.append(start.elapsed_time(end))
+    arr = np.array(timings)
+    return float(arr.mean()), float(arr.std())
+
+
+_measure = measure_latency_gpu</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=69343c86">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=8f7ee4f5">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="4-explore-the-built-in-augmentation-presets">4. Explore the built-in augmentation presets<a class="anchor-link" href="#4-explore-the-built-in-augmentation-presets">¶</a></h2><p>RF-DETR ships four ready-made presets tuned for common use cases.  Each preset
-is a plain Python dict mapping Albumentations transform names to their constructor
-kwargs (including <code>p</code>, the probability of applying the transform).  You can
-inspect, merge, or extend them like any other dict.</p>
-<table>
-<thead>
-<tr>
-<th>Preset</th>
-<th>When to use</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>AUG_CONSERVATIVE</code></td>
-<td>Small datasets (&lt; 500 images) — gentle transforms to avoid overfitting</td>
-</tr>
-<tr>
-<td><code>AUG_AGGRESSIVE</code></td>
-<td>Large datasets (2 000+ images) — stronger augmentations for better generalisation</td>
-</tr>
-<tr>
-<td><code>AUG_AERIAL</code></td>
-<td>Satellite and overhead imagery — rotation-invariant transforms</td>
-</tr>
-<tr>
-<td><code>AUG_INDUSTRIAL</code></td>
-<td>Manufacturing and inspection data — handles structured textures</td>
-</tr>
-</tbody>
-</table>
+<h2 id="5-per-config-benchmark-functions">5. Per-config benchmark functions<a class="anchor-link" href="#5-per-config-benchmark-functions">¶</a></h2><p>Three inference paths are compared:</p>
+<ul>
+<li><strong>FP32</strong> — <code>predict()</code> as shipped.  Full 32-bit arithmetic on GPU.  Baseline.</li>
+<li><strong>FP16+JIT</strong> — <code>optimize_for_inference(dtype=torch.float16)</code> fuses layers with <code>torch.jit.script</code> and
+halves the arithmetic precision.  Typically 1.5–2× faster than FP32 with negligible accuracy loss on
+modern tensor cores.</li>
+<li><strong>ONNX</strong> — the model is exported to the Open Neural Network Exchange format and run through ONNX Runtime,
+bypassing PyTorch entirely.  ORT applies its own graph optimisations and can use the TensorRT execution
+provider for additional speedup.  Benchmarked separately on CPU and GPU to show the provider impact.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=409e006a">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=533f037b">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3463,49 +3475,68 @@ inspect, merge, or extend them like any other dict.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">rfdetr.datasets.aug_configs</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aug_config</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.datasets.aug_configs</span><span class="w"> </span><span class="kn">import</span> <span class="n">AUG_AGGRESSIVE</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._onnx.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">_onnx_runtime</span>
 
-<span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"AUG_CONSERVATIVE"</span><span class="p">,</span> <span class="s2">"AUG_AGGRESSIVE"</span><span class="p">,</span> <span class="s2">"AUG_AERIAL"</span><span class="p">,</span> <span class="s2">"AUG_INDUSTRIAL"</span><span class="p">):</span>
-    <span class="n">preset</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">aug_config</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">:"</span><span class="p">)</span>
-    <span class="k">for</span> <span class="n">transform</span><span class="p">,</span> <span class="n">params</span> <span class="ow">in</span> <span class="n">preset</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
-        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">transform</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">params</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_predict_fp32</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">image</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">BenchmarkResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Baseline FP32 predict() latency."""</span>
+    <span class="n">mean</span><span class="p">,</span> <span class="n">std</span> <span class="o">=</span> <span class="n">_measure</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">BenchmarkResult</span><span class="p">(</span><span class="s2">"predict() FP32"</span><span class="p">,</span> <span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_predict_fp16</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">image</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">BenchmarkResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""FP16+JIT latency — applies and removes optimize_for_inference."""</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">optimize_for_inference</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">)</span>
+    <span class="n">mean</span><span class="p">,</span> <span class="n">std</span> <span class="o">=</span> <span class="n">_measure</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">))</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">remove_optimized_model</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">BenchmarkResult</span><span class="p">(</span><span class="s2">"predict() FP16+JIT"</span><span class="p">,</span> <span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_export_onnx</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">export_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Export model to ONNX and return the path."""</span>
+    <span class="k">return</span> <span class="n">Path</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">export_dir</span><span class="p">)))</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">import rfdetr.datasets.aug_configs as aug_config
-from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
+<div class="clipboard-copy-txt" id="cell-6">from rfdetr.export._onnx.inference import _onnx_runtime
 
-for name in ("AUG_CONSERVATIVE", "AUG_AGGRESSIVE", "AUG_AERIAL", "AUG_INDUSTRIAL"):
-    preset = getattr(aug_config, name)
-    print(f"\n{name}:")
-    for transform, params in preset.items():
-        print(f"  {transform}: {params}")</div>
+
+def _predict_fp32(model: Any, image: Image.Image) -&gt; BenchmarkResult:
+    """Baseline FP32 predict() latency."""
+    mean, std = _measure(lambda: model.predict(image))
+    return BenchmarkResult("predict() FP32", mean, std)
+
+
+def _predict_fp16(model: Any, image: Image.Image) -&gt; BenchmarkResult:
+    """FP16+JIT latency — applies and removes optimize_for_inference."""
+    model.optimize_for_inference(dtype=torch.float16)
+    mean, std = _measure(lambda: model.predict(image))
+    model.remove_optimized_model()
+    return BenchmarkResult("predict() FP16+JIT", mean, std)
+
+
+def _export_onnx(model: Any, export_dir: Path) -&gt; Path:
+    """Export model to ONNX and return the path."""
+    return Path(model.export(output_dir=str(export_dir)))</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d10837d5">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=2f6bc92a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="5-inspect-augmented-samples-before-training">5. Inspect augmented samples before training<a class="anchor-link" href="#5-inspect-augmented-samples-before-training">¶</a></h2><p>Setting <code>save_dataset_grids=True</code> writes 3×3 JPEG grids of augmented training
-and validation images to <code>output_dir</code> <em>before any weight updates occur</em>.  Use
-this to visually sanity-check your pipeline in seconds — catching problems like
-flipped labels or extreme colour shifts before committing to a full training run.</p>
-<p>Saved files:</p>
-<pre><code>output/
-  train_batch0_grid.jpg  train_batch1_grid.jpg  train_batch2_grid.jpg
-  val_batch0_grid.jpg    val_batch1_grid.jpg    val_batch2_grid.jpg
-</code></pre>
+<h2 id="6-model-benchmark-runner">6. Model benchmark runner<a class="anchor-link" href="#6-model-benchmark-runner">¶</a></h2><p>Each model is loaded fresh, exported once, and then each inference config is timed independently.
+The ONNX path reuses the same exported file for both CPU and CUDA providers so export cost is not
+counted in latency.  CUDA ONNX is skipped gracefully when no GPU is available; missing <code>onnxruntime-gpu</code>
+raises immediately so misconfigured environments are caught early.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d7797651">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=8afd179a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3523,65 +3554,102 @@ flipped labels or extreme colour shifts before committing to a full training run
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">run_model_benchmark</span><span class="p">(</span>
+    <span class="n">model_cls</span><span class="p">:</span> <span class="nb">type</span><span class="p">,</span>
+    <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">images</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">BenchmarkResult</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Run FP32 / FP16 / ONNX benchmarks for one model and print results."""</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="si">{</span><span class="s1">'='</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">62</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">model_name</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"="</span> <span class="o">*</span> <span class="mi">62</span><span class="p">)</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRNano</span>  <span class="c1"># smallest &amp; fastest model — ideal for demos</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="n">model_cls</span><span class="p">()</span>
+    <span class="n">export_dir</span> <span class="o">=</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="n">model_name</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">export_dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">image</span> <span class="o">=</span> <span class="n">images</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 
-<span class="n">DATASET_DIR</span> <span class="o">=</span> <span class="s2">"coco_demo"</span>
-<span class="n">OUTPUT_DIR</span> <span class="o">=</span> <span class="s2">"output"</span>
-<span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">OUTPUT_DIR</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">fp32</span> <span class="o">=</span> <span class="n">_predict_fp32</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">image</span><span class="p">)</span>
+    <span class="n">fp16</span> <span class="o">=</span> <span class="n">_predict_fp16</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">image</span><span class="p">)</span>
+    <span class="n">results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">BenchmarkResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">fp32</span><span class="p">,</span> <span class="n">fp16</span><span class="p">]</span>
 
-<span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">()</span>
-<span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-    <span class="n">dataset_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASET_DIR</span><span class="p">),</span>
-    <span class="n">epochs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>  <span class="c1"># one epoch is enough to generate the grids</span>
-    <span class="n">batch_size</span><span class="o">=</span><span class="mi">12</span><span class="p">,</span>
-    <span class="n">aug_config</span><span class="o">=</span><span class="n">AUG_AGGRESSIVE</span><span class="p">,</span>
-    <span class="n">save_dataset_grids</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-    <span class="n">output_dir</span><span class="o">=</span><span class="n">OUTPUT_DIR</span><span class="p">,</span>
-    <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
-    <span class="n">num_workers</span><span class="o">=</span><span class="n">num_workers</span><span class="p">,</span>
-    <span class="n">run_test</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
-<span class="p">)</span>
+    <span class="n">onnx_path</span> <span class="o">=</span> <span class="n">_export_onnx</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">export_dir</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">providers</span> <span class="ow">in</span> <span class="p">([</span><span class="s2">"CPUExecutionProvider"</span><span class="p">],</span> <span class="p">[</span><span class="s2">"CUDAExecutionProvider"</span><span class="p">,</span> <span class="s2">"CPUExecutionProvider"</span><span class="p">]):</span>
+        <span class="k">if</span> <span class="n">providers</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"CUDAExecutionProvider"</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">"  ⚠ ONNX (CUDA) skipped — no CUDA GPU"</span><span class="p">)</span>
+            <span class="k">continue</span>
+        <span class="n">mean_ms</span><span class="p">,</span> <span class="n">std_ms</span><span class="p">,</span> <span class="n">label</span> <span class="o">=</span> <span class="n">_onnx_runtime</span><span class="p">(</span><span class="n">onnx_path</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">providers</span><span class="p">,</span> <span class="n">WARMUP_RUNS</span><span class="p">,</span> <span class="n">MEASURE_RUNS</span><span class="p">)</span>
+        <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">BenchmarkResult</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ONNX (</span><span class="si">{</span><span class="n">label</span><span class="si">}</span><span class="s2">)"</span><span class="p">,</span> <span class="n">mean_ms</span><span class="p">,</span> <span class="n">std_ms</span><span class="p">))</span>
+
+    <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;30</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
+
+    <span class="n">onnx_results</span> <span class="o">=</span> <span class="p">[</span><span class="n">r</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span> <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">label</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">"ONNX"</span><span class="p">)]</span>
+    <span class="n">speedups</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"FP16 </span><span class="si">{</span><span class="n">fp32</span><span class="o">.</span><span class="n">mean_ms</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">fp16</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">×"</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">onnx_results</span><span class="p">:</span>
+        <span class="n">speedups</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ONNX </span><span class="si">{</span><span class="n">fp32</span><span class="o">.</span><span class="n">mean_ms</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">onnx_results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">×"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  Speedup vs FP32: </span><span class="si">{</span><span class="s1">' | '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">speedups</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">results</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">import os
+<div class="clipboard-copy-txt" id="cell-7">def run_model_benchmark(
+    model_cls: type,
+    model_name: str,
+    images: list[Image.Image],
+) -&gt; list[BenchmarkResult]:
+    """Run FP32 / FP16 / ONNX benchmarks for one model and print results."""
+    print(f"\n{'=' * 62}")
+    print(f"  {model_name}")
+    print("=" * 62)
 
-from rfdetr import RFDETRNano  # smallest &amp; fastest model — ideal for demos
+    model: Any = model_cls()
+    export_dir = EXPORT_DIR / model_name.split()[0]
+    export_dir.mkdir(exist_ok=True)
+    image = images[0]
 
-DATASET_DIR = "coco_demo"
-OUTPUT_DIR = "output"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+    fp32 = _predict_fp32(model, image)
+    fp16 = _predict_fp16(model, image)
+    results: list[BenchmarkResult] = [fp32, fp16]
 
-model = RFDETRNano()
-model.train(
-    dataset_dir=str(DATASET_DIR),
-    epochs=1,  # one epoch is enough to generate the grids
-    batch_size=12,
-    aug_config=AUG_AGGRESSIVE,
-    save_dataset_grids=True,
-    output_dir=OUTPUT_DIR,
-    device=device,
-    num_workers=num_workers,
-    run_test=False,
-)</div>
+    onnx_path = _export_onnx(model, export_dir)
+    for providers in (["CPUExecutionProvider"], ["CUDAExecutionProvider", "CPUExecutionProvider"]):
+        if providers[0] == "CUDAExecutionProvider" and not torch.cuda.is_available():
+            print("  ⚠ ONNX (CUDA) skipped — no CUDA GPU")
+            continue
+        mean_ms, std_ms, label = _onnx_runtime(onnx_path, image, providers, WARMUP_RUNS, MEASURE_RUNS)
+        results.append(BenchmarkResult(f"ONNX ({label})", mean_ms, std_ms))
+
+    for r in results:
+        print(f"  {r.label:&lt;30}  {r.mean_ms:6.2f} ms ± {r.std_ms:5.2f}   ({r.fps:6.1f} FPS)")
+
+    onnx_results = [r for r in results if r.label.startswith("ONNX")]
+    speedups = [f"FP16 {fp32.mean_ms / fp16.mean_ms:.1f}×"]
+    if onnx_results:
+        speedups.append(f"ONNX {fp32.mean_ms / onnx_results[0].mean_ms:.1f}×")
+    print(f"  Speedup vs FP32: {' | '.join(speedups)}")
+
+    return results</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7b7cb782">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e7ccd41c">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h3 id="display-the-saved-grids-inline">Display the saved grids inline<a class="anchor-link" href="#display-the-saved-grids-inline">¶</a></h3>
+<h2 id="7-benchmark-loop-detection-segmentation-keypoint">7. Benchmark loop — detection · segmentation · keypoint<a class="anchor-link" href="#7-benchmark-loop-detection-segmentation-keypoint">¶</a></h2><p>Three model families are benchmarked to show how task complexity affects latency.  Detection (<code>RFDETRMedium</code>)
+outputs boxes only; segmentation (<code>RFDETRSegSmall</code>) additionally predicts per-object masks, which adds
+decoder cost; keypoint (<code>RFDETRKeypointPreview</code>) predicts skeleton joints and is typically the lightest
+of the three at smaller resolutions.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=28df5b59">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=2ab7ffbc">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3599,63 +3667,49 @@ model.train(
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRKeypointPreview</span><span class="p">,</span> <span class="n">RFDETRMedium</span><span class="p">,</span> <span class="n">RFDETRSegSmall</span>
 
-<span class="o">%</span><span class="n">matplotlib</span> <span class="n">inline</span>
+<span class="n">MODELS</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">type</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">(</span><span class="n">RFDETRMedium</span><span class="p">,</span> <span class="s2">"RFDETRMedium — detection"</span><span class="p">),</span>
+    <span class="p">(</span><span class="n">RFDETRSegSmall</span><span class="p">,</span> <span class="s2">"RFDETRSegSmall — segmentation"</span><span class="p">),</span>
+    <span class="p">(</span><span class="n">RFDETRKeypointPreview</span><span class="p">,</span> <span class="s2">"RFDETRKeypointPreview — keypoint"</span><span class="p">),</span>
+<span class="p">]</span>
 
-<span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.image</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mpimg</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
-
-<span class="n">grids</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">OUTPUT_DIR</span><span class="p">)</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*_grid.jpg"</span><span class="p">))</span>
-<span class="k">if</span> <span class="n">grids</span><span class="p">:</span>
-    <span class="n">fig</span><span class="p">,</span> <span class="n">axes</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">grids</span><span class="p">),</span> <span class="mi">1</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="mi">6</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">grids</span><span class="p">)))</span>
-    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">grids</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
-        <span class="n">axes</span> <span class="o">=</span> <span class="p">[</span><span class="n">axes</span><span class="p">]</span>
-    <span class="k">for</span> <span class="n">ax</span><span class="p">,</span> <span class="n">grid_path</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">axes</span><span class="p">,</span> <span class="n">grids</span><span class="p">):</span>
-        <span class="n">ax</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">mpimg</span><span class="o">.</span><span class="n">imread</span><span class="p">(</span><span class="n">grid_path</span><span class="p">))</span>
-        <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="n">grid_path</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
-        <span class="n">ax</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">"off"</span><span class="p">)</span>
-    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
-    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="n">all_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="n">BenchmarkResult</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="k">for</span> <span class="n">_model_cls</span><span class="p">,</span> <span class="n">_model_name</span> <span class="ow">in</span> <span class="n">MODELS</span><span class="p">:</span>
+    <span class="n">all_results</span><span class="p">[</span><span class="n">_model_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">run_model_benchmark</span><span class="p">(</span><span class="n">_model_cls</span><span class="p">,</span> <span class="n">_model_name</span><span class="p">,</span> <span class="n">images</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-8">from pathlib import Path
+<div class="clipboard-copy-txt" id="cell-8">from rfdetr import RFDETRKeypointPreview, RFDETRMedium, RFDETRSegSmall
 
-%matplotlib inline
+MODELS: list[tuple[type, str]] = [
+    (RFDETRMedium, "RFDETRMedium — detection"),
+    (RFDETRSegSmall, "RFDETRSegSmall — segmentation"),
+    (RFDETRKeypointPreview, "RFDETRKeypointPreview — keypoint"),
+]
 
-import matplotlib.image as mpimg
-import matplotlib.pyplot as plt
-
-grids = sorted(Path(OUTPUT_DIR).glob("*_grid.jpg"))
-if grids:
-    fig, axes = plt.subplots(len(grids), 1, figsize=(6, 6 * len(grids)))
-    if len(grids) == 1:
-        axes = [axes]
-    for ax, grid_path in zip(axes, grids):
-        ax.imshow(mpimg.imread(grid_path))
-        ax.set_title(grid_path.name)
-        ax.axis("off")
-    plt.tight_layout()
-    plt.show()</div>
+all_results: dict[str, list[BenchmarkResult]] = {}
+for _model_cls, _model_name in MODELS:
+    all_results[_model_name] = run_model_benchmark(_model_cls, _model_name, images)</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d7f10179">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=ebbba970">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="6-choose-your-augmentation-config">6. Choose your augmentation config<a class="anchor-link" href="#6-choose-your-augmentation-config">¶</a></h2><p>Pick one of the four options below.  Option A (a built-in preset) is the fastest
-way to get started.  Options B–D give increasing levels of control.  The selected
-<code>AUG_CONFIG</code> is passed straight to <code>model.train()</code> in the next section.</p>
+<h2 id="8-summary">8. Summary<a class="anchor-link" href="#8-summary">¶</a></h2><p>The table shows FPS (frames per second) for each model × config combination.  Higher is better.
+Compare columns to see which model fits your latency budget; compare rows to choose the right
+inference backend for your deployment target (Python server, edge CPU, or ONNX Runtime service).</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f62b76de">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=5d8eddd9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3673,201 +3727,27 @@ way to get started.  Options B–D give increasing levels of control.  The selec
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="c1"># --- Option A: built-in preset ---</span>
-<span class="n">AUG_CONFIG</span> <span class="o">=</span> <span class="n">AUG_AGGRESSIVE</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
 
-<span class="c1"># --- Option B: extend a preset ---</span>
-<span class="c1"># AUG_CONFIG = {**AUG_AGGRESSIVE, "VerticalFlip": {"p": 0.3}}</span>
-
-<span class="c1"># --- Option C: fully custom ---</span>
-<span class="c1"># AUG_CONFIG = {</span>
-<span class="c1">#     "HorizontalFlip": {"p": 0.5},</span>
-<span class="c1">#     "Rotate": {"limit": 15, "p": 0.3},</span>
-<span class="c1">#     "RandomBrightnessContrast": {"brightness_limit": 0.2, "contrast_limit": 0.2, "p": 0.4},</span>
-<span class="c1">#     "GaussianBlur": {"blur_limit": 3, "p": 0.2},</span>
-<span class="c1"># }</span>
-
-<span class="c1"># --- Option D: no augmentations ---</span>
-<span class="c1"># AUG_CONFIG = {}</span>
-
-<span class="nb">print</span><span class="p">(</span><span class="s2">"Selected augmentation config:"</span><span class="p">)</span>
-<span class="k">for</span> <span class="n">transform</span><span class="p">,</span> <span class="n">params</span> <span class="ow">in</span> <span class="n">AUG_CONFIG</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">transform</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">params</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="n">summary</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">model_name</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">0</span><span class="p">]:</span> <span class="p">{</span><span class="n">r</span><span class="o">.</span><span class="n">label</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="p">}</span> <span class="k">for</span> <span class="n">model_name</span><span class="p">,</span> <span class="n">results</span> <span class="ow">in</span> <span class="n">all_results</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+<span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">summary</span><span class="p">)</span>
+<span class="n">df</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="s2">"Config </span><span class="se">\\</span><span class="s2"> Model"</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">to_string</span><span class="p">())</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="s2">FPS — </span><span class="si">{</span><span class="n">MEASURE_RUNS</span><span class="si">}</span><span class="s2"> timed + </span><span class="si">{</span><span class="n">WARMUP_RUNS</span><span class="si">}</span><span class="s2"> warmup runs, batch 1, GPU: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="si">}</span><span class="s2">."</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-9"># --- Option A: built-in preset ---
-AUG_CONFIG = AUG_AGGRESSIVE
+<div class="clipboard-copy-txt" id="cell-9">import pandas as pd
 
-# --- Option B: extend a preset ---
-# AUG_CONFIG = {**AUG_AGGRESSIVE, "VerticalFlip": {"p": 0.3}}
-
-# --- Option C: fully custom ---
-# AUG_CONFIG = {
-#     "HorizontalFlip": {"p": 0.5},
-#     "Rotate": {"limit": 15, "p": 0.3},
-#     "RandomBrightnessContrast": {"brightness_limit": 0.2, "contrast_limit": 0.2, "p": 0.4},
-#     "GaussianBlur": {"blur_limit": 3, "p": 0.2},
-# }
-
-# --- Option D: no augmentations ---
-# AUG_CONFIG = {}
-
-print("Selected augmentation config:")
-for transform, params in AUG_CONFIG.items():
-    print(f"  {transform}: {params}")</div>
+summary = {
+    model_name.split()[0]: {r.label: round(r.fps, 1) for r in results} for model_name, results in all_results.items()
+}
+df = pd.DataFrame(summary)
+df.index.name = "Config \\ Model"
+print(df.to_string())
+print(f"\nFPS — {MEASURE_RUNS} timed + {WARMUP_RUNS} warmup runs, batch 1, GPU: {torch.cuda.get_device_name(0)}.")</div>
 </div>
 </div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5a5ff7b9">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="7-train-with-augmentations">7. Train with augmentations<a class="anchor-link" href="#7-train-with-augmentations">¶</a></h2><p>Run a full training pass with the augmentation config chosen above.  The
-<code>progress_bar="rich"</code> setting activates per-epoch live progress bars — a batch
-counter, loss, and learning rate are updated in real time.  Structured metric
-tables are printed at the end of each epoch.</p>
-<p><code>aug_config</code> accepts any dict of Albumentations transforms, including the
-<code>AUG_CONFIG</code> defined above.  Passing <code>{}</code> disables all augmentations.</p>
-</div>
-</div>
-</div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=79d29fd9">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="CodeMirror cm-s-jupyter">
-<div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
-<div>
-<span class="notice" hidden="">Copied!</span>
-<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
-<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-</svg>
-</div>
-</clipboard-copy>
-</div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">()</span>
-<span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-    <span class="n">dataset_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASET_DIR</span><span class="p">),</span>
-    <span class="n">epochs</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
-    <span class="n">batch_size</span><span class="o">=</span><span class="mi">24</span><span class="p">,</span>
-    <span class="n">aug_config</span><span class="o">=</span><span class="n">AUG_CONFIG</span><span class="p">,</span>
-    <span class="n">output_dir</span><span class="o">=</span><span class="n">OUTPUT_DIR</span><span class="p">,</span>
-    <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
-    <span class="n">num_workers</span><span class="o">=</span><span class="n">num_workers</span><span class="p">,</span>
-    <span class="n">progress_bar</span><span class="o">=</span><span class="s2">"rich"</span><span class="p">,</span>
-    <span class="n">run_test</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
-<span class="p">)</span>
-</pre></div>
-<div class="clipboard-copy-txt" id="cell-10">model = RFDETRNano()
-model.train(
-    dataset_dir=str(DATASET_DIR),
-    epochs=2,
-    batch_size=24,
-    aug_config=AUG_CONFIG,
-    output_dir=OUTPUT_DIR,
-    device=device,
-    num_workers=num_workers,
-    progress_bar="rich",
-    run_test=False,
-)</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=beccaf40">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="8-run-inference">8. Run inference<a class="anchor-link" href="#8-run-inference">¶</a></h2><p>Load a sample image and run <code>model.predict()</code>.  The method returns a
-<code>supervision.Detections</code> object, which makes it straightforward to draw
-bounding boxes and labels with the <code>supervision</code> annotators.</p>
-</div>
-</div>
-</div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d79c7612">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="CodeMirror cm-s-jupyter">
-<div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-11">
-<div>
-<span class="notice" hidden="">Copied!</span>
-<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
-<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-</svg>
-</div>
-</clipboard-copy>
-</div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">requests</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.util.coco_classes</span><span class="w"> </span><span class="kn">import</span> <span class="n">COCO_CLASSES</span>
-
-<span class="n">image_url</span> <span class="o">=</span> <span class="s2">"https://media.roboflow.com/dog.jpg"</span>
-<span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">image_url</span><span class="p">,</span> <span class="n">stream</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">raw</span><span class="p">)</span>
-
-<span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
-
-<span class="n">labels</span> <span class="o">=</span> <span class="p">[</span><span class="n">COCO_CLASSES</span><span class="p">[</span><span class="n">class_id</span><span class="p">]</span> <span class="k">for</span> <span class="n">class_id</span> <span class="ow">in</span> <span class="n">detections</span><span class="o">.</span><span class="n">class_id</span><span class="p">]</span>
-<span class="n">annotated</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">BoxAnnotator</span><span class="p">()</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">image</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span> <span class="n">detections</span><span class="p">)</span>
-<span class="n">annotated</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">LabelAnnotator</span><span class="p">()</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">annotated</span><span class="p">,</span> <span class="n">detections</span><span class="p">,</span> <span class="n">labels</span><span class="p">)</span>
-<span class="n">sv</span><span class="o">.</span><span class="n">plot_image</span><span class="p">(</span><span class="n">annotated</span><span class="p">)</span>
-</pre></div>
-<div class="clipboard-copy-txt" id="cell-11">import requests
-import supervision as sv
-from PIL import Image
-
-from rfdetr.util.coco_classes import COCO_CLASSES
-
-image_url = "https://media.roboflow.com/dog.jpg"
-image = Image.open(requests.get(image_url, stream=True).raw)
-
-detections = model.predict(image, threshold=0.5)
-
-labels = [COCO_CLASSES[class_id] for class_id in detections.class_id]
-annotated = sv.BoxAnnotator().annotate(image.copy(), detections)
-annotated = sv.LabelAnnotator().annotate(annotated, detections, labels)
-sv.plot_image(annotated)</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d69f8215">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="9-next-steps">9. Next steps<a class="anchor-link" href="#9-next-steps">¶</a></h2><p>You have seen the complete 1.5.0 augmentation workflow — from exploring presets
-through live inspection to a full training run.  From here:</p>
-<ul>
-<li><a href="https://rfdetr.roboflow.com/1.5.0/learn/train/augmentations/">Augmentation docs</a> — full transform reference and custom pipeline guide</li>
-<li><a href="https://rfdetr.roboflow.com/1.5.0/learn/train/advanced/">Advanced training options</a> — EMA, gradient accumulation, learning rate schedules</li>
-<li><a href="https://rfdetr.roboflow.com/1.5.0/learn/train/loggers/">Logger integrations (ClearML, MLflow, W&amp;B)</a> — experiment tracking</li>
-<li><a href="https://rfdetr.roboflow.com/1.5.0/learn/export/">Export your model</a> — ONNX, TensorRT, CoreML</li>
-<li><a href="https://colab.research.google.com/github/roboflow/rf-detr/blob/develop/notebooks/release-demo_1-6.ipynb">RF-DETR 1.6.0 notebook</a> — PyTorch Lightning building blocks</li>
-</ul>
 </div>
 </div>
 </div>
@@ -3899,7 +3779,7 @@ through live inspection to a full training run.  From here:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 13, 2026 09:02:21 UTC">2026-06-13 09:02:21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 23, 2026 19:51:04 UTC">2026-06-23 19:51:04</span>
   </span>
 
     

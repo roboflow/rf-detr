@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/roboflow-logo.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
   
@@ -33,7 +33,7 @@
   
 
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -63,6 +63,16 @@
     
     
   
+  
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-5M220DKLMB"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){window.dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-5M220DKLMB');
+  </script>
   <link rel="preconnect" href="https://storage.googleapis.com">
 
   
@@ -87,7 +97,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-06-14T14:44:46">
+  <meta property="article:modified_time" content="2026-06-25T16:26:03">
   
   <script type="application/ld+json">
   {
@@ -102,7 +112,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-06-14T14:44:46",
+    "dateModified": "2026-06-25T16:26:03",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2308,14 +2318,14 @@
 <code>docs/hooks/cookbooks_cards.py</code> loads that file and exposes it to <code>docs/theme/notebooks.html</code>,
 which renders each entry as a card via a Jinja loop.</p>
 <h2 id="converting-a-jupytext-py-to-ipynb">Converting a jupytext <code>.py</code> to <code>.ipynb</code><a class="headerlink" href="#converting-a-jupytext-py-to-ipynb" title="Permanent link">&para;</a></h2>
-<p>Cookbook source files live as jupytext percent-format <code>.py</code> scripts (e.g. <code>fine-tune_keypoints.py</code> at the project root). Each script has <strong>two output notebooks</strong> that must be regenerated together after every edit:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Runnable copy (for users who want to run the notebook directly)</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>jupytext<span class="w"> </span>--to<span class="w"> </span>notebook<span class="w"> </span>fine-tune_keypoints.py<span class="w"> </span>--output<span class="w"> </span>notebooks/fine-tune_keypoints.ipynb
+<p>Cookbook source files live as jupytext percent-format <code>.py</code> scripts (e.g. <code>fine-tune_keypoints.py</code>) inside <code>docs/cookbooks/</code>. Each script requires at minimum a <strong>docs render copy</strong>; some also have a <code>notebooks/</code> copy for users who want to run it directly. Regenerate every existing copy after each edit:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Docs render copy (served by mkdocs-jupyter at /cookbooks/) — always required</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>jupytext<span class="w"> </span>--to<span class="w"> </span>notebook<span class="w"> </span>fine-tune_keypoints.py<span class="w"> </span>--output<span class="w"> </span>docs/cookbooks/fine-tune_keypoints.ipynb
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Docs render copy (served by mkdocs-jupyter at /cookbooks/)</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>jupytext<span class="w"> </span>--to<span class="w"> </span>notebook<span class="w"> </span>fine-tune_keypoints.py<span class="w"> </span>--output<span class="w"> </span>docs/cookbooks/fine-tune_keypoints.ipynb
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Runnable copy in notebooks/ — only for notebooks explicitly placed there</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>jupytext<span class="w"> </span>--to<span class="w"> </span>notebook<span class="w"> </span>fine-tune_keypoints.py<span class="w"> </span>--output<span class="w"> </span>notebooks/fine-tune_keypoints.ipynb
 </span></code></pre></div>
-<p>Both commands must be run to keep the two copies in sync. Omit <code>--execute</code> — notebooks are rendered statically by <code>mkdocs-jupyter</code> with <code>execute: false</code>, so pre-run outputs in the <code>.ipynb</code> are displayed as-is.</p>
+<p>New notebooks default to the docs-only copy. Add a <code>notebooks/</code> copy only when there is an explicit need (e.g. a runnable starter notebook shipped with the repo). Omit <code>--execute</code> — notebooks are rendered statically by <code>mkdocs-jupyter</code> with <code>execute: false</code>, so pre-run outputs in the <code>.ipynb</code> are displayed as-is.</p>
 <p>If jupytext is not installed: <code>pip install jupytext</code> (or <code>uv add jupytext --dev</code>).</p>
 <h2 id="adding-a-notebook">Adding a notebook<a class="headerlink" href="#adding-a-notebook" title="Permanent link">&para;</a></h2>
 <ol>
@@ -2354,9 +2364,24 @@ Current tag colours are assigned dynamically by the docs UI, so they may change 
 <td>v1.5.0</td>
 </tr>
 <tr>
+<td><code>fine-tune_detection.ipynb</code></td>
+<td>Fine-Tune RF-DETR Object Detection</td>
+<td>v1.8.0</td>
+</tr>
+<tr>
 <td><code>fine-tune_keypoints.ipynb</code></td>
 <td>Fine-Tune RF-DETR Keypoint Detection</td>
 <td>v1.8.0</td>
+</tr>
+<tr>
+<td><code>fine-tune_segmentation.ipynb</code></td>
+<td>Fine-Tune RF-DETR Instance Segmentation</td>
+<td>v1.8.2</td>
+</tr>
+<tr>
+<td><code>inference-latency-benchmark.ipynb</code></td>
+<td>Inference Latency Benchmark</td>
+<td>v1.8.2</td>
 </tr>
 <tr>
 <td><code>pytorch-lightning.ipynb</code></td>
@@ -2385,7 +2410,7 @@ Current tag colours are assigned dynamically by the docs UI, so they may change 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 14, 2026 14:44:46 UTC">2026-06-14 14:44:46</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 25, 2026 16:26:03 UTC">2026-06-25 16:26:03</span>
   </span>
 
     
@@ -2493,7 +2518,7 @@ Current tag colours are assigned dynamically by the docs UI, so they may change 
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

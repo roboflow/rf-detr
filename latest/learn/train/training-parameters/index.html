@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../../assets/roboflow-logo.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
   
@@ -37,7 +37,7 @@
   
 
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -67,6 +67,16 @@
     
     
   
+  
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-5M220DKLMB"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){window.dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-5M220DKLMB');
+  </script>
   <link rel="preconnect" href="https://storage.googleapis.com">
 
   
@@ -91,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-06-13T00:36:02">
+  <meta property="article:modified_time" content="2026-06-25T12:15:19">
   
   <script type="application/ld+json">
   {
@@ -106,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-06-13T00:36:02",
+    "dateModified": "2026-06-25T12:15:19",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3293,7 +3303,7 @@ best-checkpoint selection and patience counting until the model has had time to 
 </tbody>
 </table>
 <h2 id="keypoint-preview-parameters">Keypoint Preview Parameters<a class="headerlink" href="#keypoint-preview-parameters" title="Permanent link">&para;</a></h2>
-<p>These parameters apply when training <code>RFDETRKeypointPreview</code> on COCO keypoint annotations.</p>
+<p>These parameters apply when training <code>RFDETRKeypointPreview</code> on COCO keypoint annotations or Ultralytics YOLO pose labels.</p>
 <table>
 <thead>
 <tr>
@@ -3307,14 +3317,14 @@ best-checkpoint selection and patience counting until the model has had time to 
 <tr>
 <td><code>num_keypoints_per_class</code></td>
 <td><code>list[int]</code></td>
-<td><code>[0, 17]</code></td>
-<td>Keypoint schema by model label slot. A zero entry marks a detection-only class slot.</td>
+<td><code>[17]</code></td>
+<td>Keypoint schema by model label slot. A zero entry marks a detection-only class slot; legacy checkpoints may use a background-first <code>[0, 17]</code> schema.</td>
 </tr>
 <tr>
 <td><code>keypoint_flip_pairs</code></td>
 <td><code>list[int]</code></td>
 <td><code>[]</code></td>
-<td>Flat left/right keypoint index pairs used to swap joints after horizontal-flip augmentation.</td>
+<td>Flat left/right keypoint index pairs used to swap joints after horizontal-flip augmentation. YOLO <code>flip_idx</code> metadata is a permutation; RF-DETR converts it to this pair-list form during automatic schema inference when possible — it extracts only symmetric mutual pairs where <code>flip_idx[i] == j</code> and <code>flip_idx[j] == i</code>. Asymmetric entries and self-mapped keypoints (<code>flip_idx[i] == i</code>) are silently omitted; supply <code>keypoint_flip_pairs</code> explicitly when your <code>flip_idx</code> includes such entries.</td>
 </tr>
 <tr>
 <td><code>keypoint_l1_loss_coef</code></td>
@@ -3350,7 +3360,7 @@ best-checkpoint selection and patience counting until the model has had time to 
 </table>
 <div class="admonition note">
 <p class="admonition-title">OKS sigma values: flat vs per-keypoint</p>
-<p><code>infer_coco_keypoint_schema</code> returns a flat sigma of 0.1 for all inferred keypoints, and the keypoint demo passes those values explicitly for custom Roboflow datasets. If <code>keypoint_oks_sigmas=None</code>, COCO person-keypoint evaluation uses the standard 17-keypoint COCO sigmas, while non-17 custom keypoint counts use RF-DETR's uniform custom fallback. Flat custom sigmas are not directly comparable to official COCO benchmark numbers.</p>
+<p><code>infer_coco_keypoint_schema</code> and <code>infer_yolo_keypoint_schema</code> return a flat sigma of 0.1 for all inferred keypoints, and the keypoint demos pass those values explicitly for custom datasets. If <code>keypoint_oks_sigmas=None</code>, COCO person-keypoint evaluation uses the standard 17-keypoint COCO sigmas, while non-17 custom keypoint counts use RF-DETR's uniform custom fallback. Flat custom sigmas are not directly comparable to official COCO benchmark numbers.</p>
 </div>
 <h2 id="advanced-parameters">Advanced Parameters<a class="headerlink" href="#advanced-parameters" title="Permanent link">&para;</a></h2>
 <p>The parameters below are available for fine-grained control over training behaviour. Most users can leave these at their defaults.</p>
@@ -3727,7 +3737,7 @@ best-checkpoint selection and patience counting until the model has had time to 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 13, 2026 00:36:02 UTC">2026-06-13 00:36:02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 25, 2026 12:15:19 UTC">2026-06-25 12:15:19</span>
   </span>
 
     
@@ -3835,7 +3845,7 @@ best-checkpoint selection and patience counting until the model has had time to 
       <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../../assets/roboflow-logo.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
   
@@ -37,7 +37,7 @@
   
 
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -67,6 +67,16 @@
     
     
   
+  
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-5M220DKLMB"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){window.dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-5M220DKLMB');
+  </script>
   <link rel="preconnect" href="https://storage.googleapis.com">
 
   
@@ -91,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-05-27T09:45:40">
+  <meta property="article:modified_time" content="2026-06-25T12:15:19">
   
   <script type="application/ld+json">
   {
@@ -106,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-05-27T09:45:40",
+    "dateModified": "2026-06-25T12:15:19",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1240,6 +1250,17 @@
     <span class="md-ellipsis">
       
         Segmentation Labels (YOLO-Seg)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pose-labels-yolo-pose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pose Labels (YOLO Pose)
       
     </span>
   </a>
@@ -2742,6 +2763,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#pose-labels-yolo-pose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pose Labels (YOLO Pose)
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3066,9 +3098,10 @@ when the split files are named <code>train/_annotations.coco.json</code> and <co
 </span></code></pre></div>
 <p>The <code>keypoints</code> array above is shortened for readability. In a valid COCO person-keypoint annotation it contains
 <code>17 * 3</code> values: <code>x</code>, <code>y</code>, and visibility for each keypoint.</p>
-<p>The keypoint preview model currently targets COCO person-style keypoints. Its default schema is <code>[0, 17]</code>, so
-keypoint-bearing categories are mapped onto the active keypoint label slot during COCO loading. YOLO keypoint/pose
-training is not supported yet; use COCO keypoint JSON for keypoint training.</p>
+<p>The keypoint preview model is pretrained on COCO person-style keypoints. Its default COCO schema is <code>[17]</code>, so
+keypoint-bearing categories are mapped onto the active keypoint label slot during COCO loading. Legacy checkpoints may
+still report a background-first <code>[0, 17]</code> schema, which RF-DETR accepts for compatibility. Custom keypoint training can
+also use YOLO pose labels, described below.</p>
 <hr />
 <h2 id="yolo-format">YOLO Format<a class="headerlink" href="#yolo-format" title="Permanent link">&para;</a></h2>
 <p>YOLO format uses separate text files for each image's annotations and a <code>data.yaml</code> configuration file that defines class names.</p>
@@ -3205,33 +3238,85 @@ training is not supported yet; use COCO keypoint JSON for keypoint training.</p>
 </span></code></pre></div>
 <p>The coordinates after the class ID represent the polygon vertices in normalized format.</p>
 <hr />
+<h3 id="pose-labels-yolo-pose">Pose Labels (YOLO Pose)<a class="headerlink" href="#pose-labels-yolo-pose" title="Permanent link">&para;</a></h3>
+<p>For keypoint preview training, RF-DETR supports Ultralytics YOLO pose labels in the same directory layout shown above.
+The <code>data.yaml</code> file must declare <code>kpt_shape</code>:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nt">names</span><span class="p">:</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">0</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">person</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="nt">kpt_shape</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">17</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">3</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="c1"># [number_of_keypoints, dimensions]; dimensions must be 2 or 3</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="nt">flip_idx</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">4</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">3</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">6</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">5</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">8</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">7</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">10</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">9</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">12</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">11</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">14</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">13</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">16</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">15</span><span class="p p-Indicator">]</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="nt">kpt_names</span><span class="p">:</span>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">  </span><span class="nt">0</span><span class="p">:</span>
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">nose</span>
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">left_eye</span>
+</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">right_eye</span>
+</span></code></pre></div>
+<p><code>kpt_names</code> is optional. When omitted, RF-DETR creates placeholder names such as <code>keypoint_0</code>. <code>flip_idx</code> is an
+Ultralytics-style length-<code>K</code> permutation used to infer RF-DETR's flat <code>keypoint_flip_pairs</code> for horizontal-flip
+augmentation.</p>
+<p>Each pose label row contains a bounding box followed by keypoints:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>&lt;class_id&gt; &lt;x_center&gt; &lt;y_center&gt; &lt;width&gt; &lt;height&gt; &lt;px1&gt; &lt;py1&gt; &lt;v1&gt; ... &lt;pxK&gt; &lt;pyK&gt; &lt;vK&gt;
+</span></code></pre></div>
+<p>For <code>kpt_shape: [K, 2]</code>, omit the visibility value:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>&lt;class_id&gt; &lt;x_center&gt; &lt;y_center&gt; &lt;width&gt; &lt;height&gt; &lt;px1&gt; &lt;py1&gt; ... &lt;pxK&gt; &lt;pyK&gt;
+</span></code></pre></div>
+<p>All box and keypoint coordinates are normalized to <code>[0, 1]</code>. RF-DETR converts keypoints to COCO-style <code>(x, y, visibility)</code> tensors internally. For <code>[K, 3]</code>, the visibility values are preserved. For <code>[K, 2]</code>, visibility is
+synthesized: nonzero points are marked visible (<code>2</code>) and <code>(0, 0)</code> points are marked absent (<code>0</code>).</p>
+<p>Use the YOLO schema helper when you want to configure a model explicitly:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRKeypointPreview</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.datasets._keypoint_schema</span><span class="w"> </span><span class="kn">import</span> <span class="n">infer_yolo_keypoint_schema</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="n">DATASET_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;/path/to/yolo-pose-dataset&quot;</span><span class="p">)</span>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="n">schema</span> <span class="o">=</span> <span class="n">infer_yolo_keypoint_schema</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">&quot;data.yaml&quot;</span><span class="p">)</span>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>
+</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRKeypointPreview</span><span class="p">(</span>
+</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>    <span class="n">num_classes</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">schema</span><span class="o">.</span><span class="n">class_names</span><span class="p">),</span>
+</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>    <span class="n">num_keypoints_per_class</span><span class="o">=</span><span class="n">schema</span><span class="o">.</span><span class="n">num_keypoints_per_class</span><span class="p">,</span>
+</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="p">)</span>
+</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>
+</span><span id="__span-15-14"><a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-15-15"><a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a>    <span class="n">dataset_file</span><span class="o">=</span><span class="s2">&quot;yolo&quot;</span><span class="p">,</span>
+</span><span id="__span-15-16"><a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASET_DIR</span><span class="p">),</span>
+</span><span id="__span-15-17"><a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a>    <span class="n">class_names</span><span class="o">=</span><span class="n">schema</span><span class="o">.</span><span class="n">class_names</span><span class="p">,</span>
+</span><span id="__span-15-18"><a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a>    <span class="n">keypoint_oks_sigmas</span><span class="o">=</span><span class="n">schema</span><span class="o">.</span><span class="n">keypoint_oks_sigmas</span><span class="p">,</span>
+</span><span id="__span-15-19"><a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">flip_idx and keypoint_flip_pairs</p>
+<p><code>flip_idx</code> is a permutation, while <code>keypoint_flip_pairs</code> is a flat pair list. During <code>model.train()</code>, RF-DETR infers
+the pair list automatically from <code>flip_idx</code> when no explicit <code>keypoint_flip_pairs</code> is provided.</p>
+</div>
+<hr />
 <h2 id="converting-between-formats">Converting Between Formats<a class="headerlink" href="#converting-between-formats" title="Permanent link">&para;</a></h2>
 <h3 id="yolo-to-coco">YOLO to COCO<a class="headerlink" href="#yolo-to-coco" title="Permanent link">&para;</a></h3>
 <p>You can use the <a href="https://github.com/roboflow/supervision">supervision</a> library to convert datasets:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="c1"># Load YOLO dataset</span>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">DetectionDataset</span><span class="o">.</span><span class="n">from_yolo</span><span class="p">(</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">&quot;path/to/images&quot;</span><span class="p">,</span>
-</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>    <span class="n">annotations_directory_path</span><span class="o">=</span><span class="s2">&quot;path/to/labels&quot;</span><span class="p">,</span>
-</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>    <span class="n">data_yaml_path</span><span class="o">=</span><span class="s2">&quot;path/to/data.yaml&quot;</span><span class="p">,</span>
-</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="p">)</span>
-</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>
-</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="c1"># Save as COCO</span>
-</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="n">dataset</span><span class="o">.</span><span class="n">as_coco</span><span class="p">(</span><span class="n">images_directory_path</span><span class="o">=</span><span class="s2">&quot;output/images&quot;</span><span class="p">,</span> <span class="n">annotations_path</span><span class="o">=</span><span class="s2">&quot;output/annotations.json&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="c1"># Load YOLO dataset</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">DetectionDataset</span><span class="o">.</span><span class="n">from_yolo</span><span class="p">(</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">&quot;path/to/images&quot;</span><span class="p">,</span>
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>    <span class="n">annotations_directory_path</span><span class="o">=</span><span class="s2">&quot;path/to/labels&quot;</span><span class="p">,</span>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>    <span class="n">data_yaml_path</span><span class="o">=</span><span class="s2">&quot;path/to/data.yaml&quot;</span><span class="p">,</span>
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="p">)</span>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>
+</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="c1"># Save as COCO</span>
+</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="n">dataset</span><span class="o">.</span><span class="n">as_coco</span><span class="p">(</span><span class="n">images_directory_path</span><span class="o">=</span><span class="s2">&quot;output/images&quot;</span><span class="p">,</span> <span class="n">annotations_path</span><span class="o">=</span><span class="s2">&quot;output/annotations.json&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <h3 id="coco-to-yolo">COCO to YOLO<a class="headerlink" href="#coco-to-yolo" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="c1"># Load COCO dataset</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">DetectionDataset</span><span class="o">.</span><span class="n">from_coco</span><span class="p">(</span>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">&quot;path/to/images&quot;</span><span class="p">,</span> <span class="n">annotations_path</span><span class="o">=</span><span class="s2">&quot;path/to/annotations.json&quot;</span>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="p">)</span>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>
-</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="c1"># Save as YOLO</span>
-</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="n">dataset</span><span class="o">.</span><span class="n">as_yolo</span><span class="p">(</span>
-</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">&quot;output/images&quot;</span><span class="p">,</span> <span class="n">annotations_directory_path</span><span class="o">=</span><span class="s2">&quot;output/labels&quot;</span><span class="p">,</span> <span class="n">data_yaml_path</span><span class="o">=</span><span class="s2">&quot;output/data.yaml&quot;</span>
-</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="c1"># Load COCO dataset</span>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">DetectionDataset</span><span class="o">.</span><span class="n">from_coco</span><span class="p">(</span>
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">&quot;path/to/images&quot;</span><span class="p">,</span> <span class="n">annotations_path</span><span class="o">=</span><span class="s2">&quot;path/to/annotations.json&quot;</span>
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="p">)</span>
+</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>
+</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="c1"># Save as YOLO</span>
+</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="n">dataset</span><span class="o">.</span><span class="n">as_yolo</span><span class="p">(</span>
+</span><span id="__span-17-10"><a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">&quot;output/images&quot;</span><span class="p">,</span> <span class="n">annotations_directory_path</span><span class="o">=</span><span class="s2">&quot;output/labels&quot;</span><span class="p">,</span> <span class="n">data_yaml_path</span><span class="o">=</span><span class="s2">&quot;output/data.yaml&quot;</span>
+</span><span id="__span-17-11"><a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="p">)</span>
 </span></code></pre></div>
 <h3 id="using-roboflow">Using Roboflow<a class="headerlink" href="#using-roboflow" title="Permanent link">&para;</a></h3>
 <p><a href="https://roboflow.com">Roboflow</a> provides a web interface to:</p>
@@ -3288,7 +3373,7 @@ training is not supported yet; use COCO keypoint JSON for keypoint training.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="format-detection-fails">Format Detection Fails<a class="headerlink" href="#format-detection-fails" title="Permanent link">&para;</a></h3>
 <p>If you see an error like:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>Could not detect dataset format in /path/to/dataset
+<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>Could not detect dataset format in /path/to/dataset
 </span></code></pre></div>
 <p>Check that:</p>
 <p><strong>For COCO format:</strong></p>
@@ -3328,7 +3413,7 @@ training is not supported yet; use COCO keypoint JSON for keypoint training.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="May 27, 2026 09:45:40 UTC">2026-05-27 09:45:40</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 25, 2026 12:15:19 UTC">2026-06-25 12:15:19</span>
   </span>
 
     
@@ -3436,7 +3521,7 @@ training is not supported yet; use COCO keypoint JSON for keypoint training.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

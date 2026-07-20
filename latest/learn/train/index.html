@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../assets/roboflow-logo.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
   
@@ -37,7 +37,7 @@
   
 
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -67,6 +67,16 @@
     
     
   
+  
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-5M220DKLMB"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){window.dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-5M220DKLMB');
+  </script>
   <link rel="preconnect" href="https://storage.googleapis.com">
 
   
@@ -91,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-06-13T00:36:02">
+  <meta property="article:modified_time" content="2026-06-24T15:19:04">
   
   <script type="application/ld+json">
   {
@@ -106,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-06-13T00:36:02",
+    "dateModified": "2026-06-24T15:19:04",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2570,7 +2580,7 @@
 <ul>
 <li>Train detection, segmentation, or keypoint preview models with a single <code>model.train(dataset_dir=...)</code> call</li>
 <li>Detection and segmentation support COCO JSON and YOLO dataset formats with automatic detection</li>
-<li>Keypoint preview training supports COCO keypoint JSON; YOLO pose training is not supported yet</li>
+<li>Keypoint preview training supports COCO keypoint JSON and Ultralytics YOLO pose datasets</li>
 <li>Fine-tune from COCO-pretrained checkpoints (Nano to 2XLarge) for fastest convergence</li>
 <li>Built on PyTorch Lightning — use the high-level API or access PTL primitives directly for full control</li>
 <li>EMA weights, early stopping, and best-model checkpointing are included by default</li>
@@ -2639,7 +2649,7 @@
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRKeypointPreview</span><span class="p">()</span>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;&lt;COCO_KEYPOINT_DATASET_PATH&gt;&quot;</span><span class="p">,</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;&lt;KEYPOINT_DATASET_PATH&gt;&quot;</span><span class="p">,</span>
 </span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
 </span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
 </span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
@@ -2653,8 +2663,8 @@
 <p>Different GPUs have different VRAM capacities, so adjust batch_size and grad_accum_steps to maintain a total batch size of 16. For example, on a powerful GPU like the A100, use <code>batch_size=16</code> and <code>grad_accum_steps=1</code>; on smaller GPUs like the T4, use <code>batch_size=4</code> and <code>grad_accum_steps=4</code>. This gradient accumulation strategy helps train effectively even with limited memory.</p>
 <p>For object detection, the RF-DETR-B checkpoint is used by default. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab <a href="https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb">notebook</a>.</p>
 <h2 id="keypoint-preview-custom-datasets">Keypoint preview custom datasets<a class="headerlink" href="#keypoint-preview-custom-datasets" title="Permanent link">&para;</a></h2>
-<p>The pretrained keypoint preview checkpoint predicts 17 COCO person keypoints. Fine-tuned keypoint preview models can use the keypoint schema from your own COCO keypoint dataset, so the output keypoint count is not limited to 17.</p>
-<p>Use COCO keypoint JSON for custom keypoint training. Roboflow COCO exports are supported when split annotations are named <code>train/_annotations.coco.json</code>, <code>valid/_annotations.coco.json</code>, and optionally <code>test/_annotations.coco.json</code>. YOLO pose/keypoint training is not supported yet.</p>
+<p>The pretrained keypoint preview checkpoint predicts 17 COCO person keypoints. Fine-tuned keypoint preview models can use the keypoint schema from your own COCO or YOLO pose dataset, so the output keypoint count is not limited to 17.</p>
+<p>Use COCO keypoint JSON or Ultralytics YOLO pose labels for custom keypoint training. Roboflow COCO exports are supported when split annotations are named <code>train/_annotations.coco.json</code>, <code>valid/_annotations.coco.json</code>, and optionally <code>test/_annotations.coco.json</code>. YOLO pose datasets use the existing RF-DETR YOLO directory layout with <code>data.yaml</code>, <code>train/images</code>, <code>train/labels</code>, <code>valid/images</code>, and <code>valid/labels</code>.</p>
 <p>The keypoint fine-tuning demo infers the class names and keypoint schema from the training annotation file, then passes those values into <code>RFDETRKeypointPreview</code> and <code>model.train()</code>:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
@@ -2685,6 +2695,7 @@
 </span><span id="__span-3-27"><a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>Set <code>keypoint_flip_pairs</code> if horizontal flips should swap left/right keypoints for your schema.</p>
+<p>For YOLO pose datasets, use <code>infer_yolo_keypoint_schema(DATASET_DIR / "data.yaml")</code> instead. RF-DETR also infers YOLO pose schema automatically during <code>model.train()</code> when <code>data.yaml</code> declares <code>kpt_shape</code>.</p>
 <h2 id="dataset-format">Dataset Format<a class="headerlink" href="#dataset-format" title="Permanent link">&para;</a></h2>
 <p>RF-DETR <strong>automatically detects</strong> whether your dataset is in COCO or YOLO format. Simply pass your dataset directory to the <code>train()</code> method and the appropriate data loader will be used.</p>
 <table>
@@ -2708,8 +2719,9 @@
 </tr>
 </tbody>
 </table>
-<p>For keypoint preview training, use COCO keypoint JSON. YOLO pose/keypoint datasets are rejected with a clear error
-instead of being treated as detection-only labels.</p>
+<p>For keypoint preview training, use COCO keypoint JSON or YOLO pose labels. YOLO pose datasets must declare
+<code>kpt_shape</code> in <code>data.yaml</code>; detection-only YOLO datasets still fail clearly in keypoint mode instead of being treated as
+pose labels.</p>
 <p><a href="https://roboflow.com/annotate">Roboflow</a> allows you to create object detection datasets from scratch and export them in either COCO JSON or YOLO format for training. You can also explore <a href="https://universe.roboflow.com/">Roboflow Universe</a> to find pre-labeled datasets for a range of use cases.</p>
 <p>→ <strong><a href="dataset-formats/">Learn more about dataset formats</a></strong></p>
 <h2 id="training-configuration">Training Configuration<a class="headerlink" href="#training-configuration" title="Permanent link">&para;</a></h2>
@@ -2820,7 +2832,7 @@ schema so <code>RFDETR.from_checkpoint()</code> can reconstruct the same label/k
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 13, 2026 00:36:02 UTC">2026-06-13 00:36:02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 24, 2026 15:19:04 UTC">2026-06-24 15:19:04</span>
   </span>
 
     
@@ -2928,7 +2940,7 @@ schema so <code>RFDETR.from_checkpoint()</code> can reconstruct the same label/k
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
