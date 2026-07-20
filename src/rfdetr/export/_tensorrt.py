@@ -6,187 +6,91 @@
 # Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
-"""TensorRT export helpers: trtexec invocation and output parsing.
+"""TensorRT export helper: build a serialized engine from ONNX in-process.
 
-For TensorRT inference, use the ``inference-models`` library which provides
+The engine is built with the TensorRT Python API (via `polygraphy`), so no
+``trtexec`` binary on ``PATH`` is required — only ``pip install rfdetr[trt]``.
+
+For TensorRT *inference*, use the ``inference-models`` library which provides
 multi-backend RF-DETR support (PyTorch, ONNX, TensorRT) with automatic backend
 selection::
 
     from inference_models import AutoModel
 
-    model = AutoModel.from_pretrained("rfdetr-base")
+    model = AutoModel.from_pretrained("rfdetr-small")
 
 See https://github.com/roboflow/inference/tree/main/inference_models for details.
 """
 
 from __future__ import annotations
 
-import os
-import re
-import subprocess
 from pathlib import Path
 
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
-
-def run_command_shell(command: list[str], dry_run: bool = False) -> "subprocess.CompletedProcess[str]":
-    """Run *command* as a subprocess, optionally in dry-run mode.
-
-    Note: Despite the legacy name, this function always uses ``shell=False`` —
-    command must be an argv list, never a shell string.
-
-    Args:
-        command: Argument list (``argv``).  Must be a list — never a shell
-            string — so that paths containing spaces or shell metacharacters
-            are passed verbatim to the OS without interpretation.
-        dry_run: When ``True``, log the command that *would* run and return a
-            synthetic :class:`subprocess.CompletedProcess` with ``returncode=0``
-            without actually executing anything.
-
-    Returns:
-        A :class:`subprocess.CompletedProcess` instance.
-
-    Raises:
-        subprocess.CalledProcessError: If the command exits with a non-zero
-            return code (``check=True``).
-    """
-    if dry_run:
-        display = " ".join(command)
-        logger.info(f"\nCUDA_VISIBLE_DEVICES={os.getenv('CUDA_VISIBLE_DEVICES', '')} {display}\n")
-        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
-    try:
-        result = subprocess.run(command, shell=False, capture_output=True, text=True, check=True)
-        return result
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Command failed with exit code {e.returncode}")
-        logger.error(f"Error output:\n{e.stderr}")
-        raise
+# polygraphy ships in the ``rfdetr[trt]`` extra alongside ``tensorrt``. Import it
+# lazily at module scope (guarded) so importing this module never fails on hosts
+# without TensorRT, and so tests can monkeypatch these names without polygraphy
+# installed.
+try:
+    from polygraphy.backend.trt import (
+        CreateConfig,
+        engine_from_network,
+        network_from_onnx_path,
+        save_engine,
+    )
+except ImportError:  # pragma: no cover - exercised via the guard in build_engine
+    CreateConfig = None
+    engine_from_network = None
+    network_from_onnx_path = None
+    save_engine = None
 
 
-def trtexec(onnx_path: str, *, verbose: bool = False, profile: bool = False, dry_run: bool = False) -> str:
-    """Convert an ONNX model to a TensorRT engine using ``trtexec``.
+def build_engine(onnx_path: str, *, fp16: bool = True, verbose: bool = False, dry_run: bool = False) -> str:
+    """Build a serialized TensorRT engine from an ONNX model, in-process.
+
+    Uses the TensorRT Python API through ``polygraphy`` — no ``trtexec`` subprocess.
+    Workspace size is left to the TensorRT default (it auto-sizes to the available
+    device memory), which meets or exceeds the historical 4 GiB cap.
 
     Args:
         onnx_path: Path to the source ``.onnx`` file.
-        verbose: Append ``--verbose`` to the ``trtexec`` invocation.
-        profile: Wrap the invocation with ``nsys profile`` to capture a
-            ``.nsys-rep`` trace alongside the engine.
-        dry_run: Log the command that *would* run without executing it.
+        fp16: Enable FP16 precision when building the engine.
+        verbose: Emit extra progress logging.
+        dry_run: Log the intended build and return the engine path without
+            building anything (no TensorRT / GPU required).
 
     Returns:
         Path to the generated ``.trt`` engine file.
 
     Raises:
-        subprocess.CalledProcessError: If ``trtexec`` (or ``nsys profile``) exits
-            with a non-zero return code.
+        ImportError: If ``polygraphy``/``tensorrt`` are not installed.
+
+    Examples:
+        >>> build_engine("output/inference_model.onnx", dry_run=True)  # doctest: +SKIP
+        'output/inference_model.trt'
     """
     # Swap only the final suffix so paths with an earlier ".onnx" segment (or no
     # ".onnx" at all) are not corrupted and never alias the input path.
-    engine_dir = str(Path(onnx_path).with_suffix(".trt"))
+    engine_path = str(Path(onnx_path).with_suffix(".trt"))
 
-    # Build trtexec argv — list form prevents shell-injection via paths.
-    trt_argv: list[str] = [
-        "trtexec",
-        f"--onnx={onnx_path}",
-        f"--saveEngine={engine_dir}",
-        "--memPoolSize=workspace:4096",
-        "--fp16",
-        "--useCudaGraph",
-        "--useSpinWait",
-        "--warmUp=500",
-        "--avgRuns=1000",
-        "--duration=10",
-    ]
+    if dry_run:
+        logger.info(f"[dry-run] Would build TensorRT engine (fp16={fp16}): {onnx_path} -> {engine_path}")
+        return engine_path
+
+    if engine_from_network is None:
+        raise ImportError("TensorRT export requires the 'trt' extra. Install with: pip install rfdetr[trt]")
+
     if verbose:
-        trt_argv.append("--verbose")
+        logger.info(f"Building TensorRT engine (fp16={fp16}) from {onnx_path}")
 
-    if profile:
-        profile_dir = str(Path(onnx_path).with_suffix(".nsys-rep"))
-        # Wrap with nsys profile — also argv, not a shell string.
-        argv: list[str] = [
-            "nsys",
-            "profile",
-            f"--output={profile_dir}",
-            "--trace=cuda,nvtx",
-            "--force-overwrite",
-            "true",
-            *trt_argv,
-        ]
-        logger.info(f"Profile data will be saved to: {profile_dir}")
-    else:
-        argv = trt_argv
-
-    output = run_command_shell(argv, dry_run)
-    parse_trtexec_output(output.stdout)
-    return engine_dir
-
-
-def parse_trtexec_output(output_text: str) -> dict[str, float]:
-    """Parse latency / throughput statistics from ``trtexec`` stdout.
-
-    Args:
-        output_text: Raw stdout from a ``trtexec`` run.
-
-    Returns:
-        Dictionary mapping statistic names to float values. Empty dict if no
-        patterns matched.
-    """
-    logger.info(output_text)
-    # Common patterns in trtexec output
-    gpu_compute_pattern = (
-        r"GPU Compute Time: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms, median = (\d+\.\d+) ms"
+    engine = engine_from_network(
+        network_from_onnx_path(onnx_path),
+        config=CreateConfig(fp16=fp16),
     )
-    h2d_pattern = r"Host to Device Transfer Time: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
-    d2h_pattern = r"Device to Host Transfer Time: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
-    latency_pattern = r"Latency: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
-    throughput_pattern = r"Throughput: (\d+\.\d+) qps"
+    save_engine(engine, path=engine_path)
 
-    stats: dict[str, float] = {}
-
-    # Extract compute times
-    if match := re.search(gpu_compute_pattern, output_text):
-        stats.update(
-            {
-                "compute_min_ms": float(match.group(1)),
-                "compute_max_ms": float(match.group(2)),
-                "compute_mean_ms": float(match.group(3)),
-                "compute_median_ms": float(match.group(4)),
-            }
-        )
-
-    # Extract H2D times
-    if match := re.search(h2d_pattern, output_text):
-        stats.update(
-            {
-                "h2d_min_ms": float(match.group(1)),
-                "h2d_max_ms": float(match.group(2)),
-                "h2d_mean_ms": float(match.group(3)),
-            }
-        )
-
-    # Extract D2H times
-    if match := re.search(d2h_pattern, output_text):
-        stats.update(
-            {
-                "d2h_min_ms": float(match.group(1)),
-                "d2h_max_ms": float(match.group(2)),
-                "d2h_mean_ms": float(match.group(3)),
-            }
-        )
-
-    if match := re.search(latency_pattern, output_text):
-        stats.update(
-            {
-                "latency_min_ms": float(match.group(1)),
-                "latency_max_ms": float(match.group(2)),
-                "latency_mean_ms": float(match.group(3)),
-            }
-        )
-
-    # Extract throughput
-    if match := re.search(throughput_pattern, output_text):
-        stats["throughput_qps"] = float(match.group(1))
-
-    return stats
+    logger.info(f"Successfully built TensorRT engine: {engine_path}")
+    return engine_path

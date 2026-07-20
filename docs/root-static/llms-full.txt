@@ -222,9 +222,9 @@ model.export(format="tflite")
 
 ### TensorRT Deployment
 
-Export to ONNX first, then convert with TensorRT tooling:
-```bash
-trtexec --onnx=model.onnx --saveEngine=model.trt --fp16
+Build a `.trt` engine in one step (requires `pip install rfdetr[trt]` and a CUDA GPU):
+```python
+model.export(format="tensorrt")
 ```
 
 ### Deploy to Roboflow
@@ -295,7 +295,7 @@ Yes. Core models (Nano through Large) and all training/inference code are releas
 Instantiate a model and call model.train() with your dataset directory in COCO JSON or YOLO format. Example: model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4). The model downloads pretrained weights automatically and resumes from the best checkpoint.
 
 **How do I export RF-DETR to ONNX or TensorRT?**
-Call model.export(format='onnx') after training or loading a checkpoint. ONNX export works on CPU. For TensorRT, export to ONNX first, then convert with trtexec --onnx=model.onnx --saveEngine=model.trt --fp16.
+Call model.export(format='onnx') after training or loading a checkpoint. ONNX export works on CPU. For TensorRT, use model.export(format='tensorrt') (requires pip install rfdetr[trt] and a CUDA GPU), which builds a .trt engine in-process via the TensorRT Python API.
 
 **Which RF-DETR model size should I use?**
 RF-DETR-Nano (2.3 ms, 67.6 AP50) is best for edge/real-time. RF-DETR-Large (6.8 ms, 56.5 AP50:95) is best accuracy–latency trade-off for server deployment. RF-DETR-2XLarge (17.2 ms, 60.1 AP50:95) maximizes accuracy when latency budget allows.

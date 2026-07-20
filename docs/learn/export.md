@@ -124,7 +124,8 @@ If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX mode
 
 ### Prerequisites
 
-- Install TensorRT (`trtexec` must be available in your `PATH`)
+- Install the TensorRT extra: `pip install rfdetr[trt]` (provides `tensorrt` + `polygraphy`; no `trtexec` binary needed)
+- A CUDA GPU (the engine is built for the local GPU architecture)
 - Export an ONNX model first (for example: `output/inference_model.onnx`)
 
 ### Export Directly to TensorRT
@@ -144,7 +145,7 @@ This exports `output/inference_model.onnx` first and then produces `output/infer
 !!! note "Who consumes the `.trt` engine?"
 
     The `.trt` engine produced by `format="tensorrt"` is a standalone artifact for raw
-    TensorRT / `trtexec` deployment. It is locked to the GPU architecture and
+    TensorRT deployment. It is locked to the GPU architecture and
     TensorRT version of the machine that built it, so it is not portable across
     different GPUs or TensorRT releases.
 
@@ -156,12 +157,12 @@ This exports `output/inference_model.onnx` first and then produces `output/infer
 ### Python API Conversion
 
 ```python
-from rfdetr.export._tensorrt import trtexec
+from rfdetr.export._tensorrt import build_engine
 
-engine_path = trtexec("output/inference_model.onnx", verbose=True, profile=False, dry_run=False)
+engine_path = build_engine("output/inference_model.onnx", fp16=True)
 ```
 
-`trtexec` returns the path to the generated `.trt` engine file. If `profile=True`, it also writes an Nsight Systems report (`.nsys-rep`).
+`build_engine` builds the engine in-process via the TensorRT Python API (no `trtexec` subprocess) and returns the path to the generated `.trt` engine file.
 
 ## Run Inference with `inference-models`
 

@@ -1408,8 +1408,8 @@ class RFDETR:
                 instantiated model's patch size. Shape divisibility is validated against ``patch_size * num_windows``.
             format: Export format — ``"onnx"`` (default), ``"tflite"``, or ``"tensorrt"`` (alias: ``"trt"``).
                 ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: ``"tflite"`` via
-                ``onnx2tf`` (requires ``pip install rfdetr[onnx,tflite]``); ``"tensorrt"`` via ``trtexec``
-                (requires TensorRT to be installed and ``trtexec`` available on ``PATH``).  Unlike ``"onnx"``/
+                ``onnx2tf`` (requires ``pip install rfdetr[onnx,tflite]``); ``"tensorrt"`` via the TensorRT
+                Python API (requires ``pip install rfdetr[trt]``).  Unlike ``"onnx"``/
                 ``"tflite"`` portable serialization, ``"tensorrt"`` performs target-specific compilation at export
                 time and produces a non-portable ``.trt`` engine tied to the build machine's GPU and TensorRT version.
 
@@ -1597,10 +1597,10 @@ class RFDETR:
                 return tflite_path
 
             if format == "tensorrt":
-                from rfdetr.export._tensorrt import trtexec
+                from rfdetr.export._tensorrt import build_engine
 
                 logger.info("Converting ONNX model to TensorRT engine")
-                engine_file = trtexec(output_file, verbose=verbose, profile=False, dry_run=False)
+                engine_file = build_engine(output_file, verbose=verbose)
                 logger.info(f"Successfully exported TensorRT engine to: {engine_file}")
                 return Path(engine_file)
 
