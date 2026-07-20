@@ -24,7 +24,7 @@ See https://github.com/roboflow/inference/tree/main/inference_models for details
 
 from __future__ import annotations
 
-from pathlib import Path
+import os
 
 from rfdetr.utilities.logger import get_logger
 
@@ -73,8 +73,10 @@ def build_engine(onnx_path: str, *, fp16: bool = True, verbose: bool = False, dr
         'output/inference_model.trt'
     """
     # Swap only the final suffix so paths with an earlier ".onnx" segment (or no
-    # ".onnx" at all) are not corrupted and never alias the input path.
-    engine_path = str(Path(onnx_path).with_suffix(".trt"))
+    # ".onnx" at all) are not corrupted and never alias the input path. Use a
+    # string-level split rather than pathlib so separators are preserved verbatim
+    # (pathlib rewrites "/" to "\\" on Windows).
+    engine_path = os.path.splitext(onnx_path)[0] + ".trt"
 
     if dry_run:
         logger.info(f"[dry-run] Would build TensorRT engine (fp16={fp16}): {onnx_path} -> {engine_path}")
