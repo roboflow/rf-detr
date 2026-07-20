@@ -142,6 +142,18 @@ model.export(tensorrt=True)
 
 This exports `output/inference_model.onnx` first and then produces `output/inference_model.engine`.
 
+!!! note "Who consumes the `.engine`?"
+
+    The `.engine` produced by `tensorrt=True` is a standalone artifact for raw
+    TensorRT / `trtexec` deployment. It is locked to the GPU architecture and
+    TensorRT version of the machine that built it, so it is not portable across
+    different GPUs or TensorRT releases.
+
+    If you plan to run inference with [`inference-models`](#run-inference-with-inference-models)
+    (the recommended path below), do **not** pass `tensorrt=True` — `inference-models`
+    builds and manages its own TensorRT engine internally and does not consume this file.
+    Export a plain ONNX model instead and let `inference-models` handle the backend.
+
 ### Python API Conversion
 
 ```python
@@ -173,7 +185,7 @@ ONNX, and TensorRT — with automatic backend selection and a unified API.
 pip install inference-models
 
 # With TensorRT support (NVIDIA GPU required)
-pip install "inference-models[trt-cu12]"  # CUDA 12.x
+pip install "inference-models[trt10]"  # TensorRT 10
 ```
 
 See the [inference-models installation guide](https://inference-models.roboflow.com/getting-started/installation/)

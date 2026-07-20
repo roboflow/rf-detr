@@ -1433,7 +1433,9 @@ class RFDETR:
                 when *calibration_data* is a directory path.
             tensorrt: When ``True``, convert the exported ONNX model to a TensorRT ``.engine`` file using ``trtexec``.
                 Requires TensorRT to be installed and ``trtexec`` available on ``PATH``.  Ignored when
-                ``format="tflite"``.
+                ``format="tflite"``.  Unlike the rest of :meth:`export`, this performs target-specific compilation
+                (requiring a GPU, TensorRT, and ``trtexec`` at export time) that produces a non-portable engine tied
+                to the build machine's GPU and TensorRT version, rather than portable, device-agnostic serialization.
             notes: Optional user-defined metadata (string, dict, list, or
                 any JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata
                 property.  When ``None`` no metadata entry is written.  String values are stored verbatim; all other
