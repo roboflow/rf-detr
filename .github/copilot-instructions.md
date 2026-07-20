@@ -94,7 +94,7 @@ from tqdm.auto import tqdm  # NOT from tqdm import tqdm
 
 **Project-Specific Patterns:**
 
-- **Model selection:** Default to `RFDETRSmall` / `"rfdetr-small"` in examples, docs, and tests. **Never use base models** (`RFDETRBase` / `"rfdetr-base"`) — treat as deprecated, substitute `small`. Pick a released detection size (`nano`/`small`/`medium`/`large`) for detection; use `-preview` variants (`seg-preview`, `keypoint-preview`) **only** for capabilities with no released sized version (segmentation, keypoints).
+- **Model selection:** Default to `RFDETRSmall` / `"rfdetr-small"` in examples, docs, and tests. **Never use base models** (`RFDETRBase` / `"rfdetr-base"`) — treat as deprecated, substitute `small`. Pick a released detection size (`nano`/`small`/`medium`/`large`) for detection and a released segmentation size (`seg-nano`/`seg-small`/`seg-medium`/`seg-large`) for segmentation; `-preview` variants are only for capabilities with no released sized version — now just `keypoint-preview`. `seg-preview` is superseded; use a sized seg model instead.
 - **Logging:** Use `logger.debug()` for detailed tensor/shape info (not `logger.info()`)
 - **Segmentation models:** Return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
 - **Checkpoint handling:** Always check file existence before operations

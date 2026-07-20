@@ -222,7 +222,8 @@ uv run twine check --strict dist/*
 - **Default to `RFDETRSmall` / `"rfdetr-small"`.** Use it wherever an example needs a concrete detection model.
 - **Never use base models** (`RFDETRBase` / `"rfdetr-base"`) in new examples, docs, or tests — treat as deprecated; substitute `small`.
 - **Released detection sizes** — `nano`, `small`, `medium`, `large` (plus `xlarge`/`2xlarge` Plus models). Always pick one of these for plain object detection; never a `-preview` variant.
-- **`-preview` variants** (`RFDETRSegPreview` / `"rfdetr-seg-preview"`, `RFDETRKeypointPreview` / `"rfdetr-keypoint-preview"`) are for capabilities that have **no released sized version yet** (segmentation, keypoints). Use a preview variant **only** for those tasks — not as a stand-in for detection.
+- **Released segmentation sizes** — `RFDETRSegNano`/`Small`/`Medium`/`Large` / `"rfdetr-seg-{nano,small,medium,large}"` (plus `xlarge`/`2xlarge`). Use a sized seg model for segmentation; `RFDETRSegPreview` / `"rfdetr-seg-preview"` is now superseded — do not use it in new examples, docs, or tests.
+- **`-preview` variants** are for capabilities with **no released sized version yet**. Only keypoints remain preview-only: `RFDETRKeypointPreview` / `"rfdetr-keypoint-preview"`. Use a preview variant **only** for that task — never as a stand-in for detection or segmentation.
 
 **Imports:**
 
