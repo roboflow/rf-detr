@@ -1598,13 +1598,10 @@ class RFDETR:
                 return tflite_path
 
             if tensorrt:
-                from argparse import Namespace
-
                 from rfdetr.export._tensorrt import trtexec
 
                 logger.info("Converting ONNX model to TensorRT engine")
-                trt_args = Namespace(verbose=verbose, profile=False, dry_run=False)
-                engine_file = trtexec(output_file, trt_args)
+                engine_file = trtexec(output_file, verbose=verbose, profile=False, dry_run=False)
                 logger.info(f"Successfully exported TensorRT engine to: {engine_file}")
                 return Path(engine_file)
 

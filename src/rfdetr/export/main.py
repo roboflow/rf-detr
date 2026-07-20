@@ -239,7 +239,7 @@ def main(args: argparse.Namespace) -> None:
     onnx_path = output_file  # preserve ONNX path before any post-processing step overwrites it
 
     if args.tensorrt:
-        output_file = trtexec(onnx_path, args)
+        output_file = trtexec(onnx_path, verbose=args.verbose, profile=args.profile, dry_run=args.dry_run)
 
     # TODO: register --tflite, --quantization, --calibration-data, --max-images in the
     # argparser to enable TFLite export via CLI.  Until then, use RFDETR.export(format="tflite").

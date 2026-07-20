@@ -21,10 +21,10 @@ See https://github.com/roboflow/inference/tree/main/inference_models for details
 
 from __future__ import annotations
 
-import argparse
 import os
 import re
 import subprocess
+from pathlib import Path
 
 from rfdetr.utilities.logger import get_logger
 
@@ -65,13 +65,15 @@ def run_command_shell(command: list[str], dry_run: bool = False) -> "subprocess.
         raise
 
 
-def trtexec(onnx_dir: str, args: argparse.Namespace) -> str:
+def trtexec(onnx_path: str, *, verbose: bool = False, profile: bool = False, dry_run: bool = False) -> str:
     """Convert an ONNX model to a TensorRT engine using ``trtexec``.
 
     Args:
-        onnx_dir: Path to the source ``.onnx`` file.
-        args: Parsed CLI arguments.  Consumed attributes: ``profile``,
-            ``verbose``, ``dry_run``.
+        onnx_path: Path to the source ``.onnx`` file.
+        verbose: Append ``--verbose`` to the ``trtexec`` invocation.
+        profile: Wrap the invocation with ``nsys profile`` to capture a
+            ``.nsys-rep`` trace alongside the engine.
+        dry_run: Log the command that *would* run without executing it.
 
     Returns:
         Path to the generated ``.engine`` file.
@@ -80,12 +82,14 @@ def trtexec(onnx_dir: str, args: argparse.Namespace) -> str:
         subprocess.CalledProcessError: If ``trtexec`` (or ``nsys profile``) exits
             with a non-zero return code.
     """
-    engine_dir = onnx_dir.replace(".onnx", ".engine")
+    # Swap only the final suffix so paths with an earlier ".onnx" segment (or no
+    # ".onnx" at all) are not corrupted and never alias the input path.
+    engine_dir = str(Path(onnx_path).with_suffix(".engine"))
 
     # Build trtexec argv — list form prevents shell-injection via paths.
     trt_argv: list[str] = [
         "trtexec",
-        f"--onnx={onnx_dir}",
+        f"--onnx={onnx_path}",
         f"--saveEngine={engine_dir}",
         "--memPoolSize=workspace:4096",
         "--fp16",
@@ -95,11 +99,11 @@ def trtexec(onnx_dir: str, args: argparse.Namespace) -> str:
         "--avgRuns=1000",
         "--duration=10",
     ]
-    if args.verbose:
+    if verbose:
         trt_argv.append("--verbose")
 
-    if args.profile:
-        profile_dir = onnx_dir.replace(".onnx", ".nsys-rep")
+    if profile:
+        profile_dir = str(Path(onnx_path).with_suffix(".nsys-rep"))
         # Wrap with nsys profile — also argv, not a shell string.
         argv: list[str] = [
             "nsys",
@@ -114,7 +118,7 @@ def trtexec(onnx_dir: str, args: argparse.Namespace) -> str:
     else:
         argv = trt_argv
 
-    output = run_command_shell(argv, args.dry_run)
+    output = run_command_shell(argv, dry_run)
     parse_trtexec_output(output.stdout)
     return engine_dir
 
