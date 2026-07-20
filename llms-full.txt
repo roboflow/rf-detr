@@ -81,8 +81,8 @@ detections = model.predict("image.jpg", threshold=0.5)
 - `RFDETRSegSmall` — 4.4 ms, 66.2 AP50, 33.7M params, 384×384
 - `RFDETRSegMedium` — 5.9 ms, 68.4 AP50, 35.7M params, 432×432
 - `RFDETRSegLarge` — 8.8 ms, 70.5 AP50 (47.1 AP50:95), 36.2M params, 504×504
-- `RFDETRSegXLarge` — 13.5 ms, 72.2 AP50, 38.1M params, 624×624
-- `RFDETRSeg2XLarge` — 21.8 ms, 73.1 AP50 (49.9 AP50:95), 38.6M params, 768×768
+- `RFDETRSegXLarge` — 13.5 ms, 72.2 AP50, 38.1M params, 624×624 (requires rfdetr[plus])
+- `RFDETRSeg2XLarge` — 21.8 ms, 73.1 AP50 (49.9 AP50:95), 38.6M params, 768×768 (requires rfdetr[plus])
 
 Segmentation models output instance masks in addition to bounding boxes. Masks are returned as a `torch.Tensor` or dict with `spatial_features`, `query_features`, and `bias` keys.
 

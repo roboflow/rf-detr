@@ -18,7 +18,7 @@
 - License: Apache 2.0 for code and core Nano through Large models; XLarge and 2XLarge detection models require `rfdetr[plus]` and PML 1.0
 
 ## Getting Started
-- [Install](https://rfdetr.roboflow.com/latest/getting-started/install/): pip install rfdetr
+- [Install](https://rfdetr.roboflow.com/latest/learn/install/): pip install rfdetr
 - [Run Detection](https://rfdetr.roboflow.com/latest/learn/run/detection/): Run RF-DETR detection on images, video, webcam, and streams
 - [Run Segmentation](https://rfdetr.roboflow.com/latest/learn/run/segmentation/): Run RF-DETR Seg instance segmentation on images and video
 - [Pretrained Models](https://rfdetr.roboflow.com/latest/learn/pretrained/): Nano, Small, Medium, Large, XLarge, and 2XLarge checkpoints
@@ -29,7 +29,7 @@
 - [Training Parameters](https://rfdetr.roboflow.com/latest/learn/train/training-parameters/): RF-DETR hyperparameters and TrainConfig options
 - [Advanced Training](https://rfdetr.roboflow.com/latest/learn/train/advanced/): Resume, early stopping, multi-GPU DDP, and memory optimization
 - [Custom Training API](https://rfdetr.roboflow.com/latest/learn/train/customization/): PyTorch Lightning training primitives
-- [Augmentations](https://rfdetr.roboflow.com/latest/learn/train/augmentations/): torchvision defaults plus optional Albumentations (CPU) or Kornia (GPU) custom transforms
+- [Augmentations](https://rfdetr.roboflow.com/latest/learn/train/augmentations/): Albumentations presets and custom transforms
 - [Training Loggers](https://rfdetr.roboflow.com/latest/learn/train/loggers/): TensorBoard, Weights and Biases, MLflow, and a ClearML workaround
 
 ## Export and Deploy
