@@ -10,14 +10,15 @@
 
 {% block extrahead %}
   {{ super() }}
+  {% set ga4_measurement_id = "G-5M220DKLMB" %}
   <!-- Google tag (gtag.js) -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-5M220DKLMB"></script>
+  <script async src="https://www.googletagmanager.com/gtag/js?id={{ ga4_measurement_id }}"></script>
   <script>
     window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
+    function gtag(){window.dataLayer.push(arguments);}
     gtag('js', new Date());
 
-    gtag('config', 'G-5M220DKLMB');
+    gtag('config', '{{ ga4_measurement_id }}');
   </script>
   <link rel="preconnect" href="https://storage.googleapis.com">
 
