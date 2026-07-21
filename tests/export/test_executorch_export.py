@@ -16,7 +16,7 @@ Tests cover:
 from __future__ import annotations
 
 import contextlib
-import importlib
+import importlib.metadata
 import sys
 import types
 from pathlib import Path
@@ -71,6 +71,13 @@ class TestResolveExportBackend:
             pytest.param("executorch", "xnnpack", None, ("xnnpack", None), id="executorch-xnnpack"),
             pytest.param("executorch", "coreml", None, ("coreml", None), id="executorch-coreml"),
             pytest.param("executorch", "qnn", "SM8650", ("qnn", "SM8650"), id="executorch-qnn"),
+            pytest.param(
+                "executorch",
+                "XNNPACK",
+                None,
+                ("xnnpack", None),
+                id="executorch-backend-uppercase-normalised-to-lowercase",
+            ),
         ],
     )
     def test_valid_combination_resolves(
@@ -138,16 +145,9 @@ class TestExportExecutorchValidation:
                 backend="vulkan",
             )
 
-    @pytest.mark.parametrize(
-        "backend",
-        [
-            pytest.param("xnnpack", id="xnnpack"),
-            pytest.param("coreml", id="coreml"),
-            pytest.param("qnn", id="qnn"),
-        ],
-    )
-    def test_supported_backend_is_valid(self, backend: str) -> None:
-        assert backend in _VALID_BACKENDS
+    def test_supported_backend_set_is_exact(self) -> None:
+        """``_VALID_BACKENDS`` is exactly ``{"xnnpack", "coreml", "qnn"}`` -- no more, no fewer."""
+        assert _VALID_BACKENDS == {"xnnpack", "coreml", "qnn"}
 
     @pytest.mark.parametrize("backend", ["xnnpack", "coreml", "qnn"])
     def test_dynamic_batch_not_supported_raises(self, tmp_path: Path, backend: str) -> None:
@@ -185,7 +185,7 @@ class TestExportExecutorchValidation:
             pass
         else:
             pytest.skip("ExecuTorch QNN backend is available; missing-delegate path not exercised here")
-        with pytest.raises((ImportError, RuntimeError), match=r"QNN|executorch"):
+        with pytest.raises(ImportError, match=r"QNN|executorch"):
             export_executorch(
                 model=mock.MagicMock(),
                 input_tensors=torch.zeros(1, 3, 8, 8),
@@ -198,6 +198,36 @@ class TestExportExecutorchValidation:
         with mock.patch.dict(sys.modules, {"executorch": None}):
             with pytest.raises(ImportError, match=r"pip install rfdetr\[executorch\]"):
                 _check_executorch_available()
+
+    @pytest.mark.parametrize(
+        ("version_return", "version_side_effect", "expectation"),
+        [
+            pytest.param("1.3.0", None, contextlib.nullcontext(), id="min-supported-version-ok"),
+            pytest.param("1.4.1", None, contextlib.nullcontext(), id="newer-version-ok"),
+            pytest.param(
+                "1.2.9",
+                None,
+                pytest.raises(ImportError, match=r"requires >=1\.3"),
+                id="older-version-raises-import-error",
+            ),
+            pytest.param(
+                None,
+                importlib.metadata.PackageNotFoundError(),
+                contextlib.nullcontext(),
+                id="source-build-package-not-found-ok",
+            ),
+        ],
+    )
+    def test_check_executorch_available_version_gate(
+        self, version_return: str | None, version_side_effect: Exception | None, expectation: Any
+    ) -> None:
+        """``_check_executorch_available`` accepts >=1.3, rejects <1.3, and tolerates a source build (no distribution
+        metadata -> ``PackageNotFoundError`` is swallowed rather than raised)."""
+        fake_executorch = types.ModuleType("executorch")
+        with mock.patch.dict(sys.modules, {"executorch": fake_executorch}):
+            with mock.patch("importlib.metadata.version", return_value=version_return, side_effect=version_side_effect):
+                with expectation:
+                    _check_executorch_available()
 
     def test_export_executorch_missing_dependency_raises_import_error(self, tmp_path: Path) -> None:
         """``export_executorch`` raises ImportError with install hint when executorch is absent."""
@@ -290,6 +320,17 @@ class TestExportFormatParameter:
         with pytest.warns(UserWarning, match="experimental"):
             obj.export(format="executorch", backend="xnnpack", output_dir=str(self._tmp_path / "out"))
         self._mock_export_executorch.assert_called_once()
+
+    def test_notes_ignored_with_warning_for_executorch_format(self) -> None:
+        """``notes`` has no metadata slot in ``.pte``; passing it with ``format="executorch"`` warns and is dropped."""
+        obj = self._make_rfdetr()
+        with pytest.warns(UserWarning, match=r"`notes` is not forwarded to format='executorch'"):
+            obj.export(
+                format="executorch",
+                backend="xnnpack",
+                notes="some provenance notes",
+                output_dir=str(self._tmp_path / "out"),
+            )
 
     def test_executorch_format_does_not_call_export_onnx(self) -> None:
         obj = self._make_rfdetr()
@@ -593,6 +634,23 @@ class TestExportExecutorchBody:
 class TestPackageAvailabilityFlag:
     """The ``_IS_EXECUTORCH_AVAILABLE`` flag set at package import."""
 
+    @pytest.fixture(autouse=True)
+    def _restore_package_state(self) -> Any:
+        """Reload the real package after every test in this class, even when the test body raises.
+
+        Each test reloads ``rfdetr.export._executorch`` under a mock to force one branch of the availability check;
+        ``importlib.reload`` mutates the module object in place, so a restore that only runs on the success path (a bare
+        statement after the ``with`` block) is skipped whenever an assertion inside the mocked reload fails -- leaking
+        the mocked ``_IS_EXECUTORCH_AVAILABLE`` state into every later test that imports the package. Restoring in
+        fixture teardown guarantees it always runs.
+        """
+        yield
+        import importlib
+
+        import rfdetr.export._executorch as pkg
+
+        importlib.reload(pkg)
+
     def test_true_when_executorch_importable(self) -> None:
         """Reloading the package with executorch importable sets the flag True (the success branch)."""
         import importlib
@@ -602,7 +660,6 @@ class TestPackageAvailabilityFlag:
         with mock.patch.dict(sys.modules, _fake_executorch_tree({"executorch": {}})):
             reloaded = importlib.reload(pkg)
             assert reloaded._IS_EXECUTORCH_AVAILABLE is True
-        importlib.reload(pkg)  # restore the real availability state now that the mock is gone
 
     def test_false_when_executorch_missing(self) -> None:
         """Reloading the package with executorch unavailable sets the flag False (the except branch).
@@ -618,7 +675,6 @@ class TestPackageAvailabilityFlag:
         with mock.patch.object(conv, "_check_executorch_available", side_effect=ImportError("no executorch")):
             reloaded = importlib.reload(pkg)
             assert reloaded._IS_EXECUTORCH_AVAILABLE is False
-        importlib.reload(pkg)  # restore the real availability state
 
 
 # ---------------------------------------------------------------------------
