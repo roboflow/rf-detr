@@ -3,17 +3,22 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Unit tests for rfdetr.utilities.state_dict."""
 
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import torch
 from pytorch_lightning import LightningModule, Trainer
 
-from rfdetr.utilities.state_dict import _make_fit_loop_state, validate_checkpoint_compatibility
+from rfdetr.utilities.state_dict import (
+    _make_fit_loop_state,
+    remap_projector_to_cross_attn,
+    strip_checkpoint,
+    validate_checkpoint_compatibility,
+)
 
 # ---------------------------------------------------------------------------
 # _make_fit_loop_state
@@ -192,8 +197,8 @@ class TestValidateCheckpointCompatibility:
     ) -> None:
         """Projection weight shape used to infer ckpt patch_size when 'args' key absent.
 
-        Regression test for #965 — pretrained COCO weights lack 'args', so the
-        shape-based fallback must fire before load_state_dict raises a cryptic RuntimeError.
+        Regression test for #965 — pretrained COCO weights lack 'args', so the shape-based fallback must fire before
+        load_state_dict raises a cryptic RuntimeError.
         """
         proj_key = "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight"
         proj_weight = torch.zeros(384, 3, ckpt_patch_size, ckpt_patch_size)
@@ -298,9 +303,9 @@ class TestValidateCheckpointCompatibility:
     ) -> None:
         """Shape-based patch_size check is skipped when key or attribute is absent.
 
-        Verifies backward compatibility: missing projection key, missing model key,
-        model_args without patch_size attribute, non-4D projection weights, or an
-        explicit args.patch_size (SimpleNamespace or dict) must all be handled without error.
+        Verifies backward compatibility: missing projection key, missing model key, model_args without patch_size
+        attribute, non-4D projection weights, or an explicit args.patch_size (SimpleNamespace or dict) must all be
+        handled without error.
         """
         model_args = SimpleNamespace(**model_args_kwargs)
         validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
@@ -308,8 +313,8 @@ class TestValidateCheckpointCompatibility:
     def test_non_square_projection_kernel_skips_check(self) -> None:
         """Non-square patch projection kernel is skipped — patch_size cannot be inferred reliably.
 
-        Guards against hypothetical future backbones with non-square Conv2d kernels
-        where shape[-1] would not equal patch_size.
+        Guards against hypothetical future backbones with non-square Conv2d kernels where shape[-1] would not equal
+        patch_size.
         """
         proj_key = "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight"
         proj_weight = torch.zeros(384, 3, 16, 14)  # non-square: h=16, w=14
@@ -388,6 +393,45 @@ class TestValidateCheckpointCompatibility:
         warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
         assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"
 
+
+class TestRemapProjectorToCrossAttn:
+    """Tests for dual-projector checkpoint key remapping."""
+
+    def test_clones_projector_weights_when_dual_projector_enabled(self) -> None:
+        """Dual-projector models clone projector keys into cross_attn_projector when missing."""
+        state_dict = {
+            "backbone.0.projector.0.weight": torch.randn(4, 4, 1, 1),
+            "backbone.0.projector.0.bias": torch.randn(4),
+        }
+        model = SimpleNamespace(backbone=[SimpleNamespace(dual_projector=True)])
+
+        remapped = remap_projector_to_cross_attn(state_dict, model)
+
+        assert remapped is state_dict
+        assert "backbone.0.cross_attn_projector.0.weight" in remapped
+        assert "backbone.0.cross_attn_projector.0.bias" in remapped
+        assert torch.equal(
+            remapped["backbone.0.cross_attn_projector.0.weight"],
+            state_dict["backbone.0.projector.0.weight"],
+        )
+        assert torch.equal(
+            remapped["backbone.0.cross_attn_projector.0.bias"],
+            state_dict["backbone.0.projector.0.bias"],
+        )
+
+    def test_skips_when_cross_attn_keys_already_present(self) -> None:
+        """No remap is applied when cross_attn_projector keys already exist."""
+        state_dict = {
+            "backbone.0.projector.0.weight": torch.randn(4, 4, 1, 1),
+            "backbone.0.cross_attn_projector.0.weight": torch.randn(4, 4, 1, 1),
+        }
+        model = SimpleNamespace(backbone=[SimpleNamespace(dual_projector=True)])
+
+        remapped = remap_projector_to_cross_attn(state_dict, model)
+
+        assert remapped is state_dict
+        assert len([key for key in remapped if key.startswith("backbone.0.cross_attn_projector.")]) == 1
+
     def test_class_count_missing_model_key_no_warning(self, caplog):
         """Checkpoint without 'model' key — no warning (backward compat)."""
         ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14)
@@ -405,3 +449,59 @@ class TestValidateCheckpointCompatibility:
 
         warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
         assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"
+
+
+class TestStripCheckpoint:
+    """Tests for strip_checkpoint loop-stub backfill."""
+
+    def _make_minimal_ckpt(self, tmp_path, extra: dict | None = None) -> Path:
+        """Write a minimal checkpoint to a temp file."""
+        payload = {"model": {"w": torch.tensor(1.0)}, "args": {"lr": 1e-4}}
+        if extra:
+            payload.update(extra)
+        ckpt_path = Path(tmp_path) / "ckpt.pth"
+        torch.save(payload, ckpt_path)
+        return ckpt_path
+
+    def test_strip_adds_validate_loop_stub_when_loops_present_but_missing_key(self, tmp_path) -> None:
+        """Old checkpoints with loops but no validate_loop/test_loop get stubs backfilled."""
+        ckpt_path = self._make_minimal_ckpt(
+            tmp_path,
+            extra={"loops": {"fit_loop": {"state_dict": {}}}},
+        )
+        strip_checkpoint(ckpt_path)
+        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        assert result["loops"]["validate_loop"] == {"state_dict": {}}
+        assert result["loops"]["test_loop"] == {"state_dict": {}}
+
+    def test_strip_preserves_existing_validate_loop_stub(self, tmp_path) -> None:
+        """Checkpoints with validate_loop already present are not overwritten."""
+        original_stub = {"state_dict": {"some_key": 1}}
+        ckpt_path = self._make_minimal_ckpt(
+            tmp_path,
+            extra={"loops": {"fit_loop": {"state_dict": {}}, "validate_loop": original_stub}},
+        )
+        strip_checkpoint(ckpt_path)
+        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        assert result["loops"]["validate_loop"] == original_stub
+
+    def test_strip_no_loops_key_leaves_loops_absent(self, tmp_path) -> None:
+        """Checkpoints without a loops key must not gain one after stripping."""
+        ckpt_path = self._make_minimal_ckpt(tmp_path)
+        strip_checkpoint(ckpt_path)
+        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        assert "loops" not in result
+
+    def test_strip_writes_extra_metadata(self, tmp_path) -> None:
+        """extra_metadata key/value pairs are merged into the stripped checkpoint."""
+        ckpt_path = self._make_minimal_ckpt(tmp_path)
+        strip_checkpoint(ckpt_path, extra_metadata={"best_total_source": "ema"})
+        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        assert result["best_total_source"] == "ema"
+
+    def test_strip_extra_metadata_overrides_preserved_key(self, tmp_path) -> None:
+        """extra_metadata wins over a preserved same-named key."""
+        ckpt_path = self._make_minimal_ckpt(tmp_path, extra={"rfdetr_version": "1.0.0"})
+        strip_checkpoint(ckpt_path, extra_metadata={"rfdetr_version": "override"})
+        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        assert result["rfdetr_version"] == "override"

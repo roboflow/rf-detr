@@ -19,13 +19,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: 📥 Checkout the repository
-        uses: actions/checkout@v6.0.1
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           fetch-depth: 0
 
       - name: 🐍 Install uv and set Python
-        uses: astral-sh/setup-uv@v7.2.0
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
         with:
+          version: "0.9.26"
           python-version: "3.10"
           activate-environment: true
 
@@ -34,7 +35,14 @@ jobs:
         run: uv pip install -e ".[plus]" --group docs
 
       - name: 🧪 Test Docs Build
-        run: uv run mkdocs build --verbose
+        run: uv run --no-sync mkdocs build --verbose
+
+      - name: 📤 Upload docs artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: docs-site
+          path: site/
+          retention-days: 7
 
       - name: Minimize uv cache
         run: uv cache prune --ci

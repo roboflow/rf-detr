@@ -3,6 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
@@ -12,14 +13,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-import supervision as sv
-import torch
 import torchvision.transforms as T  # noqa: N812
 from matplotlib.axes import Axes
+from supervision import BoxAnnotator, Color, Detections, LabelAnnotator, MaskAnnotator
+from torch import Tensor
 from torch.utils.data import DataLoader
 
-from rfdetr.util.box_ops import box_cxcywh_to_xyxy
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
+from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
@@ -46,17 +47,17 @@ class DatasetGridSaver:
     def save_grid(self) -> None:
         """Create and save image grids to ``output_dir``.
 
-        Each grid is a 3x3 JPEG containing up to 9 images from a single batch,
-        with bounding boxes and class labels drawn on top.
+        Each grid is a 3x3 JPEG containing up to 9 images from a single batch, with bounding boxes and class labels
+        drawn on top.
         """
         inv_normalize = T.Normalize(
             mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
             std=[1 / 0.229, 1 / 0.224, 1 / 0.225],
         )
-        mask_annotator = sv.MaskAnnotator(opacity=0.45)
-        box_annotator = sv.BoxAnnotator(thickness=2)
-        label_annotator = sv.LabelAnnotator(
-            text_color=sv.Color.BLACK,
+        mask_annotator = MaskAnnotator(opacity=0.45)
+        box_annotator = BoxAnnotator(thickness=2)
+        label_annotator = LabelAnnotator(
+            text_color=Color.BLACK,
             text_scale=0.5,
             text_padding=3,
         )
@@ -95,13 +96,13 @@ class DatasetGridSaver:
 
     @staticmethod
     def _annotate_and_plot(
-        single_image: torch.Tensor,
+        single_image: Tensor,
         single_target: dict[str, Any],
         ax: Axes,
         inv_normalize: T.Normalize,
-        mask_annotator: sv.MaskAnnotator,
-        box_annotator: sv.BoxAnnotator,
-        label_annotator: sv.LabelAnnotator,
+        mask_annotator: MaskAnnotator,
+        box_annotator: BoxAnnotator,
+        label_annotator: LabelAnnotator,
     ) -> None:
         """De-normalize a single image tensor, annotate it with masks, boxes, and labels, and plot it on ``ax``.
 
@@ -111,19 +112,19 @@ class DatasetGridSaver:
                 optionally ``'masks'``.
             ax: Matplotlib axis to plot the annotated image on.
             inv_normalize: Inverse normalization transform to convert the tensor back to pixel values.
-            mask_annotator: ``sv.MaskAnnotator`` instance for drawing instance masks.
-            box_annotator: ``sv.BoxAnnotator`` instance for drawing bounding boxes.
-            label_annotator: ``sv.LabelAnnotator`` instance for drawing class labels.
+            mask_annotator: ``MaskAnnotator`` instance for drawing instance masks.
+            box_annotator: ``BoxAnnotator`` instance for drawing bounding boxes.
+            label_annotator: ``LabelAnnotator`` instance for drawing class labels.
         """
         from PIL import Image as PILImage
 
         resized_size = single_target["size"]
-        if isinstance(resized_size, torch.Tensor):
+        if isinstance(resized_size, Tensor):
             resized_size = resized_size.detach().cpu()
         h, w = int(resized_size[0]), int(resized_size[1])
 
         de_normalized_img = inv_normalize(single_image[:, :h, :w])
-        if isinstance(de_normalized_img, torch.Tensor):
+        if isinstance(de_normalized_img, Tensor):
             de_normalized_img = de_normalized_img.detach().cpu().numpy()
         scene = PILImage.fromarray(
             np.ascontiguousarray((np.clip(de_normalized_img.transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8))
@@ -131,13 +132,13 @@ class DatasetGridSaver:
 
         if len(single_target["boxes"]) > 0:
             labels_tensor = single_target["labels"]
-            if isinstance(labels_tensor, torch.Tensor):
+            if isinstance(labels_tensor, Tensor):
                 class_ids = labels_tensor.detach().cpu().numpy().astype(int)
             else:
                 class_ids = np.asarray(labels_tensor, dtype=int)
 
             boxes = single_target["boxes"]
-            if isinstance(boxes, torch.Tensor):
+            if isinstance(boxes, Tensor):
                 boxes_iter = boxes.detach().cpu()
             else:
                 boxes_iter = boxes
@@ -147,7 +148,7 @@ class DatasetGridSaver:
                 dtype=np.float32,
             )
             masks = DatasetGridSaver._extract_masks(single_target, image_shape=(h, w), num_instances=len(class_ids))
-            detections = sv.Detections(xyxy=xyxy, mask=masks, class_id=class_ids)
+            detections = Detections(xyxy=xyxy, mask=masks, class_id=class_ids)
             labels = [str(c) for c in class_ids]
             if masks is not None:
                 scene = mask_annotator.annotate(scene=scene, detections=detections)
@@ -168,7 +169,7 @@ class DatasetGridSaver:
         if masks is None or len(masks) == 0:
             return None
 
-        if isinstance(masks, torch.Tensor):
+        if isinstance(masks, Tensor):
             masks_np = masks.detach().cpu().numpy()
         else:
             masks_np = np.asarray(masks)

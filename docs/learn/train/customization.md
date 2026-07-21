@@ -53,21 +53,82 @@ module = RFDETRModelModule(model_config, train_config)
 
 ### Lifecycle hooks
 
-| Hook                       | Behaviour                                                                                       |
-| -------------------------- | ----------------------------------------------------------------------------------------------- |
-| `on_fit_start`             | Seeds RNGs when `train_config.seed` is set.                                                     |
-| `on_train_batch_start`     | Applies multi-scale random resize when `train_config.multi_scale=True`.                         |
-| `transfer_batch_to_device` | Moves `NestedTensor` batches to the target device.                                              |
-| `training_step`            | Computes loss, divides by `accumulate_grad_batches`, and logs `train/loss` and per-term losses. |
-| `validation_step`          | Runs forward pass and postprocessing; returns `{results, targets}` for `COCOEvalCallback`.      |
-| `test_step`                | Same as `validation_step`, logs under `test/`.                                                  |
-| `predict_step`             | Runs inference-only forward pass and returns postprocessed detections.                          |
-| `configure_optimizers`     | Builds AdamW with layer-wise LR decay and a LambdaLR scheduler (cosine or step).                |
-| `on_load_checkpoint`       | Auto-converts legacy `.pth` checkpoints to PTL format.                                          |
+| Hook                       | Behaviour                                                                                                                                                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `on_fit_start`             | Seeds RNGs when `train_config.seed` is set.                                                                                                                                                                                     |
+| `on_train_batch_start`     | Applies multi-scale random resize when `train_config.multi_scale=True`.                                                                                                                                                         |
+| `transfer_batch_to_device` | Moves `NestedTensor` batches to the target device.                                                                                                                                                                              |
+| `training_step`            | Computes loss and logs `train/loss` plus per-term losses. Keypoint models use manual optimization with box-normalized accumulation across microbatches; detection and segmentation use Lightning's automatic optimization path. |
+| `validation_step`          | Runs forward pass and postprocessing; returns `{results, targets}` for `COCOEvalCallback`.                                                                                                                                      |
+| `test_step`                | Same as `validation_step`, logs under `test/`.                                                                                                                                                                                  |
+| `predict_step`             | Runs inference-only forward pass and returns postprocessed detections.                                                                                                                                                          |
+| `configure_optimizers`     | Builds the configured optimizer, preserves layer-wise LR decay, applies optional parameter-group kwargs, and attaches the configured LR scheduler (managed preset, import path, or callable).                                   |
+| `on_load_checkpoint`       | Auto-converts legacy `.pth` checkpoints to PTL format.                                                                                                                                                                          |
 
 ### Accessing the underlying model
 
 The raw `nn.Module` is `module.model`. After training completes, `RFDETR.train()` syncs it back onto `self.model.model` so `predict()` and `export()` continue to work.
+
+### Custom optimizer
+
+`TrainConfig.optimizer` accepts either a **name / import path** (a string) or a **callable** (a class or `functools.partial`), and selects the optimizer built in `configure_optimizers`.
+
+- **Managed short name** — a bare `torch.optim` optimizer name such as the default `"adamw"`, `"sgd"`, or `"adam"` (case-insensitive). **Only native `torch.optim` optimizers may be chosen by short name.** RF-DETR manages construction here: it injects `lr`, a signature-aware `weight_decay`, and your `optimizer_kwargs`.
+- **Explicit import path** — a dotted string such as `"torch.optim.AdamW"` or `"pytorch_optimizer.Lion"`. This is how you select any non-`torch.optim` optimizer, e.g. one from [`pytorch-optimizer`](https://kozistr.tech/pytorch_optimizer/) (a third-party library you install yourself — RF-DETR does not depend on it). The class is constructed from the RF-DETR parameter groups (which already carry per-group learning rates) plus your `optimizer_kwargs` only; RF-DETR injects no `lr` or `weight_decay`, so pass any you need in `optimizer_kwargs`.
+- **Callable** — a class or `functools.partial` is called as `optimizer(param_groups)` and nothing else, so bake all hyperparameters into the callable. `optimizer_kwargs` is ignored (with a warning) in this mode. A reconstructable callable (an importable top-level class / `functools.partial` with JSON-serializable keyword arguments) is desugared to its dotted import path plus keyword arguments so the config round-trips through `training_config.json`; a lambda, locally-defined class, or non-serializable argument still trains but cannot be restored from a saved config (RF-DETR warns with a specific hint).
+
+```python
+import functools
+
+# managed native torch.optim short name — RF-DETR injects lr + weight_decay
+train_config = TrainConfig(..., optimizer="adamw")
+
+# explicit import path (incl. pytorch-optimizer) — supply hyperparameters via optimizer_kwargs
+train_config = TrainConfig(..., optimizer="pytorch_optimizer.Lion", optimizer_kwargs={"weight_decouple": True})
+
+# callable / functools.partial — bake arguments in; optimizer_kwargs is ignored
+train_config = TrainConfig(..., optimizer=functools.partial(torch.optim.AdamW, weight_decay=1e-4))
+```
+
+See [Training parameters — optimizer](training-parameters.md) for the full parameter reference and examples.
+
+`fused_optimizer` only affects the built-in `optimizer="adamw"` path; it is ignored for custom optimizers. On a BF16/CUDA run where fused AdamW would otherwise apply, RF-DETR logs a warning if `fused_optimizer=True` is combined with a non-default optimizer.
+
+!!! warning "Wrapper optimizers (SAM, Lookahead, …) need extra care"
+
+    Non-`torch.optim` optimizers are selected by import path (e.g. `"pytorch_optimizer.Lion"`) or a callable. Most `pytorch-optimizer` optimizers are drop-in replacements and work directly — including `Lion`, `AdaBelief`, `SophiaH`, `Adan`, `Ranger`, and `Ranger21`, which take `params` first like any standard optimizer. Two groups need extra care:
+
+    - **Base-optimizer wrappers — `SAM` / `BSAM` / `GSAM` / `WSAM`.** They require a `base_optimizer` as a second positional argument, so `optimizer="pytorch_optimizer.SAM"` raises a `TypeError` at training start (RF-DETR calls the class with the parameter groups only). They also change `optimizer.step()` semantics (SAM needs two forward/backward passes per step) and are incompatible with PyTorch Lightning's default `automatic_optimization=True`. Supply the `base_optimizer` via a `functools.partial`, but such an optimizer will not round-trip through a saved config.
+    - **`Lookahead` / `PCGrad` / `GradientCentralization`.** These wrap or post-process another optimizer and likewise cannot be built from parameter groups alone; construction with the parameter groups only raises a `TypeError`.
+
+    If you need SAM or Lookahead, override `configure_optimizers` and set `self.automatic_optimization = False` in `RFDETRModelModule.__init__`. For standard use, pick a `torch.optim` optimizer by name or a drop-in `pytorch-optimizer` optimizer by import path (e.g. `"pytorch_optimizer.Lion"`).
+
+### Custom LR scheduler
+
+`TrainConfig.lr_scheduler` accepts either a **preset name / import path** (a string) or a **callable** (a class or `functools.partial`), mirroring `optimizer`, and selects the scheduler built in `configure_optimizers`.
+
+- **Managed preset** — the built-in `"step"` (10x drop after `lr_drop` epochs) or `"cosine"` (annealing to `min_factor`). These own linear warmup and full-run step sizing; pass `lr_drop` / `min_factor` via `lr_scheduler_kwargs`.
+- **Explicit import path** — a dotted string such as `"torch.optim.lr_scheduler.OneCycleLR"`. The class is constructed as `scheduler(optimizer, **lr_scheduler_kwargs)`; RF-DETR injects no `total_steps` / `T_max`, so pass any the scheduler needs in `lr_scheduler_kwargs`.
+- **Callable** — a class or `functools.partial` is called as `lr_scheduler(optimizer)` and nothing else, so bake all hyperparameters into the callable. `lr_scheduler_kwargs` is ignored (with a warning) in this mode. Reconstructable callables desugar to a dotted path plus kwargs so the config round-trips through `training_config.json`; a lambda or locally-defined class still trains but cannot be restored from a saved config.
+
+```python
+import functools, torch
+
+# managed preset — warmup + full-run sizing handled by RF-DETR
+train_config = TrainConfig(..., lr_scheduler="cosine", lr_scheduler_kwargs={"min_factor": 0.1})
+
+# explicit import path — supply scheduler arguments via lr_scheduler_kwargs
+train_config = TrainConfig(
+    ..., lr_scheduler="torch.optim.lr_scheduler.StepLR", lr_scheduler_kwargs={"step_size": 30, "gamma": 0.1}
+)
+
+# callable / functools.partial — bake arguments in; lr_scheduler_kwargs is ignored
+train_config = TrainConfig(..., lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, step_size=30))
+```
+
+With `warmup_epochs > 0`, an explicit scheduler is automatically prepended with a linear warmup ramp via `SequentialLR` (managed presets bake warmup into their own schedule). `ReduceLROnPlateau` is special: it cannot be warmup-wrapped, always steps once per epoch, and reads the metric named by `lr_scheduler_monitor` (default `"val/loss"`). Use `lr_scheduler_interval="epoch"` to step other explicit schedulers per epoch instead of per optimizer step.
+
+See [Training parameters — scheduler](training-parameters.md#scheduler-and-regularization) for the full parameter reference.
 
 ---
 
@@ -114,29 +175,32 @@ trainer = build_trainer(train_config, model_config)
 
 ### What build_trainer configures
 
-| Concern               | Source                                                                                                                                                     |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Max epochs            | `train_config.epochs`                                                                                                                                      |
-| Gradient accumulation | `train_config.grad_accum_steps`                                                                                                                            |
-| Gradient clipping     | `train_config.clip_max_norm` (default `0.1`)                                                                                                               |
-| Mixed precision       | Resolved from `model_config.amp` and device capability (`bf16-mixed` on Ampere+, `16-mixed` otherwise)                                                     |
-| Accelerator           | `train_config.accelerator` (default `"auto"`)                                                                                                              |
-| Strategy              | Pass `strategy=` as a `**trainer_kwarg` to `build_trainer`. `TrainConfig` has no `strategy` field — setting it on `TrainConfig` will raise a `ValueError`. |
-| Sync batch norm       | `train_config.sync_bn`                                                                                                                                     |
-| Progress bar          | `train_config.progress_bar`                                                                                                                                |
-| Loggers               | CSVLogger always; TensorBoard, WandB, MLflow when their `train_config` flags are `True`                                                                    |
-| Callbacks             | `RFDETREMACallback`, `DropPathCallback`, `COCOEvalCallback`, `BestModelCallback`, `RFDETREarlyStopping` (conditional)                                      |
+| Concern               | Source                                                                                                                                                                                                                                                         |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Max epochs            | `train_config.epochs`                                                                                                                                                                                                                                          |
+| Gradient accumulation | Detection/segmentation: `train_config.grad_accum_steps` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `1`).                                                                                     |
+| Gradient clipping     | Detection/segmentation: `train_config.clip_max_norm` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `None`).                                                                                     |
+| Mixed precision       | `model_config.amp` enables AMP; dtype resolved from `train_config.amp_dtype` (`"auto"` selects `bf16-mixed` on Ampere+, `"bf16"` / `"fp16"` force a specific dtype)                                                                                            |
+| Accelerator           | `train_config.accelerator` (default `"auto"`)                                                                                                                                                                                                                  |
+| Strategy              | Set via `train_config.strategy` (default `"auto"`) or pass `strategy=` as a `**trainer_kwarg` to `build_trainer`. Common values: `"auto"`, `"ddp"`, `"ddp_spawn"`. `TrainConfig` also exposes `devices` and `num_nodes` for multi-GPU and multi-node training. |
+| Sync batch norm       | `train_config.sync_bn`                                                                                                                                                                                                                                         |
+| Progress bar          | `train_config.progress_bar`                                                                                                                                                                                                                                    |
+| Loggers               | CSVLogger always; TensorBoard, WandB, MLflow when their `train_config` flags are `True`                                                                                                                                                                        |
+| Callbacks             | `RFDETREMACallback`, `DropPathCallback`, `COCOEvalCallback`, `BestModelCallback`, `RFDETREarlyStopping` (conditional)                                                                                                                                          |
 
 ### Overriding PTL Trainer kwargs
 
-Pass any keyword argument accepted by `pytorch_lightning.Trainer` via `**trainer_kwargs`. These override the built configuration:
+Pass keyword arguments accepted by `pytorch_lightning.Trainer` via `**trainer_kwargs`. Most keys override the built configuration.
+
+**Detection and segmentation models** forward `accumulate_grad_batches` and `gradient_clip_val` to the Trainer normally — you can override them via `trainer_kwargs` or configure them on `TrainConfig` (`grad_accum_steps`, `clip_max_norm`).
+
+**Keypoint models** use manual optimization, so `RFDETRModelModule` owns accumulation and clipping internally. `build_trainer()` forces `accumulate_grad_batches=1` and `gradient_clip_val=None` regardless of what is passed, and emits a `UserWarning` if those keys appear in `trainer_kwargs` so the override is visible:
 
 ```python
 trainer = build_trainer(
     train_config,
     model_config,
     fast_dev_run=2,  # run 2 batches per epoch for a smoke test
-    accumulate_grad_batches=8,  # override TrainConfig.grad_accum_steps
     log_every_n_steps=10,
 )
 ```
@@ -325,9 +389,9 @@ trainer = build_trainer(
 | --------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | `RFDETREMACallback`   | Maintains an EMA copy of model weights                                                      | `train_config.use_ema=True` and strategy is not sharded |
 | `DropPathCallback`    | Anneals drop-path rate over training                                                        | `train_config.drop_path > 0`                            |
-| `COCOEvalCallback`    | Computes mAP and F1 after each validation epoch                                             | Always                                                  |
+| `COCOEvalCallback`    | Computes task validation metrics after each validation epoch                                | Always                                                  |
 | `BestModelCallback`   | Saves `checkpoint_best_regular.pth`, `checkpoint_best_ema.pth`, `checkpoint_best_total.pth` | Always                                                  |
-| `RFDETREarlyStopping` | Stops training when validation mAP stops improving                                          | `train_config.early_stopping=True`                      |
+| `RFDETREarlyStopping` | Stops training when the validation task metric stops improving                              | `train_config.early_stopping=True`                      |
 
 ---
 
@@ -344,29 +408,31 @@ trainer.loggers.append(NeptuneLogger(project="my-workspace/rf-detr"))
 trainer.fit(module, datamodule)
 ```
 
-All logged keys (`train/loss`, `val/mAP_50_95`, `val/F1`, `val/ema_mAP_50_95`, etc.) are written to every active logger in the list.
+All logged keys (`train/loss`, `val/mAP_50_95`, `val/keypoint_map_50_95`, `val/F1`, `val/ema_mAP_50_95`, etc.) are written to every active logger in the list.
 
 ---
 
 ## Logged metrics reference
 
-| Key                  | When logged            | Description                                               |
-| -------------------- | ---------------------- | --------------------------------------------------------- |
-| `train/loss`         | Every step / epoch     | Total weighted training loss                              |
-| `train/<term>`       | Every step / epoch     | Individual loss terms (e.g. `train/loss_bbox`)            |
-| `val/loss`           | Each epoch             | Validation loss (if `train_config.compute_val_loss=True`) |
-| `val/mAP_50_95`      | Each eval epoch        | COCO box mAP@[.50:.05:.95]                                |
-| `val/mAP_50`         | Each eval epoch        | COCO box mAP@.50                                          |
-| `val/mAP_75`         | Each eval epoch        | COCO box mAP@.75                                          |
-| `val/mAR`            | Each eval epoch        | COCO mean average recall                                  |
-| `val/ema_mAP_50_95`  | Each eval epoch        | EMA-model mAP@[.50:.05:.95] (if EMA active)               |
-| `val/F1`             | Each eval epoch        | Macro F1 at best confidence threshold                     |
-| `val/precision`      | Each eval epoch        | Precision at best F1 threshold                            |
-| `val/recall`         | Each eval epoch        | Recall at best F1 threshold                               |
-| `val/AP/<class>`     | Each eval epoch        | Per-class AP (if `log_per_class_metrics=True`)            |
-| `val/segm_mAP_50_95` | Each eval epoch        | Segmentation mAP (segmentation models only)               |
-| `val/segm_mAP_50`    | Each eval epoch        | Segmentation mAP@.50 (segmentation models only)           |
-| `test/*`             | After `trainer.test()` | Mirror of `val/*` keys                                    |
+| Key                      | When logged            | Description                                               |
+| ------------------------ | ---------------------- | --------------------------------------------------------- |
+| `train/loss`             | Every step / epoch     | Total weighted training loss                              |
+| `train/<term>`           | Every step / epoch     | Individual loss terms (e.g. `train/loss_bbox`)            |
+| `val/loss`               | Each epoch             | Validation loss (if `train_config.compute_val_loss=True`) |
+| `val/mAP_50_95`          | Each eval epoch        | COCO box mAP@[.50:.05:.95]                                |
+| `val/mAP_50`             | Each eval epoch        | COCO box mAP@.50                                          |
+| `val/mAP_75`             | Each eval epoch        | COCO box mAP@.75                                          |
+| `val/mAR`                | Each eval epoch        | COCO mean average recall                                  |
+| `val/ema_mAP_50_95`      | Each eval epoch        | EMA-model mAP@[.50:.05:.95] (if EMA active)               |
+| `val/F1`                 | Each eval epoch        | Macro F1 at best confidence threshold                     |
+| `val/precision`          | Each eval epoch        | Precision at best F1 threshold                            |
+| `val/recall`             | Each eval epoch        | Recall at best F1 threshold                               |
+| `val/AP/<class>`         | Each eval epoch        | Per-class AP (if `log_per_class_metrics=True`)            |
+| `val/segm_mAP_50_95`     | Each eval epoch        | Segmentation mAP (segmentation models only)               |
+| `val/segm_mAP_50`        | Each eval epoch        | Segmentation mAP@.50 (segmentation models only)           |
+| `val/keypoint_map_50_95` | Each eval epoch        | COCO keypoint AP@[.50:.05:.95] (keypoint preview only)    |
+| `val/keypoint_map_50`    | Each eval epoch        | COCO keypoint AP@.50 (keypoint preview only)              |
+| `test/*`                 | After `trainer.test()` | Mirror of `val/*` keys                                    |
 
 ---
 

@@ -2,9 +2,12 @@
 # using mike for versioned docs.
 #
 # Deploy matrix:
-#   push develop            → mike deploy develop          (rfdetr.roboflow.com/develop/)
-#   push release/latest     → mike deploy latest            (rfdetr.roboflow.com/latest/)
-#   release published        → mike deploy <tag>             (rfdetr.roboflow.com/<tag>/ only — does not move /latest/)
+#   push develop                    → mike deploy develop        (rfdetr.roboflow.com/develop/)
+#   push release/latest             → mike deploy latest         (rfdetr.roboflow.com/latest/)
+#   release published (stable/post) → mike deploy <base>          (rfdetr.roboflow.com/<base>/; .postN stripped; RC/pre-release skipped)
+#   workflow_dispatch target=develop         → same as push develop
+#   workflow_dispatch target=release/latest  → same as push release/latest (→ latest alias)
+#   workflow_dispatch target=<version tag>   → mike deploy <tag>
 #
 # Every deploy also:
 #   - Copies robots.txt, llms.txt, llms-full.txt to gh-pages root
@@ -18,10 +21,16 @@ on:
     branches: ["release/latest", "develop"]
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target: 'develop', 'release/latest', or a version tag (e.g. '1.2.3'). Determines both the checkout ref and the mike version label."
+        required: true
+        default: "release/latest"
 
 # Ensure only one concurrent deployment
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref}}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref_name || github.event_name == 'workflow_dispatch' && inputs.target || github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
   cancel-in-progress: true
 
 # Restrict permissions by default
@@ -39,14 +48,29 @@ jobs:
       url: https://rfdetr.roboflow.com/
     timeout-minutes: 10
     steps:
+      - name: 🔍 Validate dispatch target
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          TARGET="${{ inputs.target }}"
+          if [ "$TARGET" = "develop" ] || [ "$TARGET" = "release/latest" ]; then
+            echo "✓ Target '$TARGET' is valid"
+          elif echo "$TARGET" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.post[0-9]+)?$'; then
+            echo "✓ Target '$TARGET' is valid (version tag)"
+          else
+            echo "::error::Invalid target '$TARGET'. Must be 'develop', 'release/latest', or a version tag (e.g. '1.2.3' or '1.2.3.post1')"
+            exit 1
+          fi
+
       - name: 📥 Checkout the repository
-        uses: actions/checkout@v6.0.1
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           fetch-depth: 0
+          ref: ${{ inputs.target || github.ref }}
 
       - name: 🐍 Install uv and set Python
-        uses: astral-sh/setup-uv@v7.2.0
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
         with:
+          version: "0.9.26"
           python-version: "3.10"
           activate-environment: true
 
@@ -63,19 +87,47 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
         env:
           MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
-        run: uv run mike deploy --push develop
+        run: uv run --no-sync mike deploy --push develop
 
       - name: 🚀 Deploy Latest Branch Docs
         if: github.event_name == 'push' && github.ref == 'refs/heads/release/latest'
         env:
           MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
-        run: uv run mike deploy --push --update-aliases latest
+        run: uv run --no-sync mike deploy --push --update-aliases latest
 
       - name: 🚀 Deploy Release Docs
-        if: github.event_name == 'release' && github.event.action == 'published'
+        if: github.event_name == 'release' && github.event.action == 'published' && !github.event.release.prerelease
         env:
           MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
-        run: uv run mike deploy --push ${{ github.event.release.tag_name }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          DOC_VERSION="${TAG%.post*}"
+          uv run --no-sync mike deploy --push "$DOC_VERSION"
+
+      - name: 🚀 Deploy Docs (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TARGET="${{ inputs.target }}"
+          if [ "$TARGET" = "develop" ]; then
+            uv run --no-sync mike deploy --push develop
+          elif [ "$TARGET" = "release/latest" ]; then
+            uv run --no-sync mike deploy --push --update-aliases latest
+          else
+            DOC_VERSION="${TARGET%.post*}"
+            uv run --no-sync mike deploy --push "$DOC_VERSION"
+          fi
+
+      - name: 🏗️ Build docs for artifact
+        run: uv run --no-sync mkdocs build
+
+      - name: 📤 Upload docs artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: docs-site
+          path: site/
+          retention-days: 7
 
       - name: Deploy root static files to gh-pages
         if: >-
@@ -83,7 +135,9 @@ jobs:
            (github.ref == 'refs/heads/develop' ||
             github.ref == 'refs/heads/release/latest')) ||
           (github.event_name == 'release' &&
-           github.event.action == 'published')
+           github.event.action == 'published' &&
+           !github.event.release.prerelease) ||
+          github.event_name == 'workflow_dispatch'
         run: |
           cp docs/root-static/robots.txt /tmp/robots.txt
           cp docs/root-static/llms.txt /tmp/llms.txt
@@ -96,13 +150,22 @@ jobs:
           cp /tmp/llms-full.txt llms-full.txt
           cp /tmp/indexnow.txt cace9ef287cb8d641db90d4295fcb1e1.txt
           git add robots.txt llms.txt llms-full.txt cace9ef287cb8d641db90d4295fcb1e1.txt
+          # Normalize versioned paths (/X.Y.Z/) to /latest/ so sitemap URLs are
+          # not blocked by the User-agent: * Disallow rules in robots.txt.
+          # latest/ may be a mike alias redirect (no sitemap.xml) — fall back to highest versioned dir.
+          SITEMAP_SRC=""
           if [ -f latest/sitemap.xml ]; then
-            # Normalize versioned paths (/X.Y.Z/) to /latest/ so sitemap URLs are
-            # not blocked by the User-agent: * Disallow rules in robots.txt.
-            sed 's|rfdetr\.roboflow\.com/[0-9][^/]*/|rfdetr.roboflow.com/latest/|g' latest/sitemap.xml > sitemap.xml
-            git add sitemap.xml
-          elif [ -f develop/sitemap.xml ]; then
-            sed 's|rfdetr\.roboflow\.com/develop/|rfdetr.roboflow.com/latest/|g' develop/sitemap.xml > sitemap.xml
+            SITEMAP_SRC="latest/sitemap.xml"
+          else
+            LATEST_VER=$(ls -d [0-9]* 2>/dev/null | grep -E '^[0-9]+\.[0-9]+' | sort -V | tail -1)
+            if [ -n "$LATEST_VER" ] && [ -f "$LATEST_VER/sitemap.xml" ]; then
+              SITEMAP_SRC="$LATEST_VER/sitemap.xml"
+            elif [ -f develop/sitemap.xml ]; then
+              SITEMAP_SRC="develop/sitemap.xml"
+            fi
+          fi
+          if [ -n "$SITEMAP_SRC" ]; then
+            sed 's|rfdetr\.roboflow\.com/[^/]*/|rfdetr.roboflow.com/latest/|g' "$SITEMAP_SRC" > sitemap.xml
             git add sitemap.xml
           fi
           git diff --staged --quiet || git commit -m "chore: update root static files and sitemap"
@@ -118,7 +181,9 @@ jobs:
            (github.ref == 'refs/heads/develop' ||
             github.ref == 'refs/heads/release/latest')) ||
           (github.event_name == 'release' &&
-           github.event.action == 'published')
+           github.event.action == 'published' &&
+           !github.event.release.prerelease) ||
+          github.event_name == 'workflow_dispatch'
         run: |
           curl -s -o /dev/null -w "%{http_code}" -X POST "https://api.indexnow.org/IndexNow" \
             -H "Content-Type: application/json; charset=utf-8" \

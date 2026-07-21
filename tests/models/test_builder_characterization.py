@@ -3,12 +3,10 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Characterization tests for build_model() and build_criterion_and_postprocessors().
 
-These tests pin the current behavior of the legacy namespace-based builder
-functions. They serve as a safety net during the config-native builder
-refactoring: any change that alters these outputs is a regression.
+These tests pin the current behavior of the legacy namespace-based builder functions. They serve as a safety net during
+the config-native builder refactoring: any change that alters these outputs is a regression.
 
 All tests in this file must pass against the CURRENT codebase.
 """
@@ -19,6 +17,7 @@ import torch
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import (
     RFDETRBaseConfig,
+    RFDETRKeypointPreviewConfig,
     RFDETRNanoConfig,
     RFDETRSegNanoConfig,
     SegmentationTrainConfig,
@@ -271,8 +270,7 @@ class TestBuildCriterionCharacterization:
 class TestBuildModelContextCharacterization:
     """Pin current _build_model_context() behaviour.
 
-    _build_model_context is the inference-path factory used by RFDETR.get_model().
-    It has zero test coverage today.
+    _build_model_context is the inference-path factory used by RFDETR.get_model(). It has zero test coverage today.
     """
 
     def test_returns_model_context(self) -> None:
@@ -331,6 +329,13 @@ class TestBuildModelContextCharacterization:
         ctx = _build_model_context(mc)
         assert ctx.postprocess.num_select == 100
 
+    def test_keypoint_preview_postprocess_has_keypoint_schema(self) -> None:
+        from rfdetr.detr import _build_model_context
+
+        mc = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        ctx = _build_model_context(mc)
+        assert ctx.postprocess.num_keypoints_per_class == [17]
+
     def test_args_namespace_attached(self) -> None:
         from rfdetr.detr import _build_model_context
 
@@ -346,6 +351,22 @@ class TestBuildModelContextCharacterization:
         ctx = _build_model_context(mc)
         assert ctx.inference_model is None
 
+    def test_args_dataset_dir_does_not_leak_cwd(self) -> None:
+        """The serialized namespace must not embed the caller's realpathed CWD as dataset_dir."""
+        from rfdetr.detr import _build_model_context
+
+        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        ctx = _build_model_context(mc)
+        assert ctx.args.dataset_dir is None
+
+    def test_args_output_dir_does_not_leak_cwd(self) -> None:
+        """The serialized namespace must keep a relative output_dir, not the caller's realpathed CWD."""
+        from rfdetr.detr import _build_model_context
+
+        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        ctx = _build_model_context(mc)
+        assert ctx.args.output_dir == "output"
+
 
 # ---------------------------------------------------------------------------
 # RFDETRModelModule.__init__ characterization
@@ -355,9 +376,8 @@ class TestBuildModelContextCharacterization:
 class TestRFDETRModelModuleInitCharacterization:
     """Pin RFDETRModelModule.__init__() structural outputs.
 
-    The existing test_module_model.py tests the init via mocked build_model and
-    build_namespace. These tests exercise the REAL init path (no mocks) to
-    characterize what a freshly built module looks like.
+    The existing test_module_model.py tests the init via mocked build_model and build_namespace. These tests exercise
+    the REAL init path (no mocks) to characterize what a freshly built module looks like.
     """
 
     def _make_module(self, mc=None, tc=None):

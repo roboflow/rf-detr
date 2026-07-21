@@ -34,6 +34,8 @@ uv build
 > [!IMPORTANT]
 > Run `uv sync` after pulling changes to update dependencies.
 
+**Dependency extras:** `rfdetr[train]` is intentionally minimal and uses torchvision-native default augmentations. Custom Albumentations CPU configs and Kornia GPU augmentation both require `rfdetr[augment]`.
+
 ## Code Quality
 
 **Linting & Formatting:** All code must pass pre-commit checks. See **[Code Quality and Linting](CONTRIBUTING.md#code-quality-and-linting)** in CONTRIBUTING.md for setup and details.
@@ -51,8 +53,9 @@ pre-commit run --all-files
 
 **Imports:**
 
-- Always use direct imports: `from rfdetr.util.misc import get_rank, is_main_process`
-- Logger: `from rfdetr.util.logger import get_logger` (reads `LOG_LEVEL` env var)
+- Always use direct imports: `from rfdetr.utilities.distributed import get_rank, is_main_process`
+- Logger: `from rfdetr.utilities.logger import get_logger` (reads `LOG_LEVEL` env var)
+- **Never use** `rfdetr.util.*` or `rfdetr.deploy.*` — deprecated shims scheduled for removal in v1.9.0
 - TQDM: `from tqdm.auto import tqdm` (NOT `from tqdm import tqdm`)
 
 ## Testing & Development Workflow
@@ -82,8 +85,8 @@ pre-commit run --all-files
 
 ```python
 # Always use direct imports (NOT import ... as pattern)
-from rfdetr.util.misc import get_rank, is_main_process, save_on_master
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.distributed import get_rank, is_main_process, save_on_master
+from rfdetr.utilities.logger import get_logger
 
 # TQDM (for environment compatibility)
 from tqdm.auto import tqdm  # NOT from tqdm import tqdm
@@ -91,6 +94,7 @@ from tqdm.auto import tqdm  # NOT from tqdm import tqdm
 
 **Project-Specific Patterns:**
 
+- **Model selection:** Default to `RFDETRSmall` / `"rfdetr-small"` in examples, docs, and tests. **Never use base models** (`RFDETRBase` / `"rfdetr-base"`) — treat as deprecated, substitute `small`. Pick a released detection size (`nano`/`small`/`medium`/`large`) for detection and a released segmentation size (`seg-nano`/`seg-small`/`seg-medium`/`seg-large`) for segmentation; `-preview` variants are only for capabilities with no released sized version — now just `keypoint-preview`. `seg-preview` is superseded; use a sized seg model instead.
 - **Logging:** Use `logger.debug()` for detailed tensor/shape info (not `logger.info()`)
 - **Segmentation models:** Return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
 - **Checkpoint handling:** Always check file existence before operations

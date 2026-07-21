@@ -4,6 +4,11 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import functools
+import json
+import os
+import warnings
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,7 +16,10 @@ import torch
 from pydantic import ValidationError
 
 from rfdetr.config import (
+    AugmentationBackend,
+    KeypointTrainConfig,
     ModelConfig,
+    PretrainWeightsCompatibilityWarning,
     RFDETRBaseConfig,
     RFDETRLargeConfig,
     RFDETRMediumConfig,
@@ -94,6 +102,72 @@ class TestModelConfigValidation:
         with pytest.raises(ValidationError):
             ModelConfig(**{**sample_model_config, "encoder": "dinov2_invalid_backbone"})
 
+    def test_rejects_negative_postprocess_trace_alpha(self, sample_model_config) -> None:
+        """ModelConfig rejects negative uncertainty score-fusion exponents."""
+        with pytest.raises(ValidationError):
+            ModelConfig(**sample_model_config, postprocess_trace_alpha=-0.1)
+
+    def test_postprocess_trace_alpha_defaults_to_keypoint_fusion_value(self, sample_model_config) -> None:
+        """ModelConfig defaults to the keypoint uncertainty score-fusion exponent."""
+        config = ModelConfig(**sample_model_config)
+
+        assert config.postprocess_trace_alpha == 0.2
+
+    def test_pretrain_weights_absolute_path_realpath_normalised(self, tmp_path) -> None:
+        """An absolute pathlib.Path for pretrain_weights is stored as the realpath-normalised string."""
+        weights_path = tmp_path / "weights.pth"
+
+        config = RFDETRBaseConfig(pretrain_weights=weights_path)
+
+        assert config.pretrain_weights == os.path.realpath(os.fspath(weights_path))
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            pytest.param("dataset_dir", id="dataset_dir"),
+            pytest.param("output_dir", id="output_dir"),
+        ],
+    )
+    def test_train_dir_fields_accept_path(self, tmp_path, field: str) -> None:
+        """TrainConfig dataset/output dir fields accept pathlib.Path and store the realpath-normalised string."""
+        path = tmp_path / "artifact"
+        kwargs = {"dataset_dir": str(tmp_path)}
+        kwargs[field] = path
+
+        config = TrainConfig(**kwargs)
+
+        assert getattr(config, field) == os.path.realpath(os.fspath(path))
+
+    def test_accepts_bare_path_object_for_pretrain_weights(self) -> None:
+        """Bare pretrained weight Path values resolve the same as bare strings."""
+        path_config = RFDETRBaseConfig(pretrain_weights=Path("rf-detr-base.pth"))
+        string_config = RFDETRBaseConfig(pretrain_weights="rf-detr-base.pth")
+
+        assert path_config.pretrain_weights == string_config.pretrain_weights
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            # PTL trainer.fit(ckpt_path=...) sentinels — must pass through verbatim.
+            pytest.param("best", id="sentinel_best"),
+            pytest.param("last", id="sentinel_last"),
+            pytest.param("hpc", id="sentinel_hpc"),
+            pytest.param("registry:model-name", id="sentinel_registry"),
+            # A relative Path proves os.fspath coercion without realpath resolution.
+            pytest.param(Path("checkpoints/last.ckpt"), id="path_object"),
+        ],
+    )
+    def test_resume_coerced_via_fspath_without_realpath(self, value) -> None:
+        """``resume`` accepts pathlib.Path and is coerced to ``str`` via ``os.fspath`` only.
+
+        Unlike ``dataset_dir``/``output_dir``, ``resume`` is forwarded verbatim to PyTorch Lightning's
+        ``trainer.fit(ckpt_path=...)``, which also accepts sentinels such as ``"last"``. Realpath-normalising it would
+        rewrite those sentinels (and relative paths) into spurious absolute paths, so the value must be preserved.
+        """
+        config = TrainConfig(dataset_dir="/tmp", resume=value)
+
+        assert config.resume == os.fspath(value)
+
 
 class TestRFDETRBaseConfigEncoder:
     """Encoder field validation on RFDETRBaseConfig (no fixture needed — has defaults)."""
@@ -109,18 +183,8 @@ class TestRFDETRBaseConfigEncoder:
             RFDETRBaseConfig(encoder="not_a_real_encoder", pretrain_weights=None)
 
 
-class TestSegmentationTrainConfigNumSelect:
-    """Unit tests for SegmentationTrainConfig.num_select default and per-model values."""
-
-    def test_defaults_to_none(self) -> None:
-        config = SegmentationTrainConfig(dataset_dir="/tmp")
-        assert config.num_select is None
-
-    def test_explicit_value_is_accepted(self) -> None:
-        # Explicitly setting num_select on SegmentationTrainConfig is deprecated (Item #3).
-        with pytest.warns(DeprecationWarning, match="TrainConfig.num_select is deprecated"):
-            config = SegmentationTrainConfig(dataset_dir="/tmp", num_select=42)
-        assert config.num_select == 42
+class TestModelConfigNumSelect:
+    """Unit tests for ModelConfig.num_select per-model default values."""
 
     @pytest.mark.parametrize(
         "config_class, expected_num_select",
@@ -137,6 +201,42 @@ class TestSegmentationTrainConfigNumSelect:
         assert config_class().num_select == expected_num_select
 
 
+class TestTrainConfigRejectsUnknownKwargs:
+    """TrainConfig must raise on unknown/typo'd kwargs instead of silently ignoring them (extra='forbid')."""
+
+    def test_typo_kwarg_raises_with_helpful_message(self, tmp_path) -> None:
+        """A typo'd kwarg (epoch instead of epochs) raises listing the unknown and available parameters."""
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'epoch'"):
+            TrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+    def test_typo_error_lists_available_parameters(self, tmp_path) -> None:
+        """The rejection message includes the available parameter list so the typo is easy to fix."""
+        with pytest.raises(ValidationError, match=r"Available parameter\(s\):.*epochs"):
+            TrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+    @pytest.mark.parametrize(
+        "config_class",
+        [
+            pytest.param(SegmentationTrainConfig, id="segmentation"),
+            pytest.param(KeypointTrainConfig, id="keypoint"),
+        ],
+    )
+    def test_subclasses_reject_unknown_kwargs(self, tmp_path, config_class) -> None:
+        """TrainConfig subclasses inherit the forbid behaviour."""
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'epoch'"):
+            config_class(dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+    def test_get_train_config_raises_for_typo_kwarg(self, tmp_path) -> None:
+        """The public RFDETR.get_train_config path surfaces the typo instead of swallowing it."""
+        from types import SimpleNamespace
+
+        from rfdetr.detr import RFDETR
+
+        stub = SimpleNamespace(_train_config_class=TrainConfig)
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'epoch'"):
+            RFDETR.get_train_config(stub, dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+
 class TestTrainConfigT42PromotedFields:
     """T4-2: Promoted fields exist with correct defaults; device field is absent."""
 
@@ -148,14 +248,13 @@ class TestTrainConfigT42PromotedFields:
     # --- device field removed ---
 
     def test_device_not_in_model_fields(self):
-        """device must not appear in TrainConfig.model_fields (PTL auto-detects accelerator)."""
+        """Device must not appear in TrainConfig.model_fields (PTL auto-detects accelerator)."""
         assert "device" not in TrainConfig.model_fields
 
-    def test_device_kwarg_silently_ignored(self, tmp_path):
-        """Passing device= to TrainConfig is silently ignored (extra='ignore'); PTL absorbs it."""
-        # TrainConfig uses Pydantic default extra='ignore', so unknown kwargs don't raise.
-        tc = self._tc(tmp_path, device="cpu")
-        assert not hasattr(tc, "device")  # field not set on the instance
+    def test_device_kwarg_rejected(self, tmp_path):
+        """Passing device= directly to TrainConfig raises (extra='forbid'); RFDETR.train() pops it beforehand."""
+        with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'device'"):
+            self._tc(tmp_path, device="cpu")
 
     # --- promoted fields: defaults ---
 
@@ -164,7 +263,7 @@ class TestTrainConfigT42PromotedFields:
         assert self._tc(tmp_path).clip_max_norm == pytest.approx(0.1)
 
     def test_seed_default_is_none(self, tmp_path):
-        """seed defaults to None (no seeding)."""
+        """Seed defaults to None (no seeding)."""
         assert self._tc(tmp_path).seed is None
 
     def test_sync_bn_default_is_false(self, tmp_path):
@@ -178,6 +277,14 @@ class TestTrainConfigT42PromotedFields:
     def test_lr_scheduler_default_is_step(self, tmp_path):
         """lr_scheduler defaults to 'step'."""
         assert self._tc(tmp_path).lr_scheduler == "step"
+
+    def test_optimizer_default_is_adamw(self, tmp_path):
+        """Optimizer defaults to AdamW for backward compatibility."""
+        assert self._tc(tmp_path).optimizer == "adamw"
+
+    def test_optimizer_kwargs_default_is_empty_dict(self, tmp_path):
+        """optimizer_kwargs defaults to an empty dict."""
+        assert self._tc(tmp_path).optimizer_kwargs == {}
 
     def test_lr_min_factor_default(self, tmp_path):
         """lr_min_factor defaults to 0.0."""
@@ -221,7 +328,11 @@ class TestTrainConfigT42PromotedFields:
             pytest.param("sync_bn", True, id="sync_bn"),
             pytest.param("fp16_eval", True, id="fp16_eval"),
             pytest.param("lr_scheduler", "cosine", id="lr_scheduler_cosine"),
-            pytest.param("lr_min_factor", 0.01, id="lr_min_factor"),
+            pytest.param("lr_scheduler_kwargs", {"min_factor": 0.01}, id="lr_scheduler_kwargs"),
+            pytest.param("lr_scheduler_interval", "epoch", id="lr_scheduler_interval"),
+            pytest.param("lr_scheduler_monitor", "train/loss", id="lr_scheduler_monitor"),
+            pytest.param("optimizer", "sgd", id="optimizer"),
+            pytest.param("optimizer_kwargs", {"betas": (0.9, 0.99)}, id="optimizer_kwargs"),
             pytest.param("dont_save_weights", True, id="dont_save_weights"),
             pytest.param("run_test", True, id="run_test"),
             pytest.param("eval_interval", 3, id="eval_interval"),
@@ -247,6 +358,78 @@ class TestTrainConfigT42PromotedFields:
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, lr_scheduler="cyclic")
 
+    def test_optimizer_rejects_empty_name(self, tmp_path):
+        """Optimizer must be a non-empty name."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, optimizer="  ")
+
+    def test_optimizer_rejects_unknown_short_name(self, tmp_path):
+        """A bare short name that is not a torch.optim optimizer is rejected at config time."""
+        with pytest.raises((ValueError, ValidationError), match="native optimizer"):
+            self._tc(tmp_path, optimizer="lion")
+
+    def test_optimizer_rejects_non_torch_optim_short_name(self, tmp_path):
+        """Pytorch-optimizer names are not selectable by short name (use an import path)."""
+        with pytest.raises((ValueError, ValidationError), match="native optimizer"):
+            self._tc(tmp_path, optimizer="pytorch_optimizer:lion")
+
+    def test_optimizer_accepts_native_short_name(self, tmp_path):
+        """A native torch.optim short name (e.g. 'sgd') is accepted."""
+        assert self._tc(tmp_path, optimizer="sgd").optimizer == "sgd"
+
+    @pytest.mark.parametrize(
+        "reserved_key",
+        [
+            pytest.param("params", id="params"),
+            pytest.param("lr", id="lr"),
+            pytest.param("weight_decay", id="weight_decay"),
+            pytest.param("fused", id="fused"),
+        ],
+    )
+    def test_optimizer_kwargs_reject_reserved_keys(self, tmp_path, reserved_key):
+        """optimizer_kwargs must not override RF-DETR-managed optimizer arguments."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, optimizer_kwargs={reserved_key: 1})
+
+    def test_optimizer_accepts_dotted_import_path(self, tmp_path):
+        """A dotted import path is accepted verbatim as an explicit optimizer."""
+        assert self._tc(tmp_path, optimizer="torch.optim.AdamW").optimizer == "torch.optim.AdamW"
+
+    def test_dotted_optimizer_kwargs_allow_managed_keys(self, tmp_path):
+        """Explicit (dotted) optimizers may pass otherwise-managed keys such as weight_decay."""
+        tc = self._tc(tmp_path, optimizer="torch.optim.AdamW", optimizer_kwargs={"weight_decay": 0.1})
+        assert tc.optimizer_kwargs == {"weight_decay": 0.1}
+
+    def test_callable_class_desugars_to_dotted_path(self, tmp_path):
+        """A plain optimizer class desugars to its canonical dotted import path for serialization."""
+        expected_path = f"{torch.optim.AdamW.__module__}.{torch.optim.AdamW.__qualname__}"
+        tc = self._tc(tmp_path, optimizer=torch.optim.AdamW)
+        assert tc.optimizer == expected_path
+        assert tc.optimizer_kwargs == {}
+
+    def test_partial_optimizer_desugars_to_path_and_kwargs(self, tmp_path):
+        """A functools.partial desugars to a dotted path plus its keyword arguments."""
+        expected_path = f"{torch.optim.AdamW.__module__}.{torch.optim.AdamW.__qualname__}"
+        tc = self._tc(tmp_path, optimizer=functools.partial(torch.optim.AdamW, weight_decay=0.1))
+        assert tc.optimizer == expected_path
+        assert tc.optimizer_kwargs == {"weight_decay": 0.1}
+
+    def test_callable_optimizer_kwargs_are_ignored_with_warning(self, tmp_path):
+        """optimizer_kwargs are ignored (with a warning) when optimizer is a callable."""
+        with pytest.warns(UserWarning, match="optimizer_kwargs is ignored"):
+            tc = self._tc(
+                tmp_path,
+                optimizer=functools.partial(torch.optim.AdamW, weight_decay=0.1),
+                optimizer_kwargs={"betas": (0.9, 0.99)},
+            )
+        assert tc.optimizer_kwargs == {"weight_decay": 0.1}
+
+    def test_non_reconstructable_optimizer_warns(self, tmp_path):
+        """A lambda optimizer cannot be serialized and warns while staying an in-memory callable."""
+        with pytest.warns(UserWarning, match="cannot be saved"):
+            tc = self._tc(tmp_path, optimizer=lambda params: torch.optim.AdamW(params))
+        assert callable(tc.optimizer) and not isinstance(tc.optimizer, str)
+
     @pytest.mark.parametrize(
         ("field", "value"),
         [
@@ -257,7 +440,7 @@ class TestTrainConfigT42PromotedFields:
         ],
     )
     def test_interval_and_prefetch_reject_non_positive_values(self, tmp_path, field, value):
-        """eval/EMA intervals and prefetch_factor must be >= 1 when provided."""
+        """Eval/EMA intervals and prefetch_factor must be >= 1 when provided."""
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, **{field: value})
 
@@ -287,6 +470,154 @@ class TestTrainConfigT42PromotedFields:
             self._tc(tmp_path, auto_batch_ema_headroom=ema_headroom)
 
 
+class TestTrainConfigLRScheduler:
+    """Configurable LR-scheduler surface: preset validation, explicit paths/callables, and deprecation folding."""
+
+    def _tc(self, tmp_path, **kwargs):
+        defaults = dict(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
+        defaults.update(kwargs)
+        return TrainConfig(**defaults)
+
+    def test_lr_scheduler_default_is_step(self, tmp_path):
+        """lr_scheduler defaults to the managed 'step' preset."""
+        assert self._tc(tmp_path).lr_scheduler == "step"
+
+    def test_lr_scheduler_kwargs_default_is_empty_dict(self, tmp_path):
+        """lr_scheduler_kwargs defaults to an empty dict."""
+        assert self._tc(tmp_path).lr_scheduler_kwargs == {}
+
+    @pytest.mark.parametrize("preset", [pytest.param("step", id="step"), pytest.param("cosine", id="cosine")])
+    def test_lr_scheduler_accepts_managed_preset(self, tmp_path, preset):
+        """Both managed presets are accepted as bare names."""
+        assert self._tc(tmp_path, lr_scheduler=preset).lr_scheduler == preset
+
+    def test_lr_scheduler_rejects_empty_name(self, tmp_path):
+        """lr_scheduler must be a non-empty name."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, lr_scheduler="  ")
+
+    def test_lr_scheduler_rejects_unknown_bare_name(self, tmp_path):
+        """A bare name that is not a managed preset is rejected (steer to a dotted path)."""
+        with pytest.raises((ValueError, ValidationError), match="managed preset"):
+            self._tc(tmp_path, lr_scheduler="StepLR")
+
+    def test_lr_scheduler_accepts_dotted_import_path(self, tmp_path):
+        """A dotted import path is accepted verbatim as an explicit scheduler."""
+        tc = self._tc(tmp_path, lr_scheduler="torch.optim.lr_scheduler.StepLR", lr_scheduler_kwargs={"step_size": 5})
+        assert tc.lr_scheduler == "torch.optim.lr_scheduler.StepLR"
+
+    def test_callable_class_desugars_to_dotted_path(self, tmp_path):
+        """A plain scheduler class desugars to its canonical dotted import path for serialization."""
+        scheduler_class = torch.optim.lr_scheduler.StepLR
+        expected_path = f"{scheduler_class.__module__}.{scheduler_class.__qualname__}"
+        tc = self._tc(tmp_path, lr_scheduler=scheduler_class)
+        assert tc.lr_scheduler == expected_path
+        assert tc.lr_scheduler_kwargs == {}
+
+    def test_partial_scheduler_desugars_to_path_and_kwargs(self, tmp_path):
+        """A functools.partial desugars to a dotted path plus its keyword arguments."""
+        scheduler_class = torch.optim.lr_scheduler.StepLR
+        expected_path = f"{scheduler_class.__module__}.{scheduler_class.__qualname__}"
+        tc = self._tc(tmp_path, lr_scheduler=functools.partial(scheduler_class, step_size=7))
+        assert tc.lr_scheduler == expected_path
+        assert tc.lr_scheduler_kwargs == {"step_size": 7}
+
+    def test_callable_scheduler_kwargs_are_ignored_with_warning(self, tmp_path):
+        """lr_scheduler_kwargs are ignored (with a warning) when lr_scheduler is a callable."""
+        with pytest.warns(UserWarning, match="lr_scheduler_kwargs is ignored"):
+            tc = self._tc(
+                tmp_path,
+                lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, step_size=7),
+                lr_scheduler_kwargs={"gamma": 0.5},
+            )
+        assert tc.lr_scheduler_kwargs == {"step_size": 7}
+
+    def test_non_reconstructable_scheduler_warns(self, tmp_path):
+        """A lambda scheduler cannot be serialized and warns while staying an in-memory callable."""
+        with pytest.warns(UserWarning, match="cannot be saved"):
+            tc = self._tc(tmp_path, lr_scheduler=lambda optimizer: torch.optim.lr_scheduler.StepLR(optimizer, 5))
+        assert callable(tc.lr_scheduler) and not isinstance(tc.lr_scheduler, str)
+
+    def test_deprecated_lr_drop_folds_into_kwargs_with_warning(self, tmp_path):
+        """A non-default lr_drop is folded into lr_scheduler_kwargs and warns (deprecation)."""
+        with pytest.warns(FutureWarning, match="lr_drop is deprecated"):
+            tc = self._tc(tmp_path, lr_drop=80)
+        assert tc.lr_scheduler_kwargs["lr_drop"] == 80
+
+    def test_deprecated_lr_min_factor_folds_into_kwargs_with_warning(self, tmp_path):
+        """A non-default lr_min_factor is folded into lr_scheduler_kwargs['min_factor'] and warns."""
+        with pytest.warns(FutureWarning, match="lr_min_factor is deprecated"):
+            tc = self._tc(tmp_path, lr_scheduler="cosine", lr_min_factor=0.2)
+        assert tc.lr_scheduler_kwargs["min_factor"] == pytest.approx(0.2)
+
+    def test_default_deprecated_field_does_not_warn(self, tmp_path):
+        """Passing a deprecated field at its default value (e.g. on config reload) must not warn."""
+        default_lr_drop = TrainConfig.model_fields["lr_drop"].default
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            self._tc(tmp_path, lr_drop=default_lr_drop)
+
+    def test_migrated_config_reload_does_not_rewarn(self, tmp_path):
+        """Reloading a dumped config that already carries the folded kwarg must not re-warn."""
+        with pytest.warns(FutureWarning):
+            original = self._tc(tmp_path, lr_scheduler="step", lr_drop=8)
+        dumped = original.model_dump()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            reloaded = TrainConfig(**dumped)
+        assert reloaded.lr_scheduler_kwargs["lr_drop"] == 8
+
+    def test_deprecated_field_warns_but_not_folded_for_explicit_scheduler(self, tmp_path):
+        """A deprecated field set with an explicit scheduler warns (ignored) and is never folded into kwargs."""
+        with pytest.warns(FutureWarning, match="is ignored for the explicit"):
+            tc = self._tc(
+                tmp_path,
+                lr_scheduler="torch.optim.lr_scheduler.StepLR",
+                lr_scheduler_kwargs={"step_size": 5},
+                lr_drop=80,
+            )
+        assert tc.lr_scheduler_kwargs == {"step_size": 5}
+
+    def test_managed_preset_rejects_unknown_kwargs(self, tmp_path):
+        """Managed presets reject lr_scheduler_kwargs keys they do not consume (mirrors optimizer_kwargs)."""
+        with pytest.raises((ValueError, ValidationError), match="unknown key"):
+            self._tc(tmp_path, lr_scheduler="cosine", lr_scheduler_kwargs={"minfactor": 0.1})
+
+    def test_managed_preset_accepts_consumed_kwargs(self, tmp_path):
+        """Managed presets accept the kwargs they consume (min_factor, lr_drop)."""
+        tc = self._tc(tmp_path, lr_scheduler="cosine", lr_scheduler_kwargs={"min_factor": 0.1, "lr_drop": 50})
+        assert tc.lr_scheduler_kwargs == {"min_factor": pytest.approx(0.1), "lr_drop": 50}
+
+    def test_explicit_scheduler_round_trips_through_model_dump(self, tmp_path):
+        """An explicit dotted scheduler and its kwargs survive a model_dump() -> reload round-trip unchanged."""
+        original = self._tc(
+            tmp_path,
+            lr_scheduler="torch.optim.lr_scheduler.StepLR",
+            lr_scheduler_kwargs={"step_size": 30, "gamma": 0.1},
+        )
+        reloaded = TrainConfig(**original.model_dump())
+        assert reloaded.lr_scheduler == "torch.optim.lr_scheduler.StepLR"
+        assert reloaded.lr_scheduler_kwargs == {"step_size": 30, "gamma": pytest.approx(0.1)}
+
+    def test_partial_with_positional_args_is_not_serializable(self, tmp_path):
+        """A functools.partial with positional args cannot be desugared; it warns and stays an in-memory callable."""
+        with pytest.warns(UserWarning, match="cannot be saved"):
+            tc = self._tc(tmp_path, lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, 5))
+        assert callable(tc.lr_scheduler) and not isinstance(tc.lr_scheduler, str)
+
+    def test_partial_with_non_json_kwargs_is_not_serializable(self, tmp_path):
+        """A functools.partial carrying non-JSON kwargs cannot be desugared; it warns and stays a callable."""
+        with pytest.warns(UserWarning, match="cannot be saved"):
+            tc = self._tc(tmp_path, lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, gamma=object()))
+        assert callable(tc.lr_scheduler) and not isinstance(tc.lr_scheduler, str)
+
+    def test_conflicting_field_and_kwarg_warns_kwarg_wins(self, tmp_path):
+        """When both lr_min_factor and kwargs['min_factor'] are set to different values, the kwarg wins and warns so."""
+        with pytest.warns(FutureWarning, match="the kwarg wins"):
+            tc = self._tc(tmp_path, lr_scheduler="cosine", lr_min_factor=0.2, lr_scheduler_kwargs={"min_factor": 0.3})
+        assert tc.lr_scheduler_kwargs["min_factor"] == pytest.approx(0.3)
+
+
 class TestBuildTrainerUsesRealFields:
     """build_trainer() must read clip_max_norm, seed, sync_bn from real TrainConfig fields."""
 
@@ -303,6 +634,19 @@ class TestBuildTrainerUsesRealFields:
         defaults.update(kwargs)
         return TrainConfig(**defaults)
 
+    def _kp_tc(self, tmp_path, **kwargs):
+        defaults = dict(
+            dataset_dir=str(tmp_path),
+            output_dir=str(tmp_path),
+            tensorboard=False,
+            wandb=False,
+            mlflow=False,
+            clearml=False,
+            use_ema=False,
+        )
+        defaults.update(kwargs)
+        return KeypointTrainConfig(**defaults)
+
     def _mc(self, **kwargs):
         from rfdetr.config import RFDETRBaseConfig
 
@@ -310,12 +654,24 @@ class TestBuildTrainerUsesRealFields:
         defaults.update(kwargs)
         return RFDETRBaseConfig(**defaults)
 
-    def test_clip_max_norm_forwarded_to_trainer(self, tmp_path):
-        """gradient_clip_val on the Trainer matches TrainConfig.clip_max_norm."""
+    def test_clip_max_norm_forwarded_to_trainer_for_detection(self, tmp_path):
+        """Detection models use Lightning's automatic optimization, so ``gradient_clip_val`` flows through to the
+        Trainer from ``TrainConfig.clip_max_norm`` unchanged."""
         from rfdetr.training import build_trainer
 
         trainer = build_trainer(self._tc(tmp_path, clip_max_norm=0.25), self._mc())
         assert trainer.gradient_clip_val == pytest.approx(0.25)
+
+    def test_clip_max_norm_owned_by_model_module_for_keypoints(self, tmp_path):
+        """Keypoint models use manual optimization; trainer-owned clipping is disabled and ``clip_max_norm`` is applied
+        inside ``RFDETRModelModule._step_optimizer`` instead."""
+        from rfdetr.training import build_trainer
+
+        trainer = build_trainer(
+            self._kp_tc(tmp_path, clip_max_norm=0.25),
+            self._mc(use_grouppose_keypoints=True),
+        )
+        assert trainer.gradient_clip_val is None
 
     def test_seed_not_applied_in_build_trainer_factory(self, tmp_path):
         """Seeding is deferred to RFDETRModule.on_fit_start, not build_trainer()."""
@@ -347,80 +703,11 @@ class TestBuildTrainerUsesRealFields:
         assert captured_kwargs.get("sync_batchnorm") is True
 
 
-class TestDeprecatedTrainConfigFields:
-    """Item #3 Phase A: TrainConfig fields deprecated in favour of ModelConfig ownership."""
-
-    def _tc(self, **kwargs):
-        defaults = dict(dataset_dir="/tmp")
-        defaults.update(kwargs)
-        return TrainConfig(**defaults)
-
-    @pytest.mark.parametrize(
-        "field,value",
-        [
-            pytest.param("group_detr", 5, id="group_detr"),
-            pytest.param("ia_bce_loss", False, id="ia_bce_loss"),
-            pytest.param("segmentation_head", True, id="segmentation_head"),
-            pytest.param("num_select", 100, id="num_select"),
-        ],
-    )
-    def test_explicitly_set_deprecated_field_emits_warning(self, field, value) -> None:
-        """Setting a deprecated TrainConfig field explicitly must emit DeprecationWarning."""
-        with pytest.warns(DeprecationWarning, match=f"TrainConfig\\.{field} is deprecated"):
-            self._tc(**{field: value})
-
-    def test_default_group_detr_no_warning(self, recwarn) -> None:
-        """TrainConfig() without explicit group_detr must NOT warn."""
-        self._tc()
-        depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
-        assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"
-
-    def test_segmentation_train_config_no_warning_on_default_fields(self, recwarn) -> None:
-        """SegmentationTrainConfig() must NOT warn for its class-level defaults.
-
-        segmentation_head=True and num_select=None are SegmentationTrainConfig defaults,
-        not explicitly set by the user — they must not trigger DeprecationWarning.
-        """
-        SegmentationTrainConfig(dataset_dir="/tmp")
-        depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
-        assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"
-
-
-class TestDeprecatedModelConfigClsLossCoef:
-    """Item #3 Phase A: ModelConfig.cls_loss_coef deprecated in favour of TrainConfig ownership."""
-
-    def test_explicit_cls_loss_coef_emits_warning(self) -> None:
-        """Setting cls_loss_coef on ModelConfig explicitly must emit DeprecationWarning."""
-        sample = dict(
-            encoder="dinov2_windowed_small",
-            out_feature_indexes=[1, 2, 3],
-            dec_layers=3,
-            projector_scale=["P3"],
-            hidden_dim=256,
-            patch_size=14,
-            num_windows=2,
-            sa_nheads=8,
-            ca_nheads=8,
-            dec_n_points=4,
-            resolution=384,
-            positional_encoding_size=256,
-        )
-        with pytest.warns(DeprecationWarning, match="ModelConfig\\.cls_loss_coef is deprecated"):
-            ModelConfig(**sample, cls_loss_coef=2.0)
-
-    def test_default_cls_loss_coef_no_warning(self, recwarn) -> None:
-        """RFDETRBaseConfig() without explicit cls_loss_coef must NOT warn."""
-        RFDETRBaseConfig(pretrain_weights=None, device="cpu")
-        depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
-        assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"
-
-
 class TestSyncPEWithResolutionAtConstruction:
     """Tests for the _sync_pe_with_resolution model_validator.
 
-    When a user provides a custom resolution at construction time (e.g.,
-    ``RFDETRLarge(resolution=640)``), positional_encoding_size must be updated
-    proportionally for configs where the default PE is formula-derived
+    When a user provides a custom resolution at construction time (e.g., ``RFDETRLarge(resolution=640)``),
+    positional_encoding_size must be updated proportionally for configs where the default PE is formula-derived
     (``default_pe == default_resolution // patch_size``).
     """
 
@@ -486,3 +773,403 @@ class TestDetectDevice:
         mock_torch.cuda.is_available.return_value = False
         mock_torch.backends.mps.is_available.return_value = False
         assert _detect_device() == "cpu"
+
+    @patch("rfdetr.config.torch")
+    def test_returns_cpu_when_accelerator_compiled_in_but_unavailable(self, mock_torch: MagicMock) -> None:
+        """Returns 'cpu' when torch was compiled with CUDA but no driver is present at runtime.
+
+        Without ``check_available=True``, ``current_accelerator()`` reports the compile-time accelerator, so the default
+        CUDA wheel on a driverless machine yields ``device("cuda")`` and every model build crashes with "Found no NVIDIA
+        driver". The runtime availability check must win.
+        """
+
+        def fake_current_accelerator(check_available: bool = False) -> "torch.device | None":
+            return None if check_available else torch.device("cuda")
+
+        mock_torch.accelerator.current_accelerator = fake_current_accelerator
+        assert _detect_device() == "cpu"
+
+    @patch("rfdetr.config.torch")
+    def test_returns_accelerator_when_runtime_available(self, mock_torch: MagicMock) -> None:
+        """Returns the accelerator when it passes the runtime availability check."""
+
+        def fake_current_accelerator(check_available: bool = False) -> "torch.device | None":
+            return torch.device("cuda") if check_available else None
+
+        mock_torch.accelerator.current_accelerator = fake_current_accelerator
+        assert _detect_device() == "cuda"
+
+    @patch("rfdetr.config.torch")
+    def test_legacy_signature_unavailable_accelerator_returns_cpu(self, mock_torch: MagicMock) -> None:
+        """Falls back to ``is_available()`` when ``current_accelerator`` lacks ``check_available`` (PyTorch < 2.7)."""
+
+        def legacy_current_accelerator() -> "torch.device":
+            return torch.device("cuda")
+
+        mock_torch.accelerator.current_accelerator = legacy_current_accelerator
+        mock_torch.accelerator.is_available.return_value = False
+        assert _detect_device() == "cpu"
+
+    @patch("rfdetr.config.torch")
+    def test_legacy_signature_available_accelerator_is_kept(self, mock_torch: MagicMock) -> None:
+        """Keeps the accelerator on pre-``check_available`` builds when ``is_available()`` confirms it."""
+
+        def legacy_current_accelerator() -> "torch.device":
+            return torch.device("cuda")
+
+        mock_torch.accelerator.current_accelerator = legacy_current_accelerator
+        mock_torch.accelerator.is_available.return_value = True
+        assert _detect_device() == "cuda"
+
+    @patch("rfdetr.config.torch")
+    def test_legacy_signature_runtime_error_on_fallback_returns_cpu(self, mock_torch: MagicMock) -> None:
+        """Outer RuntimeError handler catches error from legacy fallback call.
+
+        Control-flow: ``current_accelerator(check_available=True)`` raises ``TypeError`` (inner except),
+        then ``current_accelerator()`` raises ``RuntimeError`` (outer except catches) → ``"cpu"``.
+        """
+        call_count = 0
+
+        def raises_on_fallback(**kwargs: object) -> "torch.device":
+            nonlocal call_count
+            call_count += 1
+            if "check_available" in kwargs:
+                raise TypeError("unexpected keyword argument 'check_available'")
+            raise RuntimeError("NVML error on legacy fallback")
+
+        mock_torch.accelerator.current_accelerator = raises_on_fallback
+        assert _detect_device() == "cpu"
+
+
+class TestPretrainWeightsCompatibilityWarning:
+    """Config-time warning for overrides that prevent pretrained weights from loading.
+
+    These tests instantiate the variant *config* directly (not the wrapper class) so they do not touch the network, the
+    cache, or any model construction.
+    """
+
+    def _capture(self, config_cls: type, **kwargs: object) -> list[warnings.WarningMessage]:
+        """Instantiate ``config_cls(**kwargs)`` and return only the pretrain-compat warnings."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            config_cls(**kwargs)
+            return [w for w in caught if issubclass(w.category, PretrainWeightsCompatibilityWarning)]
+
+    def test_default_construction_emits_no_warning(self) -> None:
+        """Default variant construction must not warn — defaults match the published checkpoint."""
+        assert self._capture(RFDETRNanoConfig) == []
+
+    def test_encoder_registers_override_warns(self) -> None:
+        """The dinov2-with-registers footgun: switching encoder away from the variant default."""
+        captured = self._capture(RFDETRNanoConfig, encoder="dinov2_registers_windowed_small")
+        assert len(captured) == 1
+        message = str(captured[0].message)
+        assert "encoder" in message
+        assert "dinov2_registers_windowed_small" in message
+        assert "dinov2_windowed_small" in message
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            pytest.param("hidden_dim", 384, id="hidden_dim"),
+            pytest.param("dec_layers", 6, id="dec_layers"),
+            pytest.param("num_windows", 4, id="num_windows"),
+            pytest.param("sa_nheads", 4, id="sa_nheads"),
+            pytest.param("ca_nheads", 8, id="ca_nheads"),
+            pytest.param("dec_n_points", 4, id="dec_n_points"),
+            pytest.param("out_feature_indexes", [2, 5, 8, 11], id="out_feature_indexes"),
+            pytest.param("projector_scale", ["P3", "P4"], id="projector_scale"),
+            pytest.param("bbox_reparam", False, id="bbox_reparam"),
+            pytest.param("lite_refpoint_refine", False, id="lite_refpoint_refine"),
+            pytest.param("layer_norm", False, id="layer_norm"),
+            pytest.param("two_stage", False, id="two_stage"),
+            pytest.param("num_channels", 1, id="num_channels"),
+        ],
+    )
+    def test_load_breaking_override_warns(self, field: str, value: object) -> None:
+        """Each load-breaking architecture override fires the warning."""
+        captured = self._capture(RFDETRNanoConfig, **{field: value})
+        assert len(captured) == 1
+        assert field in str(captured[0].message)
+
+    def test_mask_downsample_ratio_warns_on_seg_variant(self) -> None:
+        """``mask_downsample_ratio`` change is silently miscalibrating; must warn at config time."""
+        captured = self._capture(RFDETRSegNanoConfig, mask_downsample_ratio=2)
+        assert len(captured) == 1
+        assert "mask_downsample_ratio" in str(captured[0].message)
+
+    def test_patch_size_override_warns_defense_in_depth(self) -> None:
+        """patch_size already raises in load_pretrain_weights; the new warning is defense-in-depth.
+
+        We change patch_size to a value that differs from RFDETRNanoConfig's default (16).
+        """
+        captured = self._capture(RFDETRNanoConfig, patch_size=14)
+        assert len(captured) == 1
+        assert "patch_size" in str(captured[0].message)
+
+    def test_segmentation_head_override_warns(self) -> None:
+        """segmentation_head also raises at load time but warning fires first."""
+        # RFDETRNanoConfig has segmentation_head=False; flipping it to True is the override.
+        captured = self._capture(RFDETRNanoConfig, segmentation_head=True)
+        assert len(captured) == 1
+        assert "segmentation_head" in str(captured[0].message)
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            pytest.param("num_queries", 200, id="num_queries_decrease"),
+            pytest.param("num_queries", 300, id="num_queries_equal"),
+            pytest.param("group_detr", 8, id="group_detr_decrease"),
+            pytest.param("num_classes", 5, id="num_classes"),
+            pytest.param("resolution", 448, id="resolution"),
+            pytest.param("positional_encoding_size", 20, id="positional_encoding_size"),
+        ],
+    )
+    def test_silent_field_overrides(self, field: str, value: object) -> None:
+        """Fields that are auto-handled at load time must not emit a warning at config construction."""
+        assert self._capture(RFDETRNanoConfig, **{field: value}) == []
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            pytest.param("num_queries", 400, id="num_queries"),
+            pytest.param("group_detr", 20, id="group_detr"),
+        ],
+    )
+    def test_increase_field_warns(self, field: str, value: object) -> None:
+        """Increasing an integer field above the variant default warns — extra slots are randomly initialised."""
+        captured = self._capture(RFDETRNanoConfig, **{field: value})
+        assert len(captured) == 1
+        assert field in str(captured[0].message)
+
+    def test_pretrain_weights_none_warns(self) -> None:
+        """Explicitly opting out of pretrained weights warns about training from scratch."""
+        captured = self._capture(RFDETRNanoConfig, pretrain_weights=None)
+        assert len(captured) == 1
+        message = str(captured[0].message)
+        assert "from scratch" in message
+        assert "rf-detr-nano.pth" in message
+
+    def test_pretrain_weights_none_only_one_warning(self) -> None:
+        """When pretrain_weights=None, the architecture-overrides warning is suppressed.
+
+        The from-scratch warning is the dominant message; we don't pile on with arch warnings.
+        """
+        captured = self._capture(
+            RFDETRNanoConfig,
+            pretrain_weights=None,
+            encoder="dinov2_registers_windowed_small",
+            hidden_dim=384,
+        )
+        assert len(captured) == 1
+        assert "from scratch" in str(captured[0].message)
+
+    def test_custom_pretrain_weights_path_suppresses_arch_warning(self) -> None:
+        """Custom pretrain_weights path → defer to load-time detector — no config-time arch warning."""
+        captured = self._capture(
+            RFDETRNanoConfig,
+            pretrain_weights="/tmp/my_custom.pth",
+            encoder="dinov2_registers_windowed_small",
+        )
+        assert captured == []
+
+    def test_multiple_overrides_consolidated_into_one_warning(self) -> None:
+        """All overrides are listed in a single warning, not one warning per field."""
+        captured = self._capture(
+            RFDETRNanoConfig,
+            encoder="dinov2_registers_windowed_small",
+            hidden_dim=384,
+            num_queries=400,
+        )
+        assert len(captured) == 1
+        message = str(captured[0].message)
+        for needle in ("encoder", "hidden_dim", "num_queries"):
+            assert needle in message, f"expected {needle!r} in consolidated warning message"
+
+    def test_warning_is_user_warning_subclass(self) -> None:
+        """Confirms downstream filtering via UserWarning works."""
+        assert issubclass(PretrainWeightsCompatibilityWarning, UserWarning)
+
+    def test_modelconfig_with_required_fields_does_not_warn(self, sample_model_config: dict[str, object]) -> None:
+        """Constructing the abstract ModelConfig with required fields cannot compare to defaults — no warning."""
+        assert self._capture(ModelConfig, **sample_model_config) == []
+
+    def test_breaking_field_with_default_factory_skips_comparison(self) -> None:
+        """A subclass whose breaking field uses ``default_factory`` (so ``.default`` is ``PydanticUndefined``) must be
+        silently skipped — we have nothing to compare against."""
+        from pydantic import Field
+
+        class _DefaultFactoryConfig(RFDETRNanoConfig):
+            # Field uses default_factory → FieldInfo.default is PydanticUndefined,
+            # but is_required() is False.  Hits the `continue` on the
+            # PydanticUndefined check.
+            encoder: str = Field(default_factory=lambda: "dinov2_windowed_small")
+
+        assert self._capture(_DefaultFactoryConfig, encoder="dinov2_registers_windowed_small") == []
+
+    def test_increase_field_when_required_skips_comparison(self) -> None:
+        """A subclass where ``num_queries`` becomes required (no default) must be skipped."""
+
+        class _RequiredNumQueriesConfig(RFDETRNanoConfig):
+            num_queries: int  # type: ignore[misc]  # no default → required
+
+        assert self._capture(_RequiredNumQueriesConfig, num_queries=400) == []
+
+    def test_increase_field_with_non_int_default_skips_comparison(self) -> None:
+        """A subclass where ``num_queries`` has a non-int default must be skipped (can't ``>`` compare)."""
+        from typing import Any
+
+        class _NonIntDefaultConfig(RFDETRNanoConfig):
+            num_queries: Any = "300"  # type: ignore[assignment]  # non-int default
+
+        assert self._capture(_NonIntDefaultConfig, num_queries="400") == []
+
+    def test_explicit_variant_default_path_runs_arch_override_check(self) -> None:
+        """Passing the variant's own published-default path string must still check arch overrides.
+
+        Before the case-2 fix, any non-None explicit pretrain_weights bypassed the architecture-override check entirely
+        — including when the user passed the exact variant default string such as "rf-detr-nano.pth".
+        """
+        captured = self._capture(
+            RFDETRNanoConfig,
+            pretrain_weights="rf-detr-nano.pth",
+            encoder="dinov2_registers_windowed_small",
+        )
+        assert len(captured) == 1
+        assert "encoder" in str(captured[0].message)
+
+    def test_product_preserving_group_detr_increase_still_warns(self) -> None:
+        """Increasing group_detr while halving num_queries still warns — check is per-field, not product-aware.
+
+        This documents known current behaviour: the validator compares each field to its variant default independently,
+        not the combined query-slot product.  A product- preserving change (group_detr=26, num_queries=150 vs defaults
+        13, 300) warns for group_detr because 26 > 13, regardless of whether total slots are the same.
+        """
+        captured = self._capture(RFDETRNanoConfig, num_queries=150, group_detr=26)
+        assert len(captured) == 1
+        assert "group_detr" in str(captured[0].message)
+
+
+class TestBreakingListIntegrity:
+    """Guards against stale entries in the pretrain-compatibility breaking-field lists."""
+
+    def test_all_breaking_fields_exist_in_model_config(self) -> None:
+        """Every field guarded by the pretrain-compatibility check must exist in ModelConfig.model_fields.
+
+        Catches typos and fields renamed/removed without updating the breaking lists.
+        """
+        all_breaking = {
+            "encoder",
+            "hidden_dim",
+            "dec_layers",
+            "num_windows",
+            "sa_nheads",
+            "ca_nheads",
+            "dec_n_points",
+            "out_feature_indexes",
+            "projector_scale",
+            "bbox_reparam",
+            "lite_refpoint_refine",
+            "layer_norm",
+            "two_stage",
+            "patch_size",
+            "segmentation_head",
+            "num_channels",
+            "num_queries",
+            "group_detr",
+        }
+        stale = all_breaking - set(ModelConfig.model_fields.keys())
+        assert not stale, f"Fields in breaking lists not in ModelConfig.model_fields: {stale}"
+
+
+class TestTrainConfigAugmentationBackendSerialization:
+    """Serialization contract for ``TrainConfig.augmentation_backend`` used by checkpoint writers (Item #6).
+
+    ``BestModelCallback`` serializes the training config with a plain ``model_dump()`` before writing it into the
+    ``.pth`` checkpoint's ``args``.  A ``@field_serializer`` renders the ``AugmentationBackend`` enum as its plain
+    string value so the writer stays JSON-safe without a blanket ``model_dump(mode="json")`` that would silently coerce
+    every *other* field's serialized shape (e.g. ``int`` loss coefficients to ``float``).
+    """
+
+    def test_backend_dumps_to_json_safe_string(self, tmp_path: Path) -> None:
+        """Plain ``model_dump()`` (as BestModelCallback uses) renders the enum as its ``str`` value."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        assert dumped["augmentation_backend"] == AugmentationBackend.TV.value
+        assert type(dumped["augmentation_backend"]) is str
+
+    def test_dumped_backend_survives_json_sidecar(self, tmp_path: Path) -> None:
+        """The dumped backend survives the ``json.dump(..., default=str)`` sidecar path unchanged."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        round_tripped = json.loads(json.dumps(dumped, default=str))
+        assert round_tripped["augmentation_backend"] == "torchvision"
+
+    def test_dumped_backend_reconstructs_to_enum_member(self, tmp_path: Path) -> None:
+        """Reloading a config from its dumped args restores the concrete ``AugmentationBackend`` member."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        with warnings.catch_warnings():
+            # Reconstructing from a full dump sets deprecated fields; those warnings are unrelated
+            # to the backend round-trip under test.
+            warnings.simplefilter("ignore", DeprecationWarning)
+            reloaded = TrainConfig(**dumped)
+        assert reloaded.augmentation_backend is AugmentationBackend.TV
+
+    def test_plain_dump_does_not_coerce_int_field(self, tmp_path: Path) -> None:
+        """Plain ``model_dump()`` keeps native field types — guards against a blanket ``mode="json"`` regression.
+
+        Under ``model_dump(mode="json")`` this ``int`` default is silently coerced to ``float``; the
+        ``field_serializer`` lets the writer stay on plain ``model_dump()`` so unrelated fields keep their shape.
+        """
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="torchvision")
+        dumped = config.model_dump()
+        assert type(dumped["keypoint_l1_loss_coef"]) is int
+
+    @pytest.mark.parametrize(
+        "sentinel",
+        [
+            pytest.param("cpu", id="cpu"),
+            pytest.param("auto", id="auto"),
+        ],
+    )
+    def test_sentinel_backend_passes_through_as_string(self, tmp_path: Path, sentinel: str) -> None:
+        """The ``"cpu"``/``"auto"`` auto-pick sentinels serialize unchanged as plain strings."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=sentinel)
+        dumped = config.model_dump()
+        assert dumped["augmentation_backend"] == sentinel
+
+
+class TestTrainConfigAugmentationBackendConstruction:
+    """Construction-time validation for ``TrainConfig.augmentation_backend`` (Item #7).
+
+    The ``@field_validator(mode="before")`` only maps legacy alias strings (``"gpu"``, ``"tv"``, ``"albu"``) to their
+    current form; it never runs custom logic for non-string input, so an already-concrete ``AugmentationBackend`` member
+    must be accepted unchanged. Unrecognized strings must surface as a Pydantic ``ValidationError`` — not some other
+    exception or a silent fallback to a default backend.
+    """
+
+    def test_unrecognized_backend_string_raises_validation_error(self, tmp_path: Path) -> None:
+        """An unrecognized backend string raises ``ValidationError``, not a silent fallback."""
+        with pytest.raises(ValidationError, match="augmentation_backend"):
+            TrainConfig(dataset_dir=str(tmp_path), augmentation_backend="not_a_real_backend")
+
+    def test_enum_member_accepted_directly_without_alias_lookup(self, tmp_path: Path) -> None:
+        """Passing a concrete ``AugmentationBackend`` member at construction bypasses the alias map."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=AugmentationBackend.ALBU)
+        assert config.augmentation_backend is AugmentationBackend.ALBU
+
+    @pytest.mark.parametrize(
+        "alias,expected",
+        [
+            pytest.param("gpu", AugmentationBackend.KORNIA, id="gpu-aliases-to-kornia"),
+            pytest.param("tv", AugmentationBackend.TV, id="tv-aliases-to-torchvision"),
+            pytest.param("albu", AugmentationBackend.ALBU, id="albu-aliases-to-albumentations"),
+        ],
+    )
+    def test_legacy_alias_string_resolves_to_current_enum_member(
+        self, tmp_path: Path, alias: str, expected: AugmentationBackend
+    ) -> None:
+        """Legacy alias strings (``"gpu"``, ``"tv"``, ``"albu"``) still resolve to their current backend."""
+        config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=alias)
+        assert config.augmentation_backend is expected
