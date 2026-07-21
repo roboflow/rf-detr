@@ -25,7 +25,7 @@ from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
 from rfdetr.export._onnx.exporter import export_onnx
-from rfdetr.export._tensorrt import trtexec
+from rfdetr.export._tensorrt import build_engine
 from rfdetr.models import BuilderArgs, build_model
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.lwdetr import LWDETR
@@ -239,7 +239,7 @@ def main(args: argparse.Namespace) -> None:
     onnx_path = output_file  # preserve ONNX path before any post-processing step overwrites it
 
     if args.tensorrt:
-        output_file = trtexec(onnx_path, args)
+        output_file = build_engine(onnx_path, verbose=args.verbose, dry_run=args.dry_run)
 
     # TODO: register --tflite, --quantization, --calibration-data, --max-images in the
     # argparser to enable TFLite export via CLI.  Until then, use RFDETR.export(format="tflite").

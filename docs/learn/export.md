@@ -59,7 +59,7 @@ The `export()` method accepts several parameters to customize the export process
 | Parameter          | Default    | Description                                                                                                                                                                                     |
 | ------------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `output_dir`       | `"output"` | Directory where the exported model will be saved.                                                                                                                                               |
-| `format`           | `"onnx"`   | Export format: `"onnx"` or `"tflite"`.                                                                                                                                                          |
+| `format`           | `"onnx"`   | Export format: `"onnx"`, `"tflite"`, or `"tensorrt"` (alias: `"trt"`).                                                                                                                          |
 | `quantization`     | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`.                                                                                             |
 | `calibration_data` | `None`     | Calibration data for TFLite export. Image directory, `.npy` file path, NumPy array, or `None`. See [TFLite Export](#tflite-export).                                                             |
 | `max_images`       | `100`      | Maximum number of images to load from a calibration directory for TFLite INT8 quantization. Ignored for other calibration data formats.                                                         |
@@ -124,26 +124,113 @@ If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX mode
 
 ### Prerequisites
 
-- Install TensorRT (`trtexec` must be available in your `PATH`)
+- Install the TensorRT extra: `pip install rfdetr[trt]` (provides `tensorrt` + `polygraphy`; no `trtexec` binary needed)
+- A CUDA GPU (the engine is built for the local GPU architecture)
 - Export an ONNX model first (for example: `output/inference_model.onnx`)
+
+### Export Directly to TensorRT
+
+Pass `format="tensorrt"` to `export()` to export ONNX and convert to a TensorRT engine in one step:
+
+```python
+from rfdetr import RFDETRMedium
+
+model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
+
+model.export(format="tensorrt")
+```
+
+This exports `output/inference_model.onnx` first and then produces `output/inference_model.trt`.
+
+!!! note "Who consumes the `.trt` engine?"
+
+    The `.trt` engine produced by `format="tensorrt"` is a standalone artifact for raw
+    TensorRT deployment. It is locked to the GPU architecture and
+    TensorRT version of the machine that built it, so it is not portable across
+    different GPUs or TensorRT releases.
+
+    If you plan to run inference with [`inference-models`](#run-inference-with-inference-models)
+    (the recommended path below), do **not** pass `format="tensorrt"` — `inference-models`
+    builds and manages its own TensorRT engine internally and does not consume this file.
+    Export a plain ONNX model instead and let `inference-models` handle the backend.
 
 ### Python API Conversion
 
 ```python
-from argparse import Namespace
+from rfdetr.export._tensorrt import build_engine
 
-from rfdetr.export._tensorrt import trtexec
-
-args = Namespace(
-    verbose=True,
-    profile=False,
-    dry_run=False,
-)
-
-trtexec("output/inference_model.onnx", args)
+engine_path = build_engine("output/inference_model.onnx", fp16=True)
 ```
 
-This produces `output/inference_model.engine`. If `profile=True`, it also writes an Nsight Systems report (`.nsys-rep`).
+`build_engine` builds the engine in-process via the TensorRT Python API (no `trtexec` subprocess) and returns the path to the generated `.trt` engine file.
+
+## Run Inference with `inference-models`
+
+[`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) is the
+recommended library for running RF-DETR inference. It supports multiple backends — PyTorch,
+ONNX, and TensorRT — with automatic backend selection and a unified API.
+
+### Installation
+
+```bash
+# CPU / PyTorch only
+pip install inference-models
+
+# With TensorRT support (NVIDIA GPU required)
+pip install "inference-models[trt10]"  # TensorRT 10
+```
+
+See the [inference-models installation guide](https://inference-models.roboflow.com/getting-started/installation/)
+for all installation options including Jetson and CUDA 11.x.
+
+### Load a Pre-trained RF-DETR Model
+
+```python
+import cv2
+from inference_models import AutoModel
+
+# Automatically selects the best available backend for your environment
+model = AutoModel.from_pretrained("rfdetr-small")
+
+image = cv2.imread("image.jpg")
+predictions = model(image)
+
+# Convert to supervision Detections
+detections = predictions[0].to_supervision()
+print(detections)
+```
+
+### Load a Local RF-DETR Checkpoint
+
+```python
+import cv2
+from inference_models import AutoModel
+
+# Load from a local .pth checkpoint (same file used by rfdetr for training)
+model = AutoModel.from_pretrained(
+    "/path/to/checkpoint.pth",
+    model_type="rfdetr-small",  # specify the architecture variant
+)
+
+image = cv2.imread("image.jpg")
+predictions = model(image)
+```
+
+### Force TensorRT Backend
+
+```python
+import cv2
+from inference_models import AutoModel, BackendType
+
+# Explicitly request TensorRT — requires TRT to be installed
+model = AutoModel.from_pretrained("rfdetr-small", backend=BackendType.TRT)
+
+image = cv2.imread("image.jpg")
+predictions = model(image)
+```
+
+`AutoModel.from_pretrained` accepts `backend="onnx"`, `backend="torch"`, or
+`backend="trt"` to override automatic backend selection.
 
 ## TFLite Export
 
@@ -391,6 +478,10 @@ boxes, labels = outputs
 After exporting your model, you may want to:
 
 - [Deploy to Roboflow](deploy.md) for cloud-based inference and workflow integration
-- Use the ONNX model with TensorRT for optimized GPU inference
+
+- Use [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) for
+    multi-backend inference (PyTorch, ONNX, TensorRT) with automatic backend selection
+
 - Deploy TFLite models on mobile/edge devices with TensorFlow Lite
+
 - Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO
