@@ -176,7 +176,7 @@ def main(args: argparse.Namespace) -> None:
         output_names = ["features"]
     elif args.segmentation_head:
         output_names = ["dets", "labels", "masks"]
-    elif getattr(model, "use_iou_head", False):
+    elif getattr(model, "use_iou_head", False) is True:
         output_names = ["dets", "labels", "ious"]
     else:
         output_names = ["dets", "labels"]
