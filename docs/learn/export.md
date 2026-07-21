@@ -130,7 +130,7 @@ If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX mode
 
 ### Prerequisites
 
-- Install the TensorRT extra: `pip install rfdetr[trt]` (provides `tensorrt` + `polygraphy`; no `trtexec` binary needed)
+- Install the TensorRT extra: `pip install rfdetr[tensorrt]` (provides `tensorrt` + `polygraphy`; no `trtexec` binary needed)
 - A CUDA GPU (the engine is built for the local GPU architecture)
 - Export an ONNX model first (for example: `output/inference_model.onnx`)
 

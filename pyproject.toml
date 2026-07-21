@@ -71,7 +71,7 @@ onnx = [
     "onnxruntime",
     "polygraphy",
 ]
-trt = [
+tensorrt = [
     "pycuda",
     "onnxruntime-gpu",
     "tensorrt>=8.6.1",
@@ -86,9 +86,6 @@ tflite = [
 ]
 executorch = [
     "executorch>=1.3,<2.0",  # torch.export -> .pte, XNNPACK CPU delegate; validated on 1.3.1
-]
-kornia = [
-    "kornia>=0.7,<1",              # GPU-side augmentation via on_after_batch_transfer
 ]
 loggers = [
     "tensorboard>=2.13.0",
