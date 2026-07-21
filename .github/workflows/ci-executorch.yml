@@ -2,7 +2,7 @@ name: ExecuTorch parity Workflow
 
 on:
   push:
-    branches: ["main", "release/*", "develop", "feat/*"]
+    branches: ["main", "release/*", "develop"]
   pull_request:
 
 permissions:
