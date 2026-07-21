@@ -83,7 +83,7 @@ def test_save_grid_passes_masks_to_supervision(tmp_path: Path, monkeypatch) -> N
             captured_masks.append(detections.mask.copy())
             return scene
 
-    monkeypatch.setattr(save_grids.sv, "MaskAnnotator", _FakeMaskAnnotator)
+    monkeypatch.setattr(save_grids, "MaskAnnotator", _FakeMaskAnnotator)
 
     dataset = _FakeDataset(num_samples=1, include_masks=True)
     loader = DataLoader(dataset, batch_size=1, collate_fn=_collate)
