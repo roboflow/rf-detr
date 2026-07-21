@@ -5,12 +5,14 @@
 # ------------------------------------------------------------------------
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
 import matplotlib
 
-matplotlib.use("Agg")
+if not os.environ.get("MPLBACKEND"):
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torchvision.transforms as T  # noqa: N812
@@ -166,7 +168,9 @@ class DatasetGridSaver:
     ) -> np.ndarray | None:
         """Return target masks as ``(N, H, W)`` booleans aligned to the rendered image shape."""
         masks = single_target.get("masks")
-        if masks is None or len(masks) == 0:
+        if masks is None or (hasattr(masks, "ndim") and masks.ndim == 0):
+            return None
+        if len(masks) == 0:
             return None
 
         if isinstance(masks, Tensor):
