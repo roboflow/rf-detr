@@ -14,13 +14,12 @@ env:
   # Used by 'uv pip install torch torchvision' step to install CPU-only PyTorch.
   UV_TORCH_BACKEND: "cpu"
 
-concurrency:
-  group: model-smoke-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
   try-all-models:
     runs-on: ${{ matrix.os }}
+    concurrency:
+      group: model-smoke-${{ matrix.os }}-${{ matrix.python-version }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     strategy:
       fail-fast: false
       matrix:
@@ -48,3 +47,78 @@ jobs:
 
       - name: Minimize uv cache
         run: uv cache prune --ci
+
+  executorch-parity:
+    name: ExecuTorch parity
+    # The real numerical-parity test exports an RFDETRNano to .pte and asserts the
+    # XNNPACK-delegated runtime matches eager PyTorch. XNNPACK is a plain-CPU backend,
+    # so no special hardware/SDK is required — ubuntu-latest is sufficient.
+    runs-on: ${{ matrix.os }}
+    concurrency:
+      group: pytest-executorch-${{ matrix.python-version }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest"]
+        # executorch 1.3.1 ships manylinux_2_28 x86_64 wheels for cp310–cp313 and
+        # requires_python is >=3.10,<3.14. 3.10 (floor) and 3.13 (ceiling) bracket
+        # the supported range; widen the matrix if the [executorch] pin changes.
+        python-version: ["3.10", "3.13"]
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: ${{ matrix.python-version }}
+          activate-environment: true
+
+      - name: 🚀 Install Packages (executorch extra)
+        timeout-minutes: 8
+        # The end-to-end parity test builds and exports the full RFDETRNano stack, so
+        # pull the same extras as the CPU test job plus the [executorch] backend.
+        # Note: executorch 1.3.1 requires torch>=2.12.0a0 (within the repo's <3.0.0 cap).
+        run: uv pip install -e ".[executorch,train,augment,cli,visual]" --group tests
+
+      - name: 🔎 Verify executorch runtime imports
+        # Guard against a silently-skipped parity test: the test class is gated by a
+        # skipif on executorch availability, so a broken/missing wheel would skip it
+        # (false green). Fail here (red) instead if the runtime cannot be imported.
+        run: uv run --no-sync python -c "from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE; from executorch.runtime import Runtime; assert _IS_EXECUTORCH_AVAILABLE, 'executorch installed but not detected as available'"
+
+      - name: 🧪 Run ExecuTorch parity tests
+        # executorch export is heavy; run single-worker as advised for this suite.
+        run: |
+          uv run --no-sync pytest tests/export/test_executorch_export.py \
+            -m executorch -n 1 \
+            --timeout=600 \
+            --durations=20
+
+      - name: Minimize uv cache
+        continue-on-error: true
+        run: uv cache prune --ci
+
+  executorch-guardian:
+    runs-on: ubuntu-latest
+    needs: executorch-parity
+    if: always()
+    steps:
+      - name: 📋 Display test result
+        run: echo "${{ needs.executorch-parity.result }}"
+      - name: ❌ Fail guardian on test failure
+        if: needs.executorch-parity.result == 'failure'
+        run: exit 1
+      # Ensure that cancelled or skipped test runs still cause this guardian job to fail,
+      # using an explicit exit code instead of relying on timeout behavior.
+      - name: ⚠️ cancelled or skipped...
+        if: contains(fromJSON('["cancelled", "skipped"]'), needs.executorch-parity.result)
+        run: |
+          echo "executorch-parity job result is '${{ needs.executorch-parity.result }}'; failing explicitly."
+          exit 1
+      - name: ✅ tests succeeded
+        if: needs.executorch-parity.result == 'success'
+        run: echo "All ExecuTorch parity tests completed successfully in job 'executorch-parity'."
