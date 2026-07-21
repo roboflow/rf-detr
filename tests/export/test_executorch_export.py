@@ -314,11 +314,18 @@ class TestExportFormatParameter:
         obj.model_config.num_windows = 1
         return obj
 
-    def test_executorch_format_calls_export_executorch(self) -> None:
-        """``format="executorch"`` triggers export_executorch and emits an experimental UserWarning."""
+    @pytest.mark.parametrize(
+        "export_format",
+        [
+            pytest.param("executorch", id="canonical"),
+            pytest.param("pte", id="alias"),
+        ],
+    )
+    def test_executorch_format_calls_export_executorch(self, export_format: str) -> None:
+        """``format="executorch"`` — and its ``"pte"`` alias — trigger export_executorch and warn (experimental)."""
         obj = self._make_rfdetr()
         with pytest.warns(UserWarning, match="experimental"):
-            obj.export(format="executorch", backend="xnnpack", output_dir=str(self._tmp_path / "out"))
+            obj.export(format=export_format, backend="xnnpack", output_dir=str(self._tmp_path / "out"))
         self._mock_export_executorch.assert_called_once()
 
     def test_notes_ignored_with_warning_for_executorch_format(self) -> None:

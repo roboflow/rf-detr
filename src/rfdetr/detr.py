@@ -1412,7 +1412,7 @@ class RFDETR:
                 ``model_config.patch_size`` (typically 14 or 16). When provided explicitly it must match the
                 instantiated model's patch size. Shape divisibility is validated against ``patch_size * num_windows``.
             format: Export format — ``"onnx"`` (default), ``"tflite"``, ``"tensorrt"`` (alias: ``"trt"``), or
-                ``"executorch"``.
+                ``"executorch"`` (alias: ``"pte"``).
                 ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: ``"tflite"`` via
                 ``onnx2tf`` (requires ``pip install rfdetr[onnx,tflite]``); ``"tensorrt"`` via the TensorRT
                 Python API (requires ``pip install rfdetr[tensorrt]``).  Unlike ``"onnx"``/
@@ -1480,6 +1480,8 @@ class RFDETR:
         """
         if format == "trt":  # "trt" is an alias for "tensorrt"
             format = "tensorrt"
+        if format == "pte":  # "pte" is an alias for "executorch"
+            format = "executorch"
         from rfdetr.export.main import _resolve_export_backend
 
         backend, soc = _resolve_export_backend(format, backend, soc)
