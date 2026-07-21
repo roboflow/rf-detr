@@ -5,24 +5,21 @@
 # ------------------------------------------------------------------------
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import matplotlib
-
-if not os.environ.get("MPLBACKEND"):
-    matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import torchvision.transforms as T  # noqa: N812
-from matplotlib.axes import Axes
 from supervision import BoxAnnotator, Color, Detections, LabelAnnotator, MaskAnnotator
 from torch import Tensor
 from torch.utils.data import DataLoader
 
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 from rfdetr.utilities.logger import get_logger
+from rfdetr.visualize.training import _ensure_headless_backend
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
 
 logger = get_logger()
 
@@ -53,6 +50,16 @@ class DatasetGridSaver:
         drawn on top. Instance masks are also drawn, before the boxes and labels, for any sample whose target includes a
         ``'masks'`` entry.
         """
+        try:
+            import matplotlib
+
+            _ensure_headless_backend(matplotlib)
+            import matplotlib.pyplot as plt
+        except ImportError as exc:
+            raise ImportError(
+                "matplotlib is required for dataset grids. Install it with: pip install matplotlib"
+            ) from exc
+
         inv_normalize = T.Normalize(
             mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
             std=[1 / 0.229, 1 / 0.224, 1 / 0.225],

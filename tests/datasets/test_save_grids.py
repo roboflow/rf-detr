@@ -145,6 +145,14 @@ class TestExtractMasks:
         assert result is None
         assert len(warnings) == 1
 
+    def test_returns_none_silently_on_0d_masks(self) -> None:
+        """A 0-d masks tensor is rejected before the len() call that would otherwise raise TypeError."""
+        target = {"masks": torch.tensor(0.0)}
+
+        result = DatasetGridSaver._extract_masks(target, image_shape=(4, 4), num_instances=1)
+
+        assert result is None
+
     @pytest.mark.parametrize(
         ("mask_shape", "image_shape"),
         [
