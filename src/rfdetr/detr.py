@@ -1539,10 +1539,23 @@ class RFDETR:
                 property.  When ``None`` no metadata entry is written.  String values are stored verbatim; all other
                 types are JSON-encoded so consumers must call ``json.loads()`` to recover a dict or list.  The same
                 value can be passed to :meth:`train` so the checkpoint and the ONNX file share the same provenance
-                information.
+                information.  **Ignored for ``format="executorch"``**: the ``.pte`` file has no metadata slot, and
+                a non-``None`` value emits a ``UserWarning`` instead of being embedded.
 
         Returns:
             Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``, or ``.pte``).
+
+        Raises:
+            ValueError: If ``format`` is unrecognized; if ``format="executorch"`` and ``backend`` is missing,
+                unrecognized, or (for ``backend="qnn"``) ``soc`` is missing; or if the resolved export shape is
+                not divisible by ``patch_size * num_windows``.
+            NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"`` — the
+                ExecuTorch runtime cannot resize RF-DETR's windowed-attention reshapes for a variable batch size.
+            ImportError: If the optional dependencies for the requested ``format``/``backend`` are not installed
+                (e.g. ``rfdetr[onnx]``, ``rfdetr[executorch]``, ``coremltools`` for ``backend="coreml"``, or an
+                ExecuTorch source build against the QAIRT SDK for ``backend="qnn"``).
+            RuntimeError: If called after the model has undergone in-place inference optimization (the original
+                model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
         if format == "trt":  # "trt" is an alias for "tensorrt"
             format = "tensorrt"

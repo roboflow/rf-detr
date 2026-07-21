@@ -474,8 +474,9 @@ pip install "rfdetr[executorch]"
 
 ### XNNPACK Backend (Portable CPU, fp32)
 
-The `"xnnpack"` backend targets any CPU platform and runs in fp32. It is the default backend
-and requires only the standard `rfdetr[executorch]` wheel.
+The `"xnnpack"` backend targets any CPU platform and runs in fp32. It is the recommended,
+portable backend and requires only the standard `rfdetr[executorch]` wheel. `backend` has no
+default — it must always be passed explicitly for `format="executorch"`.
 
 === "Object Detection"
 
@@ -497,12 +498,18 @@ and requires only the standard `rfdetr[executorch]` wheel.
     model.export(format="executorch", backend="xnnpack")
     ```
 
-This produces `output/inference_model.pte`.
+This produces `output/rfdetr-seg-medium.pte` — the file is named after the model variant
+(`{variant}.pte`), not a generic `inference_model.pte`.
 
 ### CoreML Backend (Apple Neural Engine, fp16)
 
 The `"coreml"` backend targets Apple devices (iPhone, iPad, Mac) and runs in fp16 on the
-Neural Engine. It requires `coremltools`, which is included in the `rfdetr[executorch]` extra.
+Neural Engine. It requires `coremltools`, which is **not** included in the `rfdetr[executorch]`
+extra — install it separately:
+
+```bash
+pip install coremltools
+```
 
 ```python
 from rfdetr import RFDETRMedium
@@ -546,6 +553,35 @@ device. For example, `"SM8650"` targets the Snapdragon 8 Gen 3.
     instead (e.g. `batch_size=1` for single-image inference).
 - **QNN requires a source build.** The QNN backend is not available via the pip wheel; see the
     ExecuTorch documentation for source-build instructions against the QAIRT SDK.
+
+### ExecuTorch Inference Example
+
+```python
+import numpy as np
+import torch
+from executorch.runtime import Runtime
+from PIL import Image
+
+# Load the exported .pte program
+runtime = Runtime.get()
+method = runtime.load_program("output/rfdetr-medium.pte").load_method("forward")
+
+# Prepare input — the .pte expects the same NCHW, ImageNet-normalized input as the ONNX export
+image = Image.open("image.jpg").convert("RGB").resize((576, 576))
+image_array = np.array(image, dtype=np.float32) / 255.0
+
+mean = np.array([0.485, 0.456, 0.406])
+std = np.array([0.229, 0.224, 0.225])
+image_array = (image_array - mean) / std
+
+image_array = np.transpose(image_array, (2, 0, 1))  # HWC -> CHW
+image_array = np.expand_dims(image_array, axis=0)  # add batch dimension: (1, 3, H, W)
+input_tensor = torch.from_numpy(image_array).float()
+
+# Run inference
+outputs = method.execute([input_tensor])
+boxes, labels = outputs[0], outputs[1]
+```
 
 ## Using the Exported Model
 
