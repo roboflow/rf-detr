@@ -47,7 +47,9 @@ def ms_deform_attn_core_pytorch(
     sampling_value_list = []
     for level_index, (height, width) in enumerate(shapes):
         # batch_size, n_heads, head_dim, height, width
-        value_l_ = value_list[level_index].view(batch_size * n_heads, head_dim, height, width)
+        # height/width may be 0-d tensors when `shapes` comes from `value_spatial_shapes` (Tensor); .view(...)
+        # does not accept tensor sizes, so cast to Python ints (harmless when already ints).
+        value_l_ = value_list[level_index].view(batch_size * n_heads, head_dim, int(height), int(width))
         # batch_size, len_query, n_heads, num_points, 2
         # -> batch_size, n_heads, len_query, num_points, 2
         # -> batch_size*n_heads, len_query, num_points, 2
