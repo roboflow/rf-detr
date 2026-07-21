@@ -9,9 +9,12 @@ supported OpenCV versions."""
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader
+
+from rfdetr.datasets.save_grids import DatasetGridSaver
 
 
 class _FakeDataset:
@@ -51,8 +54,6 @@ def _collate(batch):
 
 def test_save_grid_writes_files(tmp_path: Path) -> None:
     """DatasetGridSaver must write JPEG grid files without raising OpenCV errors."""
-    from rfdetr.datasets.save_grids import DatasetGridSaver
-
     dataset = _FakeDataset(num_samples=4)
     loader = DataLoader(dataset, batch_size=2, collate_fn=_collate)
 
@@ -71,7 +72,6 @@ def test_save_grid_writes_files(tmp_path: Path) -> None:
 def test_save_grid_passes_masks_to_supervision(tmp_path: Path, monkeypatch) -> None:
     """Segmentation targets should be forwarded to supervision as instance masks."""
     from rfdetr.datasets import save_grids
-    from rfdetr.datasets.save_grids import DatasetGridSaver
 
     captured_masks = []
 
@@ -95,3 +95,71 @@ def test_save_grid_passes_masks_to_supervision(tmp_path: Path, monkeypatch) -> N
     assert captured_masks[0].shape == (2, 224, 224)
     assert captured_masks[0].dtype == bool
     assert captured_masks[0][0, 48:112, 48:112].all()
+
+
+def test_save_grid_skips_mask_annotator_without_masks(tmp_path: Path, monkeypatch) -> None:
+    """Targets without a 'masks' entry must not trigger mask_annotator.annotate."""
+    from rfdetr.datasets import save_grids
+
+    annotate_calls = []
+
+    class _FakeMaskAnnotator:
+        def __init__(self, opacity: float) -> None:
+            self.opacity = opacity
+
+        def annotate(self, scene, detections):
+            annotate_calls.append(detections)
+            return scene
+
+    monkeypatch.setattr(save_grids, "MaskAnnotator", _FakeMaskAnnotator)
+
+    dataset = _FakeDataset(num_samples=1, include_masks=False)
+    loader = DataLoader(dataset, batch_size=1, collate_fn=_collate)
+
+    saver = DatasetGridSaver(loader, tmp_path, max_batches=1, dataset_type="train")
+    saver.save_grid()
+
+    assert annotate_calls == []
+
+
+class TestExtractMasks:
+    """Unit tests for DatasetGridSaver._extract_masks guard clauses and shape realignment."""
+
+    @pytest.mark.parametrize(
+        ("masks", "num_instances"),
+        [
+            pytest.param(torch.zeros((1, 2, 4, 4), dtype=torch.bool), 2, id="ndim_4_not_3"),
+            pytest.param(torch.zeros((1, 4, 4), dtype=torch.bool), 2, id="fewer_masks_than_instances"),
+        ],
+    )
+    def test_returns_none_and_logs_warning_on_invalid_input(self, masks, num_instances, monkeypatch) -> None:
+        """Malformed or insufficient masks fall back to None with a logged warning."""
+        from rfdetr.datasets import save_grids
+
+        warnings = []
+        monkeypatch.setattr(save_grids.logger, "warning", lambda msg, *args: warnings.append(msg % args))
+
+        target = {"masks": masks}
+        result = DatasetGridSaver._extract_masks(target, image_shape=(4, 4), num_instances=num_instances)
+
+        assert result is None
+        assert len(warnings) == 1
+
+    @pytest.mark.parametrize(
+        ("mask_shape", "image_shape"),
+        [
+            pytest.param((8, 8), (4, 4), id="crop_larger_source"),
+            pytest.param((4, 4), (8, 8), id="pad_smaller_source"),
+        ],
+    )
+    def test_realigns_mismatched_spatial_shape(self, mask_shape, image_shape) -> None:
+        """Masks at a different spatial resolution than the rendered image are cropped/padded to align."""
+        masks = torch.zeros((1, *mask_shape), dtype=torch.bool)
+        masks[0, :4, :4] = True
+        target = {"masks": masks}
+
+        result = DatasetGridSaver._extract_masks(target, image_shape=image_shape, num_instances=1)
+
+        assert result.shape == (1, *image_shape)
+        assert result.dtype == bool
+        assert result[0, :4, :4].all()
