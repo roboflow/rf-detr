@@ -50,7 +50,8 @@ class DatasetGridSaver:
         """Create and save image grids to ``output_dir``.
 
         Each grid is a 3x3 JPEG containing up to 9 images from a single batch, with bounding boxes and class labels
-        drawn on top.
+        drawn on top. Instance masks are also drawn, before the boxes and labels, for any sample whose target includes a
+        ``'masks'`` entry.
         """
         inv_normalize = T.Normalize(
             mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
@@ -166,7 +167,18 @@ class DatasetGridSaver:
         image_shape: tuple[int, int],
         num_instances: int,
     ) -> np.ndarray | None:
-        """Return target masks as ``(N, H, W)`` booleans aligned to the rendered image shape."""
+        """Return target masks as ``(N, H, W)`` booleans aligned to the rendered image shape.
+
+        Args:
+            single_target: Target dict that may contain a ``'masks'`` entry — a tensor or array-like of shape
+                ``(N, H', W')`` where ``H'``/``W'`` need not match ``image_shape``.
+            image_shape: ``(height, width)`` of the rendered image the masks must align to.
+            num_instances: Number of detected instances (boxes/labels) the returned masks must match.
+
+        Returns:
+            A ``(num_instances, height, width)`` boolean array aligned to ``image_shape``, or ``None`` when masks
+            are absent, malformed, or insufficient for ``num_instances``.
+        """
         masks = single_target.get("masks")
         if masks is None or (hasattr(masks, "ndim") and masks.ndim == 0):
             return None
