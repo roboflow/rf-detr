@@ -1482,7 +1482,7 @@ class RFDETR:
             format = "tensorrt"
         if format == "pte":  # "pte" is an alias for "executorch"
             format = "executorch"
-        from rfdetr.export.main import _resolve_export_backend
+        from rfdetr.export._backend import _resolve_export_backend
 
         backend, soc = _resolve_export_backend(format, backend, soc)
         # Fail fast: dynamic_batch is statically incompatible with ExecuTorch; refuse before any forward pass
@@ -1600,7 +1600,7 @@ class RFDETR:
             input_tensors = input_tensors.cpu()
 
             if format == "executorch":
-                from rfdetr.export.main import _export_executorch_format
+                from rfdetr.export._backend import _export_executorch_format
 
                 return _export_executorch_format(
                     model,

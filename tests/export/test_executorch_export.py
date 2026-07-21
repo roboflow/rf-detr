@@ -83,32 +83,32 @@ class TestResolveExportBackend:
     def test_valid_combination_resolves(
         self, export_format: str, backend: str | None, soc: str | None, expected: tuple[str | None, str | None]
     ) -> None:
-        from rfdetr.export.main import _resolve_export_backend
+        from rfdetr.export._backend import _resolve_export_backend
 
         assert _resolve_export_backend(export_format, backend, soc) == expected
 
     def test_unknown_format_raises_value_error(self) -> None:
-        from rfdetr.export.main import _resolve_export_backend
+        from rfdetr.export._backend import _resolve_export_backend
 
         with pytest.raises(ValueError, match="Unsupported export format"):
             _resolve_export_backend("bogus", None, None)
 
     def test_format_without_required_backend_raises_value_error(self) -> None:
         """A backend-bearing format needs a backend; omitting it is an error that lists the choices."""
-        from rfdetr.export.main import _resolve_export_backend
+        from rfdetr.export._backend import _resolve_export_backend
 
         with pytest.raises(ValueError, match="requires a valid backend"):
             _resolve_export_backend("executorch", None, None)
 
     def test_unknown_backend_raises_value_error(self) -> None:
-        from rfdetr.export.main import _resolve_export_backend
+        from rfdetr.export._backend import _resolve_export_backend
 
         with pytest.raises(ValueError, match="Unsupported backend"):
             _resolve_export_backend("executorch", "vulkan", None)
 
     def test_soc_backend_without_soc_raises_value_error(self) -> None:
         """A backend that compiles for a specific chip (qnn) requires a soc."""
-        from rfdetr.export.main import _resolve_export_backend
+        from rfdetr.export._backend import _resolve_export_backend
 
         with pytest.raises(ValueError, match="requires a valid soc"):
             _resolve_export_backend("executorch", "qnn", None)
@@ -122,7 +122,7 @@ class TestResolveExportBackend:
         ],
     )
     def test_unused_argument_warns(self, export_format: str, backend: str | None, soc: str | None, match: str) -> None:
-        from rfdetr.export.main import _resolve_export_backend
+        from rfdetr.export._backend import _resolve_export_backend
 
         with pytest.warns(UserWarning, match=match):
             _resolve_export_backend(export_format, backend, soc)
@@ -392,7 +392,7 @@ class TestExportFormatParameter:
         obj = self._make_rfdetr()
         # Bypass _resolve_export_backend's own converter import, then make the dispatch-site import fail.
         with (
-            mock.patch("rfdetr.export.main._resolve_export_backend", return_value=("xnnpack", None)),
+            mock.patch("rfdetr.export._backend._resolve_export_backend", return_value=("xnnpack", None)),
             mock.patch.dict(sys.modules, {"rfdetr.export._executorch.converter": None}),
         ):
             with pytest.raises(ImportError):

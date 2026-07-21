@@ -73,7 +73,7 @@ _VALID_BACKENDS: frozenset[str] = frozenset({"xnnpack", "coreml", "qnn"})
 # Backends whose ahead-of-time compilation bakes a target SoC into the ``.pte`` (see :func:`_lower_qnn`), so a SoC
 # must be supplied at export time.  XNNPACK (portable CPU) and CoreML (Apple's runtime selects the device at load)
 # need none.  Public :meth:`rfdetr.detr.RFDETR.export` consults this set (via
-# :func:`rfdetr.export.main._resolve_export_backend`) to decide whether its ``soc`` argument is required for the
+# :func:`rfdetr.export._backend._resolve_export_backend`) to decide whether its ``soc`` argument is required for the
 # requested ``backend``.
 _SOC_BACKENDS: frozenset[str] = frozenset({"qnn"})
 
