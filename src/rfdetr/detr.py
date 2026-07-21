@@ -1388,7 +1388,7 @@ class RFDETR:
         *,
         notes: object = None,
     ) -> Path:
-        """Export the trained model to ONNX or TFLite format.
+        """Export the trained model to ONNX, TFLite, or TensorRT format.
 
         See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_ for more information.
 
@@ -1406,9 +1406,12 @@ class RFDETR:
             patch_size: Backbone patch size. Defaults to the value stored in
                 ``model_config.patch_size`` (typically 14 or 16). When provided explicitly it must match the
                 instantiated model's patch size. Shape divisibility is validated against ``patch_size * num_windows``.
-            format: Export format — ``"onnx"`` (default) or ``"tflite"``.
-                When ``"tflite"`` is selected the model is first exported to ONNX then converted to TFLite via
-                ``onnx2tf``.  Requires ``pip install rfdetr[onnx,tflite]``.
+            format: Export format — ``"onnx"`` (default), ``"tflite"``, or ``"tensorrt"`` (alias: ``"trt"``).
+                ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: ``"tflite"`` via
+                ``onnx2tf`` (requires ``pip install rfdetr[onnx,tflite]``); ``"tensorrt"`` via the TensorRT
+                Python API (requires ``pip install rfdetr[trt]``).  Unlike ``"onnx"``/
+                ``"tflite"`` portable serialization, ``"tensorrt"`` performs target-specific compilation at export
+                time and produces a non-portable ``.trt`` engine tied to the build machine's GPU and TensorRT version.
 
                 .. warning::
                     TFLite export is experimental and subject to change; upstream dependency instabilities (``onnx2tf``,
@@ -1438,12 +1441,14 @@ class RFDETR:
                 information.
 
         Returns:
-            Path to the exported model file (``.onnx`` or ``.tflite``).
+            Path to the exported model file (``.onnx``, ``.tflite``, or ``.trt``).
         """
         logger.info("Exporting model to ONNX format")
-        _valid_formats = ("onnx", "tflite")
+        _valid_formats = ("onnx", "tflite", "tensorrt", "trt")
         if format not in _valid_formats:
             raise ValueError(f"Unsupported export format {format!r}. Choose from: {_valid_formats}")
+        if format == "trt":  # "trt" is an alias for "tensorrt"
+            format = "tensorrt"
         try:
             from rfdetr.export.main import export_onnx, make_infer_image
         except ImportError:
@@ -1590,6 +1595,14 @@ class RFDETR:
                 )
                 logger.info(f"Successfully exported TFLite model to: {tflite_path}")
                 return tflite_path
+
+            if format == "tensorrt":
+                from rfdetr.export._tensorrt import build_engine
+
+                logger.info("Converting ONNX model to TensorRT engine")
+                engine_file = build_engine(output_file, verbose=verbose)
+                logger.info(f"Successfully exported TensorRT engine to: {engine_file}")
+                return Path(engine_file)
 
             logger.info("Export completed successfully")
             return Path(output_file)

@@ -210,7 +210,7 @@
         "name": "How do I export RF-DETR to ONNX or TensorRT?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Call model.export(format='onnx') after training or loading a checkpoint. ONNX export works on CPU and produces a single .onnx file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, first export to ONNX and then convert the .onnx model with TensorRT tooling such as trtexec; this requires TensorRT and a CUDA GPU."
+          "text": "Call model.export(format='onnx') after training or loading a checkpoint. ONNX export works on CPU and produces a single .onnx file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, use model.export(format='tensorrt'), which builds a .trt engine in-process via the TensorRT Python API; this requires pip install rfdetr[trt] and a CUDA GPU."
         }
       },
       {

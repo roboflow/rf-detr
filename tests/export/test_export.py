@@ -268,6 +268,99 @@ def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
     assert set(dynamic_axes.keys()) == expected_names, f"expected keys {expected_names}, got {set(dynamic_axes.keys())}"
 
 
+class _DeviceTrackingCoreModel(_DummyCoreModel):
+    """`_DummyCoreModel` variant that records every `.to()` call's target device."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.to_calls: list[str] = []
+
+    def to(self, device, *_args, **_kwargs):
+        self.to_calls.append(device)
+        return self
+
+
+def _make_tensorrt_export_model(*, device: str = "cpu") -> types.SimpleNamespace:
+    """Build the minimal `self`-like fake `RFDETR.export()` needs for the format="tensorrt" branch."""
+    return types.SimpleNamespace(
+        model=types.SimpleNamespace(model=_DeviceTrackingCoreModel(), device=device, resolution=14),
+        model_config=types.SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False, num_channels=3),
+        size=None,
+    )
+
+
+def _make_mock_infer_tensor() -> MagicMock:
+    """Mock tensor standing in for `make_infer_image()`'s return value — avoids real-device `.to()`/`.cpu()`."""
+    mock_tensor = MagicMock()
+    mock_tensor.to.return_value = mock_tensor
+    mock_tensor.cpu.return_value = mock_tensor
+    return mock_tensor
+
+
+@pytest.mark.parametrize(
+    "export_format",
+    [
+        pytest.param("tensorrt", id="canonical"),
+        pytest.param("trt", id="alias"),
+    ],
+)
+def test_rfdetr_export_tensorrt_calls_build_engine_with_onnx_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, export_format: str
+) -> None:
+    """`RFDETR.export(format="tensorrt")` — and its `"trt"` alias — must call `build_engine` once with the ONNX path.
+
+    Covers the public-API wrapper directly (as opposed to the CLI `main()` path, which
+    `TestCliExportMain.test_tensorrt_flag_calls_build_engine` already covers).
+    """
+    model = _make_tensorrt_export_model()
+    onnx_output = str(tmp_path / "inference_model.onnx")
+    mock_build_engine = MagicMock(return_value=str(tmp_path / "inference_model.trt"))
+
+    monkeypatch.setattr("rfdetr.export.main.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr("rfdetr.export.main.export_onnx", lambda *_a, **_kw: onnx_output)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+    monkeypatch.setattr("rfdetr.export._tensorrt.build_engine", mock_build_engine)
+
+    result = _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format=export_format, shape=(14, 14))
+
+    mock_build_engine.assert_called_once()
+    assert mock_build_engine.call_args.args == (onnx_output,), (
+        f"ONNX path must be passed positionally, got {mock_build_engine.call_args.args!r}"
+    )
+    assert str(result) == str(tmp_path / "inference_model.trt")
+
+
+def test_rfdetr_export_tensorrt_failure_restores_device(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A `build_engine` failure must still restore the live model to its original device.
+
+    Regression test for the try/finally around the CPU-move .. TensorRT-conversion span in `RFDETR.export()` — a build
+    failure previously (pre-merge) could strand the model on CPU.
+    """
+    # Deliberately distinct from the "cpu" staging move inside export() — if this were "cpu" too, the
+    # assertion below would pass even with the `finally` restore deleted (both moves would look identical).
+    original_device = "original-device"
+    model = _make_tensorrt_export_model(device=original_device)
+    onnx_output = str(tmp_path / "inference_model.onnx")
+
+    def _raise_build_engine(*_args, **_kwargs):
+        raise RuntimeError("engine build failed")
+
+    monkeypatch.setattr("rfdetr.export.main.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr("rfdetr.export.main.export_onnx", lambda *_a, **_kw: onnx_output)
+    # Real deepcopy (not identity) — the exported `model` local must be a distinct object from
+    # `self.model.model` so only the latter's `.to()` calls are tracked, matching production behavior.
+    monkeypatch.setattr("rfdetr.export._tensorrt.build_engine", _raise_build_engine)
+
+    with pytest.raises(RuntimeError):
+        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="tensorrt", shape=(14, 14))
+
+    core_model = model.model.model
+    assert core_model.to_calls == ["cpu", original_device], (
+        f"expected exactly one staging move to 'cpu' then one restore to {original_device!r} even though "
+        f"build_engine raised, got device move sequence {core_model.to_calls!r}"
+    )
+
+
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 @pytest.mark.parametrize("mode", [pytest.param("train", id="train_mode"), pytest.param("eval", id="eval_mode")])
@@ -325,6 +418,8 @@ class TestCliExportMain:
         verbose: bool = False,
         opset_version: int = 17,
         tensorrt: bool = False,
+        profile: bool = False,
+        dry_run: bool = False,
         dynamic_batch: bool = False,
     ) -> types.SimpleNamespace:
         return types.SimpleNamespace(
@@ -341,6 +436,8 @@ class TestCliExportMain:
             verbose=verbose,
             opset_version=opset_version,
             tensorrt=tensorrt,
+            profile=profile,
+            dry_run=dry_run,
             dynamic_batch=dynamic_batch,
         )
 
@@ -540,6 +637,117 @@ class TestCliExportMain:
         assert set(dynamic_axes.keys()) == expected_names, (
             f"expected keys {expected_names}, got {set(dynamic_axes.keys())}"
         )
+
+    def test_tensorrt_flag_calls_build_engine(self, output_dir: str) -> None:
+        """When tensorrt=True, main() must call build_engine with the ONNX output path."""
+        build_engine_calls: list[str] = []
+
+        def fake_build_engine(onnx_path: str, **_kwargs) -> str:
+            build_engine_calls.append(onnx_path)
+            return onnx_path.replace(".onnx", ".trt")
+
+        args = self._make_args(output_dir=output_dir, tensorrt=True)
+        onnx_output = str(args.output_dir) + "/inference_model.onnx"
+
+        mock_model = MagicMock()
+        mock_model.parameters.return_value = []
+        mock_model.backbone.parameters.return_value = []
+        mock_model.backbone.__getitem__.return_value.projector.parameters.return_value = []
+        mock_model.backbone.__getitem__.return_value.encoder.parameters.return_value = []
+        mock_model.transformer.parameters.return_value = []
+        mock_model.to.return_value = mock_model
+        mock_model.cpu.return_value = mock_model
+        mock_model.eval.return_value = mock_model
+        mock_model.return_value = {
+            "pred_boxes": torch.zeros(1, 300, 4),
+            "pred_logits": torch.zeros(1, 300, 90),
+        }
+        mock_tensor = MagicMock()
+        mock_tensor.to.return_value = mock_tensor
+        mock_tensor.cpu.return_value = mock_tensor
+
+        with (
+            patch.object(_cli_export_module, "build_model", return_value=(mock_model, MagicMock(), MagicMock())),
+            patch.object(_cli_export_module, "make_infer_image", return_value=mock_tensor),
+            patch.object(_cli_export_module, "export_onnx", return_value=onnx_output),
+            patch.object(_cli_export_module, "build_engine", side_effect=fake_build_engine),
+            patch.object(_cli_export_module, "get_rank", return_value=0),
+        ):
+            _cli_export_module.main(args)
+
+        assert len(build_engine_calls) == 1, "build_engine should be called exactly once"
+        assert build_engine_calls[0] == onnx_output, (
+            f"build_engine called with {build_engine_calls[0]!r}, expected {onnx_output!r}"
+        )
+
+    def test_tensorrt_flag_forwards_verbose_and_dry_run_kwargs(self, output_dir: str) -> None:
+        """Main() must forward args.verbose/args.dry_run to build_engine as keyword args, not attribute access on
+        build_engine's side — regression test for the latent AttributeError risk when args lacks these attrs."""
+        args = self._make_args(output_dir=output_dir, tensorrt=True, verbose=True, dry_run=True)
+        onnx_output = str(args.output_dir) + "/inference_model.onnx"
+
+        mock_model = MagicMock()
+        mock_model.parameters.return_value = []
+        mock_model.backbone.parameters.return_value = []
+        mock_model.backbone.__getitem__.return_value.projector.parameters.return_value = []
+        mock_model.backbone.__getitem__.return_value.encoder.parameters.return_value = []
+        mock_model.transformer.parameters.return_value = []
+        mock_model.to.return_value = mock_model
+        mock_model.cpu.return_value = mock_model
+        mock_model.eval.return_value = mock_model
+        mock_model.return_value = {
+            "pred_boxes": torch.zeros(1, 300, 4),
+            "pred_logits": torch.zeros(1, 300, 90),
+        }
+        mock_tensor = MagicMock()
+        mock_tensor.to.return_value = mock_tensor
+        mock_tensor.cpu.return_value = mock_tensor
+        mock_build_engine = MagicMock(return_value=str(args.output_dir) + "/inference_model.trt")
+
+        with (
+            patch.object(_cli_export_module, "build_model", return_value=(mock_model, MagicMock(), MagicMock())),
+            patch.object(_cli_export_module, "make_infer_image", return_value=mock_tensor),
+            patch.object(_cli_export_module, "export_onnx", return_value=onnx_output),
+            patch.object(_cli_export_module, "build_engine", mock_build_engine),
+            patch.object(_cli_export_module, "get_rank", return_value=0),
+        ):
+            _cli_export_module.main(args)
+
+        mock_build_engine.assert_called_once_with(onnx_output, verbose=True, dry_run=True)
+
+    def test_tensorrt_false_does_not_call_build_engine(self, output_dir: str) -> None:
+        """When tensorrt=False (default), main() must not call build_engine."""
+        build_engine_calls: list[str] = []
+
+        def fake_build_engine(onnx_path: str, **_kwargs) -> str:
+            build_engine_calls.append(onnx_path)
+            return onnx_path.replace(".onnx", ".trt")
+
+        args = self._make_args(output_dir=output_dir, tensorrt=False)
+
+        mock_model = MagicMock()
+        mock_model.parameters.return_value = []
+        mock_model.backbone.parameters.return_value = []
+        mock_model.backbone.__getitem__.return_value.projector.parameters.return_value = []
+        mock_model.backbone.__getitem__.return_value.encoder.parameters.return_value = []
+        mock_model.transformer.parameters.return_value = []
+        mock_model.to.return_value = mock_model
+        mock_model.cpu.return_value = mock_model
+        mock_model.eval.return_value = mock_model
+        mock_tensor = MagicMock()
+        mock_tensor.to.return_value = mock_tensor
+        mock_tensor.cpu.return_value = mock_tensor
+
+        with (
+            patch.object(_cli_export_module, "build_model", return_value=(mock_model, MagicMock(), MagicMock())),
+            patch.object(_cli_export_module, "make_infer_image", return_value=mock_tensor),
+            patch.object(_cli_export_module, "export_onnx", return_value=str(args.output_dir) + "/model.onnx"),
+            patch.object(_cli_export_module, "build_engine", side_effect=fake_build_engine),
+            patch.object(_cli_export_module, "get_rank", return_value=0),
+        ):
+            _cli_export_module.main(args)
+
+        assert len(build_engine_calls) == 0, "build_engine must not be called when tensorrt=False"
 
     @pytest.mark.parametrize(
         "device",
