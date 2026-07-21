@@ -140,10 +140,20 @@ class MSDeformAttn(nn.Module):
         """
         batch_size, len_query, _ = query.shape
         batch_size, len_input, _ = input_flatten.shape
+        # Export mode requires the Python (H, W) pairs: without them the core (ms_deform_attn_core_pytorch)
+        # silently falls back to reading shapes off the ``input_spatial_shapes`` tensor — the exact
+        # data-dependent path torch.export cannot trace. Fail loud here rather than emit a broken graph.
+        # This is a plain ``is None`` check on a Python object, so it stays static under torch.export.
+        if self._export and input_spatial_shapes_hw is None:
+            raise ValueError(
+                "input_spatial_shapes_hw (per-level Python (H, W) pairs) is required in export mode; "
+                "without it the deformable-attention core falls back to the untraceable tensor-shape path."
+            )
         # When Python int (H, W) pairs are available, derive the expected length from them so the
         # check stays a plain Python comparison. Reading the value out of the ``input_spatial_shapes``
         # tensor produces an unbacked symbolic int under ``torch.export``, which turns this sanity
         # check into a data-dependent guard that aborts the export.
+        expected_len_in: int | Tensor
         if input_spatial_shapes_hw is not None:
             expected_len_in = sum(height * width for height, width in input_spatial_shapes_hw)
         else:

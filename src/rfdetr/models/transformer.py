@@ -31,6 +31,18 @@ from rfdetr.models.math import MLP
 from rfdetr.models.ops.modules import MSDeformAttn
 
 
+def _not_exporting() -> bool:
+    """Fallback for ``torch.compiler.is_exporting`` on torch<2.6 (which lacks it and never runs ExecuTorch export).
+
+    Hoisted to a module-level function so the hot decoder ``forward`` does not allocate a fresh ``lambda`` on every
+    call just to supply this default.
+
+    Returns:
+        Always ``False`` — torch<2.6 is never in an export trace.
+    """
+    return False
+
+
 def _safe_multinormalize(dim: int) -> int:
     """Clamp a MultiheadAttention head count to at least one."""
     return max(1, dim)
@@ -314,7 +326,7 @@ class Transformer(nn.Module):
         # static shapes, so the baked constant is exact. This branch is taken only under
         # torch.export, leaving the eager and TorchScript-ONNX/TensorRT (#1155) paths untouched.
         # getattr guards torch<2.6, which lacks is_exporting() and never runs ExecuTorch export.
-        if getattr(torch.compiler, "is_exporting", lambda: False)():
+        if getattr(torch.compiler, "is_exporting", _not_exporting)():
             spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
         else:
             spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
@@ -323,6 +335,11 @@ class Transformer(nn.Module):
         level_start_index = torch.cat((spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
 
         # Flatten optional dual-projector features for keypoint-specific cross-attention.
+        # NOTE: cross-attention reuses ``spatial_shapes_hw`` derived from ``srcs`` above — this assumes
+        # ``cross_attn_srcs`` share the per-level (H, W) geometry of ``srcs`` (they differ only in channel
+        # features from the dual projector). If a future variant produces cross-attn features with a different
+        # level count or spatial geometry, the deformable sampling would mis-index; build a separate
+        # ``cross_attn_spatial_shapes_hw`` at that point.
         cross_attn_memory = None
         if cross_attn_srcs is not None:
             ca_flatten = []

@@ -72,8 +72,8 @@ _VALID_BACKENDS: frozenset[str] = frozenset({"xnnpack", "coreml", "qnn"})
 
 # Backends whose ahead-of-time compilation bakes a target SoC into the ``.pte`` (see :func:`_lower_qnn`), so a SoC
 # must be supplied at export time.  XNNPACK (portable CPU) and CoreML (Apple's runtime selects the device at load)
-# need none.  Public :meth:`rfdetr.detr.RFDETR.export` consults this set when parsing its ``runtime-backend-soc``
-# format string.
+# need none.  Public :meth:`rfdetr.detr.RFDETR.export` consults this set (via :func:`_resolve_export_backend`) to
+# decide whether its ``soc`` argument is required for the requested ``backend``.
 _SOC_BACKENDS: frozenset[str] = frozenset({"qnn"})
 
 # Public aliases so detr.py can import these without crossing a private-name boundary.
@@ -259,6 +259,10 @@ def export_executorch(
 
     The model must already be switched into export mode (``model.export()``) and moved to CPU by the caller -- the
     public :meth:`rfdetr.detr.RFDETR.export` entry point handles both.
+
+    The ``backend``/``soc`` defaults below are a convenience for direct/internal calls only; the public
+    :meth:`rfdetr.detr.RFDETR.export` contract requires ``backend`` to be passed explicitly (and ``soc`` for
+    SoC-locked backends) -- it never relies on these defaults.
 
     Args:
         model: The RF-DETR PyTorch module to export, in export mode and on CPU.

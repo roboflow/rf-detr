@@ -1561,7 +1561,10 @@ class RFDETR:
             format = "tensorrt"
         backend, soc = _resolve_export_backend(format, backend, soc)
         # Fail fast: dynamic_batch is statically incompatible with ExecuTorch; refuse before any forward pass
-        # so the user doesn't pay the full DINOv2 forward (seconds + GBs) before seeing the error.
+        # so the user doesn't pay the full DINOv2 forward (seconds + GBs) before seeing the error. This is an
+        # intentional lightweight duplicate of the authoritative check in
+        # ``rfdetr.export._executorch.converter.export_executorch`` — the detailed "why" lives there; this copy
+        # exists only to fail before the heavy ``[executorch]`` import, so keep the two messages compatible.
         if dynamic_batch and format == "executorch":
             raise NotImplementedError(
                 "ExecuTorch export does not support dynamic_batch (see export_executorch for details). "
