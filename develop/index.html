@@ -261,7 +261,7 @@
         "name": "How do I export RF-DETR to ONNX or TensorRT?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Call model.export(format='onnx') after training or loading a checkpoint. ONNX export works on CPU and produces a single .onnx file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, first export to ONNX and then convert the .onnx model with TensorRT tooling such as trtexec; this requires TensorRT and a CUDA GPU."
+          "text": "Call model.export(format='onnx') after training or loading a checkpoint. ONNX export works on CPU and produces a single .onnx file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, use model.export(format='tensorrt'), which builds a .trt engine in-process via the TensorRT Python API; this requires pip install rfdetr[trt] and a CUDA GPU."
         }
       },
       {
@@ -2909,7 +2909,7 @@ Yes. Core models (Nano through Large) and all training/inference code are releas
 <p><strong>How do I fine-tune RF-DETR on a custom dataset?</strong>
 Instantiate a model and call <code>model.train(...)</code> with your dataset directory in COCO JSON or YOLO format. Example: <code>model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4)</code>. The model downloads pretrained weights automatically and saves best checkpoints automatically (use <code>resume=</code> to continue from one).</p>
 <p><strong>How do I export RF-DETR to ONNX or TensorRT?</strong>
-Call <code>model.export(format="onnx")</code> after training or loading a checkpoint. ONNX export works on CPU and produces a single <code>.onnx</code> file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, first export to ONNX and then convert the <code>.onnx</code> model with TensorRT tooling or helpers such as <code>trtexec</code>; this requires TensorRT and a CUDA GPU.</p>
+Call <code>model.export(format="onnx")</code> after training or loading a checkpoint. ONNX export works on CPU and produces a single <code>.onnx</code> file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, use <code>model.export(format="tensorrt")</code>, which exports ONNX and then builds a <code>.trt</code> engine in-process via the TensorRT Python API; this requires <code>pip install rfdetr[trt]</code> and a CUDA GPU.</p>
 <p><strong>Which RF-DETR model size should I use?</strong>
 RF-DETR-Nano (2.3 ms, 67.6 AP50 on COCO) is best for edge and real-time applications. RF-DETR-Large (6.8 ms, 56.5 AP50:95) offers the best accuracy–latency trade-off for server deployment. RF-DETR-2XLarge (17.2 ms, 60.1 AP50:95) maximizes accuracy when latency allows.</p>
 <blockquote>
@@ -2935,7 +2935,7 @@ RF-DETR-Nano (2.3 ms, 67.6 AP50 on COCO) is best for edge and real-time applic
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 8, 2026 17:52:37 UTC">2026-07-08 17:52:37</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 21, 2026 07:00:22 UTC">2026-07-21 07:00:22</span>
   </span>
 
     
