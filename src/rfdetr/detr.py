@@ -189,89 +189,6 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     return patch_size
 
 
-# Every format accepted by :meth:`RFDETR.export`.
-_EXPORT_FORMATS: frozenset[str] = frozenset({"onnx", "tflite", "tensorrt", "executorch"})
-# The subset of :data:`_EXPORT_FORMATS` that specialize for a hardware backend, and so require a ``backend`` argument
-# (the rest are backend-agnostic).  The accepted backends per format, and the backends that further require a ``soc``,
-# are owned by the converter (``_VALID_BACKENDS`` / ``_SOC_BACKENDS``).
-_BACKEND_FORMATS: frozenset[str] = frozenset({"executorch"})
-
-
-def _resolve_export_backend(format: str, backend: str | None, soc: str | None) -> tuple[str | None, str | None]:
-    """Validate a ``format`` / ``backend`` / ``soc`` combination and return the effective ``(backend, soc)``.
-
-    Driven by the :data:`_EXPORT_FORMATS` / :data:`_BACKEND_FORMATS` registries (and the converter's backend/SoC sets)
-    rather than per-format branches, so adding a format or backend is a data change:
-
-    * A format not in :data:`_BACKEND_FORMATS` is backend-agnostic — it takes neither ``backend`` nor ``soc``;
-      supplying one warns and it is ignored (returned ``None``).
-    * A format in :data:`_BACKEND_FORMATS` requires ``backend`` to be one of the backends its converter accepts
-      (looked up by format).
-    * A backend that compiles for a specific chip (looked up by format+backend against the converter's SoC set)
-      requires ``soc``; any other backend warns if a ``soc`` is supplied and ignores it.
-
-    Args:
-        format: Export format; one of :data:`_EXPORT_FORMATS`.
-        backend: Requested hardware backend, or ``None``.
-        soc: Requested target SoC, or ``None``.
-
-    Returns:
-        ``(backend, soc)`` with each value set to ``None`` when the format/backend does not use it.
-
-    Raises:
-        ValueError: On an unknown format, a missing or unknown required backend, or a missing required SoC.
-    """
-    if format not in _EXPORT_FORMATS:
-        raise ValueError(f"Unsupported export format {format!r}. Choose from: {sorted(_EXPORT_FORMATS)}.")
-
-    if format not in _BACKEND_FORMATS:
-        # Backend-agnostic format: warn on any supplied (and therefore unused) backend/soc.
-        for name, value in (("backend", backend), ("soc", soc)):
-            if value is not None:
-                warnings.warn(
-                    f"`{name}={value!r}` is ignored for format={format!r}; this format does not require a hardware "
-                    f"backend specialization.",
-                    UserWarning,
-                    stacklevel=3,
-                )
-        return None, None
-
-    # Backend-bearing format: the converter owns the authoritative capability sets.  These are keyed by format
-    # (accepted backends) and by format+backend (which backends require a ``soc``).  Adding a second backend-bearing
-    # format is primarily a data change (add entries below + update _EXPORT_FORMATS / _BACKEND_FORMATS), but also
-    # requires a lazy import and an elif branch in export().  Imported lazily so that backend-agnostic exports never
-    # pull in the (optional, heavy) executorch dependency.
-    from rfdetr.export._executorch.converter import SOC_BACKENDS, VALID_BACKENDS
-
-    accepted_backends: dict[str, frozenset[str]] = {"executorch": VALID_BACKENDS}
-    soc_backends: dict[str, frozenset[str]] = {"executorch": SOC_BACKENDS}
-    valid = accepted_backends.get(format, frozenset())
-    soc_required = soc_backends.get(format, frozenset())
-
-    if backend is None:
-        raise ValueError(f"format {format!r} requires a valid backend (one of {sorted(valid)}), but none was provided.")
-    # Normalise case so RFDETR.export(backend="XNNPACK") and backend="xnnpack" behave identically.
-    backend = backend.lower()
-    if backend not in valid:
-        raise ValueError(f"Unsupported backend {backend!r} for format {format!r}. Choose from: {sorted(valid)}.")
-
-    if backend in soc_required:
-        if soc is None:
-            raise ValueError(
-                f"backend {backend!r} requires a valid soc (a target chip identifier; see the converter "
-                f"documentation for valid names), but none was provided."
-            )
-    elif soc is not None:
-        warnings.warn(
-            f"`soc={soc!r}` is ignored for backend={backend!r}; this backend does not target a specific chip.",
-            UserWarning,
-            stacklevel=3,
-        )
-        soc = None
-
-    return backend, soc
-
-
 def _move_model_context_to_device(model_ctx: Any) -> None:
     """Move model weights to the target device recorded in *model_ctx*.
 
@@ -1464,13 +1381,13 @@ class RFDETR:
         batch_size: int = 1,
         dynamic_batch: bool = False,
         patch_size: int | None = None,
+        *,
         format: str = "onnx",
         quantization: str | None = None,
         calibration_data: str | np.ndarray[Any, Any] | None = None,
         max_images: int = 100,
         backend: str | None = None,
         soc: str | None = None,
-        *,
         notes: object = None,
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, or ExecuTorch format.
@@ -1498,7 +1415,7 @@ class RFDETR:
                 ``"executorch"``.
                 ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: ``"tflite"`` via
                 ``onnx2tf`` (requires ``pip install rfdetr[onnx,tflite]``); ``"tensorrt"`` via the TensorRT
-                Python API (requires ``pip install rfdetr[trt]``).  Unlike ``"onnx"``/
+                Python API (requires ``pip install rfdetr[tensorrt]``).  Unlike ``"onnx"``/
                 ``"tflite"`` portable serialization, ``"tensorrt"`` performs target-specific compilation at export
                 time and produces a non-portable ``.trt`` engine tied to the build machine's GPU and TensorRT version.
                 When ``"executorch"`` is selected the model is exported directly via ``torch.export`` to an ExecuTorch
@@ -1530,10 +1447,14 @@ class RFDETR:
                 ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple devices, fp16; requires ``coremltools``),
                 and ``"qnn"`` (Qualcomm Snapdragon HTP, fp16; requires an ExecuTorch source build against the
                 QAIRT SDK — not available via pip).
-            soc: Target chip identifier for backends that compile for a specific SoC.  Required when
-                ``backend="qnn"`` and ignored — with a warning — for any other backend or format.  Must be a
-                ``QcomChipset`` name, e.g. ``"SM8650"`` (Snapdragon 8 Gen 3).  Has no effect for ``"xnnpack"``
-                or ``"coreml"``.
+            soc: Target SoC (System on Chip) — the specific Qualcomm Snapdragon chip the exported model will run
+                on.  Required when ``backend="qnn"``: the QNN backend compiles the ``.pte`` ahead-of-time for one
+                chip's Hexagon Tensor Processor (HTP), unlike ``"xnnpack"``/``"coreml"`` which run on any device of
+                their platform, so the target chip must be known at export time.  Ignored — with a warning — for
+                any other backend or format.  Must be a
+                :class:`~executorch.backends.qualcomm.serialization.qc_schema.QcomChipset` name, e.g. ``"SM8650"``
+                (Snapdragon 8 Gen 3); see that enum for the full list of supported chips.  Has no effect for
+                ``"xnnpack"`` or ``"coreml"``.
             notes: Optional user-defined metadata (string, dict, list, or
                 any JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata
                 property.  When ``None`` no metadata entry is written.  String values are stored verbatim; all other
@@ -1559,6 +1480,8 @@ class RFDETR:
         """
         if format == "trt":  # "trt" is an alias for "tensorrt"
             format = "tensorrt"
+        from rfdetr.export.main import _resolve_export_backend
+
         backend, soc = _resolve_export_backend(format, backend, soc)
         # Fail fast: dynamic_batch is statically incompatible with ExecuTorch; refuse before any forward pass
         # so the user doesn't pay the full DINOv2 forward (seconds + GBs) before seeing the error. This is an
@@ -1675,48 +1598,18 @@ class RFDETR:
             input_tensors = input_tensors.cpu()
 
             if format == "executorch":
-                if notes is not None:
-                    warnings.warn(
-                        "`notes` is not forwarded to format='executorch' (ExecuTorch .pte has no metadata slot). "
-                        "This argument is ignored.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-                # Invariant: _resolve_export_backend always sets backend for executorch formats.
-                if backend is None:  # pragma: no cover
-                    raise RuntimeError(
-                        "backend must not be None for format='executorch' — invariant: _resolve_export_backend."
-                    )
-                warnings.warn(
-                    "ExecuTorch export is experimental and work-in-progress.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                try:
-                    from rfdetr.export._executorch.converter import export_executorch
-                except ImportError:
-                    logger.error(
-                        "It seems some dependencies for ExecuTorch export are missing."
-                        " Please run `pip install rfdetr[executorch]` and try again.",
-                    )
-                    raise
-                # ExecuTorch consumes a torch.export graph directly, so switch the model into its
-                # export-friendly forward (the ONNX path does this inside export_onnx).
-                if hasattr(model, "export"):
-                    model.export()
-                # soc only applies to the qnn backend; _resolve_export_backend leaves it None otherwise.
-                soc_kwargs = {"soc": soc} if soc is not None else {}
-                pte_path = export_executorch(
-                    model=model,
-                    input_tensors=input_tensors,
-                    output_dir=str(output_dir_path),
+                from rfdetr.export.main import _export_executorch_format
+
+                return _export_executorch_format(
+                    model,
+                    input_tensors,
+                    output_dir_path,
                     backend=backend,
+                    soc=soc,
                     variant_name=getattr(self, "size", None),
                     dynamic_batch=dynamic_batch,
-                    **soc_kwargs,
+                    notes=notes,
                 )
-                logger.info(f"Successfully exported ExecuTorch model to: {pte_path}")
-                return pte_path
 
             output_file = export_onnx(
                 output_dir=str(output_dir_path),
@@ -1734,44 +1627,17 @@ class RFDETR:
 
             logger.info(f"Successfully exported ONNX model to: {output_file}")
 
-            if format == "tflite":
-                warnings.warn(
-                    "TFLite export is experimental and work-in-progress. "
-                    "Upstream dependency instabilities (onnx2tf, ai_edge_litert) may affect results.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                try:
-                    from rfdetr.export._tflite.converter import export_tflite
-                except ImportError:
-                    logger.error(
-                        "It seems some dependencies for TFLite export are missing."
-                        " Please run `pip install rfdetr[onnx,tflite]` and try again.",
-                    )
-                    raise
+            from rfdetr.export.main import _convert_onnx_export
 
-                tflite_path = export_tflite(
-                    onnx_path=output_file,
-                    output_dir=str(output_dir_path),
-                    quantization=quantization,
-                    calibration_data=calibration_data,
-                    verbosity="info" if verbose else "error",
-                    max_images=max_images,
-                    verbose=verbose,
-                )
-                logger.info(f"Successfully exported TFLite model to: {tflite_path}")
-                return tflite_path
-
-            if format == "tensorrt":
-                from rfdetr.export._tensorrt import build_engine
-
-                logger.info("Converting ONNX model to TensorRT engine")
-                engine_file = build_engine(output_file, verbose=verbose)
-                logger.info(f"Successfully exported TensorRT engine to: {engine_file}")
-                return Path(engine_file)
-
-            logger.info("Export completed successfully")
-            return Path(output_file)
+            return _convert_onnx_export(
+                output_file,
+                format,
+                output_dir_path,
+                quantization=quantization,
+                calibration_data=calibration_data,
+                max_images=max_images,
+                verbose=verbose,
+            )
         finally:
             self.model.model = self.model.model.to(device)
 

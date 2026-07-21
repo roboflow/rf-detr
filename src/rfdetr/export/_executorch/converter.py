@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import torch
 import torch.nn as nn
@@ -72,8 +72,9 @@ _VALID_BACKENDS: frozenset[str] = frozenset({"xnnpack", "coreml", "qnn"})
 
 # Backends whose ahead-of-time compilation bakes a target SoC into the ``.pte`` (see :func:`_lower_qnn`), so a SoC
 # must be supplied at export time.  XNNPACK (portable CPU) and CoreML (Apple's runtime selects the device at load)
-# need none.  Public :meth:`rfdetr.detr.RFDETR.export` consults this set (via :func:`_resolve_export_backend`) to
-# decide whether its ``soc`` argument is required for the requested ``backend``.
+# need none.  Public :meth:`rfdetr.detr.RFDETR.export` consults this set (via
+# :func:`rfdetr.export.main._resolve_export_backend`) to decide whether its ``soc`` argument is required for the
+# requested ``backend``.
 _SOC_BACKENDS: frozenset[str] = frozenset({"qnn"})
 
 # Public aliases so detr.py can import these without crossing a private-name boundary.
@@ -250,7 +251,7 @@ def export_executorch(
     input_tensors: torch.Tensor,
     output_dir: str | os.PathLike[str],
     *,
-    backend: str = "xnnpack",
+    backend: Literal["xnnpack", "coreml", "qnn"] = "xnnpack",
     variant_name: str | None = None,
     soc: str = "SM8650",
     dynamic_batch: bool = False,
@@ -303,9 +304,9 @@ def export_executorch(
 
             pte_path = export_executorch(model, input_tensor, "output/", backend="qnn", soc="SM8650")
     """
-    backend = backend.lower()
-    if backend not in _VALID_BACKENDS:
-        raise ValueError(f"Unsupported ExecuTorch backend {backend!r}. Choose from: {sorted(_VALID_BACKENDS)}.")
+    backend_name: str = backend.lower()
+    if backend_name not in _VALID_BACKENDS:
+        raise ValueError(f"Unsupported ExecuTorch backend {backend_name!r}. Choose from: {sorted(_VALID_BACKENDS)}.")
     if dynamic_batch:
         # torch.export keeps the batch dim symbolic (verified: range stays [1, N] through export), but ExecuTorch
         # 1.3.1 cannot carry it through lowering, for two independent reasons:
@@ -337,10 +338,10 @@ def export_executorch(
     output_file = output_dir / f"{export_name}.pte"
 
     model = model.eval()
-    logger.info(f"Exporting model to ExecuTorch ({backend}) format: {output_file}")
+    logger.info(f"Exporting model to ExecuTorch ({backend_name}) format: {output_file}")
     try:
         with torch.no_grad():
-            if backend == "qnn":
+            if backend_name == "qnn":
                 # QNN has its own lowering entry point + workarounds; see _lower_qnn.
                 logger.warning(
                     "ExecuTorch QNN export is EXPERIMENTAL. It requires a source build of ExecuTorch "
@@ -360,7 +361,9 @@ def export_executorch(
                 # lowering fails. Non-strict keeps those inline and lowers cleanly with verified parity. Revisit
                 # strict=True when that upstream torch.export <-> ExecuTorch interaction is fixed.
                 exported_program = torch.export.export(model, (input_tensors,), strict=False)
-                edge_program = to_edge_transform_and_lower(exported_program, partitioner=_build_partitioner(backend))
+                edge_program = to_edge_transform_and_lower(
+                    exported_program, partitioner=_build_partitioner(backend_name)
+                )
                 executorch_program = edge_program.to_executorch()
     except (ImportError, ValueError):
         raise
