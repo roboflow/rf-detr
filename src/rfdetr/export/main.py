@@ -15,7 +15,7 @@ import os
 import random
 import warnings
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 import torch
@@ -178,7 +178,6 @@ def _export_executorch_format(
     soc_kwargs = {"soc": soc} if soc is not None else {}
     # _resolve_export_backend already validated backend against _VALID_BACKENDS at runtime;
     # narrow the static type to match export_executorch's Literal signature.
-    from typing import Literal
 
     backend_literal = cast(Literal["xnnpack", "coreml", "qnn"], backend)
     pte_path = export_executorch(
@@ -247,6 +246,8 @@ def _convert_onnx_export(
         return tflite_path
 
     if format == "tensorrt":
+        # Lazy re-import (not the module-level `build_engine` above): tests monkeypatch
+        # rfdetr.export._tensorrt.build_engine, which only takes effect on a fresh lookup here.
         from rfdetr.export._tensorrt import build_engine
 
         logger.info("Converting ONNX model to TensorRT engine")
@@ -302,7 +303,6 @@ def make_infer_image(
 
     inps, _ = transforms(image, None)
     inps = inps.to(device)
-    # inps = utils.nested_tensor_from_tensor_list([inps for _ in range(args.batch_size)])
     inps = torch.stack([inps for _ in range(batch_size)])
     return inps
 
