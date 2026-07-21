@@ -627,5 +627,7 @@ After exporting your model, you may want to:
     multi-backend inference (PyTorch, ONNX, TensorRT) with automatic backend selection
 
 - Deploy TFLite models on mobile/edge devices with TensorFlow Lite
+
 - Deploy ExecuTorch `.pte` models on mobile/edge devices with the ExecuTorch runtime
+
 - Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO
