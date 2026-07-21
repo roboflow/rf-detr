@@ -20,7 +20,7 @@ import torch
 from PIL import Image
 
 from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema
-from rfdetr.datasets.coco import ConvertCoco, build_coco, build_roboflow_from_coco
+from rfdetr.datasets.coco import CocoDetection, ConvertCoco, build_coco, build_roboflow_from_coco
 from rfdetr.detr import RFDETR
 
 # Minimal image shared across all tests
@@ -455,12 +455,13 @@ class TestBuildO365RawGpuBackend:
 
     def test_auto_backend_emits_warning(self):
         """Auto + CUDA + kornia available: logger.warning about O365 Phase 1 limitation."""
-        import sys
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
+
+        from rfdetr.config import AugmentationBackend
 
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=True),
             patch("rfdetr.datasets.o365.logger") as mock_logger,
         ):
             self._call_build_o365_raw("auto")
@@ -487,12 +488,13 @@ class TestBuildO365RawGpuBackend:
 
     def test_gpu_postprocess_true_for_auto_backend(self):
         """Auto + CUDA + kornia available: gpu_postprocess=True passed to make_coco_transforms."""
-        import sys
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
+
+        from rfdetr.config import AugmentationBackend
 
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=True),
         ):
             _, mock_transform, _ = self._call_build_o365_raw("auto")
         call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
@@ -527,17 +529,12 @@ class TestBuildO365RawGpuBackend:
         """Gpu backend must raise with install hint when kornia is missing."""
         from unittest.mock import patch
 
-        original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
-
-        def _mock_import(name, *args, **kwargs):
-            if name == "kornia" or name.startswith("kornia."):
-                raise ImportError("No module named 'kornia'")
-            return original_import(name, *args, **kwargs)
+        from rfdetr.config import AugmentationBackend
 
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch("builtins.__import__", side_effect=_mock_import),
-            pytest.raises(ImportError, match="rfdetr\\[kornia\\]"),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            pytest.raises(ImportError, match="rfdetr\\[augment\\]"),
         ):
             self._call_build_o365_raw("gpu")
 
@@ -573,6 +570,34 @@ class TestBuildRoboflowFromCocoBackendResolution:
             mock_transforms.return_value = MagicMock()
             build_roboflow_from_coco("train", args, resolution=640)
         assert mock_transforms.call_args.kwargs["gpu_postprocess"] is False
+
+    def test_gpu_backend_no_cuda_raises_runtime_error(self, tmp_path: Path) -> None:
+        """Roboflow COCO builder fails fast when 'gpu' is requested without a CUDA device."""
+        from unittest.mock import patch
+
+        from rfdetr.datasets.coco import build_roboflow_from_coco
+
+        args = types.SimpleNamespace(dataset_dir=str(tmp_path), augmentation_backend="gpu")
+        with (
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
+            pytest.raises(RuntimeError, match="CUDA"),
+        ):
+            build_roboflow_from_coco("train", args, resolution=640)
+
+    def test_gpu_backend_no_kornia_raises_import_error(self, tmp_path: Path) -> None:
+        """Roboflow COCO builder fails fast with an install hint when 'gpu' is requested but kornia is missing."""
+        from unittest.mock import patch
+
+        from rfdetr.config import AugmentationBackend
+        from rfdetr.datasets.coco import build_roboflow_from_coco
+
+        args = types.SimpleNamespace(dataset_dir=str(tmp_path), augmentation_backend="gpu")
+        with (
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
+            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
+        ):
+            build_roboflow_from_coco("train", args, resolution=640)
 
     @pytest.mark.parametrize(
         ("square_resize_div_64", "transform_factory"),
@@ -626,12 +651,12 @@ class TestBuilderGpuPostprocess:
     @pytest.mark.parametrize(
         "segmentation_head, augmentation_backend, resolved_backend, expected_gpu_postprocess",
         [
-            pytest.param(False, "cpu", "cpu", False, id="cpu_backend_no_seg"),
-            pytest.param(True, "cpu", "cpu", False, id="cpu_backend_with_seg"),
-            pytest.param(False, "gpu", "gpu", True, id="gpu_backend_no_seg"),
-            pytest.param(True, "gpu", "gpu", True, id="gpu_backend_with_seg"),
-            pytest.param(True, "auto", "gpu", True, id="auto_resolved_gpu_with_seg"),
-            pytest.param(True, "auto", "cpu", False, id="auto_resolved_cpu_with_seg"),
+            pytest.param(False, "cpu", "torchvision", False, id="cpu_backend_no_seg"),
+            pytest.param(True, "cpu", "torchvision", False, id="cpu_backend_with_seg"),
+            pytest.param(False, "gpu", "kornia", True, id="gpu_backend_no_seg"),
+            pytest.param(True, "gpu", "kornia", True, id="gpu_backend_with_seg"),
+            pytest.param(True, "auto", "kornia", True, id="auto_resolved_gpu_with_seg"),
+            pytest.param(True, "auto", "torchvision", False, id="auto_resolved_cpu_with_seg"),
         ],
     )
     def test_gpu_postprocess_flag(
@@ -667,7 +692,7 @@ class TestBuilderGpuPostprocess:
         )
 
         with (
-            patch("rfdetr.datasets.coco._resolve_runtime_augmentation_backend", return_value=resolved_backend),
+            patch("rfdetr.datasets.coco.resolve_backend_for_build", return_value=resolved_backend),
             patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
             patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
         ):
@@ -893,3 +918,162 @@ class TestBuildKeypointCat2Label:
         result = _build_keypoint_cat2label(coco, num_keypoints_per_class=[17])
 
         assert result == {1: 0, 3: 1}
+
+
+class TestScaleJitter:
+    """``scale_jitter`` controls the resize-crop branch independently of ``aug_config``."""
+
+    @pytest.mark.parametrize(
+        "scale_jitter,expected",
+        [
+            pytest.param(True, True, id="enabled_keeps_crop"),
+            pytest.param(False, False, id="disabled_drops_crop"),
+        ],
+    )
+    def test_make_coco_transforms_forwards_scale_jitter(self, scale_jitter, expected):
+        """make_coco_transforms passes scale_jitter through to the torchvision-native resize pipeline unchanged."""
+        from unittest.mock import patch
+
+        from rfdetr.datasets.coco import make_coco_transforms
+
+        with patch("rfdetr.datasets.coco._build_train_resize_transforms") as mock_build:
+            make_coco_transforms("train", 640, scale_jitter=scale_jitter)
+
+        assert mock_build.call_args.kwargs["scale_jitter"] is expected
+
+    @pytest.mark.parametrize(
+        "scale_jitter,expected",
+        [
+            pytest.param(True, True, id="enabled_keeps_crop"),
+            pytest.param(False, False, id="disabled_drops_crop"),
+        ],
+    )
+    def test_make_coco_transforms_square_forwards_scale_jitter(self, scale_jitter, expected):
+        """make_coco_transforms_square_div_64 passes scale_jitter through to the torchvision-native resize pipeline."""
+        from unittest.mock import patch
+
+        from rfdetr.datasets.coco import make_coco_transforms_square_div_64
+
+        with patch("rfdetr.datasets.coco._build_train_resize_transforms") as mock_build:
+            make_coco_transforms_square_div_64("train", 640, scale_jitter=scale_jitter)
+
+        assert mock_build.call_args.kwargs["scale_jitter"] is expected
+
+    def test_empty_aug_config_no_longer_affects_crop_branch(self):
+        """aug_config={} disables the augmentation stack only — crop branch stays on by default."""
+        from unittest.mock import patch
+
+        from rfdetr.datasets.coco import make_coco_transforms
+
+        with patch("rfdetr.datasets.coco._build_train_resize_transforms") as mock_build:
+            make_coco_transforms("train", 640, aug_config={})
+
+        assert mock_build.call_args.kwargs["scale_jitter"] is True
+
+    @pytest.mark.parametrize(
+        "scale_jitter,expected",
+        [
+            pytest.param(True, True, id="enabled_keeps_crop"),
+            pytest.param(False, False, id="disabled_drops_crop"),
+        ],
+    )
+    def test_non_empty_aug_config_forwards_scale_jitter_to_albumentations(self, scale_jitter, expected):
+        """Non-empty aug_config routes to the Albumentations resize config with scale_jitter forwarded."""
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.coco import make_coco_transforms
+
+        with (
+            patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build,
+            patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=MagicMock()),
+        ):
+            make_coco_transforms("train", 640, aug_config={"HorizontalFlip": {"p": 0.5}}, scale_jitter=scale_jitter)
+
+        assert mock_build.call_args.kwargs["scale_jitter"] is expected
+
+
+def _make_gradient_image(width: int, height: int) -> Image.Image:
+    """Build a deterministic RGB gradient image with real pixel content for interpolation comparisons."""
+    import numpy as np
+
+    x = np.linspace(0, 255, width, dtype=np.uint8)
+    y = np.linspace(0, 255, height, dtype=np.uint8)
+    grid = np.broadcast_to(x, (height, width))
+    channel_b = np.broadcast_to(y[:, None], (height, width))
+    array = np.stack([grid, channel_b, (grid // 2 + channel_b // 2)], axis=-1).astype(np.uint8)
+    return Image.fromarray(array, mode="RGB")
+
+
+class TestPipelineParity:
+    """Torchvision and Albumentations eval pipelines produce statistically close resize+normalize output.
+
+    Both backends use different interpolation algorithms (torchvision: BILINEAR + antialias;
+    Albumentations: cv2 INTER_LINEAR, no antialias) so exact pixel parity is not expected — see the
+    backend-switch UserWarning in ``_build_torchvision_pipeline``. This test asserts statistical
+    closeness (shape/dtype match, output distribution within tolerance) instead.
+    """
+
+    def test_eval_resize_normalize_output_stats_are_close(self) -> None:
+        """_build_torchvision_pipeline and _build_albumentations_pipeline agree on shape, dtype, and pixel stats."""
+        from rfdetr.datasets.coco import _build_albumentations_pipeline, _build_torchvision_pipeline
+
+        image = _make_gradient_image(120, 90)
+        target = {
+            "boxes": torch.tensor([[10.0, 5.0, 60.0, 45.0]]),
+            "labels": torch.tensor([1]),
+            "orig_size": torch.tensor([90, 120]),
+            "size": torch.tensor([90, 120]),
+        }
+        pipeline_kwargs = {
+            "image_set": "val",
+            "resolution": 128,
+            "scales": [128],
+            "square": False,
+            "aug_config": None,
+            "gpu_postprocess": False,
+            "keypoint_flip_pairs": None,
+        }
+
+        tv_pipeline = _build_torchvision_pipeline(**pipeline_kwargs)
+        albu_pipeline = _build_albumentations_pipeline(**pipeline_kwargs)
+
+        tv_image, _ = tv_pipeline(image, dict(target))
+        albu_image, _ = albu_pipeline(image, dict(target))
+
+        assert tv_image.shape == albu_image.shape
+        assert tv_image.dtype == albu_image.dtype
+        torch.testing.assert_close(tv_image.mean(), albu_image.mean(), atol=0.05, rtol=0)
+        torch.testing.assert_close(tv_image.std(), albu_image.std(), atol=0.05, rtol=0)
+
+
+class TestCocoDetectionZeroAnnotations:
+    """CocoDetection correctly handles images with no annotations."""
+
+    def test_zero_annotation_sample_yields_empty_boxes_and_labels(self, tmp_path: Path) -> None:
+        """An image with no annotations yields boxes (0, 4) float32 and labels (0,) int64 tensors."""
+        img_dir = tmp_path / "images"
+        img_dir.mkdir()
+        Image.new("RGB", (100, 100)).save(img_dir / "img1.jpg")
+        Image.new("RGB", (100, 100)).save(img_dir / "img2.jpg")
+        ann_file = tmp_path / "annotations.json"
+        ann_file.write_text(
+            json.dumps(
+                {
+                    "images": [
+                        {"id": 1, "file_name": "img1.jpg", "width": 100, "height": 100},
+                        {"id": 2, "file_name": "img2.jpg", "width": 100, "height": 100},
+                    ],
+                    "annotations": [
+                        {"id": 1, "image_id": 1, "category_id": 1, "bbox": [10, 10, 30, 30], "area": 900, "iscrowd": 0}
+                    ],
+                    "categories": [{"id": 1, "name": "cat", "supercategory": "animal"}],
+                }
+            )
+        )
+        dataset = CocoDetection(img_dir, ann_file, transforms=None)
+        zero_ann_idx = dataset.ids.index(2)
+        _, target = dataset[zero_ann_idx]
+        assert target["boxes"].shape == torch.Size([0, 4])
+        assert target["labels"].shape == torch.Size([0])
+        assert target["boxes"].dtype == torch.float32
+        assert target["labels"].dtype == torch.int64

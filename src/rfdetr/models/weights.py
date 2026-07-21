@@ -17,14 +17,16 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Any, List
+from typing import Any, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
+from torch import Tensor
 
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
-from rfdetr.config import ModelConfig, TrainConfig
-from rfdetr.utilities.decorators import deprecated
+from rfdetr.config import ModelConfig
+from rfdetr.models.backbone.backbone import Backbone
+from rfdetr.models.lwdetr import LWDETR
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.state_dict import _ckpt_args_get, remap_projector_to_cross_attn, validate_checkpoint_compatibility
 
@@ -40,12 +42,12 @@ _QUERY_PARAM_SUFFIXES: tuple[str, ...] = ("refpoint_embed.weight", "query_feat.w
 
 
 def _slice_query_param_per_group(
-    tensor: torch.Tensor,
+    tensor: Tensor,
     ckpt_num_queries: int,
     ckpt_group_detr: int,
     target_num_queries: int,
     target_group_detr: int,
-) -> torch.Tensor:
+) -> Tensor:
     """Slice a ``refpoint_embed`` / ``query_feat`` weight preserving per-group structure.
 
     ``LWDETR`` packs query embeddings as ``nn.Embedding(num_queries * group_detr, ...)`` where group ``g`` occupies the
@@ -136,6 +138,10 @@ def _filter_intentional_keys(keys: list[str]) -> list[str]:
         *_QUERY_PARAM_SUFFIXES,
         "enc_out_class_embed.",
         "enc_out_bbox_embed.",
+        # The preview keypoint checkpoint still stores the old standalone
+        # MLP projection head, but the current GroupPose inference path no
+        # longer consumes it.
+        "keypoint_head.keypoint_proj.",
     )
 
     def _is_intentional(key: str) -> bool:
@@ -197,7 +203,7 @@ def _warn_on_partial_load(incompatible: Any, pretrain_weights_path: str) -> None
 
 
 def interpolate_position_embeddings(
-    checkpoint_state: dict,
+    checkpoint_state: dict[str, Any],
     pe_size: int,
 ) -> None:
     """Interpolate DINOv2 positional embeddings in *checkpoint_state* to match *pe_size*.
@@ -255,12 +261,10 @@ def interpolate_position_embeddings(
         )
 
 
-@deprecated(target=True, args_mapping={"train_config": None}, deprecated_in="1.7.0", remove_in="1.9.0", num_warns=-1)
 def load_pretrain_weights(
-    nn_model: torch.nn.Module,
+    nn_model: LWDETR,
     model_config: ModelConfig,
-    train_config: TrainConfig | None = None,
-) -> List[str]:
+) -> list[str]:
     """Load pretrained checkpoint weights into *nn_model* in-place.
 
     Canonical implementation shared by the L1 facade (``_build_model_context`` in ``rfdetr.detr``) and the L2
@@ -283,9 +287,6 @@ def load_pretrain_weights(
         nn_model: The model whose weights will be updated in-place.
         model_config: Pydantic ``ModelConfig`` instance. Must have
             ``pretrain_weights``, ``num_classes``, ``num_queries``, and ``group_detr`` attributes.
-        train_config: Deprecated since v1.7.0 — no longer used internally.
-            Passing a non-``None`` value emits a ``DeprecationWarning``.
-            Omit the argument; it will be removed in v1.9.0.
 
     Returns:
         List of class name strings from the checkpoint, or an empty list if none are present or if
@@ -295,27 +296,31 @@ def load_pretrain_weights(
         Exception: If the checkpoint file cannot be loaded even after a re-download.
     """
     mc = model_config
-    pretrain_weights = mc.pretrain_weights
-    if pretrain_weights is None:
+    if mc.pretrain_weights is None:
         return []
-    class_names: List[str] = []
+    # `expand_path`/`_coerce_resume_path` pydantic validators on ModelConfig already normalize
+    # this field to a `str` at runtime; the `str()` here just satisfies the static `PathLikeStr` type.
+    pretrain_weights = str(mc.pretrain_weights)
+    class_names: list[str] = []
+
+    from rfdetr.utilities.io import _safe_torch_load
 
     # Download first (no-op if already present and hash is valid).
     download_pretrain_weights(pretrain_weights)
     # If the first download attempt didn't produce the file (e.g. stale MD5
-    # caused an earlier ValueError that was silently swallowed), retry with
-    # MD5 validation disabled so a stale registry hash can't block training.
+    # caused an earlier ValueError that was silently swallowed), retry once.
+    # MD5 validation is kept on the retry — if it fails again the error is real.
     if not os.path.isfile(pretrain_weights):
-        logger.warning("Pretrain weights not found after initial download; retrying without MD5 validation.")
-        download_pretrain_weights(pretrain_weights, redownload=True, validate_md5=False)
+        logger.warning("Pretrain weights not found after initial download; retrying.")
+        download_pretrain_weights(pretrain_weights, redownload=True)
     validate_pretrain_weights(pretrain_weights, strict=False)
 
     try:
-        checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
+        checkpoint = _safe_torch_load(pretrain_weights)
     except Exception:
         logger.info("Failed to load pretrain weights, re-downloading")
-        download_pretrain_weights(pretrain_weights, redownload=True, validate_md5=False)
-        checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
+        download_pretrain_weights(pretrain_weights, redownload=True)
+        checkpoint = _safe_torch_load(pretrain_weights)
 
     # Normalize PyTorch Lightning native .ckpt format to the expected {"model": {...}}
     # structure.  PTL stores model weights in "state_dict" with keys prefixed by
@@ -481,7 +486,7 @@ def load_pretrain_weights(
         and hasattr(mc, "num_keypoints_per_class")
     ):
         _early_kp_mask = checkpoint["model"].get("_kp_active_mask")
-        if isinstance(_early_kp_mask, torch.Tensor) and _early_kp_mask.ndim == 2:
+        if isinstance(_early_kp_mask, Tensor) and _early_kp_mask.ndim == 2:
             _ckpt_kp_schema = [int(n) for n in _early_kp_mask.sum(dim=1).tolist()]
             _cfg_kp_schema = list(getattr(mc, "num_keypoints_per_class", []) or [])
             if not any(n > 0 for n in _ckpt_kp_schema):
@@ -498,7 +503,7 @@ def load_pretrain_weights(
                     _ckpt_kp_schema,
                 )
                 mc.num_keypoints_per_class = _ckpt_kp_schema
-        elif isinstance(_early_kp_mask, torch.Tensor):
+        elif isinstance(_early_kp_mask, Tensor):
             logger.warning(
                 "load_pretrain_weights: _kp_active_mask has unexpected shape %s (expected 2-D) "
                 "— skipping auto-align; schema mismatch may cause AP≈0 on keypoint models.",
@@ -534,8 +539,8 @@ def load_pretrain_weights(
     model_state_dict = nn_model.state_dict() if hasattr(nn_model, "state_dict") else {}
     model_kp_active_mask = model_state_dict.get("_kp_active_mask") if isinstance(model_state_dict, dict) else None
     if (
-        isinstance(ckpt_kp_active_mask, torch.Tensor)
-        and isinstance(model_kp_active_mask, torch.Tensor)
+        isinstance(ckpt_kp_active_mask, Tensor)
+        and isinstance(model_kp_active_mask, Tensor)
         and ckpt_kp_active_mask.shape != model_kp_active_mask.shape
         and not should_restore_config_keypoint_schema
     ):
@@ -570,7 +575,7 @@ def load_pretrain_weights(
     return class_names
 
 
-def apply_lora(nn_model: torch.nn.Module) -> None:
+def apply_lora(nn_model: LWDETR) -> None:
     """Apply LoRA adapters to the backbone encoder of *nn_model*.
 
     Replaces ``nn_model.backbone[0].encoder`` in-place with a PEFT-wrapped encoder using DoRA with rank 16 and alpha 16.
@@ -611,4 +616,8 @@ def apply_lora(nn_model: torch.nn.Module) -> None:
             "register_tokens",
         ],
     )
-    nn_model.backbone[0].encoder = get_peft_model(nn_model.backbone[0].encoder, lora_config)
+    backbone = cast(Backbone, nn_model.backbone[0])
+    # peft.get_peft_model() type-hints its first argument as PreTrainedModel, but only actually
+    # needs an nn.Module whose named submodules match target_modules; DinoV2 (a plain nn.Module
+    # wrapper, not itself a PreTrainedModel) satisfies that at runtime.
+    backbone.encoder = get_peft_model(backbone.encoder, lora_config)  # type: ignore[arg-type,assignment]

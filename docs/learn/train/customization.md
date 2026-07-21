@@ -62,12 +62,73 @@ module = RFDETRModelModule(model_config, train_config)
 | `validation_step`          | Runs forward pass and postprocessing; returns `{results, targets}` for `COCOEvalCallback`.                                                                                                                                      |
 | `test_step`                | Same as `validation_step`, logs under `test/`.                                                                                                                                                                                  |
 | `predict_step`             | Runs inference-only forward pass and returns postprocessed detections.                                                                                                                                                          |
-| `configure_optimizers`     | Builds AdamW with layer-wise LR decay and a LambdaLR scheduler (cosine or step).                                                                                                                                                |
+| `configure_optimizers`     | Builds the configured optimizer, preserves layer-wise LR decay, applies optional parameter-group kwargs, and attaches the configured LR scheduler (managed preset, import path, or callable).                                   |
 | `on_load_checkpoint`       | Auto-converts legacy `.pth` checkpoints to PTL format.                                                                                                                                                                          |
 
 ### Accessing the underlying model
 
 The raw `nn.Module` is `module.model`. After training completes, `RFDETR.train()` syncs it back onto `self.model.model` so `predict()` and `export()` continue to work.
+
+### Custom optimizer
+
+`TrainConfig.optimizer` accepts either a **name / import path** (a string) or a **callable** (a class or `functools.partial`), and selects the optimizer built in `configure_optimizers`.
+
+- **Managed short name** — a bare `torch.optim` optimizer name such as the default `"adamw"`, `"sgd"`, or `"adam"` (case-insensitive). **Only native `torch.optim` optimizers may be chosen by short name.** RF-DETR manages construction here: it injects `lr`, a signature-aware `weight_decay`, and your `optimizer_kwargs`.
+- **Explicit import path** — a dotted string such as `"torch.optim.AdamW"` or `"pytorch_optimizer.Lion"`. This is how you select any non-`torch.optim` optimizer, e.g. one from [`pytorch-optimizer`](https://kozistr.tech/pytorch_optimizer/) (a third-party library you install yourself — RF-DETR does not depend on it). The class is constructed from the RF-DETR parameter groups (which already carry per-group learning rates) plus your `optimizer_kwargs` only; RF-DETR injects no `lr` or `weight_decay`, so pass any you need in `optimizer_kwargs`.
+- **Callable** — a class or `functools.partial` is called as `optimizer(param_groups)` and nothing else, so bake all hyperparameters into the callable. `optimizer_kwargs` is ignored (with a warning) in this mode. A reconstructable callable (an importable top-level class / `functools.partial` with JSON-serializable keyword arguments) is desugared to its dotted import path plus keyword arguments so the config round-trips through `training_config.json`; a lambda, locally-defined class, or non-serializable argument still trains but cannot be restored from a saved config (RF-DETR warns with a specific hint).
+
+```python
+import functools
+
+# managed native torch.optim short name — RF-DETR injects lr + weight_decay
+train_config = TrainConfig(..., optimizer="adamw")
+
+# explicit import path (incl. pytorch-optimizer) — supply hyperparameters via optimizer_kwargs
+train_config = TrainConfig(..., optimizer="pytorch_optimizer.Lion", optimizer_kwargs={"weight_decouple": True})
+
+# callable / functools.partial — bake arguments in; optimizer_kwargs is ignored
+train_config = TrainConfig(..., optimizer=functools.partial(torch.optim.AdamW, weight_decay=1e-4))
+```
+
+See [Training parameters — optimizer](training-parameters.md) for the full parameter reference and examples.
+
+`fused_optimizer` only affects the built-in `optimizer="adamw"` path; it is ignored for custom optimizers. On a BF16/CUDA run where fused AdamW would otherwise apply, RF-DETR logs a warning if `fused_optimizer=True` is combined with a non-default optimizer.
+
+!!! warning "Wrapper optimizers (SAM, Lookahead, …) need extra care"
+
+    Non-`torch.optim` optimizers are selected by import path (e.g. `"pytorch_optimizer.Lion"`) or a callable. Most `pytorch-optimizer` optimizers are drop-in replacements and work directly — including `Lion`, `AdaBelief`, `SophiaH`, `Adan`, `Ranger`, and `Ranger21`, which take `params` first like any standard optimizer. Two groups need extra care:
+
+    - **Base-optimizer wrappers — `SAM` / `BSAM` / `GSAM` / `WSAM`.** They require a `base_optimizer` as a second positional argument, so `optimizer="pytorch_optimizer.SAM"` raises a `TypeError` at training start (RF-DETR calls the class with the parameter groups only). They also change `optimizer.step()` semantics (SAM needs two forward/backward passes per step) and are incompatible with PyTorch Lightning's default `automatic_optimization=True`. Supply the `base_optimizer` via a `functools.partial`, but such an optimizer will not round-trip through a saved config.
+    - **`Lookahead` / `PCGrad` / `GradientCentralization`.** These wrap or post-process another optimizer and likewise cannot be built from parameter groups alone; construction with the parameter groups only raises a `TypeError`.
+
+    If you need SAM or Lookahead, override `configure_optimizers` and set `self.automatic_optimization = False` in `RFDETRModelModule.__init__`. For standard use, pick a `torch.optim` optimizer by name or a drop-in `pytorch-optimizer` optimizer by import path (e.g. `"pytorch_optimizer.Lion"`).
+
+### Custom LR scheduler
+
+`TrainConfig.lr_scheduler` accepts either a **preset name / import path** (a string) or a **callable** (a class or `functools.partial`), mirroring `optimizer`, and selects the scheduler built in `configure_optimizers`.
+
+- **Managed preset** — the built-in `"step"` (10x drop after `lr_drop` epochs) or `"cosine"` (annealing to `min_factor`). These own linear warmup and full-run step sizing; pass `lr_drop` / `min_factor` via `lr_scheduler_kwargs`.
+- **Explicit import path** — a dotted string such as `"torch.optim.lr_scheduler.OneCycleLR"`. The class is constructed as `scheduler(optimizer, **lr_scheduler_kwargs)`; RF-DETR injects no `total_steps` / `T_max`, so pass any the scheduler needs in `lr_scheduler_kwargs`.
+- **Callable** — a class or `functools.partial` is called as `lr_scheduler(optimizer)` and nothing else, so bake all hyperparameters into the callable. `lr_scheduler_kwargs` is ignored (with a warning) in this mode. Reconstructable callables desugar to a dotted path plus kwargs so the config round-trips through `training_config.json`; a lambda or locally-defined class still trains but cannot be restored from a saved config.
+
+```python
+import functools, torch
+
+# managed preset — warmup + full-run sizing handled by RF-DETR
+train_config = TrainConfig(..., lr_scheduler="cosine", lr_scheduler_kwargs={"min_factor": 0.1})
+
+# explicit import path — supply scheduler arguments via lr_scheduler_kwargs
+train_config = TrainConfig(
+    ..., lr_scheduler="torch.optim.lr_scheduler.StepLR", lr_scheduler_kwargs={"step_size": 30, "gamma": 0.1}
+)
+
+# callable / functools.partial — bake arguments in; lr_scheduler_kwargs is ignored
+train_config = TrainConfig(..., lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, step_size=30))
+```
+
+With `warmup_epochs > 0`, an explicit scheduler is automatically prepended with a linear warmup ramp via `SequentialLR` (managed presets bake warmup into their own schedule). `ReduceLROnPlateau` is special: it cannot be warmup-wrapped, always steps once per epoch, and reads the metric named by `lr_scheduler_monitor` (default `"val/loss"`). Use `lr_scheduler_interval="epoch"` to step other explicit schedulers per epoch instead of per optimizer step.
+
+See [Training parameters — scheduler](training-parameters.md#scheduler-and-regularization) for the full parameter reference.
 
 ---
 
@@ -114,18 +175,18 @@ trainer = build_trainer(train_config, model_config)
 
 ### What build_trainer configures
 
-| Concern               | Source                                                                                                                                                                     |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Max epochs            | `train_config.epochs`                                                                                                                                                      |
-| Gradient accumulation | Detection/segmentation: `train_config.grad_accum_steps` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `1`). |
-| Gradient clipping     | Detection/segmentation: `train_config.clip_max_norm` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `None`). |
-| Mixed precision       | `model_config.amp` enables AMP; dtype resolved from `train_config.amp_dtype` (`"auto"` selects `bf16-mixed` on Ampere+, `"bf16"` / `"fp16"` force a specific dtype)        |
-| Accelerator           | `train_config.accelerator` (default `"auto"`)                                                                                                                              |
-| Strategy              | Pass `strategy=` as a `**trainer_kwarg` to `build_trainer`. `TrainConfig` has no `strategy` field — setting it on `TrainConfig` will raise a `ValueError`.                 |
-| Sync batch norm       | `train_config.sync_bn`                                                                                                                                                     |
-| Progress bar          | `train_config.progress_bar`                                                                                                                                                |
-| Loggers               | CSVLogger always; TensorBoard, WandB, MLflow when their `train_config` flags are `True`                                                                                    |
-| Callbacks             | `RFDETREMACallback`, `DropPathCallback`, `COCOEvalCallback`, `BestModelCallback`, `RFDETREarlyStopping` (conditional)                                                      |
+| Concern               | Source                                                                                                                                                                                                                                                         |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Max epochs            | `train_config.epochs`                                                                                                                                                                                                                                          |
+| Gradient accumulation | Detection/segmentation: `train_config.grad_accum_steps` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `1`).                                                                                     |
+| Gradient clipping     | Detection/segmentation: `train_config.clip_max_norm` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `None`).                                                                                     |
+| Mixed precision       | `model_config.amp` enables AMP; dtype resolved from `train_config.amp_dtype` (`"auto"` selects `bf16-mixed` on Ampere+, `"bf16"` / `"fp16"` force a specific dtype)                                                                                            |
+| Accelerator           | `train_config.accelerator` (default `"auto"`)                                                                                                                                                                                                                  |
+| Strategy              | Set via `train_config.strategy` (default `"auto"`) or pass `strategy=` as a `**trainer_kwarg` to `build_trainer`. Common values: `"auto"`, `"ddp"`, `"ddp_spawn"`. `TrainConfig` also exposes `devices` and `num_nodes` for multi-GPU and multi-node training. |
+| Sync batch norm       | `train_config.sync_bn`                                                                                                                                                                                                                                         |
+| Progress bar          | `train_config.progress_bar`                                                                                                                                                                                                                                    |
+| Loggers               | CSVLogger always; TensorBoard, WandB, MLflow when their `train_config` flags are `True`                                                                                                                                                                        |
+| Callbacks             | `RFDETREMACallback`, `DropPathCallback`, `COCOEvalCallback`, `BestModelCallback`, `RFDETREarlyStopping` (conditional)                                                                                                                                          |
 
 ### Overriding PTL Trainer kwargs
 

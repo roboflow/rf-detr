@@ -88,7 +88,7 @@ class ModelWeightsBase(Enum):
         'https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth'
     """
 
-    def __new__(cls, asset: ModelWeightAsset) -> "ModelWeightsBase":
+    def __new__(cls, asset: ModelWeightAsset) -> ModelWeightsBase:
         obj = object.__new__(cls)
         obj._value_ = asset
         return obj

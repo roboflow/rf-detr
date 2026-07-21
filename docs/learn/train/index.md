@@ -30,6 +30,16 @@ Both paths run the same underlying PyTorch Lightning stack. `RFDETR.train()` con
 
 ## Quick Start
 
+!!! info "Training requires the `train` extra"
+
+    Training dependencies are not included in the base install. Install them with:
+
+    ```bash
+    pip install "rfdetr[train]"
+    ```
+
+    For experiment tracking, also add `pip install "rfdetr[train,loggers]"`.
+
 RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The format is automatically detected based on the structure of your dataset directory.
 
 === "Object Detection"
@@ -85,7 +95,7 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
 
 Different GPUs have different VRAM capacities, so adjust batch_size and grad_accum_steps to maintain a total batch size of 16. For example, on a powerful GPU like the A100, use `batch_size=16` and `grad_accum_steps=1`; on smaller GPUs like the T4, use `batch_size=4` and `grad_accum_steps=4`. This gradient accumulation strategy helps train effectively even with limited memory.
 
-For object detection, the RF-DETR-B checkpoint is used by default. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
+Each model class downloads its COCO-pretrained checkpoint automatically when instantiated. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
 
 ## Keypoint preview custom datasets
 
@@ -157,7 +167,7 @@ RF-DETR provides many configuration options to customize your training run. See 
 - [Resume training](advanced.md#resume-training) from a checkpoint
 - [Early stopping](advanced.md#early-stopping) to prevent overfitting
 - [Multi-GPU training](advanced.md#multi-gpu-training) with PyTorch Lightning DDP
-- [Custom augmentations with Albumentations](augmentations.md) - Dedicated guide
+- [Default and custom augmentations](augmentations.md) - Torchvision defaults plus optional Albumentations (CPU) or Kornia (GPU) configs
 - [Memory optimization](advanced.md#memory-optimization) with gradient checkpointing
 
 → **[Learn more about advanced training](advanced.md)**
@@ -228,6 +238,33 @@ schema so `RFDETR.from_checkpoint()` can reconstruct the same label/keypoint slo
 
     detections = model.predict("<IMAGE_PATH>")
     ```
+
+## Evaluate a Fine-Tuned Model
+
+`model.evaluate()` runs a single evaluation pass over a dataset split and returns (and prints) the COCO metrics — mAP,
+mAR, and the macro-F1 sweep. It works both right after `model.train()` and on a model loaded from a checkpoint; the
+weights already in memory are evaluated, so no checkpoint file is re-loaded.
+
+```python
+from rfdetr import RFDETRMedium
+
+model = RFDETRMedium(pretrain_weights="<CHECKPOINT_PATH>")
+
+metrics = model.evaluate(dataset_dir="<DATASET_PATH>", split="test")
+print(metrics["test/mAP_50_95"])
+```
+
+- `split="test"` evaluates the `test/` folder on Roboflow-exported datasets (`dataset_file="roboflow"`, the default).
+    For other dataset formats (COCO, YOLO, Objects365) there is no dedicated test split, so `split="test"` silently
+    evaluates the `valid/` folder instead — the returned metric keys are still prefixed `test/*`, so double-check
+    `dataset_file` before treating `test/mAP_50_95` as held-out-test performance on a non-Roboflow dataset.
+    `split="val"` always evaluates `valid/` directly.
+- The detection head is never adapted to the dataset — the model is evaluated exactly as configured. If the dataset's
+    class count differs from the model's `num_classes`, a warning is emitted and evaluation proceeds unchanged.
+- Evaluation writes no checkpoints or logs to `output_dir`.
+- `evaluate()` accepts the same keyword arguments as `train()` for convenience, but training-only fields (`epochs`,
+    `lr`, `ema`, `early_stopping`, logger flags, etc.) have no effect — evaluation runs through an eval-only trainer
+    that never builds those callbacks.
 
 ## Next Steps
 

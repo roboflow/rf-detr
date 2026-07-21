@@ -9,37 +9,44 @@ from typing import Any, Generator
 
 import pytest
 
+# NOTE: Model weights (rf-detr-*.pth) download to the CWD (typically tests/ when running pytest).
+# This is a known limitation. Route: change pretrain_weights default to
+# platformdirs.user_cache_dir("rfdetr") in a future PR.
 from rfdetr.datasets.synthetic import DatasetSplitRatios, generate_coco_dataset
 from rfdetr.utilities.reproducibility import seed_all
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _prewarm_dinov2_cache() -> None:
+    """Download DINOv2 backbone weights once per test session.
+
+    HuggingFace hub uses file-level locking internally, so concurrent xdist
+    workers block on each other rather than issuing duplicate network requests.
+    After the first worker finishes, all others read from the local disk cache.
+
+    Examples:
+        This fixture is autouse — no explicit reference needed in tests.
+    """
+    import os
+
+    if os.environ.get("RFDETR_SKIP_DINOV2_PREWARM") == "1":
+        return
+
+    from huggingface_hub import snapshot_download
+
+    try:
+        snapshot_download(
+            "facebook/dinov2-with-registers-base",
+            ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"],
+        )
+    except Exception as exc:
+        pytest.skip(f"Skipping DINOv2 cache prewarm (snapshot_download failed): {exc}")
 
 
 @pytest.fixture(autouse=True)
 def reset_random_seeds() -> None:
     """Reset all RNG sources before every test for reproducibility."""
     seed_all()
-
-
-@pytest.fixture
-def reset_build_namespace_warning_state() -> Generator[None, Any, None]:
-    """Reset ``build_namespace`` deprecation call counters before each test.
-
-    ``@deprecated(..., num_warns=1)`` emits only once per process by default. This fixture makes warning assertions
-    deterministic regardless of test order.
-    """
-    from rfdetr._namespace import build_namespace
-
-    state = build_namespace._state
-    snapshot = (state.called, state.warned_calls, dict(state.warned_args))
-
-    state.called = 0
-    state.warned_calls = 0
-    state.warned_args = {}
-    try:
-        yield
-    finally:
-        state.called = snapshot[0]
-        state.warned_calls = snapshot[1]
-        state.warned_args = snapshot[2]
 
 
 @pytest.fixture(scope="session")

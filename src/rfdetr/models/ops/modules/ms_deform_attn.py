@@ -13,35 +13,36 @@
 # ------------------------------------------------------------------------------------------------
 """Multi-Scale Deformable Attention Module."""
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
 import math
 import warnings
+from typing import cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from torch import nn
+from torch import Tensor, nn
 from torch.nn.init import constant_, xavier_uniform_
 
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 
 
-def _is_power_of_2(n):
+def _is_power_of_2(n: int) -> bool:
     if (not isinstance(n, int)) or (n < 0):
-        raise ValueError("invalid input for _is_power_of_2: {} (type: {})".format(n, type(n)))
+        raise ValueError(f"invalid input for _is_power_of_2: {n} (type: {type(n)})")
     return (n & (n - 1) == 0) and n != 0
 
 
 class MSDeformAttn(nn.Module):
     """Multi-Scale Deformable Attention Module."""
 
-    def __init__(self, d_model=256, n_levels=4, n_heads=8, n_points=4):
+    def __init__(self, d_model: int = 256, n_levels: int = 4, n_heads: int = 8, n_points: int = 4) -> None:
         """Multi-Scale Deformable Attention Module :param d_model      hidden dimension :param n_levels     number of
         feature levels :param n_heads      number of attention heads :param n_points     number of sampling points per
         attention head per feature level."""
         super().__init__()
         if d_model % n_heads != 0:
-            raise ValueError("d_model must be divisible by n_heads, but got {} and {}".format(d_model, n_heads))
+            raise ValueError(f"d_model must be divisible by n_heads, but got {d_model} and {n_heads}")
         _d_per_head = d_model // n_heads
         # you'd better set _d_per_head to a power of 2 which is more efficient in our CUDA implementation
         if not _is_power_of_2(_d_per_head):
@@ -86,7 +87,7 @@ class MSDeformAttn(nn.Module):
         """
         self._export = True
 
-    def _reset_parameters(self):
+    def _reset_parameters(self) -> None:
         constant_(self.sampling_offsets.weight.data, 0.0)
         thetas = torch.arange(self.n_heads, dtype=torch.float32) * (2.0 * math.pi / self.n_heads)
         grid_init = torch.stack([thetas.cos(), thetas.sin()], -1)
@@ -108,14 +109,14 @@ class MSDeformAttn(nn.Module):
 
     def forward(
         self,
-        query,
-        reference_points,
-        input_flatten,
-        input_spatial_shapes,
-        input_level_start_index,
-        input_padding_mask=None,
+        query: Tensor,
+        reference_points: Tensor,
+        input_flatten: Tensor,
+        input_spatial_shapes: Tensor,
+        input_level_start_index: Tensor,
+        input_padding_mask: Tensor | None = None,
         input_spatial_shapes_hw: list[tuple[int, int]] | None = None,
-    ):
+    ) -> Tensor:
         """Forward pass of MSDeformAttn.
 
         Args:
@@ -149,7 +150,7 @@ class MSDeformAttn(nn.Module):
             expected_len_in = (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()
         error_msg = "input_spatial_shapes must match the flattened input length"
         if self._export:
-            torch._assert(expected_len_in == len_input, error_msg)
+            torch._assert(expected_len_in == len_input, error_msg)  # type: ignore[no-untyped-call]
         else:
             assert expected_len_in == len_input, error_msg
 
@@ -222,5 +223,4 @@ class MSDeformAttn(nn.Module):
             attention_weights,
             value_spatial_shapes_hw=input_spatial_shapes_hw,
         )
-        output = self.output_proj(output)
-        return output
+        return cast(Tensor, self.output_proj(output))

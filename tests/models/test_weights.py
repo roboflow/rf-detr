@@ -61,7 +61,7 @@ def _make_train_config(tmp_path=None) -> TrainConfig:
         lr_encoder=1.5e-4,
         batch_size=2,
         weight_decay=1e-4,
-        lr_drop=8,
+        lr_scheduler_kwargs={"lr_drop": 8},
         warmup_epochs=1.0,
         drop_path=0.0,
         multi_scale=False,
@@ -1051,6 +1051,37 @@ class TestPartialLoadDetector:
         _warn_on_partial_load(result, "/fake/weights.pth")
         assert len(captured) == 1
         assert "not consumed by model" in captured[0]
+
+    def test_removed_keypoint_projection_keys_do_not_warn(self, captured):
+        """Legacy keypoint projection tensors are intentionally ignored during partial-load checks."""
+        result = SimpleNamespace(
+            missing_keys=[],
+            unexpected_keys=[
+                "keypoint_head.keypoint_proj.0.weight",
+                "keypoint_head.keypoint_proj.0.bias",
+                "keypoint_head.keypoint_proj.2.weight",
+                "keypoint_head.keypoint_proj.2.bias",
+            ],
+        )
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert captured == []
+
+    def test_removed_keypoint_projection_keys_do_not_mask_other_unexpected_keys(self, captured):
+        """Only the removed keypoint projection tensors are filtered from the partial-load warning."""
+        result = SimpleNamespace(
+            missing_keys=[],
+            unexpected_keys=[
+                "keypoint_head.keypoint_proj.0.weight",
+                "keypoint_head.keypoint_proj.0.bias",
+                "keypoint_head.keypoint_proj.2.weight",
+                "keypoint_head.keypoint_proj.2.bias",
+                "backbone.0.encoder.legacy_module.weight",
+            ],
+        )
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "legacy_module" in captured[0]
+        assert "keypoint_proj" not in captured[0]
 
     def test_handles_non_iterable_input_gracefully(self, captured):
         """A MagicMock-style result (used in many existing tests) must not raise."""

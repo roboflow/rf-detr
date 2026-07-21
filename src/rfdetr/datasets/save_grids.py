@@ -16,8 +16,8 @@ from supervision import BoxAnnotator, Color, Detections, LabelAnnotator
 from torch import Tensor
 from torch.utils.data import DataLoader
 
-from rfdetr.util.box_ops import box_cxcywh_to_xyxy
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
+from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 

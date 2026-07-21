@@ -13,9 +13,10 @@ if _IS_RFDETR_PLUS_AVAILABLE:
     try:
         from rfdetr_plus.models import downloads as _downloads
 
-        PLATFORM_MODELS = _downloads._PLATFORM_MODELS
-    except AttributeError:
-        PLATFORM_MODELS = _downloads.PLATFORM_MODELS
+        if hasattr(_downloads, "_PLATFORM_MODELS"):
+            PLATFORM_MODELS = _downloads._PLATFORM_MODELS
+        else:
+            PLATFORM_MODELS = _downloads.PLATFORM_MODELS
     except ModuleNotFoundError as ex:
         missing_name = getattr(ex, "name", "")
         if missing_name in {"rfdetr_plus", "rfdetr_plus.models", "rfdetr_plus.models.downloads"}:

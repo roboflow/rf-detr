@@ -7,8 +7,8 @@
 
 import json
 import math
+from collections.abc import Callable
 from copy import deepcopy
-from typing import Callable, Dict, Optional, Union
 
 import torch
 
@@ -21,9 +21,9 @@ class ModelEma(torch.nn.Module):
         model: torch.nn.Module,
         decay: float = 0.9997,
         tau: float = 0,
-        device: Optional[torch.device] = None,
+        device: torch.device | None = None,
     ) -> None:
-        super(ModelEma, self).__init__()
+        super().__init__()
         # make a copy of the model for accumulating moving average of weights
         self.module = deepcopy(model)
         self.module.eval()
@@ -87,12 +87,12 @@ class BestMetricSingle:
         return False
 
     def __str__(self) -> str:
-        return "best_res: {}\t best_ep: {}".format(self.best_res, self.best_ep)
+        return f"best_res: {self.best_res}\t best_ep: {self.best_ep}"
 
     def __repr__(self) -> str:
         return self.__str__()
 
-    def summary(self) -> Dict[str, Union[float, int]]:
+    def summary(self) -> dict[str, float | int]:
         return {
             "best_res": self.best_res,
             "best_ep": self.best_ep,
@@ -111,15 +111,14 @@ class BestMetricHolder:
         """Return if the results is the best."""
         if not self.use_ema:
             return self.best_all.update(new_res, epoch)
+        elif is_ema:
+            self.best_ema.update(new_res, epoch)
+            return self.best_all.update(new_res, epoch)
         else:
-            if is_ema:
-                self.best_ema.update(new_res, epoch)
-                return self.best_all.update(new_res, epoch)
-            else:
-                self.best_regular.update(new_res, epoch)
-                return self.best_all.update(new_res, epoch)
+            self.best_regular.update(new_res, epoch)
+            return self.best_all.update(new_res, epoch)
 
-    def summary(self) -> Dict[str, Union[float, int]]:
+    def summary(self) -> dict[str, float | int]:
         if not self.use_ema:
             return self.best_all.summary()
 

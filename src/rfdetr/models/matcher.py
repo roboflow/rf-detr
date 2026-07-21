@@ -19,11 +19,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any, cast
+
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
-from scipy.optimize import linear_sum_assignment
-from torch import nn
+from numpy.typing import NDArray
+from scipy.optimize import linear_sum_assignment as _linear_sum_assignment  # type: ignore[import-untyped,unused-ignore]
+from torch import Tensor, nn
 
 from rfdetr.models.heads.keypoints import compute_keypoint_matching_cost
 from rfdetr.models.heads.segmentation import point_sample
@@ -33,6 +37,8 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 _SANITIZED_COST_MARGIN = 1.0
 _FOCAL_LOSS_GAMMA = 2.0
+_LinearSumAssignment = Callable[[Any], tuple[NDArray[np.int64], NDArray[np.int64]]]
+linear_sum_assignment = cast(_LinearSumAssignment, _linear_sum_assignment)
 
 
 class HungarianMatcher(nn.Module):
@@ -94,7 +100,7 @@ class HungarianMatcher(nn.Module):
         self._warned_non_finite_costs = False
 
     @staticmethod
-    def _sanitize_cost_matrix(cost_matrix: torch.Tensor) -> torch.Tensor:
+    def _sanitize_cost_matrix(cost_matrix: Tensor) -> Tensor:
         """Replace non-finite cost entries with a large finite sentinel.
 
         >>> HungarianMatcher._sanitize_cost_matrix(
@@ -136,10 +142,10 @@ class HungarianMatcher(nn.Module):
     @torch.no_grad()
     def forward(
         self,
-        outputs: dict,
-        targets: list,
+        outputs: dict[str, Any],
+        targets: list[dict[str, Any]],
         group_detr: int = 1,
-    ) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    ) -> list[tuple[Tensor, Tensor]]:
         """Performs the matching
 
         Args:
@@ -157,8 +163,9 @@ class HungarianMatcher(nn.Module):
             A list of size batch_size, containing tuples of (index_i, index_j) where:
                 - index_i is the indices of the selected predictions (in order)
                 - index_j is the indices of the corresponding selected targets (in order)
-            For each batch element, it holds:
-                len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
+            For each batch element, it holds len(index_i) == len(index_j). With group_detr == 1 this
+            length is min(num_queries, num_target_boxes); with group_detr > 1 the per-group matches are
+            concatenated, so the length is that quantity summed over the groups.
         """
         bs, num_queries = outputs["pred_logits"].shape[:2]
 
@@ -198,7 +205,7 @@ class HungarianMatcher(nn.Module):
         if masks_present:
             tgt_masks = torch.cat([v["masks"] for v in targets])
 
-            if isinstance(outputs["pred_masks"], torch.Tensor):
+            if isinstance(outputs["pred_masks"], Tensor):
                 out_masks = outputs["pred_masks"].flatten(0, 1)
 
                 num_points = out_masks.shape[-2] * out_masks.shape[-1] // self.mask_point_sample_ratio
@@ -280,6 +287,8 @@ class HungarianMatcher(nn.Module):
 
         sizes = [len(v["boxes"]) for v in targets]
         indices = []
+        if num_queries % group_detr != 0:
+            raise ValueError(f"num_queries ({num_queries}) must be divisible by group_detr ({group_detr})")
         g_num_queries = num_queries // group_detr
         cost_matrix_list = cost_matrix.split(g_num_queries, dim=1)
         for g_i in range(group_detr):
@@ -298,7 +307,7 @@ class HungarianMatcher(nn.Module):
         return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
 
 
-def build_matcher(args) -> HungarianMatcher:
+def build_matcher(args: Any) -> HungarianMatcher:
     """Build a HungarianMatcher from a training argument namespace.
 
     Args:

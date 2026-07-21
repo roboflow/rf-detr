@@ -100,14 +100,14 @@ def test_list_models():
     assert all(isinstance(m, str) for m in models)
 
 
-@pytest.mark.parametrize("asset", list(ModelWeights), ids=[a.filename for a in ModelWeights])
+@pytest.mark.parametrize("asset", [pytest.param(a, id=a.filename) for a in ModelWeights])
 def test_all_assets_have_valid_urls(asset: ModelWeightAsset) -> None:
     """Test that all assets have valid URLs."""
     assert asset.url.startswith("http")
     assert len(asset.url) > 20  # Reasonable minimum URL length
 
 
-@pytest.mark.parametrize("asset", list(ModelWeights), ids=[a.filename for a in ModelWeights])
+@pytest.mark.parametrize("asset", [pytest.param(a, id=a.filename) for a in ModelWeights])
 def test_all_assets_have_valid_filenames(asset: ModelWeightAsset) -> None:
     """Test that all assets have valid filenames."""
     assert len(asset.filename) > 0

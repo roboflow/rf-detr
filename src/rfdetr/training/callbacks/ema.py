@@ -10,11 +10,14 @@ from __future__ import annotations
 import math
 import warnings
 from copy import deepcopy
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, cast
 
-import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
+from torch import Tensor
 from torch.optim.swa_utils import AveragedModel
+
+if TYPE_CHECKING:
+    from rfdetr.training.module_model import RFDETRModelModule
 
 
 class RFDETREMACallback(Callback):
@@ -31,6 +34,13 @@ class RFDETREMACallback(Callback):
             ``TrainConfig.ema_tau``.
         use_buffers: Whether buffers are averaged in addition to parameters.
         update_interval_steps: Update EMA every N optimizer steps.
+
+    Attributes:
+        suppress_test_swap: When ``True`` the test-epoch hooks skip the EMA weight swap.  Set (and restored) by
+            :class:`~rfdetr.training.callbacks.best_model.BestModelCallback` around its fit-end ``trainer.test()``
+            run, which has already loaded the best checkpoint weights into the module — swapping in the final EMA
+            weights there would make the reported ``test/*`` metrics reflect the wrong model.  Standalone
+            ``trainer.test()`` runs keep the default ``False`` and evaluate EMA weights as before.
     """
 
     def __init__(
@@ -45,19 +55,20 @@ class RFDETREMACallback(Callback):
         self._tau = tau
         self._use_buffers = use_buffers
         self._update_interval_steps = max(1, int(update_interval_steps))
+        self.suppress_test_swap = False
 
-        self._average_model: Optional[AveragedModel] = None
+        self._average_model: AveragedModel | None = None
         self._latest_update_step = 0
         self._latest_update_epoch = -1
-        self._swapped_state_dict: Optional[dict[str, torch.Tensor]] = None
-        self._pending_average_state_dict: Optional[dict[str, Any]] = None
+        self._swapped_state_dict: dict[str, Tensor] | None = None
+        self._pending_average_state_dict: dict[str, Any] | None = None
 
     def _avg_fn(
         self,
-        averaged_param: torch.Tensor,
-        model_param: torch.Tensor,
-        num_averaged: int,
-    ) -> torch.Tensor:
+        averaged_param: Tensor,
+        model_param: Tensor,
+        num_averaged: Tensor | int,
+    ) -> Tensor:
         """Compute the EMA update for a single parameter tensor.
 
         Matches the ``ModelEma`` formula where ``updates`` is 1-indexed: PTL's ``num_averaged`` starts at 0 (incremented
@@ -67,12 +78,14 @@ class RFDETREMACallback(Callback):
         Args:
             averaged_param: Current EMA parameter value.
             model_param: Corresponding live model parameter value.
-            num_averaged: Number of models averaged so far (0-indexed).
+            num_averaged: Number of models averaged so far (0-indexed). ``AveragedModel`` always passes this as a
+                0-dim tensor; the ``int`` branch only matches the declared ``torch.optim.swa_utils`` signature.
 
         Returns:
             Updated EMA parameter tensor.
         """
-        updates = num_averaged + 1  # match ModelEma 1-indexed counter
+        num_averaged_value = num_averaged.item() if isinstance(num_averaged, Tensor) else num_averaged
+        updates = num_averaged_value + 1  # match ModelEma 1-indexed counter
         if self._tau > 0:
             effective_decay = self._decay * (1 - math.exp(-updates / self._tau))
         else:
@@ -105,9 +118,10 @@ class RFDETREMACallback(Callback):
             self._average_model.load_state_dict(self._pending_average_state_dict)
             self._pending_average_state_dict = None
         elif hasattr(pl_module, "_pending_legacy_ema_state"):
-            legacy_ema_state = getattr(pl_module, "_pending_legacy_ema_state")
+            legacy_ema_state = pl_module._pending_legacy_ema_state
             if isinstance(legacy_ema_state, dict):
-                incompatible = self._average_model.module.model.load_state_dict(legacy_ema_state, strict=False)
+                average_module = cast("RFDETRModelModule", self._average_model.module)
+                incompatible = average_module.model.load_state_dict(legacy_ema_state, strict=False)
                 if incompatible.missing_keys or incompatible.unexpected_keys:
                     warnings.warn(
                         "Legacy EMA checkpoint loaded with non-exact key match; "
@@ -120,8 +134,8 @@ class RFDETREMACallback(Callback):
 
     def should_update(
         self,
-        step_idx: Optional[int] = None,
-        epoch_idx: Optional[int] = None,
+        step_idx: int | None = None,
+        epoch_idx: int | None = None,
     ) -> bool:
         """Return ``True`` after every optimizer step and every epoch end.
 
@@ -177,11 +191,15 @@ class RFDETREMACallback(Callback):
             self._latest_update_epoch = trainer.current_epoch
 
     def on_test_epoch_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        """Evaluate tests using averaged EMA weights."""
+        """Evaluate tests using averaged EMA weights unless the swap is suppressed."""
+        if self.suppress_test_swap:
+            return
         self._swap_models(pl_module)
 
     def on_test_epoch_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        """Restore live weights after test evaluation."""
+        """Restore live weights after test evaluation unless the swap is suppressed."""
+        if self.suppress_test_swap:
+            return
         self._swap_models(pl_module)
 
     def on_train_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
@@ -192,7 +210,7 @@ class RFDETREMACallback(Callback):
 
     def state_dict(self) -> dict[str, Any]:
         """Return callback state for checkpointing."""
-        state = {
+        state: dict[str, Any] = {
             "latest_update_step": self._latest_update_step,
             "latest_update_epoch": self._latest_update_epoch,
         }
@@ -206,8 +224,9 @@ class RFDETREMACallback(Callback):
         self._latest_update_epoch = state_dict.get("latest_update_epoch", -1)
         self._pending_average_state_dict = state_dict.get("average_model_state_dict")
 
-    def get_ema_model_state_dict(self) -> Optional[dict[str, torch.Tensor]]:
+    def get_ema_model_state_dict(self) -> dict[str, Tensor] | None:
         """Expose EMA model weights for external checkpoint callbacks."""
         if self._average_model is None or not hasattr(self._average_model.module, "model"):
             return None
-        return {k: v.detach().clone() for k, v in self._average_model.module.model.state_dict().items()}
+        average_module = cast("RFDETRModelModule", self._average_model.module)
+        return {k: v.detach().clone() for k, v in average_module.model.state_dict().items()}

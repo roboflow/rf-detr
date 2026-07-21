@@ -8,9 +8,14 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
 
 __all__ = [
     "CocoKeypointSchema",
@@ -30,6 +35,7 @@ class CocoKeypointSchema:
         class_names: Category names sorted by category id.
         num_keypoints_per_class: Number of keypoints for each sorted category.
         keypoint_oks_sigmas: Default OKS sigmas matching the largest keypoint class.
+        keypoint_flip_pairs: Flat horizontal-flip swap pairs inferred from keypoint names.
 
     Returns:
         Immutable schema value used to configure keypoint training.
@@ -45,6 +51,7 @@ class CocoKeypointSchema:
     class_names: list[str]
     num_keypoints_per_class: list[int]
     keypoint_oks_sigmas: list[float]
+    keypoint_flip_pairs: list[int] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +83,7 @@ class YoloKeypointSchema:
     keypoint_names: list[str]
     flip_idx: list[int]
     keypoint_dim: int
+    keypoint_flip_pairs: list[int] = field(default_factory=list)
 
 
 # Public union alias covering both concrete schema types.
@@ -102,7 +110,7 @@ def _load_yaml_mapping(yaml_path: Path) -> dict[str, Any]:
         >>> sorted(_load_yaml_mapping(path))
         ['kpt_shape', 'names']
     """
-    import yaml
+    import yaml  # type: ignore[import-untyped,unused-ignore]
 
     with yaml_path.open(encoding="utf-8") as file:
         data = yaml.safe_load(file)
@@ -187,6 +195,94 @@ def _extract_yolo_flip_idx(data: dict[str, Any], num_keypoints: int) -> list[int
     if sorted(flip_idx) != list(range(num_keypoints)):
         raise ValueError(f"YOLO pose flip_idx must be a permutation of 0..{num_keypoints - 1}.")
     return flip_idx
+
+
+def _flip_idx_to_pairs(flip_idx: list[int]) -> list[int]:
+    """Convert a YOLO flip_idx permutation to flat swap pairs.
+
+    Args:
+        flip_idx: Full permutation where ``flip_idx[i]`` is the horizontal mirror of joint ``i``.
+
+    Returns:
+        Flat list ``[a0, b0, a1, b1, ...]`` of left/right joint index pairs.
+
+    Example:
+        >>> _flip_idx_to_pairs([0, 2, 1])
+        [1, 2]
+    """
+    pairs: list[int] = []
+    seen: set[int] = set()
+    for idx, mirror_idx in enumerate(flip_idx):
+        if idx in seen or mirror_idx in seen or idx == mirror_idx:
+            seen.add(idx)
+            continue
+        if 0 <= mirror_idx < len(flip_idx) and flip_idx[mirror_idx] == idx:
+            pairs.extend([idx, mirror_idx])
+            seen.update({idx, mirror_idx})
+    return pairs
+
+
+def _normalize_keypoint_name(name: Any) -> str:
+    """Normalize a keypoint name for symmetry matching."""
+    return re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower()).strip("_")
+
+
+def _mirror_keypoint_name(normalized_name: str) -> str | None:
+    """Return the left/right counterpart for a normalized keypoint name."""
+    tokens = normalized_name.split("_")
+    left_count = tokens.count("left")
+    right_count = tokens.count("right")
+    if left_count + right_count != 1:
+        return None
+
+    mirror_tokens = ["right" if token == "left" else "left" if token == "right" else token for token in tokens]
+    return "_".join(mirror_tokens)
+
+
+def _infer_keypoint_flip_pairs_from_names(keypoint_names: list[Any]) -> list[int]:
+    """Infer horizontal-flip swap pairs from left/right keypoint names."""
+    normalized_names = [_normalize_keypoint_name(name) for name in keypoint_names]
+    if len(set(normalized_names)) != len(normalized_names):
+        return []
+
+    index_by_name = {name: idx for idx, name in enumerate(normalized_names)}
+    pairs: list[int] = []
+    seen: set[int] = set()
+    for idx, normalized_name in enumerate(normalized_names):
+        if idx in seen:
+            continue
+        mirror_name = _mirror_keypoint_name(normalized_name)
+        if mirror_name is None:
+            continue
+        mirror_idx = index_by_name.get(mirror_name)
+        if mirror_idx is None or mirror_idx == idx or mirror_idx in seen:
+            continue
+        if _mirror_keypoint_name(normalized_names[mirror_idx]) != normalized_name:
+            continue
+        pairs.extend([idx, mirror_idx])
+        seen.update({idx, mirror_idx})
+    if not pairs and keypoint_names:
+        logger.info(
+            "Inferred 0 flip pairs from %d keypoint names %s. "
+            "Automatic horizontal-flip slot swapping is disabled for this category. "
+            "Provide keypoint_flip_pairs explicitly if your keypoints have left/right symmetry.",
+            len(keypoint_names),
+            keypoint_names[:4],
+        )
+    return pairs
+
+
+def _merge_category_keypoint_flip_pairs(category_pairs: list[list[int]]) -> list[int]:
+    """Return one global flip-pair list when all keypoint categories agree."""
+    if not category_pairs:
+        return []
+    if len(category_pairs) == 1:
+        return list(category_pairs[0])
+
+    first = category_pairs[0]
+    if all(pairs == first for pairs in category_pairs[1:]):
+        return list(first)
+    return []
 
 
 def _load_coco_annotation(annotation_path: Path) -> dict[str, Any]:
@@ -334,14 +430,19 @@ def infer_coco_keypoint_schema(
 
     class_names: list[str] = []
     num_keypoints_per_class: list[int] = []
+    category_flip_pairs: list[list[int]] = []
     for category in categories:
         category_id = int(category["id"])
         class_names.append(str(category["name"]))
         category_keypoints = category.get("keypoints")
         if isinstance(category_keypoints, list) and category_keypoints:
             num_keypoints_per_class.append(len(category_keypoints))
+            category_flip_pairs.append(_infer_keypoint_flip_pairs_from_names(category_keypoints))
         else:
-            num_keypoints_per_class.append(_keypoint_count_from_annotations(annotations, category_id))
+            inferred_count = _keypoint_count_from_annotations(annotations, category_id)
+            num_keypoints_per_class.append(inferred_count)
+            if inferred_count > 0:
+                category_flip_pairs.append([])
 
     if not any(count > 0 for count in num_keypoints_per_class):
         raise ValueError(
@@ -354,6 +455,7 @@ def infer_coco_keypoint_schema(
         class_names=class_names,
         num_keypoints_per_class=num_keypoints_per_class,
         keypoint_oks_sigmas=[keypoint_oks_sigma] * max_keypoints,
+        keypoint_flip_pairs=_merge_category_keypoint_flip_pairs(category_flip_pairs),
     )
 
 
@@ -397,6 +499,7 @@ def infer_yolo_keypoint_schema(
         keypoint_names=keypoint_names,
         flip_idx=flip_idx,
         keypoint_dim=keypoint_dim,
+        keypoint_flip_pairs=_flip_idx_to_pairs(flip_idx),
     )
 
 

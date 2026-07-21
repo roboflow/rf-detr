@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Sequence
-from functools import lru_cache
+from functools import cache
 from typing import Any
 
 try:
@@ -32,14 +32,14 @@ from PIL import Image
 from torch import Tensor
 from torchvision.transforms import Normalize as _TVNormalize
 
-from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
+from rfdetr.datasets._aug_utils import IMAGE_LEVEL_TARGET_FIELDS, filter_keypoint_hflip_augmentations
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
 
-class Normalize(object):
+class Normalize:
     def __init__(
         self,
         mean: tuple[float, ...] = (0.485, 0.456, 0.406),
@@ -137,6 +137,7 @@ GEOMETRIC_TRANSFORMS = {
     "Resize",
     "SmallestMaxSize",
     "LongestMaxSize",
+    "CappedLongestMaxSize",
     "RandomScale",
     "Downscale",
     # Padding and symmetry
@@ -147,6 +148,37 @@ GEOMETRIC_TRANSFORMS = {
 
 # Albumentations container/meta transforms that hold nested transforms
 ALBUMENTATIONS_CONTAINERS = frozenset({"OneOf", "SomeOf", "Sequential"})
+
+# Config name for the conditional-cap resize transform built by _capped_longest_max_size_cls().
+_CAPPED_LONGEST_MAX_SIZE_NAME = "CappedLongestMaxSize"
+
+
+@cache
+def _capped_longest_max_size_cls() -> type:
+    """Build a ``LongestMaxSize`` subclass that only shrinks, never upscales.
+
+    Standard ``alb.LongestMaxSize`` always forces the longest side to exactly ``max_size``, scaling the image up
+    when its current longest side is smaller than the target. Chained after ``SmallestMaxSize`` (as in RF-DETR's
+    non-square training resize), this silently inflates every image whose aspect ratio keeps the long side below
+    ``max_size`` — the common case, since ``max_size`` defaults to the DETR-style 1333 cap while typical training
+    resolutions are far smaller.
+
+    This subclass clamps the resolved scale factor to ``<= 1.0``, giving it torchvision
+    ``RandomResize``-style conditional-cap semantics: a no-op when the image already fits within ``max_size``, a
+    shrink when it doesn't. Lazily defined (not at module scope) so importing this module never requires
+    Albumentations to be installed.
+
+    Returns:
+        A ``LongestMaxSize`` subclass with capped (never-upscale) resize behaviour.
+    """
+
+    class CappedLongestMaxSize(alb.LongestMaxSize):
+        def get_params_dependent_on_data(self, params: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+            resolved = super().get_params_dependent_on_data(params, data)
+            resolved["scale"] = min(resolved["scale"], 1.0)
+            return resolved
+
+    return CappedLongestMaxSize
 
 
 def _is_geometric_transform(transform: alb.BasicTransform) -> bool:
@@ -214,8 +246,8 @@ def _build_albu_transform(name: str, params: dict[str, Any]) -> alb.BasicTransfo
     """
     if alb is None:
         raise ImportError(
-            "Albumentations is required to build RF-DETR dataset transforms. "
-            "Install the project dependencies with `uv sync --all-groups` or install albumentations."
+            "Custom Albumentations augmentations require the optional augmentation extra. "
+            "Install with: pip install 'rfdetr[augment]'"
         )
 
     if name in ALBUMENTATIONS_CONTAINERS:
@@ -250,13 +282,13 @@ def _build_albu_transform(name: str, params: dict[str, Any]) -> alb.BasicTransfo
             raise ValueError(f"Unknown Albumentations container: {name!r}")
         return container_cls(transforms=nested_transforms, **other_params)
 
-    aug_cls = getattr(alb, name, None)
+    aug_cls = _capped_longest_max_size_cls() if name == _CAPPED_LONGEST_MAX_SIZE_NAME else getattr(alb, name, None)
     if aug_cls is None:
         raise ValueError(f"Unknown Albumentations transform: {name!r}")
     return aug_cls(**_normalize_albu_params(name, params, aug_cls))
 
 
-@lru_cache(maxsize=None)
+@cache
 def _random_sized_crop_uses_size_param(aug_cls: type) -> bool:
     """Return whether ``RandomSizedCrop`` expects a ``size`` keyword.
 
@@ -397,9 +429,18 @@ class AlbumentationsWrapper:
 
     Note:
         For custom geometric transforms, add the transform class name to the GEOMETRIC_TRANSFORMS set at module level.
+
+    Raises:
+        ImportError: If Albumentations is not installed.
     """
 
     def __init__(self, transform: alb.BasicTransform, keypoint_flip_pairs: list[int] | None = None) -> None:
+        if alb is None:
+            raise ImportError(
+                "Custom Albumentations augmentations require the optional augmentation extra. "
+                "Install with: pip install 'rfdetr[augment]'"
+            )
+
         # Auto-detect if transform is geometric (recursively for containers)
         self._is_geometric = _is_geometric_transform(transform)
         self._keypoint_flip_pairs = list(keypoint_flip_pairs or [])
@@ -407,7 +448,14 @@ class AlbumentationsWrapper:
         if self._is_geometric:
             # Wrap geometric transform with bbox handling capabilities
             # bbox_params configure how Albumentations should transform bounding boxes:
-            self.transform = alb.Compose(
+            needs_replay = bool(self._keypoint_flip_pairs)
+            if needs_replay and not hasattr(alb, "ReplayCompose"):
+                logger.warning(
+                    "albumentations.ReplayCompose not available; horizontal-flip keypoint "
+                    "slot swapping is disabled. Upgrade albumentations to >=1.3."
+                )
+            compose_cls = alb.ReplayCompose if (needs_replay and hasattr(alb, "ReplayCompose")) else alb.Compose
+            self.transform = compose_cls(
                 [transform],
                 bbox_params=alb.BboxParams(
                     format="pascal_voc",  # Boxes are in (x1, y1, x2, y2) format
@@ -510,40 +558,35 @@ class AlbumentationsWrapper:
         }
 
     @staticmethod
-    def _detect_horizontal_flip(
-        boxes_np: np.ndarray,
-        idxs: list[int],
-        bboxes_aug: list[Any],
-        kept_idxs: list[int],
-        aug_width: int,
-    ) -> bool:
-        """Return True when a horizontal flip is detected via bbox center-X mirroring.
-
-        After a pure HorizontalFlip, every box satisfies: center_x_orig + center_x_aug == image_width.
-        Uses the first surviving box as probe; returns False when no boxes are available.
+    def _replay_contains_horizontal_flip(replay: Any) -> bool:
+        """Return whether Albumentations replay metadata applied a horizontal flip.
 
         Args:
-            boxes_np: Original (valid) bounding boxes before the transform, shape (N, 4) pascal_voc.
-            idxs: Original instance indices corresponding to rows of ``boxes_np``.
-            bboxes_aug: Augmented bounding boxes in pascal_voc format.
-            kept_idxs: Original instance indices of boxes that survived the transform.
-            aug_width: Width of the augmented image in pixels.
+            replay: ``ReplayCompose`` metadata from an Albumentations call.
 
         Returns:
-            True if a horizontal flip was applied, False otherwise.
+            ``True`` only when a horizontal mirror transform was actually applied.
         """
-        if len(bboxes_aug) == 0 or len(kept_idxs) == 0 or boxes_np.shape[0] == 0:
+        if not isinstance(replay, dict):
             return False
-        first_kept_orig_idx = kept_idxs[0]
-        try:
-            pos = idxs.index(first_kept_orig_idx)
-        except ValueError:
+
+        transforms = replay.get("transforms")
+        if isinstance(transforms, list):
+            return any(AlbumentationsWrapper._replay_contains_horizontal_flip(transform) for transform in transforms)
+
+        if not replay.get("applied", False):
             return False
-        orig_box = boxes_np[pos]
-        aug_box = bboxes_aug[0]
-        orig_cx = (float(orig_box[0]) + float(orig_box[2])) / 2.0
-        aug_cx = (float(aug_box[0]) + float(aug_box[2])) / 2.0
-        return abs(orig_cx + aug_cx - aug_width) < max(1.0, aug_width * 0.02)
+
+        transform_name = str(replay.get("__class_fullname__", "")).rsplit(".", 1)[-1]
+        if transform_name == "HorizontalFlip":
+            return True
+        if transform_name == "Flip":
+            params = replay.get("params") or {}
+            return int(params.get("axis", params.get("d", -1))) == 1
+        if transform_name in {"D4", "SquareSymmetry"}:
+            params = replay.get("params") or {}
+            return str(params.get("group_element")) == "h"
+        return False
 
     @staticmethod
     def _rebuild_keypoints_from_albu(
@@ -621,8 +664,12 @@ class AlbumentationsWrapper:
         >>> cleared["area"].shape
         torch.Size([0])
         """
-        # Fields that are global properties, not per-instance
-        global_fields = {"boxes", "labels", "orig_size", "size", "image_id"}
+        # Image-level fields shared with the torchvision backend (IMAGE_LEVEL_TARGET_FIELDS),
+        # plus ``boxes``/``labels`` which are handled separately. ``labels`` stays global here
+        # because the Albumentations pipeline re-syncs it from ``category_ids`` (its label_field)
+        # after the transform, so it must NOT be sliced by this per-instance filter — unlike the
+        # torchvision path in ``_torchvision.py``, which filters ``labels`` directly with its keep mask.
+        global_fields = {"boxes", "labels"} | IMAGE_LEVEL_TARGET_FIELDS
 
         result = {}
         for key, value in target.items():
@@ -646,8 +693,12 @@ class AlbumentationsWrapper:
         >>> filtered["area"].tolist()
         [100, 300]
         """
-        # Fields that are global properties, not per-instance
-        global_fields = {"boxes", "labels", "orig_size", "size", "image_id"}
+        # Image-level fields shared with the torchvision backend (IMAGE_LEVEL_TARGET_FIELDS),
+        # plus ``boxes``/``labels`` which are handled separately. ``labels`` stays global here
+        # because the Albumentations pipeline re-syncs it from ``category_ids`` (its label_field)
+        # after the transform, so it must NOT be sliced by this per-instance filter — unlike the
+        # torchvision path in ``_torchvision.py``, which filters ``labels`` directly with its keep mask.
+        global_fields = {"boxes", "labels"} | IMAGE_LEVEL_TARGET_FIELDS
 
         result = {}
         kept_idxs_tensor = torch.as_tensor(kept_idxs, dtype=torch.long)
@@ -754,7 +805,7 @@ class AlbumentationsWrapper:
                 target_out["area"] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
             if keypoints_np is not None:
                 did_flip = (
-                    self._detect_horizontal_flip(boxes_np, idxs, bboxes_aug, kept_idxs, augmented["image"].shape[1])
+                    self._replay_contains_horizontal_flip(augmented.get("replay"))
                     if self._keypoint_flip_pairs
                     else False
                 )
@@ -879,7 +930,8 @@ class AlbumentationsWrapper:
     def from_config(
         config_dict: dict[str, Any] | list[dict[str, Any]],
         keypoint_flip_pairs: list[int] | None = None,
-    ) -> list["AlbumentationsWrapper"]:
+        strict: bool = False,
+    ) -> list[AlbumentationsWrapper]:
         """Build a list of :class:`AlbumentationsWrapper` instances from a config.
 
         Supports both a flat dictionary format (backward-compatible) and a list format that allows duplicate transform
@@ -924,6 +976,10 @@ class AlbumentationsWrapper:
                 detection pipelines where horizontal flips are always permitted. Pass an empty list
                 ``[]`` to mark a keypoint pipeline without any defined flip pairs -- horizontal-flip
                 augmentations are then disabled until flip-pair swapping is implemented.
+            strict: When ``True``, a transform that fails to build raises :class:`RuntimeError`
+                instead of being logged and skipped. Use for internally-generated pipelines (e.g. the
+                required resize stack) where a silently dropped transform would corrupt the output shape.
+                Defaults to ``False`` for user augmentation configs, which stay lenient.
 
         Returns:
             List of :class:`AlbumentationsWrapper` instances in config order.
@@ -931,6 +987,7 @@ class AlbumentationsWrapper:
         Raises:
             ImportError: If Albumentations is not installed.
             TypeError: If *config_dict* is neither a ``dict`` nor a ``list``.
+            RuntimeError: If ``strict=True`` and a transform fails to build.
 
         Examples:
             >>> config = {
@@ -966,8 +1023,8 @@ class AlbumentationsWrapper:
 
         if alb is None:
             raise ImportError(
-                "Albumentations is required to build RF-DETR dataset transforms. "
-                "Install the project dependencies with `uv sync --all-groups` or install albumentations."
+                "Custom Albumentations augmentations require the optional augmentation extra. "
+                "Install with: pip install 'rfdetr[augment]'"
             )
 
         transforms = []
@@ -996,6 +1053,8 @@ class AlbumentationsWrapper:
                 transform = _build_albu_transform(aug_name, params)
                 transforms.append(AlbumentationsWrapper(transform, keypoint_flip_pairs=keypoint_flip_pairs))
             except Exception as e:
+                if strict:
+                    raise RuntimeError(f"Failed to build required transform {aug_name!r}: {e}") from e
                 logger.warning(
                     "Failed to initialize %s with params %r: %s. Skipping.",
                     aug_name,

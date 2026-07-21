@@ -7,7 +7,6 @@
 
 from unittest import mock
 
-import albumentations as alb
 import numpy as np
 import pytest
 import torch
@@ -17,10 +16,13 @@ from torchvision.transforms.v2 import Compose
 
 from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
 from rfdetr.datasets._develop import _SimpleDataset
-from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE, AUG_CONFIG
+from rfdetr.datasets._torchvision import RandomHorizontalFlip
+from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize, _build_albu_transform
 from rfdetr.utilities import collate_fn
+
+alb = pytest.importorskip("albumentations")
 
 
 class _FakeRandomSizedCropV2:
@@ -178,11 +180,10 @@ class TestAlbumentationsWrapper:
     def test_horizontal_flip_with_keypoint_flip_pairs_handles_ndarray_bboxes(self, num_instances):
         """Regression test for #1125.
 
-        Albumentations 2.x returns ``bboxes`` as a NumPy ndarray of shape (N, 4); 1.x returned a list of tuples.
-        ``_detect_horizontal_flip`` previously used ``not bboxes_aug`` as an empty-check, which raises ``ValueError: The
-        truth value of an array with more than one element is ambiguous`` on any ndarray with more than one element —
-        i.e. any sample with N >= 1 under Albumentations 2.x. The call is reached only when ``keypoint_flip_pairs`` is
-        configured, so this test exercises that path across multi/single/empty instance counts.
+        Albumentations 2.x returns ``bboxes`` as a NumPy ndarray of shape (N, 4); 1.x returned a list of tuples. The
+        horizontal-flip swap path used to inspect ``bboxes`` with list-style truthiness, which raised ``ValueError: The
+        truth value of an array with more than one element is ambiguous`` on any ndarray with more than one element.
+        This test exercises that path across multi/single/empty instance counts.
         """
         wrapper = AlbumentationsWrapper(
             alb.HorizontalFlip(p=1.0),
@@ -238,6 +239,75 @@ class TestAlbumentationsWrapper:
         # slot1 gets kp0's flipped x=89. Without swap the ordering would be inverted (89 > 19).
         torch.testing.assert_close(kp[0, 0], torch.tensor(19.0), rtol=1e-4, atol=1e-6)
         torch.testing.assert_close(kp[1, 0], torch.tensor(89.0), rtol=1e-4, atol=1e-6)
+
+    def test_nested_horizontal_flip_swaps_slots_after_all_geometry(self):
+        """Nested HFlip+VFlip should mirror coordinates once, then swap only the left/right slots."""
+        wrapper = AlbumentationsWrapper(
+            alb.Sequential([alb.HorizontalFlip(p=1.0), alb.VerticalFlip(p=1.0)], p=1.0),
+            keypoint_flip_pairs=[0, 1],
+        )
+        image = Image.new("RGB", (100, 50))
+        target = {
+            "boxes": torch.tensor([[5.0, 5.0, 95.0, 45.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor(
+                [
+                    [
+                        [10.0, 10.0, 2.0],
+                        [80.0, 30.0, 2.0],
+                        [50.0, 20.0, 1.0],
+                    ]
+                ]
+            ),
+        }
+
+        _, transformed = wrapper(image, target)
+
+        torch.testing.assert_close(
+            transformed["keypoints"],
+            torch.tensor([[[19.0, 19.0, 2.0], [89.0, 39.0, 2.0], [49.0, 29.0, 1.0]]]),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+
+    @pytest.mark.parametrize(
+        "transform,expected_keypoints",
+        [
+            pytest.param(
+                alb.HorizontalFlip(p=0.0),
+                torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 2.0]]]),
+                id="disabled-horizontal-flip",
+            ),
+            pytest.param(
+                alb.VerticalFlip(p=1.0),
+                torch.tensor([[[10.0, 39.0, 2.0], [80.0, 19.0, 2.0]]]),
+                id="vertical-flip",
+            ),
+            pytest.param(
+                alb.Resize(height=50, width=100, p=1.0),
+                torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 2.0]]]),
+                id="resize",
+            ),
+            pytest.param(
+                alb.Crop(x_min=0, y_min=0, x_max=100, y_max=50, p=1.0),
+                torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 2.0]]]),
+                id="full-image-crop",
+            ),
+        ],
+    )
+    def test_non_horizontal_geometry_does_not_swap_paired_keypoints(self, transform, expected_keypoints):
+        """Configured HFlip pairs should not swap slots when no horizontal flip applied."""
+        wrapper = AlbumentationsWrapper(transform, keypoint_flip_pairs=[0, 1])
+        image = Image.new("RGB", (100, 50))
+        target = {
+            "boxes": torch.tensor([[5.0, 5.0, 95.0, 45.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 2.0]]]),
+        }
+
+        _, transformed = wrapper(image, target)
+
+        torch.testing.assert_close(transformed["keypoints"], expected_keypoints, rtol=1e-4, atol=1e-6)
 
     def test_crop_filters_keypoints_with_removed_boxes(self):
         """When a crop removes a box, its keypoints are removed with the same instance."""
@@ -1601,13 +1671,14 @@ class TestTrainingLoop:
     @pytest.mark.parametrize(
         "transform_class,transform_kwargs",
         [
-            (alb.HorizontalFlip, {"p": 1.0}),
-            (alb.VerticalFlip, {"p": 1.0}),
-            (alb.RandomRotate90, {"p": 1.0}),
+            pytest.param(alb.HorizontalFlip, {"p": 1.0}, id="horizontal_flip"),
+            pytest.param(alb.VerticalFlip, {"p": 1.0}, id="vertical_flip"),
+            pytest.param(alb.RandomRotate90, {"p": 1.0}, id="random_rotate_90"),
         ],
-        ids=["horizontal_flip", "vertical_flip", "random_rotate_90"],
     )
-    @pytest.mark.parametrize("include_masks", [False, True], ids=["detection", "segmentation"])
+    @pytest.mark.parametrize(
+        "include_masks", [pytest.param(False, id="detection"), pytest.param(True, id="segmentation")]
+    )
     def test_geometric_dataloader_compatibility(self, include_masks, transform_class, transform_kwargs):
         """Test geometric Albumentations transforms work in DataLoader for detection and segmentation."""
 
@@ -1663,16 +1734,11 @@ class TestMakeCocoTransformsAugConfig:
         ],
     )
     def test_default_none_uses_aug_config(self, make_transforms):
-        """Omitting aug_config uses the module-level AUG_CONFIG default (HorizontalFlip)."""
+        """Omitting aug_config uses the torchvision-native default HorizontalFlip."""
         pipeline = make_transforms("train", 640)
-        # Train pipeline: [resize_wrapper, *aug_wrappers, normalize]
-        # First AlbumentationsWrapper is the resize OneOf; remaining are from aug_config.
-        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
-        aug_wrappers = wrappers[1:]
 
-        expected_names = list(AUG_CONFIG.keys())
-        actual_names = [w.transform.transforms[0].__class__.__name__ for w in aug_wrappers]
-        assert actual_names == expected_names
+        assert any(isinstance(t, RandomHorizontalFlip) for t in pipeline.transforms)
+        assert not any(isinstance(t, AlbumentationsWrapper) for t in pipeline.transforms)
 
     @pytest.mark.parametrize(
         "make_transforms",
@@ -1682,12 +1748,11 @@ class TestMakeCocoTransformsAugConfig:
         ],
     )
     def test_empty_dict_disables_augmentations(self, make_transforms):
-        """aug_config={} means no aug wrappers beyond the resize wrapper."""
+        """aug_config={} disables the default torchvision HorizontalFlip."""
         pipeline = make_transforms("train", 640, aug_config={})
-        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
-        aug_wrappers = wrappers[1:]  # skip resize wrapper
 
-        assert aug_wrappers == []
+        assert not any(isinstance(t, RandomHorizontalFlip) for t in pipeline.transforms)
+        assert not any(isinstance(t, AlbumentationsWrapper) for t in pipeline.transforms)
 
     @pytest.mark.parametrize(
         "make_transforms",
@@ -1697,7 +1762,7 @@ class TestMakeCocoTransformsAugConfig:
         ],
     )
     def test_custom_dict_is_used(self, make_transforms):
-        """aug_config with a custom dict wires up exactly those transforms."""
+        """A custom non-empty aug_config uses the optional Albumentations path."""
         custom = {"HorizontalFlip": {"p": 1.0}}
         pipeline = make_transforms("train", 640, aug_config=custom)
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
@@ -1709,14 +1774,12 @@ class TestMakeCocoTransformsAugConfig:
     @pytest.mark.parametrize(
         "make_transforms,expected_resize_wrappers",
         [
-            # make_coco_transforms val: SmallestMaxSize + LongestMaxSize = 2 wrappers
-            pytest.param(make_coco_transforms, 2, id="make_coco_transforms"),
-            # make_coco_transforms_square_div_64 val: Resize = 1 wrapper
-            pytest.param(make_coco_transforms_square_div_64, 1, id="make_coco_transforms_square_div_64"),
+            pytest.param(make_coco_transforms, 0, id="make_coco_transforms"),
+            pytest.param(make_coco_transforms_square_div_64, 0, id="make_coco_transforms_square_div_64"),
         ],
     )
     def test_aug_config_not_applied_on_val(self, make_transforms, expected_resize_wrappers):
-        """aug_config is ignored for val splits — only resize wrappers are present."""
+        """aug_config is ignored for val splits and defaults to torchvision resize."""
         pipeline = make_transforms("val", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
 
@@ -1730,23 +1793,21 @@ class TestMakeCocoTransformsAugConfig:
         ],
     )
     def test_aug_config_not_applied_on_val_speed(self, make_transforms):
-        """aug_config is ignored for val_speed splits — only the resize wrapper is present."""
+        """aug_config is ignored for val_speed splits and defaults to torchvision resize."""
         pipeline = make_transforms("val_speed", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
 
-        assert len(wrappers) == 1
+        assert len(wrappers) == 0
 
     @pytest.mark.parametrize(
         "make_transforms,expected_resize_wrappers",
         [
-            # make_coco_transforms test: SmallestMaxSize + LongestMaxSize = 2 wrappers
-            pytest.param(make_coco_transforms, 2, id="make_coco_transforms"),
-            # make_coco_transforms_square_div_64 test: Resize = 1 wrapper
-            pytest.param(make_coco_transforms_square_div_64, 1, id="make_coco_transforms_square_div_64"),
+            pytest.param(make_coco_transforms, 0, id="make_coco_transforms"),
+            pytest.param(make_coco_transforms_square_div_64, 0, id="make_coco_transforms_square_div_64"),
         ],
     )
     def test_aug_config_not_applied_on_test(self, make_transforms, expected_resize_wrappers):
-        """aug_config is ignored for test splits — only resize wrappers are present."""
+        """aug_config is ignored for test splits and defaults to torchvision resize."""
         pipeline = make_transforms("test", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
         assert len(wrappers) == expected_resize_wrappers
@@ -2045,3 +2106,135 @@ class TestNormalize:
         target = {"boxes": boxes_original.clone()}
         normalize(image, target)
         torch.testing.assert_close(target["boxes"], boxes_original, rtol=0.0, atol=0.0)
+
+
+class TestReplayContainsHorizontalFlip:
+    """Unit tests for AlbumentationsWrapper._replay_contains_horizontal_flip using fixture dicts."""
+
+    @pytest.mark.parametrize(
+        "replay,expected",
+        [
+            pytest.param(
+                {"__class_fullname__": "HorizontalFlip", "applied": True, "params": {}},
+                True,
+                id="horizontal-flip-applied",
+            ),
+            pytest.param(
+                {"__class_fullname__": "HorizontalFlip", "applied": False, "params": {}},
+                False,
+                id="horizontal-flip-not-applied",
+            ),
+            pytest.param(
+                {"__class_fullname__": "Flip", "applied": True, "params": {"axis": 1}},
+                True,
+                id="flip-horizontal-axis",
+            ),
+            pytest.param(
+                {"__class_fullname__": "Flip", "applied": True, "params": {"axis": 0}},
+                False,
+                id="flip-vertical-axis",
+            ),
+            pytest.param(
+                {"__class_fullname__": "Flip", "applied": False, "params": {"axis": 1}},
+                False,
+                id="flip-not-applied",
+            ),
+            pytest.param(
+                {
+                    "__class_fullname__": "D4",
+                    "applied": True,
+                    "params": {"group_element": "h"},
+                },
+                True,
+                id="d4-horizontal-element",
+            ),
+            pytest.param(
+                {
+                    "__class_fullname__": "D4",
+                    "applied": True,
+                    "params": {"group_element": "r90"},
+                },
+                False,
+                id="d4-rotation-element",
+            ),
+            pytest.param(
+                {
+                    "__class_fullname__": "D4",
+                    "applied": False,
+                    "params": {"group_element": "h"},
+                },
+                False,
+                id="d4-not-applied",
+            ),
+            pytest.param(
+                {
+                    "__class_fullname__": "SquareSymmetry",
+                    "applied": True,
+                    "params": {"group_element": "h"},
+                },
+                True,
+                id="square-symmetry-horizontal",
+            ),
+            pytest.param(
+                {
+                    "__class_fullname__": "SquareSymmetry",
+                    "applied": True,
+                    "params": {"group_element": "r90"},
+                },
+                False,
+                id="square-symmetry-rotation",
+            ),
+            pytest.param(
+                None,
+                False,
+                id="none-replay",
+            ),
+            pytest.param(
+                "not-a-dict",
+                False,
+                id="non-dict-replay",
+            ),
+            pytest.param(
+                {
+                    "transforms": [
+                        {"__class_fullname__": "HorizontalFlip", "applied": True, "params": {}},
+                    ]
+                },
+                True,
+                id="nested-horizontal-flip",
+            ),
+            pytest.param(
+                {
+                    "transforms": [
+                        {"__class_fullname__": "HorizontalFlip", "applied": False, "params": {}},
+                    ]
+                },
+                False,
+                id="nested-horizontal-flip-not-applied",
+            ),
+        ],
+    )
+    def test_replay_contains_horizontal_flip(self, replay: object, expected: bool) -> None:
+        """Fixture replay dicts should be correctly classified as horizontal flip or not."""
+        assert AlbumentationsWrapper._replay_contains_horizontal_flip(replay) == expected
+
+
+class TestFromConfigStrict:
+    """AlbumentationsWrapper.from_config strict mode raises on required-transform failures instead of skipping."""
+
+    def test_strict_false_skips_unbuildable_transform(self):
+        """Lenient mode (default) logs and skips a transform that cannot be built."""
+        result = AlbumentationsWrapper.from_config([{"NotARealTransform": {"p": 1.0}}])
+
+        assert result == []
+
+    def test_strict_true_raises_on_unbuildable_transform(self):
+        """Strict mode surfaces a RuntimeError so a corrupt required pipeline fails loudly."""
+        with pytest.raises(RuntimeError, match="NotARealTransform"):
+            AlbumentationsWrapper.from_config([{"NotARealTransform": {"p": 1.0}}], strict=True)
+
+    def test_strict_true_builds_valid_config(self):
+        """Strict mode still returns wrappers when every transform builds successfully."""
+        result = AlbumentationsWrapper.from_config([{"HorizontalFlip": {"p": 0.5}}], strict=True)
+
+        assert len(result) == 1

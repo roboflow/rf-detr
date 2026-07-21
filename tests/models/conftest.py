@@ -3,48 +3,22 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Shared fixtures and test helpers for model tests."""
-
-from types import SimpleNamespace
+"""Shared fixtures for the models test suite."""
 
 import pytest
+import torch
 
-from rfdetr.detr import RFDETR
 
+@pytest.fixture(autouse=True)
+def reset_torch_safe_globals():
+    """Reset torch serialization safe globals after each test.
 
-class _BaseFakeRFDETR(RFDETR):
-    """RFDETR test double that skips weight downloads and returns a minimal model config.
-
-    Subclasses must override ``get_model`` to supply the model context appropriate for
-    the scenario under test.
-
-    Examples:
-        This class is imported directly by test modules that need a weight-free RFDETR.
+    Prevents cross-test state contamination caused by ``_safe_torch_load``'s Attempt 2 path, which calls
+    ``torch.serialization.add_safe_globals``. Without this reset, globals registered by one test bleed into subsequent
+    tests and can mask trust-gate failures.
     """
-
-    def maybe_download_pretrain_weights(self) -> None:
-        """Skip weight download in tests."""
-        return None
-
-    def get_model_config(self, **kwargs: object) -> SimpleNamespace:
-        """Return a minimal config sufficient for most test scenarios."""
-        return SimpleNamespace(num_channels=3)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _prewarm_dinov2_cache() -> None:
-    """Download DINOv2 backbone weights once per test session.
-
-    HuggingFace hub uses file-level locking internally, so concurrent xdist
-    workers block on each other rather than issuing duplicate network requests.
-    After the first worker finishes, all others read from the local disk cache.
-
-    Examples:
-        This fixture is autouse — no explicit reference needed in tests.
-    """
-    from huggingface_hub import snapshot_download
-
-    snapshot_download(
-        "facebook/dinov2-with-registers-base",
-        ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"],
-    )
+    yield
+    try:
+        torch.serialization.clear_safe_globals()
+    except AttributeError:
+        pass  # torch <2.4 does not have clear_safe_globals

@@ -20,11 +20,13 @@ benchmarks.
 Implementation mirrors torchvision's evaluator structure but uses ``faster_coco_eval`` as the runtime backend.
 """
 
+from __future__ import annotations
+
 import contextlib
 import copy
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import faster_coco_eval.core.mask as mask_util
 import numpy as np
@@ -79,7 +81,7 @@ class _GroupedKeypointCOCOeval:
     """Aggregate COCO keypoint stats for categories with different keypoint counts."""
 
     groups: list[_KeypointCategoryGroup]
-    stats: np.ndarray
+    stats: np.ndarray[Any, Any]
     evals: list[COCOeval]
 
 
@@ -93,14 +95,14 @@ def _ensure_faster_coco(coco_gt: Any) -> COCO:
     faster_coco.createIndex()
     label2cat = getattr(coco_gt, "label2cat", None)
     if label2cat is not None:
-        setattr(faster_coco, "label2cat", copy.deepcopy(label2cat))
+        faster_coco.label2cat = copy.deepcopy(label2cat)
     return faster_coco
 
 
 def _backfill_num_keypoints(coco_gt: COCO) -> None:
     """Populate missing COCO ``num_keypoints`` fields from visibility flags."""
     annotations_by_id: dict[int, dict[str, Any]] = {}
-    for annotation in coco_gt.dataset.get("annotations", []):
+    for annotation in getattr(coco_gt, "dataset", {}).get("annotations", []):
         annotation_id = annotation.get("id")
         if isinstance(annotation_id, int):
             annotations_by_id[annotation_id] = annotation
@@ -108,7 +110,7 @@ def _backfill_num_keypoints(coco_gt: COCO) -> None:
         if "num_keypoints" not in annotation and isinstance(keypoints, list):
             annotation["num_keypoints"] = sum(1 for visibility in keypoints[2::3] if visibility > 0)
 
-    for annotation_id, annotation in coco_gt.anns.items():
+    for annotation_id, annotation in getattr(coco_gt, "anns", {}).items():
         keypoints = annotation.get("keypoints")
         if "num_keypoints" not in annotation and isinstance(keypoints, list):
             annotation["num_keypoints"] = sum(1 for visibility in keypoints[2::3] if visibility > 0)
@@ -134,18 +136,18 @@ def _infer_keypoint_count(coco_gt: COCO) -> int | None:
 def _infer_keypoint_counts_by_category(coco_gt: COCO) -> dict[int, int]:
     """Infer keypoint count for each category from COCO category metadata or annotations."""
     counts: dict[int, int] = {}
-    for category_id, category in coco_gt.cats.items():
+    for category_id, category in getattr(coco_gt, "cats", {}).items():
         keypoints = category.get("keypoints")
         if isinstance(keypoints, list) and keypoints:
             counts[int(category_id)] = len(keypoints)
 
-    for annotation in coco_gt.dataset.get("annotations", []):
+    for annotation in getattr(coco_gt, "dataset", {}).get("annotations", []):
         keypoints = annotation.get("keypoints")
         if not isinstance(keypoints, list) or not keypoints:
             continue
         category_id = int(annotation["category_id"])
         counts[category_id] = max(counts.get(category_id, 0), len(keypoints) // 3)
-    for annotation in coco_gt.anns.values():
+    for annotation in getattr(coco_gt, "anns", {}).values():
         keypoints = annotation.get("keypoints")
         if not isinstance(keypoints, list) or not keypoints:
             continue
@@ -167,7 +169,7 @@ def _resolve_keypoint_oks_sigmas(coco_gt: COCO, keypoint_oks_sigmas: list[float]
             raise ValueError(
                 f"keypoint_oks_sigmas length {sigmas.size} does not match dataset keypoint count {keypoint_count}."
             )
-        return sigmas.tolist()
+        return [float(sigma) for sigma in sigmas.tolist()]
 
     if keypoint_count is None or keypoint_count == len(_COCO_PERSON_KEYPOINT_SIGMAS):
         return None
@@ -196,7 +198,7 @@ def _resolve_group_keypoint_oks_sigmas(
         raise ValueError(
             f"keypoint_oks_sigmas length {sigmas.size} does not match dataset keypoint count {keypoint_count}."
         )
-    return sigmas[:keypoint_count].tolist()
+    return cast(list[float], sigmas[:keypoint_count].tolist())
 
 
 def _warn_custom_keypoint_oks_sigma_once(keypoint_count: int) -> None:
@@ -236,44 +238,46 @@ def _build_keypoint_category_groups(
 def _filter_coco_by_category_ids(coco_gt: COCO, category_ids: list[int]) -> COCO:
     """Return a COCO object containing only the requested categories and annotations."""
     category_id_set = set(category_ids)
-    dataset = copy.deepcopy(coco_gt.dataset)
-    dataset["categories"] = [
-        category for category in dataset.get("categories", []) if int(category["id"]) in category_id_set
-    ]
-    dataset["annotations"] = [
-        annotation
-        for annotation in dataset.get("annotations", [])
-        if int(annotation.get("category_id", -1)) in category_id_set
-    ]
+    gt_dataset: dict[str, Any] = copy.deepcopy(coco_gt.dataset)
+    dataset: dict[str, Any] = {
+        **gt_dataset,
+        "categories": [
+            category for category in gt_dataset.get("categories", []) if int(category["id"]) in category_id_set
+        ],
+        "annotations": [
+            annotation
+            for annotation in gt_dataset.get("annotations", [])
+            if int(annotation.get("category_id", -1)) in category_id_set
+        ],
+    }
 
     filtered = COCO()
     filtered.dataset = dataset
     filtered.createIndex()
     label2cat = getattr(coco_gt, "label2cat", None)
     if label2cat is not None:
-        setattr(
-            filtered,
-            "label2cat",
-            {label: cat_id for label, cat_id in label2cat.items() if cat_id in category_id_set},
-        )
+        filtered.label2cat = {label: cat_id for label, cat_id in label2cat.items() if cat_id in category_id_set}
     return filtered
 
 
 def _load_coco_results(coco_gt: COCO, results: list[dict[str, Any]]) -> COCO:
     """Build a COCO detections object, including the empty-result case."""
     if results:
-        return COCO.loadRes(coco_gt, results)
+        return coco_gt.loadRes(results)
 
     coco_dt = COCO()
-    coco_dt.dataset["info"] = copy.deepcopy(coco_gt.dataset.get("info", {}))
-    coco_dt.dataset["images"] = copy.deepcopy(coco_gt.dataset.get("images", []))
-    coco_dt.dataset["categories"] = copy.deepcopy(coco_gt.dataset.get("categories", []))
-    coco_dt.dataset["annotations"] = []
+    gt_dataset: dict[str, Any] = coco_gt.dataset
+    coco_dt.dataset = {
+        "info": copy.deepcopy(gt_dataset.get("info", {})),
+        "images": copy.deepcopy(gt_dataset.get("images", [])),
+        "categories": copy.deepcopy(gt_dataset.get("categories", [])),
+        "annotations": [],
+    }
     coco_dt.createIndex()
     return coco_dt
 
 
-def _xyxy_to_xywh(boxes: np.ndarray) -> np.ndarray:
+def _xyxy_to_xywh(boxes: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
     """Convert boxes from [x1, y1, x2, y2] to [x1, y1, w, h]."""
     boxes = boxes.copy()
     boxes[:, 2] -= boxes[:, 0]
@@ -281,7 +285,7 @@ def _xyxy_to_xywh(boxes: np.ndarray) -> np.ndarray:
     return boxes
 
 
-def _weighted_mean_coco_stats(stats: list[np.ndarray], weights: list[int]) -> np.ndarray:
+def _weighted_mean_coco_stats(stats: list[np.ndarray[Any, Any]], weights: list[int]) -> np.ndarray[Any, Any]:
     """Compute category-weighted mean COCO stats, ignoring unavailable ``-1`` values."""
     if not stats:
         return np.full((10,), -1.0, dtype=np.float32)
@@ -301,7 +305,7 @@ def _weighted_mean_coco_stats(stats: list[np.ndarray], weights: list[int]) -> np
     return aggregated
 
 
-def _log_keypoint_stats(stats: np.ndarray) -> None:
+def _log_keypoint_stats(stats: np.ndarray[Any, Any]) -> None:
     """Log keypoint COCO stats from an already accumulated evaluator."""
     labels = (
         ("Average Precision", "(AP)", "0.50:0.95", "all", 20, 0),
@@ -328,10 +332,9 @@ def _accumulate_and_summarize(coco_eval: COCOeval, *, log_summary: bool) -> None
         patched_pycocotools_summarize(coco_eval)
         return
 
-    with open(os.devnull, "w") as devnull:
-        with contextlib.redirect_stdout(devnull):
-            coco_eval.accumulate()
-            patched_pycocotools_summarize(coco_eval, log_summary=False)
+    with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+        coco_eval.accumulate()
+        patched_pycocotools_summarize(coco_eval, log_summary=False)
 
 
 class CocoEvaluator:
@@ -470,7 +473,7 @@ class CocoEvaluator:
     def summarize(self) -> None:
         """Print and log COCO summary statistics."""
         for iou_type, coco_eval in self.coco_eval.items():
-            logger.info("IoU metric: {}".format(iou_type))
+            logger.info(f"IoU metric: {iou_type}")
             if isinstance(coco_eval, _GroupedKeypointCOCOeval):
                 _log_keypoint_stats(coco_eval.stats)
             else:
@@ -479,17 +482,16 @@ class CocoEvaluator:
     def _evaluate(self, iou_type: str, coco_eval: COCOeval) -> None:
         """Run faster-coco-eval evaluation for accumulated COCO result records."""
         results = self.coco_results[iou_type]
-        with open(os.devnull, "w") as devnull:
-            with contextlib.redirect_stdout(devnull):
-                coco_dt = _load_coco_results(self.coco_gt, results)
-                coco_eval.cocoDt = coco_dt
-                coco_eval.params.imgIds = list(np.unique(self.img_ids))
-                coco_eval.evaluate()
+        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+            coco_dt = _load_coco_results(self.coco_gt, results)
+            coco_eval.cocoDt = coco_dt
+            coco_eval.params.imgIds = list(np.unique(self.img_ids))
+            coco_eval.evaluate()
 
     def _evaluate_grouped_keypoints(self, grouped_eval: _GroupedKeypointCOCOeval) -> None:
         """Run keypoint evaluation per keypoint-count group and aggregate stats."""
         grouped_eval.evals = []
-        group_stats: list[np.ndarray] = []
+        group_stats: list[np.ndarray[Any, Any]] = []
         group_weights: list[int] = []
         all_results = self.coco_results["keypoints"]
         img_ids = list(np.unique(self.img_ids))
@@ -507,7 +509,7 @@ class CocoEvaluator:
             self._evaluate_grouped_keypoint_results(group_coco_eval, group_gt, group_results, img_ids)
             _accumulate_and_summarize(group_coco_eval, log_summary=False)
             grouped_eval.evals.append(group_coco_eval)
-            group_stats.append(np.asarray(group_coco_eval.stats, dtype=np.float32))
+            group_stats.append(np.asarray(getattr(group_coco_eval, "stats"), dtype=np.float32))
             group_weights.append(len(group.category_ids))
 
         grouped_eval.stats = _weighted_mean_coco_stats(group_stats, group_weights)
@@ -520,12 +522,11 @@ class CocoEvaluator:
         img_ids: list[int],
     ) -> None:
         """Evaluate one grouped keypoint result set."""
-        with open(os.devnull, "w") as devnull:
-            with contextlib.redirect_stdout(devnull):
-                coco_dt = _load_coco_results(coco_gt, results)
-                coco_eval.cocoDt = coco_dt
-                coco_eval.params.imgIds = img_ids
-                coco_eval.evaluate()
+        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+            coco_dt = _load_coco_results(coco_gt, results)
+            coco_eval.cocoDt = coco_dt
+            coco_eval.params.imgIds = img_ids
+            coco_eval.evaluate()
 
     def prepare(self, predictions: dict[int, Any], iou_type: str) -> list[dict[str, Any]]:
         """Convert predictions to COCO format for the given iou_type."""
@@ -536,11 +537,11 @@ class CocoEvaluator:
         elif iou_type == "keypoints":
             return self.prepare_for_coco_keypoint(predictions)
         else:
-            raise ValueError("Unknown iou type {}".format(iou_type))
+            raise ValueError(f"Unknown iou type {iou_type}")
 
     def prepare_for_coco_detection(self, predictions: dict[int, Any]) -> list[dict[str, Any]]:
         """Format bounding-box predictions as COCO result dicts."""
-        coco_results = []
+        coco_results: list[dict[str, Any]] = []
         for original_id, prediction in predictions.items():
             if len(prediction) == 0:
                 continue
@@ -566,7 +567,7 @@ class CocoEvaluator:
 
     def prepare_for_coco_segmentation(self, predictions: dict[int, Any]) -> list[dict[str, Any]]:
         """Format segmentation mask predictions as COCO result dicts."""
-        coco_results = []
+        coco_results: list[dict[str, Any]] = []
         for original_id, prediction in predictions.items():
             if len(prediction) == 0:
                 continue
@@ -581,9 +582,9 @@ class CocoEvaluator:
             labels = prediction["labels"].tolist()
             use_raw_category_ids = self._should_use_raw_category_ids(labels)
 
-            rles = [
-                mask_util.encode(np.array(mask.cpu()[0, :, :, np.newaxis], dtype=np.uint8, order="F"))[0]
-                for mask in masks
+            encode = getattr(mask_util, "encode")
+            rles: list[dict[str, Any]] = [
+                encode(np.array(mask.cpu()[0, :, :, np.newaxis], dtype=np.uint8, order="F"))[0] for mask in masks
             ]
             for rle in rles:
                 rle["counts"] = rle["counts"].decode("utf-8")
@@ -604,7 +605,7 @@ class CocoEvaluator:
 
     def prepare_for_coco_keypoint(self, predictions: dict[int, Any]) -> list[dict[str, Any]]:
         """Format keypoint predictions as COCO result dicts."""
-        coco_results = []
+        coco_results: list[dict[str, Any]] = []
         for original_id, prediction in predictions.items():
             if len(prediction) == 0:
                 continue
@@ -639,53 +640,62 @@ class CocoEvaluator:
 # maxDets[-1] instead of hardcoded 100.
 #################################################################
 def patched_pycocotools_summarize(self: COCOeval, *, log_summary: bool = True) -> None:
-    """Compute and display summary metrics for evaluation results."""
+    """Compute and display summary metrics for evaluation results.
+
+    Args:
+        self: COCOeval instance that has already run ``accumulate()``.
+        log_summary: Whether to log per-metric lines at INFO level.
+
+    Raises:
+        Exception: If ``accumulate()`` has not been called (``self.eval`` is empty).
+        ValueError: If ``self.params.iouType`` is not ``"segm"``, ``"bbox"``, or
+            ``"keypoints"``.
+    """
+    p = self.params
+    evaluation = self.eval
 
     def _summarize(ap: int = 1, iou_thr: float | None = None, area_rng: str = "all", max_dets: int = 100) -> float:
-        p = self.params
         log_template = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}"
         title_str = "Average Precision" if ap == 1 else "Average Recall"
         type_str = "(AP)" if ap == 1 else "(AR)"
-        iou_str = (
-            "{:0.2f}:{:0.2f}".format(p.iouThrs[0], p.iouThrs[-1]) if iou_thr is None else "{:0.2f}".format(iou_thr)
-        )
+        iou_str = f"{p.iouThrs[0]:0.2f}:{p.iouThrs[-1]:0.2f}" if iou_thr is None else f"{iou_thr:0.2f}"
 
         aind = [i for i, aRng in enumerate(p.areaRngLbl) if aRng == area_rng]
         mind = [i for i, mDet in enumerate(p.maxDets) if mDet == max_dets]
         if ap == 1:
-            s = self.eval["precision"]
+            s = evaluation["precision"]
             if iou_thr is not None:
                 t = np.where(iou_thr == p.iouThrs)[0]
                 s = s[t]
             s = s[:, :, :, aind, mind]
         else:
-            s = self.eval["recall"]
+            s = evaluation["recall"]
             if iou_thr is not None:
                 t = np.where(iou_thr == p.iouThrs)[0]
                 s = s[t]
             s = s[:, :, aind, mind]
-        mean_s = -1 if len(s[s > -1]) == 0 else float(np.mean(s[s > -1]))
+        mean_s = -1 if len(s[s > -1]) == 0 else float(cast(Any, np.mean(s[s > -1])))
         if log_summary:
             logger.info(log_template.format(title_str, type_str, iou_str, area_rng, max_dets, mean_s))
         return mean_s
 
-    def _summarizeDets() -> np.ndarray:  # noqa: N802
+    def _summarizeDets() -> np.ndarray[Any, Any]:  # noqa: N802
         stats = np.zeros((12,))
-        stats[0] = _summarize(1, max_dets=self.params.maxDets[2])
-        stats[1] = _summarize(1, iou_thr=0.5, max_dets=self.params.maxDets[2])
-        stats[2] = _summarize(1, iou_thr=0.75, max_dets=self.params.maxDets[2])
-        stats[3] = _summarize(1, area_rng="small", max_dets=self.params.maxDets[2])
-        stats[4] = _summarize(1, area_rng="medium", max_dets=self.params.maxDets[2])
-        stats[5] = _summarize(1, area_rng="large", max_dets=self.params.maxDets[2])
-        stats[6] = _summarize(0, max_dets=self.params.maxDets[0])
-        stats[7] = _summarize(0, max_dets=self.params.maxDets[1])
-        stats[8] = _summarize(0, max_dets=self.params.maxDets[2])
-        stats[9] = _summarize(0, area_rng="small", max_dets=self.params.maxDets[2])
-        stats[10] = _summarize(0, area_rng="medium", max_dets=self.params.maxDets[2])
-        stats[11] = _summarize(0, area_rng="large", max_dets=self.params.maxDets[2])
+        stats[0] = _summarize(1, max_dets=p.maxDets[2])
+        stats[1] = _summarize(1, iou_thr=0.5, max_dets=p.maxDets[2])
+        stats[2] = _summarize(1, iou_thr=0.75, max_dets=p.maxDets[2])
+        stats[3] = _summarize(1, area_rng="small", max_dets=p.maxDets[2])
+        stats[4] = _summarize(1, area_rng="medium", max_dets=p.maxDets[2])
+        stats[5] = _summarize(1, area_rng="large", max_dets=p.maxDets[2])
+        stats[6] = _summarize(0, max_dets=p.maxDets[0])
+        stats[7] = _summarize(0, max_dets=p.maxDets[1])
+        stats[8] = _summarize(0, max_dets=p.maxDets[2])
+        stats[9] = _summarize(0, area_rng="small", max_dets=p.maxDets[2])
+        stats[10] = _summarize(0, area_rng="medium", max_dets=p.maxDets[2])
+        stats[11] = _summarize(0, area_rng="large", max_dets=p.maxDets[2])
         return stats
 
-    def _summarizeKps() -> np.ndarray:  # noqa: N802
+    def _summarizeKps() -> np.ndarray[Any, Any]:  # noqa: N802
         stats = np.zeros((10,))
         stats[0] = _summarize(1, max_dets=20)
         stats[1] = _summarize(1, max_dets=20, iou_thr=0.5)
@@ -699,11 +709,13 @@ def patched_pycocotools_summarize(self: COCOeval, *, log_summary: bool = True) -
         stats[9] = _summarize(0, max_dets=20, area_rng="large")
         return stats
 
-    if not self.eval:
+    if not evaluation:
         raise Exception("Please run accumulate() first")
-    iou_type = self.params.iouType
+    iou_type = p.iouType
     if iou_type == "segm" or iou_type == "bbox":
         summarize = _summarizeDets
     elif iou_type == "keypoints":
         summarize = _summarizeKps
+    else:
+        raise ValueError(f"Unknown iou type {iou_type}")
     self.stats = summarize()

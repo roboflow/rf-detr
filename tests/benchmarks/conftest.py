@@ -38,6 +38,9 @@ def download_coco_val() -> tuple[Path, Path]:
     Returns:
         Tuple containing the images root directory and annotations file path.
     """
+    if not _is_online(_COCO_HOST, _COCO_PORT):
+        pytest.skip("Offline environment, skipping COCO val2017 benchmark tests.")
+
     images_root = _DATA_DIR / "val2017"
     annotations_path = _DATA_DIR / "annotations" / "instances_val2017.json"
 

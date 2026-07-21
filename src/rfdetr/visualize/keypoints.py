@@ -71,7 +71,7 @@ def _key_points_for_display(
 
     visible = keypoint_confidence >= keypoint_threshold
     existing_visible = key_points.visible
-    setattr(key_points, "visible", visible if existing_visible is None else existing_visible & visible)
+    key_points.visible = visible if existing_visible is None else existing_visible & visible
     return key_points
 
 

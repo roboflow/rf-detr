@@ -8,7 +8,7 @@
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-import torch.nn as nn
+from torch import nn
 
 
 @runtime_checkable

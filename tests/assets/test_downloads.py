@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from types import ModuleType
 from unittest.mock import Mock, patch
 
 import pytest
@@ -48,18 +49,24 @@ class TestDownloadPretrainWeights:
 
     @pytest.mark.skipif(not _IS_RFDETR_PLUS_AVAILABLE, reason="rf-detr-plus not installed - skip priority test")
     def test_download_from_rfdetr_plus_when_available(self, mock_file_operations):
-        """Test that rf-detr-plus models are prioritized when available.
+        """Test that rf-detr-plus URL is used for models absent from local ModelWeights.
 
-        Note: This test only runs if rf-detr-plus is actually installed.
-        The priority logic is also tested in the fallback test.
+        Verifies the priority contract: a model not registered in local ModelWeights but
+        present in rf-detr-plus triggers _download_file with the plus URL, not a fallback
+        or silent no-op.
         """
-        # This test validates the real rf-detr-plus integration
-        # If rf-detr-plus is installed, verify it's checked first
-        download_pretrain_weights("some-model.pth")
+        plus_url = "https://plus.example.com/plus-only-model.pth"
+        plus_asset = ModelWeightAsset(filename="plus-only-model.pth", url=plus_url, md5_hash=None)
 
-        # Should attempt download (whether from plus or local)
-        # The important part is that the function doesn't crash
-        assert mock_file_operations["download"].called or not mock_file_operations["exists"].return_value
+        with (
+            patch("rfdetr.assets.model_weights.ModelWeights.from_filename", return_value=None),
+            patch("rfdetr_plus.assets.ModelWeights.from_filename", return_value=plus_asset),
+        ):
+            download_pretrain_weights("plus-only-model.pth")
+
+        mock_file_operations["download"].assert_called_once()
+        call_kwargs = mock_file_operations["download"].call_args[1]
+        assert call_kwargs["url"] == plus_url
 
     def test_download_from_platform_models_fallback(self, mock_file_operations):
         """Test falling back to PLATFORM_MODELS when model not in ModelWeights."""
@@ -78,6 +85,38 @@ class TestDownloadPretrainWeights:
             call_kwargs = mock_file_operations["download"].call_args[1]
             assert call_kwargs["url"] == "https://legacy.com/model.pth"
             assert call_kwargs["expected_md5"] is None  # Platform models don't have MD5
+
+    def test_private_platform_models_registry_imports_without_eager_fallback(self):
+        """Test that a private-only registry imports cleanly without evaluating PLATFORM_MODELS early."""
+        from importlib import reload
+
+        import rfdetr.platform as platform_pkg
+        import rfdetr.platform.downloads as platform_downloads
+
+        mock_rfdetr_plus_pkg = ModuleType("rfdetr_plus")
+        mock_rfdetr_plus_pkg.__path__ = []
+        mock_platforms_pkg = ModuleType("rfdetr_plus.models")
+        mock_platforms_pkg.__path__ = []
+        mock_downloads_module = ModuleType("rfdetr_plus.models.downloads")
+        mock_downloads_module._PLATFORM_MODELS = {"legacy-model.pth": "https://legacy.com/model.pth"}
+        mock_platforms_pkg.downloads = mock_downloads_module
+        mock_rfdetr_plus_pkg.models = mock_platforms_pkg
+
+        with (
+            patch.dict(
+                "sys.modules",
+                {
+                    "rfdetr_plus": mock_rfdetr_plus_pkg,
+                    "rfdetr_plus.models": mock_platforms_pkg,
+                    "rfdetr_plus.models.downloads": mock_downloads_module,
+                },
+            ),
+            patch.object(platform_pkg, "_IS_RFDETR_PLUS_AVAILABLE", True),
+        ):
+            reloaded = reload(platform_downloads)
+            assert reloaded.PLATFORM_MODELS == {"legacy-model.pth": "https://legacy.com/model.pth"}
+
+        reload(platform_downloads)
 
     def test_file_exists_with_correct_md5(self, mock_file_operations):
         """Test that download is skipped if file exists with correct MD5."""
@@ -177,7 +216,7 @@ class TestDownloadPretrainWeights:
 class TestDownloadIntegration:
     """Integration tests for the complete download flow."""
 
-    @pytest.mark.parametrize("model", list(ModelWeights), ids=[m.filename for m in ModelWeights])
+    @pytest.mark.parametrize("model", [pytest.param(m, id=m.filename) for m in ModelWeights])
     def test_all_models_have_valid_md5_format(self, model: ModelWeightAsset) -> None:
         """Test that MD5 hashes are valid when present (prevent typos)."""
         # MD5 should be None or valid 32-char hex string

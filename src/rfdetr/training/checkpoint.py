@@ -44,7 +44,11 @@ def convert_legacy_checkpoint(old_path: str, new_path: str) -> None:
         old_path: Path to the source legacy ``.pth`` checkpoint.
         new_path: Destination path for the converted ``.ckpt`` file.
     """
-    old: dict[str, Any] = torch.load(old_path, map_location="cpu", weights_only=False)
+    # trust=True: this function converts internally-produced legacy .pth files;
+    # allow pickle fallback if safe deserialization fails due to non-tensor/custom objects.
+    from rfdetr.utilities.io import _safe_torch_load
+
+    old: dict[str, Any] = _safe_torch_load(old_path, trust=True)
 
     if "model" not in old:
         raise ValueError(

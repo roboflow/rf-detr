@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
+import yaml
 
 if TYPE_CHECKING:
     from supervision import Detections
@@ -26,13 +27,16 @@ from rfdetr.datasets._keypoint_schema import (
     infer_yolo_keypoint_schema,
 )
 from rfdetr.datasets.coco import (
-    _resolve_runtime_augmentation_backend,
     make_coco_transforms,
     make_coco_transforms_square_div_64,
 )
+from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
 
 REQUIRED_YOLO_YAML_FILES = ["data.yaml", "data.yml"]
-REQUIRED_SPLIT_DIRS = ["train", "valid"]
+_VALID_VAL_DIR_NAMES = ("valid", "val")
 REQUIRED_DATA_SUBDIRS = ["images", "labels"]
 YOLO_IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpg", ".jpeg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
 
@@ -122,7 +126,7 @@ class _LazyYoloSample:
     polygons: tuple[np.ndarray, ...]
     keypoints: np.ndarray
 
-    def to_detections(self) -> "Detections":
+    def to_detections(self) -> Detections:
         """Materialize the current sample as a supervision ``Detections`` object."""
         from supervision import Detections
 
@@ -152,7 +156,7 @@ class _LazyYoloDetectionDataset:
     def __len__(self) -> int:
         return len(self._samples)
 
-    def __getitem__(self, idx: int) -> tuple[str, np.ndarray, "Detections"]:
+    def __getitem__(self, idx: int) -> tuple[str, np.ndarray, Detections]:
         sample = self._samples[idx]
         try:
             with Image.open(sample.image_path) as image:
@@ -590,23 +594,180 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
 
     We accept a dataset to be in yolo format if the following conditions are met:
     - The dataset_dir contains a data.yaml or data.yml file
-    - The dataset_dir contains "train" and "valid" subdirectories, each containing "images" and "labels" subdirectories
+    - The dataset_dir contains "train" and either "valid" or "val" subdirectories,
+      each containing "images" and "labels" subdirectories
     - The "test" subdirectory is optional
 
-    Returns a boolean indicating whether the dataset is in correct yolo format.
+    .. note::
+        This is a coarse filesystem pre-check and intentionally does **not**
+        consult ``data.yaml`` split path keys.  Actual split directories are
+        resolved by :func:`_resolve_yolo_split_dirs`, which reads the YAML
+        first and falls back to the filesystem convention.  When both ``valid/``
+        and ``val/`` exist but YAML declares the non-priority one, the two
+        functions may pick different directories — this is by design; the
+        validity gate is a cheap early filter only.  When ``valid/`` exists,
+        it takes precedence over ``val/``.
+
+    Returns:
+        ``True`` if the directory satisfies all YOLO format requirements,
+        ``False`` otherwise.
     """
     contains_required_yolo_yaml = any(
         os.path.exists(os.path.join(dataset_dir, yaml_file)) for yaml_file in REQUIRED_YOLO_YAML_FILES
     )
-    contains_required_split_dirs = all(
-        os.path.exists(os.path.join(dataset_dir, split_dir)) for split_dir in REQUIRED_SPLIT_DIRS
+    has_train = os.path.exists(os.path.join(dataset_dir, "train"))
+    has_val = any(os.path.exists(os.path.join(dataset_dir, d)) for d in _VALID_VAL_DIR_NAMES)
+    contains_required_split_dirs = has_train and has_val
+
+    val_dir_name = next(
+        (d for d in _VALID_VAL_DIR_NAMES if os.path.exists(os.path.join(dataset_dir, d))),
+        "valid",
     )
+    active_splits = ["train", val_dir_name]
     contains_required_data_subdirs = all(
         os.path.exists(os.path.join(dataset_dir, split_dir, data_subdir))
-        for split_dir in REQUIRED_SPLIT_DIRS
+        for split_dir in active_splits
         for data_subdir in REQUIRED_DATA_SUBDIRS
     )
     return contains_required_yolo_yaml and contains_required_split_dirs and contains_required_data_subdirs
+
+
+def _parse_yaml_split_dirs(root: Path, data_file: Path, split: str) -> tuple[Path, Path] | None:
+    """Parse ``data_file`` and resolve image/label dirs for ``split``.
+
+    Returns ``None`` when the YAML declares no usable path for the requested
+    split, the resolved path does not exist on disk, or a path traversal is
+    detected.
+
+    Raises:
+        OSError: File I/O failure reading ``data_file``.
+        ValueError: Unexpected value type inside the YAML mapping.
+        TypeError: Unexpected type inside the YAML mapping.
+        yaml.YAMLError: Malformed YAML content.
+
+    Args:
+        root: Dataset root directory.
+        data_file: Path to ``data.yaml`` or ``data.yml``.
+        split: One of ``"train"``, ``"val"``, or ``"test"``.
+
+    Returns:
+        ``(images_dir, labels_dir)`` on success, or ``None`` to signal fallback.
+    """
+    data = _load_yaml_mapping(data_file)
+    yaml_base = Path(data.get("path", "")) if data.get("path") else root
+    if not yaml_base.is_absolute():
+        yaml_base = root / yaml_base
+
+    raw_path: str | None = data.get(split)
+    if raw_path is None and split == "val":
+        raw_path = data.get("valid")
+
+    if raw_path is None:
+        return None
+
+    split_images = yaml_base / raw_path
+    # Path traversal guard: reject yaml-declared paths that escape
+    # the dataset root (e.g. "../../other_project/val/images").
+    try:
+        split_images.resolve().relative_to(root.resolve())
+    except ValueError:
+        return None  # traversal detected; signal fallback
+
+    parts = split_images.parts
+    is_dir = split_images.is_dir()
+    if is_dir and "images" in parts:
+        idx = parts.index("images")
+        split_labels = Path(*parts[:idx], "labels", *parts[idx + 1 :])
+        if split_labels.is_dir():
+            return split_images, split_labels
+    elif is_dir:
+        sub_images = split_images / "images"
+        sub_labels = split_images / "labels"
+        if sub_images.is_dir() and sub_labels.is_dir():
+            return sub_images, sub_labels
+    return None
+
+
+def _resolve_split_from_yaml(root: Path, data_file: Path, split: str) -> tuple[Path, Path] | None:
+    """Try to resolve image and label dirs for ``split`` from ``data_file``.
+
+    Returns ``None`` when the YAML file is absent, declares no usable path for
+    the requested split, or the resolved path does not exist on disk.
+
+    Args:
+        root: Dataset root directory.
+        data_file: Path to ``data.yaml`` or ``data.yml``.
+        split: One of ``"train"``, ``"val"``, or ``"test"``.
+
+    Returns:
+        ``(images_dir, labels_dir)`` on success, or ``None`` to signal fallback.
+    """
+    if not data_file.exists():
+        return None
+    try:
+        return _parse_yaml_split_dirs(root, data_file, split)
+    except OSError:
+        pass
+    except (ValueError, TypeError) as exc:
+        logger.warning(
+            "Could not resolve YAML split path for %r in %s: %s — falling back to Roboflow directory convention.",
+            split,
+            data_file,
+            exc,
+        )
+    except yaml.YAMLError as exc:
+        logger.warning(
+            "Failed to parse YAML file %s: %s — falling back to Roboflow directory convention.",
+            data_file,
+            exc,
+        )
+    return None
+
+
+def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[Path, Path]:
+    """Resolve image and label directories for a YOLO dataset split.
+
+    Supports both Roboflow (``valid/``) and Ultralytics (``val/``, paths in
+    ``data.yaml``) layouts.  When the YAML file declares ``train``/``val``/
+    ``test`` path keys the function uses those; otherwise it falls back to the
+    existing Roboflow convention with an additional check for ``val/`` when
+    ``valid/`` is absent.
+
+    When ``split`` is ``"val"``, the function first queries the YAML for a
+    ``"val"`` key and, if absent, retries with a ``"valid"`` key before falling
+    back to the filesystem convention.
+
+    Labels are derived from the resolved images path by replacing the
+    ``"images"`` segment with ``"labels"`` anywhere in the path, mirroring the
+    Ultralytics ``img2label_paths`` convention.  This handles both
+    trailing-images (``val/images``) and intermediate-images
+    (``images/val2017``) layouts.
+
+    Args:
+        root: Dataset root directory.
+        data_file: Path to ``data.yaml`` or ``data.yml``.
+        split: One of ``"train"``, ``"val"``, or ``"test"``.
+
+    Returns:
+        ``(images_dir, labels_dir)`` as resolved :class:`~pathlib.Path` objects.
+    """
+    result = _resolve_split_from_yaml(root, data_file, split)
+    if result is not None:
+        return result
+
+    roboflow_map = {"train": "train", "val": "valid", "test": "test"}
+    mapped = roboflow_map.get(split, split)
+    img_dir = root / mapped / "images"
+    lb_dir = root / mapped / "labels"
+
+    if split == "val" and not img_dir.exists():
+        for alt in _VALID_VAL_DIR_NAMES:
+            candidate = root / alt / "images"
+            candidate_labels = root / alt / "labels"
+            if candidate.is_dir() and candidate_labels.is_dir():
+                return candidate, candidate_labels
+
+    return img_dir, lb_dir
 
 
 class ConvertYolo:
@@ -751,7 +912,7 @@ class YoloDetection(VisionDataset):
     ):
         if include_masks and include_keypoints:
             raise ValueError("YOLO segmentation masks and keypoints cannot be loaded at the same time.")
-        super(YoloDetection, self).__init__(img_folder)
+        super().__init__(img_folder)
         self._transforms = transforms
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
@@ -809,52 +970,50 @@ class YoloDetection(VisionDataset):
 
 
 def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> YoloDetection:
-    """Build a Roboflow YOLO-format dataset.
+    """Build a YOLO-format dataset from Roboflow or Ultralytics directory layouts.
 
-    This uses Roboflow's standard YOLO directory structure (train/valid/test folders with images/ and labels/
-    subdirectories).
+    Supports both Roboflow (``train/valid/test``) and Ultralytics (``train/val/test``,
+    with ``data.yaml`` path keys) directory structures.  Split directories are resolved
+    via :func:`_resolve_yolo_split_dirs`.
 
     Args:
         image_set: Dataset split to load. One of ``"train"``, ``"val"``, or
             ``"test"``.
         args: Argument namespace. The following attributes are consumed:
-            ``dataset_dir``, ``square_resize_div_64``, ``aug_config``, ``segmentation_head``, ``multi_scale``,
-            ``expanded_scales``, ``do_random_resize_via_padding``, ``patch_size``, ``num_windows``. ``aug_config`` is
-            forwarded to the transform builder; when ``None`` the builder falls back to the default
-            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG`.
+            ``dataset_dir``, ``square_resize_div_64``, ``aug_config``, ``scale_jitter``, ``segmentation_head``,
+            ``multi_scale``, ``expanded_scales``, ``do_random_resize_via_padding``, ``patch_size``, ``num_windows``.
+            ``aug_config`` is forwarded to the transform builder; when ``None`` the builder uses torchvision-native
+            defaults. ``scale_jitter`` independently controls the resize-crop branch (Option B) and defaults to
+            ``True`` when absent.
         resolution: Target square resolution in pixels.
 
     Returns:
         A :class:`YoloDetection` dataset instance ready for use with a DataLoader.
     """
     root = Path(args.dataset_dir)
-    assert root.exists(), f"provided Roboflow path {root} does not exist"
-
-    # YOLO format uses images/ and labels/ subdirectories
-    PATHS = {  # noqa: N806
-        "train": (root / "train" / "images", root / "train" / "labels"),
-        "val": (root / "valid" / "images", root / "valid" / "labels"),
-        "test": (root / "test" / "images", root / "test" / "labels"),
-    }
+    if not root.exists():
+        raise FileNotFoundError(f"YOLO dataset root not found: {root}")
 
     # Prefer data.yaml; fall back to data.yml if present; default to data.yaml for error reporting
     data_file = next((root / f for f in REQUIRED_YOLO_YAML_FILES if (root / f).exists()), root / "data.yaml")
-    img_folder, lb_folder = PATHS[image_set.split("_")[0]]
+    split_key = image_set.split("_")[0]
+    img_folder, lb_folder = _resolve_yolo_split_dirs(root, data_file, split_key)
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
     multi_scale = getattr(args, "multi_scale", False)
-    expanded_scales = getattr(args, "expanded_scales", None)
+    expanded_scales = getattr(args, "expanded_scales", False)
     do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
-    patch_size = getattr(args, "patch_size", None)
-    num_windows = getattr(args, "num_windows", None)
+    patch_size = getattr(args, "patch_size", 16)
+    num_windows = getattr(args, "num_windows", 4)
     aug_config = getattr(args, "aug_config", None)
+    scale_jitter = getattr(args, "scale_jitter", True)
     include_keypoints = getattr(args, "use_grouppose_keypoints", False)
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
     keypoint_flip_pairs: list[int] | None = (
         (getattr(args, "keypoint_flip_pairs", []) or []) if include_keypoints else None
     )
-    resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
-    gpu_postprocess = resolved_augmentation_backend != "cpu"
+    resolved_augmentation_backend = resolve_backend_for_build(getattr(args, "augmentation_backend", "cpu"))
+    gpu_postprocess = is_gpu_postprocess(resolved_augmentation_backend)
 
     if include_keypoints:
         try:
@@ -878,6 +1037,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             ),
@@ -899,6 +1059,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
+                scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             ),

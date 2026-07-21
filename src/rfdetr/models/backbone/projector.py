@@ -11,12 +11,14 @@
 # ------------------------------------------------------------------------
 """Projector."""
 
-from typing import Callable, Optional, Sequence, Union
+from __future__ import annotations
 
-import numpy as np
+from collections.abc import Callable, Sequence
+from typing import cast
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
+from torch import Tensor, nn
 
 
 class LayerNorm(nn.Module):
@@ -26,14 +28,14 @@ class LayerNorm(nn.Module):
     https://github.com/facebookresearch/ConvNeXt/blob/d1fa8f6fef0a165b27399986cc2bdacc92777e40/models/convnext.py#L119
     """
 
-    def __init__(self, normalized_shape, eps=1e-6):
+    def __init__(self, normalized_shape: int, eps: float = 1e-6) -> None:
         super().__init__()
         self.weight = nn.Parameter(torch.ones(normalized_shape))
         self.bias = nn.Parameter(torch.zeros(normalized_shape))
         self.eps = eps
         self.normalized_shape = (normalized_shape,)
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         """
         LayerNorm forward
         TODO: this is a hack to avoid overflow when using fp16
@@ -44,7 +46,7 @@ class LayerNorm(nn.Module):
         return x
 
 
-def get_norm(norm: Optional[Union[str, Callable[[int], nn.Module]]], out_channels: int) -> Optional[nn.Module]:
+def get_norm(norm: str | Callable[[int], nn.Module] | None, out_channels: int) -> nn.Module | None:
     """
     Args:
         norm: Either one of BN, SyncBN, FrozenBN, GN;
@@ -64,8 +66,9 @@ def get_norm(norm: Optional[Union[str, Callable[[int], nn.Module]]], out_channel
     return norm(out_channels)
 
 
-def get_activation(name, inplace=False):
+def get_activation(name: str | None, inplace: bool = False) -> nn.Module:
     """Get activation."""
+    module: nn.Module
     if name == "silu":
         module = nn.SiLU(inplace=inplace)
     elif name == "relu":
@@ -75,7 +78,7 @@ def get_activation(name, inplace=False):
     elif name is None:
         module = nn.Identity()
     else:
-        raise AttributeError("Unsupported act type: {}".format(name))
+        raise AttributeError(f"Unsupported act type: {name}")
     return module
 
 
@@ -84,17 +87,17 @@ class ConvX(nn.Module):
 
     def __init__(
         self,
-        in_planes,
-        out_planes,
-        kernel=3,
-        stride=1,
-        groups=1,
-        dilation=1,
-        act="relu",
-        layer_norm=False,
-        rms_norm=False,
-    ):
-        super(ConvX, self).__init__()
+        in_planes: int,
+        out_planes: int,
+        kernel: int | tuple[int, int] = 3,
+        stride: int = 1,
+        groups: int = 1,
+        dilation: int = 1,
+        act: str = "relu",
+        layer_norm: bool = False,
+        rms_norm: bool = False,
+    ) -> None:
+        super().__init__()
         if not isinstance(kernel, tuple):
             kernel = (kernel, kernel)
         padding = (kernel[0] // 2, kernel[1] // 2)
@@ -108,22 +111,34 @@ class ConvX(nn.Module):
             dilation=dilation,
             bias=False,
         )
+        self.bn: nn.Module
         if rms_norm:
             self.bn = nn.RMSNorm(out_planes)
         else:
-            self.bn = get_norm("LN", out_planes) if layer_norm else nn.BatchNorm2d(out_planes)
+            self.bn = cast(nn.Module, get_norm("LN", out_planes)) if layer_norm else nn.BatchNorm2d(out_planes)
         self.act = get_activation(act, inplace=True)
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         """forward."""
         out = self.act(self.bn(self.conv(x.contiguous())))
-        return out
+        return cast(Tensor, out)
 
 
 class Bottleneck(nn.Module):
     """Standard bottleneck."""
 
-    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5, act="silu", layer_norm=False, rms_norm=False):
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        shortcut: bool = True,
+        g: int = 1,
+        k: tuple[int, int] = (3, 3),
+        e: float = 0.5,
+        act: str = "silu",
+        layer_norm: bool = False,
+        rms_norm: bool = False,
+    ) -> None:
         """ch_in, ch_out, shortcut, groups, kernels, expand."""
         super().__init__()
         c_ = int(c2 * e)  # hidden channels
@@ -131,15 +146,26 @@ class Bottleneck(nn.Module):
         self.cv2 = ConvX(c_, c2, k[1], 1, groups=g, act=act, layer_norm=layer_norm, rms_norm=rms_norm)
         self.add = shortcut and c1 == c2
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         """'forward()' applies the YOLOv5 FPN to input data."""
-        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+        return cast(Tensor, x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x)))
 
 
 class C2f(nn.Module):
     """Faster Implementation of CSP Bottleneck with 2 convolutions."""
 
-    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5, act="silu", layer_norm=False, rms_norm=False):
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        n: int = 1,
+        shortcut: bool = False,
+        g: int = 1,
+        e: float = 0.5,
+        act: str = "silu",
+        layer_norm: bool = False,
+        rms_norm: bool = False,
+    ) -> None:
         """ch_in, ch_out, number, shortcut, groups, expansion."""
         super().__init__()
         self.c = int(c2 * e)  # hidden channels
@@ -152,11 +178,11 @@ class C2f(nn.Module):
             for _ in range(n)
         )
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         """Forward pass using split() instead of chunk()."""
         y = list(self.cv1(x).split((self.c, self.c), 1))
         y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
+        return cast(Tensor, self.cv2(torch.cat(y, 1)))
 
 
 class MultiScaleProjector(nn.Module):
@@ -183,20 +209,20 @@ class MultiScaleProjector(nn.Module):
             scale_factors: List of scaling factors to upsample or downsample
                 the input features for creating pyramid features.
         """
-        super(MultiScaleProjector, self).__init__()
+        super().__init__()
 
         self.scale_factors = scale_factors
         self.survival_prob = survival_prob
         self.force_drop_last_n_features = force_drop_last_n_features
 
-        stages_sampling = []
-        stages = []
+        stages_sampling: list[nn.ModuleList] = []
+        stages: list[nn.Sequential] = []
         # use_bias = norm == ""
         self.use_extra_pool = False
         for scale in scale_factors:
-            stages_sampling.append([])
+            scale_stage_layers: list[nn.Module] = []
             for in_dim in in_channels:
-                layers = []
+                layers: list[nn.Module] = []
 
                 # if in_dim > 512:
                 #     layers.append(ConvX(in_dim, in_dim // 2, kernel=1))
@@ -206,7 +232,7 @@ class MultiScaleProjector(nn.Module):
                     layers.extend(
                         [
                             nn.ConvTranspose2d(in_dim, in_dim // 2, kernel_size=2, stride=2),
-                            get_norm("LN", in_dim // 2),
+                            cast(nn.Module, get_norm("LN", in_dim // 2)),
                             nn.GELU(),
                             nn.ConvTranspose2d(in_dim // 2, in_dim // 4, kernel_size=2, stride=2),
                         ]
@@ -239,23 +265,21 @@ class MultiScaleProjector(nn.Module):
                     self.use_extra_pool = True
                     continue
                 else:
-                    raise NotImplementedError("Unsupported scale_factor:{}".format(scale))
-                layers = nn.Sequential(*layers)
-                stages_sampling[-1].append(layers)
-            stages_sampling[-1] = nn.ModuleList(stages_sampling[-1])
+                    raise NotImplementedError(f"Unsupported scale_factor:{scale}")
+                scale_stage_layers.append(nn.Sequential(*layers))
+            stages_sampling.append(nn.ModuleList(scale_stage_layers))
 
             in_dim = int(sum(in_channel // max(1, scale) for in_channel in in_channels))
-            layers = [
+            stage_layers: list[nn.Module] = [
                 C2f(in_dim, out_channels, num_blocks, layer_norm=layer_norm),
-                get_norm("LN", out_channels),
+                cast(nn.Module, get_norm("LN", out_channels)),
             ]
-            layers = nn.Sequential(*layers)
-            stages.append(layers)
+            stages.append(nn.Sequential(*stage_layers))
 
         self.stages_sampling = nn.ModuleList(stages_sampling)
         self.stages = nn.ModuleList(stages)
 
-    def forward(self, x):
+    def forward(self, x: list[Tensor]) -> list[Tensor]:
         """
         Args:
             x: Tensor of shape (N,C,H,W). H, W must be a multiple of ``self.size_divisibility``.
@@ -268,12 +292,14 @@ class MultiScaleProjector(nn.Module):
         """
         num_features = len(x)
         if self.survival_prob < 1.0 and self.training:
+            x = list(x)  # copy before mutating so the caller's list is untouched
             final_drop_prob = 1 - self.survival_prob
-            drop_p = np.random.uniform()
+            # torch RNG (not numpy) so the draw honours per-rank seeding under DDP.
+            drop_p = torch.rand(()).item()
             for i in range(1, num_features):
                 critical_drop_prob = i * (final_drop_prob / (num_features - 1))
                 if drop_p < critical_drop_prob:
-                    x[i][:] = 0
+                    x[i] = torch.zeros_like(x[i])
         elif self.force_drop_last_n_features > 0:
             for i in range(self.force_drop_last_n_features):
                 # don't do it inplace to ensure the compiler can optimize out the backbone layers
@@ -282,31 +308,11 @@ class MultiScaleProjector(nn.Module):
         results = []
         # x list of len(out_features_indexes)
         for i, stage in enumerate(self.stages):
-            feat_fuse = []
-            for j, stage_sampling in enumerate(self.stages_sampling[i]):
-                feat_fuse.append(stage_sampling(x[j]))
-            if len(feat_fuse) > 1:
-                feat_fuse = torch.cat(feat_fuse, dim=1)
-            else:
-                feat_fuse = feat_fuse[0]
+            feat_fuse_list = []
+            for j, stage_sampling in enumerate(cast(nn.ModuleList, self.stages_sampling[i])):
+                feat_fuse_list.append(stage_sampling(x[j]))
+            feat_fuse = torch.cat(feat_fuse_list, dim=1) if len(feat_fuse_list) > 1 else feat_fuse_list[0]
             results.append(stage(feat_fuse))
         if self.use_extra_pool:
             results.append(F.max_pool2d(results[-1], kernel_size=1, stride=2, padding=0))
         return results
-
-
-class SimpleProjector(nn.Module):
-    def __init__(self, in_dim, out_dim, factor_kernel=False):
-        super(SimpleProjector, self).__init__()
-        if not factor_kernel:
-            self.convx1 = ConvX(in_dim, in_dim * 2, layer_norm=True, act="silu")
-            self.convx2 = ConvX(in_dim * 2, out_dim, layer_norm=True, act="silu")
-        else:
-            self.convx1 = ConvX(in_dim, out_dim, kernel=(3, 1), layer_norm=True, act="silu")
-            self.convx2 = ConvX(out_dim, out_dim, kernel=(1, 3), layer_norm=True, act="silu")
-        self.ln = get_norm("LN", out_dim)
-
-    def forward(self, x):
-        """forward."""
-        out = self.ln(self.convx2(self.convx1(x[0])))
-        return [out]

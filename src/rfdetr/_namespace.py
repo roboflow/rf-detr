@@ -12,13 +12,11 @@ This module has zero dependency on ``main.py`` and can survive its deletion.
 import dataclasses
 import types
 
-from deprecate import deprecated
-
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.models._defaults import MODEL_DEFAULTS, ModelDefaults
 
 # Fields forwarded from ModelConfig into the namespace.
-# Excludes cls_loss_coef (handled by transitional override logic below).
+# Excludes cls_loss_coef (set explicitly below from TrainConfig, its sole owner).
 _MC_NAMESPACE_FIELDS = {
     "amp",
     "backbone_lora",
@@ -66,7 +64,6 @@ _MC_NAMESPACE_FIELDS = {
 #
 # Excluded categories:
 #   - Explicit transformations: handled with custom logic in _namespace_from_configs.
-#   - Deprecated TC architecture copies: ModelConfig wins (see _MC_NAMESPACE_FIELDS).
 #   - PTL Trainer / DDP, logger flags, auto-batch probe, DataModule knobs:
 #     not consumed by legacy builders.
 _TC_NON_NAMESPACE_FIELDS = {
@@ -74,11 +71,6 @@ _TC_NON_NAMESPACE_FIELDS = {
     "resume",
     "seed",
     "cls_loss_coef",
-    # Deprecated TC architecture copies — ModelConfig wins.
-    "group_detr",
-    "ia_bce_loss",
-    "segmentation_head",
-    "num_select",
     # PTL Trainer / DDP.
     "accelerator",
     "strategy",
@@ -103,7 +95,14 @@ _TC_NON_NAMESPACE_FIELDS = {
     "pin_memory",
     "persistent_workers",
     "lr_scheduler",
+    "lr_scheduler_kwargs",
+    "lr_scheduler_interval",
+    "lr_scheduler_monitor",
     "lr_min_factor",
+    "lr_drop",
+    "optimizer",
+    "optimizer_kwargs",
+    "optimizer_param_group_overrides",
     # Dataset class labels.
     "class_names",
 }
@@ -119,13 +118,9 @@ def _namespace_from_configs(
 ) -> types.SimpleNamespace:
     """Build a ``types.SimpleNamespace`` from configs and architectural defaults.
 
-    This is the internal implementation behind :func:`build_namespace`. Extracting it allows config-native builder
-    functions to construct a namespace without going through the public ``build_namespace()`` API while still accepting
-    overridable defaults.
-
     This function is used by multiple modules as the transitional namespace
     bridge: :func:`rfdetr.models.build_model_from_config`, :func:`rfdetr.models.build_criterion_from_config`, and
-    :func:`rfdetr.detr._build_model_context` all call it directly to avoid the public ``build_namespace()`` shim.
+    :func:`rfdetr.detr._build_model_context` all call it directly to build a legacy namespace from configs.
 
     Args:
         model_config: Architecture configuration.
@@ -139,25 +134,16 @@ def _namespace_from_configs(
     mc = model_config
     tc = train_config
     d = defaults
-    train_fields_set = getattr(tc, "model_fields_set", set())
-    model_fields_set = getattr(mc, "model_fields_set", set())
-    # Transitional compatibility: during deprecation, preserve explicit
-    # ModelConfig.cls_loss_coef values when TrainConfig does not set one.
-    cls_loss_coef = (
-        tc.cls_loss_coef
-        if "cls_loss_coef" in train_fields_set or "cls_loss_coef" not in model_fields_set
-        else mc.cls_loss_coef
-    )
+    cls_loss_coef = tc.cls_loss_coef
 
     return types.SimpleNamespace(
         **{
             # Architectural defaults — 35 constants not exposed in ModelConfig/TrainConfig.
             **dataclasses.asdict(d),
             # TrainConfig: fields consumed by legacy builders (PTL, logger, auto-batch
-            # fields excluded; see _TC_NAMESPACE_FIELDS).  Architecture copies
-            # (group_detr, num_select, …) are intentionally absent — mc wins below.
+            # fields excluded; see _TC_NAMESPACE_FIELDS).
             **tc.model_dump(include=set(_TC_NAMESPACE_FIELDS)),
-            # ModelConfig: wins over tc for overlapping architecture params
+            # ModelConfig: sole source of architecture params
             # (group_detr, ia_bce_loss, segmentation_head, num_select).
             **mc.model_dump(include=set(_MC_NAMESPACE_FIELDS)),
             # Segmentation extras (SegmentationTrainConfig only — absent from base TrainConfig).
@@ -170,29 +156,3 @@ def _namespace_from_configs(
             "seed": tc.seed if tc.seed is not None else 42,
         }
     )
-
-
-@deprecated(target=_namespace_from_configs, deprecated_in="1.7.0", remove_in="1.9.0")
-def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> types.SimpleNamespace:
-    """Build a ``types.SimpleNamespace`` from Pydantic model and train configs.
-
-    .. deprecated:: 1.7.0
-        ``build_namespace`` is a backward-compatibility shim with no remaining internal callers.
-        Deprecated since v1.7.0, will be removed in v1.9.0. Use the config-native builders instead:
-
-        - :func:`rfdetr.models.build_model_from_config` — replaces
-          ``build_model(build_namespace(mc, tc))``
-        - :func:`rfdetr.models.build_criterion_from_config` — replaces
-          ``build_criterion_and_postprocessors(build_namespace(mc, tc))``
-        - :func:`rfdetr._namespace._namespace_from_configs` — for the rare
-          case where a raw namespace is still required (e.g. ``build_dataset``)
-
-    Args:
-        model_config: Architecture configuration.
-        train_config: Training hyperparameter configuration.
-
-    Returns:
-        ``types.SimpleNamespace`` compatible with ``build_model``, ``build_criterion_and_postprocessors``, and
-        ``build_dataset``.
-    """
-    ...

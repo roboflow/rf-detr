@@ -31,6 +31,7 @@ from rfdetr.export._tflite.converter import (
     _DEFAULT_CALIB_SAMPLES,
     _DEFAULT_DIR_CALIB_SAMPLES,
     _IMAGE_EXTENSIONS,
+    _NUMPY_LOAD_PATCH_LOCK,
     _VALID_QUANTIZATIONS,
     _check_onnx2tf_available,
     _get_onnx_input_info,
@@ -630,6 +631,7 @@ class TestNumpyAllowPickle:
             np.load = original  # type: ignore[assignment]
 
     def test_restores_on_exception(self) -> None:
+        """Patch is restored even when an exception propagates out of the context."""
         original = np.load
         try:
             with _numpy_allow_pickle():
@@ -637,6 +639,28 @@ class TestNumpyAllowPickle:
         except RuntimeError:
             pass
         assert np.load is original
+
+    def test_concurrent_access_lock_not_reentrant(self) -> None:
+        """Lock prevents a second context from patching np.load while the first is still active."""
+        import threading
+
+        entered = threading.Event()
+        released = threading.Event()
+
+        def _hold_context() -> None:
+            with _numpy_allow_pickle():
+                entered.set()
+                released.wait(timeout=2.0)
+
+        holder = threading.Thread(target=_hold_context)
+        holder.start()
+        entered.wait(timeout=2.0)
+
+        acquired = _NUMPY_LOAD_PATCH_LOCK.acquire(blocking=False)
+        released.set()
+        holder.join(timeout=2.0)
+
+        assert not acquired, "Lock must remain held while first context is active"
 
 
 # ---------------------------------------------------------------------------

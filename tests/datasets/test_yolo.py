@@ -18,6 +18,7 @@ from rfdetr.datasets.yolo import (
     YoloDetection,
     _extract_yolo_class_names,
     _LazyYoloDetectionDataset,
+    _resolve_yolo_split_dirs,
     is_valid_yolo_dataset,
 )
 
@@ -116,10 +117,12 @@ class TestBuildRoboflowFromYoloAugConfig:
         """Regression test for #769: aug_config is forwarded to transform builders for all code paths."""
         args = self._make_args(square_resize_div_64=square_resize_div_64, aug_config=aug_config)
 
+        fake_dirs = (Path("/fake/dataset/train/images"), Path("/fake/dataset/train/labels"))
         with (
             patch("rfdetr.datasets.yolo.Path") as mock_path,
             patch(f"rfdetr.datasets.yolo.{transform_fn}") as mock_transform,
             patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
+            patch("rfdetr.datasets.yolo._resolve_yolo_split_dirs", return_value=fake_dirs),
         ):
             mock_path.return_value.exists.return_value = True
             mock_transform.return_value = MagicMock()
@@ -158,11 +161,13 @@ class TestBuildRoboflowFromYoloAugConfig:
         """Auto + no CUDA must keep CPU normalize by passing gpu_postprocess=False."""
         args = self._make_args(square_resize_div_64=False, aug_config=None)
         args.augmentation_backend = "auto"
+        fake_dirs = (Path("/fake/dataset/train/images"), Path("/fake/dataset/train/labels"))
         with (
             patch("rfdetr.datasets.yolo.Path") as mock_path,
             patch("rfdetr.datasets.yolo.make_coco_transforms") as mock_transform,
             patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
+            patch("rfdetr.datasets.yolo._resolve_yolo_split_dirs", return_value=fake_dirs),
         ):
             mock_path.return_value.exists.return_value = True
             mock_transform.return_value = MagicMock()
@@ -679,7 +684,7 @@ class TestYoloDetectionLazyMasks:
             ),
         ],
     )
-    @pytest.mark.parametrize("include_masks", [True, False], ids=["masks", "no_masks"])
+    @pytest.mark.parametrize("include_masks", [pytest.param(True, id="masks"), pytest.param(False, id="no_masks")])
     def test_malformed_label_line_raises_clear_error(
         self, tmp_path: Path, label_content: str, match_pattern: str, include_masks: bool
     ) -> None:
@@ -741,7 +746,7 @@ class TestYoloDetectionLazyMasks:
             f"Lazy storage ({lazy_bytes} B) should be at least 10× smaller than eager mask cost ({eager_mask_bytes} B)."
         )
 
-    @pytest.mark.parametrize("include_masks", [True, False], ids=["masks", "no_masks"])
+    @pytest.mark.parametrize("include_masks", [pytest.param(True, id="masks"), pytest.param(False, id="no_masks")])
     def test_out_of_range_class_id_raises_clear_error(self, tmp_path: Path, include_masks: bool) -> None:
         """A label with a class ID beyond the class count should raise ValueError at init."""
         image_dir = tmp_path / "images"
@@ -906,6 +911,207 @@ class TestYoloDetectionLazyMasks:
                 transforms=None,
                 include_masks=True,
             )
+
+
+def _write_ultralytics_yolo_dataset(tmp_path: Path) -> None:
+    """Create a minimal Ultralytics-style YOLO dataset with val/ (not valid/) and yaml paths."""
+    (tmp_path / "data.yaml").write_text(
+        "path: .\ntrain: train/images\nval: val/images\ntest: test/images\nnames:\n  0: person\n",
+        encoding="utf-8",
+    )
+    for split in ("train", "val", "test"):
+        (tmp_path / split / "images").mkdir(parents=True)
+        (tmp_path / split / "labels").mkdir(parents=True)
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(tmp_path / split / "images" / "sample.png")
+        (tmp_path / split / "labels" / "sample.txt").write_text("0 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+
+
+class TestResolveYoloSplitDirs:
+    """Tests for _resolve_yolo_split_dirs: yaml-aware split path resolution (#1177)."""
+
+    def test_roboflow_layout_without_yaml_paths(self, tmp_path: Path) -> None:
+        """Roboflow export layout (valid/, no yaml paths) must keep working unchanged."""
+        _write_minimal_roboflow_yolo_dataset(tmp_path)
+        data_file = tmp_path / "data.yaml"
+        img, lb = _resolve_yolo_split_dirs(tmp_path, data_file, "val")
+        assert img == tmp_path / "valid" / "images"
+        assert lb == tmp_path / "valid" / "labels"
+
+    def test_ultralytics_layout_val_from_yaml(self, tmp_path: Path) -> None:
+        """Ultralytics layout (val/, yaml declares paths) must resolve from yaml."""
+        _write_ultralytics_yolo_dataset(tmp_path)
+        data_file = tmp_path / "data.yaml"
+        img, lb = _resolve_yolo_split_dirs(tmp_path, data_file, "val")
+        assert img == tmp_path / "val" / "images"
+        assert lb == tmp_path / "val" / "labels"
+
+    def test_ultralytics_layout_train_from_yaml(self, tmp_path: Path) -> None:
+        """Train split resolved from yaml paths."""
+        _write_ultralytics_yolo_dataset(tmp_path)
+        data_file = tmp_path / "data.yaml"
+        img, lb = _resolve_yolo_split_dirs(tmp_path, data_file, "train")
+        assert img == tmp_path / "train" / "images"
+        assert lb == tmp_path / "train" / "labels"
+
+    def test_ultralytics_layout_test_from_yaml(self, tmp_path: Path) -> None:
+        """Test split resolved from yaml paths."""
+        _write_ultralytics_yolo_dataset(tmp_path)
+        data_file = tmp_path / "data.yaml"
+        img, lb = _resolve_yolo_split_dirs(tmp_path, data_file, "test")
+        assert img == tmp_path / "test" / "images"
+        assert lb == tmp_path / "test" / "labels"
+
+    def test_yaml_path_key_resolves_relative_to_root(self, tmp_path: Path) -> None:
+        """Ultralytics 'path' key in yaml is used as base for relative split dirs."""
+        sub = tmp_path / "datasets" / "coco128"
+        sub.mkdir(parents=True)
+        for split in ("train", "val"):
+            (sub / split / "images").mkdir(parents=True)
+            (sub / split / "labels").mkdir(parents=True)
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text(
+            f"path: {sub}\ntrain: train/images\nval: val/images\nnames:\n  0: person\n",
+            encoding="utf-8",
+        )
+        img, lb = _resolve_yolo_split_dirs(tmp_path, data_file, "val")
+        assert img == sub / "val" / "images"
+        assert lb == sub / "val" / "labels"
+
+    def test_images_suffix_swapped_to_labels(self, tmp_path: Path) -> None:
+        """Yaml path ending with /images must have labels dir derived by swapping last component."""
+        _write_ultralytics_yolo_dataset(tmp_path)
+        data_file = tmp_path / "data.yaml"
+        _, lb = _resolve_yolo_split_dirs(tmp_path, data_file, "val")
+        assert lb.name == "labels"
+        assert lb.parent == (tmp_path / "val")
+
+    def test_fallback_val_dir_when_no_yaml_paths_and_no_valid(self, tmp_path: Path) -> None:
+        """When yaml has no path keys and valid/ does not exist but val/ does, use val/."""
+        (tmp_path / "data.yaml").write_text("names:\n  0: person\n", encoding="utf-8")
+        for split in ("train", "val"):
+            (tmp_path / split / "images").mkdir(parents=True)
+            (tmp_path / split / "labels").mkdir(parents=True)
+        data_file = tmp_path / "data.yaml"
+        img, lb = _resolve_yolo_split_dirs(tmp_path, data_file, "val")
+        assert img == tmp_path / "val" / "images"
+        assert lb == tmp_path / "val" / "labels"
+
+    def test_yaml_declared_path_absent_on_disk_falls_back_to_roboflow(self, tmp_path: Path) -> None:
+        """Yaml declares a split path that does not exist; must fall back to Roboflow convention."""
+        (tmp_path / "data.yaml").write_text(
+            "path: .\ntrain: train/images\nval: nonexistent/images\nnames:\n  0: person\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "valid" / "images").mkdir(parents=True)
+        (tmp_path / "valid" / "labels").mkdir(parents=True)
+        data_file = tmp_path / "data.yaml"
+        img, lb = _resolve_yolo_split_dirs(tmp_path, data_file, "val")
+        assert img == tmp_path / "valid" / "images"
+        assert lb == tmp_path / "valid" / "labels"
+
+    def test_test_split_falls_back_when_yaml_has_no_test_key(self, tmp_path: Path) -> None:
+        """When yaml exists but has no 'test' key, return root/test/images convention."""
+        (tmp_path / "data.yaml").write_text(
+            "path: .\ntrain: train/images\nval: val/images\nnames:\n  0: person\n",
+            encoding="utf-8",
+        )
+        data_file = tmp_path / "data.yaml"
+        img, lb = _resolve_yolo_split_dirs(tmp_path, data_file, "test")
+        assert img == tmp_path / "test" / "images"
+        assert lb == tmp_path / "test" / "labels"
+
+    def test_path_traversal_in_yaml_does_not_escape_root(self, tmp_path: Path) -> None:
+        """Traversal sequence in yaml split path must not escape dataset root."""
+        outside = tmp_path.parent / "outside_dataset" / "images"
+        outside_labels = tmp_path.parent / "outside_dataset" / "labels"
+        outside.mkdir(parents=True)
+        outside_labels.mkdir(parents=True)
+        (tmp_path / "data.yaml").write_text(
+            "path: .\nval: ../outside_dataset/images\nnames:\n  0: person\n",
+            encoding="utf-8",
+        )
+        data_file = tmp_path / "data.yaml"
+        img, _ = _resolve_yolo_split_dirs(tmp_path, data_file, "val")
+        assert not str(img).startswith(str(tmp_path.parent / "outside_dataset"))
+
+
+class TestIsValidYoloDatasetUltralytics:
+    """is_valid_yolo_dataset must accept both val/ (Ultralytics) and valid/ (Roboflow) layouts."""
+
+    def test_ultralytics_val_dir_accepted(self, tmp_path: Path) -> None:
+        """Dataset with val/ instead of valid/ should be recognized as valid YOLO."""
+        (tmp_path / "data.yaml").touch()
+        for split in ["train", "val"]:
+            for subdir in ["images", "labels"]:
+                (tmp_path / split / subdir).mkdir(parents=True)
+        assert is_valid_yolo_dataset(str(tmp_path)) is True
+
+    def test_roboflow_valid_dir_still_accepted(self, tmp_path: Path) -> None:
+        """Existing Roboflow layout (valid/) must keep working."""
+        (tmp_path / "data.yaml").touch()
+        for split in ["train", "valid"]:
+            for subdir in ["images", "labels"]:
+                (tmp_path / split / subdir).mkdir(parents=True)
+        assert is_valid_yolo_dataset(str(tmp_path)) is True
+
+
+class TestBuildRoboflowFromYoloUltralytics:
+    """build_roboflow_from_yolo must handle Ultralytics YOLO layout (#1177)."""
+
+    def _make_args(self, dataset_dir: str) -> types.SimpleNamespace:
+        return types.SimpleNamespace(
+            dataset_dir=dataset_dir,
+            square_resize_div_64=False,
+            aug_config=None,
+            segmentation_head=False,
+            multi_scale=False,
+            expanded_scales=None,
+            do_random_resize_via_padding=False,
+            patch_size=16,
+            num_windows=4,
+            augmentation_backend="cpu",
+            use_grouppose_keypoints=False,
+            num_keypoints_per_class=[],
+            keypoint_flip_pairs=[],
+        )
+
+    def test_ultralytics_val_split_resolves_correctly(self, tmp_path: Path) -> None:
+        """Val split on Ultralytics layout (val/, yaml paths) should not raise."""
+        _write_ultralytics_yolo_dataset(tmp_path)
+        args = self._make_args(str(tmp_path))
+
+        with (
+            patch("rfdetr.datasets.yolo.make_coco_transforms") as mock_transform,
+            patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
+        ):
+            mock_transform.return_value = MagicMock()
+            mock_dataset.return_value = MagicMock()
+
+            from rfdetr.datasets.yolo import build_roboflow_from_yolo
+
+            build_roboflow_from_yolo("val", args, resolution=640)
+
+        _, kwargs = mock_dataset.call_args
+        assert kwargs["img_folder"] == str(tmp_path / "val" / "images")
+
+    def test_roboflow_layout_still_works(self, tmp_path: Path) -> None:
+        """Roboflow export layout (valid/) must keep working after the change."""
+        _write_minimal_roboflow_yolo_dataset(tmp_path)
+        args = self._make_args(str(tmp_path))
+
+        with (
+            patch("rfdetr.datasets.yolo.make_coco_transforms") as mock_transform,
+            patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
+        ):
+            mock_transform.return_value = MagicMock()
+            mock_dataset.return_value = MagicMock()
+
+            from rfdetr.datasets.yolo import build_roboflow_from_yolo
+
+            build_roboflow_from_yolo("val", args, resolution=640)
+
+        _, kwargs = mock_dataset.call_args
+        assert "valid" in kwargs["img_folder"]
 
 
 class TestExtractYoloClassNames:

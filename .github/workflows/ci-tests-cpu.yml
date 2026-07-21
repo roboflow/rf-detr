@@ -46,18 +46,19 @@ jobs:
       - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
         with:
+          version: "0.9.26"
           python-version: ${{ matrix.python-version }}
           activate-environment: true
 
       - name: 🚀 Install Packages
         timeout-minutes: 5
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
-        run: uv pip install -e ".[train,cli,visual,kornia]" --group tests
+        run: uv pip install -e ".[train,augment,cli,visual]" --group tests
 
       - name: 🧪 Run the Test
         run: |
           uv run --no-sync pytest src/ tests/ \
-            -n 2 -m "not gpu" \
+            -n 2 -m "not gpu and not coco17" \
             --ignore=tests/run_smoke_all_models.py \
             --cov=rfdetr --cov-report=xml \
             --timeout=420 \

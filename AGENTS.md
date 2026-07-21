@@ -69,7 +69,7 @@ uv sync --all-groups
 See `pyproject.toml` for complete dependency specifications:
 
 - **Core:** PyTorch, torchvision, transformers, supervision, pydantic, pyDeprecate
-- **Optional:** `[train]` (training, including peft and pycocotools), `[lora]` (LoRA fine-tuning), `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb, mlflow, clearml)
+- **Optional:** `[train]` (minimal training loop dependencies), `[augment]` (custom Albumentations CPU augmentations and Kornia GPU augmentations), `[lora]` (LoRA fine-tuning), `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb, mlflow, clearml)
 - **Development:** `tests`, `docs`, `build` groups
 
 **Important version constraints:**
@@ -205,11 +205,25 @@ uv run twine check --strict dist/*
 
 ### Key Patterns
 
+**Augmentations:**
+
+- Default training, validation, prediction, and export preprocessing use torchvision-native transforms.
+- Custom non-empty `aug_config` values on the CPU path use Albumentations and require `rfdetr[augment]`.
+- `augmentation_backend="gpu"` uses Kornia and requires `rfdetr[augment]`; `augmentation_backend="auto"` falls back to CPU when CUDA or Kornia is unavailable.
+
 **Model Architecture:**
 
 - RFDETR wrappers: `self.model` is the model context returned by `get_model()`
 - Underlying PyTorch module: `self.model.model`
 - Segmentation models return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
+
+**Model Selection (examples, docs, tests, defaults):**
+
+- **Default to `RFDETRSmall` / `"rfdetr-small"`.** Use it wherever an example needs a concrete detection model.
+- **Never use base models** (`RFDETRBase` / `"rfdetr-base"`) in new examples, docs, or tests — treat as deprecated; substitute `small`.
+- **Released detection sizes** — `nano`, `small`, `medium`, `large` (plus `xlarge`/`2xlarge` Plus models). Always pick one of these for plain object detection; never a `-preview` variant.
+- **Released segmentation sizes** — `RFDETRSegNano`/`Small`/`Medium`/`Large` / `"rfdetr-seg-{nano,small,medium,large}"` (plus `xlarge`/`2xlarge`). Use a sized seg model for segmentation; `RFDETRSegPreview` / `"rfdetr-seg-preview"` is now superseded — do not use it in new examples, docs, or tests.
+- **`-preview` variants** are for capabilities with **no released sized version yet**. Only keypoints remain preview-only: `RFDETRKeypointPreview` / `"rfdetr-keypoint-preview"`. Use a preview variant **only** for that task — never as a stand-in for detection or segmentation.
 
 **Imports:**
 

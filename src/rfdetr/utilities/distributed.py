@@ -12,11 +12,14 @@
 # ------------------------------------------------------------------------
 """Distributed-training helpers (world-size, rank, all_gather, reduce_dict)."""
 
+from __future__ import annotations
+
 import pickle
 from typing import Any
 
 import torch
 import torch.distributed as dist
+from torch import Tensor
 
 
 def is_dist_avail_and_initialized() -> bool:
@@ -50,8 +53,6 @@ def is_main_process() -> bool:
 def save_on_master(obj: Any, f: Any, *args: Any, **kwargs: Any) -> None:
     """Save *obj* to *f* only on the main process (rank 0).
 
-    Safely saves objects, removing any callbacks that cannot be pickled.
-
     Args:
         obj: Object to save.
         f: File path or file-like object passed to ``torch.save``.
@@ -83,9 +84,9 @@ def all_gather(data: Any) -> list[Any]:
     # obtain Tensor size of each rank
     local_size = tensor.numel()
     local_size_tensor = torch.tensor([local_size], device=device)
-    size_list = [torch.tensor([0], device=device) for _ in range(world_size)]
-    dist.all_gather(size_list, local_size_tensor)
-    size_list = [int(size.item()) for size in size_list]
+    size_tensor_list = [torch.tensor([0], device=device) for _ in range(world_size)]
+    dist.all_gather(size_tensor_list, local_size_tensor)
+    size_list = [int(size.item()) for size in size_tensor_list]
     max_size = max(size_list)
 
     # receiving Tensor from all ranks
@@ -107,7 +108,7 @@ def all_gather(data: Any) -> list[Any]:
     return data_list
 
 
-def reduce_dict(input_dict: dict[str, torch.Tensor], average: bool = True) -> dict[str, torch.Tensor]:
+def reduce_dict(input_dict: dict[str, Tensor], average: bool = True) -> dict[str, Tensor]:
     """Reduce values in *input_dict* across all processes.
 
     Args:
@@ -122,12 +123,12 @@ def reduce_dict(input_dict: dict[str, torch.Tensor], average: bool = True) -> di
         return input_dict
     with torch.no_grad():
         names = []
-        values = []
+        value_list = []
         # sort the keys so that they are consistent across processes
         for k in sorted(input_dict.keys()):
             names.append(k)
-            values.append(input_dict[k])
-        values = torch.stack(values, dim=0)
+            value_list.append(input_dict[k])
+        values = torch.stack(value_list, dim=0)
         dist.all_reduce(values)
         if average:
             values /= world_size

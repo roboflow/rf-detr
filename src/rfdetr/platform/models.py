@@ -4,6 +4,8 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from typing import Any
+
 from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 
 __all__: list[str] = []
@@ -25,7 +27,7 @@ if _IS_RFDETR_PLUS_AVAILABLE:
     ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazy failure for missing plus exports: warn on import, raise on access."""
     # Only intercept plus-only symbols when the extra package is missing.
     if name in _PLUS_EXPORTS and not _IS_RFDETR_PLUS_AVAILABLE:

@@ -5,6 +5,8 @@
 # ------------------------------------------------------------------------
 """Reproducibility helpers: seed all RNGs consistently."""
 
+from __future__ import annotations
+
 import random
 
 import numpy as np
@@ -18,11 +20,15 @@ def seed_all(seed: int = 7) -> None:
     use deterministic algorithms and disables its auto-tuner so that results are reproducible across runs at the cost of
     a possible slight performance decrease.
 
+    Under distributed data-parallel, ``random`` and NumPy are offset by the process rank so stochastic augmentations
+    differ across ranks, while PyTorch is seeded identically so model initialization stays in sync.
+
     Args:
         seed: Integer seed value.  Defaults to ``7``.
     """
-    random.seed(seed)
-    np.random.seed(seed)
+    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+    random.seed(seed + rank)
+    np.random.seed(seed + rank)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)

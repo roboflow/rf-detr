@@ -104,3 +104,31 @@ class TestNumBoxesForTargets:
 
         # 2 + 1 = 3 boxes; single-process so no all-reduce
         assert result.item() == pytest.approx(3.0)
+
+
+class TestLossMasksEmptyMatch:
+    """Tests for the dict-path zero-GT branch of SetCriterion.loss_masks."""
+
+    def test_dict_path_zero_gt_stays_connected_to_graph(self):
+        """Zero-match dict path returns a loss that back-propagates to every segmentation-head output."""
+        criterion = _bare_criterion()
+        spatial_features = torch.randn(1, 4, 8, 8, requires_grad=True)
+        query_features = torch.randn(1, 5, 4, requires_grad=True)
+        bias = torch.randn(1, requires_grad=True)
+        outputs = {
+            "pred_masks": {
+                "spatial_features": spatial_features,
+                "query_features": query_features,
+                "bias": bias,
+            }
+        }
+        empty = torch.empty(0, dtype=torch.long)
+        indices = [(empty, empty)]
+
+        losses = criterion.loss_masks(outputs, targets=[{}], indices=indices, num_boxes=1)
+
+        assert losses["loss_mask_ce"].requires_grad
+        (losses["loss_mask_ce"] + losses["loss_mask_dice"]).backward()
+        assert spatial_features.grad is not None
+        assert query_features.grad is not None
+        assert bias.grad is not None

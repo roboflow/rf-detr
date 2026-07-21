@@ -110,7 +110,7 @@ def _bilinear_resize_half_pixel(src: NDArray[np.float32], out_h: int, out_w: int
     return np.asarray(out, dtype=np.float32)
 
 
-def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArray[np.bool_]:
+def _decode_masks(mask_logits: NDArray[np.floating[Any]], out_size: tuple[int, int]) -> NDArray[np.bool_]:
     """Upsample mask logits to image size and threshold at zero.
 
     Matches ``PostProcess.forward``: bilinear upsample with ``align_corners=False`` followed by ``> 0``.
@@ -243,8 +243,8 @@ def _run_inference(
             "Export the model with float32 quantization or implement input quantization manually."
         )
 
-    pil_img = PILImage.open(image_path)
-    inp_tensor = _preprocess_image(pil_img, (int(height), int(width)), int(channels))
+    with PILImage.open(image_path) as pil_img:
+        inp_tensor = _preprocess_image(pil_img, (int(height), int(width)), int(channels))
 
     interp.set_tensor(inp_det[0]["index"], inp_tensor)
     interp.invoke()
