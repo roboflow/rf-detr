@@ -97,36 +97,47 @@ def _match_single_class(
     else:
         iou_matrix = _compute_mask_iou(pred_sorted, gt_items)  # [N, M]
 
-    device = pred_scores.device
-    gt_matched = torch.zeros(m, dtype=torch.bool, device=device)
-    pred_match = torch.zeros(n, dtype=torch.long, device=device)
-    pred_ignore = torch.zeros(n, dtype=torch.bool, device=device)
+    # The greedy matching below is inherently sequential (each GT can only be claimed
+    # once, so iteration i depends on the outcome of i-1) — it cannot be vectorized away.
+    # But on CUDA, comparing a 0-dim tensor against a Python float inside the loop
+    # (`if best_nc_iou >= iou_threshold`) forces a device-to-host sync every iteration,
+    # turning what should be O(1) host-side work into O(N) GPU pipeline stalls. Move the
+    # IoU matrix and crowd mask to host memory once, then run the loop on plain
+    # numpy/Python values so no per-iteration tensor sync occurs (regression: #416).
+    iou_matrix_np = iou_matrix.detach().cpu().numpy()  # [N, M]
+    gt_crowd_np = gt_crowd.detach().cpu().numpy()  # [M]
+
+    gt_matched_np = np.zeros(m, dtype=np.bool_)
+    pred_match_np = np.zeros(n, dtype=np.int64)
+    pred_ignore_np = np.zeros(n, dtype=np.bool_)
+    any_crowd = bool(gt_crowd_np.any())
 
     for i in range(n):
-        ious = iou_matrix[i]  # [M]
+        ious = iou_matrix_np[i]  # [M]
 
         # Try to match to a non-crowd GT (each non-crowd GT matched at most once).
-        nc_ious = ious.clone()
-        nc_ious[gt_crowd] = -1.0
-        nc_ious[gt_matched & ~gt_crowd] = -1.0  # already claimed
+        nc_ious = ious.copy()
+        nc_ious[gt_crowd_np] = -1.0
+        nc_ious[gt_matched_np & ~gt_crowd_np] = -1.0  # already claimed
 
-        best_nc_iou, best_nc_idx = nc_ious.max(dim=0)
+        best_nc_idx = int(np.argmax(nc_ious))
+        best_nc_iou = nc_ious[best_nc_idx]
         if best_nc_iou >= iou_threshold:
-            pred_match[i] = 1
-            gt_matched[best_nc_idx] = True
+            pred_match_np[i] = 1
+            gt_matched_np[best_nc_idx] = True
         # A detection matched to a crowd GT is ignored (not a false positive).
-        elif gt_crowd.any():
-            crowd_ious = ious.clone()
-            crowd_ious[~gt_crowd] = -1.0
+        elif any_crowd:
+            crowd_ious = ious.copy()
+            crowd_ious[~gt_crowd_np] = -1.0
             if crowd_ious.max() >= iou_threshold:
-                pred_ignore[i] = True
-            # else: false positive — pred_match stays 0
+                pred_ignore_np[i] = True
+            # else: false positive — pred_match_np stays 0
 
-    total_gt = int((~gt_crowd).sum().item())
+    total_gt = int((~gt_crowd_np).sum())
     return (
         np.asarray(pred_scores_sorted.float().cpu().numpy(), dtype=np.float32),
-        np.asarray(pred_match.cpu().numpy(), dtype=np.int64),
-        np.asarray(pred_ignore.cpu().numpy(), dtype=np.bool_),
+        pred_match_np,
+        pred_ignore_np,
         total_gt,
     )
 

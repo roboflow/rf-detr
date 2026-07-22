@@ -141,6 +141,20 @@ class TestSetup:
         assert "segm" not in cb.map_metric.iou_type
         assert "keypoints" not in cb.map_metric.iou_type
 
+    def test_log_per_class_metrics_false_disables_class_metrics_compute(self) -> None:
+        """Regression test for #416: log_per_class_metrics=False must also skip the expensive per-class
+        MeanAveragePrecision compute, not merely the table rendering at epoch end — otherwise the flag silently fails to
+        reduce cost."""
+        cb = COCOEvalCallback(log_per_class_metrics=False)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        assert cb.map_metric.class_metrics is False
+
+    def test_log_per_class_metrics_true_enables_class_metrics_compute(self) -> None:
+        """log_per_class_metrics=True (default) keeps class_metrics compute enabled."""
+        cb = COCOEvalCallback(log_per_class_metrics=True)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        assert cb.map_metric.class_metrics is True
+
 
 class TestOnFitStart:
     """on_fit_start() populates class names from the datamodule."""

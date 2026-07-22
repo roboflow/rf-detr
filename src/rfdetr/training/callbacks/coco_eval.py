@@ -174,7 +174,9 @@ class COCOEvalCallback(Callback):
         self._use_segm_metrics = self._segmentation and not self._keypoint_mode
         iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
         kwargs: dict[str, Any] = dict(
-            class_metrics=True,
+            # Skipping per-class computation (not just its table rendering) when the
+            # caller has no use for it saves real per-epoch compute cost (#416).
+            class_metrics=self._log_per_class_metrics,
             max_detection_thresholds=[1, 10, self._max_dets],
             # Disable torchmetrics' built-in cross-rank sync: its `gather_all_tensors` requires every
             # state tensor to have the same ndim on all ranks, but DDP seg validation produces
@@ -754,7 +756,7 @@ class COCOEvalCallback(Callback):
             ema_iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
             self.map_metric_ema = MeanAveragePrecision(
                 iou_type=ema_iou_type,
-                class_metrics=True,
+                class_metrics=self._log_per_class_metrics,
                 max_detection_thresholds=[1, 10, self._max_dets],
                 backend="faster_coco_eval",
                 sync_on_compute=False,  # we merge state across ranks ourselves (see map_metric in setup)

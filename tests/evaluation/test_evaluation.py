@@ -185,6 +185,38 @@ class TestMatchSingleClass:
         assert matches[0] == 1
         assert total_gt == 1
 
+    def test_greedy_loop_does_not_sync_a_tensor_per_detection(self) -> None:
+        """Regression test for #416: the per-detection greedy loop must not force one device-to-host tensor sync
+        (``Tensor.__bool__``) per detection.
+
+        On CUDA each such sync is a pipeline stall; the loop should convert IoUs to host data once, then run the
+        inherently-sequential greedy matching on plain Python/numpy values.
+        """
+        n, m = 50, 10
+        scores = torch.rand(n)
+        preds = torch.rand(n, 4) * 100
+        preds[:, 2:] += preds[:, :2] + 1.0
+        gts = torch.rand(m, 4) * 100
+        gts[:, 2:] += gts[:, :2] + 1.0
+        gt_crowd = torch.zeros(m, dtype=torch.bool)
+
+        call_count = 0
+        orig_bool = torch.Tensor.__bool__
+
+        def counting_bool(self: torch.Tensor) -> bool:
+            nonlocal call_count
+            call_count += 1
+            return orig_bool(self)
+
+        with patch.object(torch.Tensor, "__bool__", counting_bool):
+            self._run(scores, preds, gts, gt_crowd=gt_crowd)
+
+        assert call_count < n, (
+            f"_match_single_class triggered {call_count} tensor->bool syncs for n={n} "
+            "detections; expected O(1) syncs, not O(n) — the greedy loop should operate "
+            "on host data, not per-iteration device tensor comparisons"
+        )
+
 
 # ---------------------------------------------------------------------------
 # build_matching_data
