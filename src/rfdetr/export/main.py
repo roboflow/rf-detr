@@ -14,7 +14,8 @@ import argparse
 import os
 import random
 import warnings
-from typing import cast
+from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -34,6 +35,72 @@ from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_sha, get_version
 
 logger = get_logger()
+
+
+def _convert_onnx_export(
+    output_file: str,
+    format: str,
+    output_dir_path: Path,
+    *,
+    quantization: str | None,
+    calibration_data: str | np.ndarray[Any, Any] | None,
+    max_images: int,
+    verbose: bool,
+) -> Path:
+    """Dispatch :meth:`rfdetr.detr.RFDETR.export`'s post-ONNX-export conversion (TFLite / TensorRT / none).
+
+    Args:
+        output_file: Path to the already-exported ONNX model.
+        format: Export format; one of ``"onnx"``, ``"tflite"``, ``"tensorrt"``.
+        output_dir_path: Directory where converted artifacts are written.
+        quantization: TFLite quantization mode (ignored for other formats).
+        calibration_data: Representative images for TFLite INT8 calibration (ignored for other formats).
+        max_images: Maximum calibration images to load from a directory (ignored for other formats).
+        verbose: Print conversion progress information.
+
+    Returns:
+        Path to the final exported artifact (``.onnx``, ``.tflite``, or ``.trt``).
+    """
+    if format == "tflite":
+        warnings.warn(
+            "TFLite export is experimental and work-in-progress. "
+            "Upstream dependency instabilities (onnx2tf, ai_edge_litert) may affect results.",
+            UserWarning,
+            stacklevel=3,
+        )
+        try:
+            from rfdetr.export._tflite.converter import export_tflite
+        except ImportError:
+            logger.error(
+                "It seems some dependencies for TFLite export are missing."
+                " Please run `pip install rfdetr[tflite]` and try again.",
+            )
+            raise
+
+        tflite_path = export_tflite(
+            onnx_path=output_file,
+            output_dir=str(output_dir_path),
+            quantization=quantization,
+            calibration_data=calibration_data,
+            verbosity="info" if verbose else "error",
+            max_images=max_images,
+            verbose=verbose,
+        )
+        logger.info(f"Successfully exported TFLite model to: {tflite_path}")
+        return tflite_path
+
+    if format == "tensorrt":
+        # Lazy re-import (not the module-level `build_engine` above): tests monkeypatch
+        # rfdetr.export._tensorrt.build_engine, which only takes effect on a fresh lookup here.
+        from rfdetr.export._tensorrt import build_engine
+
+        logger.info("Converting ONNX model to TensorRT engine")
+        engine_file = build_engine(output_file, verbose=verbose)
+        logger.info(f"Successfully exported TensorRT engine to: {engine_file}")
+        return Path(engine_file)
+
+    logger.info("Export completed successfully")
+    return Path(output_file)
 
 
 def _num_parameters(module: nn.Module) -> int:
@@ -80,7 +147,6 @@ def make_infer_image(
 
     inps, _ = transforms(image, None)
     inps = inps.to(device)
-    # inps = utils.nested_tensor_from_tensor_list([inps for _ in range(args.batch_size)])
     inps = torch.stack([inps for _ in range(batch_size)])
     return inps
 

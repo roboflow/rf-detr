@@ -436,7 +436,7 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
     except ImportError as exc:
         raise ImportError(
             "onnx and onnx_graphsurgeon are required for the GridSample TFLite "
-            "patch.  Install with: pip install rfdetr[onnx,tflite]"
+            "patch.  Install with: pip install rfdetr[tflite]"
         ) from exc
 
     model = onnx.load(str(onnx_path))
@@ -482,9 +482,8 @@ def _check_onnx2tf_available() -> None:
         import onnx2tf  # noqa: F401
     except ImportError as exc:
         raise ImportError(
-            "onnx2tf is not installed. TFLite export requires both ONNX and "
-            "TFLite export dependencies. Install them with: "
-            "pip install rfdetr[onnx,tflite]"
+            "onnx2tf is not installed. TFLite export requires the tflite extra. "
+            "Install it with: pip install rfdetr[tflite]"
         ) from exc
 
     from importlib.metadata import PackageNotFoundError as _PkgNotFound
@@ -665,9 +664,8 @@ def _get_onnx_input_info(onnx_path: Path) -> tuple[str, list[int]]:
         import onnx
     except ImportError as exc:
         raise ImportError(
-            "onnx is not installed. TFLite export requires both ONNX and "
-            "TFLite export dependencies. Install them with: "
-            "pip install rfdetr[onnx,tflite]"
+            "onnx is not installed. TFLite export requires the tflite extra. "
+            "Install it with: pip install rfdetr[tflite]"
         ) from exc
 
     model = onnx.load(str(onnx_path))
@@ -887,7 +885,7 @@ def export_tflite(
         logger.warning(
             "GridSample TFLite patch skipped — onnx/onnx_graphsurgeon not available (%s). "
             "TFLite inference may produce incorrect scores if the model contains GridSample nodes. "
-            "Install with: pip install rfdetr[onnx,tflite]",
+            "Install with: pip install rfdetr[tflite]",
             exc,
         )
 

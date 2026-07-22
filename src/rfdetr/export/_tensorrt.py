@@ -9,7 +9,7 @@
 """TensorRT export helper: build a serialized engine from ONNX in-process.
 
 The engine is built with the TensorRT Python API (via `polygraphy`), so no
-``trtexec`` binary on ``PATH`` is required — only ``pip install rfdetr[trt]``.
+``trtexec`` binary on ``PATH`` is required — only ``pip install rfdetr[tensorrt]``.
 
 For TensorRT *inference*, use the ``inference-models`` library which provides
 multi-backend RF-DETR support (PyTorch, ONNX, TensorRT) with automatic backend
@@ -30,7 +30,7 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
-# polygraphy ships in the ``rfdetr[trt]`` extra alongside ``tensorrt``. Import it
+# polygraphy ships in the ``rfdetr[tensorrt]`` extra alongside ``tensorrt``. Import it
 # lazily at module scope (guarded) so importing this module never fails on hosts
 # without TensorRT, and so tests can monkeypatch these names without polygraphy
 # installed.
@@ -83,7 +83,7 @@ def build_engine(onnx_path: str, *, fp16: bool = True, verbose: bool = False, dr
         return engine_path
 
     if engine_from_network is None:
-        raise ImportError("TensorRT export requires the 'trt' extra. Install with: pip install rfdetr[trt]")
+        raise ImportError("TensorRT export requires the 'tensorrt' extra. Install with: pip install rfdetr[tensorrt]")
 
     if verbose:
         logger.info(f"Building TensorRT engine (fp16={fp16}) from {onnx_path}")
