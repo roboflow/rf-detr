@@ -117,6 +117,10 @@ class COCOEvalCallback(Callback):
         eval_interval: Run validation metrics every N epochs. Test metrics are
             always computed when ``trainer.test()`` is called.
         log_per_class_metrics: When ``False``, skip per-class AP logging/table.
+        eval_ema_only: When ``True``, ``validation_step`` already forwarded through the EMA
+            model directly (see ``TrainConfig.eval_ema_only``), so the independent duplicate
+            EMA forward pass this callback would otherwise run every validation batch is
+            skipped.
     """
 
     def __init__(
@@ -127,12 +131,14 @@ class COCOEvalCallback(Callback):
         log_per_class_metrics: bool = True,
         keypoint_oks_sigmas: list[float] | None = None,
         in_notebook: bool | None = None,
+        eval_ema_only: bool = False,
     ) -> None:
         super().__init__()
         self._max_dets = max_dets
         self._segmentation = segmentation
         self._eval_interval = max(1, int(eval_interval))
         self._log_per_class_metrics = bool(log_per_class_metrics)
+        self._eval_ema_only = bool(eval_ema_only)
         self._class_names: list[str] = []
         self._cat_id_to_name: dict[int, str] = {}
         self._f1_local: dict[int, dict[str, Any]] = init_matching_accumulator()
@@ -414,7 +420,8 @@ class COCOEvalCallback(Callback):
         if not isinstance(outputs, Mapping):
             return
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
-        targets = self._convert_targets(outputs["targets"])
+        targets_raw = self._convert_targets(outputs["targets"])
+        targets = self._align_gt_masks_to_pred_resolution(preds, targets_raw) if self._use_segm_metrics else targets_raw
 
         self.map_metric.update(preds, targets)
 
@@ -430,9 +437,12 @@ class COCOEvalCallback(Callback):
         # forward pass + update when the averaged model is available.  ema_cb._average_model
         # availability is rank-invariant (EMA updates fire on the same global step on every
         # rank), so per-rank EMA update counts stay consistent.
+        # Skipped entirely when eval_ema_only=True: validation_step already forwarded through
+        # the EMA model directly (RFDETRModelModule._resolve_eval_model), so this second,
+        # independent EMA forward pass would be pure duplicate compute (#416).
         ema_cb = self._get_ema_callback(trainer)
         ema_inner = _get_ema_inner_module(ema_cb)
-        if ema_cb is not None and ema_inner is not None and self.map_metric_ema is not None:
+        if not self._eval_ema_only and ema_cb is not None and ema_inner is not None and self.map_metric_ema is not None:
             samples, _ = batch
             orig_sizes = torch.stack([t["orig_size"] for t in outputs["targets"]]).to(pl_module.device)
             ema_underlying = ema_inner.model
@@ -441,7 +451,12 @@ class COCOEvalCallback(Callback):
                 ema_outputs = ema_underlying(samples)
                 ema_results = pl_module.postprocess(ema_outputs, orig_sizes)
             ema_preds = self._convert_preds(ema_results)
-            self.map_metric_ema.update(ema_preds, targets)
+            ema_targets = (
+                self._align_gt_masks_to_pred_resolution(ema_preds, targets_raw)
+                if self._use_segm_metrics
+                else targets_raw
+            )
+            self.map_metric_ema.update(ema_preds, ema_targets)
             self._update_keypoint_oks_metric(
                 trainer,
                 {"results": ema_results, "targets": outputs["targets"]},
@@ -495,7 +510,8 @@ class COCOEvalCallback(Callback):
         if not isinstance(outputs, Mapping):
             return
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
-        targets = self._convert_targets(outputs["targets"])
+        targets_raw = self._convert_targets(outputs["targets"])
+        targets = self._align_gt_masks_to_pred_resolution(preds, targets_raw) if self._use_segm_metrics else targets_raw
 
         self.map_metric.update(preds, targets)
 
@@ -1177,5 +1193,40 @@ class COCOEvalCallback(Callback):
                 entry["masks"] = masks
             if "iscrowd" in t:
                 entry["iscrowd"] = t["iscrowd"]
+            out.append(entry)
+        return out
+
+    @staticmethod
+    def _align_gt_masks_to_pred_resolution(
+        preds: list[dict[str, Tensor]], targets: list[dict[str, Tensor]]
+    ) -> list[dict[str, Tensor]]:
+        """Downsize ground-truth masks to match predicted masks' resolution when they differ.
+
+        ``_convert_targets`` already normalises GT masks to ``orig_size``, matching predictions in the default
+        (``upsample_masks_to_image_size=True``) case. When ``TrainConfig.eval_masks_native_resolution`` is set,
+        ``PostProcess`` instead returns predicted masks at the mask head's native (lower) resolution — comparing
+        them against full-resolution GT masks would silently produce meaningless IoU values (both
+        ``torchmetrics.MeanAveragePrecision``'s RLE encoding and ``matching.build_matching_data`` require both
+        sides on the same pixel grid), not an error. This brings GT masks down to the prediction's resolution so the
+        comparison stays valid, just at lower fidelity.
+
+        Args:
+            preds: Per-image prediction dicts, already through ``_convert_preds``.
+            targets: Per-image target dicts, already through ``_convert_targets`` (GT masks at ``orig_size``).
+
+        Returns:
+            ``targets`` unchanged when no masks are present or resolutions already match; otherwise a new list with
+            each target's masks nearest-downsized to match its paired prediction's mask resolution.
+        """
+        out = []
+        for p, t in zip(preds, targets):
+            p_masks, t_masks = p.get("masks"), t.get("masks")
+            if p_masks is None or t_masks is None or p_masks.shape[-2:] == t_masks.shape[-2:]:
+                out.append(t)
+                continue
+            h, w = p_masks.shape[-2:]
+            resized = F.interpolate(t_masks.float().unsqueeze(1), size=(int(h), int(w)), mode="nearest").squeeze(1)
+            entry = dict(t)
+            entry["masks"] = resized.bool()
             out.append(entry)
         return out

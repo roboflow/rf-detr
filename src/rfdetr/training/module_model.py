@@ -895,6 +895,28 @@ class RFDETRModelModule(LightningModule):
         )
         self.log("val/loss", loss, prog_bar=True, on_epoch=True, sync_dist=True, batch_size=batch_size)
 
+    def _resolve_eval_model(self) -> Any:
+        """Return the model to forward through for validation.
+
+        When ``TrainConfig.eval_ema_only`` is set, validation forwards through the EMA-averaged
+        weights directly instead of the base model — this replaces the second, duplicate
+        base+EMA forward pass ``COCOEvalCallback`` would otherwise also run every validation
+        batch (see issue 416). Falls back to the base model when EMA is enabled but not yet
+        warmed up (e.g. the very first validation epoch, before ``RFDETREMACallback.setup``
+        has built its averaged model).
+
+        Returns:
+            The base model, or the EMA-averaged inner module when ``eval_ema_only`` is active
+            and available.
+        """
+        if not self.train_config.eval_ema_only:
+            return self.model
+        for callback in getattr(self.trainer, "callbacks", []):
+            averaged = getattr(callback, "_average_model", None)
+            if averaged is not None:
+                return averaged.module
+        return self.model
+
     def validation_step(self, batch: tuple[Any, Any], batch_idx: int) -> dict[str, Any]:
         """Run forward pass and postprocess for one validation step.
 
@@ -909,7 +931,7 @@ class RFDETRModelModule(LightningModule):
             Dict with ``results`` (postprocessed predictions) and ``targets``.
         """
         samples, targets = batch
-        outputs = self.model(samples)
+        outputs = self._resolve_eval_model()(samples)
         if self.train_config.compute_val_loss:
             loss_dict = self.criterion(outputs, targets)
             weight_dict = self.criterion.weight_dict

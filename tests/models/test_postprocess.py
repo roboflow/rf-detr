@@ -168,3 +168,55 @@ class TestPostProcessMasks:
         masks = results[0]["masks"]
         assert masks.shape == (num_select, 1, img_h, img_w)
         assert masks.dtype == torch.bool
+
+    def test_native_resolution_skips_upsample_when_flag_false(self):
+        """upsample_masks_to_image_size=False returns masks at native mask-head resolution instead of target_sizes (opt-
+        in validation-cost reduction, see TrainConfig.eval_masks_native_resolution)."""
+        batch, num_queries, mask_h, mask_w = 1, 8, 16, 16
+        num_select, img_h, img_w = 8, 512, 512
+        out_masks = torch.randn(batch, num_queries, mask_h, mask_w)
+        scores = torch.rand(batch, num_select)
+        labels = torch.zeros(batch, num_select, dtype=torch.long)
+        boxes = torch.zeros(batch, num_select, 4)
+        topk_boxes = torch.arange(num_select).unsqueeze(0)
+        target_sizes = torch.tensor([[img_h, img_w]])
+
+        results = PostProcess._postprocess_masks(
+            out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=False
+        )
+
+        masks = results[0]["masks"]
+        assert masks.shape == (num_select, 1, mask_h, mask_w)
+        assert masks.dtype == torch.bool
+
+    def test_native_resolution_thresholds_at_zero_same_as_upsampled_path(self):
+        """Native-resolution masks apply the same logit > 0.0 threshold as the upsampled path."""
+        out_masks = torch.tensor([[[[5.0, -5.0], [-1.0, 1.0]]]])  # [B=1, Q=1, Hm=2, Wm=2]
+        scores = torch.tensor([[0.9]])
+        labels = torch.zeros(1, 1, dtype=torch.long)
+        boxes = torch.zeros(1, 1, 4)
+        topk_boxes = torch.tensor([[0]])
+        target_sizes = torch.tensor([[100, 100]])
+
+        results = PostProcess._postprocess_masks(
+            out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=False
+        )
+
+        expected = torch.tensor([[True, False], [False, True]])
+        assert torch.equal(results[0]["masks"].squeeze(1)[0], expected)
+
+    def test_forward_threads_upsample_flag_from_constructor(self):
+        """PostProcess.forward() must respect the constructor's upsample_masks_to_image_size setting."""
+        batch, num_queries, mask_h, mask_w = 1, 4, 8, 8
+        num_classes = 2
+        pp = PostProcess(num_select=4, upsample_masks_to_image_size=False)
+        outputs = {
+            "pred_logits": torch.randn(batch, num_queries, num_classes),
+            "pred_boxes": torch.rand(batch, num_queries, 4),
+            "pred_masks": torch.randn(batch, num_queries, mask_h, mask_w),
+        }
+        target_sizes = torch.tensor([[256, 256]])
+
+        results = pp(outputs, target_sizes)
+
+        assert results[0]["masks"].shape[-2:] == (mask_h, mask_w)

@@ -1409,6 +1409,54 @@ class TestValidationStep:
         assert "val/loss" not in logged_keys
         assert "results" in result and "targets" in result
 
+    def test_eval_ema_only_forwards_through_ema_model_not_base(self, tmp_path):
+        """eval_ema_only=True must forward through the EMA-averaged model, not the base model (regression for #416:
+
+        this replaces the duplicate base+EMA forward pass COCOEvalCallback would otherwise run).
+        """
+        tc = _base_train_config(tmp_path, eval_ema_only=True, use_ema=True)
+        module, fake_model, fake_criterion, _ = _build_module(train_config=tc, tmp_path=tmp_path)
+        samples, targets = _make_batch()
+        fake_model.return_value = {"base": True}
+        fake_criterion.return_value = {"loss_ce": torch.tensor(0.5)}
+        fake_criterion.weight_dict = {"loss_ce": 1.0}
+
+        ema_model = MagicMock(name="ema_model", return_value={"ema": True})
+        fake_ema_callback = SimpleNamespace(_average_model=SimpleNamespace(module=ema_model))
+        module.trainer = SimpleNamespace(callbacks=[fake_ema_callback])
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+
+        module.validation_step((samples, targets), batch_idx=0)
+
+        ema_model.assert_called_once()
+        fake_model.assert_not_called()
+
+    def test_eval_ema_only_falls_back_to_base_model_when_ema_not_warmed_up(self, tmp_path):
+        """eval_ema_only=True must fall back to the base model if the EMA callback has no averaged model yet (e.g. very
+        first validation before EMA warm-up)."""
+        tc = _base_train_config(tmp_path, eval_ema_only=True, use_ema=True)
+        module, fake_model, fake_criterion, _ = _build_module(train_config=tc, tmp_path=tmp_path)
+        samples, targets = _make_batch()
+        fake_model.return_value = {"base": True}
+        fake_criterion.return_value = {"loss_ce": torch.tensor(0.5)}
+        fake_criterion.weight_dict = {"loss_ce": 1.0}
+
+        fake_ema_callback = SimpleNamespace(_average_model=None)
+        module.trainer = SimpleNamespace(callbacks=[fake_ema_callback])
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+
+        module.validation_step((samples, targets), batch_idx=0)
+
+        fake_model.assert_called_once()
+
+    def test_eval_ema_only_false_does_not_touch_trainer(self, tmp_path):
+        """eval_ema_only=False (default) must not access self.trainer at all — validation_step must stay usable without
+        a Trainer attached, as every other test in this class relies on."""
+        result, _, module = self._run_val_step(tmp_path)
+        assert "results" in result
+
 
 class TestTestStep:
     """Tests for test_step() — verifies output dict shape, postprocessor invocation with correct original sizes, and

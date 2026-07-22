@@ -469,6 +469,31 @@ class TestTrainConfigT42PromotedFields:
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, auto_batch_ema_headroom=ema_headroom)
 
+    def test_eval_ema_only_requires_use_ema(self, tmp_path):
+        """eval_ema_only=True with use_ema=False must raise — no EMA model exists to evaluate."""
+        with pytest.raises(ValidationError, match="eval_ema_only"):
+            self._tc(tmp_path, eval_ema_only=True, use_ema=False)
+
+    def test_eval_ema_only_accepted_with_use_ema(self, tmp_path):
+        """eval_ema_only=True is accepted when use_ema=True (the default)."""
+        tc = self._tc(tmp_path, eval_ema_only=True, use_ema=True)
+        assert tc.eval_ema_only is True
+
+    def test_eval_ema_only_defaults_to_false(self, tmp_path):
+        """eval_ema_only defaults to False, preserving current dual base+EMA validation behaviour."""
+        tc = self._tc(tmp_path)
+        assert tc.eval_ema_only is False
+
+    def test_eval_masks_native_resolution_defaults_to_false(self, tmp_path):
+        """eval_masks_native_resolution defaults to False, preserving full-resolution mask upsampling."""
+        tc = self._tc(tmp_path)
+        assert tc.eval_masks_native_resolution is False
+
+    def test_eval_masks_native_resolution_can_be_enabled(self, tmp_path):
+        """eval_masks_native_resolution=True is accepted (opt-in, no cross-field constraint)."""
+        tc = self._tc(tmp_path, eval_masks_native_resolution=True)
+        assert tc.eval_masks_native_resolution is True
+
 
 class TestTrainConfigLRScheduler:
     """Configurable LR-scheduler surface: preset validation, explicit paths/callables, and deprecation folding."""

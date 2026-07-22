@@ -1057,6 +1057,10 @@ class TrainConfig(BaseConfig):
     do_random_resize_via_padding: bool = False
     use_ema: bool = True
     ema_update_interval: int = 1
+    # Validation-only: forward through the EMA model instead of the base model, and skip the
+    # duplicate base-model forward pass COCOEvalCallback would otherwise also run — halves
+    # per-batch validation compute when EMA is enabled. Requires use_ema=True.
+    eval_ema_only: bool = False
     num_workers: int = 2
     weight_decay: float = 1e-4
     amp_dtype: Literal["auto", "bf16", "fp16"] = Field(
@@ -1085,6 +1089,12 @@ class TrainConfig(BaseConfig):
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = True
+    # Segmentation only. Skip upsampling predicted masks to full image resolution during
+    # validation/test, returning them at the mask head's native (lower) resolution instead —
+    # cheaper, but ground-truth masks must then be compared at that same lower resolution
+    # (handled in COCOEvalCallback). No effect on non-segmentation models or on inference output
+    # (RFDETR.predict always upsamples regardless of this flag).
+    eval_masks_native_resolution: bool = False
     aug_config: Optional[Dict[str, Any]] = None
     scale_jitter: bool = True
     augmentation_backend: AugmentationBackend | Literal["cpu", "auto"] = "cpu"
@@ -1301,6 +1311,13 @@ class TrainConfig(BaseConfig):
         if "." not in optimizer:
             _resolve_native_optimizer(optimizer)
         return optimizer
+
+    @model_validator(mode="after")
+    def validate_eval_ema_only(self) -> "TrainConfig":
+        """``eval_ema_only`` has no EMA model to evaluate without ``use_ema=True``."""
+        if self.eval_ema_only and not self.use_ema:
+            raise ValueError("eval_ema_only=True requires use_ema=True.")
+        return self
 
     @model_validator(mode="after")
     def validate_optimizer_kwargs(self) -> "TrainConfig":
