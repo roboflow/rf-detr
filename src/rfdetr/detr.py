@@ -1414,7 +1414,7 @@ class RFDETR:
             format: Export format — ``"onnx"`` (default), ``"tflite"``, ``"tensorrt"`` (alias: ``"trt"``), or
                 ``"executorch"`` (alias: ``"pte"``).
                 ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: ``"tflite"`` via
-                ``onnx2tf`` (requires ``pip install rfdetr[onnx,tflite]``); ``"tensorrt"`` via the TensorRT
+                ``onnx2tf`` (requires ``pip install rfdetr[tflite]``); ``"tensorrt"`` via the TensorRT
                 Python API (requires ``pip install rfdetr[tensorrt]``).  Unlike ``"onnx"``/
                 ``"tflite"`` portable serialization, ``"tensorrt"`` performs target-specific compilation at export
                 time and produces a non-portable ``.trt`` engine tied to the build machine's GPU and TensorRT version.

@@ -73,7 +73,7 @@ def _convert_onnx_export(
         except ImportError:
             logger.error(
                 "It seems some dependencies for TFLite export are missing."
-                " Please run `pip install rfdetr[onnx,tflite]` and try again.",
+                " Please run `pip install rfdetr[tflite]` and try again.",
             )
             raise
 

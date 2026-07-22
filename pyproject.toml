@@ -78,9 +78,16 @@ tensorrt = [
     "polygraphy",
 ]
 tflite = [
+    # TFLite conversion routes every export through the ONNX pipeline first (export_onnx's
+    # graph optimization/simplification), so these are needed here directly rather than via
+    # the separate [onnx] extra — onnxruntime is NOT included: it's only for running ONNX
+    # inference, never touched by the TFLite export path.
+    "onnx>=1.20.0,<2.0; python_version >= '3.12' and python_version < '3.13'",
+    "onnxsim<0.6.0; python_version >= '3.12' and python_version < '3.13'",  # TODO: onnxsim 0.6.0+ hangs on install
+    "onnx_graphsurgeon; python_version >= '3.12' and python_version < '3.13'",
+    "polygraphy; python_version >= '3.12' and python_version < '3.13'",
     "onnx2tf>=2.4.0,<3.0.0; python_version >= '3.12' and python_version < '3.13'",
     "flatbuffers>=23.5.26; python_version >= '3.12' and python_version < '3.13'",
-    "onnx>=1.20.0,<2.0; python_version >= '3.12' and python_version < '3.13'",
     "tf-keras>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
     "tensorflow>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
 ]

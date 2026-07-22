@@ -23,8 +23,8 @@ Install the export dependencies you need:
 # ONNX export only
 pip install "rfdetr[onnx]"
 
-# TFLite export (includes ONNX dependency)
-pip install "rfdetr[onnx,tflite]"
+# TFLite export
+pip install "rfdetr[tflite]"
 
 # ExecuTorch export (on-device inference: XNNPACK/CoreML/QNN)
 pip install "rfdetr[executorch]"
@@ -275,7 +275,7 @@ Export your model to TFLite for deployment on mobile devices, microcontrollers, 
 ### Prerequisites
 
 ```bash
-pip install "rfdetr[onnx,tflite]"
+pip install "rfdetr[tflite]"
 ```
 
 ### Basic TFLite Export (FP32)
