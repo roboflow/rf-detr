@@ -31,6 +31,18 @@ from rfdetr.models.math import MLP
 from rfdetr.models.ops.modules import MSDeformAttn
 
 
+def _not_exporting() -> bool:
+    """Fallback for ``torch.compiler.is_exporting`` on torch<2.6 (which lacks it and never runs ExecuTorch export).
+
+    Hoisted to a module-level function so the hot decoder ``forward`` does not allocate a fresh ``lambda`` on every
+    call just to supply this default.
+
+    Returns:
+        Always ``False`` — torch<2.6 is never in an export trace.
+    """
+    return False
+
+
 def _safe_multinormalize(dim: int) -> int:
     """Clamp a MultiheadAttention head count to at least one."""
     return max(1, dim)
@@ -308,12 +320,26 @@ class Transformer(nn.Module):
         # time), but that Constant is accepted by TensorRT as a valid shape tensor source —
         # unlike ScatterND. torch._shape_as_tensor(t) is a private ATen op that returns a
         # 1-D int64 tensor of t's dimension sizes; [2:4] extracts (H, W) from NCHW.
-        spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
-            device=srcs[0].device, dtype=torch.long
-        )
+        # torch.export (ExecuTorch) cannot trace torch._shape_as_tensor — it raises "the tensor has
+        # a non-zero number of elements, but its data is not allocated yet". Under that trace build
+        # spatial_shapes directly from the concrete Python-int (H, W) pairs instead; ExecuTorch uses
+        # static shapes, so the baked constant is exact. This branch is taken only under
+        # torch.export, leaving the eager and TorchScript-ONNX/TensorRT (#1155) paths untouched.
+        # getattr guards torch<2.6, which lacks is_exporting() and never runs ExecuTorch export.
+        if getattr(torch.compiler, "is_exporting", _not_exporting)():
+            spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
+        else:
+            spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
+                device=srcs[0].device, dtype=torch.long
+            )
         level_start_index = torch.cat((spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
 
         # Flatten optional dual-projector features for keypoint-specific cross-attention.
+        # NOTE: cross-attention reuses ``spatial_shapes_hw`` derived from ``srcs`` above — this assumes
+        # ``cross_attn_srcs`` share the per-level (H, W) geometry of ``srcs`` (they differ only in channel
+        # features from the dual projector). If a future variant produces cross-attn features with a different
+        # level count or spatial geometry, the deformable sampling would mis-index; build a separate
+        # ``cross_attn_spatial_shapes_hw`` at that point.
         cross_attn_memory = None
         if cross_attn_srcs is not None:
             ca_flatten = []
@@ -460,6 +486,7 @@ class Transformer(nn.Module):
                 refpoints_unsigmoid=refpoint_embed,
                 level_start_index=level_start_index,
                 spatial_shapes=spatial_shapes,
+                spatial_shapes_hw=spatial_shapes_hw,
                 valid_ratios=valid_ratios.to(decoder_memory.dtype) if valid_ratios is not None else valid_ratios,
                 tgt_keypoints=tgt_keypoints,
                 init_kp_ref_xy=init_kp_ref_xy,
@@ -609,6 +636,7 @@ class TransformerDecoder(nn.Module):
         # for memory
         level_start_index: Tensor | None = None,  # num_levels
         spatial_shapes: Tensor | None = None,  # num_levels, 2
+        spatial_shapes_hw: list[tuple[int, int]] | None = None,  # num_levels (H, W) Python ints
         valid_ratios: Tensor | None = None,
         # keypoints
         tgt_keypoints: Tensor | None = None,
@@ -681,6 +709,7 @@ class TransformerDecoder(nn.Module):
                     query_pos=query_pos,
                     reference_points=refpoints_input,
                     spatial_shapes=spatial_shapes,
+                    spatial_shapes_hw=spatial_shapes_hw,
                     level_start_index=level_start_index,
                     keypoint_tgt=keypoint_tgt,
                     keypoint_pos=kp_query_pos,
@@ -700,6 +729,7 @@ class TransformerDecoder(nn.Module):
                     query_pos=query_pos,
                     reference_points=refpoints_input,
                     spatial_shapes=spatial_shapes,
+                    spatial_shapes_hw=spatial_shapes_hw,
                     level_start_index=level_start_index,
                 )
 
@@ -867,6 +897,7 @@ class TransformerDecoderLayer(nn.Module):
         query_pos: Tensor | None = None,
         reference_points: Tensor | None = None,
         spatial_shapes: Tensor | None = None,
+        spatial_shapes_hw: list[tuple[int, int]] | None = None,
         level_start_index: Tensor | None = None,
         # Keypoint processing parameters
         keypoint_tgt: Tensor | None = None,  # [B, N, total_kp_per_instance, C]
@@ -903,6 +934,7 @@ class TransformerDecoderLayer(nn.Module):
             spatial_shapes,
             level_start_index,
             memory_key_padding_mask,
+            input_spatial_shapes_hw=spatial_shapes_hw,
         )
         # ========== End of Cross-Attention =============
 
@@ -994,6 +1026,7 @@ class TransformerDecoderLayer(nn.Module):
                         spatial_shapes,
                         level_start_index,
                         memory_key_padding_mask,
+                        input_spatial_shapes_hw=spatial_shapes_hw,
                     ).reshape(bs, num_queries, num_kp, kp_dim)
                 )
                 keypoint_tgt = self.kp_cross_attn_norm(keypoint_tgt)
@@ -1022,6 +1055,7 @@ class TransformerDecoderLayer(nn.Module):
         query_pos: Tensor | None = None,
         reference_points: Tensor | None = None,
         spatial_shapes: Tensor | None = None,
+        spatial_shapes_hw: list[tuple[int, int]] | None = None,
         level_start_index: Tensor | None = None,
         keypoint_tgt: Tensor | None = None,
         keypoint_pos: Tensor | None = None,
@@ -1038,6 +1072,7 @@ class TransformerDecoderLayer(nn.Module):
             query_pos=query_pos,
             reference_points=reference_points,
             spatial_shapes=spatial_shapes,
+            spatial_shapes_hw=spatial_shapes_hw,
             level_start_index=level_start_index,
             keypoint_tgt=keypoint_tgt,
             keypoint_pos=keypoint_pos,

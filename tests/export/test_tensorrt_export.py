@@ -47,7 +47,7 @@ def test_build_engine_without_polygraphy_raises(monkeypatch: pytest.MonkeyPatch)
     """A missing polygraphy/tensorrt install must raise an actionable ImportError."""
     monkeypatch.setattr(tensorrt_export, "engine_from_network", None)
 
-    with pytest.raises(ImportError, match=r"rfdetr\[trt\]"):
+    with pytest.raises(ImportError, match=r"rfdetr\[tensorrt\]"):
         tensorrt_export.build_engine("/tmp/model.onnx")
 
 

@@ -188,7 +188,7 @@ Yes. Core models (Nano through Large) and all training/inference code are releas
 Instantiate a model and call `model.train(...)` with your dataset directory in COCO JSON or YOLO format. Example: `model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4)`. The model downloads pretrained weights automatically and saves best checkpoints automatically (use `resume=` to continue from one).
 
 **How do I export RF-DETR to ONNX or TensorRT?**
-Call `model.export(format="onnx")` after training or loading a checkpoint. ONNX export works on CPU and produces a single `.onnx` file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, use `model.export(format="tensorrt")`, which exports ONNX and then builds a `.trt` engine in-process via the TensorRT Python API; this requires `pip install rfdetr[trt]` and a CUDA GPU.
+Call `model.export(format="onnx")` after training or loading a checkpoint. ONNX export works on CPU and produces a single `.onnx` file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, use `model.export(format="tensorrt")`, which exports ONNX and then builds a `.trt` engine in-process via the TensorRT Python API; this requires `pip install rfdetr[tensorrt]` and a CUDA GPU.
 
 **Which RF-DETR model size should I use?**
 RF-DETR-Nano (2.3 ms, 67.6 AP50 on COCO) is best for edge and real-time applications. RF-DETR-Large (6.8 ms, 56.5 AP50:95) offers the best accuracy–latency trade-off for server deployment. RF-DETR-2XLarge (17.2 ms, 60.1 AP50:95) maximizes accuracy when latency allows.
