@@ -83,6 +83,15 @@ SOC_BACKENDS: frozenset[str] = _SOC_BACKENDS
 
 _INSTALL_HINT = "ExecuTorch export requires the `executorch` package. Install it with: pip install rfdetr[executorch]"
 _COREML_HINT = "CoreML export requires `coremltools`. Install it with: pip install coremltools"
+_RUNTIME_ABI_HINT = (
+    "executorch's compiled runtime extension (executorch.runtime) failed to load against the installed "
+    "torch {torch_version} ({exc}). This is a known torch/executorch ABI-compatibility gap: executorch's "
+    "prebuilt wheels are compiled against whatever torch ABI existed at their release time, and a torch "
+    "release published afterward can silently break that ABI. This does not affect .pte export itself "
+    "(export() does not use executorch.runtime), only loading/running a .pte locally via ExecuTorch's "
+    "Python runtime. Try pinning torch to a version released before your installed executorch version, "
+    'e.g. `pip install "torch<2.13"` for executorch 1.3.1.'
+)
 _QNN_HINT = (
     "Qualcomm QNN export requires the ExecuTorch QNN backend, which is NOT in the `executorch` pip wheel. "
     "Build ExecuTorch from source against the Qualcomm AI Engine Direct (QAIRT) SDK "
@@ -107,11 +116,20 @@ _QNN_CPU_FALLBACK_OPS: frozenset[str] = frozenset(
 )
 
 
-def _check_executorch_available() -> None:
+def _check_executorch_available(*, require_runtime: bool = False) -> None:
     """Verify that the ``executorch`` package is importable and meets the minimum version requirement.
 
+    Args:
+        require_runtime: Also verify that ``executorch.runtime`` (the on-host ``.pte`` loader/runner)
+            imports cleanly. :func:`export_executorch` itself never touches ``executorch.runtime``, so
+            this defaults to ``False`` and does not gate export capability. Set ``True`` only when the
+            caller intends to load and run a ``.pte`` locally (e.g. a parity/verification check) — a
+            torch/executorch ABI mismatch breaks only this submodule, not AOT export.
+
     Raises:
-        ImportError: If ``executorch`` is not installed or is older than 1.3.
+        ImportError: If ``executorch`` is not installed, is older than 1.3, or (when
+            ``require_runtime=True``) its compiled runtime extension is ABI-incompatible with the
+            installed ``torch`` version.
     """
     try:
         import executorch  # noqa: F401
@@ -131,6 +149,16 @@ def _check_executorch_available() -> None:
             )
     except importlib.metadata.PackageNotFoundError:
         pass  # Source-build install — skip version check.
+
+    if require_runtime:
+        try:
+            from executorch.runtime import Runtime  # noqa: F401
+        except ImportError as exc:
+            try:
+                _torch_version = importlib.metadata.version("torch")
+            except importlib.metadata.PackageNotFoundError:
+                _torch_version = "unknown"
+            raise ImportError(_RUNTIME_ABI_HINT.format(torch_version=_torch_version, exc=exc)) from exc
 
 
 def _build_partitioner(backend: str) -> list[Any]:

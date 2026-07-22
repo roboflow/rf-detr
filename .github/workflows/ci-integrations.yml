@@ -81,14 +81,27 @@ jobs:
         timeout-minutes: 8
         # The end-to-end parity test builds and exports the full RFDETRNano stack, so
         # pull the same extras as the CPU test job plus the [executorch] backend.
-        # Note: executorch 1.3.1 requires torch>=2.12.0a0 (within the repo's <3.0.0 cap).
-        run: uv pip install -e ".[executorch,train,augment,cli,visual]" --group tests
+        # --group ci-executorch-pin locks torch to a version whose C10 ABI matches
+        # executorch 1.3.1's prebuilt wheel (see pyproject.toml for the empirically
+        # validated range and removal condition).
+        run: uv pip install -e ".[executorch,train,augment,cli,visual]" --group tests --group ci-executorch-pin
 
       - name: 🔎 Verify executorch runtime imports
         # Guard against a silently-skipped parity test: the test class is gated by a
         # skipif on executorch availability, so a broken/missing wheel would skip it
         # (false green). Fail here (red) instead if the runtime cannot be imported.
-        run: uv run --no-sync python -c "from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE; from executorch.runtime import Runtime; assert _IS_EXECUTORCH_AVAILABLE, 'executorch installed but not detected as available'"
+        # require_runtime=True also surfaces an actionable ABI-compatibility message
+        # (rather than a bare "undefined symbol") if the pin above ever drifts stale.
+        # shell: python — activate-environment: true (setup-uv, above) puts the venv's
+        # python on PATH, so this runs the script through it directly (no uv run needed).
+        run: |
+          from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
+          from rfdetr.export._executorch.converter import _check_executorch_available
+
+          _check_executorch_available(require_runtime=True)
+          assert _IS_EXECUTORCH_AVAILABLE, "executorch installed but not detected as available"
+          print("executorch runtime import OK")
+        shell: python
 
       - name: 🧪 Run ExecuTorch parity tests
         # executorch export is heavy; run single-worker as advised for this suite.

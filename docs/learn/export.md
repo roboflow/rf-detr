@@ -556,6 +556,15 @@ device. For example, `"SM8650"` targets the Snapdragon 8 Gen 3.
 
 ### ExecuTorch Inference Example
 
+!!! warning "torch/executorch ABI compatibility"
+
+    Loading a `.pte` via `executorch.runtime` (below) requires a `torch` version whose ABI
+    matches the `executorch` wheel you installed — `.pte` **export** itself does not need
+    `executorch.runtime` and is unaffected. For `executorch==1.3.1`, pin `torch<2.13`
+    (`pip install "torch<2.13"`); a newer `torch` release can silently break `executorch.runtime`
+    with an `undefined symbol` / `dlopen` error at import time, since ExecuTorch's prebuilt wheels
+    are compiled against whichever `torch` ABI existed at their release time.
+
 ```python
 import numpy as np
 import torch

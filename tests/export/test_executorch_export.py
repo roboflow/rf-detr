@@ -41,6 +41,7 @@ def _runtime_parity(model: Any, example: torch.Tensor, pte_path: Path) -> list[f
 
     The export-mode forward mutates its input in place, so a fresh clone is fed to each run.
     """
+    _check_executorch_available(require_runtime=True)
     from executorch.runtime import Runtime
     from torch.utils._pytree import tree_flatten
 
@@ -228,6 +229,33 @@ class TestExportExecutorchValidation:
             with mock.patch("importlib.metadata.version", return_value=version_return, side_effect=version_side_effect):
                 with expectation:
                     _check_executorch_available()
+
+    def test_check_executorch_available_require_runtime_false_ignores_broken_runtime(self) -> None:
+        """Default ``require_runtime=False`` does not probe ``executorch.runtime`` — export capability is unaffected by
+        a broken runtime extension (export never imports it)."""
+        fake_executorch = types.ModuleType("executorch")
+        with mock.patch.dict(sys.modules, {"executorch": fake_executorch, "executorch.runtime": None}):
+            with mock.patch("importlib.metadata.version", return_value="1.3.1"):
+                _check_executorch_available()  # must not raise, even though executorch.runtime is broken
+
+    def test_check_executorch_available_require_runtime_true_raises_actionable_message(self) -> None:
+        """``require_runtime=True`` surfaces an ABI-compatibility hint when ``executorch.runtime`` fails to import,
+        distinguishing this from a plain "not installed" error."""
+        fake_executorch = types.ModuleType("executorch")
+        with mock.patch.dict(sys.modules, {"executorch": fake_executorch, "executorch.runtime": None}):
+            with mock.patch("importlib.metadata.version", return_value="1.3.1"):
+                with pytest.raises(ImportError, match=r"ABI-compatibility gap"):
+                    _check_executorch_available(require_runtime=True)
+
+    def test_check_executorch_available_require_runtime_true_passes_when_runtime_ok(self) -> None:
+        """``require_runtime=True`` does not raise when ``executorch.runtime`` imports cleanly."""
+        fake_executorch = types.ModuleType("executorch")
+        fake_runtime_module = types.ModuleType("executorch.runtime")
+        fake_runtime_module.Runtime = mock.MagicMock()
+        fake_executorch.runtime = fake_runtime_module
+        with mock.patch.dict(sys.modules, {"executorch": fake_executorch, "executorch.runtime": fake_runtime_module}):
+            with mock.patch("importlib.metadata.version", return_value="1.3.1"):
+                _check_executorch_available(require_runtime=True)  # must not raise
 
     def test_export_executorch_missing_dependency_raises_import_error(self, tmp_path: Path) -> None:
         """``export_executorch`` raises ImportError with install hint when executorch is absent."""
