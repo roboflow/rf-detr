@@ -55,6 +55,42 @@ def get_config(size: str, use_registers: bool) -> dict[str, Any]:
     return dino_config
 
 
+def compute_window_block_indexes(
+    out_feature_indexes: list[int], window_block_indexes: list[int] | None = None
+) -> list[int]:
+    """Derive which 0-indexed encoder blocks use windowed self-attention (the rest use global).
+
+    When `window_block_indexes` is provided explicitly, it is returned unchanged — this is the
+    override path for callers that want to pin an exact routing (e.g. to match a published
+    architecture spec) without disturbing the derived default used by existing configs/checkpoints.
+
+    When omitted, the windowed set is derived as the complement of `out_feature_indexes` (treated
+    as raw block indices) within `range(0, out_feature_indexes[-1] + 1)`. This mirrors the
+    historical behavior relied upon by all released RF-DETR checkpoints; it does not renumber
+    `out_feature_indexes` (1-indexed HF stage numbers) to 0-indexed block indices, so it is not
+    guaranteed to match any particular paper-specified layer schedule.
+
+    Args:
+        out_feature_indexes: Encoder stage numbers whose feature maps are exported to the decoder.
+        window_block_indexes: Explicit windowed-block override. `None` derives from
+            `out_feature_indexes` using the legacy formula.
+
+    Returns:
+        0-indexed encoder block positions that should run windowed attention.
+
+    Examples:
+        >>> compute_window_block_indexes([3, 6, 9, 12])
+        [0, 1, 2, 4, 5, 7, 8, 10, 11]
+        >>> compute_window_block_indexes([3, 6, 9, 12], window_block_indexes=[0, 1, 3, 4, 6, 7, 9, 10])
+        [0, 1, 3, 4, 6, 7, 9, 10]
+    """
+    if window_block_indexes is not None:
+        return window_block_indexes
+    window_block_indexes_set = set(range(out_feature_indexes[-1] + 1))
+    window_block_indexes_set.difference_update(out_feature_indexes)
+    return sorted(window_block_indexes_set)
+
+
 class DinoV2(nn.Module):
     def __init__(
         self,
@@ -69,6 +105,7 @@ class DinoV2(nn.Module):
         num_windows: int = 4,
         positional_encoding_size: int = 37,
         drop_path_rate: float = 0.0,
+        window_block_indexes: list[int] | None = None,
     ) -> None:
         super().__init__()
 
@@ -97,9 +134,7 @@ class DinoV2(nn.Module):
                 return_dict=False,
             )
         else:
-            window_block_indexes_set = set(range(out_feature_indexes[-1] + 1))
-            window_block_indexes_set.difference_update(out_feature_indexes)
-            window_block_indexes = list(window_block_indexes_set)
+            window_block_indexes = compute_window_block_indexes(out_feature_indexes, window_block_indexes)
 
             dino_config = get_config(size, use_registers)
 
