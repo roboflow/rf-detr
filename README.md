@@ -157,6 +157,12 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 > Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric.
 
+### NAS on the Roboflow Platform
+
+<img alt="RF100-VL accuracy-latency Pareto chart showing RF-DETR NAS trained on the Roboflow platform outperforming the paper NAS and named configs" src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/nas_two_source_comparison_100_test_only.svg" />
+
+Since the paper release, we have improved RF-DETR NAS training on the Roboflow platform even further. A single training run gives you every model size, with results that beat not only the open-source checkpoints but also our own paper NAS results. [Try it now!](https://roboflow.com/)
+
 ## Run Models
 
 ### Detection
