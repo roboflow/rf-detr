@@ -116,7 +116,8 @@ class COCOEvalCallback(Callback):
             ``backend="faster_coco_eval"``. Defaults to ``False``.
         eval_interval: Run validation metrics every N epochs. Test metrics are
             always computed when ``trainer.test()`` is called.
-        log_per_class_metrics: When ``False``, skip per-class AP logging/table.
+        log_per_class_metrics: When ``False``, skip per-class AP computation
+            (``MeanAveragePrecision(class_metrics=False)``) as well as the per-class logging/table.
     """
 
     def __init__(
@@ -174,7 +175,10 @@ class COCOEvalCallback(Callback):
         self._use_segm_metrics = self._segmentation and not self._keypoint_mode
         iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
         kwargs: dict[str, Any] = dict(
-            class_metrics=True,
+            # Per-class AP is genuinely skipped (compute + state memory) when per-class logging is
+            # off — with class_metrics=True the metric would still pay the per-class cost and the
+            # flag would only gate result consumption.
+            class_metrics=self._log_per_class_metrics,
             max_detection_thresholds=[1, 10, self._max_dets],
             # Disable torchmetrics' built-in cross-rank sync: its `gather_all_tensors` requires every
             # state tensor to have the same ndim on all ranks, but DDP seg validation produces
@@ -754,7 +758,7 @@ class COCOEvalCallback(Callback):
             ema_iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
             self.map_metric_ema = MeanAveragePrecision(
                 iou_type=ema_iou_type,
-                class_metrics=True,
+                class_metrics=self._log_per_class_metrics,
                 max_detection_thresholds=[1, 10, self._max_dets],
                 backend="faster_coco_eval",
                 sync_on_compute=False,  # we merge state across ranks ourselves (see map_metric in setup)

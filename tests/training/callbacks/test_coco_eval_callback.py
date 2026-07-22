@@ -131,6 +131,30 @@ class TestSetup:
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         assert cb.map_metric._coco_backend.backend == "faster_coco_eval"
 
+    def test_log_per_class_metrics_false_disables_class_metrics_compute(self) -> None:
+        """log_per_class_metrics=False must disable torchmetrics per-class computation, not just logging."""
+        cb = COCOEvalCallback(log_per_class_metrics=False)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        assert cb.map_metric.class_metrics is False
+        assert cb.map_metric_train.class_metrics is False
+
+    def test_log_per_class_metrics_default_keeps_class_metrics_compute(self) -> None:
+        """Default log_per_class_metrics=True keeps per-class AP computation on."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        assert cb.map_metric.class_metrics is True
+
+    def test_log_per_class_metrics_false_disables_class_metrics_on_ema_metric(self) -> None:
+        """The EMA metric mirrors the per-class computation flag."""
+        cb = COCOEvalCallback(log_per_class_metrics=False)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        module = _make_pl_module()
+        module.device = torch.device("cpu")
+        with patch.object(cb, "_get_ema_callback", return_value=MagicMock()):
+            cb._prepare_ema_metric(_make_trainer(), module)
+        assert cb.map_metric_ema is not None
+        assert cb.map_metric_ema.class_metrics is False
+
     def test_keypoint_mode_does_not_enable_torchmetrics_keypoint_iou(self) -> None:
         """Keypoint mode must keep torchmetrics on bbox-only iou_type."""
         cb = COCOEvalCallback(segmentation=True)

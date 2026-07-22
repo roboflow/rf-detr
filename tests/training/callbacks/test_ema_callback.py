@@ -204,6 +204,76 @@ class TestLegacyEMAResume:
         assert not hasattr(pl_module, "_pending_legacy_ema_state")
 
 
+class _BufferContainerModule(nn.Module):
+    """Container module with a float parameter and an integer buffer."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = nn.Linear(4, 2)
+        self.register_buffer("step_count", torch.tensor(10, dtype=torch.long))
+
+    @property
+    def device(self) -> torch.device:
+        return next(self.parameters()).device
+
+
+class TestMultiAvgFn:
+    """Foreach ``multi_avg_fn`` path must reproduce the per-tensor ``avg_fn`` numerics exactly."""
+
+    def test_setup_registers_multi_avg_fn(self) -> None:
+        """Fit setup must wire multi_avg_fn (foreach branch) and leave avg_fn unset."""
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        trainer = MagicMock()
+
+        cb.setup(trainer, pl_module, stage="fit")
+
+        assert cb._average_model is not None
+        assert cb._average_model.multi_avg_fn is not None
+        assert cb._average_model.avg_fn is None
+
+    def test_multi_avg_fn_matches_avg_fn_weight_parity(self) -> None:
+        """200 update_parameters steps: foreach multi_avg_fn EMA equals legacy per-tensor avg_fn EMA."""
+        torch.manual_seed(42)
+        n_steps = 200
+        decay = 0.993
+        tau = 100
+        model = _EMAContainerModule()
+        cb = RFDETREMACallback(decay=decay, tau=tau)
+        ema_new = AveragedModel(model=model, use_buffers=True, multi_avg_fn=cb._multi_avg_fn)
+        ema_old = AveragedModel(model=model, use_buffers=True, avg_fn=cb._avg_fn)
+
+        for _ in range(n_steps):
+            with torch.no_grad():
+                for p in model.parameters():
+                    p.add_(torch.randn_like(p) * 0.01)
+            ema_new.update_parameters(model)
+            ema_old.update_parameters(model)
+
+        new_state = ema_new.module.state_dict()
+        old_state = ema_old.module.state_dict()
+        for name, old_val in old_state.items():
+            assert torch.allclose(new_state[name], old_val, atol=1e-6), (
+                f"Parity failed for {name}: max diff = {(new_state[name].float() - old_val.float()).abs().max().item()}"
+            )
+
+    def test_multi_avg_fn_integer_buffer_matches_avg_fn(self) -> None:
+        """Integer buffers (non-foreach dtype group) must follow the same cast semantics as avg_fn."""
+        torch.manual_seed(42)
+        decay = 0.5
+        model = _BufferContainerModule()
+        cb = RFDETREMACallback(decay=decay, tau=0)
+        ema_new = AveragedModel(model=model, use_buffers=True, multi_avg_fn=cb._multi_avg_fn)
+        ema_old = AveragedModel(model=model, use_buffers=True, avg_fn=cb._avg_fn)
+
+        for value in (20, 31):
+            model.step_count.fill_(value)
+            ema_new.update_parameters(model)
+            ema_old.update_parameters(model)
+
+        assert torch.equal(ema_new.module.step_count, ema_old.module.step_count)
+
+
 class TestSuppressTestSwap:
     """suppress_test_swap must disable the test-time EMA weight swap while leaving defaults unchanged."""
 

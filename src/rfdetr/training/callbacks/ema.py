@@ -12,6 +12,7 @@ import warnings
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, cast
 
+import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
 from torch import Tensor
 from torch.optim.swa_utils import AveragedModel
@@ -85,12 +86,52 @@ class RFDETREMACallback(Callback):
             Updated EMA parameter tensor.
         """
         num_averaged_value = num_averaged.item() if isinstance(num_averaged, Tensor) else num_averaged
-        updates = num_averaged_value + 1  # match ModelEma 1-indexed counter
-        if self._tau > 0:
-            effective_decay = self._decay * (1 - math.exp(-updates / self._tau))
-        else:
-            effective_decay = self._decay
+        effective_decay = self._effective_decay(int(num_averaged_value))
         return averaged_param * effective_decay + model_param * (1.0 - effective_decay)
+
+    def _effective_decay(self, num_averaged: int) -> float:
+        """Return the effective decay for the given 0-indexed average counter.
+
+        Args:
+            num_averaged: Number of models averaged so far (0-indexed).
+
+        Returns:
+            Effective decay after the optional tau warm-up ramp.
+        """
+        updates = num_averaged + 1  # match ModelEma 1-indexed counter
+        if self._tau > 0:
+            return self._decay * (1 - math.exp(-updates / self._tau))
+        return self._decay
+
+    def _multi_avg_fn(
+        self,
+        averaged_params: tuple[Tensor, ...] | list[Tensor],
+        model_params: tuple[Tensor, ...] | list[Tensor],
+        num_averaged: Tensor | int,
+    ) -> None:
+        """Update a (device, dtype) group of EMA tensors in-place via foreach kernels.
+
+        ``AveragedModel.update_parameters`` routes to this grouped path when ``multi_avg_fn`` is set, replacing the
+        per-tensor ``avg_fn`` loop that performed one ``num_averaged.item()`` GPU→CPU sync *per tensor* per step with a
+        single sync per group. The float path applies ``ema * decay + model * (1 - decay)`` with the exact same
+        operation order as :meth:`_avg_fn`; non-floating-point groups (e.g. integer buffers when averaging buffers)
+        fall back to the per-tensor formula to preserve its cast semantics.
+
+        Args:
+            averaged_params: EMA tensors of one device/dtype group, updated in-place.
+            model_params: Matching live model tensors.
+            num_averaged: Number of models averaged so far (0-indexed); passed by ``AveragedModel`` as a 0-dim tensor.
+        """
+        num_averaged_value = int(num_averaged.item()) if isinstance(num_averaged, Tensor) else int(num_averaged)
+        effective_decay = self._effective_decay(num_averaged_value)
+        if not averaged_params:
+            return
+        if not averaged_params[0].is_floating_point():
+            for averaged_param, model_param in zip(averaged_params, model_params):
+                averaged_param.copy_(self._avg_fn(averaged_param, model_param, num_averaged_value))
+            return
+        torch._foreach_mul_(averaged_params, effective_decay)
+        torch._foreach_add_(averaged_params, model_params, alpha=1.0 - effective_decay)
 
     def setup(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:
         """Initialise the averaged model at fit start.
@@ -107,7 +148,7 @@ class RFDETREMACallback(Callback):
             model=pl_module,
             device=pl_module.device,
             use_buffers=self._use_buffers,
-            avg_fn=self._avg_fn,
+            multi_avg_fn=self._multi_avg_fn,
         )
         # The averaged model is inference-only; PTL never calls .eval() on it
         # because it is not registered as a Lightning module.  Without this,
