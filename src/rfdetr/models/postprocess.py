@@ -33,11 +33,13 @@ class PostProcess(nn.Module):
         num_select: int = 300,
         num_keypoints_per_class: list[int] | None = None,
         trace_alpha: float = 0.2,
+        upsample_masks_to_image_size: bool = True,
     ) -> None:
         super().__init__()
         self.num_select = num_select
         self.num_keypoints_per_class = num_keypoints_per_class or []
         self.trace_alpha = trace_alpha
+        self.upsample_masks_to_image_size = upsample_masks_to_image_size
 
     @torch.no_grad()
     def forward(self, outputs: dict[str, torch.Tensor], target_sizes: torch.Tensor) -> list[dict[str, torch.Tensor]]:
@@ -63,7 +65,9 @@ class PostProcess(nn.Module):
         boxes = self._gather_and_scale_boxes(out_bbox, topk_boxes, target_sizes)
 
         if out_masks is not None:
-            return self._postprocess_masks(out_masks, scores, labels, boxes, topk_boxes, target_sizes)
+            return self._postprocess_masks(
+                out_masks, scores, labels, boxes, topk_boxes, target_sizes, self.upsample_masks_to_image_size
+            )
         if out_keypoints is not None:
             return self._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)
         return self._postprocess_boxes(scores, labels, boxes)
@@ -150,8 +154,9 @@ class PostProcess(nn.Module):
         boxes: torch.Tensor,
         topk_boxes: torch.Tensor,
         target_sizes: torch.Tensor,
+        upsample_masks_to_image_size: bool = True,
     ) -> list[dict[str, torch.Tensor]]:
-        """Attach resized segmentation masks for selected detections.
+        """Attach segmentation masks for selected detections.
 
         Args:
             out_masks: Raw mask logits with shape ``(B, Q, Hm, Wm)``.
@@ -159,12 +164,22 @@ class PostProcess(nn.Module):
             labels: Selected class labels with shape ``(B, K)``.
             boxes: Selected absolute boxes with shape ``(B, K, 4)``.
             topk_boxes: Selected query indices with shape ``(B, K)``.
-            target_sizes: Per-image ``(height, width)`` tensor used for mask
-                resizing.
+            target_sizes: Per-image ``(height, width)`` tensor used for mask resizing when
+                ``upsample_masks_to_image_size`` is ``True``.
+            upsample_masks_to_image_size: When ``True`` (default), resize masks to the target
+                image size — the standard behaviour required for correct-resolution inference
+                output. When ``False``, skip the resize and return masks thresholded at the
+                model's native ``(Hm, Wm)`` mask-head resolution instead — cheaper (no
+                interpolation, no chunking needed) but masks are then at a different resolution
+                than boxes/ground truth; callers comparing them against full-resolution masks
+                (e.g. COCO segm mAP) must downsize the other side to match, or the comparison is
+                meaningless. Intended for opt-in, validation-only cost reduction (see
+                ``TrainConfig.eval_masks_head_resolution``), not for inference output.
 
         Returns:
-            One result dict per image containing scores, labels, boxes, and
-            boolean masks resized to the target image size.
+            One result dict per image containing scores, labels, boxes, and boolean masks —
+            resized to the target image size, or left at native mask-head resolution per
+            ``upsample_masks_to_image_size``.
         """
         results = []
         for i in range(out_masks.shape[0]):
@@ -175,6 +190,10 @@ class PostProcess(nn.Module):
                 0,
                 k_idx.unsqueeze(-1).unsqueeze(-1).repeat(1, out_masks.shape[-2], out_masks.shape[-1]),
             )  # [K, Hm, Wm]
+            if not upsample_masks_to_image_size:
+                res_i["masks"] = (masks_i > 0.0).unsqueeze(1)  # [K,1,Hm,Wm] bool, native resolution
+                results.append(res_i)
+                continue
             h, w = target_sizes[i].tolist()
             # Upsample in chunks and threshold *inside* the comprehension so only one float32 chunk
             # is live at a time; the accumulated list holds bool tensors (1 byte/pixel vs 4 for float32).
