@@ -1265,6 +1265,79 @@ class TestConvertTargets:
         assert set(out[0].keys()) == {"boxes", "labels"}
 
 
+class TestConvertTargetsOriented:
+    """_convert_targets() maps OBB corners into the same space as postprocessed predictions.
+
+    ``corners`` are left in post-transform pixel space by ``DotaNormalize`` while ``PostProcess`` scales predictions to
+    ``orig_size``, so the callback must rescale by ``orig_size / size`` or IoU is computed across two coordinate
+    systems.
+    """
+
+    def test_corners_rescaled_from_size_to_orig_size(self) -> None:
+        """A 100x100 corner box at size=512 maps to 200x200 at orig_size=1024."""
+        cb = COCOEvalCallback()
+        corners = torch.tensor([[[10.0, 10.0], [110.0, 10.0], [110.0, 110.0], [10.0, 110.0]]])
+        targets = [
+            {
+                "boxes": torch.zeros(1, 4),
+                "corners": corners,
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([1024, 1024]),
+                "size": torch.tensor([512, 512]),
+            }
+        ]
+        out = cb._convert_targets(targets)
+        assert out[0]["boxes"][0].tolist() == pytest.approx([20.0, 20.0, 220.0, 220.0])
+
+    def test_no_rescale_when_size_matches_orig_size(self) -> None:
+        """Corners pass through untouched when the image was never resized."""
+        cb = COCOEvalCallback()
+        corners = torch.tensor([[[10.0, 20.0], [110.0, 20.0], [110.0, 120.0], [10.0, 120.0]]])
+        targets = [
+            {
+                "boxes": torch.zeros(1, 4),
+                "corners": corners,
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([256, 256]),
+                "size": torch.tensor([256, 256]),
+            }
+        ]
+        out = cb._convert_targets(targets)
+        assert out[0]["boxes"][0].tolist() == pytest.approx([10.0, 20.0, 110.0, 120.0])
+
+    def test_rotated_corners_use_axis_aligned_envelope(self) -> None:
+        """A diamond-shaped OBB yields its bounding envelope, not its edge lengths."""
+        cb = COCOEvalCallback()
+        corners = torch.tensor([[[50.0, 0.0], [100.0, 50.0], [50.0, 100.0], [0.0, 50.0]]])
+        targets = [
+            {
+                "boxes": torch.zeros(1, 4),
+                "corners": corners,
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([100, 100]),
+                "size": torch.tensor([100, 100]),
+            }
+        ]
+        out = cb._convert_targets(targets)
+        assert out[0]["boxes"][0].tolist() == pytest.approx([0.0, 0.0, 100.0, 100.0])
+
+    def test_anisotropic_rescale_uses_per_axis_ratio(self) -> None:
+        """Width and height scale independently when the resize was not square."""
+        cb = COCOEvalCallback()
+        corners = torch.tensor([[[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]]])
+        targets = [
+            {
+                "boxes": torch.zeros(1, 4),
+                "corners": corners,
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([400, 200]),  # H=400, W=200
+                "size": torch.tensor([100, 100]),
+            }
+        ]
+        out = cb._convert_targets(targets)
+        assert out[0]["boxes"][0].tolist() == pytest.approx([0.0, 0.0, 200.0, 400.0])
+
+
 def _ema_callback() -> MagicMock:
     """Return a mock that ``_get_ema_callback`` recognises (has ``get_ema_model_state_dict``)."""
     cb = MagicMock(name="ema_callback")

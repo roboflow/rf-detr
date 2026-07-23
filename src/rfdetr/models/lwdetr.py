@@ -133,6 +133,7 @@ class LWDETR(nn.Module):
         use_grouppose_keypoints: bool = False,
         num_keypoints_per_class: list[int] | None = None,
         grouppose_keypoint_dim_downscale: int = 1,
+        oriented: bool = False,
     ) -> None:
         """Initializes the model.
 
@@ -145,6 +146,7 @@ class LWDETR(nn.Module):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
             group_detr: Number of groups to speed detr training. Default is 1.
             lite_refpoint_refine: TODO
+            oriented: If True, add an angle prediction head for oriented bounding boxes.
         """
         super().__init__()
         self.num_queries = num_queries
@@ -152,6 +154,8 @@ class LWDETR(nn.Module):
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
+        self.oriented = oriented
+        self.angle_embed = MLP(hidden_dim, hidden_dim, 1, 3) if oriented else None
         self.segmentation_head = segmentation_head
         query_dim = 4
         self.refpoint_embed = nn.Embedding(num_queries * group_detr, query_dim)
@@ -210,6 +214,11 @@ class LWDETR(nn.Module):
         bbox_out_layer = cast(nn.Linear, self.bbox_embed.layers[-1])
         nn.init.constant_(bbox_out_layer.weight.data, 0)
         nn.init.constant_(bbox_out_layer.bias.data, 0)
+
+        if self.angle_embed is not None:
+            angle_out_layer = cast(nn.Linear, self.angle_embed.layers[-1])
+            nn.init.constant_(angle_out_layer.weight.data, 0)
+            nn.init.constant_(angle_out_layer.bias.data, 0)
 
         # two_stage
         self.two_stage = two_stage
@@ -527,6 +536,10 @@ class LWDETR(nn.Module):
             else:
                 outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
 
+            if self.angle_embed is not None:
+                angle = self.angle_embed(hs).sigmoid() * math.pi
+                outputs_coord = torch.cat([outputs_coord, angle], dim=-1)
+
             outputs_class = self.class_embed(hs)
             outputs_keypoints = None
 
@@ -646,6 +659,9 @@ class LWDETR(nn.Module):
                 outputs_coord = torch.concat([outputs_coord_cxcy, outputs_coord_wh], dim=-1)
             else:
                 outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
+            if self.angle_embed is not None:
+                angle = self.angle_embed(hs).sigmoid() * math.pi
+                outputs_coord = torch.cat([outputs_coord, angle], dim=-1)
             outputs_class = self.class_embed(hs)
             if self.use_grouppose_keypoints and self.keypoint_embed is not None:
                 if keypoint_hs is None:
@@ -841,6 +857,7 @@ def build_model(args: "BuilderArgs") -> LWDETR | tuple[Any, None, None]:
         use_grouppose_keypoints=getattr(args, "use_grouppose_keypoints", False),
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         grouppose_keypoint_dim_downscale=getattr(args, "grouppose_keypoint_dim_downscale", 1),
+        oriented=getattr(args, "oriented", False),
     )
     return model
 
@@ -850,6 +867,12 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
     matcher = build_matcher(args)
     weight_dict = {"loss_ce": args.cls_loss_coef, "loss_bbox": args.bbox_loss_coef}
     weight_dict["loss_giou"] = args.giou_loss_coef
+    if getattr(args, "oriented", False):
+        # The oriented decoder reports ProbIoU under "loss_kld", but the two-stage
+        # encoder still reports plain GIoU under "loss_giou". Both need a weight:
+        # SetCriterion drops any loss key missing from weight_dict, so registering
+        # only one of them silently excludes the other from the optimised total.
+        weight_dict["loss_kld"] = args.giou_loss_coef
     if args.segmentation_head:
         weight_dict["loss_mask_ce"] = args.mask_ce_loss_coef
         weight_dict["loss_mask_dice"] = args.mask_dice_loss_coef
@@ -909,8 +932,8 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
     postprocess = PostProcess(
         num_select=args.num_select,
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
-        # Older detection-only namespaces may omit keypoint postprocess knobs; keep the ModelConfig default.
         trace_alpha=getattr(args, "postprocess_trace_alpha", 0.2),
+        oriented=getattr(args, "oriented", False),
     )
 
     return criterion, postprocess

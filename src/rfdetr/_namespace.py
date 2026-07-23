@@ -39,6 +39,7 @@ _MC_NAMESPACE_FIELDS = {
     "num_queries",
     "num_select",
     "num_windows",
+    "oriented",
     "out_feature_indexes",
     "patch_size",
     "positional_encoding_size",

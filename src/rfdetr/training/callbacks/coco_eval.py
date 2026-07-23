@@ -1143,6 +1143,11 @@ class COCOEvalCallback(Callback):
     def _convert_targets(self, targets: list[dict[str, Tensor]]) -> list[dict[str, Tensor]]:
         """Convert targets from normalised CxCyWH to absolute xyxy boxes.
 
+        For oriented boxes (``corners`` key present), the axis-aligned envelope
+        of the 4 OBB corners is used instead of treating the rotated-box dims as
+        an axis-aligned rectangle (which would produce wrong/smaller GT boxes and
+        inflate IoU scores above 1.0).
+
         Also passes ``iscrowd`` and ``masks`` through unchanged.
 
         Args:
@@ -1155,8 +1160,27 @@ class COCOEvalCallback(Callback):
         out = []
         for t in targets:
             h, w = t["orig_size"].tolist()
-            scale = t["boxes"].new_tensor([w, h, w, h])
-            boxes = box_cxcywh_to_xyxy(t["boxes"]) * scale
+            if "corners" in t and t["corners"].numel() > 0:
+                # OBB path: corners are in *post-transform* pixel space, but PostProcess
+                # scales predictions to orig_size.  Rescale so GT and predictions share a
+                # coordinate system — otherwise IoU is computed across two different
+                # spaces and mAP is meaningless whenever size != orig_size.
+                corners = t["corners"].float()  # (N, 4, 2)
+                size = t.get("size")
+                if size is not None:
+                    sh, sw = (int(v) for v in size.tolist())
+                    if (sh, sw) != (h, w) and sh > 0 and sw > 0:
+                        corners = corners * corners.new_tensor([w / sw, h / sh])
+                x_min = corners[..., 0].min(dim=-1).values
+                y_min = corners[..., 1].min(dim=-1).values
+                x_max = corners[..., 0].max(dim=-1).values
+                y_max = corners[..., 1].max(dim=-1).values
+                boxes = torch.stack([x_min, y_min, x_max, y_max], dim=-1)
+            elif len(t["boxes"]) == 0:
+                boxes = t["boxes"].new_zeros((0, 4))
+            else:
+                scale = t["boxes"].new_tensor([w, h, w, h])
+                boxes = box_cxcywh_to_xyxy(t["boxes"]) * scale
             entry: dict[str, Tensor] = {"boxes": boxes, "labels": t["labels"]}
             if "masks" in t:
                 masks = t["masks"].bool()

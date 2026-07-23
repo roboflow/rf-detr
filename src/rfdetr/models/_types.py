@@ -67,6 +67,7 @@ class BuilderArgs(Protocol):
     ia_bce_loss: bool
     cls_loss_coef: float
     segmentation_head: bool
+    oriented: bool
     mask_downsample_ratio: int
     num_queries: int
     num_select: int

@@ -14,6 +14,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
 from rfdetr.utilities import box_ops
+from rfdetr.utilities.rotated_box_ops import box_cxcywha_to_corners
 
 # Number of masks upsampled per interpolation call. Bounds peak memory when many masks are
 # resized to full image resolution (e.g. K=300 at 1080p would otherwise allocate gigabytes).
@@ -23,9 +24,9 @@ _MASK_CHUNK = 32
 class PostProcess(nn.Module):
     """Convert raw RF-DETR model outputs into per-image prediction tensors.
 
-    The postprocessor is shared by detection, segmentation, and keypoint inference. It selects top scoring query/class
-    pairs, scales boxes back to the requested image sizes, and then delegates to the head-specific private helper for
-    masks, keypoints, or box-only results.
+    The postprocessor is shared by detection, segmentation, keypoint, and oriented-box inference. It selects top scoring
+    query/class pairs, scales boxes back to the requested image sizes, and then delegates to the head-specific private
+    helper for masks, keypoints, oriented boxes, or box-only results.
     """
 
     def __init__(
@@ -33,11 +34,13 @@ class PostProcess(nn.Module):
         num_select: int = 300,
         num_keypoints_per_class: list[int] | None = None,
         trace_alpha: float = 0.2,
+        oriented: bool = False,
     ) -> None:
         super().__init__()
         self.num_select = num_select
         self.num_keypoints_per_class = num_keypoints_per_class or []
         self.trace_alpha = trace_alpha
+        self.oriented = oriented
 
     @torch.no_grad()
     def forward(self, outputs: dict[str, torch.Tensor], target_sizes: torch.Tensor) -> list[dict[str, torch.Tensor]]:
@@ -59,7 +62,17 @@ class PostProcess(nn.Module):
         out_keypoints = outputs.get("pred_keypoints")
         self._validate_outputs(out_logits, out_masks, out_keypoints, target_sizes)
 
+        if self.oriented and out_masks is not None:
+            raise ValueError(
+                "Segmentation head is not supported together with oriented=True. "
+                "Disable the segmentation head or set oriented=False."
+            )
+
         scores, labels, topk_boxes = self._select_topk(out_logits)
+
+        if self.oriented:
+            return self._postprocess_oriented(out_bbox, scores, labels, topk_boxes, target_sizes)
+
         boxes = self._gather_and_scale_boxes(out_bbox, topk_boxes, target_sizes)
 
         if out_masks is not None:
@@ -115,6 +128,43 @@ class PostProcess(nn.Module):
         topk_boxes = topk_indexes // out_logits.shape[2]
         labels = topk_indexes % out_logits.shape[2]
         return scores, labels, topk_boxes
+
+    def _postprocess_oriented(
+        self,
+        out_bbox: torch.Tensor,
+        scores: torch.Tensor,
+        labels: torch.Tensor,
+        topk_boxes: torch.Tensor,
+        target_sizes: torch.Tensor,
+    ) -> list[dict[str, torch.Tensor]]:
+        """Gather oriented boxes and return corner representations.
+
+        Args:
+            out_bbox: Normalized ``[cx, cy, w, h, angle]`` boxes with shape ``(B, Q, 5)``.
+            scores: Selected scores with shape ``(B, K)``.
+            labels: Selected class labels with shape ``(B, K)``.
+            topk_boxes: Query indices selected by :meth:`_select_topk`.
+            target_sizes: Per-image ``(height, width)`` tensor.
+
+        Returns:
+            One dict per image with ``scores``, ``labels``, ``boxes_obb`` (scaled), and ``corners``.
+        """
+        box_dim = out_bbox.shape[-1]
+        obb = torch.gather(out_bbox, 1, topk_boxes.unsqueeze(-1).repeat(1, 1, box_dim)).clone()
+        img_h, img_w = target_sizes.unbind(1)
+        scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1).to(obb.dtype)
+        obb[..., :4] = obb[..., :4] * scale_fct[:, None, :]
+        corners = box_cxcywha_to_corners(obb)
+        # Axis-aligned xyxy envelope of each OBB — required by COCO eval callback and torchmetrics
+        x_min = corners[..., 0].min(dim=-1).values
+        y_min = corners[..., 1].min(dim=-1).values
+        x_max = corners[..., 0].max(dim=-1).values
+        y_max = corners[..., 1].max(dim=-1).values
+        boxes_xyxy = torch.stack([x_min, y_min, x_max, y_max], dim=-1)
+        return [
+            {"scores": sc, "labels": lb, "boxes_obb": ob, "corners": cn, "boxes": bx}
+            for sc, lb, ob, cn, bx in zip(scores, labels, obb, corners, boxes_xyxy)
+        ]
 
     @staticmethod
     def _gather_and_scale_boxes(

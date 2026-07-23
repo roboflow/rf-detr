@@ -274,6 +274,7 @@ filterwarnings = [
 
 [tool.codespell]
 skip = "*.pth"
+ignore-words-list = "dota"
 
 [tool.mypy]
 python_version = "3.10"
@@ -294,6 +295,7 @@ overrides = [
   ], ignore_errors = true },
   { module = [
     "torchvision", "torchvision.*",
+    "albumentations", "albumentations.*",
     "pycocotools", "pycocotools.*",
     "timm", "timm.*",
     "einops", "einops.*",

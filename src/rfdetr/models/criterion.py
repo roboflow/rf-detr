@@ -28,6 +28,7 @@ from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.math import accuracy
 from rfdetr.utilities import box_ops
 from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
+from rfdetr.utilities.rotated_box_ops import obb_to_aabb, probiou
 
 _LossFunction = Callable[..., dict[str, Tensor]]
 
@@ -204,6 +205,7 @@ class SetCriterion(nn.Module):
         self.use_varifocal_loss = use_varifocal_loss
         self.use_position_supervised_loss = use_position_supervised_loss
         self.ia_bce_loss = ia_bce_loss
+        self.oriented = getattr(matcher, "oriented", False)
         self.mask_point_sample_ratio = mask_point_sample_ratio
         self.num_keypoints_per_class = num_keypoints_per_class or []
 
@@ -300,14 +302,23 @@ class SetCriterion(nn.Module):
             alpha = self.focal_alpha
             gamma = 2
             src_boxes = outputs["pred_boxes"][idx]
-            target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            tgt_key = "boxes_obb" if self.oriented else "boxes"
+            target_boxes = torch.cat([t[tgt_key][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
-            iou_targets = torch.diag(
-                box_ops.box_iou(
-                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
-                    box_ops.box_cxcywh_to_xyxy(target_boxes),
-                )[0]
-            )
+            if self.oriented and src_boxes.shape[-1] == 5:
+                iou_targets = probiou(src_boxes.detach(), target_boxes)
+            else:
+                # Encoder path: compare against the target's axis-aligned envelope
+                # (see loss_boxes) so the IoU-aware weighting is not systematically
+                # understated for rotated ground truth.
+                if self.oriented and target_boxes.shape[-1] == 5:
+                    target_boxes = obb_to_aabb(target_boxes)
+                iou_targets = torch.diag(
+                    box_ops.box_iou(
+                        box_ops.box_cxcywh_to_xyxy(src_boxes.detach()[..., :4]),
+                        box_ops.box_cxcywh_to_xyxy(target_boxes[..., :4]),
+                    )[0]
+                )
             pos_ious = iou_targets.clone().detach()
             prob = src_logits.sigmoid()
             # init positive weights and negative weights
@@ -329,12 +340,13 @@ class SetCriterion(nn.Module):
 
         elif self.use_position_supervised_loss:
             src_boxes = outputs["pred_boxes"][idx]
-            target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            tgt_key = "boxes_obb" if self.oriented else "boxes"
+            target_boxes = torch.cat([t[tgt_key][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
             iou_targets = torch.diag(
                 box_ops.box_iou(
-                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
-                    box_ops.box_cxcywh_to_xyxy(target_boxes),
+                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()[..., :4]),
+                    box_ops.box_cxcywh_to_xyxy(target_boxes[..., :4]),
                 )[0]
             )
             pos_ious = iou_targets.clone().detach()
@@ -367,12 +379,13 @@ class SetCriterion(nn.Module):
 
         elif self.use_varifocal_loss:
             src_boxes = outputs["pred_boxes"][idx]
-            target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            tgt_key = "boxes_obb" if self.oriented else "boxes"
+            target_boxes = torch.cat([t[tgt_key][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
             iou_targets = torch.diag(
                 box_ops.box_iou(
-                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
-                    box_ops.box_cxcywh_to_xyxy(target_boxes),
+                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()[..., :4]),
+                    box_ops.box_cxcywh_to_xyxy(target_boxes[..., :4]),
                 )[0]
             )
             pos_ious = iou_targets.clone().detach()
@@ -462,24 +475,39 @@ class SetCriterion(nn.Module):
     ) -> dict[str, Tensor]:
         """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss targets dicts must
         contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4] The target boxes are expected in format
-        (center_x, center_y, w, h), normalized by the image size."""
+        (center_x, center_y, w, h), normalized by the image size.
+
+        In oriented mode the targets are read from "boxes_obb" instead, with dim [nb_target_boxes, 5] as (center_x,
+        center_y, w, h, angle), and the GIoU term is replaced by ProbIoU under the "loss_kld" key.
+        """
         assert "pred_boxes" in outputs
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs["pred_boxes"][idx]
-        target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
-
-        loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
+        tgt_key = "boxes_obb" if self.oriented else "boxes"
+        target_boxes = torch.cat([t[tgt_key][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
         losses = {}
-        losses["loss_bbox"] = loss_bbox.sum() / num_boxes
 
-        loss_giou = 1 - torch.diag(
-            box_ops.generalized_box_iou(
-                box_ops.box_cxcywh_to_xyxy(src_boxes),
-                box_ops.box_cxcywh_to_xyxy(target_boxes),
+        if self.oriented and src_boxes.shape[-1] == 5:
+            loss_bbox = F.l1_loss(src_boxes[..., :4], target_boxes[..., :4], reduction="none")
+            losses["loss_bbox"] = loss_bbox.sum() / num_boxes
+            losses["loss_kld"] = (1 - probiou(src_boxes, target_boxes)).sum() / num_boxes
+        else:
+            # The two-stage encoder predicts 4D proposals even in oriented mode, so
+            # reduce the 5D target to its axis-aligned envelope. Slicing [..., :4]
+            # would compare rotated side lengths against axis-aligned extents.
+            if self.oriented and target_boxes.shape[-1] == 5:
+                target_boxes = obb_to_aabb(target_boxes)
+            loss_bbox = F.l1_loss(src_boxes[..., :4], target_boxes[..., :4], reduction="none")
+            losses["loss_bbox"] = loss_bbox.sum() / num_boxes
+            loss_giou = 1 - torch.diag(
+                box_ops.generalized_box_iou(
+                    box_ops.box_cxcywh_to_xyxy(src_boxes[..., :4]),
+                    box_ops.box_cxcywh_to_xyxy(target_boxes[..., :4]),
+                )
             )
-        )
-        losses["loss_giou"] = loss_giou.sum() / num_boxes
+            losses["loss_giou"] = loss_giou.sum() / num_boxes
+
         return losses
 
     def loss_masks(
