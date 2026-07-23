@@ -673,6 +673,10 @@ class TransformerDecoder(nn.Module):
 
             if self._export:
                 query_sine_embed = gen_sineembed_for_position(obj_center, self.d_model // 2)  # bs, nq, 256*2
+                # "Materialize one shared box to per-level references" happens at different layers per mode:
+                # eager (below) multiplies by valid_ratios to produce per-level refs, while export keeps the
+                # singleton level dim here and defers expansion to MSDeformAttn's internal .expand(). Export's
+                # expand omits eager's valid_ratios scaling — sound only under the no-padding export assumption.
                 refpoints_input = obj_center[:, :, None]  # bs, nq, 1, 4
             else:
                 assert valid_ratios is not None
