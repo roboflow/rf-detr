@@ -63,12 +63,18 @@ def compute_window_block_indexes(
     When `window_block_indexes` is provided explicitly, it is returned unchanged — this is the
     override path for callers that want to pin an exact routing (e.g. to match a published
     architecture spec) without disturbing the derived default used by existing configs/checkpoints.
+    This override is only wired through `ModelDefaults` (`rfdetr/models/_defaults.py`) or direct
+    `Backbone`/`DinoV2` construction — not the public pydantic `RFDETR*Config` classes, which set
+    `ConfigDict(extra="forbid")` and raise on unknown fields.
 
     When omitted, the windowed set is derived as the complement of `out_feature_indexes` (treated
     as raw block indices) within `range(0, out_feature_indexes[-1] + 1)`. This mirrors the
     historical behavior relied upon by all released RF-DETR checkpoints; it does not renumber
     `out_feature_indexes` (1-indexed HF stage numbers) to 0-indexed block indices, so it is not
-    guaranteed to match any particular paper-specified layer schedule.
+    guaranteed to match any particular paper-specified layer schedule. The derivation assumes
+    `out_feature_indexes` is given in ascending order: it uses `out_feature_indexes[-1]` (not
+    `max(out_feature_indexes)`) as the upper bound, so an unsorted list whose maximum is not last
+    would under-cover the intended range.
 
     Args:
         out_feature_indexes: Encoder stage numbers whose feature maps are exported to the decoder.
