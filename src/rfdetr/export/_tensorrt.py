@@ -57,7 +57,8 @@ def build_engine(onnx_path: str, *, fp16: bool = True, verbose: bool = False, dr
 
     Args:
         onnx_path: Path to the source ``.onnx`` file.
-        fp16: Enable FP16 precision when building the engine.
+        fp16: Enable FP16 precision when building the engine.  Automatically downgraded to FP32 (with a
+            warning) on TensorRT builds that do not expose the FP16 builder flag.
         verbose: Emit extra progress logging.
         dry_run: Log the intended build and return the engine path without
             building anything (no TensorRT / GPU required).
@@ -84,6 +85,23 @@ def build_engine(onnx_path: str, *, fp16: bool = True, verbose: bool = False, dr
 
     if engine_from_network is None:
         raise ImportError("TensorRT export requires the 'tensorrt' extra. Install with: pip install rfdetr[tensorrt]")
+
+    if fp16:
+        # Some TensorRT builds (e.g. lean/partial wheels) do not expose the FP16 builder flag. polygraphy aborts
+        # when asked to set an unavailable flag, so probe for it up front and fall back to an FP32 engine instead
+        # of crashing the whole export.
+        try:
+            import tensorrt as trt
+
+            if not hasattr(trt.BuilderFlag, "FP16"):
+                logger.warning(
+                    "TensorRT %s does not expose the FP16 builder flag; building an FP32 engine instead. "
+                    "Pass fp16=False to silence this warning.",
+                    getattr(trt, "__version__", "unknown"),
+                )
+                fp16 = False
+        except ImportError:
+            pass  # a missing/broken tensorrt import is surfaced by the polygraphy build chain below
 
     if verbose:
         logger.info(f"Building TensorRT engine (fp16={fp16}) from {onnx_path}")
