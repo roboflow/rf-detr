@@ -74,6 +74,7 @@ nav:
           - Keypoint Train Config: reference/keypoint_train_config.md
       - Lightning Training:
           - Training Primitives: reference/training.md
+  - FAQ: faq.md
   - Cookbooks: cookbooks.md
   - Resources: resources/index.md
   - Changelog: changelog.md
