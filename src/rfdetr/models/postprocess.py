@@ -174,7 +174,7 @@ class PostProcess(nn.Module):
                 than boxes/ground truth; callers comparing them against full-resolution masks
                 (e.g. COCO segm mAP) must downsize the other side to match, or the comparison is
                 meaningless. Intended for opt-in, validation-only cost reduction (see
-                ``TrainConfig.eval_masks_native_resolution``), not for inference output.
+                ``TrainConfig.eval_masks_head_resolution``), not for inference output.
 
         Returns:
             One result dict per image containing scores, labels, boxes, and boolean masks —

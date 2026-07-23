@@ -912,7 +912,7 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
         # Older detection-only namespaces may omit keypoint postprocess knobs; keep the ModelConfig default.
         trace_alpha=getattr(args, "postprocess_trace_alpha", 0.2),
         # Older namespaces may omit this TrainConfig-only knob; default preserves full upsample.
-        upsample_masks_to_image_size=not getattr(args, "eval_masks_native_resolution", False),
+        upsample_masks_to_image_size=not getattr(args, "eval_masks_head_resolution", False),
     )
 
     return criterion, postprocess

@@ -409,6 +409,15 @@ class COCOEvalCallback(Callback):
         When an EMA callback is present the EMA model is run on the same batch in a separate ``torch.no_grad()`` forward
         pass so that base and EMA metrics are computed from independent predictions.
 
+        When ``eval_ema_only`` is active and the EMA model has warmed up, ``validation_step`` already forwarded
+        through the EMA-averaged weights (see ``RFDETRModelModule._resolve_eval_model``) — these predictions are
+        routed to the EMA mAP/checkpoint track (``map_metric_ema`` / ``val/ema_*``) instead of the regular one,
+        which never ran a base-model forward pass this batch. Without this routing, the regular ``val/mAP_50_95``
+        key silently reflects EMA quality while ``BestModelCallback`` checkpoints the (unevaluated) base weights
+        under that key — a metric/weights mismatch. The macro-F1 sweep (``val/F1``) has no parallel EMA-tracked
+        accumulator and is not rerouted; under ``eval_ema_only`` it reflects EMA-quality predictions logged under
+        the regular key, a known limitation of this mode.
+
         Args:
             trainer: The PTL Trainer.
             pl_module: The LightningModule.
@@ -423,25 +432,32 @@ class COCOEvalCallback(Callback):
         targets_raw = self._convert_targets(outputs["targets"])
         targets = self._align_gt_masks_to_pred_resolution(preds, targets_raw) if self._use_segm_metrics else targets_raw
 
-        self.map_metric.update(preds, targets)
+        # ema_cb._average_model availability is rank-invariant (EMA updates fire on the same
+        # global step on every rank), so per-rank EMA-forward decisions stay consistent.
+        ema_cb = self._get_ema_callback(trainer)
+        ema_inner = _get_ema_inner_module(ema_cb)
+        used_ema_forward = self._eval_ema_only and ema_inner is not None
+        if used_ema_forward:
+            if self.map_metric_ema is not None:
+                self.map_metric_ema.update(preds, targets)
+                self._ema_has_updates = True
+        else:
+            self.map_metric.update(preds, targets)
 
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
         merge_matching_data(self._f1_local, batch_matching)
-        self._update_keypoint_oks_metric(trainer, outputs, split="val")
+        self._update_keypoint_oks_metric(trainer, outputs, split="val_ema" if used_ema_forward else "val")
 
         # Run EMA model separately on the same batch so that base and EMA metrics
         # are computed from independent forward passes rather than being aliases.
         # The EMA metric object itself is created on every rank in
         # on_validation_epoch_start (_prepare_ema_metric); here we only run the EMA
-        # forward pass + update when the averaged model is available.  ema_cb._average_model
-        # availability is rank-invariant (EMA updates fire on the same global step on every
-        # rank), so per-rank EMA update counts stay consistent.
+        # forward pass + update when the averaged model is available.
         # Skipped entirely when eval_ema_only=True: validation_step already forwarded through
-        # the EMA model directly (RFDETRModelModule._resolve_eval_model), so this second,
-        # independent EMA forward pass would be pure duplicate compute (#416).
-        ema_cb = self._get_ema_callback(trainer)
-        ema_inner = _get_ema_inner_module(ema_cb)
+        # the EMA model directly (RFDETRModelModule._resolve_eval_model) and the primary preds
+        # above are already routed to the EMA track, so this second, independent EMA forward
+        # pass would be pure duplicate compute (#416).
         if not self._eval_ema_only and ema_cb is not None and ema_inner is not None and self.map_metric_ema is not None:
             samples, _ = batch
             orig_sizes = torch.stack([t["orig_size"] for t in outputs["targets"]]).to(pl_module.device)
@@ -1203,7 +1219,7 @@ class COCOEvalCallback(Callback):
         """Downsize ground-truth masks to match predicted masks' resolution when they differ.
 
         ``_convert_targets`` already normalises GT masks to ``orig_size``, matching predictions in the default
-        (``upsample_masks_to_image_size=True``) case. When ``TrainConfig.eval_masks_native_resolution`` is set,
+        (``upsample_masks_to_image_size=True``) case. When ``TrainConfig.eval_masks_head_resolution`` is set,
         ``PostProcess`` instead returns predicted masks at the mask head's native (lower) resolution — comparing
         them against full-resolution GT masks would silently produce meaningless IoU values (both
         ``torchmetrics.MeanAveragePrecision``'s RLE encoding and ``matching.build_matching_data`` require both

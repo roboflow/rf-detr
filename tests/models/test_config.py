@@ -484,15 +484,15 @@ class TestTrainConfigT42PromotedFields:
         tc = self._tc(tmp_path)
         assert tc.eval_ema_only is False
 
-    def test_eval_masks_native_resolution_defaults_to_false(self, tmp_path):
-        """eval_masks_native_resolution defaults to False, preserving full-resolution mask upsampling."""
+    def test_eval_masks_head_resolution_defaults_to_false(self, tmp_path):
+        """eval_masks_head_resolution defaults to False, preserving full-resolution mask upsampling."""
         tc = self._tc(tmp_path)
-        assert tc.eval_masks_native_resolution is False
+        assert tc.eval_masks_head_resolution is False
 
-    def test_eval_masks_native_resolution_can_be_enabled(self, tmp_path):
-        """eval_masks_native_resolution=True is accepted (opt-in, no cross-field constraint)."""
-        tc = self._tc(tmp_path, eval_masks_native_resolution=True)
-        assert tc.eval_masks_native_resolution is True
+    def test_eval_masks_head_resolution_can_be_enabled(self, tmp_path):
+        """eval_masks_head_resolution=True is accepted (opt-in, no cross-field constraint)."""
+        tc = self._tc(tmp_path, eval_masks_head_resolution=True)
+        assert tc.eval_masks_head_resolution is True
 
 
 class TestTrainConfigLRScheduler:

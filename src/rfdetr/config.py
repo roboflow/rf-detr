@@ -1060,6 +1060,12 @@ class TrainConfig(BaseConfig):
     # Validation-only: forward through the EMA model instead of the base model, and skip the
     # duplicate base-model forward pass COCOEvalCallback would otherwise also run — halves
     # per-batch validation compute when EMA is enabled. Requires use_ema=True.
+    # Metric-key remap: when active, val/mAP_50_95 (and val/segm_mAP_*) report EMA-model
+    # quality, not base-model quality — the base model is never evaluated this epoch. Best-
+    # checkpoint tracking follows: the "regular" checkpoint track sees no data (safely no-ops)
+    # while the EMA checkpoint track receives the real per-epoch EMA score. val/F1 is not
+    # remapped (no parallel EMA-tracked accumulator) and still reflects EMA-quality predictions
+    # under the regular key.
     eval_ema_only: bool = False
     num_workers: int = 2
     weight_decay: float = 1e-4
@@ -1094,7 +1100,11 @@ class TrainConfig(BaseConfig):
     # cheaper, but ground-truth masks must then be compared at that same lower resolution
     # (handled in COCOEvalCallback). No effect on non-segmentation models or on inference output
     # (RFDETR.predict always upsamples regardless of this flag).
-    eval_masks_native_resolution: bool = False
+    # Metric comparability: GT masks are nearest-downsized to the mask head's native resolution
+    # (e.g. 512x512 -> ~16x16) before comparison, so val/segm_mAP under this flag is NOT
+    # comparable to a full-resolution run — small objects can collapse to empty masks at the
+    # lower resolution, and IoU is computed on a coarser pixel grid either way.
+    eval_masks_head_resolution: bool = False
     aug_config: Optional[Dict[str, Any]] = None
     scale_jitter: bool = True
     augmentation_backend: AugmentationBackend | Literal["cpu", "auto"] = "cpu"

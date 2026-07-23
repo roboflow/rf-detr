@@ -171,7 +171,7 @@ class TestPostProcessMasks:
 
     def test_native_resolution_skips_upsample_when_flag_false(self):
         """upsample_masks_to_image_size=False returns masks at native mask-head resolution instead of target_sizes (opt-
-        in validation-cost reduction, see TrainConfig.eval_masks_native_resolution)."""
+        in validation-cost reduction, see TrainConfig.eval_masks_head_resolution)."""
         batch, num_queries, mask_h, mask_w = 1, 8, 16, 16
         num_select, img_h, img_w = 8, 512, 512
         out_masks = torch.randn(batch, num_queries, mask_h, mask_w)

@@ -1156,7 +1156,9 @@ class TestValidationBatchEndEvalEmaOnly:
         return ema_cb
 
     def test_eval_ema_only_true_skips_duplicate_ema_forward(self) -> None:
-        """eval_ema_only=True must never call the EMA model's forward a second time."""
+        """eval_ema_only=True must never call the EMA model's forward a second time, and must route the single forward's
+        predictions to the EMA metric/checkpoint track (not the regular one, which never ran a base-model forward this
+        batch — regression for the val/mAP_50_95 metric/checkpoint-weights mismatch)."""
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
         cb = COCOEvalCallback(eval_ema_only=True)
         trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
@@ -1170,7 +1172,31 @@ class TestValidationBatchEndEvalEmaOnly:
         cb.on_validation_batch_end(trainer, module, outputs, batch, 0)
 
         ema_underlying.assert_not_called()
+        cb.map_metric_ema.update.assert_called_once()
+        cb.map_metric.update.assert_not_called()
+        assert cb._ema_has_updates is True
+
+    def test_eval_ema_only_true_falls_back_to_regular_track_when_ema_not_warmed_up(self) -> None:
+        """eval_ema_only=True with no averaged EMA model yet available must route predictions to the regular map_metric,
+        mirroring RFDETRModelModule._resolve_eval_model's own base-model fallback — otherwise the EMA track would record
+        an update that never actually came from an EMA forward pass."""
+        cb = COCOEvalCallback(eval_ema_only=True)
+        ema_cb = MagicMock(name="ema_callback")
+        ema_cb.get_ema_model_state_dict = MagicMock(name="get_ema_model_state_dict")
+        ema_cb._average_model = None
+        trainer = _make_trainer(callbacks=[ema_cb])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+
+        outputs = {"results": _detection_preds(0), "targets": _detection_targets()}
+        batch = (torch.zeros(1), None)
+        cb.on_validation_batch_end(trainer, module, outputs, batch, 0)
+
+        cb.map_metric.update.assert_called_once()
         cb.map_metric_ema.update.assert_not_called()
+        assert cb._ema_has_updates is False
 
     def test_eval_ema_only_false_still_runs_duplicate_ema_forward(self) -> None:
         """eval_ema_only=False (default) must preserve the existing independent base+EMA forward behaviour."""
@@ -1222,6 +1248,47 @@ class TestValidationBatchEndEvalEmaOnly:
         cb.on_validation_batch_end(trainer, module, outputs, None, 0)
 
         called_targets = cb.map_metric.update.call_args[0][1]
+        assert called_targets[0]["masks"].shape[-2:] == (4, 4)
+
+    def test_eval_ema_only_and_native_resolution_masks_combined(self) -> None:
+        """eval_ema_only=True and native-resolution mask predictions active together (the #416 commenter's actual
+        workaround) must route to map_metric_ema with GT masks aligned to the native pred resolution — neither flag's
+        handling should interfere with the other."""
+        ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
+        cb = COCOEvalCallback(eval_ema_only=True, segmentation=True)
+        trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+
+        pred_masks = torch.zeros(1, 4, 4, dtype=torch.bool)
+        gt_masks = torch.ones(1, 8, 8, dtype=torch.bool)
+        outputs = {
+            "results": [
+                {
+                    "scores": torch.tensor([0.9]),
+                    "labels": torch.tensor([0]),
+                    "boxes": torch.zeros(1, 4),
+                    "masks": pred_masks,
+                }
+            ],
+            "targets": [
+                {
+                    "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
+                    "labels": torch.tensor([0]),
+                    "orig_size": torch.tensor([8, 8]),
+                    "masks": gt_masks,
+                }
+            ],
+        }
+        batch = (torch.zeros(1), None)
+
+        cb.on_validation_batch_end(trainer, module, outputs, batch, 0)
+
+        ema_underlying.assert_not_called()
+        cb.map_metric.update.assert_not_called()
+        called_targets = cb.map_metric_ema.update.call_args[0][1]
         assert called_targets[0]["masks"].shape[-2:] == (4, 4)
 
 
@@ -1364,7 +1431,7 @@ class TestConvertTargets:
 class TestAlignGtMasksToPredResolution:
     """_align_gt_masks_to_pred_resolution() keeps GT/pred mask comparisons size-consistent when
     PostProcess.upsample_masks_to_image_size=False returns predictions at native, lower resolution
-    (TrainConfig.eval_masks_native_resolution — regression coverage for #416)."""
+    (TrainConfig.eval_masks_head_resolution — regression coverage for #416)."""
 
     def test_downsizes_gt_masks_to_match_smaller_pred_resolution(self) -> None:
         """GT masks at 8x8 must be nearest-downsized to match 4x4 predicted masks."""
@@ -1378,6 +1445,24 @@ class TestAlignGtMasksToPredResolution:
 
         assert out[0]["masks"].shape[-2:] == (4, 4)
         assert out[0]["masks"].dtype == torch.bool
+
+    def test_upsizes_gt_masks_to_match_larger_pred_resolution(self) -> None:
+        """GT masks at 4x4 must be nearest-upsized to match 8x8 predicted (native-resolution) masks — the reverse of the
+        downsize case; F.interpolate(mode="nearest") fires on any shape mismatch, either direction."""
+        pred_masks = torch.zeros(1, 8, 8, dtype=torch.bool)
+        gt_masks = torch.zeros(1, 4, 4, dtype=torch.bool)
+        gt_masks[0, :2, :2] = True  # top-left quadrant filled
+        preds = [{"masks": pred_masks}]
+        targets = [{"masks": gt_masks, "labels": torch.tensor([0])}]
+
+        out = COCOEvalCallback._align_gt_masks_to_pred_resolution(preds, targets)
+
+        assert out[0]["masks"].shape[-2:] == (8, 8)
+        assert out[0]["masks"].dtype == torch.bool
+        # nearest-neighbor upsize must preserve the filled quadrant's extent (top-left half).
+        assert out[0]["masks"][0, :4, :4].all()
+        assert not out[0]["masks"][0, 4:, :].any()
+        assert not out[0]["masks"][0, :, 4:].any()
 
     def test_leaves_targets_unchanged_when_resolutions_already_match(self) -> None:
         """No resize (and no copy) is needed when pred and GT masks already share a resolution."""

@@ -161,15 +161,15 @@ class TestBuildCriterionFromConfig:
         criterion, _ = build_criterion_from_config(mc, tc, defaults=custom_defaults)
         assert criterion.focal_alpha == pytest.approx(0.5), f"Expected focal_alpha=0.5, got {criterion.focal_alpha}"
 
-    def test_eval_masks_native_resolution_disables_postprocess_upsample(self) -> None:
-        """TrainConfig.eval_masks_native_resolution=True must reach PostProcess.upsample_masks_to_image_size=False."""
+    def test_eval_masks_head_resolution_disables_postprocess_upsample(self) -> None:
+        """TrainConfig.eval_masks_head_resolution=True must reach PostProcess.upsample_masks_to_image_size=False."""
         mc = RFDETRSegNanoConfig()
-        tc = SegmentationTrainConfig(dataset_dir="/tmp", eval_masks_native_resolution=True)
+        tc = SegmentationTrainConfig(dataset_dir="/tmp", eval_masks_head_resolution=True)
         _, postprocess = build_criterion_from_config(mc, tc)
         assert postprocess.upsample_masks_to_image_size is False
 
-    def test_eval_masks_native_resolution_defaults_to_upsampling(self) -> None:
-        """eval_masks_native_resolution=False (default) preserves full-resolution mask upsampling."""
+    def test_eval_masks_head_resolution_defaults_to_upsampling(self) -> None:
+        """eval_masks_head_resolution=False (default) preserves full-resolution mask upsampling."""
         mc = RFDETRSegNanoConfig()
         tc = SegmentationTrainConfig(dataset_dir="/tmp")
         _, postprocess = build_criterion_from_config(mc, tc)
