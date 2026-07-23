@@ -8,7 +8,7 @@ Answers to questions that come up often in [GitHub issues](https://github.com/ro
 
 ## How many objects can RF-DETR detect in one image?
 
-By default up to `num_queries` distinct objects — 300 for Small, Medium, and Large, fewer for the smallest variants. To go higher, raise both `num_queries` and `num_select` when you build the model:
+By default up to `num_queries` distinct objects — 300 for Nano, Small, Medium, and Large. To go higher, raise both `num_queries` and `num_select` when you build the model:
 
 ```python
 from rfdetr import RFDETRSmall
@@ -35,7 +35,7 @@ No. Fine-tuning on a custom dataset retrains the classification head for that da
 
 ## What input resolutions are allowed?
 
-`resolution` must be a positive integer divisible by `patch_size × num_windows` for the variant (56 for the standard variants). A non-divisible value raises `ValueError` with the exact multiple to use. Input is square; each variant ships a sensible default resolution.
+`resolution` must be a positive integer divisible by `patch_size × num_windows` for the selected variant (for example, current detection checkpoints use a block size of 32). A non-divisible value raises `ValueError` indicating the required divisor. Input is square; each variant ships a sensible default resolution.
 
 ## Does my effective batch size have to be 16?
 
