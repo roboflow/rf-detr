@@ -195,7 +195,11 @@ class HungarianMatcher(nn.Module):
         # pos_cost_class = alpha * ((1 - tgt_prob) ** gamma) * (-(tgt_prob + 1e-8).log())
         # we refactor these with logsigmoid for numerical stability
         # Gather the target-class columns first: only the tgt_ids columns of the focal terms are
-        # consumed, so computing them over all num_classes columns would be wasted work/memory.
+        # consumed, so computing them over all num_classes columns would be wasted work/memory —
+        # a real win when num_targets <= num_classes (e.g. large-vocabulary datasets). When
+        # num_targets exceeds num_classes (repeated columns, e.g. crowded COCO batches) this
+        # gathers marginally more values than the full materialization would; net impact is
+        # negligible either way since the Hungarian solve dominates matcher wall-time.
         tgt_logits = flat_pred_logits[:, tgt_ids]  # [batch_size * num_queries, num_targets]
         tgt_prob = tgt_logits.sigmoid()
         neg_cost_class = (1 - alpha) * (tgt_prob**gamma) * (-F.logsigmoid(-tgt_logits))

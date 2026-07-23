@@ -64,6 +64,8 @@ class RFDETREMACallback(Callback):
         self._swapped_state_dict: dict[str, Tensor] | None = None
         self._pending_average_state_dict: dict[str, Any] | None = None
 
+    # Retained as the per-tensor fallback for non-floating-point groups (see
+    # _multi_avg_fn) — no longer the registered AveragedModel avg_fn.
     def _avg_fn(
         self,
         averaged_param: Tensor,
