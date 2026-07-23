@@ -141,8 +141,8 @@ class MSDeformAttn(nn.Module):
 
         Raises:
             ValueError: If ``input_spatial_shapes_hw`` is ``None`` in export mode; if the last
-                dimension of ``reference_points`` is not 2 or 4; or (in export mode) if the level
-                dimension is neither 1 nor ``n_levels``.
+                dimension of ``reference_points`` is not 2 or 4; or if the level dimension is
+                neither 1 nor ``n_levels`` (checked in both eager and export mode).
         """
         batch_size, len_query, _ = query.shape
         batch_size, len_input, _ = input_flatten.shape

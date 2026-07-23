@@ -494,6 +494,29 @@ class TestMSDeformAttnModule:
                 input_spatial_shapes_hw=hw_pairs,
             )
 
+    def test_eager_mode_rejects_invalid_reference_level_dim(self) -> None:
+        """Eager mode forward must raise ValueError when reference level dim is neither 1 nor n_levels.
+
+        Regression: the level-dim guard was hoisted above the export/eager split so both modes
+        reject malformed input with the same message (ms_deform_attn.py:192-198), but only the
+        export-mode path (test_export_mode_rejects_invalid_reference_level_dim) was covered.
+        """
+        module = MSDeformAttn(
+            d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=self._n_points
+        )
+        query, _, input_flatten, spatial_shapes, level_start_index, hw_pairs = self._make_module_inputs()
+        bad_ref = torch.rand(query.shape[0], query.shape[1], self._n_levels + 1, 4)
+
+        with pytest.raises(ValueError, match="level dim must be 1 or n_levels"):
+            module(
+                query,
+                bad_ref,
+                input_flatten,
+                spatial_shapes,
+                level_start_index,
+                input_spatial_shapes_hw=hw_pairs,
+            )
+
     @pytest.mark.parametrize(
         "last_dim",
         [pytest.param(1, id="last-dim-1"), pytest.param(3, id="last-dim-3")],
