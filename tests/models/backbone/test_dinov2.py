@@ -132,3 +132,40 @@ class TestWindowBlockIndexesReachesEncoderConfig:
         )
 
         assert backbone.encoder.encoder.config.window_block_indexes == override
+
+
+class TestWindowBlockIndexesValidation:
+    """Validation guards in `DinoV2.__init__` for empty `out_feature_indexes` and invalid overrides."""
+
+    def test_empty_out_feature_indexes_raises(self):
+        """An empty out_feature_indexes raises ValueError instead of an unhelpful IndexError."""
+        with pytest.raises(ValueError, match="out_feature_indexes must be non-empty"):
+            DinoV2(
+                out_feature_indexes=[],
+                use_windowed_attn=True,
+                load_dinov2_weights=False,
+                size="small",
+            )
+
+    @pytest.mark.parametrize(
+        "window_block_indexes",
+        [
+            pytest.param([0, 0, 1], id="duplicate-entry"),
+            pytest.param([-1, 0, 1], id="negative-entry"),
+            pytest.param([0, 1, 12], id="out-of-range-entry"),
+        ],
+    )
+    def test_invalid_window_block_indexes_override_raises(self, window_block_indexes):
+        """An override with duplicate, negative, or out-of-range entries raises ValueError.
+
+        `size="small"` has `num_hidden_layers=12` (valid range `[0, 12)`), so `12` in the out-of-range case and `-1` in
+        the negative case are both one step outside that range.
+        """
+        with pytest.raises(ValueError, match="unique and within"):
+            DinoV2(
+                out_feature_indexes=[12],
+                window_block_indexes=window_block_indexes,
+                use_windowed_attn=True,
+                load_dinov2_weights=False,
+                size="small",
+            )
