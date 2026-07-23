@@ -6,38 +6,38 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Configure RF-DETR data augmentations. Defaults use torchvision; custom presets use optional Albumentations.">
+        <meta name="description" content="Frequently asked questions about RF-DETR — object count limits, model selection, class configuration, input resolution, batch size, export formats, and evaluation.">
       
       
         <meta name="author" content="Roboflow">
       
       
-        <link rel="canonical" href="https://rfdetr.roboflow.com/develop/learn/train/augmentations/">
+        <link rel="canonical" href="https://rfdetr.roboflow.com/develop/faq/">
       
       
-        <link rel="prev" href="../customization/">
+        <link rel="prev" href="../reference/training/">
       
       
-        <link rel="next" href="../loggers/">
+        <link rel="next" href="../cookbooks/">
       
       
         
       
       
-      <link rel="icon" href="../../../assets/roboflow-logo.svg">
+      <link rel="icon" href="../assets/roboflow-logo.svg">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
   
     
       
-        <title>Augmentations - RF-DETR</title>
+        <title>FAQ - RF-DETR</title>
       
     
   
 
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -56,11 +56,11 @@
       
     
     
-      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="../../../stylesheets/rf.css">
+      <link rel="stylesheet" href="../stylesheets/rf.css">
     
-    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -82,10 +82,10 @@
   
   
   
-  <meta property="og:title" content="Augmentations - RF-DETR">
-  <meta property="og:description" content="Configure RF-DETR data augmentations. Defaults use torchvision; custom presets use optional Albumentations.">
+  <meta property="og:title" content="FAQ - RF-DETR">
+  <meta property="og:description" content="Frequently asked questions about RF-DETR — object count limits, model selection, class configuration, input resolution, batch size, export formats, and evaluation.">
   <meta property="og:type" content="article">
-  <meta property="og:url" content="https://rfdetr.roboflow.com/develop/learn/train/augmentations/">
+  <meta property="og:url" content="https://rfdetr.roboflow.com/develop/faq/">
   <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
   <meta property="og:image:width" content="840">
   <meta property="og:image:height" content="630">
@@ -93,34 +93,34 @@
   
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@roboflow">
-  <meta name="twitter:title" content="Augmentations - RF-DETR">
-  <meta name="twitter:description" content="Configure RF-DETR data augmentations. Defaults use torchvision; custom presets use optional Albumentations.">
+  <meta name="twitter:title" content="FAQ - RF-DETR">
+  <meta name="twitter:description" content="Frequently asked questions about RF-DETR — object count limits, model selection, class configuration, input resolution, batch size, export formats, and evaluation.">
   <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
 
   
   
   
   
-  <meta property="article:modified_time" content="2026-07-17T05:43:52">
+  <meta property="article:modified_time" content="2026-07-23T22:32:01">
   
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "Augmentations",
-    "description": "Configure RF-DETR data augmentations. Defaults use torchvision; custom presets use optional Albumentations.",
-    "url": "https://rfdetr.roboflow.com/develop/learn/train/augmentations/",
+    "headline": "FAQ",
+    "description": "Frequently asked questions about RF-DETR \u2014 object count limits, model selection, class configuration, input resolution, batch size, export formats, and evaluation.",
+    "url": "https://rfdetr.roboflow.com/develop/faq/",
     "isPartOf": {"@id": "https://rfdetr.roboflow.com/develop#website"},
     "about": {"@id": "https://rfdetr.roboflow.com/develop#software"},
     "proficiencyLevel": "Beginner to advanced",
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-07-17T05:43:52",
+    "dateModified": "2026-07-23T22:32:01",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
-    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/develop/learn/train/augmentations/"},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/develop/faq/"},
     "speakable": {
       "@type": "SpeakableSpecification",
       "cssSelector": [".md-content h1", ".md-typeset > p:first-child"]
@@ -142,14 +142,8 @@
       {
         "@type": "ListItem",
         "position": 2,
-        "name": "Train Model",
-        "item": "https://rfdetr.roboflow.com/develop/learn/train/"
-      },
-      {
-        "@type": "ListItem",
-        "position": 3,
-        "name": "Augmentations",
-        "item": "https://rfdetr.roboflow.com/develop/learn/train/augmentations/"
+        "name": "FAQ",
+        "item": "https://rfdetr.roboflow.com/develop/faq/"
       }
       
     ]
@@ -170,7 +164,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#augmentations" class="md-skip">
+        <a href="#frequently-asked-questions" class="md-skip">
           Skip to content
         </a>
       
@@ -198,14 +192,14 @@
 
     <!-- Link to home -->
     <a
-      href="../../.."
+      href=".."
       title="RF-DETR"
       class="md-header__button md-logo"
       aria-label="RF-DETR"
       data-md-component="logo"
     >
       
-  <img src="../../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
+  <img src="../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
 
     </a>
 
@@ -226,7 +220,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis" style="display: flex; align-items: center; gap: 0.5rem;">
             <a
-            href="../../.."
+            href=".."
             title="RF-DETR"
             class="md-header__button md-logo"
             aria-label="RF-DETR"
@@ -234,11 +228,11 @@
             id="item-logo"
             >
             
-  <img src="../../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
+  <img src="../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
 
             </a>
             
-              Augmentations
+              FAQ
             
           </span>
         </div>
@@ -397,7 +391,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../.." class="md-tabs__link">
+      <a href=".." class="md-tabs__link">
         
   
   
@@ -414,8 +408,6 @@
   
   
   
-    
-  
   
     
     
@@ -423,13 +415,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../../../getting-started/install/" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../getting-started/install/" class="md-tabs__link">
           
   
   
@@ -452,7 +442,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../reference/rfdetr/" class="md-tabs__link">
+        <a href="../reference/rfdetr/" class="md-tabs__link">
           
   
   
@@ -468,9 +458,11 @@
   
   
   
+    
   
-    <li class="md-tabs__item">
-      <a href="../../../faq/" class="md-tabs__link">
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
         
   
   
@@ -489,7 +481,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../../cookbooks/" class="md-tabs__link">
+      <a href="../cookbooks/" class="md-tabs__link">
         
   
   
@@ -508,7 +500,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../../resources/" class="md-tabs__link">
+      <a href="../resources/" class="md-tabs__link">
         
   
   
@@ -527,7 +519,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../../changelog/" class="md-tabs__link">
+      <a href="../changelog/" class="md-tabs__link">
         
   
   
@@ -568,9 +560,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../.." title="RF-DETR" class="md-nav__button md-logo" aria-label="RF-DETR" data-md-component="logo">
+    <a href=".." title="RF-DETR" class="md-nav__button md-logo" aria-label="RF-DETR" data-md-component="logo">
       
-  <img src="../../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
+  <img src="../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
 
     </a>
     RF-DETR
@@ -597,7 +589,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -621,29 +613,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
       
-        
-        
-      
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
             
   
   
@@ -661,7 +650,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -731,7 +720,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../getting-started/install/" class="md-nav__link">
+      <a href="../getting-started/install/" class="md-nav__link">
         
   
   
@@ -759,7 +748,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../getting-started/migration/" class="md-nav__link">
+      <a href="../getting-started/migration/" class="md-nav__link">
         
   
   
@@ -847,7 +836,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../run/detection/" class="md-nav__link">
+      <a href="../learn/run/detection/" class="md-nav__link">
         
   
   
@@ -875,7 +864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../run/segmentation/" class="md-nav__link">
+      <a href="../learn/run/segmentation/" class="md-nav__link">
         
   
   
@@ -903,7 +892,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../run/keypoints/" class="md-nav__link">
+      <a href="../learn/run/keypoints/" class="md-nav__link">
         
   
   
@@ -931,7 +920,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../pretrained/" class="md-nav__link">
+      <a href="../learn/pretrained/" class="md-nav__link">
         
   
   
@@ -964,8 +953,6 @@
                 
   
   
-    
-  
   
   
     
@@ -976,11 +963,13 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" checked>
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_3" >
         
           
           <label class="md-nav__link" for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
@@ -1001,7 +990,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1019,7 +1008,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../learn/train/" class="md-nav__link">
         
   
   
@@ -1047,7 +1036,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dataset-formats/" class="md-nav__link">
+      <a href="../learn/train/dataset-formats/" class="md-nav__link">
         
   
   
@@ -1075,7 +1064,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../training-parameters/" class="md-nav__link">
+      <a href="../learn/train/training-parameters/" class="md-nav__link">
         
   
   
@@ -1103,7 +1092,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../advanced/" class="md-nav__link">
+      <a href="../learn/train/advanced/" class="md-nav__link">
         
   
   
@@ -1131,7 +1120,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../customization/" class="md-nav__link">
+      <a href="../learn/train/customization/" class="md-nav__link">
         
   
   
@@ -1156,37 +1145,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Augmentations
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../learn/train/augmentations/" class="md-nav__link">
         
   
   
@@ -1202,153 +1164,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#augmentation-backend-values" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Augmentation Backend Values
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#quick-start" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Quick Start
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#built-in-presets" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Built-in Presets
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Built-in Presets">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#recommendations-by-dataset-size" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Recommendations by Dataset Size
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#nested-transforms" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Nested Transforms
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#geometric-vs-pixel-level-transforms" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Geometric vs. Pixel-Level Transforms
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#best-practices" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Best Practices
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#troubleshooting" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Troubleshooting
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#advanced-custom-transforms" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Advanced: Custom Transforms
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Reference
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#next-steps" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Next Steps
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1361,7 +1176,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../loggers/" class="md-nav__link">
+      <a href="../learn/train/loggers/" class="md-nav__link">
         
   
   
@@ -1397,7 +1212,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../export/" class="md-nav__link">
+      <a href="../learn/export/" class="md-nav__link">
         
   
   
@@ -1425,7 +1240,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../deploy/" class="md-nav__link">
+      <a href="../learn/deploy/" class="md-nav__link">
         
   
   
@@ -1453,7 +1268,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../benchmarks/" class="md-nav__link">
+      <a href="../learn/benchmarks/" class="md-nav__link">
         
   
   
@@ -1540,7 +1355,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/rfdetr/" class="md-nav__link">
+      <a href="../reference/rfdetr/" class="md-nav__link">
         
   
   
@@ -1620,7 +1435,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/nano/" class="md-nav__link">
+      <a href="../reference/nano/" class="md-nav__link">
         
   
   
@@ -1648,7 +1463,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/small/" class="md-nav__link">
+      <a href="../reference/small/" class="md-nav__link">
         
   
   
@@ -1676,7 +1491,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/medium/" class="md-nav__link">
+      <a href="../reference/medium/" class="md-nav__link">
         
   
   
@@ -1704,7 +1519,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/large/" class="md-nav__link">
+      <a href="../reference/large/" class="md-nav__link">
         
   
   
@@ -1732,7 +1547,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/xlarge/" class="md-nav__link">
+      <a href="../reference/xlarge/" class="md-nav__link">
         
   
   
@@ -1760,7 +1575,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/2xlarge/" class="md-nav__link">
+      <a href="../reference/2xlarge/" class="md-nav__link">
         
   
   
@@ -1848,7 +1663,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/seg_nano/" class="md-nav__link">
+      <a href="../reference/seg_nano/" class="md-nav__link">
         
   
   
@@ -1876,7 +1691,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/seg_small/" class="md-nav__link">
+      <a href="../reference/seg_small/" class="md-nav__link">
         
   
   
@@ -1904,7 +1719,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/seg_medium/" class="md-nav__link">
+      <a href="../reference/seg_medium/" class="md-nav__link">
         
   
   
@@ -1932,7 +1747,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/seg_large/" class="md-nav__link">
+      <a href="../reference/seg_large/" class="md-nav__link">
         
   
   
@@ -1960,7 +1775,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/seg_xlarge/" class="md-nav__link">
+      <a href="../reference/seg_xlarge/" class="md-nav__link">
         
   
   
@@ -1988,7 +1803,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/seg_2xlarge/" class="md-nav__link">
+      <a href="../reference/seg_2xlarge/" class="md-nav__link">
         
   
   
@@ -2076,7 +1891,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/kp_preview/" class="md-nav__link">
+      <a href="../reference/kp_preview/" class="md-nav__link">
         
   
   
@@ -2164,7 +1979,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/train_config/" class="md-nav__link">
+      <a href="../reference/train_config/" class="md-nav__link">
         
   
   
@@ -2192,7 +2007,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/segmentation_train_config/" class="md-nav__link">
+      <a href="../reference/segmentation_train_config/" class="md-nav__link">
         
   
   
@@ -2220,7 +2035,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/keypoint_train_config/" class="md-nav__link">
+      <a href="../reference/keypoint_train_config/" class="md-nav__link">
         
   
   
@@ -2308,7 +2123,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/training/" class="md-nav__link">
+      <a href="../reference/training/" class="md-nav__link">
         
   
   
@@ -2348,10 +2163,37 @@
       
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../../faq/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2367,6 +2209,114 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-many-objects-can-rf-detr-detect-in-one-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How many objects can RF-DETR detect in one image?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#which-model-size-should-i-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which model size should I use?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#do-i-need-to-set-num_classes-when-fine-tuning-or-loading-a-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do I need to set num_classes when fine-tuning or loading a checkpoint?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-i-keep-the-coco-classes-while-training-on-my-own-classes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I keep the COCO classes while training on my own classes?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-input-resolutions-are-allowed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What input resolutions are allowed?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-my-effective-batch-size-have-to-be-16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does my effective batch size have to be 16?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-export-formats-are-supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What export formats are supported?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-do-i-evaluate-a-trained-model-and-get-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How do I evaluate a trained model and get mAP?
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2378,7 +2328,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../cookbooks/" class="md-nav__link">
+      <a href="../cookbooks/" class="md-nav__link">
         
   
   
@@ -2405,7 +2355,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../resources/" class="md-nav__link">
+      <a href="../resources/" class="md-nav__link">
         
   
   
@@ -2432,7 +2382,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../changelog/" class="md-nav__link">
+      <a href="../changelog/" class="md-nav__link">
         
   
   
@@ -2479,10 +2429,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#augmentation-backend-values" class="md-nav__link">
+  <a href="#how-many-objects-can-rf-detr-detect-in-one-image" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Augmentation Backend Values
+        How many objects can RF-DETR detect in one image?
       
     </span>
   </a>
@@ -2490,10 +2440,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#quick-start" class="md-nav__link">
+  <a href="#which-model-size-should-i-use" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Quick Start
+        Which model size should I use?
       
     </span>
   </a>
@@ -2501,38 +2451,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#built-in-presets" class="md-nav__link">
+  <a href="#do-i-need-to-set-num_classes-when-fine-tuning-or-loading-a-checkpoint" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Built-in Presets
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Built-in Presets">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#recommendations-by-dataset-size" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Recommendations by Dataset Size
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#nested-transforms" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Nested Transforms
+        Do I need to set num_classes when fine-tuning or loading a checkpoint?
       
     </span>
   </a>
@@ -2540,10 +2462,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#geometric-vs-pixel-level-transforms" class="md-nav__link">
+  <a href="#can-i-keep-the-coco-classes-while-training-on-my-own-classes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Geometric vs. Pixel-Level Transforms
+        Can I keep the COCO classes while training on my own classes?
       
     </span>
   </a>
@@ -2551,10 +2473,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#best-practices" class="md-nav__link">
+  <a href="#what-input-resolutions-are-allowed" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Best Practices
+        What input resolutions are allowed?
       
     </span>
   </a>
@@ -2562,10 +2484,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#troubleshooting" class="md-nav__link">
+  <a href="#does-my-effective-batch-size-have-to-be-16" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Troubleshooting
+        Does my effective batch size have to be 16?
       
     </span>
   </a>
@@ -2573,10 +2495,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#advanced-custom-transforms" class="md-nav__link">
+  <a href="#what-export-formats-are-supported" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Advanced: Custom Transforms
+        What export formats are supported?
       
     </span>
   </a>
@@ -2584,21 +2506,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#reference" class="md-nav__link">
+  <a href="#how-do-i-evaluate-a-trained-model-and-get-map" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Reference
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#next-steps" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Next Steps
+        How do I evaluate a trained model and get mAP?
       
     </span>
   </a>
@@ -2625,200 +2536,33 @@
   
 
 
-<h1 id="augmentations">Augmentations<a class="headerlink" href="#augmentations" title="Permanent link">&para;</a></h1>
-<p>RF-DETR uses torchvision-native default augmentations for training, validation, prediction, and export preprocessing. Omitting <code>aug_config</code> uses the default training augmentation stack: resize/crop scale jitter plus horizontal flip at 50%. Passing <code>aug_config={}</code> disables the horizontal flip while keeping required resizing and normalization.</p>
-<p>RF-DETR also supports advanced custom data augmentations via optional <a href="https://albumentations.ai/">Albumentations</a>, with automatic bounding box and mask handling for geometric transforms. Albumentations 1.4.24+ and 2.x are supported.</p>
-<h2 id="augmentation-backend-values">Augmentation Backend Values<a class="headerlink" href="#augmentation-backend-values" title="Permanent link">&para;</a></h2>
-<p><code>augmentation_backend</code> (on <code>model.train()</code>/<code>TrainConfig</code>) selects which pipeline runs the augmentation stack:</p>
-<table>
-<thead>
-<tr>
-<th>Value</th>
-<th>Behavior</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>"cpu"</code> (default)</td>
-<td>Auto-picks the best <em>installed</em> CPU backend: Albumentations &gt; Kornia (CPU) &gt; torchvision.</td>
-</tr>
-<tr>
-<td><code>"auto"</code></td>
-<td>Same priority as <code>"cpu"</code>, but prefers GPU-side Kornia first when CUDA is available.</td>
-</tr>
-<tr>
-<td><code>"torchvision"</code></td>
-<td>Forces the torchvision-native default pipeline, never auto-upgraded — use to pin behavior regardless of what's installed.</td>
-</tr>
-<tr>
-<td><code>"albumentations"</code></td>
-<td>Forces the CPU Albumentations pipeline; requires <code>rfdetr[augment]</code>.</td>
-</tr>
-<tr>
-<td><code>"kornia"</code></td>
-<td>Forces the GPU Kornia pipeline; requires <code>rfdetr[augment]</code>.</td>
-</tr>
-</tbody>
-</table>
-<p><code>"cpu"</code>/<code>"auto"</code> resolution is late (checked at dataset-build time, not when <code>TrainConfig</code> is constructed), so a saved config stays portable across environments with different optional packages installed. The legacy strings <code>"tv"</code>, <code>"albu"</code>, and <code>"gpu"</code> are still accepted as aliases for <code>"torchvision"</code>, <code>"albumentations"</code>, and <code>"kornia"</code> respectively.</p>
-<h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
-<p>Install the optional augmentation extra before using custom <code>aug_config</code> dictionaries or built-in Albumentations presets:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;rfdetr[train,augment]&quot;</span>
+<h1 id="frequently-asked-questions">Frequently Asked Questions<a class="headerlink" href="#frequently-asked-questions" title="Permanent link">&para;</a></h1>
+<p>Answers to questions that come up often in <a href="https://github.com/roboflow/rf-detr/issues">GitHub issues</a>.</p>
+<h2 id="how-many-objects-can-rf-detr-detect-in-one-image">How many objects can RF-DETR detect in one image?<a class="headerlink" href="#how-many-objects-can-rf-detr-detect-in-one-image" title="Permanent link">&para;</a></h2>
+<p>By default up to <code>num_queries</code> distinct objects — 300 for Nano, Small, Medium, and Large. To go higher, raise both <code>num_queries</code> and <code>num_select</code> when you build the model:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">num_queries</span><span class="o">=</span><span class="mi">600</span><span class="p">,</span> <span class="n">num_select</span><span class="o">=</span><span class="mi">600</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Then pass <code>aug_config</code> to your training call. Import one of the built-in presets:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.datasets.aug_configs</span><span class="w"> </span><span class="kn">import</span> <span class="n">AUG_CONSERVATIVE</span><span class="p">,</span> <span class="n">AUG_AGGRESSIVE</span><span class="p">,</span> <span class="n">AUG_AERIAL</span><span class="p">,</span> <span class="n">AUG_INDUSTRIAL</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">()</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span> <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">aug_config</span><span class="o">=</span><span class="n">AUG_CONSERVATIVE</span><span class="p">)</span>
-</span></code></pre></div>
-<p>Or pass a custom dict directly — keys are Albumentations transform names:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">aug_config</span><span class="o">=</span><span class="p">{</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>        <span class="s2">&quot;HorizontalFlip&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>        <span class="s2">&quot;Rotate&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;limit&quot;</span><span class="p">:</span> <span class="mi">15</span><span class="p">,</span> <span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">},</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>        <span class="s2">&quot;GaussianBlur&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.2</span><span class="p">},</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="p">},</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">)</span>
-</span></code></pre></div>
-<p>To disable all optional training augmentation including the torchvision default horizontal flip: <code>aug_config={}</code>.</p>
-<p><code>aug_config</code> controls only the augmentation stack — the torchvision-native default, or the
-Albumentations/Kornia stack when a non-empty <code>aug_config</code> is passed. To also disable
-the independent resize → crop → resize branch (Option B) in the training resize
-pipeline — so no spatial clipping occurs and annotations near image borders stay
-intact — pass <code>scale_jitter=False</code> to <code>model.train()</code>.</p>
-<h2 id="built-in-presets">Built-in Presets<a class="headerlink" href="#built-in-presets" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Preset</th>
-<th>Best for</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>AUG_CONSERVATIVE</code></td>
-<td>Small datasets (under 500 images)</td>
-</tr>
-<tr>
-<td><code>AUG_AGGRESSIVE</code></td>
-<td>Large datasets (2000+ images)</td>
-</tr>
-<tr>
-<td><code>AUG_AERIAL</code></td>
-<td>Satellite / overhead imagery</td>
-</tr>
-<tr>
-<td><code>AUG_INDUSTRIAL</code></td>
-<td>Manufacturing / inspection data</td>
-</tr>
-</tbody>
-</table>
-<p>All presets are Albumentations config dicts and require <code>rfdetr[augment]</code>. They are plain dicts, so you can inspect or extend them before passing:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.datasets.aug_configs</span><span class="w"> </span><span class="kn">import</span> <span class="n">AUG_AGGRESSIVE</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">my_config</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">AUG_AGGRESSIVE</span><span class="p">,</span> <span class="s2">&quot;VerticalFlip&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.1</span><span class="p">}}</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;...&quot;</span><span class="p">,</span> <span class="n">aug_config</span><span class="o">=</span><span class="n">my_config</span><span class="p">)</span>
-</span></code></pre></div>
-<h3 id="recommendations-by-dataset-size">Recommendations by Dataset Size<a class="headerlink" href="#recommendations-by-dataset-size" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Dataset Size</th>
-<th>Recommended preset</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Under 500 images</td>
-<td><code>AUG_CONSERVATIVE</code> — flip + mild brightness/contrast</td>
-</tr>
-<tr>
-<td>500–2000 images</td>
-<td>Default or <code>AUG_CONSERVATIVE</code> with a few extra transforms added</td>
-</tr>
-<tr>
-<td>2000+ images</td>
-<td><code>AUG_AGGRESSIVE</code> — rotations, affine, color jitter</td>
-</tr>
-</tbody>
-</table>
-<h2 id="nested-transforms">Nested Transforms<a class="headerlink" href="#nested-transforms" title="Permanent link">&para;</a></h2>
-<p>RF-DETR supports <code>OneOf</code>, <code>SomeOf</code>, and <code>Sequential</code> container transforms from Albumentations. The most common pattern is <code>OneOf</code>, which randomly picks one transform from a group:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">aug_config</span> <span class="o">=</span> <span class="p">{</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="s2">&quot;HorizontalFlip&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="s2">&quot;OneOf&quot;</span><span class="p">:</span> <span class="p">{</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>        <span class="s2">&quot;transforms&quot;</span><span class="p">:</span> <span class="p">[</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>            <span class="p">{</span><span class="s2">&quot;Rotate&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;limit&quot;</span><span class="p">:</span> <span class="mi">45</span><span class="p">,</span> <span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">}},</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>            <span class="p">{</span><span class="s2">&quot;Affine&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;scale&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.8</span><span class="p">,</span> <span class="mf">1.2</span><span class="p">),</span> <span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">}},</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>        <span class="p">],</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="p">},</span>
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="s2">&quot;GaussianBlur&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.2</span><span class="p">},</span>
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="p">}</span>
-</span></code></pre></div>
-<p>Each child's <code>p</code> controls its relative selection weight. The container itself always fires.</p>
-<p>If you need the same transform twice, or want explicit ordering, pass a list instead of a dict:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">aug_config</span> <span class="o">=</span> <span class="p">[</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="p">{</span><span class="s2">&quot;HorizontalFlip&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">}},</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="p">{</span><span class="s2">&quot;Rotate&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;limit&quot;</span><span class="p">:</span> <span class="mi">45</span><span class="p">,</span> <span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">}},</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="p">{</span><span class="s2">&quot;Rotate&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;limit&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span> <span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">}},</span>  <span class="c1"># second Rotate — only possible with list format</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="p">]</span>
-</span></code></pre></div>
-<p>Bounding boxes are updated automatically when a container holds any geometric transform — no extra configuration needed.</p>
-<h2 id="geometric-vs-pixel-level-transforms">Geometric vs. Pixel-Level Transforms<a class="headerlink" href="#geometric-vs-pixel-level-transforms" title="Permanent link">&para;</a></h2>
-<p>RF-DETR automatically handles bounding boxes for <strong>geometric transforms</strong> (flips, rotations, crops, affine, perspective). <strong>Pixel-level transforms</strong> (blur, noise, color) preserve coordinates unchanged. You don't need to handle this distinction — it's automatic based on the transform name.</p>
-<h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
-<div class="admonition tip">
-<p class="admonition-title">Start Conservative</p>
-<p>Begin with simple augmentations (horizontal flip, small brightness changes) and gradually add more as needed.</p>
-</div>
-<div class="admonition warning">
-<p class="admonition-title">Geometric Transforms</p>
-<p>Be careful with aggressive rotations and crops on datasets where object orientation matters (e.g., text detection, oriented objects).</p>
-</div>
 <ul>
-<li><strong>Default path:</strong> Uses torchvision-native transforms and does not require Albumentations.</li>
-<li><strong>Custom CPU path:</strong> Non-empty <code>aug_config</code> dictionaries use Albumentations and require <code>rfdetr[augment]</code>.</li>
-<li><strong>GPU path:</strong> <code>augmentation_backend="kornia"</code> uses Kornia and requires <code>rfdetr[augment]</code>.</li>
-<li><strong>CPU-bound custom configs:</strong> More transforms means slower data loading</li>
-<li><strong>Use <code>num_workers</code>:</strong> Parallelize augmentation across data loader workers</li>
-<li><strong>Monitor training mAP vs validation mAP:</strong> With strong augmentations it's normal for training mAP to be lower — validation uses original images while training uses augmented (harder) ones</li>
+<li><code>num_queries</code> — decoder object slots; the hard cap on distinct objects.</li>
+<li><code>num_select</code> — predictions kept by post-processing. It must track <code>num_queries</code>, otherwise the output is capped at the lower value. Raising <code>num_select</code> alone returns duplicate boxes (same object, different label), not new objects.</li>
 </ul>
-<h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
-<p><strong>Training is slow</strong> — reduce the number of transforms or increase <code>num_workers</code>.</p>
-<p><strong>Boxes disappear after augmentation</strong> — aggressive rotations or crops can push boxes outside the image boundary. Reduce rotation angles or avoid large crops.</p>
-<p><strong>Model not improving</strong> — augmentations may be too aggressive. Start with <code>AUG_CONSERVATIVE</code> and add transforms gradually. Try removing geometric transforms first to isolate the cause.</p>
-<p><strong>Validation mAP is much higher than training mAP</strong> — this is expected with strong augmentations and not a bug. See the monitoring tip above.</p>
-<p><strong>Upgrading albumentations to 2.x with existing <code>RandomSizedCrop</code> configs?</strong> RF-DETR automatically adapts <code>height</code>/<code>width</code> kwargs to the <code>size=(height, width)</code> format required by albumentations 2.x. No config changes needed.</p>
-<h2 id="advanced-custom-transforms">Advanced: Custom Transforms<a class="headerlink" href="#advanced-custom-transforms" title="Permanent link">&para;</a></h2>
-<p>Any Albumentations transform works by name. If your custom transform is geometric, register it in <code>rfdetr/datasets/transforms.py</code> so boxes are updated automatically:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">GEOMETRIC_TRANSFORMS</span> <span class="o">=</span> <span class="p">{</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="o">...</span><span class="p">,</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="s2">&quot;YourCustomTransform&quot;</span><span class="p">,</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="p">}</span>
-</span></code></pre></div>
-<p>Then use it like any other transform:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">aug_config</span><span class="o">=</span><span class="p">{</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>        <span class="s2">&quot;HorizontalFlip&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>        <span class="s2">&quot;YourCustomTransform&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;param&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">},</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="p">},</span>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="p">)</span>
-</span></code></pre></div>
-<h2 id="reference">Reference<a class="headerlink" href="#reference" title="Permanent link">&para;</a></h2>
-<ul>
-<li><a href="https://albumentations.ai/docs/">Albumentations docs</a></li>
-<li><a href="https://albumentations.ai/docs/api_reference/augmentations/">All available transforms</a></li>
-</ul>
-<h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
-<ul>
-<li><a href="../loggers/#tensorboard">Monitor training with TensorBoard</a></li>
-<li><a href="../advanced/#early-stopping">Use early stopping</a> to prevent overfitting</li>
-<li><a href="../../export/">Export your trained model</a> for deployment</li>
-</ul>
+<p>Raising <code>num_queries</code> above a variant's default adds new rows to the query embeddings, so RF-DETR warns that part of the checkpoint will not load and those slots start untrained. <strong>Fine-tune after raising <code>num_queries</code>.</strong> More queries also cost more compute (decoder attention scales with the square of the query count), so keep the default unless your scenes really are that crowded.</p>
+<h2 id="which-model-size-should-i-use">Which model size should I use?<a class="headerlink" href="#which-model-size-should-i-use" title="Permanent link">&para;</a></h2>
+<p>Pick by the accuracy/latency trade-off in the <a href="../learn/run/detection/#pre-trained-checkpoints">pre-trained checkpoints table</a>: <code>RFDETRNano</code> through <code>RFDETR2XLarge</code>. <code>RFDETRSmall</code> is a good default. The older <code>RFDETRBase</code> is legacy — use <code>RFDETRSmall</code> instead.</p>
+<h2 id="do-i-need-to-set-num_classes-when-fine-tuning-or-loading-a-checkpoint">Do I need to set <code>num_classes</code> when fine-tuning or loading a checkpoint?<a class="headerlink" href="#do-i-need-to-set-num_classes-when-fine-tuning-or-loading-a-checkpoint" title="Permanent link">&para;</a></h2>
+<p>No. <code>RFDETR.from_checkpoint(...)</code> infers <code>num_classes</code> from the checkpoint's classification head shape, and training infers it from your dataset's annotations. Pass an explicit <code>num_classes=N</code> only when you need to pin it.</p>
+<h2 id="can-i-keep-the-coco-classes-while-training-on-my-own-classes">Can I keep the COCO classes while training on my own classes?<a class="headerlink" href="#can-i-keep-the-coco-classes-while-training-on-my-own-classes" title="Permanent link">&para;</a></h2>
+<p>No. Fine-tuning on a custom dataset retrains the classification head for that dataset's classes; the pretrained COCO classes are not retained. To detect both your classes and some COCO classes, include those COCO classes in your training data.</p>
+<h2 id="what-input-resolutions-are-allowed">What input resolutions are allowed?<a class="headerlink" href="#what-input-resolutions-are-allowed" title="Permanent link">&para;</a></h2>
+<p><code>resolution</code> must be a positive integer divisible by <code>patch_size × num_windows</code> for the selected variant (for example, current detection checkpoints use a block size of 32). A non-divisible value raises <code>ValueError</code> indicating the required divisor. Input is square; each variant ships a sensible default resolution.</p>
+<h2 id="does-my-effective-batch-size-have-to-be-16">Does my effective batch size have to be 16?<a class="headerlink" href="#does-my-effective-batch-size-have-to-be-16" title="Permanent link">&para;</a></h2>
+<p>It is the recommended target, not a hard requirement. Effective batch size is <code>batch_size × grad_accum_steps × num_gpus</code>. On smaller GPUs, keep <code>batch_size</code> low and raise <code>grad_accum_steps</code> to reach the same effective size — for example <code>batch_size=4, grad_accum_steps=4</code> on a T4. See <a href="../learn/train/training-parameters/">Training Parameters</a>.</p>
+<h2 id="what-export-formats-are-supported">What export formats are supported?<a class="headerlink" href="#what-export-formats-are-supported" title="Permanent link">&para;</a></h2>
+<p>ONNX, TFLite (FP32/FP16/INT8), and ExecuTorch (XNNPACK, CoreML, QNN). TensorRT runs via the exported ONNX model. Install the matching extra — <code>rfdetr[onnx]</code>, <code>rfdetr[tflite]</code>, or <code>rfdetr[executorch]</code> — then call <code>model.export()</code>. See <a href="../learn/export/">Export Model</a>.</p>
+<h2 id="how-do-i-evaluate-a-trained-model-and-get-map">How do I evaluate a trained model and get mAP?<a class="headerlink" href="#how-do-i-evaluate-a-trained-model-and-get-map" title="Permanent link">&para;</a></h2>
+<p>Call <code>model.evaluate(split="test")</code> (or <code>split="val"</code>). It returns a dictionary of metrics including mAP. See the <a href="../learn/train/customization/">Custom Training API</a>.</p>
 
 
 
@@ -2839,7 +2583,7 @@ intact — pass <code>scale_jitter=False</code> to <code>model.train()</code>.</
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 17, 2026 05:43:52 UTC">2026-07-17 05:43:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 23, 2026 22:32:01 UTC">2026-07-23 22:32:01</span>
   </span>
 
     
@@ -2944,10 +2688,10 @@ intact — pass <code>scale_jitter=False</code> to <code>model.train()</code>.</
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
