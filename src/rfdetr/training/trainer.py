@@ -432,12 +432,30 @@ def build_trainer(
         or _requests_multiple_devices(devices, accelerator)
     )
     if has_keypoints and distributed_requested:
-        # TODO(@keypoints-ddp): validate keypoint training under distributed strategies
-        # before enabling keypoint distributed training.
-        raise NotImplementedError(
-            "Keypoint training currently does not support distributed execution "
-            f"(strategy={strategy!r}, devices={devices!r}, num_nodes={num_nodes!r}). "
-            "Use single-process training for now (for example strategy='auto', devices=1, num_nodes=1)."
+        # Keypoint models train with manual optimization (see RFDETRModelModule) and a
+        # graph-connected keypoint loss (see models/heads/keypoints.py), so every rank's
+        # keypoint-head parameters always receive a gradient and DistributedDataParallel's
+        # reducer stays in sync. Combined with find_unused_parameters=True (set below),
+        # DDP / ddp_spawn / ddp_notebook and multi-node DDP are supported.
+        #
+        # Sharded strategies (FSDP / DeepSpeed) shard optimizer state and gradients in ways
+        # the manual-optimization + dynamic per-step loss-normalization path has not been
+        # validated against, so those remain unsupported for keypoint models.
+        sharded_requested = any(s in str(strategy).lower() for s in ("fsdp", "deepspeed"))
+        if sharded_requested:
+            raise NotImplementedError(
+                "Keypoint training does not support sharded distributed strategies "
+                f"(strategy={strategy!r}). Use DistributedDataParallel instead, e.g. strategy='ddp' "
+                "(or strategy='auto' with devices>1), which is supported for keypoint models."
+            )
+        _logger.info(
+            "Keypoint model + distributed execution (strategy=%r, devices=%r, num_nodes=%r) → "
+            "DDP with manual optimization. For best throughput on multi-GPU keep grad_accum_steps=1: "
+            "the manual-optimization path synchronizes gradients on every microbatch, so "
+            "grad_accum_steps>1 is correct but performs redundant all-reduces.",
+            strategy,
+            devices,
+            num_nodes,
         )
 
     # Transparently replace fork-based DDP with spawn-based DDP — see the

@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from pytorch_lightning.callbacks import ModelCheckpoint
-
 from rfdetr.config import (
     KeypointTrainConfig,
     RFDETRBaseConfig,
@@ -1077,27 +1076,58 @@ class TestBuildTrainerDDPFields:
         assert tc.devices == "auto"
 
 
-class TestBuildTrainerKeypointDistributedGuard:
-    """Keypoint mode must fail fast for unsupported distributed training settings."""
+class TestBuildTrainerKeypointDistributed:
+    """Keypoint mode supports DistributedDataParallel and rejects only sharded strategies."""
 
-    def test_keypoint_ddp_strategy_raises_clear_error(self, tmp_path):
-        """Keypoint mode rejects explicit distributed strategy requests with a clear error."""
+    def test_keypoint_ddp_strategy_wrapped_with_find_unused_parameters(self, tmp_path):
+        """Keypoint mode with strategy='ddp' produces DDPStrategy(find_unused_parameters=True)."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
         tc = _kp_tc(tmp_path, use_ema=False, strategy="ddp")
         mc = _mc(use_grouppose_keypoints=True)
-
-        with pytest.raises(NotImplementedError, match="Keypoint training currently does not support distributed"):
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
             build_trainer(tc, mc)
 
-    def test_keypoint_auto_devices_raises_when_cuda_has_multiple_devices(self, tmp_path):
-        """Keypoint mode rejects devices='auto' when it would resolve to multi-GPU execution."""
-        tc = _kp_tc(tmp_path, use_ema=False, devices="auto")
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
+
+    def test_keypoint_multiple_devices_builds_ddp(self, tmp_path):
+        """Keypoint mode with devices>1 builds a DDP trainer (no error) with find_unused_parameters."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _kp_tc(tmp_path, use_ema=False, strategy="auto", devices=2)
+        mc = _mc(use_grouppose_keypoints=True)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
+        assert captured["devices"] == 2
+
+    def test_keypoint_sharded_strategy_raises_clear_error(self, tmp_path):
+        """Keypoint mode still rejects sharded strategies (FSDP/DeepSpeed) with a clear error."""
+        tc = _kp_tc(tmp_path, use_ema=False, strategy="fsdp")
         mc = _mc(use_grouppose_keypoints=True)
 
-        with (
-            patch("rfdetr.training.trainer.torch.cuda.is_available", return_value=True),
-            patch("rfdetr.training.trainer.torch.cuda.device_count", return_value=2),
-            pytest.raises(NotImplementedError, match="Keypoint training currently does not support distributed"),
-        ):
+        with pytest.raises(NotImplementedError, match="sharded distributed strategies"):
             build_trainer(tc, mc)
 
     def test_non_keypoint_ddp_strategy_wrapped_with_find_unused_parameters(self, tmp_path):

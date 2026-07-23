@@ -234,6 +234,45 @@ torchrun \
 
 Run this command on each node, changing `--node_rank` accordingly.
 
+### Keypoint / Pose models
+
+Keypoint models (`RFDETRKeypointPreview`) train under `DistributedDataParallel` on multiple GPUs and
+multiple nodes exactly like detection models — build a script and launch it with `torchrun`, passing
+`devices=` explicitly:
+
+```python
+# train_pose.py
+from rfdetr import RFDETRKeypointPreview
+
+model = RFDETRKeypointPreview()
+
+model.train(
+    dataset_dir="path/to/keypoint-dataset",
+    epochs=100,
+    batch_size=2,        # per-GPU batch size
+    grad_accum_steps=1,  # recommended on multi-GPU — see note below
+    lr=1e-4,
+    output_dir="output",
+    devices="auto",      # or devices=8
+)
+```
+
+```bash
+torchrun --nproc_per_node=8 train_pose.py
+```
+
+!!! note "Prefer `grad_accum_steps=1` on multi-GPU for keypoints"
+
+    Keypoint models use **manual optimization** so the per-step box-count loss normalization is
+    computed over the full accumulated batch. As a result, gradients synchronize on **every**
+    microbatch rather than only at the end of an accumulation window. Training with
+    `grad_accum_steps > 1` on multiple GPUs is still numerically correct, but performs one
+    `all_reduce` per microbatch (i.e. `grad_accum_steps`× the necessary communication). For best
+    throughput, scale with more GPUs / a larger per-GPU `batch_size` and keep `grad_accum_steps=1`.
+
+    Sharded strategies (FSDP / DeepSpeed) are **not** supported for keypoint models — use `ddp`
+    (or `strategy="auto"` with `devices > 1`).
+
 ### Advanced multi-GPU options (PTL API)
 
 For fine-grained control over strategy, sync batch norm, precision, and other distributed settings, use the Lightning API directly.
