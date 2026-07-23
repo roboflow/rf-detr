@@ -178,6 +178,16 @@ class MSDeformAttn(nn.Module):
             batch_size, len_query, self.n_heads, self.n_levels * self.n_points
         )
 
+        # Reference points carry either one box per level (level dim == n_levels) or a single
+        # shared box (level dim == 1) broadcast across all levels. Validate here — before the
+        # export/eager split — so malformed input is rejected with the same clear message on both
+        # paths; without this hoist eager silently mis-broadcasts or raises an opaque torch shape
+        # error depending on self._export. Only the export path materializes the singleton via
+        # .expand() below; eager relies on natural broadcasting over the None-inserted level axis.
+        n_ref_levels = reference_points.shape[2]
+        if n_ref_levels not in (1, self.n_levels):
+            raise ValueError(f"reference_points level dim must be 1 or n_levels={self.n_levels}, got {n_ref_levels}")
+
         if self._export:
             # Export path: build sampling_locations at rank 5 by merging (n_levels, n_points) -> n_levels*n_points,
             # so no tensor exceeds rank 5. CoreML's MIL backend rejects rank-6 tensors; XNNPACK is unaffected. The
@@ -190,13 +200,8 @@ class MSDeformAttn(nn.Module):
             sampling_offsets = self.sampling_offsets(query).view(
                 batch_size, len_query, self.n_heads, self.n_levels * self.n_points, 2
             )
-            n_ref_levels = reference_points.shape[2]
             if n_ref_levels == 1:
                 reference_points = reference_points.expand(-1, -1, self.n_levels, -1)
-            elif n_ref_levels != self.n_levels:
-                raise ValueError(
-                    f"reference_points level dim must be 1 or n_levels={self.n_levels}, got {n_ref_levels}"
-                )
             if reference_points.shape[-1] == 2:
                 offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
                 offset_normalizer = offset_normalizer.repeat_interleave(self.n_points, dim=0)  # n_levels*n_points, 2
