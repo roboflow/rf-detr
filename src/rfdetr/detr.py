@@ -1406,20 +1406,22 @@ class RFDETR:
             patch_size: Backbone patch size. Defaults to the value stored in
                 ``model_config.patch_size`` (typically 14 or 16). When provided explicitly it must match the
                 instantiated model's patch size. Shape divisibility is validated against ``patch_size * num_windows``.
-            format: Export format — ``"onnx"`` (default), ``"tflite"``, or ``"tensorrt"`` (alias: ``"trt"``).
-                ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: ``"tflite"`` via
-                ``onnx2tf`` (requires ``pip install rfdetr[onnx,tflite]``); ``"tensorrt"`` via the TensorRT
-                Python API (requires ``pip install rfdetr[trt]``).  Unlike ``"onnx"``/
-                ``"tflite"`` portable serialization, ``"tensorrt"`` performs target-specific compilation at export
-                time and produces a non-portable ``.trt`` engine tied to the build machine's GPU and TensorRT version.
+            format: Export format — ``"onnx"`` (default), ``"tflite"``, ``"tensorrt"`` (alias: ``"trt"``), or 
+                ``"openvino"``. ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: 
+                ``"tflite"`` via ``onnx2tf`` (requires ``pip install rfdetr[onnx,tflite]``); ``"tensorrt"`` via the 
+                TensorRT Python API (requires ``pip install rfdetr[trt]``); ``"openvino"`` converts directly from 
+                PyTorch to OpenVINO IR format (requires ``pip install openvino``).  Unlike ``"onnx"``/
+                ``"tflite"``/``"openvino"`` portable serialization, ``"tensorrt"`` performs target-specific compilation 
+                at export time and produces a non-portable ``.trt`` engine tied to the build machine's GPU and 
+                TensorRT version.
 
                 .. warning::
                     TFLite export is experimental and subject to change; upstream dependency instabilities (``onnx2tf``,
                     ``ai_edge_litert``) may affect results.
             quantization: TFLite quantization mode (ignored when
-                ``format="onnx"``).  One of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``.  ``None`` / ``"fp32"`` /
-                ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally produces an INT8-quantized
-                model.
+                ``format="onnx"`` or ``format="openvino"``).  One of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``.  
+                ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally 
+                produces an INT8-quantized model.
             calibration_data: Representative images for INT8 calibration and ``onnx2tf`` output validation.  Accepts:
 
                 * ``None`` — auto-generate random data (sufficient for fp32/fp16; warns for int8).
@@ -1441,22 +1443,34 @@ class RFDETR:
                 information.
 
         Returns:
-            Path to the exported model file (``.onnx``, ``.tflite``, or ``.trt``).
+            Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``, or ``.xml`` for OpenVINO).
         """
-        logger.info("Exporting model to ONNX format")
-        _valid_formats = ("onnx", "tflite", "tensorrt", "trt")
+        logger.info(f"Exporting model to {format.upper()} format")
+        _valid_formats = ("onnx", "tflite", "tensorrt", "trt", "openvino")
         if format not in _valid_formats:
             raise ValueError(f"Unsupported export format {format!r}. Choose from: {_valid_formats}")
         if format == "trt":  # "trt" is an alias for "tensorrt"
             format = "tensorrt"
-        try:
-            from rfdetr.export.main import export_onnx, make_infer_image
-        except ImportError:
-            logger.error(
-                "It seems some dependencies for ONNX export are missing."
-                " Please run `pip install rfdetr[onnx]` and try again.",
-            )
-            raise
+        
+        # OpenVINO uses direct conversion, others go through ONNX first
+        if format != "openvino":
+            try:
+                from rfdetr.export.main import export_onnx, make_infer_image
+            except ImportError:
+                logger.error(
+                    "It seems some dependencies for ONNX export are missing."
+                    " Please run `pip install rfdetr[onnx]` and try again.",
+                )
+                raise
+        else:
+            try:
+                from rfdetr.export.main import make_infer_image
+            except ImportError:
+                logger.error(
+                    "It seems some dependencies for export are missing."
+                    " Please run `pip install rfdetr` and try again.",
+                )
+                raise
 
         device = self.model.device
 
@@ -1552,6 +1566,30 @@ class RFDETR:
             model.cpu()
             input_tensors = input_tensors.cpu()
 
+            # Handle OpenVINO direct export (no ONNX intermediate)
+            if format == "openvino":
+                try:
+                    from rfdetr.export._openvino.exporter import export_openvino
+                except ImportError:
+                    logger.error(
+                        "It seems OpenVINO is not installed."
+                        " Please run `pip install openvino` and try again.",
+                    )
+                    raise
+
+                output_file = export_openvino(
+                    output_dir=str(output_dir_path),
+                    model=model,
+                    input_tensors=input_tensors,
+                    backbone_only=backbone_only,
+                    verbose=verbose,
+                    variant_name=getattr(self, "size", None),
+                    output_names=output_names,
+                )
+                logger.info(f"Successfully exported OpenVINO model to: {output_file}")
+                return Path(output_file)
+
+            # For other formats, export to ONNX first
             output_file = export_onnx(
                 output_dir=str(output_dir_path),
                 model=model,
