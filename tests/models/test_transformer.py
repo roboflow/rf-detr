@@ -340,6 +340,66 @@ class TestMSDeformAttnModule:
 
         assert module._export
 
+    def test_export_mode_broadcasts_singleton_level_dim(self) -> None:
+        """Checks export mode accepts decoder-style ``(B, Q, 1, 4)`` refs when ``n_levels > 1``."""
+        # Use n_points > 1 so a missing expand would yield length n_points vs n_levels*n_points.
+        module = MSDeformAttn(
+            d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=2
+        )
+        module.eval()
+        hw_pairs = self._hw_pairs
+        total_len = sum(ht * wd for ht, wd in hw_pairs)
+        batch_size, num_queries = 1, 3
+        query = torch.randn(batch_size, num_queries, self._d_model)
+        # Decoder export shape: one shared box broadcast across feature levels.
+        ref_pts = torch.rand(batch_size, num_queries, 1, 4)
+        input_flatten = torch.randn(batch_size, total_len, self._d_model)
+        spatial_shapes = torch.tensor(hw_pairs, dtype=torch.long)
+        starts = [sum(ht * wd for ht, wd in hw_pairs[:idx]) for idx in range(self._n_levels)]
+        level_start_index = torch.tensor(starts, dtype=torch.long)
+        assert ref_pts.shape[2] == 1
+        assert self._n_levels > 1
+
+        with torch.no_grad():
+            eager_out = module(
+                query,
+                ref_pts,
+                input_flatten,
+                spatial_shapes,
+                level_start_index,
+                input_spatial_shapes_hw=hw_pairs,
+            )
+            module.export()
+            export_out = module(
+                query,
+                ref_pts,
+                input_flatten,
+                spatial_shapes,
+                level_start_index,
+                input_spatial_shapes_hw=hw_pairs,
+            )
+
+        torch.testing.assert_close(export_out, eager_out, rtol=1e-5, atol=1e-5)
+
+    def test_export_mode_rejects_invalid_reference_level_dim(self) -> None:
+        """Checks export mode raises when reference level dim is neither 1 nor ``n_levels``."""
+        module = MSDeformAttn(
+            d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=self._n_points
+        )
+        module.export()
+        query, _, input_flatten, spatial_shapes, level_start_index, hw_pairs = self._make_module_inputs()
+        bad_ref = torch.rand(query.shape[0], query.shape[1], self._n_levels + 1, 4)
+
+        with pytest.raises(ValueError, match="level dim must be 1 or n_levels"):
+            module(
+                query,
+                bad_ref,
+                input_flatten,
+                spatial_shapes,
+                level_start_index,
+                input_spatial_shapes_hw=hw_pairs,
+            )
+
 
 class TestGenEncoderOutputProposalsDynamicBatch:
     """Regression tests for dynamic batch support in gen_encoder_output_proposals.
