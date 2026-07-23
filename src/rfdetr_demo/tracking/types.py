@@ -33,6 +33,9 @@ class PersonTrackSettings:
     expected_person_count: int = 0
     fill_below_expected: bool = True
     fill_extra_missed: int = 3
+    motion_enabled: bool = True
+    motion_smoothing: float = 0.5
+    motion_max_speed: float = 120.0
 
 
 @dataclass
@@ -108,6 +111,9 @@ def person_track_settings_from_env(
     expected_raw = os.environ.get("RFDETR_EXPECTED_PERSON_COUNT")
     fill_extra_raw = os.environ.get("RFDETR_FILL_EXTRA_MISSED")
     fill_below_raw = os.environ.get("RFDETR_FILL_BELOW_EXPECTED", "").strip().lower()
+    motion_raw = os.environ.get("RFDETR_TRACK_MOTION", "").strip().lower()
+    motion_smoothing_raw = os.environ.get("RFDETR_MOTION_SMOOTHING")
+    motion_max_speed_raw = os.environ.get("RFDETR_MOTION_MAX_SPEED")
     kwargs: dict[str, object] = {}
     if max_missed_raw is not None:
         kwargs["max_missed"] = max(0, int(max_missed_raw))
@@ -131,6 +137,14 @@ def person_track_settings_from_env(
         kwargs["fill_below_expected"] = True
     elif fill_below_raw in {"0", "false", "no", "off"}:
         kwargs["fill_below_expected"] = False
+    if motion_raw in {"1", "true", "yes", "on"}:
+        kwargs["motion_enabled"] = True
+    elif motion_raw in {"0", "false", "no", "off"}:
+        kwargs["motion_enabled"] = False
+    if motion_smoothing_raw is not None:
+        kwargs["motion_smoothing"] = max(0.0, min(1.0, float(motion_smoothing_raw)))
+    if motion_max_speed_raw is not None:
+        kwargs["motion_max_speed"] = max(0.0, float(motion_max_speed_raw))
     if not kwargs:
         return settings
     from dataclasses import replace

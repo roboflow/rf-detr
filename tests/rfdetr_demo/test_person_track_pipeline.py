@@ -87,6 +87,57 @@ def test_sticky_center_extends_hold() -> None:
     assert result2.stats.ghost_count == 1
 
 
+def _center_x(key_points: sv.KeyPoints, detection_index: int) -> float:
+    return float(key_points.xy[detection_index, 0, 0])
+
+
+def test_motion_retains_track_across_fast_move() -> None:
+    pipeline = PersonTrackPipeline(
+        settings=PersonTrackSettings(motion_enabled=True, motion_smoothing=0.5),
+        frame_width=1280,
+    )
+    first = pipeline.apply(_box_key_points(boxes=[(100.0, 100.0, 200.0, 300.0)], confidences=[0.9]), 0)
+    pipeline.apply(_box_key_points(boxes=[(150.0, 100.0, 250.0, 300.0)], confidences=[0.9]), 1)
+    pipeline.apply(_box_key_points(boxes=[(200.0, 100.0, 300.0, 300.0)], confidences=[0.9]), 2)
+    # Raw IoU with the previous box is below match_iou_threshold; only the
+    # motion-predicted box overlaps the new detection.
+    fast = pipeline.apply(_box_key_points(boxes=[(280.0, 100.0, 380.0, 300.0)], confidences=[0.9]), 3)
+
+    first_id = track_ids_from_key_points(first.key_points)[0]
+    fast_id = track_ids_from_key_points(fast.key_points)[0]
+    assert fast_id == first_id
+
+
+def test_motion_disabled_switches_track_on_fast_move() -> None:
+    pipeline = PersonTrackPipeline(
+        settings=PersonTrackSettings(motion_enabled=False),
+        frame_width=1280,
+    )
+    first = pipeline.apply(_box_key_points(boxes=[(100.0, 100.0, 200.0, 300.0)], confidences=[0.9]), 0)
+    pipeline.apply(_box_key_points(boxes=[(150.0, 100.0, 250.0, 300.0)], confidences=[0.9]), 1)
+    pipeline.apply(_box_key_points(boxes=[(200.0, 100.0, 300.0, 300.0)], confidences=[0.9]), 2)
+    fast = pipeline.apply(_box_key_points(boxes=[(280.0, 100.0, 380.0, 300.0)], confidences=[0.9]), 3)
+
+    first_id = track_ids_from_key_points(first.key_points)[0]
+    fast_id = track_ids_from_key_points(fast.key_points)[0]
+    assert fast_id != first_id
+
+
+def test_motion_advances_ghost_keypoints() -> None:
+    pipeline = PersonTrackPipeline(
+        settings=PersonTrackSettings(motion_enabled=True, motion_smoothing=0.5, max_missed=3),
+        frame_width=1280,
+    )
+    pipeline.apply(_box_key_points(boxes=[(100.0, 100.0, 200.0, 300.0)], confidences=[0.9]), 0)
+    pipeline.apply(_box_key_points(boxes=[(150.0, 100.0, 250.0, 300.0)], confidences=[0.9]), 1)
+    last = pipeline.apply(_box_key_points(boxes=[(200.0, 100.0, 300.0, 300.0)], confidences=[0.9]), 2)
+    ghost = pipeline.apply(_box_key_points(boxes=[], confidences=[]), 3)
+
+    assert ghost.stats.ghost_count == 1
+    # The held ghost should predict forward, not freeze at the last position.
+    assert _center_x(ghost.key_points, 0) > _center_x(last.key_points, 0)
+
+
 def test_hysteresis_blocks_low_confidence_new_track() -> None:
     pipeline = PersonTrackPipeline(
         settings=PersonTrackSettings(

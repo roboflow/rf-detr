@@ -37,15 +37,9 @@ def empty_key_points_like(template: sv.KeyPoints) -> sv.KeyPoints:
         xy=np.zeros((0, num_joints, 2), dtype=template.xy.dtype),
         visible=(np.zeros((0, num_joints), dtype=bool) if template.visible is not None else None),
         keypoint_confidence=(
-            np.zeros((0, num_joints), dtype=np.float32)
-            if template.keypoint_confidence is not None
-            else None
+            np.zeros((0, num_joints), dtype=np.float32) if template.keypoint_confidence is not None else None
         ),
-        detection_confidence=(
-            np.zeros((0,), dtype=np.float32)
-            if template.detection_confidence is not None
-            else None
-        ),
+        detection_confidence=(np.zeros((0,), dtype=np.float32) if template.detection_confidence is not None else None),
         class_id=(np.zeros((0,), dtype=np.int64) if template.class_id is not None else None),
         data={},
     )
@@ -62,14 +56,10 @@ def subset_key_points(key_points: sv.KeyPoints, indices: list[int]) -> sv.KeyPoi
         xy=key_points.xy[idx],
         visible=key_points.visible[idx] if key_points.visible is not None else None,
         keypoint_confidence=(
-            key_points.keypoint_confidence[idx]
-            if key_points.keypoint_confidence is not None
-            else None
+            key_points.keypoint_confidence[idx] if key_points.keypoint_confidence is not None else None
         ),
         detection_confidence=(
-            key_points.detection_confidence[idx]
-            if key_points.detection_confidence is not None
-            else None
+            key_points.detection_confidence[idx] if key_points.detection_confidence is not None else None
         ),
         class_id=key_points.class_id[idx] if key_points.class_id is not None else None,
         data=_subset_key_points_data(key_points.data, indices, num_detections),
@@ -79,6 +69,49 @@ def subset_key_points(key_points: sv.KeyPoints, indices: list[int]) -> sv.KeyPoi
 def single_detection_key_points(key_points: sv.KeyPoints, detection_index: int) -> sv.KeyPoints:
     """Extract one detection row as a length-1 ``KeyPoints``."""
     return subset_key_points(key_points, [detection_index])
+
+
+def shift_key_points(key_points: sv.KeyPoints, dx: float, dy: float) -> sv.KeyPoints:
+    """Return a copy with every visible joint translated by ``(dx, dy)``.
+
+    Zero-padded (invisible) joints are left untouched so they keep acting as
+    absent points. Any ``data['xyxy']`` box is translated by the same offset.
+
+    Args:
+        key_points: Source detections to translate.
+        dx: Horizontal shift in pixels applied to visible joints.
+        dy: Vertical shift in pixels applied to visible joints.
+
+    Returns:
+        A new ``KeyPoints`` with shifted coordinates.
+    """
+    if len(key_points) == 0 or (dx == 0.0 and dy == 0.0):
+        return key_points
+
+    xy = key_points.xy.copy()
+    offset = np.asarray([dx, dy], dtype=xy.dtype)
+    if key_points.visible is not None:
+        mask = key_points.visible
+    else:
+        mask = ~np.all(np.isclose(xy, 0), axis=2)
+    xy[mask] += offset
+
+    data = dict(key_points.data) if key_points.data else {}
+    xyxy = data.get("xyxy")
+    if isinstance(xyxy, np.ndarray) and xyxy.shape[-1] == 4:
+        shifted = xyxy.astype(np.float64, copy=True)
+        shifted[..., [0, 2]] += dx
+        shifted[..., [1, 3]] += dy
+        data["xyxy"] = shifted.astype(xyxy.dtype, copy=False)
+
+    return sv.KeyPoints(
+        xy=xy,
+        visible=key_points.visible,
+        keypoint_confidence=key_points.keypoint_confidence,
+        detection_confidence=key_points.detection_confidence,
+        class_id=key_points.class_id,
+        data=data,
+    )
 
 
 def is_track_ghost(key_points: sv.KeyPoints, detection_index: int) -> bool:
