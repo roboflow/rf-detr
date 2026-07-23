@@ -6110,6 +6110,19 @@ keypoint config raises a <code>UserWarning</code> to make the override explicit.
     </table>
 
 
+<details class="note" open>
+  <summary>Note</summary>
+  <p>Two process-wide side effects: (1) unconditionally calls
+<code>torch.set_float32_matmul_precision("high")</code>, which persists after this function
+returns and overrides any caller-set precision (e.g. <code>"highest"</code>) with no opt-out —
+mirrors the import-time guard in <code>rfdetr.detr</code> so the Lightning CLI path
+(<code>rfdetr fit</code>) gets the same TF32 behavior as the python API path. (2) sets
+<code>check_val_every_n_epoch=tc.eval_interval</code>, so <code>eval_interval</code> now gates the whole
+validation loop (forward pass, metric compute, EMA forward), not just result logging;
+a <code>_ForceLastEpochValidationCallback</code> still guarantees the final epoch always
+validates even when <code>epochs</code> is not a multiple of <code>eval_interval</code>.</p>
+</details>
+
     <p><span class="doc-section-title">Returns:</span></p>
     <table>
       <thead>
@@ -6978,7 +6991,8 @@ always computed when <code>trainer.test()</code> is called.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>When <code>False</code>, skip per-class AP logging/table.</p>
+                <p>When <code>False</code>, skip per-class AP computation
+(<code>MeanAveragePrecision(class_metrics=False)</code>) as well as the per-class logging/table.</p>
               </div>
             </td>
             <td>
