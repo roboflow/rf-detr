@@ -69,7 +69,22 @@ class MSDeformAttn(nn.Module):
         self._export = False
 
     def export(self) -> None:
-        """Export mode."""
+        """Switch module to export mode for torch.export / TFLite compatibility.
+
+        In export mode the module uses ``torch._assert`` instead of Python ``assert`` for shape
+        checks (FakeTensor tracing cannot evaluate data-dependent asserts), and the forward pass
+        routes through the rank-5 tensor path that avoids runtime tensor-shape reads incompatible
+        with ``torch.export.export``.
+
+        Note:
+            There is no corresponding ``unexport()`` — export mode is one-way.  If you need the
+            original eager-mode behaviour after calling ``export()``, deepcopy the module before
+            calling this method::
+
+                import copy
+                attn_eager = copy.deepcopy(attn)
+                attn.export()
+        """
         self._export = True
 
     def _reset_parameters(self) -> None:
@@ -125,7 +140,24 @@ class MSDeformAttn(nn.Module):
         """
         batch_size, len_query, _ = query.shape
         batch_size, len_input, _ = input_flatten.shape
-        expected_len_in = (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()
+        # Export mode requires the Python (H, W) pairs: without them the core (ms_deform_attn_core_pytorch)
+        # silently falls back to reading shapes off the ``input_spatial_shapes`` tensor — the exact
+        # data-dependent path torch.export cannot trace. Fail loud here rather than emit a broken graph.
+        # This is a plain ``is None`` check on a Python object, so it stays static under torch.export.
+        if self._export and input_spatial_shapes_hw is None:
+            raise ValueError(
+                "input_spatial_shapes_hw (per-level Python (H, W) pairs) is required in export mode; "
+                "without it the deformable-attention core falls back to the untraceable tensor-shape path."
+            )
+        # When Python int (H, W) pairs are available, derive the expected length from them so the
+        # check stays a plain Python comparison. Reading the value out of the ``input_spatial_shapes``
+        # tensor produces an unbacked symbolic int under ``torch.export``, which turns this sanity
+        # check into a data-dependent guard that aborts the export.
+        expected_len_in: int | Tensor
+        if input_spatial_shapes_hw is not None:
+            expected_len_in = sum(height * width for height, width in input_spatial_shapes_hw)
+        else:
+            expected_len_in = (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()
         error_msg = "input_spatial_shapes must match the flattened input length"
         if self._export:
             torch._assert(expected_len_in == len_input, error_msg)  # type: ignore[no-untyped-call]
@@ -136,29 +168,59 @@ class MSDeformAttn(nn.Module):
         if input_padding_mask is not None:
             value = value.masked_fill(input_padding_mask[..., None], float(0))
 
-        sampling_offsets = self.sampling_offsets(query).view(
-            batch_size, len_query, self.n_heads, self.n_levels, self.n_points, 2
-        )
         attention_weights = self.attention_weights(query).view(
             batch_size, len_query, self.n_heads, self.n_levels * self.n_points
         )
 
-        # N, Len_q, n_heads, n_levels, n_points, 2
-        if reference_points.shape[-1] == 2:
-            offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
-            sampling_locations = (
-                reference_points[:, :, None, :, None, :]
-                + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
+        if self._export:
+            # Export path: build sampling_locations at rank 5 by merging (n_levels, n_points) -> n_levels*n_points,
+            # so no tensor exceeds rank 5. CoreML's MIL backend rejects rank-6 tensors; XNNPACK is unaffected. The
+            # merged layout is bit-identical to the rank-6 path below (offset_normalizer / reference_points are
+            # repeat_interleaved over n_points to match the [n_levels, n_points] flattening order). The core consumes
+            # the rank-5 form (detected by ndim). Only reached in export mode, so eager train/inference is unchanged.
+            sampling_offsets = self.sampling_offsets(query).view(
+                batch_size, len_query, self.n_heads, self.n_levels * self.n_points, 2
             )
-        elif reference_points.shape[-1] == 4:
-            sampling_locations = (
-                reference_points[:, :, None, :, None, :2]
-                + sampling_offsets / self.n_points * reference_points[:, :, None, :, None, 2:] * 0.5
-            )
+            if reference_points.shape[-1] == 2:
+                offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
+                offset_normalizer = offset_normalizer.repeat_interleave(self.n_points, dim=0)  # n_levels*n_points, 2
+                ref = reference_points.repeat_interleave(self.n_points, dim=2)  # N, Len_q, n_levels*n_points, 2
+                sampling_locations = (
+                    ref[:, :, None, :, :] + sampling_offsets / offset_normalizer[None, None, None, :, :]
+                )
+            elif reference_points.shape[-1] == 4:
+                ref = reference_points.repeat_interleave(self.n_points, dim=2)  # N, Len_q, n_levels*n_points, 4
+                sampling_locations = (
+                    ref[:, :, None, :, :2] + sampling_offsets / self.n_points * ref[:, :, None, :, 2:] * 0.5
+                )
+            else:
+                raise ValueError(
+                    "Last dim of reference_points must be 2 or 4, but get {} instead.".format(
+                        reference_points.shape[-1]
+                    )
+                )
         else:
-            raise ValueError(
-                f"Last dim of reference_points must be 2 or 4, but get {reference_points.shape[-1]} instead."
+            sampling_offsets = self.sampling_offsets(query).view(
+                batch_size, len_query, self.n_heads, self.n_levels, self.n_points, 2
             )
+            # N, Len_q, n_heads, n_levels, n_points, 2
+            if reference_points.shape[-1] == 2:
+                offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
+                sampling_locations = (
+                    reference_points[:, :, None, :, None, :]
+                    + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
+                )
+            elif reference_points.shape[-1] == 4:
+                sampling_locations = (
+                    reference_points[:, :, None, :, None, :2]
+                    + sampling_offsets / self.n_points * reference_points[:, :, None, :, None, 2:] * 0.5
+                )
+            else:
+                raise ValueError(
+                    "Last dim of reference_points must be 2 or 4, but get {} instead.".format(
+                        reference_points.shape[-1]
+                    )
+                )
         attention_weights = F.softmax(attention_weights, -1)
 
         value = (

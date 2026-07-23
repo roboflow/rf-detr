@@ -1386,9 +1386,11 @@ class RFDETR:
         calibration_data: str | np.ndarray[Any, Any] | None = None,
         max_images: int = 100,
         *,
+        backend: str | None = None,
+        soc: str | None = None,
         notes: object = None,
     ) -> Path:
-        """Export the trained model to ONNX, TFLite, or TensorRT format.
+        """Export the trained model to ONNX, TFLite, TensorRT, or ExecuTorch format.
 
         See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_ for more information.
 
@@ -1401,25 +1403,31 @@ class RFDETR:
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
                 Both dimensions must be divisible by ``patch_size * num_windows``.
             batch_size: Static batch size to bake into the ONNX graph.
-            dynamic_batch: If True, export with a dynamic batch dimension
-                so the ONNX model accepts variable batch sizes at runtime.
+            dynamic_batch: If True, export with a dynamic batch dimension so the model accepts variable batch sizes
+                at runtime (spatial dimensions always stay fixed).  Applies to the ONNX and TFLite graphs.  Not
+                supported for ExecuTorch export on executorch 1.3.1 (raises ``NotImplementedError``): the runtime
+                cannot resize RF-DETR's windowed-attention reshapes, so a dynamic ``.pte`` runs only at the traced
+                batch — export one ``.pte`` per batch size instead.
             patch_size: Backbone patch size. Defaults to the value stored in
                 ``model_config.patch_size`` (typically 14 or 16). When provided explicitly it must match the
                 instantiated model's patch size. Shape divisibility is validated against ``patch_size * num_windows``.
-            format: Export format — ``"onnx"`` (default), ``"tflite"``, ``"tensorrt"`` (alias: ``"trt"``), or 
-                ``"openvino"``. ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: 
-                ``"tflite"`` via ``onnx2tf`` (requires ``pip install rfdetr[onnx,tflite]``); ``"tensorrt"`` via the 
-                TensorRT Python API (requires ``pip install rfdetr[trt]``); ``"openvino"`` converts directly from 
-                PyTorch to OpenVINO IR format (requires ``pip install openvino``).  Unlike ``"onnx"``/
-                ``"tflite"``/``"openvino"`` portable serialization, ``"tensorrt"`` performs target-specific compilation 
-                at export time and produces a non-portable ``.trt`` engine tied to the build machine's GPU and 
-                TensorRT version.
+            format: Export format — ``"onnx"`` (default), ``"tflite"``, ``"tensorrt"`` (alias: ``"trt"``),
+                ``"executorch"`` (alias: ``"pte"``), or ``"openvino"``.
+                ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: ``"tflite"`` via
+                ``onnx2tf`` (requires ``pip install rfdetr[tflite]``); ``"tensorrt"`` via the TensorRT
+                Python API (requires ``pip install rfdetr[tensorrt]``).  Unlike ``"onnx"``/
+                ``"tflite"`` portable serialization, ``"tensorrt"`` performs target-specific compilation at export
+                time and produces a non-portable ``.trt`` engine tied to the build machine's GPU and TensorRT version.
+                When ``"executorch"`` is selected the model is exported directly via ``torch.export`` to an ExecuTorch
+                ``.pte`` file (no ONNX step), configured by *backend* / *soc* below.  Requires
+                ``pip install rfdetr[executorch]``. ``"openvino"`` converts directly from PyTorch to OpenVINO IR
+                format (requires ``pip install openvino``).
 
                 .. warning::
-                    TFLite export is experimental and subject to change; upstream dependency instabilities (``onnx2tf``,
-                    ``ai_edge_litert``) may affect results.
+                    TFLite and ExecuTorch export are experimental and subject to change; upstream dependency
+                    instabilities (``onnx2tf``, ``ai_edge_litert``, ``executorch``) may affect results.
             quantization: TFLite quantization mode (ignored when
-                ``format="onnx"`` or ``format="openvino"``).  One of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``.  
+                ``format="onnx"``, ``format="openvino"``, or ``format="executorch"``).  One of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``.  
                 ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally 
                 produces an INT8-quantized model.
             calibration_data: Representative images for INT8 calibration and ``onnx2tf`` output validation.  Accepts:
@@ -1435,25 +1443,62 @@ class RFDETR:
                 accuracy.
             max_images: Maximum number of images to load from a calibration directory.  Defaults to ``100``.  Only used
                 when *calibration_data* is a directory path.
+            backend: Hardware backend to specialize the export for.  Required when ``format="executorch"`` and
+                ignored — with a warning — for any other format.  Accepted values for ExecuTorch:
+                ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple devices, fp16; requires ``coremltools``),
+                and ``"qnn"`` (Qualcomm Snapdragon HTP, fp16; requires an ExecuTorch source build against the
+                QAIRT SDK — not available via pip).
+            soc: Target SoC (System on Chip) — the specific Qualcomm Snapdragon chip the exported model will run
+                on.  Required when ``backend="qnn"``: the QNN backend compiles the ``.pte`` ahead-of-time for one
+                chip's Hexagon Tensor Processor (HTP), unlike ``"xnnpack"``/``"coreml"`` which run on any device of
+                their platform, so the target chip must be known at export time.  Ignored — with a warning — for
+                any other backend or format.  Must be a
+                :class:`~executorch.backends.qualcomm.serialization.qc_schema.QcomChipset` name, e.g. ``"SM8650"``
+                (Snapdragon 8 Gen 3); see that enum for the full list of supported chips.  Has no effect for
+                ``"xnnpack"`` or ``"coreml"``.
             notes: Optional user-defined metadata (string, dict, list, or
                 any JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata
                 property.  When ``None`` no metadata entry is written.  String values are stored verbatim; all other
                 types are JSON-encoded so consumers must call ``json.loads()`` to recover a dict or list.  The same
                 value can be passed to :meth:`train` so the checkpoint and the ONNX file share the same provenance
-                information.
+                information.  **Ignored for ``format="executorch"``**: the ``.pte`` file has no metadata slot, and
+                a non-``None`` value emits a ``UserWarning`` instead of being embedded.
 
         Returns:
-            Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``, or ``.xml`` for OpenVINO).
+            Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``, ``.pte``, or ``.xml`` for OpenVINO).
+
+        Raises:
+            ValueError: If ``format`` is unrecognized; if ``format="executorch"`` and ``backend`` is missing,
+                unrecognized, or (for ``backend="qnn"``) ``soc`` is missing; or if the resolved export shape is
+                not divisible by ``patch_size * num_windows``.
+            NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"`` — the
+                ExecuTorch runtime cannot resize RF-DETR's windowed-attention reshapes for a variable batch size.
+            ImportError: If the optional dependencies for the requested ``format``/``backend`` are not installed
+                (e.g. ``rfdetr[onnx]``, ``rfdetr[executorch]``, ``coremltools`` for ``backend="coreml"``, ``openvino``
+                for OpenVINO export, or an ExecuTorch source build against the QAIRT SDK for ``backend="qnn"``).
+            RuntimeError: If called after the model has undergone in-place inference optimization (the original
+                model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
-        logger.info(f"Exporting model to {format.upper()} format")
-        _valid_formats = ("onnx", "tflite", "tensorrt", "trt", "openvino")
-        if format not in _valid_formats:
-            raise ValueError(f"Unsupported export format {format!r}. Choose from: {_valid_formats}")
         if format == "trt":  # "trt" is an alias for "tensorrt"
             format = "tensorrt"
-        
-        # OpenVINO uses direct conversion, others go through ONNX first
-        if format != "openvino":
+        if format == "pte":  # "pte" is an alias for "executorch"
+            format = "executorch"
+        from rfdetr.export._backend import _resolve_export_backend
+
+        backend, soc = _resolve_export_backend(format, backend, soc)
+        # Fail fast: dynamic_batch is statically incompatible with ExecuTorch; refuse before any forward pass
+        # so the user doesn't pay the full DINOv2 forward (seconds + GBs) before seeing the error. This is an
+        # intentional lightweight duplicate of the authoritative check in
+        # ``rfdetr.export._executorch.converter.export_executorch`` — the detailed "why" lives there; this copy
+        # exists only to fail before the heavy ``[executorch]`` import, so keep the two messages compatible.
+        if dynamic_batch and format == "executorch":
+            raise NotImplementedError(
+                "ExecuTorch export does not support dynamic_batch (see export_executorch for details). "
+                "Export one .pte per batch size instead."
+            )
+        logger.info(f"Exporting model to {format} format")
+        # OpenVINO and ExecuTorch use direct conversion, others may need ONNX
+        if format not in ("openvino", "executorch"):
             try:
                 from rfdetr.export.main import export_onnx, make_infer_image
             except ImportError:
@@ -1589,7 +1634,22 @@ class RFDETR:
                 logger.info(f"Successfully exported OpenVINO model to: {output_file}")
                 return Path(output_file)
 
-            # For other formats, export to ONNX first
+            # Handle ExecuTorch export (also no ONNX intermediate)
+            if format == "executorch":
+                from rfdetr.export._backend import _export_executorch_format
+
+                return _export_executorch_format(
+                    model,
+                    input_tensors,
+                    output_dir_path,
+                    backend=backend,
+                    soc=soc,
+                    variant_name=getattr(self, "size", None),
+                    dynamic_batch=dynamic_batch,
+                    notes=notes,
+                )
+
+            # For other formats (ONNX, TFLite, TensorRT), export to ONNX first
             output_file = export_onnx(
                 output_dir=str(output_dir_path),
                 model=model,
@@ -1606,44 +1666,17 @@ class RFDETR:
 
             logger.info(f"Successfully exported ONNX model to: {output_file}")
 
-            if format == "tflite":
-                warnings.warn(
-                    "TFLite export is experimental and work-in-progress. "
-                    "Upstream dependency instabilities (onnx2tf, ai_edge_litert) may affect results.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                try:
-                    from rfdetr.export._tflite.converter import export_tflite
-                except ImportError:
-                    logger.error(
-                        "It seems some dependencies for TFLite export are missing."
-                        " Please run `pip install rfdetr[onnx,tflite]` and try again.",
-                    )
-                    raise
+            from rfdetr.export.main import _convert_onnx_export
 
-                tflite_path = export_tflite(
-                    onnx_path=output_file,
-                    output_dir=str(output_dir_path),
-                    quantization=quantization,
-                    calibration_data=calibration_data,
-                    verbosity="info" if verbose else "error",
-                    max_images=max_images,
-                    verbose=verbose,
-                )
-                logger.info(f"Successfully exported TFLite model to: {tflite_path}")
-                return tflite_path
-
-            if format == "tensorrt":
-                from rfdetr.export._tensorrt import build_engine
-
-                logger.info("Converting ONNX model to TensorRT engine")
-                engine_file = build_engine(output_file, verbose=verbose)
-                logger.info(f"Successfully exported TensorRT engine to: {engine_file}")
-                return Path(engine_file)
-
-            logger.info("Export completed successfully")
-            return Path(output_file)
+            return _convert_onnx_export(
+                output_file,
+                format,
+                output_dir_path,
+                quantization=quantization,
+                calibration_data=calibration_data,
+                max_images=max_images,
+                verbose=verbose,
+            )
         finally:
             self.model.model = self.model.model.to(device)
 

@@ -71,18 +71,28 @@ onnx = [
     "onnxruntime",
     "polygraphy",
 ]
-trt = [
+tensorrt = [
     "pycuda",
     "onnxruntime-gpu",
     "tensorrt>=8.6.1",
     "polygraphy",
 ]
 tflite = [
+    # TFLite conversion routes every export through the ONNX pipeline first (export_onnx's
+    # graph optimization/simplification), so these are needed here directly rather than via
+    # the separate [onnx] extra — onnxruntime is NOT included: it's only for running ONNX
+    # inference, never touched by the TFLite export path.
+    "onnx>=1.20.0,<2.0; python_version >= '3.12' and python_version < '3.13'",
+    "onnxsim<0.6.0; python_version >= '3.12' and python_version < '3.13'",  # TODO: onnxsim 0.6.0+ hangs on install
+    "onnx_graphsurgeon; python_version >= '3.12' and python_version < '3.13'",
+    "polygraphy; python_version >= '3.12' and python_version < '3.13'",
     "onnx2tf>=2.4.0,<3.0.0; python_version >= '3.12' and python_version < '3.13'",
     "flatbuffers>=23.5.26; python_version >= '3.12' and python_version < '3.13'",
-    "onnx>=1.20.0,<2.0; python_version >= '3.12' and python_version < '3.13'",
     "tf-keras>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
     "tensorflow>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
+]
+executorch = [
+    "executorch>=1.3,<2.0",  # torch.export -> .pte, XNNPACK CPU delegate; validated on 1.3.1
 ]
 loggers = [
     "tensorboard>=2.13.0",
@@ -106,6 +116,18 @@ plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
 ci-gpu-pin = [
     "torch<2.11",
     "torchvision<0.26",
+]
+
+# TODO: Temporary: executorch==1.3.1's prebuilt wheel is compiled against ~torch-2.12.x's C10 ABI
+#   (executorch itself only floors torch>=2.12.0a0, no ceiling). torch>=2.13.0 removed/changed a C10
+#   symbol the wheel links, breaking executorch.runtime at dlopen (undefined symbol). Empirically
+#   validated: torch==2.12.1 + executorch==1.3.1 imports executorch.runtime cleanly; torch==2.13.0
+#   does not. Remove this group and the --group ci-executorch-pin reference in CI once executorch
+#   ships a release compatible with newer torch. Does not affect users installing rfdetr from PyPI —
+#   see rfdetr.export._executorch.converter._check_executorch_available(require_runtime=True) for the
+#   equivalent runtime guidance surfaced to end users who hit this.
+ci-executorch-pin = [
+    "torch<2.13",
 ]
 
 build = [
@@ -159,6 +181,17 @@ rfdetr = "rfdetr.cli:main"
 # remove the <'3.13' upper bound from the tflite deps AND from the override below.
 override-dependencies = [
     "ml-dtypes==0.5.1; python_version >= '3.12' and python_version < '3.13'",
+]
+
+# ci-gpu-pin (torch<2.11, GPU-driver constraint) and the executorch extra (torch>=2.12.0a0,
+# from executorch's own metadata) are unsatisfiable together -- no CI job combines them, but
+# `uv sync --all-groups` and a plain `uv lock` need to know that so the universal resolver
+# forks the two instead of failing to find one lockfile that satisfies both at once.
+conflicts = [
+    [
+        { group = "ci-gpu-pin" },
+        { extra = "executorch" },
+    ],
 ]
 
 
@@ -219,6 +252,7 @@ markers = [
     "coco17: tests that require COCO 2017 images or annotations",
     "flaky: tests that may fail due to nondeterminism",
     "tflite: tests requiring onnx2tf and TFLite dependencies",
+    "executorch: tests requiring the executorch package",
 ]
 filterwarnings = [
     # pytest-xdist workers close their channel before teardown completes;
@@ -282,6 +316,7 @@ overrides = [
     "jsonargparse", "jsonargparse.*",
     "tflite_runtime", "tflite_runtime.*",
     "tensorflow", "tensorflow.*",
+    "executorch", "executorch.*",
     "rfdetr_plus", "rfdetr_plus.*",
   ], ignore_missing_imports = true },
   # Optional-import None assignments in console.py: type: ignore[assignment, misc] is needed when

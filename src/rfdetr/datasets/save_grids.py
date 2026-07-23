@@ -6,18 +6,20 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torchvision.transforms as T  # noqa: N812
-from matplotlib.axes import Axes
-from supervision import BoxAnnotator, Color, Detections, LabelAnnotator
+from supervision import BoxAnnotator, Color, Detections, LabelAnnotator, MaskAnnotator
 from torch import Tensor
 from torch.utils.data import DataLoader
 
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 from rfdetr.utilities.logger import get_logger
+from rfdetr.visualize.training import _ensure_headless_backend
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
 
 logger = get_logger()
 
@@ -45,12 +47,24 @@ class DatasetGridSaver:
         """Create and save image grids to ``output_dir``.
 
         Each grid is a 3x3 JPEG containing up to 9 images from a single batch, with bounding boxes and class labels
-        drawn on top.
+        drawn on top. Instance masks are also drawn, before the boxes and labels, for any sample whose target includes a
+        ``'masks'`` entry.
         """
+        try:
+            import matplotlib
+
+            _ensure_headless_backend(matplotlib)
+            import matplotlib.pyplot as plt
+        except ImportError as exc:
+            raise ImportError(
+                "matplotlib is required for dataset grids. Install it with: pip install matplotlib"
+            ) from exc
+
         inv_normalize = T.Normalize(
             mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
             std=[1 / 0.229, 1 / 0.224, 1 / 0.225],
         )
+        mask_annotator = MaskAnnotator(opacity=0.45)
         box_annotator = BoxAnnotator(thickness=2)
         label_annotator = LabelAnnotator(
             text_color=Color.BLACK,
@@ -66,15 +80,22 @@ class DatasetGridSaver:
             fig.suptitle(f"{self.dataset_type} dataset, batch {batch_idx}")
             axes = axes.flatten()
 
-            sample_index = 0
-            for sample_index, (single_image, single_target) in enumerate(zip(sample.tensors, target)):
-                if sample_index >= 9:
+            num_plotted = 0
+            for single_image, single_target in zip(sample.tensors, target):
+                if num_plotted >= 9:
                     break
                 self._annotate_and_plot(
-                    single_image, single_target, axes[sample_index], inv_normalize, box_annotator, label_annotator
+                    single_image,
+                    single_target,
+                    axes[num_plotted],
+                    inv_normalize,
+                    mask_annotator,
+                    box_annotator,
+                    label_annotator,
                 )
+                num_plotted += 1
 
-            for i in range(sample_index, 9):
+            for i in range(num_plotted, 9):
                 axes[i].axis("off")
 
             fig.tight_layout()
@@ -89,16 +110,19 @@ class DatasetGridSaver:
         single_target: dict[str, Any],
         ax: Axes,
         inv_normalize: T.Normalize,
+        mask_annotator: MaskAnnotator,
         box_annotator: BoxAnnotator,
         label_annotator: LabelAnnotator,
     ) -> None:
-        """De-normalize a single image tensor, annotate it with boxes and labels, and plot it on ``ax``.
+        """De-normalize a single image tensor, annotate it with masks, boxes, and labels, and plot it on ``ax``.
 
         Args:
             single_image: Normalized image tensor of shape ``(C, H, W)``.
-            single_target: Target dict with keys ``'size'``, ``'boxes'`` (cx,cy,wh normalized), and ``'labels'``.
+            single_target: Target dict with keys ``'size'``, ``'boxes'`` (cx,cy,wh normalized), ``'labels'``, and
+                optionally ``'masks'``.
             ax: Matplotlib axis to plot the annotated image on.
             inv_normalize: Inverse normalization transform to convert the tensor back to pixel values.
+            mask_annotator: ``MaskAnnotator`` instance for drawing instance masks.
             box_annotator: ``BoxAnnotator`` instance for drawing bounding boxes.
             label_annotator: ``LabelAnnotator`` instance for drawing class labels.
         """
@@ -109,10 +133,12 @@ class DatasetGridSaver:
             resized_size = resized_size.detach().cpu()
         h, w = int(resized_size[0]), int(resized_size[1])
 
-        de_normalized_img = inv_normalize(single_image)
+        de_normalized_img = inv_normalize(single_image[:, :h, :w])
         if isinstance(de_normalized_img, Tensor):
             de_normalized_img = de_normalized_img.detach().cpu().numpy()
-        scene = PILImage.fromarray((np.clip(de_normalized_img.transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8))
+        scene = PILImage.fromarray(
+            np.ascontiguousarray((np.clip(de_normalized_img.transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8))
+        )
 
         if len(single_target["boxes"]) > 0:
             labels_tensor = single_target["labels"]
@@ -131,10 +157,65 @@ class DatasetGridSaver:
                 [[b[0] * w, b[1] * h, b[2] * w, b[3] * h] for box in boxes_iter for b in [box_cxcywh_to_xyxy(box)]],
                 dtype=np.float32,
             )
-            detections = Detections(xyxy=xyxy, class_id=class_ids)
+            masks = DatasetGridSaver._extract_masks(single_target, image_shape=(h, w), num_instances=len(class_ids))
+            detections = Detections(xyxy=xyxy, mask=masks, class_id=class_ids)
             labels = [str(c) for c in class_ids]
+            if masks is not None:
+                scene = mask_annotator.annotate(scene=scene, detections=detections)
             scene = box_annotator.annotate(scene=scene, detections=detections)
             scene = label_annotator.annotate(scene=scene, detections=detections, labels=labels)
 
         ax.imshow(scene)
         ax.axis("off")
+
+    @staticmethod
+    def _extract_masks(
+        single_target: dict[str, Any],
+        image_shape: tuple[int, int],
+        num_instances: int,
+    ) -> np.ndarray | None:
+        """Return target masks as ``(N, H, W)`` booleans aligned to the rendered image shape.
+
+        Args:
+            single_target: Target dict that may contain a ``'masks'`` entry — a tensor or array-like of shape
+                ``(N, H', W')`` where ``H'``/``W'`` need not match ``image_shape``.
+            image_shape: ``(height, width)`` of the rendered image the masks must align to.
+            num_instances: Number of detected instances (boxes/labels) the returned masks must match.
+
+        Returns:
+            A ``(num_instances, height, width)`` boolean array aligned to ``image_shape``, or ``None`` when masks
+            are absent, malformed, or insufficient for ``num_instances``.
+        """
+        masks = single_target.get("masks")
+        if masks is None or (hasattr(masks, "ndim") and masks.ndim == 0):
+            return None
+        if len(masks) == 0:
+            return None
+
+        if isinstance(masks, Tensor):
+            masks_np = masks.detach().cpu().numpy()
+        else:
+            masks_np = np.asarray(masks)
+
+        if masks_np.ndim != 3:
+            logger.warning("Skipping dataset-grid masks with invalid shape %s; expected (N, H, W).", masks_np.shape)
+            return None
+
+        if masks_np.shape[0] < num_instances:
+            logger.warning(
+                "Skipping dataset-grid masks with %d masks for %d instances.",
+                masks_np.shape[0],
+                num_instances,
+            )
+            return None
+
+        masks_np = masks_np[:num_instances].astype(bool, copy=False)
+        height, width = image_shape
+        if masks_np.shape[1:] == image_shape:
+            return masks_np
+
+        aligned_masks = np.zeros((masks_np.shape[0], height, width), dtype=bool)
+        copy_height = min(height, masks_np.shape[1])
+        copy_width = min(width, masks_np.shape[2])
+        aligned_masks[:, :copy_height, :copy_width] = masks_np[:, :copy_height, :copy_width]
+        return aligned_masks
