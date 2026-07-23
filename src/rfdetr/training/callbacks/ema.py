@@ -130,6 +130,9 @@ class RFDETREMACallback(Callback):
             for averaged_param, model_param in zip(averaged_params, model_params):
                 averaged_param.copy_(self._avg_fn(averaged_param, model_param, num_averaged_value))
             return
+        # Two non-atomic in-place ops: a failure between them (e.g. a future dtype/shape
+        # mismatch) would leave averaged_params scaled-but-not-added, with no rollback.
+        # Accepted risk — AveragedModel pairs matching tensors, so this cannot occur today.
         torch._foreach_mul_(averaged_params, effective_decay)
         torch._foreach_add_(averaged_params, model_params, alpha=1.0 - effective_decay)
 

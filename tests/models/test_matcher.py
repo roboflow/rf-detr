@@ -461,3 +461,36 @@ class TestClassCostGatherFirst:
         for (act_q, act_t), (exp_q, exp_t) in zip(actual, expected):
             assert torch.equal(act_q, exp_q)
             assert torch.equal(act_t, exp_t)
+
+    def test_forward_matches_reference_when_one_batch_element_has_zero_targets(self, matcher: HungarianMatcher) -> None:
+        """A zero-GT batch element must gather-first-match the reference (empty tgt_ids column selection).
+
+        The gather-first refactor indexes ``flat_pred_logits[:, tgt_ids]`` where ``tgt_ids`` is the concatenation of
+        every batch element's labels; an empty-labels element degenerates that slice to a ``[N, 0]`` selection for its
+        own queries. This boundary was previously unexercised — every existing test target has >=1 GT box.
+        """
+        torch.manual_seed(11)
+        bs, num_queries, num_classes = 2, 6, 7
+        outputs = {
+            "pred_logits": torch.randn(bs, num_queries, num_classes),
+            "pred_boxes": torch.rand(bs, num_queries, 4) * 0.4 + 0.3,
+        }
+        targets = [
+            {
+                "labels": torch.tensor([2, 4], dtype=torch.int64),
+                "boxes": torch.tensor([[0.3, 0.3, 0.2, 0.2], [0.6, 0.6, 0.1, 0.1]], dtype=torch.float32),
+            },
+            {
+                "labels": torch.zeros(0, dtype=torch.int64),
+                "boxes": torch.zeros(0, 4, dtype=torch.float32),
+            },
+        ]
+
+        actual = matcher(outputs, targets)
+
+        expected = _reference_indices_full_class_materialization(matcher, outputs, targets)
+        for (act_q, act_t), (exp_q, exp_t) in zip(actual, expected):
+            assert torch.equal(act_q, exp_q)
+            assert torch.equal(act_t, exp_t)
+        assert actual[1][0].shape == (0,)
+        assert actual[1][1].shape == (0,)

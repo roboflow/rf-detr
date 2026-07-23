@@ -143,10 +143,14 @@ class TestSetup:
         assert cb.map_metric_train.class_metrics is False
 
     def test_log_per_class_metrics_default_keeps_class_metrics_compute(self) -> None:
-        """Default log_per_class_metrics=True keeps per-class AP computation on."""
+        """Default log_per_class_metrics=True keeps per-class AP computation on for both metrics.
+
+        Mirrors the disable-path test's symmetric map_metric_train assertion.
+        """
         cb = COCOEvalCallback()
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         assert cb.map_metric.class_metrics is True
+        assert cb.map_metric_train.class_metrics is True
 
     def test_log_per_class_metrics_false_disables_class_metrics_on_ema_metric(self) -> None:
         """The EMA metric mirrors the per-class computation flag."""

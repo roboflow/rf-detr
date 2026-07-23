@@ -273,6 +273,37 @@ class TestMultiAvgFn:
 
         assert torch.equal(ema_new.module.step_count, ema_old.module.step_count)
 
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_multi_avg_fn_matches_avg_fn_weight_parity_on_cuda(self) -> None:
+        """CUDA-resident foreach multi_avg_fn EMA must match avg_fn EMA — exercises real GPU group dispatch.
+
+        The CPU-only parity test above verifies numerics but not the actual optimization target:
+        torch._foreach_mul_/torch._foreach_add_ dispatching as fused CUDA kernels over a (device, dtype)
+        group, collapsing what would otherwise be one .item() GPU->CPU sync per tensor into one per group.
+        """
+        torch.manual_seed(42)
+        n_steps = 50
+        decay = 0.993
+        tau = 100
+        model = _EMAContainerModule().cuda()
+        cb = RFDETREMACallback(decay=decay, tau=tau)
+        ema_new = AveragedModel(model=model, use_buffers=True, multi_avg_fn=cb._multi_avg_fn)
+        ema_old = AveragedModel(model=model, use_buffers=True, avg_fn=cb._avg_fn)
+
+        for _ in range(n_steps):
+            with torch.no_grad():
+                for p in model.parameters():
+                    p.add_(torch.randn_like(p) * 0.01)
+            ema_new.update_parameters(model)
+            ema_old.update_parameters(model)
+
+        new_state = ema_new.module.state_dict()
+        old_state = ema_old.module.state_dict()
+        for name, old_val in old_state.items():
+            assert new_state[name].is_cuda
+            assert torch.allclose(new_state[name], old_val, atol=1e-6), f"CUDA parity failed for {name}"
+
 
 class TestSuppressTestSwap:
     """suppress_test_swap must disable the test-time EMA weight swap while leaving defaults unchanged."""
