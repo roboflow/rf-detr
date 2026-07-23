@@ -343,9 +343,7 @@ class TestMSDeformAttnModule:
     def test_export_mode_broadcasts_singleton_level_dim(self) -> None:
         """Checks export mode accepts decoder-style ``(B, Q, 1, 4)`` refs when ``n_levels > 1``."""
         # Use n_points > 1 so a missing expand would yield length n_points vs n_levels*n_points.
-        module = MSDeformAttn(
-            d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=2
-        )
+        module = MSDeformAttn(d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=2)
         module.eval()
         hw_pairs = self._hw_pairs
         total_len = sum(ht * wd for ht, wd in hw_pairs)
