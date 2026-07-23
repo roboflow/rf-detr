@@ -513,6 +513,7 @@ def build_trainer(
             eval_interval=tc.eval_interval,
             log_per_class_metrics=tc.log_per_class_metrics,
             keypoint_oks_sigmas=tc.keypoint_oks_sigmas,
+            eval_ema_only=tc.eval_ema_only,
         )
     )
 

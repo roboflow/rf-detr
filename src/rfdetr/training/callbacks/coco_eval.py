@@ -117,6 +117,10 @@ class COCOEvalCallback(Callback):
         eval_interval: Run validation metrics every N epochs. Test metrics are
             always computed when ``trainer.test()`` is called.
         log_per_class_metrics: When ``False``, skip per-class AP logging/table.
+        eval_ema_only: When ``True``, ``validation_step`` already forwarded through the EMA
+            model directly (see ``TrainConfig.eval_ema_only``), so the independent duplicate
+            EMA forward pass this callback would otherwise run every validation batch is
+            skipped.
     """
 
     def __init__(
@@ -127,12 +131,14 @@ class COCOEvalCallback(Callback):
         log_per_class_metrics: bool = True,
         keypoint_oks_sigmas: list[float] | None = None,
         in_notebook: bool | None = None,
+        eval_ema_only: bool = False,
     ) -> None:
         super().__init__()
         self._max_dets = max_dets
         self._segmentation = segmentation
         self._eval_interval = max(1, int(eval_interval))
         self._log_per_class_metrics = bool(log_per_class_metrics)
+        self._eval_ema_only = bool(eval_ema_only)
         self._class_names: list[str] = []
         self._cat_id_to_name: dict[int, str] = {}
         self._f1_local: dict[int, dict[str, Any]] = init_matching_accumulator()
@@ -174,7 +180,9 @@ class COCOEvalCallback(Callback):
         self._use_segm_metrics = self._segmentation and not self._keypoint_mode
         iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
         kwargs: dict[str, Any] = dict(
-            class_metrics=True,
+            # Skipping per-class computation (not just its table rendering) when the
+            # caller has no use for it saves real per-epoch compute cost (#416).
+            class_metrics=self._log_per_class_metrics,
             max_detection_thresholds=[1, 10, self._max_dets],
             # Disable torchmetrics' built-in cross-rank sync: its `gather_all_tensors` requires every
             # state tensor to have the same ndim on all ranks, but DDP seg validation produces
@@ -401,6 +409,15 @@ class COCOEvalCallback(Callback):
         When an EMA callback is present the EMA model is run on the same batch in a separate ``torch.no_grad()`` forward
         pass so that base and EMA metrics are computed from independent predictions.
 
+        When ``eval_ema_only`` is active and the EMA model has warmed up, ``validation_step`` already forwarded
+        through the EMA-averaged weights (see ``RFDETRModelModule._resolve_eval_model``) — these predictions are
+        routed to the EMA mAP/checkpoint track (``map_metric_ema`` / ``val/ema_*``) instead of the regular one,
+        which never ran a base-model forward pass this batch. Without this routing, the regular ``val/mAP_50_95``
+        key silently reflects EMA quality while ``BestModelCallback`` checkpoints the (unevaluated) base weights
+        under that key — a metric/weights mismatch. The macro-F1 sweep (``val/F1``) has no parallel EMA-tracked
+        accumulator and is not rerouted; under ``eval_ema_only`` it reflects EMA-quality predictions logged under
+        the regular key, a known limitation of this mode.
+
         Args:
             trainer: The PTL Trainer.
             pl_module: The LightningModule.
@@ -412,25 +429,36 @@ class COCOEvalCallback(Callback):
         if not isinstance(outputs, Mapping):
             return
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
-        targets = self._convert_targets(outputs["targets"])
+        targets_raw = self._convert_targets(outputs["targets"])
+        targets = self._align_gt_masks_to_pred_resolution(preds, targets_raw) if self._use_segm_metrics else targets_raw
 
-        self.map_metric.update(preds, targets)
+        # ema_cb._average_model availability is rank-invariant (EMA updates fire on the same
+        # global step on every rank), so per-rank EMA-forward decisions stay consistent.
+        ema_cb = self._get_ema_callback(trainer)
+        ema_inner = _get_ema_inner_module(ema_cb)
+        used_ema_forward = self._eval_ema_only and ema_inner is not None
+        if used_ema_forward:
+            if self.map_metric_ema is not None:
+                self.map_metric_ema.update(preds, targets)
+                self._ema_has_updates = True
+        else:
+            self.map_metric.update(preds, targets)
 
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
         merge_matching_data(self._f1_local, batch_matching)
-        self._update_keypoint_oks_metric(trainer, outputs, split="val")
+        self._update_keypoint_oks_metric(trainer, outputs, split="val_ema" if used_ema_forward else "val")
 
         # Run EMA model separately on the same batch so that base and EMA metrics
         # are computed from independent forward passes rather than being aliases.
         # The EMA metric object itself is created on every rank in
         # on_validation_epoch_start (_prepare_ema_metric); here we only run the EMA
-        # forward pass + update when the averaged model is available.  ema_cb._average_model
-        # availability is rank-invariant (EMA updates fire on the same global step on every
-        # rank), so per-rank EMA update counts stay consistent.
-        ema_cb = self._get_ema_callback(trainer)
-        ema_inner = _get_ema_inner_module(ema_cb)
-        if ema_cb is not None and ema_inner is not None and self.map_metric_ema is not None:
+        # forward pass + update when the averaged model is available.
+        # Skipped entirely when eval_ema_only=True: validation_step already forwarded through
+        # the EMA model directly (RFDETRModelModule._resolve_eval_model) and the primary preds
+        # above are already routed to the EMA track, so this second, independent EMA forward
+        # pass would be pure duplicate compute (#416).
+        if not self._eval_ema_only and ema_cb is not None and ema_inner is not None and self.map_metric_ema is not None:
             samples, _ = batch
             orig_sizes = torch.stack([t["orig_size"] for t in outputs["targets"]]).to(pl_module.device)
             ema_underlying = ema_inner.model
@@ -439,7 +467,12 @@ class COCOEvalCallback(Callback):
                 ema_outputs = ema_underlying(samples)
                 ema_results = pl_module.postprocess(ema_outputs, orig_sizes)
             ema_preds = self._convert_preds(ema_results)
-            self.map_metric_ema.update(ema_preds, targets)
+            ema_targets = (
+                self._align_gt_masks_to_pred_resolution(ema_preds, targets_raw)
+                if self._use_segm_metrics
+                else targets_raw
+            )
+            self.map_metric_ema.update(ema_preds, ema_targets)
             self._update_keypoint_oks_metric(
                 trainer,
                 {"results": ema_results, "targets": outputs["targets"]},
@@ -493,7 +526,8 @@ class COCOEvalCallback(Callback):
         if not isinstance(outputs, Mapping):
             return
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
-        targets = self._convert_targets(outputs["targets"])
+        targets_raw = self._convert_targets(outputs["targets"])
+        targets = self._align_gt_masks_to_pred_resolution(preds, targets_raw) if self._use_segm_metrics else targets_raw
 
         self.map_metric.update(preds, targets)
 
@@ -754,7 +788,7 @@ class COCOEvalCallback(Callback):
             ema_iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
             self.map_metric_ema = MeanAveragePrecision(
                 iou_type=ema_iou_type,
-                class_metrics=True,
+                class_metrics=self._log_per_class_metrics,
                 max_detection_thresholds=[1, 10, self._max_dets],
                 backend="faster_coco_eval",
                 sync_on_compute=False,  # we merge state across ranks ourselves (see map_metric in setup)
@@ -1175,5 +1209,40 @@ class COCOEvalCallback(Callback):
                 entry["masks"] = masks
             if "iscrowd" in t:
                 entry["iscrowd"] = t["iscrowd"]
+            out.append(entry)
+        return out
+
+    @staticmethod
+    def _align_gt_masks_to_pred_resolution(
+        preds: list[dict[str, Tensor]], targets: list[dict[str, Tensor]]
+    ) -> list[dict[str, Tensor]]:
+        """Downsize ground-truth masks to match predicted masks' resolution when they differ.
+
+        ``_convert_targets`` already normalises GT masks to ``orig_size``, matching predictions in the default
+        (``upsample_masks_to_image_size=True``) case. When ``TrainConfig.eval_masks_head_resolution`` is set,
+        ``PostProcess`` instead returns predicted masks at the mask head's native (lower) resolution — comparing
+        them against full-resolution GT masks would silently produce meaningless IoU values (both
+        ``torchmetrics.MeanAveragePrecision``'s RLE encoding and ``matching.build_matching_data`` require both
+        sides on the same pixel grid), not an error. This brings GT masks down to the prediction's resolution so the
+        comparison stays valid, just at lower fidelity.
+
+        Args:
+            preds: Per-image prediction dicts, already through ``_convert_preds``.
+            targets: Per-image target dicts, already through ``_convert_targets`` (GT masks at ``orig_size``).
+
+        Returns:
+            ``targets`` unchanged when no masks are present or resolutions already match; otherwise a new list with
+            each target's masks nearest-downsized to match its paired prediction's mask resolution.
+        """
+        out = []
+        for p, t in zip(preds, targets):
+            p_masks, t_masks = p.get("masks"), t.get("masks")
+            if p_masks is None or t_masks is None or p_masks.shape[-2:] == t_masks.shape[-2:]:
+                out.append(t)
+                continue
+            h, w = p_masks.shape[-2:]
+            resized = F.interpolate(t_masks.float().unsqueeze(1), size=(int(h), int(w)), mode="nearest").squeeze(1)
+            entry = dict(t)
+            entry["masks"] = resized.bool()
             out.append(entry)
         return out
