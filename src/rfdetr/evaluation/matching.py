@@ -104,13 +104,14 @@ def _match_single_class(
     # turning what should be O(1) host-side work into O(N) GPU pipeline stalls. Move the
     # IoU matrix and crowd mask to host memory once, then run the loop on plain
     # numpy/Python values so no per-iteration tensor sync occurs (regression: #416).
-    iou_matrix_np = iou_matrix.detach().cpu().numpy()  # [N, M]
+    iou_matrix_np = iou_matrix.detach().float().cpu().numpy()  # [N, M] -- float() guards bf16/fp16 (no numpy dtype)
     gt_crowd_np = gt_crowd.detach().cpu().numpy()  # [M]
 
     gt_matched_np = np.zeros(m, dtype=np.bool_)
     pred_match_np = np.zeros(n, dtype=np.int64)
     pred_ignore_np = np.zeros(n, dtype=np.bool_)
     any_crowd = bool(gt_crowd_np.any())
+    not_crowd_np = ~gt_crowd_np  # crowd mask is loop-invariant — compute the negation once
 
     for i in range(n):
         ious = iou_matrix_np[i]  # [M]
@@ -118,7 +119,7 @@ def _match_single_class(
         # Try to match to a non-crowd GT (each non-crowd GT matched at most once).
         nc_ious = ious.copy()
         nc_ious[gt_crowd_np] = -1.0
-        nc_ious[gt_matched_np & ~gt_crowd_np] = -1.0  # already claimed
+        nc_ious[gt_matched_np & not_crowd_np] = -1.0  # already claimed
 
         best_nc_idx = int(np.argmax(nc_ious))
         best_nc_iou = nc_ious[best_nc_idx]
@@ -128,7 +129,7 @@ def _match_single_class(
         # A detection matched to a crowd GT is ignored (not a false positive).
         elif any_crowd:
             crowd_ious = ious.copy()
-            crowd_ious[~gt_crowd_np] = -1.0
+            crowd_ious[not_crowd_np] = -1.0
             if crowd_ious.max() >= iou_threshold:
                 pred_ignore_np[i] = True
             # else: false positive — pred_match_np stays 0

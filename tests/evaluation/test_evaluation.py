@@ -9,6 +9,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 import torch
+from torchvision.ops import box_iou
 
 from rfdetr.evaluation.matching import (
     _compute_mask_iou,
@@ -185,13 +186,58 @@ class TestMatchSingleClass:
         assert matches[0] == 1
         assert total_gt == 1
 
+    @staticmethod
+    def _reference_greedy_match(
+        order: list[int],
+        iou_matrix: torch.Tensor,
+        gt_crowd: torch.Tensor,
+        iou_threshold: float,
+    ) -> tuple[np.ndarray, np.ndarray, int]:
+        """Naive, independently-written greedy matcher used as a ground-truth oracle.
+
+        Reimplements the COCO greedy-matching contract directly from spec with plain Python
+        loops and no shared code with ``_match_single_class`` (no numpy vectorization, no
+        hoisted crowd mask) — a divergence in the optimized/numpy-ported implementation (e.g. a
+        tie-break or crowd-handling regression) will disagree with this reference instead of
+        silently agreeing with itself.
+
+        Args:
+            order: Detection indices into ``iou_matrix``'s rows, in descending-score order.
+            iou_matrix: Pairwise IoU, ``[n_preds, n_gt]``, rows in original (unsorted) order.
+            gt_crowd: Bool tensor ``[n_gt]``, ``True`` for crowd instances.
+            iou_threshold: Minimum IoU to count as a positive match.
+
+        Returns:
+            Tuple ``(matches, ignore, total_gt)`` aligned to ``order``.
+        """
+        n_gt = iou_matrix.shape[1]
+        gt_matched = [False] * n_gt
+        matches = np.zeros(len(order), dtype=np.int64)
+        ignore = np.zeros(len(order), dtype=np.bool_)
+        for out_i, orig_i in enumerate(order):
+            best_iou, best_gt = -1.0, -1
+            for j in range(n_gt):
+                if gt_crowd[j] or gt_matched[j]:
+                    continue
+                iou = float(iou_matrix[orig_i, j])
+                if iou > best_iou:
+                    best_iou, best_gt = iou, j
+            if best_gt != -1 and best_iou >= iou_threshold:
+                matches[out_i] = 1
+                gt_matched[best_gt] = True
+                continue
+            for j in range(n_gt):
+                if gt_crowd[j] and float(iou_matrix[orig_i, j]) >= iou_threshold:
+                    ignore[out_i] = True
+                    break
+        total_gt = int((~gt_crowd.numpy()).sum())
+        return matches, ignore, total_gt
+
     def test_greedy_loop_does_not_sync_a_tensor_per_detection(self) -> None:
         """Regression test for #416: the per-detection greedy loop must not force one device-to-host tensor sync
-        (``Tensor.__bool__``) per detection.
-
-        On CUDA each such sync is a pipeline stall; the loop should convert IoUs to host data once, then run the
-        inherently-sequential greedy matching on plain Python/numpy values.
-        """
+        (``Tensor.__bool__``) per detection, and the numpy-ported matching output must agree with an independent
+        reference implementation of the same algorithm at scale (matches/ignore/total_gt) — the sync-count assert alone
+        cannot catch a logic regression in the torch->numpy port (e.g. a tie-break or crowd-handling change)."""
         n, m = 50, 10
         scores = torch.rand(n)
         preds = torch.rand(n, 4) * 100
@@ -199,6 +245,7 @@ class TestMatchSingleClass:
         gts = torch.rand(m, 4) * 100
         gts[:, 2:] += gts[:, :2] + 1.0
         gt_crowd = torch.zeros(m, dtype=torch.bool)
+        gt_crowd[:3] = True  # exercise the crowd/ignore branch at scale, not just n<=3 cases
 
         call_count = 0
         orig_bool = torch.Tensor.__bool__
@@ -209,13 +256,21 @@ class TestMatchSingleClass:
             return orig_bool(self)
 
         with patch.object(torch.Tensor, "__bool__", counting_bool):
-            self._run(scores, preds, gts, gt_crowd=gt_crowd)
+            scores_out, matches, ignore, total_gt = self._run(scores, preds, gts, gt_crowd=gt_crowd)
 
         assert call_count < n, (
             f"_match_single_class triggered {call_count} tensor->bool syncs for n={n} "
             "detections; expected O(1) syncs, not O(n) — the greedy loop should operate "
             "on host data, not per-iteration device tensor comparisons"
         )
+
+        order = torch.argsort(scores, descending=True).tolist()
+        iou_matrix = box_iou(preds, gts)
+        ref_matches, ref_ignore, ref_total_gt = self._reference_greedy_match(order, iou_matrix, gt_crowd, 0.5)
+        assert list(scores_out) == pytest.approx(scores[order].tolist())
+        assert np.array_equal(matches, ref_matches)
+        assert np.array_equal(ignore, ref_ignore)
+        assert total_gt == ref_total_gt
 
 
 # ---------------------------------------------------------------------------
