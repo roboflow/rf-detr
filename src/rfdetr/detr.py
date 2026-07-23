@@ -1421,7 +1421,7 @@ class RFDETR:
                 When ``"executorch"`` is selected the model is exported directly via ``torch.export`` to an ExecuTorch
                 ``.pte`` file (no ONNX step), configured by *backend* / *soc* below.  Requires
                 ``pip install rfdetr[executorch]``. ``"openvino"`` converts directly from PyTorch to OpenVINO IR
-                format (requires ``pip install openvino``).
+                format (requires ``pip install rfdetr[openvino]``).
 
                 .. warning::
                     TFLite and ExecuTorch export are experimental and subject to change; upstream dependency
@@ -1611,14 +1611,13 @@ class RFDETR:
             model.cpu()
             input_tensors = input_tensors.cpu()
 
-            # Handle OpenVINO direct export (no ONNX intermediate)
             if format == "openvino":
                 try:
                     from rfdetr.export._openvino.exporter import export_openvino
                 except ImportError:
                     logger.error(
                         "It seems OpenVINO is not installed."
-                        " Please run `pip install openvino` and try again.",
+                        " Please run `pip install \"rfdetr[openvino]\"` and try again.",
                     )
                     raise
 
@@ -1634,7 +1633,6 @@ class RFDETR:
                 logger.info(f"Successfully exported OpenVINO model to: {output_file}")
                 return Path(output_file)
 
-            # Handle ExecuTorch export (also no ONNX intermediate)
             if format == "executorch":
                 from rfdetr.export._backend import _export_executorch_format
 
@@ -1649,7 +1647,6 @@ class RFDETR:
                     notes=notes,
                 )
 
-            # For other formats (ONNX, TFLite, TensorRT), export to ONNX first
             output_file = export_onnx(
                 output_dir=str(output_dir_path),
                 model=model,

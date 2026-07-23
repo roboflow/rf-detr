@@ -4,7 +4,13 @@ This module provides direct PyTorch to OpenVINO IR export for RF-DETR models, wi
 
 ## Installation
 
-Install OpenVINO:
+Install RF-DETR with OpenVINO support:
+
+```bash
+pip install "rfdetr[openvino]"
+```
+
+Or if you already have RF-DETR installed, just add OpenVINO:
 
 ```bash
 pip install openvino

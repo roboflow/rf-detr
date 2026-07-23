@@ -39,7 +39,7 @@ class OpenVINOInference:
             import openvino as ov
         except ImportError:
             logger.error(
-                "OpenVINO is not installed. Please run `pip install openvino` and try again.",
+                "OpenVINO is not installed. Please run `pip install \"rfdetr[openvino]\"` and try again.",
             )
             raise
 

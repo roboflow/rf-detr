@@ -45,7 +45,7 @@ def export_openvino(
         from openvino import convert_model, save_model
     except ImportError:
         logger.error(
-            "OpenVINO is not installed. Please run `pip install openvino` and try again.",
+            "OpenVINO is not installed. Please run `pip install \"rfdetr[openvino]\"` and try again.",
         )
         raise
 
