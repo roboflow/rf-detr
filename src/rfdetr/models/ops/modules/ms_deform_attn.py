@@ -123,7 +123,8 @@ class MSDeformAttn(nn.Module):
             query: (N, Length_{query}, C)
             reference_points: (N, Length_{query}, n_levels, 2) with range in [0, 1],
                 top-left (0,0), bottom-right (1, 1), including padding area; or (N, Length_{query}, n_levels, 4) adding
-                additional (w, h) to form reference boxes.
+                additional (w, h) to form reference boxes. In export mode, the level dim may also be 1
+                (e.g. a single shared decoder reference box); it is broadcast to n_levels internally.
             input_flatten: (N, sum_{l=0}^{L-1} H_l * W_l, C)
             input_spatial_shapes: (n_levels, 2), [(H_0, W_0), (H_1, W_1), ..., (H_{L-1}, W_{L-1})]
             input_level_start_index: (n_levels,), [0, H_0*W_0, H_0*W_0+H_1*W_1, ...,
