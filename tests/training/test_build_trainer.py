@@ -9,6 +9,7 @@ import warnings
 from unittest.mock import MagicMock, patch
 
 import pytest
+import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
 
 from rfdetr.config import (
@@ -23,6 +24,7 @@ from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyS
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.callbacks.drop_schedule import DropPathCallback
 from rfdetr.training.callbacks.ema import RFDETREMACallback
+from rfdetr.training.trainer import _ForceLastEpochValidationCallback
 
 
 def _mc(**kwargs):
@@ -1284,3 +1286,144 @@ class TestBuildTrainerEvalMode:
         """The default (training) path is unchanged: BestModelCallback is still wired."""
         trainer = build_trainer(_tc(tmp_path), _mc())
         assert any(isinstance(cb, BestModelCallback) for cb in trainer.callbacks)
+
+
+class TestEvalIntervalValidationGating:
+    """eval_interval must gate the whole validation loop, not just metric logging."""
+
+    def test_check_val_every_n_epoch_matches_eval_interval(self, tmp_path):
+        """check_val_every_n_epoch mirrors eval_interval so Lightning skips whole val epochs."""
+        trainer = build_trainer(_tc(tmp_path, eval_interval=3, epochs=10), _mc(), accelerator="cpu")
+        assert trainer.check_val_every_n_epoch == 3
+
+    def test_default_eval_interval_validates_every_epoch(self, tmp_path):
+        """Default eval_interval=1 keeps per-epoch validation."""
+        trainer = build_trainer(_tc(tmp_path), _mc(), accelerator="cpu")
+        assert trainer.check_val_every_n_epoch == 1
+
+    def test_force_last_epoch_callback_present_when_interval_gt_1(self, tmp_path):
+        """Interval > 1 wires the callback guaranteeing last-epoch validation."""
+        trainer = build_trainer(_tc(tmp_path, eval_interval=3, epochs=10), _mc(), accelerator="cpu")
+        assert any(isinstance(cb, _ForceLastEpochValidationCallback) for cb in trainer.callbacks)
+
+    def test_force_last_epoch_callback_absent_at_default_interval(self, tmp_path):
+        """Interval 1 needs no last-epoch forcing."""
+        trainer = build_trainer(_tc(tmp_path), _mc(), accelerator="cpu")
+        assert not any(isinstance(cb, _ForceLastEpochValidationCallback) for cb in trainer.callbacks)
+
+    def test_force_last_epoch_callback_resets_interval_on_final_epoch(self):
+        """On the final epoch start the callback re-enables validation."""
+        cb = _ForceLastEpochValidationCallback()
+        trainer = MagicMock()
+        trainer.max_epochs = 10
+        trainer.current_epoch = 9
+        trainer.check_val_every_n_epoch = 3
+
+        cb.on_train_epoch_start(trainer, MagicMock())
+
+        assert trainer.check_val_every_n_epoch == 1
+
+    def test_force_last_epoch_callback_keeps_interval_before_final_epoch(self):
+        """Before the final epoch the interval is left untouched."""
+        cb = _ForceLastEpochValidationCallback()
+        trainer = MagicMock()
+        trainer.max_epochs = 10
+        trainer.current_epoch = 8
+        trainer.check_val_every_n_epoch = 3
+
+        cb.on_train_epoch_start(trainer, MagicMock())
+
+        assert trainer.check_val_every_n_epoch == 3
+
+    @pytest.mark.parametrize("max_epochs", [None, -1], ids=["none", "unlimited"])
+    def test_force_last_epoch_callback_noops_when_max_epochs_not_a_positive_int(self, max_epochs):
+        """max_epochs=None/-1 (PTL's not-yet-known / unlimited sentinels) must not force validation.
+
+        The guard is isinstance(max_epochs, int) and max_epochs > 0 — only the finite max_epochs=10 case was previously
+        tested; -1 (unlimited) and None are both PTL-permitted values with no well-defined "final epoch" to force.
+        """
+        cb = _ForceLastEpochValidationCallback()
+        trainer = MagicMock()
+        trainer.max_epochs = max_epochs
+        trainer.current_epoch = 8
+        trainer.check_val_every_n_epoch = 3
+
+        cb.on_train_epoch_start(trainer, MagicMock())
+
+        assert trainer.check_val_every_n_epoch == 3
+
+    def test_real_fit_validates_final_epoch_despite_eval_interval_skip(self, base_model_config, base_train_config):
+        """A real trainer.fit() must validate the final epoch even when it isn't an eval_interval multiple.
+
+        epochs=4, eval_interval=3: Lightning's own check_val_every_n_epoch=3 gating would only validate at (0-indexed)
+        epoch 2 (current_epoch+1==3). Epoch 3 (the final epoch, 4 % 3 != 0) is only reached because
+        _ForceLastEpochValidationCallback resets check_val_every_n_epoch=1 when the final epoch starts — this is a
+        behavioral regression guard, not an attribute-level check.
+        """
+        from rfdetr.training.module_data import RFDETRDataModule
+        from rfdetr.training.module_model import RFDETRModelModule
+
+        from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
+
+        mc = base_model_config()
+        tc = base_train_config(epochs=4, eval_interval=3, use_ema=False, run_test=False)
+
+        with (
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(_FakeCriterion(), MagicMock(side_effect=_fake_postprocess)),
+            ),
+            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=4)),
+            patch(
+                "rfdetr.training.module_model.get_param_dict",
+                side_effect=lambda args, model: _make_param_dicts(model),
+            ),
+        ):
+            module = RFDETRModelModule(mc, tc)
+            datamodule = RFDETRDataModule(mc, tc)
+
+            validated_epochs: list[int] = []
+            original_validation_step = module.validation_step
+
+            def _recording_validation_step(batch, batch_idx):
+                validated_epochs.append(module.trainer.current_epoch)
+                return original_validation_step(batch, batch_idx)
+
+            module.validation_step = _recording_validation_step
+
+            trainer = build_trainer(
+                tc,
+                mc,
+                accelerator="cpu",
+                limit_train_batches=1,
+                limit_val_batches=1,
+                num_sanity_val_steps=0,
+                enable_progress_bar=False,
+                enable_model_summary=False,
+                logger=False,
+            )
+            trainer.fit(module, datamodule=datamodule)
+
+        assert validated_epochs == [2, 3], (
+            f"expected validation on eval_interval epoch 2 and forced final epoch 3, got {validated_epochs}"
+        )
+
+
+class TestFloat32MatmulPrecision:
+    """build_trainer must enable TF32 matmul on every entry path (CLI included)."""
+
+    @pytest.fixture(autouse=True)
+    def _restore_matmul_precision(self):
+        """Snapshot and restore the process-global matmul precision around each test."""
+        previous = torch.get_float32_matmul_precision()
+        yield
+        torch.set_float32_matmul_precision(previous)
+
+    def test_build_trainer_sets_matmul_precision_high(self, tmp_path):
+        """build_trainer upgrades the default 'highest' to 'high' (TF32 on Ampere+)."""
+        torch.set_float32_matmul_precision("highest")
+
+        build_trainer(_tc(tmp_path), _mc(), accelerator="cpu")
+
+        assert torch.get_float32_matmul_precision() == "high"

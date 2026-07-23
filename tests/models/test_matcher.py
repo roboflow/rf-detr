@@ -399,3 +399,98 @@ class TestHungarianMatcherFocalAlpha:
         assert not matcher._warned_non_finite_costs, "boundary focal_alpha produced non-finite costs"
         result = matched_queries[matched_targets.argsort()].tolist()
         assert result == expected
+
+
+def _reference_indices_full_class_materialization(
+    matcher: HungarianMatcher,
+    outputs: dict[str, torch.Tensor],
+    targets: list[dict[str, torch.Tensor]],
+) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    """Reference matching that materializes the focal class cost over ALL classes before slicing."""
+    from scipy.optimize import linear_sum_assignment
+
+    from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
+
+    bs, num_queries = outputs["pred_logits"].shape[:2]
+    logits = outputs["pred_logits"].flatten(0, 1)
+    prob = logits.sigmoid()
+    out_bbox = outputs["pred_boxes"].flatten(0, 1)
+    tgt_ids = torch.cat([t["labels"] for t in targets])
+    tgt_bbox = torch.cat([t["boxes"] for t in targets])
+    alpha = matcher.focal_alpha
+    gamma = matcher_module._FOCAL_LOSS_GAMMA
+    neg_cost_class = (1 - alpha) * (prob**gamma) * (-torch.nn.functional.logsigmoid(-logits))
+    pos_cost_class = alpha * ((1 - prob) ** gamma) * (-torch.nn.functional.logsigmoid(logits))
+    cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
+    cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
+    cost_giou = -generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
+    cost = matcher.cost_bbox * cost_bbox + matcher.cost_class * cost_class + matcher.cost_giou * cost_giou
+    cost = cost.view(bs, num_queries, -1).float().cpu()
+    sizes = [len(t["boxes"]) for t in targets]
+    indices = [linear_sum_assignment(c[i]) for i, c in enumerate(cost.split(sizes, -1))]
+    return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+
+
+class TestClassCostGatherFirst:
+    """Class cost computed on gathered target columns must reproduce the full-materialization matching."""
+
+    def test_forward_matches_full_class_materialization_reference(self, matcher: HungarianMatcher) -> None:
+        """Random batch: matcher assignment equals the reference that builds [bs*nq, num_classes] first."""
+        torch.manual_seed(7)
+        bs, num_queries, num_classes = 2, 8, 11
+        outputs = {
+            "pred_logits": torch.randn(bs, num_queries, num_classes),
+            "pred_boxes": torch.rand(bs, num_queries, 4) * 0.4 + 0.3,
+        }
+        targets = [
+            {
+                "labels": torch.tensor([1, 3, 3], dtype=torch.int64),
+                "boxes": torch.tensor(
+                    [[0.3, 0.3, 0.2, 0.2], [0.6, 0.6, 0.1, 0.1], [0.5, 0.4, 0.3, 0.2]], dtype=torch.float32
+                ),
+            },
+            {
+                "labels": torch.tensor([0], dtype=torch.int64),
+                "boxes": torch.tensor([[0.5, 0.5, 0.4, 0.4]], dtype=torch.float32),
+            },
+        ]
+
+        actual = matcher(outputs, targets)
+
+        expected = _reference_indices_full_class_materialization(matcher, outputs, targets)
+        for (act_q, act_t), (exp_q, exp_t) in zip(actual, expected):
+            assert torch.equal(act_q, exp_q)
+            assert torch.equal(act_t, exp_t)
+
+    def test_forward_matches_reference_when_one_batch_element_has_zero_targets(self, matcher: HungarianMatcher) -> None:
+        """A zero-GT batch element must gather-first-match the reference (empty tgt_ids column selection).
+
+        The gather-first refactor indexes ``flat_pred_logits[:, tgt_ids]`` where ``tgt_ids`` is the concatenation of
+        every batch element's labels; an empty-labels element degenerates that slice to a ``[N, 0]`` selection for its
+        own queries. This boundary was previously unexercised — every existing test target has >=1 GT box.
+        """
+        torch.manual_seed(11)
+        bs, num_queries, num_classes = 2, 6, 7
+        outputs = {
+            "pred_logits": torch.randn(bs, num_queries, num_classes),
+            "pred_boxes": torch.rand(bs, num_queries, 4) * 0.4 + 0.3,
+        }
+        targets = [
+            {
+                "labels": torch.tensor([2, 4], dtype=torch.int64),
+                "boxes": torch.tensor([[0.3, 0.3, 0.2, 0.2], [0.6, 0.6, 0.1, 0.1]], dtype=torch.float32),
+            },
+            {
+                "labels": torch.zeros(0, dtype=torch.int64),
+                "boxes": torch.zeros(0, 4, dtype=torch.float32),
+            },
+        ]
+
+        actual = matcher(outputs, targets)
+
+        expected = _reference_indices_full_class_materialization(matcher, outputs, targets)
+        for (act_q, act_t), (exp_q, exp_t) in zip(actual, expected):
+            assert torch.equal(act_q, exp_q)
+            assert torch.equal(act_t, exp_t)
+        assert actual[1][0].shape == (0,)
+        assert actual[1][1].shape == (0,)

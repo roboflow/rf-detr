@@ -116,7 +116,8 @@ class COCOEvalCallback(Callback):
             ``backend="faster_coco_eval"``. Defaults to ``False``.
         eval_interval: Run validation metrics every N epochs. Test metrics are
             always computed when ``trainer.test()`` is called.
-        log_per_class_metrics: When ``False``, skip per-class AP logging/table.
+        log_per_class_metrics: When ``False``, skip per-class AP computation
+            (``MeanAveragePrecision(class_metrics=False)``) as well as the per-class logging/table.
         eval_ema_only: When ``True``, ``validation_step`` already forwarded through the EMA
             model directly (see ``TrainConfig.eval_ema_only``), so the independent duplicate
             EMA forward pass this callback would otherwise run every validation batch is
@@ -180,8 +181,9 @@ class COCOEvalCallback(Callback):
         self._use_segm_metrics = self._segmentation and not self._keypoint_mode
         iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
         kwargs: dict[str, Any] = dict(
-            # Skipping per-class computation (not just its table rendering) when the
-            # caller has no use for it saves real per-epoch compute cost (#416).
+            # Per-class AP is genuinely skipped (compute + state memory) when per-class logging is
+            # off — with class_metrics=True the metric would still pay the per-class cost and the
+            # flag would only gate result consumption (#416).
             class_metrics=self._log_per_class_metrics,
             max_detection_thresholds=[1, 10, self._max_dets],
             # Disable torchmetrics' built-in cross-rank sync: its `gather_all_tensors` requires every
@@ -711,10 +713,17 @@ class COCOEvalCallback(Callback):
                 if isinstance(value, Tensor) and value.ndim == 0 and "per_class" in metric_key:
                     metrics[metric_key] = value.unsqueeze(0)
 
-        # Per-class AR from torchmetrics (keyed by category_id)
+        # Per-class AR from torchmetrics (keyed by category_id).  Gated on
+        # self._log_per_class_metrics like the AP path (_build_per_class_rows) —
+        # with the flag off, torchmetrics still emits a 0-d mar_*_per_class
+        # (class_metrics=False collapses per-class state), which the ndim==0
+        # normalizer above only unsqueezes for a genuinely single-class batch,
+        # so zip() against a 1-d `classes` would raise TypeError: iteration
+        # over a 0-d tensor.  Skipping also avoids computing ar_by_cid when
+        # _build_per_class_rows would discard it anyway.
         ar_pc_key = f"{pfx}mar_{self._max_dets}_per_class"
         ar_by_cid: dict[int, float] = {}
-        if ar_pc_key in metrics and "classes" in metrics:
+        if self._log_per_class_metrics and ar_pc_key in metrics and "classes" in metrics:
             for class_id, ar in zip(metrics["classes"], metrics[ar_pc_key]):
                 ar_by_cid[int(class_id)] = float(ar)
 
