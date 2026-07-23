@@ -140,9 +140,20 @@ class DinoV2(nn.Module):
                 return_dict=False,
             )
         else:
-            window_block_indexes = compute_window_block_indexes(out_feature_indexes, window_block_indexes)
-
             dino_config = get_config(size, use_registers)
+
+            num_hidden_layers = dino_config["num_hidden_layers"]
+            if not out_feature_indexes:
+                raise ValueError("out_feature_indexes must be non-empty.")
+            if window_block_indexes is not None and (
+                len(set(window_block_indexes)) != len(window_block_indexes)
+                or any(not (0 <= idx < num_hidden_layers) for idx in window_block_indexes)
+            ):
+                raise ValueError(
+                    f"window_block_indexes entries must be unique and within "
+                    f"[0, {num_hidden_layers}); got {window_block_indexes}."
+                )
+            window_block_indexes = compute_window_block_indexes(out_feature_indexes, window_block_indexes)
 
             dino_config["return_dict"] = False
             dino_config["out_features"] = [f"stage{i}" for i in out_feature_indexes]
