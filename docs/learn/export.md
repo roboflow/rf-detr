@@ -1,5 +1,5 @@
 ---
-description: Export RF-DETR models to ONNX, TensorRT, TFLite, and ExecuTorch (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.
+description: Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, and OpenVINO IR (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.
 ---
 
 # Export RF-DETR Model
@@ -7,13 +7,14 @@ description: Export RF-DETR models to ONNX, TensorRT, TFLite, and ExecuTorch (FP
 !!! tip "Key Takeaways"
 
     - Export to ONNX for cross-platform inference with ONNX Runtime, OpenVINO, or TensorRT
+    - Export to OpenVINO IR for optimized inference on Intel CPUs, GPUs, and VPUs
     - Export to TFLite (FP32, FP16, INT8) for mobile and edge deployment
     - TensorRT conversion delivers lowest latency on NVIDIA GPUs (2.3 ms for Nano)
     - INT8 quantization requires calibration data from your dataset for accurate results
     - Custom input resolutions supported (must be divisible by `patch_size × num_windows`, which varies by model variant)
     - Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN)
 
-RF-DETR supports exporting models to ONNX, TFLite, and ExecuTorch formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
+RF-DETR supports exporting models to ONNX, TFLite, ExecuTorch, and OpenVINO IR formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
 
 ## Installation
 
@@ -22,6 +23,9 @@ Install the export dependencies you need:
 ```bash
 # ONNX export only
 pip install "rfdetr[onnx]"
+
+# OpenVINO IR export (Intel hardware optimization)
+pip install "rfdetr[openvino]"
 
 # TFLite export
 pip install "rfdetr[tflite]"
@@ -63,7 +67,7 @@ The `export()` method accepts several parameters to customize the export process
 | Parameter          | Default    | Description                                                                                                                                                                                     |
 | ------------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `output_dir`       | `"output"` | Directory where the exported model will be saved.                                                                                                                                               |
-| `format`           | `"onnx"`   | Export format: `"onnx"`, `"tflite"`, `"tensorrt"` (alias: `"trt"`), or `"executorch"`.                                                                                                          |
+| `format`           | `"onnx"`   | Export format: `"onnx"`, `"openvino"`, `"tflite"`, `"tensorrt"` (alias: `"trt"`), or `"executorch"`.                                                                                                          |
 | `quantization`     | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`.                                                                                             |
 | `calibration_data` | `None`     | Calibration data for TFLite export. Image directory, `.npy` file path, NumPy array, or `None`. See [TFLite Export](#tflite-export).                                                             |
 | `max_images`       | `100`      | Maximum number of images to load from a calibration directory for TFLite INT8 quantization. Ignored for other calibration data formats.                                                         |
@@ -445,6 +449,109 @@ boxes = interpreter.get_tensor(output_details[0]["index"])
 labels = interpreter.get_tensor(output_details[1]["index"])
 ```
 
+## OpenVINO IR Export
+
+OpenVINO IR (Intermediate Representation) is Intel's model format optimized for inference on Intel hardware including CPUs, integrated GPUs, and VPUs (Vision Processing Units). Unlike ONNX or TFLite export which go through intermediate steps, OpenVINO export converts the PyTorch model directly to IR format.
+
+### Prerequisites
+
+```bash
+pip install "rfdetr[openvino]"
+```
+
+### Basic OpenVINO Export
+
+=== "Object Detection"
+
+    ```python
+    from rfdetr import RFDETRMedium
+
+    model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
+
+    model.export(format="openvino", output_dir="output")
+    ```
+
+=== "Image Segmentation"
+
+    ```python
+    from rfdetr import RFDETRSegMedium
+
+    model = RFDETRSegMedium(pretrain_weights="<path/to/checkpoint.pth>")
+
+    model.export(format="openvino", output_dir="output")
+    ```
+
+This produces two files:
+
+- `output/rfdetr-medium.xml` - The model structure (Intermediate Representation)
+- `output/rfdetr-medium.bin` - The model weights
+
+### OpenVINO Export with Custom Resolution
+
+```python
+from rfdetr import RFDETRMedium
+
+model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
+
+model.export(format="openvino", shape=(608, 608))
+```
+
+### OpenVINO Inference Example
+
+```python
+import numpy as np
+from PIL import Image
+from rfdetr.export._openvino.inference import OpenVINOInference
+
+# Load the exported model
+model = OpenVINOInference("output/rfdetr-medium.xml")
+
+# Prepare input image (NCHW format, ImageNet normalized)
+image = Image.open("image.jpg").convert("RGB").resize((576, 576))
+image_array = np.array(image).astype(np.float32) / 255.0
+
+# Apply ImageNet normalization
+mean = np.array([0.485, 0.456, 0.406])
+std = np.array([0.229, 0.224, 0.225])
+image_array = (image_array - mean) / std
+
+# Convert to NCHW format
+image_array = np.transpose(image_array, (2, 0, 1))
+image_array = np.expand_dims(image_array, axis=0)
+
+# Run inference
+outputs = model(image_array)
+boxes, labels = outputs
+```
+
+### Benchmark OpenVINO Model
+
+Use OpenVINO's `benchmark_app` tool to measure performance:
+
+```bash
+benchmark_app -m output/rfdetr-medium.xml -data_shape [1,3,576,576]
+```
+
+### OpenVINO Model Outputs
+
+The exported OpenVINO IR model produces the following outputs:
+
+- **Object Detection Models**: 
+  - Output 0: Bounding boxes `[batch, 300, 4]` (x, y, w, h in normalized coordinates)
+  - Output 1: Class logits `[batch, 300, num_classes]`
+
+- **Segmentation Models**:
+  - Output 0: Bounding boxes `[batch, 300, 4]`
+  - Output 1: Class logits `[batch, 300, num_classes]`
+  - Output 2: Instance masks (if segmentation head is present)
+
+### Advantages of OpenVINO IR
+
+- **Direct Conversion**: No intermediate ONNX format required
+- **Intel Hardware Optimization**: Optimized for Intel CPUs, integrated GPUs, and VPUs
+- **Flexible Deployment**: Works on CPU with minimal dependencies
+- **Performance**: Excellent performance on Intel hardware
+
 ## ExecuTorch Export
 
 !!! warning "Experimental — Use with Caution"
@@ -639,4 +746,6 @@ After exporting your model, you may want to:
 
 - Deploy ExecuTorch `.pte` models on mobile/edge devices with the ExecuTorch runtime
 
-- Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO
+- Deploy OpenVINO IR models on Intel hardware (CPUs, GPUs, VPUs) with OpenVINO Runtime
+
+- Integrate with edge deployment frameworks like ONNX Runtime, OpenVINO, or TensorRT
