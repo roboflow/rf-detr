@@ -7,7 +7,7 @@ description: Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, and Op
 !!! tip "Key Takeaways"
 
     - Export to ONNX for cross-platform inference with ONNX Runtime, OpenVINO, or TensorRT
-    - Export to OpenVINO IR for optimized inference on Intel CPUs, GPUs, and VPUs
+    - Export to OpenVINO IR for optimized inference on CPU (x86, ARM), GPU (Intel integrated & discrete GPU) and AI accelerators (Intel NPU)
     - Export to TFLite (FP32, FP16, INT8) for mobile and edge deployment
     - TensorRT conversion delivers lowest latency on NVIDIA GPUs (2.3 ms for Nano)
     - INT8 quantization requires calibration data from your dataset for accurate results
@@ -24,7 +24,7 @@ Install the export dependencies you need:
 # ONNX export only
 pip install "rfdetr[onnx]"
 
-# OpenVINO IR export (Intel hardware optimization)
+# OpenVINO IR export 
 pip install "rfdetr[openvino]"
 
 # TFLite export
@@ -451,7 +451,7 @@ labels = interpreter.get_tensor(output_details[1]["index"])
 
 ## OpenVINO IR Export
 
-OpenVINO IR (Intermediate Representation) is Intel's model format optimized for inference on Intel hardware including CPUs, integrated GPUs, and VPUs (Vision Processing Units). Unlike ONNX or TFLite export which go through intermediate steps, OpenVINO export converts the PyTorch model directly to IR format.
+OpenVINO IR (Intermediate Representation) is a proprietary model format used by the OpenVINO Toolkit to optimize and deploy deep learning models.
 
 ### Prerequisites
 
@@ -545,12 +545,6 @@ The exported OpenVINO IR model produces the following outputs:
   - Output 1: Class logits `[batch, 300, num_classes]`
   - Output 2: Instance masks (if segmentation head is present)
 
-### Advantages of OpenVINO IR
-
-- **Direct Conversion**: No intermediate ONNX format required
-- **Intel Hardware Optimization**: Optimized for Intel CPUs, integrated GPUs, and VPUs
-- **Flexible Deployment**: Works on CPU with minimal dependencies
-- **Performance**: Excellent performance on Intel hardware
 
 ## ExecuTorch Export
 
@@ -746,6 +740,4 @@ After exporting your model, you may want to:
 
 - Deploy ExecuTorch `.pte` models on mobile/edge devices with the ExecuTorch runtime
 
-- Deploy OpenVINO IR models on Intel hardware (CPUs, GPUs, VPUs) with OpenVINO Runtime
-
-- Integrate with edge deployment frameworks like ONNX Runtime, OpenVINO, or TensorRT
+- Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO
