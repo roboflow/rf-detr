@@ -113,9 +113,10 @@ class RFDETREMACallback(Callback):
 
         ``AveragedModel.update_parameters`` routes to this grouped path when ``multi_avg_fn`` is set, replacing the
         per-tensor ``avg_fn`` loop that performed one ``num_averaged.item()`` GPU→CPU sync *per tensor* per step with a
-        single sync per group. The float path applies ``ema * decay + model * (1 - decay)`` with the exact same
-        operation order as :meth:`_avg_fn`; non-floating-point groups (e.g. integer buffers when averaging buffers)
-        fall back to the per-tensor formula to preserve its cast semantics.
+        single sync per group. The float path applies ``ema * decay + model * (1 - decay)``, numerically equivalent
+        within floating-point tolerance to ``_avg_fn`` (``torch._foreach_add_(..., alpha=)`` may lower to an FMA
+        instruction, so the result can differ from separate mul-then-add by ~1 ULP); non-floating-point groups (e.g.
+        integer buffers when averaging buffers) fall back to the per-tensor formula to preserve its cast semantics.
 
         Args:
             averaged_params: EMA tensors of one device/dtype group, updated in-place.

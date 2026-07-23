@@ -363,6 +363,17 @@ def build_trainer(
             because ``RFDETRModelModule`` owns both operations under manual optimization; passing those keys for a
             keypoint config raises a ``UserWarning`` to make the override explicit.
 
+    Note:
+        Two process-wide side effects: (1) unconditionally calls
+        ``torch.set_float32_matmul_precision("high")``, which persists after this function
+        returns and overrides any caller-set precision (e.g. ``"highest"``) with no opt-out —
+        mirrors the import-time guard in ``rfdetr.detr`` so the Lightning CLI path
+        (``rfdetr fit``) gets the same TF32 behavior as the python API path. (2) sets
+        ``check_val_every_n_epoch=tc.eval_interval``, so ``eval_interval`` now gates the whole
+        validation loop (forward pass, metric compute, EMA forward), not just result logging;
+        a ``_ForceLastEpochValidationCallback`` still guarantees the final epoch always
+        validates even when ``epochs`` is not a multiple of ``eval_interval``.
+
     Returns:
         A configured ``pytorch_lightning.Trainer`` instance.
     """
