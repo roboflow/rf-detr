@@ -376,7 +376,7 @@ def build_trainer(
     try:
         torch.set_float32_matmul_precision("high")
     except Exception:  # defensive parity with the rfdetr.detr import-time guard
-        pass
+        _logger.debug("torch.set_float32_matmul_precision('high') failed", exc_info=True)
 
     # --- Precision resolution ---
     def _resolve_precision() -> str:

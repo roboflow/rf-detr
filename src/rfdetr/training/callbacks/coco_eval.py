@@ -713,10 +713,17 @@ class COCOEvalCallback(Callback):
                 if isinstance(value, Tensor) and value.ndim == 0 and "per_class" in metric_key:
                     metrics[metric_key] = value.unsqueeze(0)
 
-        # Per-class AR from torchmetrics (keyed by category_id)
+        # Per-class AR from torchmetrics (keyed by category_id).  Gated on
+        # self._log_per_class_metrics like the AP path (_build_per_class_rows) —
+        # with the flag off, torchmetrics still emits a 0-d mar_*_per_class
+        # (class_metrics=False collapses per-class state), which the ndim==0
+        # normalizer above only unsqueezes for a genuinely single-class batch,
+        # so zip() against a 1-d `classes` would raise TypeError: iteration
+        # over a 0-d tensor.  Skipping also avoids computing ar_by_cid when
+        # _build_per_class_rows would discard it anyway.
         ar_pc_key = f"{pfx}mar_{self._max_dets}_per_class"
         ar_by_cid: dict[int, float] = {}
-        if ar_pc_key in metrics and "classes" in metrics:
+        if self._log_per_class_metrics and ar_pc_key in metrics and "classes" in metrics:
             for class_id, ar in zip(metrics["classes"], metrics[ar_pc_key]):
                 ar_by_cid[int(class_id)] = float(ar)
 

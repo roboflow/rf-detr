@@ -132,7 +132,11 @@ class TestSetup:
         assert cb.map_metric._coco_backend.backend == "faster_coco_eval"
 
     def test_log_per_class_metrics_false_disables_class_metrics_compute(self) -> None:
-        """log_per_class_metrics=False must disable torchmetrics per-class computation, not just logging."""
+        """log_per_class_metrics=False must disable torchmetrics per-class computation, not just logging.
+
+        Regression test for #416: skips the expensive per-class MeanAveragePrecision compute (not merely its table
+        rendering at epoch end) on both the regular and train-split metrics.
+        """
         cb = COCOEvalCallback(log_per_class_metrics=False)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         assert cb.map_metric.class_metrics is False
@@ -164,14 +168,6 @@ class TestSetup:
         assert "bbox" in cb.map_metric.iou_type
         assert "segm" not in cb.map_metric.iou_type
         assert "keypoints" not in cb.map_metric.iou_type
-
-    def test_log_per_class_metrics_false_disables_class_metrics_compute(self) -> None:
-        """Regression test for #416: log_per_class_metrics=False must also skip the expensive per-class
-        MeanAveragePrecision compute, not merely the table rendering at epoch end — otherwise the flag silently fails to
-        reduce cost."""
-        cb = COCOEvalCallback(log_per_class_metrics=False)
-        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
-        assert cb.map_metric.class_metrics is False
 
     def test_log_per_class_metrics_true_enables_class_metrics_compute(self) -> None:
         """log_per_class_metrics=True (default) keeps class_metrics compute enabled."""
@@ -1019,6 +1015,30 @@ class TestOnValidationEpochEnd:
         module = _make_pl_module()
 
         cb.on_validation_epoch_end(_make_trainer(), module)
+
+        logged_keys = {c.args[0] for c in module.log.call_args_list}
+        assert not any(k.startswith("val/AP/") for k in logged_keys)
+
+    def test_per_class_ap_disabled_does_not_crash_on_torchmetrics_faithful_ar_shape(self) -> None:
+        """Regression test for H1: log_per_class_metrics=False must not crash epoch-end validation.
+
+        torchmetrics still emits ``mar_{max_dets}_per_class`` as a 0-dim ``tensor(-1.)`` even when
+        ``class_metrics=False`` (only ``map_per_class`` is actually suppressed), while ``classes`` stays 1-d for >=2
+        classes. Before the fix, the per-class AR block was gated on key-presence only (not on the flag), so
+        ``zip(classes, mar_..._per_class)`` iterated a 0-d tensor and raised ``TypeError: iteration over a 0-d tensor``.
+        ``_minimal_metrics()`` alone (used by the sibling ``test_per_class_ap_can_be_disabled``) omits this key entirely
+        and would not catch the regression.
+        """
+        cb = COCOEvalCallback(log_per_class_metrics=False)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        metrics = _minimal_metrics()
+        metrics["classes"] = torch.tensor([0, 1])
+        metrics["mar_500_per_class"] = torch.tensor(-1.0)  # torchmetrics' real 0-d shape when class_metrics=False
+        cb.map_metric.compute.return_value = metrics
+        module = _make_pl_module()
+
+        cb.on_validation_epoch_end(_make_trainer(), module)  # must not raise TypeError
 
         logged_keys = {c.args[0] for c in module.log.call_args_list}
         assert not any(k.startswith("val/AP/") for k in logged_keys)
