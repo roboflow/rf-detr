@@ -201,7 +201,14 @@ def compute_l1_keypoint_loss(
         # others (e.g. one rank has an out-of-schema class label), producing a hang or a
         # "parameter did not receive grad" error. Adding a graph-connected scalar zero keeps
         # the gradient numerically zero while ensuring the head is seen as "used".
-        zeros = all_pred_keypoints.new_zeros(n_targets) + all_pred_keypoints.sum() * 0.0
+        #
+        # Use an empty reduction rather than ``all_pred_keypoints.sum() * 0.0``: the latter
+        # yields NaN when predictions contain NaN/Inf (``nan * 0 == nan``) or when a finite
+        # fp16 tensor overflows in ``.sum()`` (``inf * 0 == nan``), poisoning the loss. An
+        # empty differentiable reduction is exactly zero regardless of prediction values while
+        # staying connected to every producer parameter.
+        graph_zero = all_pred_keypoints.reshape(-1)[:0].sum()
+        zeros = all_pred_keypoints.new_zeros(n_targets) + graph_zero
         return zeros, zeros, zeros, zeros
 
     if total_padded_num_keypoints % num_classes != 0:
