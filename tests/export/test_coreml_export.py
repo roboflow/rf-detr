@@ -8,7 +8,11 @@
 Covers:
 * ``export_coreml()`` — argument/dependency behaviour (``coremltools`` mocked where needed)
 * ``format="coreml"`` wiring through ``RFDETR.export()``
-* End-to-end export + numerical parity against eager PyTorch (``@pytest.mark.coreml``)
+* End-to-end convert + numerical parity (``@pytest.mark.coreml_e2e``, opt-in)
+
+Parity inputs are spatially structured (gradient + checkerboard) and a fixture photo under
+``coreml_e2e``. Random Gaussian noise is intentionally avoided: it can hide export/runtime
+divergence that only appears on correlated image structure.
 """
 
 from __future__ import annotations
@@ -22,6 +26,8 @@ from unittest import mock
 import numpy as np
 import pytest
 import torch
+import torchvision.transforms.functional as TF
+from PIL import Image
 
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.converter import _check_coremltools_available, export_coreml
@@ -31,6 +37,72 @@ coreml_only = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="coremlto
 # FLOAT32 CoreML convert matches eager to ~1e-5 on boxes/logits; masks need a bit more
 # headroom (~8e-5 observed on SegNano). Bound stays well under structural-failure scale (>=1e-3).
 _COREML_MAX_ABS_DIFF = 1e-4
+
+_FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "images"
+_DOG_JPG = _FIXTURES_DIR / "dog.jpg"
+
+# ImageNet stats used by RF-DETR preprocess / exported CoreML bundles.
+_IMAGENET_MEAN = (0.485, 0.456, 0.406)
+_IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
+def _structured_parity_input(
+    batch: int,
+    channels: int,
+    height: int,
+    width: int,
+) -> torch.Tensor:
+    """Build a deterministic, spatially correlated ``NCHW`` tensor for export parity.
+
+    Combines a smooth spatial gradient with a coarse checkerboard so the backbone sees
+    local structure (unlike ``torch.randn``, which can mask export/runtime divergence).
+
+    Args:
+        batch: Batch size.
+        channels: Channel count (typically 3).
+        height: Spatial height.
+        width: Spatial width.
+
+    Returns:
+        Float tensor shaped ``(batch, channels, height, width)`` in roughly ImageNet-normalized range.
+    """
+    ys = torch.linspace(-1.0, 1.0, height).view(1, 1, height, 1)
+    xs = torch.linspace(-1.0, 1.0, width).view(1, 1, 1, width)
+    gradient = (0.35 * ys + 0.25 * xs).expand(1, channels, height, width).clone()
+    # Per-channel offset so RGB planes are not identical.
+    for c in range(channels):
+        gradient[:, c] = gradient[:, c] + 0.05 * (c - 1)
+
+    tile = 16
+    yy = (torch.arange(height).view(height, 1) // tile) % 2
+    xx = (torch.arange(width).view(1, width) // tile) % 2
+    checker = ((yy + xx) % 2).to(dtype=torch.float32).view(1, 1, height, width)
+    checker = (checker * 0.4 - 0.2).expand(1, channels, height, width)
+
+    sample = gradient + checker
+    return sample.expand(batch, channels, height, width).contiguous()
+
+
+def _parity_input_from_image(path: Path, resolution: int) -> torch.Tensor:
+    """Load an RGB image, resize to square ``resolution``, and ImageNet-normalize (predict-style).
+
+    Args:
+        path: Path to an RGB image file.
+        resolution: Square side length matching the exported model.
+
+    Returns:
+        Float tensor shaped ``(1, 3, resolution, resolution)``.
+
+    Raises:
+        FileNotFoundError: If ``path`` does not exist.
+    """
+    if not path.is_file():
+        raise FileNotFoundError(f"parity fixture image not found: {path}")
+    image = Image.open(path).convert("RGB")
+    tensor = TF.to_tensor(image)
+    tensor = TF.resize(tensor, [resolution, resolution], antialias=False)
+    tensor = TF.normalize(tensor, _IMAGENET_MEAN, _IMAGENET_STD)
+    return tensor.unsqueeze(0)
 
 
 def _coreml_parity_diffs(
@@ -291,14 +363,14 @@ def coreml_detection_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[A
     """Export RFDETRNano to a ``.mlpackage`` once for e2e tests."""
     from rfdetr import RFDETRNano
 
-    torch.manual_seed(42)
     out_dir = tmp_path_factory.mktemp("coreml_det")
     detector = RFDETRNano(pretrain_weights=None)
     mlpackage_path = detector.export(output_dir=str(out_dir), format="coreml", verbose=False)
 
     model = detector.model.model.to("cpu").eval()
     model.export()
-    example = torch.randn(1, 3, detector.model.resolution, detector.model.resolution)
+    resolution = int(detector.model.resolution)
+    example = _structured_parity_input(1, 3, resolution, resolution)
     return model, example, Path(mlpackage_path)
 
 
@@ -307,21 +379,21 @@ def coreml_segmentation_export(tmp_path_factory: pytest.TempPathFactory) -> tupl
     """Export RFDETRSegNano to a ``.mlpackage`` once for e2e tests."""
     from rfdetr import RFDETRSegNano
 
-    torch.manual_seed(42)
     out_dir = tmp_path_factory.mktemp("coreml_seg")
     detector = RFDETRSegNano(pretrain_weights=None)
     mlpackage_path = detector.export(output_dir=str(out_dir), format="coreml", verbose=False)
 
     model = detector.model.model.to("cpu").eval()
     model.export()
-    example = torch.randn(1, 3, detector.model.resolution, detector.model.resolution)
+    resolution = int(detector.model.resolution)
+    example = _structured_parity_input(1, 3, resolution, resolution)
     return model, example, Path(mlpackage_path)
 
 
 @coreml_only
-@pytest.mark.coreml
+@pytest.mark.coreml_e2e
 class TestCoreMLEndToEnd:
-    """Real CoreML export on darwin/coremltools with FLOAT32 CPU numerical parity."""
+    """Real CoreML export + FLOAT32 CPU numerical parity (``-m coreml_e2e``)."""
 
     def test_mlpackage_written_for_detection(self, coreml_detection_export: tuple[Any, torch.Tensor, Path]) -> None:
         """Detection export must write a non-empty ``.mlpackage`` directory/bundle."""
@@ -337,14 +409,53 @@ class TestCoreMLEndToEnd:
         assert mlpackage_path.exists()
         assert mlpackage_path.suffix == ".mlpackage" or mlpackage_path.name.endswith(".mlpackage")
 
-    def test_detection_outputs_match_pytorch(self, coreml_detection_export: tuple[Any, torch.Tensor, Path]) -> None:
-        """CoreML detection (boxes, logits) must match eager export-mode PyTorch within tolerance."""
+    def test_detection_outputs_match_pytorch_structured(
+        self, coreml_detection_export: tuple[Any, torch.Tensor, Path]
+    ) -> None:
+        """CoreML detection matches eager on structured (gradient+checkerboard) input."""
         model, example, mlpackage_path = coreml_detection_export
         validate_detection_coreml_vs_pytorch(mlpackage_path, model, example)
 
-    def test_segmentation_outputs_match_pytorch(
+    def test_segmentation_outputs_match_pytorch_structured(
         self, coreml_segmentation_export: tuple[Any, torch.Tensor, Path]
     ) -> None:
-        """CoreML segmentation (boxes, logits, masks) must match eager export-mode PyTorch within tolerance."""
+        """CoreML segmentation matches eager on structured (gradient+checkerboard) input."""
         model, example, mlpackage_path = coreml_segmentation_export
         validate_segmentation_coreml_vs_pytorch(mlpackage_path, model, example)
+
+    def test_detection_outputs_match_pytorch_dog_jpg(
+        self, coreml_detection_export: tuple[Any, torch.Tensor, Path]
+    ) -> None:
+        """CoreML detection matches eager on the fixture photo (``dog.jpg``)."""
+        model, structured, mlpackage_path = coreml_detection_export
+        example = _parity_input_from_image(_DOG_JPG, int(structured.shape[-1]))
+        validate_detection_coreml_vs_pytorch(mlpackage_path, model, example)
+
+    def test_segmentation_outputs_match_pytorch_dog_jpg(
+        self, coreml_segmentation_export: tuple[Any, torch.Tensor, Path]
+    ) -> None:
+        """CoreML segmentation matches eager on the fixture photo (``dog.jpg``)."""
+        model, structured, mlpackage_path = coreml_segmentation_export
+        example = _parity_input_from_image(_DOG_JPG, int(structured.shape[-1]))
+        validate_segmentation_coreml_vs_pytorch(mlpackage_path, model, example)
+
+
+class TestCoreMLParityInputHelpers:
+    """Unit checks for CoreML-local parity input builders (no coremltools required)."""
+
+    def test_structured_parity_input_shape_and_determinism(self) -> None:
+        """Structured tensor must be ``NCHW``, finite, and seed-independent-deterministic."""
+        a = _structured_parity_input(1, 3, 64, 64)
+        b = _structured_parity_input(1, 3, 64, 64)
+        assert a.shape == (1, 3, 64, 64)
+        assert torch.isfinite(a).all()
+        assert torch.equal(a, b)
+        # Spatially varying — not a constant fill.
+        assert float(a.std()) > 1e-3
+
+    def test_dog_fixture_exists_and_loads(self) -> None:
+        """Committed ``dog.jpg`` fixture must load to a normalized ``1x3xHxW`` tensor."""
+        assert _DOG_JPG.is_file(), f"missing fixture {_DOG_JPG}"
+        tensor = _parity_input_from_image(_DOG_JPG, 64)
+        assert tensor.shape == (1, 3, 64, 64)
+        assert torch.isfinite(tensor).all()

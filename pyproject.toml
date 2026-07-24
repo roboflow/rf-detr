@@ -263,7 +263,8 @@ markers = [
     "flaky: tests that may fail due to nondeterminism",
     "tflite: tests requiring onnx2tf and TFLite dependencies",
     "executorch: tests requiring the executorch package",
-    "coreml: tests requiring coremltools (typically macOS)",
+    "coreml: CoreML unit/wiring/op-coverage tests requiring coremltools (typically macOS)",
+    "coreml_e2e: CoreML end-to-end convert + numerical parity (structured and photo inputs; opt-in)",
 ]
 filterwarnings = [
     # pytest-xdist workers close their channel before teardown completes;
