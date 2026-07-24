@@ -123,7 +123,8 @@ class MSDeformAttn(nn.Module):
             query: (N, Length_{query}, C)
             reference_points: (N, Length_{query}, n_levels, 2) with range in [0, 1],
                 top-left (0,0), bottom-right (1, 1), including padding area; or (N, Length_{query}, n_levels, 4) adding
-                additional (w, h) to form reference boxes.
+                additional (w, h) to form reference boxes. In export mode, the level dim may also be 1
+                (e.g. a single shared decoder reference box); it is broadcast to n_levels internally.
             input_flatten: (N, sum_{l=0}^{L-1} H_l * W_l, C)
             input_spatial_shapes: (n_levels, 2), [(H_0, W_0), (H_1, W_1), ..., (H_{L-1}, W_{L-1})]
             input_level_start_index: (n_levels,), [0, H_0*W_0, H_0*W_0+H_1*W_1, ...,
@@ -137,6 +138,11 @@ class MSDeformAttn(nn.Module):
 
         Returns:
             Output tensor of shape (N, Length_{query}, C).
+
+        Raises:
+            ValueError: If ``input_spatial_shapes_hw`` is ``None`` in export mode; if the last
+                dimension of ``reference_points`` is not 2 or 4; or if the level dimension is
+                neither 1 nor ``n_levels`` (checked in both eager and export mode).
         """
         batch_size, len_query, _ = query.shape
         batch_size, len_input, _ = input_flatten.shape
@@ -172,15 +178,30 @@ class MSDeformAttn(nn.Module):
             batch_size, len_query, self.n_heads, self.n_levels * self.n_points
         )
 
+        # Reference points carry either one box per level (level dim == n_levels) or a single
+        # shared box (level dim == 1) broadcast across all levels. Validate here — before the
+        # export/eager split — so malformed input is rejected with the same clear message on both
+        # paths; without this hoist eager silently mis-broadcasts or raises an opaque torch shape
+        # error depending on self._export. Only the export path materializes the singleton via
+        # .expand() below; eager relies on natural broadcasting over the None-inserted level axis.
+        n_ref_levels = reference_points.shape[2]
+        if n_ref_levels not in (1, self.n_levels):
+            raise ValueError(f"reference_points level dim must be 1 or n_levels={self.n_levels}, got {n_ref_levels}")
+
         if self._export:
             # Export path: build sampling_locations at rank 5 by merging (n_levels, n_points) -> n_levels*n_points,
             # so no tensor exceeds rank 5. CoreML's MIL backend rejects rank-6 tensors; XNNPACK is unaffected. The
             # merged layout is bit-identical to the rank-6 path below (offset_normalizer / reference_points are
             # repeat_interleaved over n_points to match the [n_levels, n_points] flattening order). The core consumes
             # the rank-5 form (detected by ndim). Only reached in export mode, so eager train/inference is unchanged.
+            #
+            # Decoder export mode passes reference_points with level dim 1 (shared across levels); the rank-6 path
+            # broadcasts via None dims. Expand here before repeat_interleave so the merged axis is n_levels*n_points.
             sampling_offsets = self.sampling_offsets(query).view(
                 batch_size, len_query, self.n_heads, self.n_levels * self.n_points, 2
             )
+            if n_ref_levels == 1:
+                reference_points = reference_points.expand(-1, -1, self.n_levels, -1)
             if reference_points.shape[-1] == 2:
                 offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
                 offset_normalizer = offset_normalizer.repeat_interleave(self.n_points, dim=0)  # n_levels*n_points, 2
