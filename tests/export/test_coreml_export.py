@@ -98,7 +98,8 @@ def _parity_input_from_image(path: Path, resolution: int) -> torch.Tensor:
     """
     if not path.is_file():
         raise FileNotFoundError(f"parity fixture image not found: {path}")
-    image = Image.open(path).convert("RGB")
+    with Image.open(path) as img:
+        image = img.convert("RGB")
     tensor = TF.to_tensor(image)
     tensor = TF.resize(tensor, [resolution, resolution], antialias=False)
     tensor = TF.normalize(tensor, _IMAGENET_MEAN, _IMAGENET_STD)
