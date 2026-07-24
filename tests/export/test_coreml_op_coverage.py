@@ -5,16 +5,14 @@
 # ------------------------------------------------------------------------
 """CoreML op-coverage checklist.
 
-How we find CoreML blockers (without reading CoreML's traceback)
-----------------------------------------------------------------
-``ct.convert`` crashes inside coremltools and does not name the RF-DETR line.
-Instead: export + decompose → walk ``call_function`` nodes → ask coremltools'
-registry if it knows each op kind → fix gaps before convert.
+``ct.convert`` can fail deep inside coremltools without pointing at an RF-DETR line.
+Export and decompose the graph, walk ``call_function`` nodes, and check each op kind
+against coremltools' Torch registry (via ``unsupported_coreml_ops``, after the
+package-local patches in ``torch_ops.py``) before converting.
 
-``unsupported_coreml_ops`` is that checklist (after our package-local Torch-op
-patches in ``torch_ops.py``). Prefer registry patches over model call-site rewrites.
-
-Nano must stay registry-clean after patches (living allowlist empty). New kinds fail.
+Prefer registry patches over model call-site rewrites. After patches, Nano must have
+no registry gaps; ``_KNOWN_NANO_UNSUPPORTED_KINDS`` stays empty unless a gap is
+accepted deliberately.
 """
 
 from __future__ import annotations
@@ -34,8 +32,8 @@ from rfdetr.export._coreml.torch_ops import ensure_coreml_torch_op_patches
 
 coreml_only = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="coremltools not installed")
 
-# Living allowlist of Nano registry gaps *after* ``ensure_coreml_torch_op_patches``.
-# Keep empty; any new kind must be fixed (or consciously re-added here) before merge.
+# Known Nano registry gaps *after* ``ensure_coreml_torch_op_patches``. Keep empty;
+# fix new kinds (or add them here deliberately) before merge.
 _KNOWN_NANO_UNSUPPORTED_KINDS: frozenset[str] = frozenset()
 
 # Registry keys that tests in this module may pop or override. Snapshotted/restored by
@@ -60,10 +58,9 @@ def _reset_patches_for_test() -> None:
 def _restore_coreml_torch_op_registry() -> Generator[None, None, None]:
     """Snapshot coremltools Torch-op registry entries and our patch flag; restore on teardown.
 
-    Tests may pop/override registry keys to exercise ``ensure_coreml_torch_op_patches`` / the
-    scanner. Restoring in fixture teardown (not a success-path-only ``finally``) matches the
-    #1142 Borda pattern so a failing assert cannot leak mutated global registry state into
-    later tests.
+    Tests may pop or override registry keys to exercise ``ensure_coreml_torch_op_patches``
+    and the scanner. Restore in fixture teardown (not only on the success path) so a
+    failing assert cannot leak mutated global registry state into later tests.
     """
     from coremltools.converters.mil.frontend.torch.ops import _TORCH_OPS_REGISTRY
 
@@ -127,7 +124,7 @@ class TestEnsureCoremlTorchOpPatches:
         )
 
     def test_nano_still_emits_alias_but_is_registry_clean(self) -> None:
-        """Nano's export graph must still contain ``aten.alias`` (patch is load-bearing)."""
+        """Nano's export graph must still contain ``aten.alias``; the registry patch must clear it."""
         from rfdetr import RFDETRNano
 
         model = RFDETRNano(pretrain_weights=None).model.model
