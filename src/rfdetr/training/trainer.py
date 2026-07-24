@@ -116,6 +116,44 @@ def _is_distributed_strategy_requested(strategy: str) -> bool:
     return any(token in strategy_name for token in ("ddp", "fsdp", "deepspeed"))
 
 
+def _is_sharded_strategy(strategy: object) -> bool:
+    """Return whether *strategy* is a sharded distributed strategy.
+
+    Detects FSDP, FSDP2 (``ModelParallelStrategy``) and DeepSpeed given either a config
+    string (e.g. ``"fsdp"``, ``"deepspeed"``) or an instantiated ``Strategy`` object. Object
+    detection uses ``isinstance`` because ``str(ModelParallelStrategy())`` contains neither the
+    ``"fsdp"`` nor ``"deepspeed"`` token, so a substring test alone would misclassify FSDP2 as
+    non-sharded and let it reach the unvalidated manual-optimization path.
+
+    Args:
+        strategy: A strategy string or an instantiated PyTorch Lightning ``Strategy`` object.
+
+    Returns:
+        ``True`` if *strategy* requests a sharded strategy, ``False`` otherwise.
+
+    Examples:
+        >>> _is_sharded_strategy("fsdp")
+        True
+        >>> _is_sharded_strategy("ddp")
+        False
+    """
+    if isinstance(strategy, str):
+        return any(token in strategy.lower() for token in ("fsdp", "deepspeed"))
+    try:
+        from pytorch_lightning.strategies import (
+            DeepSpeedStrategy,
+            FSDPStrategy,
+            ModelParallelStrategy,
+        )
+    except ImportError:
+        sharded_types: tuple[type, ...] = ()
+    else:
+        sharded_types = (FSDPStrategy, DeepSpeedStrategy, ModelParallelStrategy)
+    if sharded_types and isinstance(strategy, sharded_types):
+        return True
+    return any(token in str(strategy).lower() for token in ("fsdp", "deepspeed", "modelparallel"))
+
+
 def _accelerator_has_multiple_auto_devices(accelerator: str | None) -> bool:
     """Return whether PTL auto/all device resolution can select multiple devices."""
     accelerator_name = (accelerator or "auto").strip().lower()
@@ -482,13 +520,25 @@ def build_trainer(
         # Sharded strategies (FSDP / DeepSpeed) shard optimizer state and gradients in ways
         # the manual-optimization + dynamic per-step loss-normalization path has not been
         # validated against, so those remain unsupported for keypoint models.
-        sharded_requested = any(s in str(strategy).lower() for s in ("fsdp", "deepspeed"))
-        if sharded_requested:
+        if _is_sharded_strategy(strategy):
             raise NotImplementedError(
                 "Keypoint training does not support sharded distributed strategies "
                 f"(strategy={strategy!r}). Use DistributedDataParallel instead, e.g. strategy='ddp' "
                 "(or strategy='auto' with devices>1), which is supported for keypoint models."
             )
+        if isinstance(strategy, _DDPStrategy):
+            # A supplied DDPStrategy object bypasses the string-strategy
+            # find_unused_parameters wrap below. Keypoint models can leave parameters
+            # unused on some steps (two-stage encoder / group-DETR branches), which plain
+            # DDP with find_unused_parameters=False rejects mid-training, so require it.
+            ddp_kwargs = getattr(strategy, "_ddp_kwargs", {})
+            if not ddp_kwargs.get("find_unused_parameters", False):
+                raise ValueError(
+                    "Keypoint training under a supplied DDPStrategy requires "
+                    "find_unused_parameters=True; construct it as "
+                    "DDPStrategy(find_unused_parameters=True). Keypoint models can leave "
+                    "parameters unused on some steps, which plain DDP rejects."
+                )
         _logger.info(
             "Keypoint model + distributed execution (strategy=%r, devices=%r, num_nodes=%r) → "
             "DDP with manual optimization. For best throughput on multi-GPU keep grad_accum_steps=1: "
@@ -529,7 +579,7 @@ def build_trainer(
             _logger.info(
                 "strategy='ddp' → DDPStrategy(find_unused_parameters=True).",
             )
-    sharded = any(s in str(strategy).lower() for s in ("fsdp", "deepspeed"))
+    sharded = _is_sharded_strategy(strategy)
     enable_ema = bool(tc.use_ema) and not sharded
     if tc.use_ema and sharded:
         warnings.warn(
