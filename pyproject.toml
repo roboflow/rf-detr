@@ -95,7 +95,7 @@ executorch = [
     "executorch>=1.3,<2.0",  # torch.export -> .pte, XNNPACK CPU delegate; validated on 1.3.1
 ]
 coreml = [
-    "coremltools>=7.0,<10.0",  # torch.export -> native .mlpackage; distinct from executorch backend="coreml"
+    "coremltools>=8.0,<10.0",  # torch.export (ExportedProgram) support added in 8.0; validated on 9.0
 ]
 loggers = [
     "tensorboard>=2.13.0",
