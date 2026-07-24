@@ -304,3 +304,36 @@ class TestComputeL1KeypointLossOobClass:
         total.backward()
         assert pred_keypoints.grad is not None, "keypoint-head output received no gradient path"
         torch.testing.assert_close(pred_keypoints.grad, torch.zeros_like(pred_keypoints.grad))
+
+    @pytest.mark.parametrize(
+        "fill_value, dtype",
+        [
+            pytest.param(float("nan"), torch.float32, id="nan"),
+            pytest.param(float("inf"), torch.float32, id="inf"),
+            pytest.param(1000.0, torch.float16, id="fp16-overflow"),
+        ],
+    )
+    def test_class_index_out_of_range_zeros_finite_under_nonfinite_predictions(
+        self, fill_value: float, dtype: torch.dtype
+    ) -> None:
+        """Out-of-range guard zeros must stay finite even when predictions are NaN/Inf or overflow.
+
+        ``all_pred_keypoints.sum() * 0.0`` yields NaN for non-finite predictions (``nan * 0 == nan``) or when a finite
+        fp16 tensor overflows in ``.sum()`` (``inf * 0 == nan``). The value-independent empty reduction must instead
+        return exactly-zero, finite losses while staying graph-connected.
+        """
+        pred_keypoints = torch.full((1, 17, 7), fill_value, dtype=dtype, requires_grad=True)
+        target_keypoints = torch.rand(1, 17, 3)
+        target_keypoints[:, :, 2] = 2.0
+        result = compute_l1_keypoint_loss(
+            all_pred_keypoints=pred_keypoints,
+            target_keypoints=target_keypoints,
+            target_classes=torch.tensor([2], dtype=torch.int64),
+            target_areas=torch.tensor([1.0], dtype=torch.float32),
+            num_keypoints_per_class=[17],
+        )
+
+        for i, loss in enumerate(result):
+            assert loss.requires_grad, f"Loss[{i}] must stay connected to the autograd graph"
+            assert torch.isfinite(loss).all(), f"Loss[{i}] must be finite, got {loss}"
+            torch.testing.assert_close(loss, torch.zeros_like(loss))
