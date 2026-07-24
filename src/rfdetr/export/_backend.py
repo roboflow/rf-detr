@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Backend/format resolution and ExecuTorch dispatch helpers for :meth:`rfdetr.detr.RFDETR.export`.
+"""Backend/format resolution and export-format dispatch helpers for :meth:`rfdetr.detr.RFDETR.export`.
 
 These are utility functions shared by the export CLI (:mod:`rfdetr.export.main`) and the public
 :meth:`rfdetr.detr.RFDETR.export` API — kept in their own module so ``main.py`` stays focused on CLI orchestration.
@@ -23,10 +23,12 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 # Every format accepted by :meth:`rfdetr.detr.RFDETR.export`.
-_EXPORT_FORMATS: frozenset[str] = frozenset({"onnx", "tflite", "tensorrt", "executorch"})
+_EXPORT_FORMATS: frozenset[str] = frozenset({"onnx", "tflite", "tensorrt", "executorch", "coreml"})
 # The subset of :data:`_EXPORT_FORMATS` that specialize for a hardware backend, and so require a ``backend`` argument
 # (the rest are backend-agnostic).  The accepted backends per format, and the backends that further require a ``soc``,
 # are owned by the converter (``_VALID_BACKENDS`` / ``_SOC_BACKENDS``).
+# Note: ``format="coreml"`` (native ``.mlpackage``) is backend-agnostic; ExecuTorch's ``backend="coreml"`` is separate
+# and still goes through ``format="executorch"``.
 _BACKEND_FORMATS: frozenset[str] = frozenset({"executorch"})
 
 
@@ -189,3 +191,71 @@ def _export_executorch_format(
     )
     logger.info(f"Successfully exported ExecuTorch model to: {pte_path}")
     return pte_path
+
+
+def _export_coreml_format(
+    model: LWDETR,
+    input_tensors: Tensor,
+    output_dir_path: Path,
+    *,
+    variant_name: str | None,
+    dynamic_batch: bool,
+    verbose: bool,
+    notes: object,
+) -> Path:
+    """Dispatch :meth:`rfdetr.detr.RFDETR.export` to the native CoreML converter.
+
+    This is ``format="coreml"`` → ``.mlpackage`` via ``torch.export`` + ``coremltools``. It is distinct from
+    ExecuTorch's ``format="executorch", backend="coreml"`` path, which produces a ``.pte``.
+
+    Args:
+        model: The prepared (CPU) PyTorch module to export.
+        input_tensors: Example input tensor used to trace the graph.
+        output_dir_path: Directory where the ``.mlpackage`` is written.
+        variant_name: Model variant identifier used to name the output bundle.
+        dynamic_batch: Whether a dynamic batch dimension was requested (always rejected by the converter).
+        verbose: Forwarded to :func:`~rfdetr.export._coreml.converter.export_coreml`.
+        notes: User-supplied export metadata; CoreML has no ONNX-style metadata slot, so a non-``None`` value warns.
+
+    Returns:
+        Path to the exported ``.mlpackage`` bundle.
+
+    Raises:
+        ImportError: If the optional ``coreml`` dependency is not installed.
+        NotImplementedError: If ``dynamic_batch`` is requested, or if the exported graph has CoreML registry gaps.
+    """
+    if notes is not None:
+        warnings.warn(
+            "`notes` is not forwarded to format='coreml' (CoreML .mlpackage has no ONNX-style metadata slot). "
+            "This argument is ignored.",
+            UserWarning,
+            stacklevel=3,
+        )
+    warnings.warn(
+        "CoreML export is experimental and work-in-progress. "
+        "Dynamic batch is not supported.",
+        UserWarning,
+        stacklevel=3,
+    )
+    try:
+        from rfdetr.export._coreml.converter import export_coreml
+    except ImportError:
+        logger.error(
+            "It seems some dependencies for CoreML export are missing."
+            " Please run `pip install rfdetr[coreml]` and try again.",
+        )
+        raise
+    # CoreML consumes a torch.export graph directly, so switch the model into its
+    # export-friendly forward (the ONNX path does this inside export_onnx).
+    if hasattr(model, "export"):
+        model.export()
+    mlpackage_path = export_coreml(
+        model=model,
+        input_tensors=input_tensors,
+        output_dir=str(output_dir_path),
+        variant_name=variant_name,
+        dynamic_batch=dynamic_batch,
+        verbose=verbose,
+    )
+    logger.info(f"Successfully exported CoreML model to: {mlpackage_path}")
+    return mlpackage_path

@@ -94,6 +94,9 @@ tflite = [
 executorch = [
     "executorch>=1.3,<2.0",  # torch.export -> .pte, XNNPACK CPU delegate; validated on 1.3.1
 ]
+coreml = [
+    "coremltools>=7.0,<10.0",  # torch.export -> native .mlpackage; distinct from executorch backend="coreml"
+]
 loggers = [
     "tensorboard>=2.13.0",
     "protobuf>=3.20.0",  # Cap <4.0.0 removed — tensorflow>=2.16.0 (required by [tflite]) needs protobuf>=3.20.3 and is incompatible with <4.0.0 (see #1041)
@@ -260,6 +263,7 @@ markers = [
     "flaky: tests that may fail due to nondeterminism",
     "tflite: tests requiring onnx2tf and TFLite dependencies",
     "executorch: tests requiring the executorch package",
+    "coreml: tests requiring coremltools (typically macOS)",
 ]
 filterwarnings = [
     # pytest-xdist workers close their channel before teardown completes;
@@ -324,6 +328,7 @@ overrides = [
     "tflite_runtime", "tflite_runtime.*",
     "tensorflow", "tensorflow.*",
     "executorch", "executorch.*",
+    "coremltools", "coremltools.*",
     "rfdetr_plus", "rfdetr_plus.*",
   ], ignore_missing_imports = true },
   # Optional-import None assignments in console.py: type: ignore[assignment, misc] is needed when
