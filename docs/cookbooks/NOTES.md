@@ -51,6 +51,7 @@ Current tag colours are assigned dynamically by the docs UI, so they may change 
 | File                                | Card title                                      | Version |
 | ----------------------------------- | ----------------------------------------------- | ------- |
 | `custom-augmentations.ipynb`        | Custom Augmentations and Live Training Progress | v1.5.0  |
+| `custom-optimizer-scheduler.ipynb`  | Custom Optimizer and LR Scheduler               | v1.9.0  |
 | `fine-tune_detection.ipynb`         | Fine-Tune RF-DETR Object Detection              | v1.8.0  |
 | `fine-tune_keypoints.ipynb`         | Fine-Tune RF-DETR Keypoint Detection            | v1.8.0  |
 | `fine-tune_segmentation.ipynb`      | Fine-Tune RF-DETR Instance Segmentation         | v1.8.2  |

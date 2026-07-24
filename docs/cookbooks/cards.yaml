@@ -35,3 +35,9 @@ cards:
     version: v1.6.0
     author: Borda
     description: "Train RF-DETR with PyTorch Lightning — callbacks, checkpointing, and the LightningModule API."
+  - href: custom-optimizer-scheduler/
+    name: "Custom Optimizer and LR Scheduler"
+    labels: [TRAINING, PYTORCH LIGHTNING]
+    version: v1.9.0
+    author: Borda
+    description: "Swap RF-DETR's optimizer and LR scheduler via TrainConfig — native torch.optim, a third-party optimizer by import path, or a functools.partial — fine-tuned on a small Roboflow Universe dataset."
