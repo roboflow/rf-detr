@@ -249,11 +249,11 @@ model = RFDETRKeypointPreview()
 model.train(
     dataset_dir="path/to/keypoint-dataset",
     epochs=100,
-    batch_size=2,        # per-GPU batch size
+    batch_size=2,  # per-GPU batch size
     grad_accum_steps=1,  # recommended on multi-GPU — see note below
     lr=1e-4,
     output_dir="output",
-    devices="auto",      # or devices=8
+    devices="auto",  # or devices=8
 )
 ```
 

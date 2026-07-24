@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from pytorch_lightning.callbacks import ModelCheckpoint
+
 from rfdetr.config import (
     KeypointTrainConfig,
     RFDETRBaseConfig,

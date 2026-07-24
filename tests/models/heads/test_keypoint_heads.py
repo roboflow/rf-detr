@@ -6,6 +6,7 @@
 
 import pytest
 import torch
+
 from rfdetr.models.heads import ConditionalQueryInitializer
 from rfdetr.models.heads.keypoints import (
     compute_keypoint_matching_cost,
@@ -279,10 +280,9 @@ class TestComputeL1KeypointLossOobClass:
     def test_class_index_out_of_range_zeros_stay_connected_to_graph(self) -> None:
         """Out-of-range guard must return graph-connected zeros for DDP correctness.
 
-        Under DistributedDataParallel, a detached zero would leave the keypoint-head
-        parameters without a gradient path on this batch, desyncing the gradient reducer
-        across ranks. The returned zeros must therefore still be a function of the head
-        output (grad present and numerically zero), not fresh leaves.
+        Under DistributedDataParallel, a detached zero would leave the keypoint-head parameters without a gradient path
+        on this batch, desyncing the gradient reducer across ranks. The returned zeros must therefore still be a
+        function of the head output (grad present and numerically zero), not fresh leaves.
         """
         pred_keypoints = torch.randn(1, 17, 7, requires_grad=True)
         target_keypoints = torch.rand(1, 17, 3)
