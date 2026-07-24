@@ -232,8 +232,7 @@ def _export_coreml_format(
             stacklevel=3,
         )
     warnings.warn(
-        "CoreML export is experimental and work-in-progress. "
-        "Dynamic batch is not supported.",
+        "CoreML export is experimental and work-in-progress. Dynamic batch is not supported.",
         UserWarning,
         stacklevel=3,
     )

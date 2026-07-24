@@ -126,8 +126,7 @@ def export_coreml(
                 summary = f"CoreML op registry gaps: {dict(coverage)}"
                 logger.error(summary)
                 raise NotImplementedError(
-                    f"{summary}. Fix these ops before convert "
-                    "(see tests/export/test_coreml_op_coverage.py)."
+                    f"{summary}. Fix these ops before convert (see tests/export/test_coreml_op_coverage.py)."
                 )
             mlmodel = ct.convert(
                 exported_program,

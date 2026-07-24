@@ -72,8 +72,7 @@ def _coreml_parity_diffs(
     coreml_tensors = [torch.from_numpy(np.asarray(prediction[name], dtype=np.float32)) for name in output_names]
 
     assert len(coreml_tensors) == len(eager_tensors), (
-        f"CoreML output count {len(coreml_tensors)} != PyTorch {len(eager_tensors)} "
-        f"(spec names={output_names})"
+        f"CoreML output count {len(coreml_tensors)} != PyTorch {len(eager_tensors)} (spec names={output_names})"
     )
     diffs: list[float] = []
     for idx, (eager, coreml) in enumerate(zip(eager_tensors, coreml_tensors)):
@@ -124,9 +123,7 @@ def validate_segmentation_coreml_vs_pytorch(
         AssertionError: When output count/shape disagrees or max-abs-diff exceeds tolerance.
     """
     diffs = _coreml_parity_diffs(mlpackage_path, pytorch_model, example_input)
-    assert len(diffs) == 3, (
-        f"segmentation export must yield (boxes, logits, masks), got {len(diffs)} outputs"
-    )
+    assert len(diffs) == 3, f"segmentation export must yield (boxes, logits, masks), got {len(diffs)} outputs"
     assert max(diffs) < _COREML_MAX_ABS_DIFF, (
         f"CoreML segmentation outputs diverge from PyTorch: max abs diff {max(diffs)} "
         f"(boxes={diffs[0]}, logits={diffs[1]}, masks={diffs[2]}, bound={_COREML_MAX_ABS_DIFF})"
@@ -173,9 +170,7 @@ class TestExportCoremlValidation:
         with pytest.raises(NotImplementedError, match="dynamic_batch"):
             export_coreml(model, example, tmp_path, dynamic_batch=True)
 
-    def test_missing_coremltools_raises_import_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_coremltools_raises_import_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """``export_coreml`` must surface the install hint when coremltools is absent."""
         monkeypatch.setattr(
             "rfdetr.export._coreml.converter._check_coremltools_available",
@@ -328,9 +323,7 @@ def coreml_segmentation_export(tmp_path_factory: pytest.TempPathFactory) -> tupl
 class TestCoreMLEndToEnd:
     """Real CoreML export on darwin/coremltools with FLOAT32 CPU numerical parity."""
 
-    def test_mlpackage_written_for_detection(
-        self, coreml_detection_export: tuple[Any, torch.Tensor, Path]
-    ) -> None:
+    def test_mlpackage_written_for_detection(self, coreml_detection_export: tuple[Any, torch.Tensor, Path]) -> None:
         """Detection export must write a non-empty ``.mlpackage`` directory/bundle."""
         _, _, mlpackage_path = coreml_detection_export
         assert mlpackage_path.exists()
@@ -344,9 +337,7 @@ class TestCoreMLEndToEnd:
         assert mlpackage_path.exists()
         assert mlpackage_path.suffix == ".mlpackage" or mlpackage_path.name.endswith(".mlpackage")
 
-    def test_detection_outputs_match_pytorch(
-        self, coreml_detection_export: tuple[Any, torch.Tensor, Path]
-    ) -> None:
+    def test_detection_outputs_match_pytorch(self, coreml_detection_export: tuple[Any, torch.Tensor, Path]) -> None:
         """CoreML detection (boxes, logits) must match eager export-mode PyTorch within tolerance."""
         model, example, mlpackage_path = coreml_detection_export
         validate_detection_coreml_vs_pytorch(mlpackage_path, model, example)

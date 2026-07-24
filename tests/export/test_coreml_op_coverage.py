@@ -88,8 +88,7 @@ class TestEnsureCoremlTorchOpPatches:
         _reset_patches_for_test()
         ensure_coreml_torch_op_patches()
         assert (
-            _TORCH_OPS_REGISTRY.name_to_func_mapping["bitwise_not"]
-            is torch_ops._bitwise_not_allowing_float_bool_masks
+            _TORCH_OPS_REGISTRY.name_to_func_mapping["bitwise_not"] is torch_ops._bitwise_not_allowing_float_bool_masks
         )
 
     def test_nano_still_emits_alias_but_is_registry_clean(self) -> None:
