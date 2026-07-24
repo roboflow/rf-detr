@@ -285,6 +285,7 @@ filterwarnings = [
 
 [tool.codespell]
 skip = "*.pth"
+ignore-words-list = "ane"
 
 [tool.mypy]
 python_version = "3.10"
