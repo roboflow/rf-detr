@@ -20,6 +20,8 @@ Nano must stay registry-clean after patches (living allowlist empty). New kinds 
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Generator
+from typing import Any
 
 import pytest
 import torch
@@ -36,6 +38,10 @@ coreml_only = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="coremlto
 # Keep empty; any new kind must be fixed (or consciously re-added here) before merge.
 _KNOWN_NANO_UNSUPPORTED_KINDS: frozenset[str] = frozenset()
 
+# Registry keys that tests in this module may pop or override. Snapshotted/restored by
+# ``_restore_coreml_torch_op_registry`` so a failing assert cannot leak mutations.
+_REGISTRY_KEYS_MUTATED_IN_TESTS: frozenset[str] = frozenset({"alias", "__and__", "bitwise_not"})
+
 
 def _export_decomposed(model: nn.Module, example: torch.Tensor) -> ExportedProgram:
     """Match ``export_coreml`` graph prep: ``torch.export`` then ``run_decompositions``."""
@@ -50,10 +56,39 @@ def _reset_patches_for_test() -> None:
     torch_ops._PATCHED = False
 
 
+@pytest.fixture
+def _restore_coreml_torch_op_registry() -> Generator[None, None, None]:
+    """Snapshot coremltools Torch-op registry entries and our patch flag; restore on teardown.
+
+    Tests may pop/override registry keys to exercise ``ensure_coreml_torch_op_patches`` / the
+    scanner. Restoring in fixture teardown (not a success-path-only ``finally``) matches the
+    #1142 Borda pattern so a failing assert cannot leak mutated global registry state into
+    later tests.
+    """
+    from coremltools.converters.mil.frontend.torch.ops import _TORCH_OPS_REGISTRY
+
+    import rfdetr.export._coreml.torch_ops as torch_ops
+
+    mapping = _TORCH_OPS_REGISTRY.name_to_func_mapping
+    saved_handlers: dict[str, Any] = {key: mapping.get(key) for key in _REGISTRY_KEYS_MUTATED_IN_TESTS}
+    saved_patched = torch_ops._PATCHED
+    yield
+    for key, handler in saved_handlers.items():
+        if handler is None:
+            mapping.pop(key, None)
+        else:
+            mapping[key] = handler
+    torch_ops._PATCHED = saved_patched
+
+
 @coreml_only
 @pytest.mark.coreml
 class TestEnsureCoremlTorchOpPatches:
     """Package-local coremltools registry patches."""
+
+    @pytest.fixture(autouse=True)
+    def _autouse_restore_registry(self, _restore_coreml_torch_op_registry: None) -> None:
+        """Restore registry mutations after every test (see ``_restore_coreml_torch_op_registry``)."""
 
     def test_alias_maps_to_alias_copy_noop(self) -> None:
         """``alias`` must share coremltools' ``alias_copy`` identity handler."""
@@ -122,6 +157,10 @@ class TestEnsureCoremlTorchOpPatches:
 class TestUnsupportedCoremlOps:
     """Checklist against the real coremltools registry."""
 
+    @pytest.fixture(autouse=True)
+    def _autouse_restore_registry(self, _restore_coreml_torch_op_registry: None) -> None:
+        """Restore registry mutations after every test (see ``_restore_coreml_torch_op_registry``)."""
+
     def test_bool_and_is_registry_clean_after_patches(self) -> None:
         """Bool ``&`` exports as ``__and__``; package patch must make it registry-clean."""
 
@@ -149,25 +188,18 @@ class TestUnsupportedCoremlOps:
         """Scanner must still flag ``__and__`` when the package patch is not applied."""
         from coremltools.converters.mil.frontend.torch.ops import _TORCH_OPS_REGISTRY
 
+        import rfdetr.export._coreml.torch_ops as torch_ops
+
         class _RangeMaskAnd(nn.Module):
             def forward(self, x: torch.Tensor) -> torch.Tensor:
                 return ((x > 0.01) & (x < 0.99)).all(dim=-1, keepdim=True)
 
         ep = _export_decomposed(_RangeMaskAnd().eval(), torch.rand(1, 4, 4))
         mapping = _TORCH_OPS_REGISTRY.name_to_func_mapping
-        saved = mapping.pop("__and__", None)
-        _reset_patches_for_test()
-        # Keep ensure from re-adding ``__and__`` while we assert the scanner still flags it.
-        import rfdetr.export._coreml.torch_ops as torch_ops
-
+        mapping.pop("__and__", None)
+        # Keep ensure inside unsupported_coreml_ops from re-adding ``__and__``.
         torch_ops._PATCHED = True
-        try:
-            gaps = unsupported_coreml_ops(ep)
-        finally:
-            torch_ops._PATCHED = False
-            if saved is not None:
-                mapping["__and__"] = saved
-            ensure_coreml_torch_op_patches()
+        gaps = unsupported_coreml_ops(ep)
         assert "__and__" in gaps
 
     def test_nano_registry_clean_after_patches(self) -> None:
