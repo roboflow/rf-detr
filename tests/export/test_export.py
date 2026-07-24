@@ -330,6 +330,26 @@ def test_rfdetr_export_tensorrt_calls_build_engine_with_onnx_path(
     assert str(result) == str(tmp_path / "inference_model.trt")
 
 
+@pytest.mark.parametrize("fp16", [pytest.param(True, id="fp16"), pytest.param(False, id="fp32")])
+def test_rfdetr_export_tensorrt_forwards_fp16(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fp16: bool) -> None:
+    """`RFDETR.export(format="tensorrt", fp16=...)` must forward the precision flag to `build_engine`.
+
+    Passing ``fp16=False`` lets callers build an FP32 engine on TensorRT builds that lack the FP16 builder flag.
+    """
+    model = _make_tensorrt_export_model()
+    onnx_output = str(tmp_path / "inference_model.onnx")
+    mock_build_engine = MagicMock(return_value=str(tmp_path / "inference_model.trt"))
+
+    monkeypatch.setattr("rfdetr.export.main.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr("rfdetr.export.main.export_onnx", lambda *_a, **_kw: onnx_output)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+    monkeypatch.setattr("rfdetr.export._tensorrt.build_engine", mock_build_engine)
+
+    _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="tensorrt", fp16=fp16, shape=(14, 14))
+
+    assert mock_build_engine.call_args.kwargs["fp16"] == fp16
+
+
 def test_rfdetr_export_tensorrt_failure_restores_device(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A `build_engine` failure must still restore the live model to its original device.
 
@@ -713,7 +733,7 @@ class TestCliExportMain:
         ):
             _cli_export_module.main(args)
 
-        mock_build_engine.assert_called_once_with(onnx_output, verbose=True, dry_run=True)
+        mock_build_engine.assert_called_once_with(onnx_output, fp16=True, verbose=True, dry_run=True)
 
     def test_tensorrt_false_does_not_call_build_engine(self, output_dir: str) -> None:
         """When tensorrt=False (default), main() must not call build_engine."""
