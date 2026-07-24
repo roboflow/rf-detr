@@ -52,8 +52,8 @@ def _check_coremltools_available() -> None:
     """
     try:
         import coremltools  # noqa: F401
-    except ImportError as exc:
-        raise ImportError(_INSTALL_HINT) from exc
+    except Exception as exc:
+        raise ImportError(f"{_INSTALL_HINT} (coremltools import failed: {exc})") from exc
 
 
 def export_coreml(
