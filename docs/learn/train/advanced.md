@@ -237,8 +237,8 @@ Run this command on each node, changing `--node_rank` accordingly.
 ### Keypoint / Pose models
 
 Keypoint models (`RFDETRKeypointPreview`) train under `DistributedDataParallel` on multiple GPUs and
-multiple nodes exactly like detection models — build a script and launch it with `torchrun`, passing
-`devices=` explicitly:
+multiple nodes exactly like detection models — build a script and launch it with `torchrun`, setting
+`devices=` (e.g. `"auto"` or an integer like `8`):
 
 ```python
 # train_pose.py
