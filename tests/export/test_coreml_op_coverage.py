@@ -5,14 +5,12 @@
 # ------------------------------------------------------------------------
 """CoreML op-coverage checklist.
 
-``ct.convert`` can fail deep inside coremltools without pointing at an RF-DETR line.
-Export and decompose the graph, walk ``call_function`` nodes, and check each op kind
-against coremltools' Torch registry (via ``unsupported_coreml_ops``, after the
-package-local patches in ``torch_ops.py``) before converting.
+``ct.convert`` can fail deep inside coremltools without pointing at an RF-DETR line. Export and decompose the graph,
+walk ``call_function`` nodes, and check each op kind against coremltools' Torch registry (via
+``unsupported_coreml_ops``, after the package-local patches in ``torch_ops.py``) before converting.
 
-Prefer registry patches over model call-site rewrites. After patches, Nano must have
-no registry gaps; ``_KNOWN_NANO_UNSUPPORTED_KINDS`` stays empty unless a gap is
-accepted deliberately.
+Prefer registry patches over model call-site rewrites. After patches, Nano must have no registry gaps;
+``_KNOWN_NANO_UNSUPPORTED_KINDS`` stays empty unless a gap is accepted deliberately.
 """
 
 from __future__ import annotations
@@ -58,9 +56,9 @@ def _reset_patches_for_test() -> None:
 def _restore_coreml_torch_op_registry() -> Generator[None, None, None]:
     """Snapshot coremltools Torch-op registry entries and our patch flag; restore on teardown.
 
-    Tests may pop or override registry keys to exercise ``ensure_coreml_torch_op_patches``
-    and the scanner. Restore in fixture teardown (not only on the success path) so a
-    failing assert cannot leak mutated global registry state into later tests.
+    Tests may pop or override registry keys to exercise ``ensure_coreml_torch_op_patches`` and the scanner. Restore in
+    fixture teardown (not only on the success path) so a failing assert cannot leak mutated global registry state into
+    later tests.
     """
     from coremltools.converters.mil.frontend.torch.ops import _TORCH_OPS_REGISTRY
 
