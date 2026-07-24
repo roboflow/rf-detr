@@ -46,6 +46,7 @@ def _convert_onnx_export(
     calibration_data: str | np.ndarray[Any, Any] | None,
     max_images: int,
     verbose: bool,
+    fp16: bool = True,
 ) -> Path:
     """Dispatch :meth:`rfdetr.detr.RFDETR.export`'s post-ONNX-export conversion (TFLite / TensorRT / none).
 
@@ -57,6 +58,8 @@ def _convert_onnx_export(
         calibration_data: Representative images for TFLite INT8 calibration (ignored for other formats).
         max_images: Maximum calibration images to load from a directory (ignored for other formats).
         verbose: Print conversion progress information.
+        fp16: Build the TensorRT engine with FP16 precision (ignored for other formats). Pass ``False`` to
+            build an FP32 engine — useful on TensorRT builds that do not expose the FP16 builder flag.
 
     Returns:
         Path to the final exported artifact (``.onnx``, ``.tflite``, or ``.trt``).
@@ -95,7 +98,7 @@ def _convert_onnx_export(
         from rfdetr.export._tensorrt import build_engine
 
         logger.info("Converting ONNX model to TensorRT engine")
-        engine_file = build_engine(output_file, verbose=verbose)
+        engine_file = build_engine(output_file, fp16=fp16, verbose=verbose)
         logger.info(f"Successfully exported TensorRT engine to: {engine_file}")
         return Path(engine_file)
 
@@ -305,7 +308,9 @@ def main(args: argparse.Namespace) -> None:
     onnx_path = output_file  # preserve ONNX path before any post-processing step overwrites it
 
     if args.tensorrt:
-        output_file = build_engine(onnx_path, verbose=args.verbose, dry_run=args.dry_run)
+        output_file = build_engine(
+            onnx_path, fp16=getattr(args, "fp16", True), verbose=args.verbose, dry_run=args.dry_run
+        )
 
     # TODO: register --tflite, --quantization, --calibration-data, --max-images in the
     # argparser to enable TFLite export via CLI.  Until then, use RFDETR.export(format="tflite").
