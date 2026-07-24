@@ -11,7 +11,7 @@ import warnings
 from typing import Any
 
 import torch
-from pytorch_lightning import Callback, Trainer
+from pytorch_lightning import Callback, LightningModule, Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar, TQDMProgressBar
 from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBarTheme
 from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
@@ -303,6 +303,28 @@ def _append_training_callbacks(
         raise NotImplementedError("ClearML logging is not yet supported. Remove clearml=True from TrainConfig.")
 
 
+class _ForceLastEpochValidationCallback(Callback):
+    """Force a validation run on the final training epoch when ``eval_interval`` would skip it.
+
+    ``check_val_every_n_epoch=N`` makes Lightning skip the whole validation loop on non-eval epochs (the compute saving
+    behind ``eval_interval``), but Lightning has no "always validate the last epoch" switch while RF-DETR guarantees
+    last-epoch metrics (``COCOEvalCallback`` treats the final epoch as an eval epoch). The fit loop reads
+    ``trainer.check_val_every_n_epoch`` live on every epoch, so resetting it to 1 at the start of the final epoch re-
+    enables validation exactly there.
+    """
+
+    def on_train_epoch_start(self, trainer: Trainer, pl_module: "LightningModule") -> None:
+        """Reset ``check_val_every_n_epoch`` to 1 once the final epoch starts.
+
+        Args:
+            trainer: The Lightning Trainer instance.
+            pl_module: The module being trained (unused).
+        """
+        max_epochs = trainer.max_epochs
+        if isinstance(max_epochs, int) and max_epochs > 0 and trainer.current_epoch >= max_epochs - 1:
+            trainer.check_val_every_n_epoch = 1
+
+
 def build_trainer(
     train_config: TrainConfig,
     model_config: ModelConfig,
@@ -341,12 +363,31 @@ def build_trainer(
             because ``RFDETRModelModule`` owns both operations under manual optimization; passing those keys for a
             keypoint config raises a ``UserWarning`` to make the override explicit.
 
+    Note:
+        Two process-wide side effects: (1) unconditionally calls
+        ``torch.set_float32_matmul_precision("high")``, which persists after this function
+        returns and overrides any caller-set precision (e.g. ``"highest"``) with no opt-out —
+        mirrors the import-time guard in ``rfdetr.detr`` so the Lightning CLI path
+        (``rfdetr fit``) gets the same TF32 behavior as the python API path. (2) sets
+        ``check_val_every_n_epoch=tc.eval_interval``, so ``eval_interval`` now gates the whole
+        validation loop (forward pass, metric compute, EMA forward), not just result logging;
+        a ``_ForceLastEpochValidationCallback`` still guarantees the final epoch always
+        validates even when ``epochs`` is not a multiple of ``eval_interval``.
+
     Returns:
         A configured ``pytorch_lightning.Trainer`` instance.
     """
     tc = train_config
     if accelerator is None:
         accelerator = tc.accelerator
+
+    # TF32 matmul for fp32 residual matmuls on Ampere+.  ``rfdetr.detr`` sets this at import
+    # time for the python API path, but the Lightning CLI path (``rfdetr fit``) never imports
+    # that module — build_trainer is on every training entry path, so set it here as well.
+    try:
+        torch.set_float32_matmul_precision("high")
+    except Exception:  # defensive parity with the rfdetr.detr import-time guard
+        _logger.debug("torch.set_float32_matmul_precision('high') failed", exc_info=True)
 
     # --- Precision resolution ---
     def _resolve_precision() -> str:
@@ -531,8 +572,17 @@ def build_trainer(
             eval_interval=tc.eval_interval,
             log_per_class_metrics=tc.log_per_class_metrics,
             keypoint_oks_sigmas=tc.keypoint_oks_sigmas,
+            eval_ema_only=tc.eval_ema_only,
         )
     )
+
+    # eval_interval must skip the whole validation loop, not just metric logging: without
+    # check_val_every_n_epoch Lightning runs (and COCOEvalCallback discards) a full validation
+    # pass — including the EMA forward — on every non-eval epoch.  The final epoch is always
+    # validated (COCOEvalCallback treats it as an eval epoch), which Lightning's modulus check
+    # alone does not guarantee when epochs % eval_interval != 0.
+    if tc.eval_interval > 1:
+        callbacks.append(_ForceLastEpochValidationCallback())
 
     # --- Promoted config fields (T4-2 added these to TrainConfig) ---
     clip_max_norm: float = tc.clip_max_norm
@@ -569,6 +619,7 @@ def build_trainer(
         "default_root_dir": tc.output_dir,
         "log_every_n_steps": 50,
         "deterministic": False,
+        "check_val_every_n_epoch": tc.eval_interval,
     }
     trainer_config.update(trainer_kwargs)
     trainer_config["strategy"] = strategy
