@@ -16,9 +16,11 @@ path — :meth:`rfdetr.detr.RFDETR.export` handles that before calling :func:`ex
 Note:
     The produced ``.mlpackage`` expects ImageNet mean/std normalization
     (``mean=[0.485, 0.456, 0.406]``, ``std=[0.229, 0.224, 0.225]``), same as ONNX.
-    Conversion defaults to ``compute_precision=FLOAT32`` so CPU parity against eager PyTorch
-    stays tight; pass ``FLOAT16`` when you want a smaller ANE-oriented bundle (expect larger
-    numeric drift).
+    :func:`export_coreml` defaults to ``compute_precision=FLOAT32`` for tight CPU parity with
+    eager PyTorch. Pass ``ct.precision.FLOAT16`` to :func:`export_coreml` directly when you want
+    a smaller ANE-oriented bundle (expect larger numeric drift).
+    :meth:`rfdetr.detr.RFDETR.export` ``format="coreml"`` does not expose this knob and always
+    uses the FLOAT32 default.
 """
 
 from __future__ import annotations
@@ -78,6 +80,7 @@ def export_coreml(
         verbose: When ``True``, log export progress at info level.
         compute_precision: coremltools precision for ``ct.convert`` (e.g. ``ct.precision.FLOAT32`` /
             ``FLOAT16``). ``None`` selects ``FLOAT32`` (tight CPU parity with eager PyTorch).
+            Only available on this function — :meth:`rfdetr.detr.RFDETR.export` does not forward it.
 
     Returns:
         Path to the exported ``.mlpackage`` bundle.
