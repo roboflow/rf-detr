@@ -223,6 +223,13 @@ def _export_coreml_format(
     Raises:
         ImportError: If the optional ``coreml`` dependency is not installed.
         NotImplementedError: If ``dynamic_batch`` is requested, or if the exported graph has CoreML registry gaps.
+
+    Examples:
+        >>> _export_coreml_format(  # doctest: +SKIP
+        ...     model, input_tensors, output_dir_path,
+        ...     variant_name="small", dynamic_batch=False, verbose=True, notes=None,
+        ... )
+        PosixPath('out/model.mlpackage')
     """
     if notes is not None:
         warnings.warn(

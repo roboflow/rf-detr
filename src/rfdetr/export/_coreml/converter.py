@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 import torch
 from torch import nn
@@ -35,6 +35,9 @@ from torch import nn
 from rfdetr.export._coreml.op_coverage import unsupported_coreml_ops
 from rfdetr.export._coreml.torch_ops import ensure_coreml_torch_op_patches
 from rfdetr.utilities.logger import get_logger
+
+if TYPE_CHECKING:
+    import coremltools as ct
 
 logger = get_logger()
 
@@ -61,7 +64,7 @@ def export_coreml(
     variant_name: str | None = None,
     dynamic_batch: bool = False,
     verbose: bool = True,
-    compute_precision: Any | None = None,
+    compute_precision: ct.precision | None = None,
 ) -> Path:
     """Export an RF-DETR model to a CoreML ``.mlpackage``.
 

@@ -130,7 +130,7 @@ class TestEnsureCoremlTorchOpPatches:
         """Nano's export graph must still contain ``aten.alias`` (patch is load-bearing)."""
         from rfdetr import RFDETRNano
 
-        model = RFDETRNano().model.model
+        model = RFDETRNano(pretrain_weights=None).model.model
         model.eval()
         model.export()
         resolution = int(getattr(model, "resolution", 384))
@@ -206,7 +206,7 @@ class TestUnsupportedCoremlOps:
         """Nano must have no registry gaps after package-local Torch-op patches."""
         from rfdetr import RFDETRNano
 
-        model = RFDETRNano().model.model
+        model = RFDETRNano(pretrain_weights=None).model.model
         model.eval()
         model.export()
         resolution = int(getattr(model, "resolution", 384))
