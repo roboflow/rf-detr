@@ -566,6 +566,15 @@ device. For example, `"SM8650"` targets the Snapdragon 8 Gen 3.
     with an `undefined symbol` / `dlopen` error at import time, since ExecuTorch's prebuilt wheels
     are compiled against whichever `torch` ABI existed at their release time.
 
+!!! warning "The input tensor must be contiguous"
+
+    The ExecuTorch runtime reads the input buffer as contiguous NCHW and ignores tensor strides.
+    Preprocessing steps that permute axes — `np.transpose`, `Tensor.permute`, torchvision's
+    `ToImage` — return a strided view rather than a copy, and such a view is misread as a
+    scrambled image. Nothing errors: the model runs and returns confident-looking but wrong
+    predictions, typically with every detection below threshold. Finish preprocessing with
+    `np.ascontiguousarray(...)` (or `Tensor.contiguous()`) before calling `execute`.
+
 ```python
 import numpy as np
 import torch
@@ -586,6 +595,10 @@ image_array = (image_array - mean) / std
 
 image_array = np.transpose(image_array, (2, 0, 1))  # HWC -> CHW
 image_array = np.expand_dims(image_array, axis=0)  # add batch dimension: (1, 3, H, W)
+# np.transpose returns a strided view, not a copy. The ExecuTorch runtime reads the input
+# buffer as contiguous NCHW and ignores strides, so a non-contiguous tensor is silently
+# misread as a scrambled image and every detection collapses below threshold.
+image_array = np.ascontiguousarray(image_array)
 input_tensor = torch.from_numpy(image_array).float()
 
 # Run inference
