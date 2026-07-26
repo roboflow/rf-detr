@@ -1388,6 +1388,7 @@ class RFDETR:
         *,
         backend: str | None = None,
         soc: str | None = None,
+        fp16: bool = True,
         notes: object = None,
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, or ExecuTorch format.
@@ -1455,6 +1456,10 @@ class RFDETR:
                 :class:`~executorch.backends.qualcomm.serialization.qc_schema.QcomChipset` name, e.g. ``"SM8650"``
                 (Snapdragon 8 Gen 3); see that enum for the full list of supported chips.  Has no effect for
                 ``"xnnpack"`` or ``"coreml"``.
+            fp16: Build the TensorRT engine with FP16 precision.  Only applies when ``format="tensorrt"``
+                (alias ``"trt"``); ignored for every other format.  Defaults to ``True`` for lowest latency
+                on NVIDIA GPUs.  Pass ``False`` to build an FP32 engine — required on TensorRT builds that do
+                not expose the FP16 builder flag (``export()`` otherwise aborts while configuring FP16).
             notes: Optional user-defined metadata (string, dict, list, or
                 any JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata
                 property.  When ``None`` no metadata entry is written.  String values are stored verbatim; all other
@@ -1639,6 +1644,7 @@ class RFDETR:
                 calibration_data=calibration_data,
                 max_images=max_images,
                 verbose=verbose,
+                fp16=fp16,
             )
         finally:
             self.model.model = self.model.model.to(device)

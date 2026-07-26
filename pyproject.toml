@@ -246,6 +246,13 @@ addopts = [
     "--color=yes",          # colored output
     "--doctest-plus",       # run doctests from all modules (pytest-doctestplus)
 ]
+# Skip doctest COLLECTION for test modules (they are not doc sources; src/ doctests unaffected).
+# Without this, doctestplus walks every test module's attributes; when the TF/ai_edge_litert
+# stack has been imported by the tflite export tests, scanning a module that exposes
+# `unittest.mock.call` (a `_Call` that auto-creates and caches child mocks on attribute access)
+# grows the object graph unboundedly — observed 38 GB RSS and a silent SIGKILL during
+# collection. The value must be a glob ("tests/*"): matching is per-file via fnmatch.
+doctest_norecursedirs = ["tests/*"]
 pythonpath = ["src"]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",

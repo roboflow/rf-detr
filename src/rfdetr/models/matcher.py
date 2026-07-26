@@ -171,7 +171,6 @@ class HungarianMatcher(nn.Module):
 
         # We flatten to compute the cost matrices in a batch
         flat_pred_logits = outputs["pred_logits"].flatten(0, 1)
-        out_prob = flat_pred_logits.sigmoid()  # [batch_size * num_queries, num_classes]
         out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4]
 
         # Also concat the target labels and boxes
@@ -192,12 +191,20 @@ class HungarianMatcher(nn.Module):
         alpha = self.focal_alpha
         gamma = _FOCAL_LOSS_GAMMA
 
-        # neg_cost_class = (1 - alpha) * (out_prob ** gamma) * (-(1 - out_prob + 1e-8).log())
-        # pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-(out_prob + 1e-8).log())
+        # neg_cost_class = (1 - alpha) * (tgt_prob ** gamma) * (-(1 - tgt_prob + 1e-8).log())
+        # pos_cost_class = alpha * ((1 - tgt_prob) ** gamma) * (-(tgt_prob + 1e-8).log())
         # we refactor these with logsigmoid for numerical stability
-        neg_cost_class = (1 - alpha) * (out_prob**gamma) * (-F.logsigmoid(-flat_pred_logits))
-        pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-F.logsigmoid(flat_pred_logits))
-        cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
+        # Gather the target-class columns first: only the tgt_ids columns of the focal terms are
+        # consumed, so computing them over all num_classes columns would be wasted work/memory —
+        # a real win when num_targets <= num_classes (e.g. large-vocabulary datasets). When
+        # num_targets exceeds num_classes (repeated columns, e.g. crowded COCO batches) this
+        # gathers marginally more values than the full materialization would; net impact is
+        # negligible either way since the Hungarian solve dominates matcher wall-time.
+        tgt_logits = flat_pred_logits[:, tgt_ids]  # [batch_size * num_queries, num_targets]
+        tgt_prob = tgt_logits.sigmoid()
+        neg_cost_class = (1 - alpha) * (tgt_prob**gamma) * (-F.logsigmoid(-tgt_logits))
+        pos_cost_class = alpha * ((1 - tgt_prob) ** gamma) * (-F.logsigmoid(tgt_logits))
+        cost_class = pos_cost_class - neg_cost_class
 
         # Compute the L1 cost between boxes
         cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)

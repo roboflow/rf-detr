@@ -109,9 +109,10 @@ For example, `RFDETRSegXLarge` uses `624x624`, which is valid because `624` is d
 
 ## EMA (Exponential Moving Average)
 
-| Parameter | Type   | Default | Description                                                                                                          |
-| --------- | ------ | ------- | -------------------------------------------------------------------------------------------------------------------- |
-| `use_ema` | `bool` | `True`  | Enables Exponential Moving Average of weights. Produces a smoothed checkpoint that often improves final performance. |
+| Parameter       | Type   | Default | Description                                                                                                                                                                                                                              |
+| --------------- | ------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `use_ema`       | `bool` | `True`  | Enables Exponential Moving Average of weights. Produces a smoothed checkpoint that often improves final performance.                                                                                                                     |
+| `eval_ema_only` | `bool` | `False` | Validation-only: forward through the EMA model instead of the base model, halving per-batch validation compute. Requires `use_ema=True`. `val/mAP_*` then reports EMA-model quality, not base-model quality — see Evaluation Parameters. |
 
 !!! info "What is EMA?"
 
@@ -200,12 +201,14 @@ model.train(
 
 ## Evaluation Parameters
 
-| Parameter               | Type                | Default | Description                                                                                                        |
-| ----------------------- | ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------ |
-| `eval_max_dets`         | `int`               | `500`   | Maximum number of detections per image considered during COCO evaluation. Lower values speed up evaluation.        |
-| `eval_interval`         | `int`               | `1`     | Run COCO evaluation every N epochs. Set to a higher value to reduce evaluation overhead during long training runs. |
-| `log_per_class_metrics` | `bool`              | `True`  | Log per-class AP metrics to the console and loggers. Disable to reduce log verbosity when there are many classes.  |
-| `progress_bar`          | str \| bool \| None | `None`  | Progress bar style: `"tqdm"`, `"rich"`, or `None`. Legacy booleans are still accepted.                             |
+| Parameter                    | Type                | Default | Description                                                                                                                                                                                                                                                          |
+| ---------------------------- | ------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `eval_max_dets`              | `int`               | `500`   | Maximum number of detections per image considered during COCO evaluation. Lower values speed up evaluation.                                                                                                                                                          |
+| `eval_interval`              | `int`               | `1`     | Skip the whole COCO validation loop (forward pass, metric compute, EMA forward) on epochs that aren't a multiple of N, to reduce evaluation overhead during long training runs. The final epoch always validates regardless of this setting.                         |
+| `log_per_class_metrics`      | `bool`              | `True`  | Log per-class AP metrics to the console and loggers. Disable to also skip the underlying per-class `torchmetrics` computation (not just its display), reducing per-epoch compute when there are many classes.                                                        |
+| `eval_ema_only`              | `bool`              | `False` | Forward through the EMA model only during validation, skipping the duplicate base-model pass. Requires `use_ema=True`. See [EMA](#ema-exponential-moving-average).                                                                                                   |
+| `eval_masks_head_resolution` | `bool`              | `False` | Segmentation only. Skip upsampling predicted masks to full image resolution during validation, comparing at the mask head's native (lower) resolution instead. `val/segm_mAP` is then not comparable to a full-resolution run. No effect on `RFDETR.predict` output. |
+| `progress_bar`               | str \| bool \| None | `None`  | Progress bar style: `"tqdm"`, `"rich"`, or `None`. Legacy booleans are still accepted.                                                                                                                                                                               |
 
 ## Keypoint Preview Parameters
 
@@ -266,47 +269,49 @@ The parameters below are available for fine-grained control over training behavi
 
 Below is a summary table of all training parameters:
 
-| Parameter                  | Type                | Default        | Description                                                                                                                           |
-| -------------------------- | ------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `dataset_dir`              | str                 | Required       | Path to COCO or YOLO formatted dataset with train/valid/test splits.                                                                  |
-| `output_dir`               | str                 | "output"       | Directory for checkpoints, logs, and other training artifacts.                                                                        |
-| `epochs`                   | int                 | 100            | Number of full passes over the dataset.                                                                                               |
-| `batch_size`               | int or "auto"       | 4              | Samples per iteration. Set to `"auto"` to let RF-DETR probe the GPU for the largest safe batch size. Balance with `grad_accum_steps`. |
-| `grad_accum_steps`         | int                 | 4              | Gradient accumulation steps for effective larger batch sizes.                                                                         |
-| `lr`                       | float               | 1e-4           | Learning rate for the model (excluding encoder).                                                                                      |
-| `lr_encoder`               | float               | 1.5e-4         | Learning rate for the backbone encoder.                                                                                               |
-| `resolution`               | int                 | Model-specific | Input image size (must be divisible by the selected model's `patch_size * num_windows`).                                              |
-| `weight_decay`             | float               | 1e-4           | L2 regularization coefficient.                                                                                                        |
-| `device`                   | str                 | "cuda"         | Training device: cuda, cpu, or mps.                                                                                                   |
-| `use_ema`                  | bool                | True           | Enable Exponential Moving Average of weights.                                                                                         |
-| `gradient_checkpointing`   | bool                | False          | Trade compute for memory during backprop.                                                                                             |
-| `checkpoint_interval`      | int                 | 10             | Save checkpoint every N epochs.                                                                                                       |
-| `resume`                   | str                 | None           | Path to checkpoint for resuming training.                                                                                             |
-| `tensorboard`              | bool                | True           | Enable TensorBoard logging.                                                                                                           |
-| `wandb`                    | bool                | False          | Enable Weights & Biases logging.                                                                                                      |
-| `project`                  | str                 | None           | W&B project name.                                                                                                                     |
-| `run`                      | str                 | None           | W&B run name.                                                                                                                         |
-| `early_stopping`           | bool                | False          | Enable early stopping.                                                                                                                |
-| `early_stopping_patience`  | int                 | 10             | Epochs without improvement before stopping.                                                                                           |
-| `early_stopping_min_delta` | float               | 0.001          | Minimum validation metric change to qualify as improvement.                                                                           |
-| `early_stopping_use_ema`   | bool                | False          | Use EMA model for early stopping metrics.                                                                                             |
-| `eval_max_dets`            | int                 | 500            | Maximum detections per image considered during COCO evaluation.                                                                       |
-| `eval_interval`            | int                 | 1              | Run COCO evaluation every N epochs.                                                                                                   |
-| `log_per_class_metrics`    | bool                | True           | Log per-class AP metrics to the console and loggers.                                                                                  |
-| `progress_bar`             | str \| bool \| None | None           | Progress bar style: `"tqdm"`, `"rich"`, or `None`. Legacy booleans are still accepted.                                                |
-| `accelerator`              | str                 | "auto"         | PyTorch Lightning accelerator. "auto" selects GPU/MPS/CPU automatically.                                                              |
-| `seed`                     | int                 | None           | Random seed for reproducibility. None means no fixed seed.                                                                            |
-| `lr_scheduler`             | str \| Callable     | "step"         | Scheduler preset ("step"/"cosine"), dotted import path, or callable.                                                                  |
-| `lr_scheduler_kwargs`      | dict                | {}             | Keyword arguments for an explicit scheduler; also carries lr_drop / min_factor for the managed presets.                               |
-| `lr_scheduler_interval`    | str                 | "step"         | Explicit-scheduler stepping cadence: "step" or "epoch".                                                                               |
-| `lr_scheduler_monitor`     | str                 | "val/loss"     | Metric fed to ReduceLROnPlateau.                                                                                                      |
-| `lr_min_factor`            | float               | 0.0            | Deprecated — use lr_scheduler_kwargs["min_factor"]. Cosine-preset floor as a fraction of the initial LR.                              |
-| `lr_drop`                  | int                 | 100            | Deprecated — use lr_scheduler_kwargs["lr_drop"]. Epoch at which the "step" preset drops the LR by 10x.                                |
-| `warmup_epochs`            | float               | 0.0            | Number of linear warmup epochs at the start of training.                                                                              |
-| `drop_path`                | float               | 0.0            | Stochastic depth drop-path rate for the backbone.                                                                                     |
-| `compute_val_loss`         | bool                | True           | Compute and log loss during validation.                                                                                               |
-| `compute_test_loss`        | bool                | True           | Compute and log loss during the test run.                                                                                             |
-| `fp16_eval`                | bool                | False          | Run evaluation in FP16 precision to reduce memory usage.                                                                              |
-| `pin_memory`               | bool                | None           | Pin DataLoader memory. None defers to PyTorch Lightning's default.                                                                    |
-| `persistent_workers`       | bool                | None           | Keep DataLoader workers alive between epochs. None uses PTL default.                                                                  |
-| `prefetch_factor`          | int                 | None           | Number of batches prefetched per worker. None uses PyTorch default.                                                                   |
+| Parameter                    | Type                | Default        | Description                                                                                                                           |
+| ---------------------------- | ------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `dataset_dir`                | str                 | Required       | Path to COCO or YOLO formatted dataset with train/valid/test splits.                                                                  |
+| `output_dir`                 | str                 | "output"       | Directory for checkpoints, logs, and other training artifacts.                                                                        |
+| `epochs`                     | int                 | 100            | Number of full passes over the dataset.                                                                                               |
+| `batch_size`                 | int or "auto"       | 4              | Samples per iteration. Set to `"auto"` to let RF-DETR probe the GPU for the largest safe batch size. Balance with `grad_accum_steps`. |
+| `grad_accum_steps`           | int                 | 4              | Gradient accumulation steps for effective larger batch sizes.                                                                         |
+| `lr`                         | float               | 1e-4           | Learning rate for the model (excluding encoder).                                                                                      |
+| `lr_encoder`                 | float               | 1.5e-4         | Learning rate for the backbone encoder.                                                                                               |
+| `resolution`                 | int                 | Model-specific | Input image size (must be divisible by the selected model's `patch_size * num_windows`).                                              |
+| `weight_decay`               | float               | 1e-4           | L2 regularization coefficient.                                                                                                        |
+| `device`                     | str                 | "cuda"         | Training device: cuda, cpu, or mps.                                                                                                   |
+| `use_ema`                    | bool                | True           | Enable Exponential Moving Average of weights.                                                                                         |
+| `gradient_checkpointing`     | bool                | False          | Trade compute for memory during backprop.                                                                                             |
+| `checkpoint_interval`        | int                 | 10             | Save checkpoint every N epochs.                                                                                                       |
+| `resume`                     | str                 | None           | Path to checkpoint for resuming training.                                                                                             |
+| `tensorboard`                | bool                | True           | Enable TensorBoard logging.                                                                                                           |
+| `wandb`                      | bool                | False          | Enable Weights & Biases logging.                                                                                                      |
+| `project`                    | str                 | None           | W&B project name.                                                                                                                     |
+| `run`                        | str                 | None           | W&B run name.                                                                                                                         |
+| `early_stopping`             | bool                | False          | Enable early stopping.                                                                                                                |
+| `early_stopping_patience`    | int                 | 10             | Epochs without improvement before stopping.                                                                                           |
+| `early_stopping_min_delta`   | float               | 0.001          | Minimum validation metric change to qualify as improvement.                                                                           |
+| `early_stopping_use_ema`     | bool                | False          | Use EMA model for early stopping metrics.                                                                                             |
+| `eval_max_dets`              | int                 | 500            | Maximum detections per image considered during COCO evaluation.                                                                       |
+| `eval_interval`              | int                 | 1              | Skip the whole validation loop on epochs not a multiple of N; final epoch always validates.                                           |
+| `log_per_class_metrics`      | bool                | True           | Log per-class AP metrics; disable to also skip the underlying per-class compute.                                                      |
+| `eval_ema_only`              | bool                | False          | Forward through the EMA model only during validation. Requires use_ema=True.                                                          |
+| `eval_masks_head_resolution` | bool                | False          | Segmentation only. Compare masks at native (lower) resolution instead of upsampling; not comparable across runs.                      |
+| `progress_bar`               | str \| bool \| None | None           | Progress bar style: `"tqdm"`, `"rich"`, or `None`. Legacy booleans are still accepted.                                                |
+| `accelerator`                | str                 | "auto"         | PyTorch Lightning accelerator. "auto" selects GPU/MPS/CPU automatically.                                                              |
+| `seed`                       | int                 | None           | Random seed for reproducibility. None means no fixed seed.                                                                            |
+| `lr_scheduler`               | str \| Callable     | "step"         | Scheduler preset ("step"/"cosine"), dotted import path, or callable.                                                                  |
+| `lr_scheduler_kwargs`        | dict                | {}             | Keyword arguments for an explicit scheduler; also carries lr_drop / min_factor for the managed presets.                               |
+| `lr_scheduler_interval`      | str                 | "step"         | Explicit-scheduler stepping cadence: "step" or "epoch".                                                                               |
+| `lr_scheduler_monitor`       | str                 | "val/loss"     | Metric fed to ReduceLROnPlateau.                                                                                                      |
+| `lr_min_factor`              | float               | 0.0            | Deprecated — use lr_scheduler_kwargs["min_factor"]. Cosine-preset floor as a fraction of the initial LR.                              |
+| `lr_drop`                    | int                 | 100            | Deprecated — use lr_scheduler_kwargs["lr_drop"]. Epoch at which the "step" preset drops the LR by 10x.                                |
+| `warmup_epochs`              | float               | 0.0            | Number of linear warmup epochs at the start of training.                                                                              |
+| `drop_path`                  | float               | 0.0            | Stochastic depth drop-path rate for the backbone.                                                                                     |
+| `compute_val_loss`           | bool                | True           | Compute and log loss during validation.                                                                                               |
+| `compute_test_loss`          | bool                | True           | Compute and log loss during the test run.                                                                                             |
+| `fp16_eval`                  | bool                | False          | Run evaluation in FP16 precision to reduce memory usage.                                                                              |
+| `pin_memory`                 | bool                | None           | Pin DataLoader memory. None defers to PyTorch Lightning's default.                                                                    |
+| `persistent_workers`         | bool                | None           | Keep DataLoader workers alive between epochs. None uses PTL default.                                                                  |
+| `prefetch_factor`            | int                 | None           | Number of batches prefetched per worker. None uses PyTorch default.                                                                   |

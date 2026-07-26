@@ -90,7 +90,7 @@ repos:
     hooks:
       - id: insert-license
         files: \.py$
-        exclude: ^notebooks/
+        exclude: ^(notebooks|docs)/
         args:
           - --license-filepath
           - .github/LICENSE_HEADER.txt
