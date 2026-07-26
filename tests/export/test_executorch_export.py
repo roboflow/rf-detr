@@ -717,6 +717,35 @@ class TestPackageAvailabilityFlag:
 # ---------------------------------------------------------------------------
 
 
+def _photo_like_image(size: tuple[int, int]) -> Any:
+    """Build a deterministic, spatially structured RGB image for parity checks.
+
+    A photo, not noise: the ExecuTorch runtime reads its input buffer as contiguous NCHW, so a
+    non-contiguous input is only detectably wrong when the pixel values vary across the layout it
+    misreads. Constant and all-zero images are layout-invariant and a ``torch.randn`` tensor is
+    already contiguous, which is why neither exposes issue #1233. Drawn rather than downloaded so
+    the test stays hermetic and deterministic in CI.
+
+    Args:
+        size: Target ``(height, width)`` of the generated image.
+
+    Returns:
+        A ``PIL.Image.Image`` in RGB mode with smooth gradients and hard edges.
+    """
+    from PIL import Image, ImageDraw
+
+    height, width = size
+    image = Image.new("RGB", (width, height))
+    pixels = image.load()
+    for y in range(height):
+        for x in range(width):
+            pixels[x, y] = (x * 255 // max(width - 1, 1), y * 255 // max(height - 1, 1), (x + y) % 256)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([width // 8, height // 8, width // 2, height // 2], fill=(240, 32, 16))
+    draw.ellipse([width // 2, height // 3, (7 * width) // 8, (5 * height) // 6], fill=(16, 64, 240))
+    return image
+
+
 @pytest.fixture(scope="module")
 def exported(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, torch.Tensor, Path]:
     """Export RFDETRNano to a ``.pte`` once and reuse it across the parity checks."""
@@ -729,7 +758,9 @@ def exported(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, torch.Tenso
 
     model = detector.model.model.to("cpu").eval()
     model.export()
-    example = torch.randn(1, 3, detector.model.resolution, detector.model.resolution)
+    # .contiguous() is a no-op for a fresh randn but states the runtime's requirement explicitly:
+    # ExecuTorch ignores input strides and reads the buffer as contiguous NCHW (see issue #1233).
+    example = torch.randn(1, 3, detector.model.resolution, detector.model.resolution).contiguous()
     return model, example, Path(pte_path)
 
 
@@ -753,6 +784,62 @@ class TestExecutorchEndToEnd:
         # weights).  The bound keeps modest headroom over that so it is robust to BLAS/XNNPACK build differences
         # while still failing on a structural regression (those diverge by >=1e-3).
         assert max(diffs) < 5e-5, f"ExecuTorch outputs diverge from PyTorch: max abs diff {max(diffs)}"
+
+    def test_preprocessed_image_detections_match_pytorch(self, exported: tuple[Any, torch.Tensor, Path]) -> None:
+        """Detections from an image fed through ``infer_transforms`` must match the eager forward.
+
+        Regression for issue #1233. ``infer_transforms`` emitted a channels_last (non-contiguous)
+        tensor, and the ExecuTorch runtime ignores strides and reads the input buffer as contiguous
+        NCHW. The image reaching the model was therefore scrambled and every detection collapsed
+        below threshold, while the existing ``torch.randn`` parity check stayed green because a
+        freshly allocated random tensor is already contiguous.
+
+        Scores are compared instead of raw logits: ``post_process`` ranks the flattened
+        query x class grid, so it is invariant to the query-order swaps that near-tied two-stage
+        selection scores produce between the two backends.
+        """
+        from rfdetr.export.benchmark import infer_transforms, post_process
+
+        model, example, pte_path = exported
+        resolution = int(example.shape[-1])
+        image = _photo_like_image((resolution, resolution))
+        tensor, _ = infer_transforms((resolution, resolution))(image, None)
+        pixel_values = tensor[None].float()
+
+        _check_executorch_available(require_runtime=True)
+        from executorch.runtime import Runtime
+
+        with torch.no_grad():
+            eager_boxes, eager_logits = model(pixel_values.clone())[:2]
+        method = Runtime.get().load_program(str(pte_path)).load_method("forward")
+        runtime_boxes, runtime_logits = method.execute([pixel_values.clone()])[:2]
+
+        target_sizes = torch.tensor([[image.height, image.width]])
+        eager_scores = post_process({"dets": eager_boxes, "labels": eager_logits}, target_sizes)[0]["scores"]
+        runtime_scores = post_process({"dets": runtime_boxes, "labels": runtime_logits}, target_sizes)[0]["scores"]
+
+        max_diff = (eager_scores - runtime_scores).abs().max().item()
+        # Scores agree to fp32 delegate noise once the input is contiguous. Against the non-contiguous
+        # input this asserted 2.9e-2 with the random weights used here, where the untrained score range
+        # is compressed; on a pretrained model the same fault drops every real detection below threshold.
+        assert max_diff < 1e-3, f"ExecuTorch detections diverge from PyTorch: max abs score diff {max_diff}"
+
+
+# ---------------------------------------------------------------------------
+# Export preprocessing contiguity (no executorch required)
+# ---------------------------------------------------------------------------
+
+
+class TestInferTransformsContiguity:
+    """``infer_transforms`` must hand exported runtimes a buffer they can read (issue #1233)."""
+
+    def test_output_is_contiguous(self) -> None:
+        """The preprocessing pipeline must emit a contiguous tensor, not a channels_last view."""
+        from rfdetr.export.benchmark import infer_transforms
+
+        image = _photo_like_image((64, 64))
+        tensor, _ = infer_transforms((32, 32))(image, None)
+        assert tensor.is_contiguous(), f"infer_transforms returned a non-contiguous tensor: stride {tensor.stride()}"
 
 
 # ---------------------------------------------------------------------------
