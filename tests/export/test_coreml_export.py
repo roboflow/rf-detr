@@ -10,9 +10,10 @@ Covers:
 * ``format="coreml"`` wiring through ``RFDETR.export()``
 * End-to-end convert + numerical parity (``@pytest.mark.coreml_e2e``, opt-in)
 
-Parity inputs are spatially structured (gradient + checkerboard) and a fixture photo under
-``coreml_e2e``. Random Gaussian noise is intentionally avoided: it can hide export/runtime
-divergence that only appears on correlated image structure.
+Parity inputs are spatially structured (gradient + checkerboard) and
+``download_assets(ImageAssets.PEOPLE_WALKING)`` under ``coreml_e2e`` (no committed images).
+Random Gaussian noise is intentionally avoided: it can hide export/runtime divergence that
+only appears on correlated image structure.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ import pytest
 import torch
 import torchvision.transforms.functional as TF
 from PIL import Image
+from supervision.assets import ImageAssets, download_assets
 
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.converter import _check_coremltools_available, export_coreml
@@ -37,9 +39,6 @@ coreml_only = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="coremlto
 # FLOAT32 CoreML convert matches eager to ~1e-5 on boxes/logits; masks need a bit more
 # headroom (~8e-5 observed on SegNano). Bound stays well under structural-failure scale (>=1e-3).
 _COREML_MAX_ABS_DIFF = 1e-4
-
-_FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "images"
-_DOG_JPG = _FIXTURES_DIR / "dog.jpg"
 
 # ImageNet stats used by RF-DETR preprocess / exported CoreML bundles.
 _IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -424,20 +423,34 @@ class TestCoreMLEndToEnd:
         model, example, mlpackage_path = coreml_segmentation_export
         validate_segmentation_coreml_vs_pytorch(mlpackage_path, model, example)
 
-    def test_detection_outputs_match_pytorch_dog_jpg(
-        self, coreml_detection_export: tuple[Any, torch.Tensor, Path]
+    def test_detection_outputs_match_pytorch_supervision_image(
+        self,
+        coreml_detection_export: tuple[Any, torch.Tensor, Path],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """CoreML detection matches eager on the fixture photo (``dog.jpg``)."""
+        """CoreML detection matches eager on ``ImageAssets.PEOPLE_WALKING``."""
         model, structured, mlpackage_path = coreml_detection_export
-        example = _parity_input_from_image(_DOG_JPG, int(structured.shape[-1]))
+        monkeypatch.chdir(tmp_path)
+        example = _parity_input_from_image(
+            Path(download_assets(ImageAssets.PEOPLE_WALKING)),
+            int(structured.shape[-1]),
+        )
         validate_detection_coreml_vs_pytorch(mlpackage_path, model, example)
 
-    def test_segmentation_outputs_match_pytorch_dog_jpg(
-        self, coreml_segmentation_export: tuple[Any, torch.Tensor, Path]
+    def test_segmentation_outputs_match_pytorch_supervision_image(
+        self,
+        coreml_segmentation_export: tuple[Any, torch.Tensor, Path],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """CoreML segmentation matches eager on the fixture photo (``dog.jpg``)."""
+        """CoreML segmentation matches eager on ``ImageAssets.PEOPLE_WALKING``."""
         model, structured, mlpackage_path = coreml_segmentation_export
-        example = _parity_input_from_image(_DOG_JPG, int(structured.shape[-1]))
+        monkeypatch.chdir(tmp_path)
+        example = _parity_input_from_image(
+            Path(download_assets(ImageAssets.PEOPLE_WALKING)),
+            int(structured.shape[-1]),
+        )
         validate_segmentation_coreml_vs_pytorch(mlpackage_path, model, example)
 
 
@@ -454,9 +467,10 @@ class TestCoreMLParityInputHelpers:
         # Spatially varying — not a constant fill.
         assert float(a.std()) > 1e-3
 
-    def test_dog_fixture_exists_and_loads(self) -> None:
-        """Committed ``dog.jpg`` fixture must load to a normalized ``1x3xHxW`` tensor."""
-        assert _DOG_JPG.is_file(), f"missing fixture {_DOG_JPG}"
-        tensor = _parity_input_from_image(_DOG_JPG, 64)
+    def test_parity_input_from_image_loads_rgb(self, tmp_path: Path) -> None:
+        """``_parity_input_from_image`` must normalize a local RGB file to ``1x3xHxW``."""
+        image_path = tmp_path / "tiny.png"
+        Image.new("RGB", (32, 24), color=(20, 40, 60)).save(image_path)
+        tensor = _parity_input_from_image(image_path, 64)
         assert tensor.shape == (1, 3, 64, 64)
         assert torch.isfinite(tensor).all()
