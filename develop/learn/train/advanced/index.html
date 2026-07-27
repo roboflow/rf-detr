@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-07-17T05:43:52">
+  <meta property="article:modified_time" content="2026-07-27T08:55:05">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-07-17T05:43:52",
+    "dateModified": "2026-07-27T08:55:05",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1273,6 +1273,17 @@
     <span class="md-ellipsis">
       
         Multi-Node Training
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keypoint-pose-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keypoint / Pose models
       
     </span>
   </a>
@@ -2769,6 +2780,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#keypoint-pose-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keypoint / Pose models
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#advanced-multi-gpu-options-ptl-api" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3218,6 +3240,38 @@ integer (e.g. <code>devices=4</code>). These values are forwarded to <code>build
 </span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">    </span>train.py
 </span></code></pre></div>
 <p>Run this command on each node, changing <code>--node_rank</code> accordingly.</p>
+<h3 id="keypoint-pose-models">Keypoint / Pose models<a class="headerlink" href="#keypoint-pose-models" title="Permanent link">&para;</a></h3>
+<p>Keypoint models (<code>RFDETRKeypointPreview</code>) train under <code>DistributedDataParallel</code> on multiple GPUs and
+multiple nodes exactly like detection models — build a script and launch it with <code>torchrun</code>, setting
+<code>devices=</code> (e.g. <code>"auto"</code> or an integer like <code>8</code>):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># train_pose.py</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRKeypointPreview</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRKeypointPreview</span><span class="p">()</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/keypoint-dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>  <span class="c1"># per-GPU batch size</span>
+</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>  <span class="c1"># recommended on multi-GPU — see note below</span>
+</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;output&quot;</span><span class="p">,</span>
+</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>    <span class="n">devices</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>  <span class="c1"># or devices=8</span>
+</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a><span class="p">)</span>
+</span></code></pre></div>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>torchrun<span class="w"> </span>--nproc_per_node<span class="o">=</span><span class="m">8</span><span class="w"> </span>train_pose.py
+</span></code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Prefer <code>grad_accum_steps=1</code> on multi-GPU for keypoints</p>
+<p>Keypoint models use <strong>manual optimization</strong> so the per-step box-count loss normalization is
+computed over the full accumulated batch. As a result, gradients synchronize on <strong>every</strong>
+microbatch rather than only at the end of an accumulation window. Training with
+<code>grad_accum_steps &gt; 1</code> on multiple GPUs is still numerically correct, but performs one
+<code>all_reduce</code> per microbatch (i.e. <code>grad_accum_steps</code>× the necessary communication). For best
+throughput, scale with more GPUs / a larger per-GPU <code>batch_size</code> and keep <code>grad_accum_steps=1</code>.</p>
+<p>Sharded strategies (FSDP / DeepSpeed) are <strong>not</strong> supported for keypoint models — use <code>ddp</code>
+(or <code>strategy="auto"</code> with <code>devices &gt; 1</code>).</p>
+</div>
 <h3 id="advanced-multi-gpu-options-ptl-api">Advanced multi-GPU options (PTL API)<a class="headerlink" href="#advanced-multi-gpu-options-ptl-api" title="Permanent link">&para;</a></h3>
 <p>For fine-grained control over strategy, sync batch norm, precision, and other distributed settings, use the Lightning API directly.</p>
 <p>→ <strong><a href="../customization/#multi-gpu-training">Multi-GPU with the PTL API</a></strong></p>
@@ -3229,43 +3283,43 @@ integer (e.g. <code>devices=4</code>). These values are forwarded to <code>build
 <li><strong>GPU (<code>augmentation_backend="kornia"</code> or <code>"auto"</code> with CUDA):</strong> <a href="https://kornia.readthedocs.io/">Kornia</a> integration, applying augmentations on-batch on the GPU instead of per-sample on CPU workers.</li>
 </ul>
 <p>Both optional backends share the same <code>aug_config</code> dictionary format. See <a href="../augmentations/#augmentation-backend-values">Augmentation Backend Values</a> for the full set of accepted <code>augmentation_backend</code> strings, including <code>"torchvision"</code> to force the default pipeline regardless of what's installed. Install the optional augmentation extra before using custom <code>aug_config</code> dictionaries or the built-in presets:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;rfdetr[train,augment]&quot;</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;rfdetr[train,augment]&quot;</span>
 </span></code></pre></div>
 <p>→ <strong><a href="../augmentations/">Complete Augmentation Guide</a></strong> - Configuration examples, best practices, troubleshooting, and advanced topics.</p>
 <h3 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h3>
 <p>Pass an <code>aug_config</code> dictionary to <code>model.train()</code>. Each key is an Albumentations transform name; the value is a dict of keyword arguments for that transform:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">()</span>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
-</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
-</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
-</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;output&quot;</span><span class="p">,</span>
-</span><span id="__span-12-12"><a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>    <span class="n">aug_config</span><span class="o">=</span><span class="p">{</span>
-</span><span id="__span-12-13"><a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>        <span class="s2">&quot;HorizontalFlip&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>
-</span><span id="__span-12-14"><a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>        <span class="s2">&quot;VerticalFlip&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>
-</span><span id="__span-12-15"><a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a>        <span class="s2">&quot;Rotate&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;limit&quot;</span><span class="p">:</span> <span class="mi">45</span><span class="p">,</span> <span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>
-</span><span id="__span-12-16"><a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a>    <span class="p">},</span>
-</span><span id="__span-12-17"><a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">()</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;output&quot;</span><span class="p">,</span>
+</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>    <span class="n">aug_config</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>        <span class="s2">&quot;HorizontalFlip&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>
+</span><span id="__span-14-14"><a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a>        <span class="s2">&quot;VerticalFlip&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>
+</span><span id="__span-14-15"><a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a>        <span class="s2">&quot;Rotate&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;limit&quot;</span><span class="p">:</span> <span class="mi">45</span><span class="p">,</span> <span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>
+</span><span id="__span-14-16"><a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a>    <span class="p">},</span>
+</span><span id="__span-14-17"><a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>Use a built-in preset by importing it from <code>rfdetr.datasets.aug_configs</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.datasets.aug_configs</span><span class="w"> </span><span class="kn">import</span> <span class="n">AUG_CONSERVATIVE</span><span class="p">,</span> <span class="n">AUG_AGGRESSIVE</span><span class="p">,</span> <span class="n">AUG_AERIAL</span><span class="p">,</span> <span class="n">AUG_INDUSTRIAL</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span> <span class="n">aug_config</span><span class="o">=</span><span class="n">AUG_AGGRESSIVE</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.datasets.aug_configs</span><span class="w"> </span><span class="kn">import</span> <span class="n">AUG_CONSERVATIVE</span><span class="p">,</span> <span class="n">AUG_AGGRESSIVE</span><span class="p">,</span> <span class="n">AUG_AERIAL</span><span class="p">,</span> <span class="n">AUG_INDUSTRIAL</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span> <span class="n">aug_config</span><span class="o">=</span><span class="n">AUG_AGGRESSIVE</span><span class="p">)</span>
 </span></code></pre></div>
 <p>To disable all augmentations, pass an empty dict:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span> <span class="n">aug_config</span><span class="o">=</span><span class="p">{})</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span> <span class="n">aug_config</span><span class="o">=</span><span class="p">{})</span>
 </span></code></pre></div>
 <p><code>aug_config</code> controls only the augmentation stack (Albumentations on CPU, or the
 equivalent Kornia pipeline when <code>augmentation_backend="kornia"</code>/<code>"auto"</code>). The training
 resize pipeline's independent resize → crop → resize branch (Option B) is controlled
 separately by <code>scale_jitter</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># Keep aug_config&#39;s default augmentation stack, but disable random crop/scale jitter</span>
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span> <span class="n">scale_jitter</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># Keep aug_config&#39;s default augmentation stack, but disable random crop/scale jitter</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span> <span class="n">scale_jitter</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 </span></code></pre></div>
 <p><code>scale_jitter</code> defaults to <code>True</code>. Set it to <code>False</code> to use direct resize only —
 no random crop, so annotations near image borders are never clipped.</p>
@@ -3277,14 +3331,14 @@ no random crop, so annotations near image borders are never clipped.</p>
 <p class="admonition-title">Constructor parameter — not a <code>train()</code> parameter</p>
 <p><code>gradient_checkpointing</code> is a <code>ModelConfig</code> field and must be passed to the <strong>model constructor</strong>, not to <code>train()</code>. Passing it to <code>train()</code> will raise a <code>ValidationError</code> because <code>TrainConfig</code> has <code>extra="forbid"</code>.</p>
 </div>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">gradient_checkpointing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>
-</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
-</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>  <span class="c1"># May be able to increase with checkpointing</span>
-</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">gradient_checkpointing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>  <span class="c1"># May be able to increase with checkpointing</span>
+</span><span id="__span-18-8"><a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>This re-computes activations during the backward pass instead of storing them, reducing memory usage by ~30-40% at the cost of ~20% slower training.</p>
 <h3 id="memory-efficient-configurations">Memory-Efficient Configurations<a class="headerlink" href="#memory-efficient-configurations" title="Permanent link">&para;</a></h3>
@@ -3406,7 +3460,7 @@ no random crop, so annotations near image borders are never clipped.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 17, 2026 05:43:52 UTC">2026-07-17 05:43:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 27, 2026 08:55:05 UTC">2026-07-27 08:55:05</span>
   </span>
 
     
