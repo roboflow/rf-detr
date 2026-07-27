@@ -431,8 +431,7 @@ class COCOEvalCallback(Callback):
         if not isinstance(outputs, Mapping):
             return
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
-        targets_raw = self._convert_targets(outputs["targets"])
-        targets = self._align_gt_masks_to_pred_resolution(preds, targets_raw) if self._use_segm_metrics else targets_raw
+        targets = self._convert_targets(outputs["targets"], preds if self._use_segm_metrics else None)
 
         # ema_cb._average_model availability is rank-invariant (EMA updates fire on the same
         # global step on every rank), so per-rank EMA-forward decisions stay consistent.
@@ -469,11 +468,7 @@ class COCOEvalCallback(Callback):
                 ema_outputs = ema_underlying(samples)
                 ema_results = pl_module.postprocess(ema_outputs, orig_sizes)
             ema_preds = self._convert_preds(ema_results)
-            ema_targets = (
-                self._align_gt_masks_to_pred_resolution(ema_preds, targets_raw)
-                if self._use_segm_metrics
-                else targets_raw
-            )
+            ema_targets = self._convert_targets(outputs["targets"], ema_preds if self._use_segm_metrics else None)
             self.map_metric_ema.update(ema_preds, ema_targets)
             self._update_keypoint_oks_metric(
                 trainer,
@@ -528,8 +523,7 @@ class COCOEvalCallback(Callback):
         if not isinstance(outputs, Mapping):
             return
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
-        targets_raw = self._convert_targets(outputs["targets"])
-        targets = self._align_gt_masks_to_pred_resolution(preds, targets_raw) if self._use_segm_metrics else targets_raw
+        targets = self._convert_targets(outputs["targets"], preds if self._use_segm_metrics else None)
 
         self.map_metric.update(preds, targets)
 
@@ -1183,33 +1177,40 @@ class COCOEvalCallback(Callback):
             out.append(entry)
         return out
 
-    def _convert_targets(self, targets: list[dict[str, Tensor]]) -> list[dict[str, Tensor]]:
+    def _convert_targets(
+        self, targets: list[dict[str, Tensor]], preds: list[dict[str, Tensor]] | None = None
+    ) -> list[dict[str, Tensor]]:
         """Convert targets from normalised CxCyWH to absolute xyxy boxes.
 
-        Also passes ``iscrowd`` and ``masks`` through unchanged.
+        Masks use each prediction's pixel grid when available, avoiding a lossy
+        model-resolution -> original-resolution -> mask-head-resolution round trip.
 
         Args:
             targets: Per-image target dicts with ``boxes`` in normalised
                 CxCyWH format and ``orig_size`` as ``[H, W]``.
+            preds: Converted per-image predictions. Their mask shapes select the
+                target mask grid during segmentation evaluation.
 
         Returns:
             Per-image dicts with ``boxes`` in absolute xyxy, ``labels``, and optionally ``masks`` and ``iscrowd``.
         """
         out = []
-        for t in targets:
+        for index, t in enumerate(targets):
             h, w = t["orig_size"].tolist()
             scale = t["boxes"].new_tensor([w, h, w, h])
             boxes = box_cxcywh_to_xyxy(t["boxes"]) * scale
             entry: dict[str, Tensor] = {"boxes": boxes, "labels": t["labels"]}
             if "masks" in t:
                 masks = t["masks"].bool()
-                # PostProcess resizes predicted masks to orig_size; resize GT
-                # masks to match so that mask-IoU comparisons are size-consistent.
-                if masks.shape[-2:] != (int(h), int(w)):
+                mask_size = (int(h), int(w))
+                if preds is not None and "masks" in preds[index]:
+                    pred_mask_shape = preds[index]["masks"].shape
+                    mask_size = (int(pred_mask_shape[-2]), int(pred_mask_shape[-1]))
+                if masks.shape[-2:] != mask_size:
                     masks = (
                         F.interpolate(
                             masks.float().unsqueeze(1),
-                            size=(int(h), int(w)),
+                            size=mask_size,
                             mode="nearest",
                         )
                         .squeeze(1)
@@ -1218,40 +1219,5 @@ class COCOEvalCallback(Callback):
                 entry["masks"] = masks
             if "iscrowd" in t:
                 entry["iscrowd"] = t["iscrowd"]
-            out.append(entry)
-        return out
-
-    @staticmethod
-    def _align_gt_masks_to_pred_resolution(
-        preds: list[dict[str, Tensor]], targets: list[dict[str, Tensor]]
-    ) -> list[dict[str, Tensor]]:
-        """Downsize ground-truth masks to match predicted masks' resolution when they differ.
-
-        ``_convert_targets`` already normalises GT masks to ``orig_size``, matching predictions in the default
-        (``upsample_masks_to_image_size=True``) case. When ``TrainConfig.eval_masks_head_resolution`` is set,
-        ``PostProcess`` instead returns predicted masks at the mask head's native (lower) resolution — comparing
-        them against full-resolution GT masks would silently produce meaningless IoU values (both
-        ``torchmetrics.MeanAveragePrecision``'s RLE encoding and ``matching.build_matching_data`` require both
-        sides on the same pixel grid), not an error. This brings GT masks down to the prediction's resolution so the
-        comparison stays valid, just at lower fidelity.
-
-        Args:
-            preds: Per-image prediction dicts, already through ``_convert_preds``.
-            targets: Per-image target dicts, already through ``_convert_targets`` (GT masks at ``orig_size``).
-
-        Returns:
-            ``targets`` unchanged when no masks are present or resolutions already match; otherwise a new list with
-            each target's masks nearest-downsized to match its paired prediction's mask resolution.
-        """
-        out = []
-        for p, t in zip(preds, targets):
-            p_masks, t_masks = p.get("masks"), t.get("masks")
-            if p_masks is None or t_masks is None or p_masks.shape[-2:] == t_masks.shape[-2:]:
-                out.append(t)
-                continue
-            h, w = p_masks.shape[-2:]
-            resized = F.interpolate(t_masks.float().unsqueeze(1), size=(int(h), int(w)), mode="nearest").squeeze(1)
-            entry = dict(t)
-            entry["masks"] = resized.bool()
             out.append(entry)
         return out
