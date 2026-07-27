@@ -353,6 +353,7 @@ class COCOEvalCallback(Callback):
             return
 
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
+        # preds omitted: training pred_masks is a sparse dict lacking "masks", so passing it here is inert.
         targets = self._convert_targets(outputs["targets"])
         # In training mode pred_masks is a sparse dict, excluded from postprocess inputs, so
         # preds have no masks key.  torchmetrics requires it when iou_type includes "segm" → skip.
@@ -1189,11 +1190,18 @@ class COCOEvalCallback(Callback):
             targets: Per-image target dicts with ``boxes`` in normalised
                 CxCyWH format and ``orig_size`` as ``[H, W]``.
             preds: Converted per-image predictions. Their mask shapes select the
-                target mask grid during segmentation evaluation.
+                target mask grid during segmentation evaluation. When provided,
+                ``preds`` must have the same length and order as ``targets``:
+                the two are paired positionally 1:1 (``preds[i]`` describes the
+                same image as ``targets[i]``).
 
         Returns:
             Per-image dicts with ``boxes`` in absolute xyxy, ``labels``, and optionally ``masks`` and ``iscrowd``.
         """
+        if preds is not None:
+            assert len(preds) == len(targets), (
+                f"preds and targets must be positionally paired 1:1; got {len(preds)} preds vs {len(targets)} targets"
+            )
         out = []
         for index, t in enumerate(targets):
             h, w = t["orig_size"].tolist()
@@ -1203,6 +1211,11 @@ class COCOEvalCallback(Callback):
             if "masks" in t:
                 masks = t["masks"].bool()
                 mask_size = (int(h), int(w))
+                # Native-grid path assumes a uniform (square-resized) batch: every image shares one
+                # grid, so reusing the prediction's mask resolution is safe. Under non-square
+                # mixed-size padded batches, mask_size would be the batch-wide padded grid while
+                # masks is the unpadded GT, and resizing to it would stretch content — that
+                # configuration is unsupported (WAD, see issue #481).
                 if preds is not None and "masks" in preds[index]:
                     pred_mask_shape = preds[index]["masks"].shape
                     mask_size = (int(pred_mask_shape[-2]), int(pred_mask_shape[-1]))
