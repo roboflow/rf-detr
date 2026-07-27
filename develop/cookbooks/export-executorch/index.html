@@ -27,7 +27,7 @@
   
     
       
-        <title>RF-DETR → ExecuTorch Export - RF-DETR</title>
+        <title>RF-DETR → ExecuTorch Export & Inference - RF-DETR</title>
       
     
   
@@ -78,7 +78,7 @@
   
   
   
-  <meta property="og:title" content="RF-DETR → ExecuTorch Export - RF-DETR">
+  <meta property="og:title" content="RF-DETR → ExecuTorch Export &amp; Inference - RF-DETR">
   <meta property="og:description" content="Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10.">
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://rfdetr.roboflow.com/develop/cookbooks/export-executorch/">
@@ -89,7 +89,7 @@
   
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@roboflow">
-  <meta name="twitter:title" content="RF-DETR → ExecuTorch Export - RF-DETR">
+  <meta name="twitter:title" content="RF-DETR → ExecuTorch Export &amp; Inference - RF-DETR">
   <meta name="twitter:description" content="Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10.">
   <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
 
@@ -97,13 +97,13 @@
   
   
   
-  <meta property="article:modified_time" content="2026-07-24T10:29:06">
+  <meta property="article:modified_time" content="2026-07-27T13:06:18">
   
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "RF-DETR \u2192 ExecuTorch Export",
+    "headline": "RF-DETR \u2192 ExecuTorch Export \u0026amp; Inference",
     "description": "Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python \u22653.10.",
     "url": "https://rfdetr.roboflow.com/develop/cookbooks/export-executorch/",
     "isPartOf": {"@id": "https://rfdetr.roboflow.com/develop#website"},
@@ -112,7 +112,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-07-24T10:29:06",
+    "dateModified": "2026-07-27T13:06:18",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -138,7 +138,7 @@
       {
         "@type": "ListItem",
         "position": 2,
-        "name": "RF-DETR \u2192 ExecuTorch Export",
+        "name": "RF-DETR \u2192 ExecuTorch Export \u0026amp; Inference",
         "item": "https://rfdetr.roboflow.com/develop/cookbooks/export-executorch/"
       }
       
@@ -160,7 +160,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rf-detr-executorch-export" class="md-skip">
+        <a href="#rf-detr-executorch-export-inference" class="md-skip">
           Skip to content
         </a>
       
@@ -228,7 +228,7 @@
 
             </a>
             
-              RF-DETR → ExecuTorch Export
+              RF-DETR → ExecuTorch Export &amp; Inference
             
           </span>
         </div>
@@ -2329,13 +2329,63 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="4. Other backends">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apple-coreml-fp16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apple (CoreML, fp16)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#qualcomm-snapdragon-qnn-fp16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Qualcomm Snapdragon (QNN, fp16)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-running-the-exported-reference" class="md-nav__link">
+  <a href="#5-sample-image" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Running the exported (reference)
+        5. Sample image
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-run-the-on-the-cpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Run the on the CPU
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-visualize-with-supervision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Visualize with supervision
       
     </span>
   </a>
@@ -3095,15 +3145,16 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </style>
 <!-- End of mermaid configuration --><div class="jupyter-wrapper">
 <div class="jp-Notebook" data-jp-theme-light="true" data-jp-theme-name="JupyterLab Light">
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=bc07851a">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=64667c50">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h1 id="rf-detr-executorch-export">RF-DETR → ExecuTorch Export<a class="anchor-link" href="#rf-detr-executorch-export">¶</a></h1><p>Export an RF-DETR detector to a portable <strong>ExecuTorch program</strong> (<code>.pte</code>) for on-device deployment on
-mobile and edge hardware. Unlike ONNX or TFLite, the model is captured directly via <code>torch.export</code>
-(no intermediate conversion) and lowered to a hardware backend:</p>
+<h1 id="rf-detr-executorch-export-inference">RF-DETR → ExecuTorch Export &amp; Inference<a class="anchor-link" href="#rf-detr-executorch-export-inference">¶</a></h1><p>Export an RF-DETR detector to a portable <strong>ExecuTorch program</strong> (<code>.pte</code>) for on-device deployment on
+mobile and edge hardware, then run it on the CPU and visualize the detections. Unlike ONNX or TFLite,
+the model is captured directly via <code>torch.export</code> (no intermediate conversion) and lowered to a
+hardware backend:</p>
 <table>
 <thead>
 <tr>
@@ -3130,12 +3181,14 @@ mobile and edge hardware. Unlike ONNX or TFLite, the model is captured directly 
 </tr>
 </tbody>
 </table>
-<p>!!! warning "On-device inference is currently blocked by an ExecuTorch bug"</p>
-<pre><code>This cookbook covers **export only**. On `executorch==1.3.1` (the latest release), running the exported
-`.pte` returns **incorrect detections on real images** — the `to_edge` lowering corrupts the DINOv2
-backbone output, and this reproduces on **both XNNPACK and CoreML**. `torch.export` itself is bit-exact
-with eager PyTorch, so the model export is correct; the fault is in ExecuTorch's ahead-of-time lowering.
-Validate `.pte` inference against eager PyTorch on your target before relying on it.</code></pre>
+<p>!!! warning "The input tensor must be contiguous"</p>
+<pre><code>The ExecuTorch runtime reads the input buffer as contiguous NCHW and ignores tensor strides. Any
+preprocessing that permutes axes — `np.transpose`, `Tensor.permute`, torchvision's `ToImage` —
+returns a strided view rather than a copy, and the runtime misreads such a view as a scrambled
+image. Nothing errors: the model runs without error and returns plausible-shaped output, but every
+detection's score collapses below threshold. This cookbook is safe because `infer_transforms`
+already materializes a contiguous tensor (its final `_ensure_contiguous` step); Step 6 also calls
+`.contiguous()` defensively so the requirement stays visible for anyone adapting the preprocessing.</code></pre>
 </div>
 </div>
 </div>
@@ -3297,57 +3350,247 @@ print(f"ExecuTorch program: {pte_path}  ({pte_path.stat().st_size / 1e6:.1f} MB)
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="4-other-backends">4. Other backends<a class="anchor-link" href="#4-other-backends">¶</a></h2><p>Swap the <code>backend</code> argument to target a different on-device runtime:</p>
-<p>=== "Apple (CoreML, fp16)"</p>
-<pre><code>```python
-# requires: pip install coremltools
-model.export(format="executorch", backend="coreml", output_dir="export_executorch")
-```</code></pre>
-<p>=== "Qualcomm Snapdragon (QNN, fp16)"</p>
-<pre><code>```python
-# requires an ExecuTorch source build against the QAIRT SDK (not pip-installable)
-model.export(format="executorch", backend="qnn", soc="SM8650", output_dir="export_executorch")
-```</code></pre>
+<h2 id="4-other-backends">4. Other backends<a class="anchor-link" href="#4-other-backends">¶</a></h2><p>Swap the <code>backend</code> argument to target a different on-device runtime.</p>
+<h3 id="apple-coreml-fp16">Apple (CoreML, fp16)<a class="anchor-link" href="#apple-coreml-fp16">¶</a></h3><p>Install <code>coremltools</code>, then rerun the export cell with:</p>
+<div class="highlight"><pre><span></span><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"executorch"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">"export_executorch"</span><span class="p">)</span>
+</pre></div>
+<h3 id="qualcomm-snapdragon-qnn-fp16">Qualcomm Snapdragon (QNN, fp16)<a class="anchor-link" href="#qualcomm-snapdragon-qnn-fp16">¶</a></h3><p>Build ExecuTorch from source against the QAIRT SDK (the QNN backend is not pip-installable), then rerun the export cell with:</p>
+<div class="highlight"><pre><span></span><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"executorch"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"qnn"</span><span class="p">,</span> <span class="n">soc</span><span class="o">=</span><span class="s2">"SM8650"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">"export_executorch"</span><span class="p">)</span>
+</pre></div>
 <p>CoreML runs fp16 on the Apple Neural Engine; QNN targets the Snapdragon HTP and bakes in the target SoC.</p>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=fa357f24">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=0883846c">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="5-running-the-exported-pte-reference">5. Running the exported <code>.pte</code> (reference)<a class="anchor-link" href="#5-running-the-exported-pte-reference">¶</a></h2><p>!!! warning "Known bug — returns 0 detections on real images (executorch 1.3.1)"</p>
-<pre><code>The code below is the **intended** inference path. On the current ExecuTorch release it produces
-incorrect detections (see the top-of-notebook warning). It is kept here as a reference for when the
-upstream lowering bug is fixed. Validate against eager PyTorch on your target before relying on it.</code></pre>
-<p>The <code>.pte</code> expects the same input the model was trained on: NCHW, ImageNet-normalized, at the traced
-resolution. <code>Runtime.load_program(...).load_method("forward")</code> gives a callable graph whose two outputs
-are <code>dets</code> (boxes, <code>cxcywh</code>, normalized) and <code>labels</code> (class logits).</p>
-<div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">executorch.runtime</span><span class="w"> </span><span class="kn">import</span> <span class="n">Runtime</span>
+<h2 id="5-sample-image">5. Sample image<a class="anchor-link" href="#5-sample-image">¶</a></h2><p>A single street scene with several COCO classes (dog, person, backpack, car) is enough to verify
+detections. The image is downloaded once and reused.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b2de9b6a">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">urllib.request</span>
+
 <span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+
+<span class="n">IMAGE_URL</span> <span class="o">=</span> <span class="s2">"https://media.roboflow.com/notebooks/examples/dog.jpeg"</span>
+<span class="n">IMAGE_PATH</span> <span class="o">=</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"sample.jpg"</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">IMAGE_PATH</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+    <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">urlretrieve</span><span class="p">(</span><span class="n">IMAGE_URL</span><span class="p">,</span> <span class="n">IMAGE_PATH</span><span class="p">)</span>
+
+<span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">IMAGE_PATH</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Sample image: </span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">×</span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-4">import urllib.request
+
+from PIL import Image
+
+IMAGE_URL = "https://media.roboflow.com/notebooks/examples/dog.jpeg"
+IMAGE_PATH = EXPORT_DIR / "sample.jpg"
+if not IMAGE_PATH.exists():
+    urllib.request.urlretrieve(IMAGE_URL, IMAGE_PATH)
+
+image = Image.open(IMAGE_PATH).convert("RGB")
+print(f"Sample image: {image.size[0]}×{image.size[1]}")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=1fa8e5d0">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="6-run-the-pte-on-the-cpu">6. Run the <code>.pte</code> on the CPU<a class="anchor-link" href="#6-run-the-pte-on-the-cpu">¶</a></h2><p><code>Runtime.load_program(...).load_method("forward")</code> gives a callable graph whose two outputs are <code>dets</code>
+(boxes, <code>cxcywh</code>, normalized) and <code>labels</code> (class logits). The <code>.pte</code> expects the same input the model
+was trained on: NCHW, ImageNet-normalized, at the traced resolution — <code>infer_transforms</code> builds exactly
+that pipeline.</p>
+<p>The trailing <code>.contiguous()</code> is defensive. <code>infer_transforms</code> already returns a contiguous tensor (its
+final <code>_ensure_contiguous</code> step), so the call is a no-op here — it documents the runtime's requirement
+explicitly. If you swap in your own preprocessing that permutes axes without copying, the ExecuTorch
+runtime would ignore the strides, misread the buffer as a scrambled image, and every detection would
+collapse below threshold.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e6510471">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">executorch.runtime</span><span class="w"> </span><span class="kn">import</span> <span class="n">Runtime</span>
+
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">infer_transforms</span><span class="p">,</span> <span class="n">post_process</span>
 
-<span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
+<span class="n">CONFIDENCE_THRESHOLD</span> <span class="o">=</span> <span class="mf">0.5</span>
+
 <span class="n">resolution</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">model_config</span><span class="o">.</span><span class="n">resolution</span>
-<span class="n">transforms</span> <span class="o">=</span> <span class="n">infer_transforms</span><span class="p">((</span><span class="n">resolution</span><span class="p">,</span> <span class="n">resolution</span><span class="p">))</span>
-<span class="n">image_tensor</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">transforms</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+<span class="n">image_tensor</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">infer_transforms</span><span class="p">((</span><span class="n">resolution</span><span class="p">,</span> <span class="n">resolution</span><span class="p">))(</span><span class="n">image</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+<span class="n">pixel_values</span> <span class="o">=</span> <span class="n">image_tensor</span><span class="p">[</span><span class="kc">None</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
 
 <span class="n">method</span> <span class="o">=</span> <span class="n">Runtime</span><span class="o">.</span><span class="n">get</span><span class="p">()</span><span class="o">.</span><span class="n">load_program</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">pte_path</span><span class="p">))</span><span class="o">.</span><span class="n">load_method</span><span class="p">(</span><span class="s2">"forward"</span><span class="p">)</span>
-<span class="n">dets</span><span class="p">,</span> <span class="n">labels</span> <span class="o">=</span> <span class="n">method</span><span class="o">.</span><span class="n">execute</span><span class="p">([</span><span class="n">image_tensor</span><span class="p">[</span><span class="kc">None</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">()])</span>
+<span class="n">dets</span><span class="p">,</span> <span class="n">labels</span> <span class="o">=</span> <span class="n">method</span><span class="o">.</span><span class="n">execute</span><span class="p">([</span><span class="n">pixel_values</span><span class="p">])</span>
 
 <span class="n">target_sizes</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([[</span><span class="n">image</span><span class="o">.</span><span class="n">height</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">width</span><span class="p">]])</span>
 <span class="n">result</span> <span class="o">=</span> <span class="n">post_process</span><span class="p">({</span><span class="s2">"dets"</span><span class="p">:</span> <span class="n">dets</span><span class="p">,</span> <span class="s2">"labels"</span><span class="p">:</span> <span class="n">labels</span><span class="p">},</span> <span class="n">target_sizes</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
-<span class="c1"># result["boxes"], result["scores"], result["labels"] — filter by confidence, then annotate.</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Top score: </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">'scores'</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
+<div class="clipboard-copy-txt" id="cell-5">import torch
+from executorch.runtime import Runtime
+
+from rfdetr.export.benchmark import infer_transforms, post_process
+
+CONFIDENCE_THRESHOLD = 0.5
+
+resolution = model.model_config.resolution
+image_tensor, _ = infer_transforms((resolution, resolution))(image, None)
+pixel_values = image_tensor[None].float().contiguous()
+
+method = Runtime.get().load_program(str(pte_path)).load_method("forward")
+dets, labels = method.execute([pixel_values])
+
+target_sizes = torch.tensor([[image.height, image.width]])
+result = post_process({"dets": dets, "labels": labels}, target_sizes)[0]
+print(f"Top score: {result['scores'][0]:.3f}")</div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=4850bd5c">
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5ed15cee">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="7-visualize-with-supervision">7. Visualize with supervision<a class="anchor-link" href="#7-visualize-with-supervision">¶</a></h2><p><code>post_process</code> returns boxes in absolute <code>xyxy</code> pixel coordinates along with scores and COCO class ids.
+Filter by confidence, wrap the result in a <code>supervision.Detections</code>, and annotate the original image.</p>
+<p>Annotate the <strong>PIL image</strong> rather than <code>np.array(image)</code>. supervision's annotators accept either, but a
+numpy scene is assumed to be OpenCV-style BGR — handing them an RGB array swaps the red and blue channels
+of the annotations, and <code>sv.plot_image</code> then swaps the photo itself. Passing PIL lets supervision convert
+in both directions and keeps the colours right.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4d06788c">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-6">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.assets.coco_classes</span><span class="w"> </span><span class="kn">import</span> <span class="n">COCO_CLASSES</span>
+
+<span class="n">keep</span> <span class="o">=</span> <span class="n">result</span><span class="p">[</span><span class="s2">"scores"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">CONFIDENCE_THRESHOLD</span>
+<span class="n">detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
+    <span class="n">xyxy</span><span class="o">=</span><span class="n">result</span><span class="p">[</span><span class="s2">"boxes"</span><span class="p">][</span><span class="n">keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+    <span class="n">confidence</span><span class="o">=</span><span class="n">result</span><span class="p">[</span><span class="s2">"scores"</span><span class="p">][</span><span class="n">keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+    <span class="n">class_id</span><span class="o">=</span><span class="n">result</span><span class="p">[</span><span class="s2">"labels"</span><span class="p">][</span><span class="n">keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">),</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Kept </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+<span class="n">names</span> <span class="o">=</span> <span class="p">[</span><span class="n">COCO_CLASSES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">c</span><span class="p">),</span> <span class="nb">str</span><span class="p">(</span><span class="n">c</span><span class="p">))</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">detections</span><span class="o">.</span><span class="n">class_id</span><span class="p">]</span>
+<span class="n">annotation_labels</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">conf</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">"</span> <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">conf</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">names</span><span class="p">,</span> <span class="n">detections</span><span class="o">.</span><span class="n">confidence</span><span class="p">)]</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Detections: </span><span class="si">{</span><span class="n">annotation_labels</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+<span class="n">annotated</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">BoxAnnotator</span><span class="p">(</span><span class="n">thickness</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">scene</span><span class="o">=</span><span class="n">image</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span> <span class="n">detections</span><span class="o">=</span><span class="n">detections</span><span class="p">)</span>
+<span class="n">annotated</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">LabelAnnotator</span><span class="p">(</span><span class="n">text_scale</span><span class="o">=</span><span class="mf">0.6</span><span class="p">,</span> <span class="n">text_thickness</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">text_padding</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span>
+    <span class="n">scene</span><span class="o">=</span><span class="n">annotated</span><span class="p">,</span> <span class="n">detections</span><span class="o">=</span><span class="n">detections</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">annotation_labels</span>
+<span class="p">)</span>
+
+<span class="n">OUTPUT_PATH</span> <span class="o">=</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_executorch.jpg"</span>
+<span class="n">annotated</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">OUTPUT_PATH</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Saved annotated image: </span><span class="si">{</span><span class="n">OUTPUT_PATH</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="n">sv</span><span class="o">.</span><span class="n">plot_image</span><span class="p">(</span><span class="n">annotated</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-6">import supervision as sv
+
+from rfdetr.assets.coco_classes import COCO_CLASSES
+
+keep = result["scores"] &gt; CONFIDENCE_THRESHOLD
+detections = sv.Detections(
+    xyxy=result["boxes"][keep].numpy(),
+    confidence=result["scores"][keep].numpy(),
+    class_id=result["labels"][keep].numpy().astype(int),
+)
+print(f"Kept {len(detections)} detections above {CONFIDENCE_THRESHOLD}")
+
+names = [COCO_CLASSES.get(int(c), str(c)) for c in detections.class_id]
+annotation_labels = [f"{name} {conf:.2f}" for name, conf in zip(names, detections.confidence)]
+print(f"Detections: {annotation_labels}")
+
+annotated = sv.BoxAnnotator(thickness=3).annotate(scene=image.copy(), detections=detections)
+annotated = sv.LabelAnnotator(text_scale=0.6, text_thickness=1, text_padding=4).annotate(
+    scene=annotated, detections=detections, labels=annotation_labels
+)
+
+OUTPUT_PATH = EXPORT_DIR / "annotated_executorch.jpg"
+annotated.save(OUTPUT_PATH)
+print(f"Saved annotated image: {OUTPUT_PATH}")
+sv.plot_image(annotated)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=85646c62">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3357,7 +3600,7 @@ are <code>dets</code> (boxes, <code>cxcywh</code>, normalized) and <code>labels<
 <li><strong>Deploy on-device</strong> — copy the <code>.pte</code> to your Android / iOS / edge app and run it with the ExecuTorch
 runtime for that platform. See the <a href="https://pytorch.org/executorch/">ExecuTorch docs</a>.</li>
 <li><strong>Fine-tuned weights</strong> — pass <code>pretrain_weights="&lt;path/to/checkpoint.pth&gt;"</code> when constructing the model.</li>
-<li><strong>For working inference today</strong>, use the <a href="export-tensorrt/">TensorRT cookbook</a> (NVIDIA GPU) or
+<li><strong>Other runtimes</strong> — see the <a href="export-tensorrt/">TensorRT cookbook</a> (NVIDIA GPU) or
 <a href="https://github.com/roboflow/inference/tree/main/inference_models"><code>inference-models</code></a> (PyTorch / ONNX / TensorRT).</li>
 <li>See the <a href="https://rfdetr.roboflow.com/learn/export/">Export documentation</a> for all formats and options.</li>
 </ul>
@@ -3392,7 +3635,7 @@ runtime for that platform. See the <a href="https://pytorch.org/executorch/">Exe
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 24, 2026 10:29:06 UTC">2026-07-24 10:29:06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 27, 2026 13:06:18 UTC">2026-07-27 13:06:18</span>
   </span>
 
     
