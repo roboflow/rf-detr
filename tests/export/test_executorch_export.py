@@ -18,7 +18,6 @@ from __future__ import annotations
 import contextlib
 import importlib.metadata
 import os
-import socket
 import sys
 import types
 from pathlib import Path
@@ -34,6 +33,7 @@ from rfdetr.export._executorch.converter import (
     _check_executorch_available,
     export_executorch,
 )
+from tests._online import is_online
 
 executorch_only = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
 
@@ -723,15 +723,6 @@ _ASSET_HOST = "media.roboflow.com"
 _ASSET_PORT = 443
 
 
-def _is_online(host: str, port: int, timeout_s: float = 3.0) -> bool:
-    """Report whether *host* accepts a TCP connection on *port* within *timeout_s*."""
-    try:
-        with socket.create_connection((host, port), timeout=timeout_s):
-            return True
-    except OSError:
-        return False
-
-
 @pytest.fixture(scope="module")
 def photo_asset(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Download a real photograph from supervision's image assets.
@@ -744,7 +735,7 @@ def photo_asset(tmp_path_factory: pytest.TempPathFactory) -> Path:
     Returns:
         Path to the downloaded JPEG.
     """
-    if not _is_online(_ASSET_HOST, _ASSET_PORT):
+    if not is_online(_ASSET_HOST, _ASSET_PORT):
         pytest.skip(f"Offline environment, cannot reach {_ASSET_HOST} for supervision image assets.")
 
     from supervision.assets import ImageAssets, download_assets
