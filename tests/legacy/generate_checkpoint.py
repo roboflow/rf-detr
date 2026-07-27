@@ -32,16 +32,12 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import importlib
 import sys
-import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import torch
-
-_OutIndices = list[int] | tuple[int, ...]
 
 
 def _get_state_dict(model: Any) -> dict[str, torch.Tensor]:
@@ -94,150 +90,6 @@ def _get_patch_size(model: Any) -> int:
                 obj = getattr(obj, attr)
             return int(obj)
     return 16
-
-
-def _find_pruneable_heads_and_indices(
-    heads: set[int], n_heads: int, head_size: int, already_pruned_heads: set[int]
-) -> tuple[set[int], torch.LongTensor]:
-    """Return pruneable heads and the flattened index mask.
-
-    Mirrors the helper that older RF-DETR releases imported from
-    ``transformers.pytorch_utils`` before transformers v5 removed that public
-    export.
-
-    Args:
-        heads: Attention head indices requested for pruning.
-        n_heads: Number of heads currently present in the layer.
-        head_size: Width of each attention head.
-        already_pruned_heads: Heads removed by previous pruning calls.
-
-    Returns:
-        Adjusted pruneable head indices and a tensor selecting retained rows.
-    """
-    mask = torch.ones(n_heads, head_size)
-    heads = set(heads) - already_pruned_heads
-    for head in heads:
-        head -= sum(1 if pruned_head < head else 0 for pruned_head in already_pruned_heads)
-        mask[head] = 0
-    mask = mask.view(-1).contiguous().eq(1)
-    index = torch.arange(len(mask))[mask].long()
-    return heads, index
-
-
-def _align_output_features_output_indices(
-    out_features: list[str] | None,
-    out_indices: _OutIndices | None,
-    stage_names: list[str],
-) -> tuple[list[str], list[int]]:
-    """Fill missing backbone output names or indices from stage names.
-
-    Args:
-        out_features: Names of backbone stages to emit, or ``None``.
-        out_indices: Indices of backbone stages to emit, or ``None``.
-        stage_names: Ordered backbone stage names.
-
-    Returns:
-        Normalized output feature names and indices.
-    """
-    if out_indices is None and out_features is None:
-        out_indices = [len(stage_names) - 1]
-        out_features = [stage_names[-1]]
-    elif out_indices is None and out_features is not None:
-        out_indices = [stage_names.index(layer) for layer in out_features]
-    elif out_features is None and out_indices is not None:
-        out_features = [stage_names[idx] for idx in out_indices]
-    assert out_features is not None
-    assert out_indices is not None
-    return out_features, list(out_indices)
-
-
-def _get_aligned_output_features_output_indices(
-    out_features: list[str] | None,
-    out_indices: _OutIndices | None,
-    stage_names: list[str],
-) -> tuple[list[str], list[int]]:
-    """Align backbone output feature names and indices for old RF-DETR.
-
-    Mirrors the transformers helper that RF-DETR 1.4 imports from
-    ``transformers.utils.backbone_utils``.  Newer transformers releases removed
-    that public export.
-
-    Args:
-        out_features: Names of backbone stages to emit, or ``None``.
-        out_indices: Indices of backbone stages to emit, or ``None``.
-        stage_names: Ordered backbone stage names.
-
-    Returns:
-        Normalized output feature names and indices.
-
-    Raises:
-        ValueError: If both arguments are set and do not describe the same
-            stages.
-    """
-    out_features, out_indices = _align_output_features_output_indices(out_features, out_indices, stage_names)
-    if len(out_features) != len(out_indices):
-        raise ValueError("out_features and out_indices must have the same length")
-    if out_features != [stage_names[idx] for idx in out_indices]:
-        raise ValueError("out_features and out_indices must describe the same stages")
-    return out_features, out_indices
-
-
-def _init_backbone_shim(self: Any, config: Any) -> None:
-    """Compatibility shim for ``BackboneMixin._init_backbone`` removed in transformers v5.
-
-    RF-DETR 1.4's ``WindowedDinov2WithRegistersBackbone.__init__`` calls
-    ``super()._init_backbone(config)`` explicitly.  Transformers v5 removed that
-    method from ``BackboneMixin`` (replacing it with cooperative-MRO
-    ``__init__`` → ``_init_transformers_backbone``).  This shim reinstates the
-    v4 behaviour: populate ``stage_names``, ``_out_features``, ``_out_indices``,
-    and ``num_features`` from *config*.
-
-    Args:
-        config: Backbone configuration object.  Expected to carry
-            ``stage_names``, ``out_features``, and ``out_indices`` attributes.
-    """
-    self.stage_names = list(getattr(config, "stage_names", None) or [])
-    out_features = getattr(config, "out_features", None)
-    out_indices = getattr(config, "out_indices", None)
-    aligned_features, aligned_indices = _get_aligned_output_features_output_indices(
-        out_features=list(out_features) if out_features is not None else None,
-        out_indices=list(out_indices) if out_indices is not None else None,
-        stage_names=self.stage_names,
-    )
-    self._out_features = aligned_features
-    self._out_indices = aligned_indices
-    # num_features is immediately overridden by the subclass; set sentinel here.
-    if not hasattr(self, "num_features"):
-        self.num_features = None
-
-
-def _install_transformers_compat() -> None:
-    """Install transformers compatibility shims required by old RF-DETR.
-
-    RF-DETR 1.4 imports helpers from transformer modules where newer transformers releases no longer expose them, and
-    calls ``BackboneMixin._init_backbone`` which was removed in transformers v5. These shims are intentionally scoped to
-    this legacy generator process.
-    """
-    pytorch_utils = importlib.import_module("transformers.pytorch_utils")
-    if not hasattr(pytorch_utils, "find_pruneable_heads_and_indices"):
-        pytorch_utils.find_pruneable_heads_and_indices = _find_pruneable_heads_and_indices
-
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=r"Importing `Backbone.*` from `utils/backbone_utils.py` is deprecated.*",
-            category=FutureWarning,
-        )
-        backbone_utils = importlib.import_module("transformers.utils.backbone_utils")
-    if not hasattr(backbone_utils, "get_aligned_output_features_output_indices"):
-        backbone_utils.get_aligned_output_features_output_indices = _get_aligned_output_features_output_indices
-
-    # RF-DETR 1.4's WindowedDinov2WithRegistersBackbone calls super()._init_backbone(config)
-    # explicitly.  Transformers v5 removed this method from BackboneMixin.
-    backbone_module = importlib.import_module("transformers.backbone_utils")
-    backbone_mixin_cls = getattr(backbone_module, "BackboneMixin", None)
-    if backbone_mixin_cls is not None and not hasattr(backbone_mixin_cls, "_init_backbone"):
-        backbone_mixin_cls._init_backbone = _init_backbone_shim
 
 
 def _build_model(preferred_class: str, num_classes: int, device: str) -> Any:
@@ -298,8 +150,6 @@ def generate_checkpoint(
         num_classes: Number of foreground classes to store in the checkpoint.
         preferred_class: rfdetr facade class to attempt first.
     """
-    _install_transformers_compat()
-
     import rfdetr
 
     installed_version: str = getattr(rfdetr, "__version__", "unknown")

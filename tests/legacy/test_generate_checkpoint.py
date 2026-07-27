@@ -6,126 +6,27 @@
 
 """Tests for the legacy checkpoint generation utility.
 
-Covers the compat shims, ``_get_state_dict``, ``_get_patch_size``, ``_build_model``, and an integration smoke-test for
+Covers ``_get_state_dict``, ``_get_patch_size``, ``_build_model``, and an integration smoke-test for
 ``generate_checkpoint()``.
 """
 
 from __future__ import annotations
 
-import importlib
 import sys
 import types
-import warnings
-from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
-from typing import Any
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-from transformers import pytorch_utils
 
 from tests.legacy.generate_checkpoint import (
     _build_model,
     _get_patch_size,
     _get_state_dict,
-    _install_transformers_compat,
     generate_checkpoint,
 )
-
-
-def _get_transformers_backbone_utils() -> ModuleType:
-    """Import deprecated transformers backbone module without test warnings.
-
-    Returns:
-        Imported ``transformers.utils.backbone_utils`` module.
-    """
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=r"Importing `Backbone.*` from `utils/backbone_utils.py` is deprecated.*",
-            category=FutureWarning,
-        )
-        return importlib.import_module("transformers.utils.backbone_utils")
-
-
-def test_transformers_compat_installs_missing_prune_helper(monkeypatch: pytest.MonkeyPatch) -> None:
-    """RF-DETR 1.4 imports the old pruning helper from transformers.
-
-    Args:
-        monkeypatch: Pytest fixture used to simulate transformers v5 removing
-            the historical public helper.
-    """
-    monkeypatch.delattr(pytorch_utils, "find_pruneable_heads_and_indices", raising=False)
-
-    _install_transformers_compat()
-
-    helper: Callable[[set[int], int, int, set[int]], tuple[set[int], torch.LongTensor]] = getattr(
-        pytorch_utils, "find_pruneable_heads_and_indices"
-    )
-    heads, index = helper({1}, 4, 3, set())
-
-    assert heads == {1}
-    assert index.tolist() == [0, 1, 2, 6, 7, 8, 9, 10, 11]
-
-
-def test_transformers_compat_installs_missing_backbone_alignment_helper(monkeypatch: pytest.MonkeyPatch) -> None:
-    """RF-DETR 1.4 imports the old backbone alignment helper from transformers.
-
-    Args:
-        monkeypatch: Pytest fixture used to simulate transformers v5 removing
-            the historical public helper.
-    """
-    backbone_utils = _get_transformers_backbone_utils()
-    monkeypatch.delattr(backbone_utils, "get_aligned_output_features_output_indices", raising=False)
-
-    _install_transformers_compat()
-
-    helper: Callable[[list[str] | None, list[int] | tuple[int, ...] | None, list[str]], tuple[list[str], list[int]]]
-    helper = getattr(backbone_utils, "get_aligned_output_features_output_indices")
-
-    features, indices = helper(None, (1, 2), ["stem", "layer1", "layer2"])
-
-    assert features == ["layer1", "layer2"]
-    assert indices == [1, 2]
-
-
-def test_transformers_compat_installs_init_backbone_on_backbone_mixin(monkeypatch: pytest.MonkeyPatch) -> None:
-    """RF-DETR 1.4 calls super()._init_backbone(config) on its DINOv2 backbone.
-
-    Transformers v5 removed BackboneMixin._init_backbone; the shim must restore
-    it and populate stage_names, _out_features, _out_indices on the instance.
-
-    Args:
-        monkeypatch: Pytest fixture used to simulate transformers v5 removing
-            _init_backbone from BackboneMixin.
-    """
-    backbone_module = importlib.import_module("transformers.backbone_utils")
-    backbone_mixin_cls = getattr(backbone_module, "BackboneMixin", None)
-    if backbone_mixin_cls is None:
-        pytest.skip("BackboneMixin not available in installed transformers")
-
-    monkeypatch.delattr(backbone_mixin_cls, "_init_backbone", raising=False)
-    assert not hasattr(backbone_mixin_cls, "_init_backbone"), "precondition: method removed"
-
-    _install_transformers_compat()
-
-    assert hasattr(backbone_mixin_cls, "_init_backbone"), "shim must add _init_backbone to BackboneMixin"
-
-    stage_names = ["stem", "stage1", "stage2"]
-    config = SimpleNamespace(
-        stage_names=stage_names,
-        out_features=["stage1", "stage2"],
-        out_indices=[1, 2],
-    )
-    obj: Any = object.__new__(backbone_mixin_cls)
-    backbone_mixin_cls._init_backbone(obj, config)
-
-    assert obj.stage_names == stage_names
-    assert obj._out_features == ["stage1", "stage2"]
-    assert obj._out_indices == [1, 2]
-
 
 # ---------------------------------------------------------------------------
 # _get_state_dict
