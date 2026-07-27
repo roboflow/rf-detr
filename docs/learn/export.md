@@ -571,8 +571,8 @@ device. For example, `"SM8650"` targets the Snapdragon 8 Gen 3.
     The ExecuTorch runtime reads the input buffer as contiguous NCHW and ignores tensor strides.
     Preprocessing steps that permute axes — `np.transpose`, `Tensor.permute`, torchvision's
     `ToImage` — return a strided view rather than a copy, and such a view is misread as a
-    scrambled image. Nothing errors: the model runs and returns confident-looking but wrong
-    predictions, typically with every detection below threshold. Finish preprocessing with
+    scrambled image. Nothing errors: the model runs without error and returns plausible-shaped
+    output, but every detection's score collapses below threshold. Finish preprocessing with
     `np.ascontiguousarray(...)` (or `Tensor.contiguous()`) before calling `execute`.
 
 ```python
