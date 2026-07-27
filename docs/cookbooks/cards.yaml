@@ -6,11 +6,11 @@ cards:
     author: Borda
     description: "Export RF-DETR to a TensorRT FP16 engine and run inference on it directly — low-latency NVIDIA GPU deployment with supervision-annotated detections."
   - href: export-executorch/
-    name: "Export to ExecuTorch"
-    labels: [EXPORT, DEPLOY]
+    name: "Export to ExecuTorch & Run Inference"
+    labels: [EXPORT, INFERENCE, DEPLOY]
     version: v1.8.3
     author: Borda
-    description: "Export RF-DETR to a portable ExecuTorch .pte program (XNNPACK / CoreML / QNN backends) for on-device mobile and edge deployment."
+    description: "Export RF-DETR to a portable ExecuTorch .pte program (XNNPACK / CoreML / QNN backends) and run it on the CPU — on-device mobile and edge deployment with supervision-annotated detections."
   - href: fine-tune_detection/
     name: "Fine-Tune RF-DETR Object Detection"
     labels: [TRAINING, PYTORCH LIGHTNING, INFERENCE]
@@ -47,3 +47,9 @@ cards:
     version: v1.6.0
     author: Borda
     description: "Train RF-DETR with PyTorch Lightning — callbacks, checkpointing, and the LightningModule API."
+  - href: custom-optimizer-scheduler/
+    name: "Custom Optimizer and LR Scheduler"
+    labels: [TRAINING, PYTORCH LIGHTNING]
+    version: v1.9.0
+    author: Borda
+    description: "Swap RF-DETR's optimizer and LR scheduler via TrainConfig — native torch.optim, a third-party optimizer by import path, or a functools.partial — fine-tuned on a small Roboflow Universe dataset."

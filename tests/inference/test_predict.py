@@ -4,7 +4,6 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 import io
-import socket
 from types import SimpleNamespace
 
 import numpy as np
@@ -17,20 +16,13 @@ import torch
 from rfdetr import RFDETRNano, RFDETRSegNano
 from rfdetr.detr import RFDETR
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
+from tests._online import is_online
 
 from .helpers import _DummyModel, _DummyRFDETR
 
 _HTTP_IMAGE_URL = "http://images.cocodataset.org/val2017/000000397133.jpg"
 _HTTP_HOST = "images.cocodataset.org"
 _HTTP_PORT = 80
-
-
-def _is_online(host: str, port: int, timeout_s: float = 3.0) -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=timeout_s):
-            return True
-    except OSError:
-        return False
 
 
 class TestPredictReturnTypes:
@@ -152,7 +144,7 @@ class TestPredictOptimizedInferenceKeypoints:
 
 
 def test_predict_accepts_image_url() -> None:
-    if not _is_online(_HTTP_HOST, _HTTP_PORT):
+    if not is_online(_HTTP_HOST, _HTTP_PORT):
         pytest.skip("Offline environment, skipping HTTP predict URL test.")
     model = _DummyRFDETR()
     detections = model.predict(_HTTP_IMAGE_URL)

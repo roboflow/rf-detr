@@ -256,7 +256,7 @@ addopts = [
 # grows the object graph unboundedly — observed 38 GB RSS and a silent SIGKILL during
 # collection. The value must be a glob ("tests/*"): matching is per-file via fnmatch.
 doctest_norecursedirs = ["tests/*"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
     "coco17: tests that require COCO 2017 images or annotations",
