@@ -52,7 +52,7 @@ Current tag colours are assigned dynamically by the docs UI, so they may change 
 | ----------------------------------- | ----------------------------------------------- | ------- |
 | `custom-augmentations.ipynb`        | Custom Augmentations and Live Training Progress | v1.5.0  |
 | `export-tensorrt.ipynb`             | Export to TensorRT & Run Inference              | v1.8.3  |
-| `export-executorch.ipynb`           | Export to ExecuTorch                            | v1.8.3  |
+| `export-executorch.ipynb`           | Export to ExecuTorch & Run Inference            | v1.8.3  |
 | `fine-tune_detection.ipynb`         | Fine-Tune RF-DETR Object Detection              | v1.8.0  |
 | `fine-tune_keypoints.ipynb`         | Fine-Tune RF-DETR Keypoint Detection            | v1.8.0  |
 | `fine-tune_segmentation.ipynb`      | Fine-Tune RF-DETR Instance Segmentation         | v1.8.2  |
