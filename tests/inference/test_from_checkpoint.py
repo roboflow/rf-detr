@@ -242,6 +242,33 @@ class TestFromCheckpointEdgeCases:
         call_kwargs = mock_cls.call_args.kwargs
         assert call_kwargs.get("resolution") == 640
 
+    def test_trust_checkpoint_true_forwarded_to_constructor(self, tmp_path: Path) -> None:
+        """trust_checkpoint=True reaches the model constructor, not just the metadata read.
+
+        Regression coverage: the constructor reloads the same checkpoint file via
+        ``load_pretrain_weights`` — without forwarding ``trust_checkpoint`` into
+        ``constructor_kwargs``, that reload always used the unsafe-load default, making
+        ``trust_checkpoint=True`` inert for checkpoints that actually need it.
+        """
+        _, mock_cls = _call_from_checkpoint(
+            _ns("rf-detr-small.pth"),
+            tmp_path / "ckpt.pth",
+            "rfdetr.variants.RFDETRSmall",
+            trust_checkpoint=True,
+        )
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["trust_checkpoint"] is True
+
+    def test_trust_checkpoint_defaults_to_false_in_constructor(self, tmp_path: Path) -> None:
+        """trust_checkpoint defaults to False in the forwarded constructor kwargs."""
+        _, mock_cls = _call_from_checkpoint(
+            _ns("rf-detr-small.pth"),
+            tmp_path / "ckpt.pth",
+            "rfdetr.variants.RFDETRSmall",
+        )
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["trust_checkpoint"] is False
+
     def test_characterization_pretrain_weights_in_kwargs_is_overridden(self, tmp_path: Path) -> None:
         """pretrain_weights passed in **kwargs is silently overridden by the checkpoint path."""
         _, mock_cls = _call_from_checkpoint(

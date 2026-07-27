@@ -332,6 +332,51 @@ class TestLoadPretrainWeightsClassNames:
 
 
 # ---------------------------------------------------------------------------
+# load_pretrain_weights — trust propagation
+# ---------------------------------------------------------------------------
+
+
+class TestLoadPretrainWeightsTrustPropagation:
+    """Verify the ``trust`` kwarg reaches ``_safe_torch_load`` unchanged.
+
+    Regression coverage for a gap where ``RFDETR.from_checkpoint(path, trust_checkpoint=True)`` bypassed the safe-load
+    check only for its own metadata read, then silently reverted to ``trust=False`` when the constructed model reloaded
+    the same file here — making ``trust_checkpoint=True`` inert for any checkpoint that actually needed it.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_io(self, monkeypatch):
+        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
+
+    def test_trust_true_forwarded_to_safe_torch_load(self):
+        """load_pretrain_weights(trust=True) calls _safe_torch_load with trust=True."""
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        checkpoint = _make_checkpoint(num_classes=91)
+
+        with patch("rfdetr.utilities.io._safe_torch_load", return_value=checkpoint) as mock_load:
+            from rfdetr.models.weights import load_pretrain_weights
+
+            load_pretrain_weights(_fake_nn_model(), mc, trust=True)
+
+        mock_load.assert_called_once_with("/fake/weights.pth", trust=True)
+
+    def test_trust_defaults_to_false(self):
+        """load_pretrain_weights without a trust kwarg calls _safe_torch_load with trust=False."""
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        checkpoint = _make_checkpoint(num_classes=91)
+
+        with patch("rfdetr.utilities.io._safe_torch_load", return_value=checkpoint) as mock_load:
+            from rfdetr.models.weights import load_pretrain_weights
+
+            load_pretrain_weights(_fake_nn_model(), mc)
+
+        mock_load.assert_called_once_with("/fake/weights.pth", trust=False)
+
+
+# ---------------------------------------------------------------------------
 # load_pretrain_weights — PTL .ckpt format
 # ---------------------------------------------------------------------------
 
