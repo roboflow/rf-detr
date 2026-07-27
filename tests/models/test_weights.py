@@ -361,7 +361,7 @@ class TestLoadPretrainWeightsTrustPropagation:
 
             load_pretrain_weights(_fake_nn_model(), mc, trust=True)
 
-        mock_load.assert_called_once_with("/fake/weights.pth", trust=True)
+        mock_load.assert_called_once_with(mc.pretrain_weights, trust=True)
 
     def test_trust_defaults_to_false(self):
         """load_pretrain_weights without a trust kwarg calls _safe_torch_load with trust=False."""
@@ -373,7 +373,7 @@ class TestLoadPretrainWeightsTrustPropagation:
 
             load_pretrain_weights(_fake_nn_model(), mc)
 
-        mock_load.assert_called_once_with("/fake/weights.pth", trust=False)
+        mock_load.assert_called_once_with(mc.pretrain_weights, trust=False)
 
 
 # ---------------------------------------------------------------------------
