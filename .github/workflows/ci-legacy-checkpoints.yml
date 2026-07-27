@@ -62,7 +62,9 @@ jobs:
     name: Generate checkpoint (rfdetr ${{ matrix.version }})
     needs: get-versions
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Bumped from 10: --use-pretrained now downloads a real published checkpoint
+    # (~100MB+) plus the fixed reference image, instead of a fast random init.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -90,10 +92,13 @@ jobs:
             --extra-index-url https://download.pytorch.org/whl/cpu
 
       - name: 🏗️ Generate checkpoint
+        # --use-pretrained builds with the real (COCO-)pretrained checkpoint for
+        # this version and captures a reference prediction (fixed real image) so
+        # test-compat can assert the reloaded model predicts the same thing.
         run: |
           python tests/legacy/generate_checkpoint.py \
             --output "checkpoints/checkpoint_v${{ matrix.version }}.pth" \
-            --num-classes 2
+            --use-pretrained
 
       - name: 📤 Upload checkpoint artifact
         uses: actions/upload-artifact@v4
@@ -109,7 +114,9 @@ jobs:
     name: Test checkpoint loading compatibility
     needs: generate
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Bumped from 15: now runs one real CPU forward pass per version plus a
+    # small reference-image download, on top of the existing load checks.
+    timeout-minutes: 20
 
     steps:
       - name: 📥 Checkout repository

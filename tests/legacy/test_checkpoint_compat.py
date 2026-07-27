@@ -24,8 +24,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
+import supervision as sv
 import torch
+
+from tests.legacy.generate_checkpoint import _get_reference_image_path, _top_detection
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -180,6 +184,49 @@ class TestCheckpointBackwardCompat:
         assert bias.ndim == 1 and bias.shape[0] >= 2, (
             f"v{version} 'class_embed.bias' must be 1-D with ≥ 2 entries, got shape {tuple(bias.shape)}"
         )
+
+    def test_prediction_matches_reference(self, loaded_checkpoint: tuple[str, Path, dict]) -> None:
+        """Reloading a real-pretrained-weights checkpoint must predict the same thing.
+
+        The structural checks above cannot catch a load-path regression that
+        silently permutes or corrupts weights — the model would still "load"
+        without raising. This exercises the real inference path instead: the
+        checkpoint stores the top detection captured at generation time on a
+        fixed reference image (``generate_checkpoint.py --use-pretrained``);
+        reloading with current code and re-running the same image must
+        reproduce it. Skipped for checkpoints generated without
+        ``--use-pretrained`` (no ``reference_prediction`` key).
+
+        Args:
+            loaded_checkpoint: Shared (version, path, raw checkpoint dict) fixture.
+        """
+        from rfdetr import RFDETRSmall
+
+        version, ckpt_path, ckpt = loaded_checkpoint
+        reference = ckpt.get("reference_prediction")
+        if reference is None:
+            pytest.skip(f"v{version} checkpoint has no reference_prediction (generated without --use-pretrained)")
+
+        loaded = RFDETRSmall(pretrain_weights=str(ckpt_path), device="cpu")
+        detections = loaded.predict(str(_get_reference_image_path()), threshold=0.5)
+        actual = _top_detection(detections)
+
+        # class_id (not class_name) is the identity check: class-name mapping
+        # logic has changed across rfdetr releases, while the raw category id
+        # is what a load-path regression would actually corrupt.
+        assert actual["class_id"] == reference["class_id"], (
+            f"v{version}: top detection class_id changed after reload (expected "
+            f"{reference['class_id']} {reference['class_name']!r}, got {actual['class_id']} {actual['class_name']!r})"
+        )
+
+        confidence_delta = abs(actual["confidence"] - reference["confidence"])
+        assert confidence_delta < 0.05, (
+            f"v{version}: top detection confidence drifted by {confidence_delta:.4f} after reload "
+            f"(expected {reference['confidence']:.4f}, got {actual['confidence']:.4f})"
+        )
+
+        iou = float(sv.box_iou_batch(np.array([reference["xyxy"]]), np.array([actual["xyxy"]]))[0, 0])
+        assert iou > 0.9, f"v{version}: top detection box IoU dropped to {iou:.4f} after reload (expected > 0.9)"
 
 
 # ---------------------------------------------------------------------------

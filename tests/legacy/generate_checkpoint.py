@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Generate a minimal RF-DETR checkpoint for backward-compatibility CI testing.
+"""Generate an RF-DETR checkpoint for backward-compatibility CI testing.
 
 Intended to be run with a *specific released version* of the ``rfdetr`` package
 already installed (the version under test).  Produces a ``.pth`` checkpoint file
@@ -14,7 +14,7 @@ in the format that version would save during training, which the
 Usage::
 
     pip install rfdetr==1.5.0
-    python tests/legacy/generate_checkpoint.py --output checkpoint_v1.5.0.pth
+    python tests/legacy/generate_checkpoint.py --output checkpoint_v1.5.0.pth --use-pretrained
 
 Arguments
 ---------
@@ -22,22 +22,102 @@ Arguments
     Destination path for the generated ``.pth`` checkpoint file.
 --num-classes : int, optional
     Number of foreground classes to embed in the checkpoint (default: 2).
+    Ignored when ``--use-pretrained`` is set.
 --model : str, optional
     Class name to try first (default: ``RFDETRSmall``).  Falls back
     automatically through ``RFDETRBase`` → ``RFDETR`` if the preferred class
     is unavailable in the installed version.
+--use-pretrained : flag, optional
+    Build with real (COCO-)pretrained weights instead of a fast random init,
+    and store a reference prediction (on a fixed real image) in the
+    checkpoint for the compat suite to check against after reload.
 """
 
 from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import torch
+
+# supervision's own "people-walking.jpg" example image (same file served by
+# supervision.assets.ImageAssets.PEOPLE_WALKING). Fetched by direct URL rather
+# than via supervision.assets: that module's API is not stable across the
+# legacy version matrix — e.g. supervision 0.27.0 (pulled transitively by
+# rfdetr 1.6.0) only ships VideoAssets, no ImageAssets/download_assets(enum)
+# support at all — while a plain URL + MD5 check works identically everywhere.
+_REFERENCE_IMAGE_URL = "https://media.roboflow.com/supervision/image-examples/people-walking.jpg"
+_REFERENCE_IMAGE_MD5 = "e6bda00b47f2908eeae7df86ef995dcd"
+
+
+def _get_reference_image_path() -> Path:
+    """Download (once) and return the path to the fixed reference test image.
+
+    Caches the file in a stable temp directory and verifies its MD5 hash
+    before reuse, so repeated calls (across matrix versions, or local reruns)
+    skip re-downloading once the cached copy is confirmed intact.
+
+    Returns:
+        Absolute path to the downloaded reference JPEG.
+
+    Raises:
+        ValueError: If the downloaded content's MD5 does not match the
+            expected hash.
+    """
+    import requests
+
+    cache_dir = Path(tempfile.gettempdir()) / "rfdetr-legacy-test-assets"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cached = cache_dir / "people-walking.jpg"
+
+    if cached.is_file() and hashlib.md5(cached.read_bytes()).hexdigest() == _REFERENCE_IMAGE_MD5:
+        return cached.resolve()
+
+    response = requests.get(_REFERENCE_IMAGE_URL, timeout=30)
+    response.raise_for_status()
+    digest = hashlib.md5(response.content).hexdigest()
+    if digest != _REFERENCE_IMAGE_MD5:
+        raise ValueError(f"Downloaded reference image MD5 mismatch: expected {_REFERENCE_IMAGE_MD5}, got {digest}")
+    cached.write_bytes(response.content)
+    return cached.resolve()
+
+
+def _top_detection(detections: Any) -> dict[str, Any]:
+    """Extract the highest-confidence detection as a plain, picklable reference.
+
+    ``class_id`` (not ``class_name``) is the identity used for comparison by
+    callers: class-name mapping logic has changed across rfdetr releases
+    (e.g. issues #988/#1051), while the raw category id predicted by the
+    model is what a load-path regression would actually corrupt. Confidence
+    and box are included as continuous checks; ``class_name`` is kept for
+    human-readable diagnostics only.
+
+    Args:
+        detections: A ``supervision.Detections`` instance returned by ``predict()``.
+
+    Returns:
+        Dict with ``class_id`` (int), ``class_name`` (str, informational),
+        ``confidence`` (float), and ``xyxy`` (list of 4 floats).
+
+    Raises:
+        ValueError: If *detections* is empty (no detection above threshold).
+    """
+    if len(detections) == 0:
+        raise ValueError("No detections above threshold on the reference image.")
+    top_idx = int(detections.confidence.argmax())
+    class_names = detections.data.get("class_name")
+    return {
+        "class_id": int(detections.class_id[top_idx]),
+        "class_name": str(class_names[top_idx]) if class_names is not None else "",
+        "confidence": float(detections.confidence[top_idx]),
+        "xyxy": [float(v) for v in detections.xyxy[top_idx]],
+    }
 
 
 def _get_state_dict(model: Any) -> dict[str, torch.Tensor]:
@@ -92,7 +172,7 @@ def _get_patch_size(model: Any) -> int:
     return 16
 
 
-def _build_model(preferred_class: str, num_classes: int, device: str) -> Any:
+def _build_model(preferred_class: str, device: str, *, num_classes: int | None = None) -> Any:
     """Instantiate an rfdetr model, falling back through available classes.
 
     Tries *preferred_class* first, then ``RFDETRBase``, then ``RFDETR`` in
@@ -100,8 +180,11 @@ def _build_model(preferred_class: str, num_classes: int, device: str) -> Any:
 
     Args:
         preferred_class: Preferred rfdetr class name (e.g. ``"RFDETRSmall"``).
-        num_classes: Number of foreground classes.
         device: PyTorch device string (e.g. ``"cpu"``).
+        num_classes: When given, builds a random-init model with this many
+            foreground classes (``pretrain_weights=None`` — no network access).
+            When ``None`` (default), builds with the class's own real
+            (COCO-)pretrained weights and its natural class count instead.
 
     Returns:
         Instantiated rfdetr facade.
@@ -118,6 +201,11 @@ def _build_model(preferred_class: str, num_classes: int, device: str) -> Any:
 
     rfdetr_module = sys.modules.get("rfdetr") or __import__("rfdetr")
 
+    build_kwargs: dict[str, Any] = {"device": device}
+    if num_classes is not None:
+        build_kwargs["pretrain_weights"] = None
+        build_kwargs["num_classes"] = num_classes
+
     errors: list[str] = []
     for class_name in seen:
         cls = getattr(rfdetr_module, class_name, None)
@@ -125,7 +213,7 @@ def _build_model(preferred_class: str, num_classes: int, device: str) -> Any:
             errors.append(f"{class_name}: not found in rfdetr module")
             continue
         try:
-            model = cls(pretrain_weights=None, num_classes=num_classes, device=device)
+            model = cls(**build_kwargs)
             return model
         except Exception as exc:
             errors.append(f"{class_name}: {exc}")
@@ -138,34 +226,56 @@ def generate_checkpoint(
     output_path: str,
     num_classes: int = 2,
     preferred_class: str = "RFDETRSmall",
+    use_pretrained: bool = False,
 ) -> None:
-    """Create a minimal rfdetr checkpoint at *output_path*.
+    """Create an rfdetr checkpoint at *output_path*.
 
     The checkpoint uses the legacy ``{model, args}`` format which all released
     rfdetr versions can produce and which :func:`rfdetr.models.weights.load_pretrain_weights`
     can consume both directly and after PTL-key normalisation.
 
+    By default (``use_pretrained=False``) builds a random-init model with
+    ``num_classes`` foreground classes — fast and offline, no network access.
+    With ``use_pretrained=True`` (used by the legacy-checkpoint-compat CI
+    workflow) builds the model with its real (COCO-)pretrained weights
+    instead — ``num_classes`` is then ignored, since overriding it would
+    discard the real pretrained detection head — and additionally runs one
+    fixed reference-image prediction, storing the top detection in the
+    checkpoint under ``reference_prediction`` so the compat suite can assert
+    the same detection reproduces after reload with current code.
+
     Args:
         output_path: File path where the checkpoint is written.
-        num_classes: Number of foreground classes to store in the checkpoint.
+        num_classes: Number of foreground classes for the random-init path.
+            Ignored when ``use_pretrained=True``.
         preferred_class: rfdetr facade class to attempt first.
+        use_pretrained: Use real pretrained weights and capture a reference
+            prediction instead of a fast random init.
     """
     import rfdetr
 
     installed_version: str = getattr(rfdetr, "__version__", "unknown")
     print(f"[generate_checkpoint] rfdetr {installed_version} installed")
 
-    model = _build_model(preferred_class, num_classes, device="cpu")
+    if use_pretrained:
+        model = _build_model(preferred_class, device="cpu")
+    else:
+        model = _build_model(preferred_class, device="cpu", num_classes=num_classes)
     state_dict = _get_state_dict(model)
     patch_size = _get_patch_size(model)
+
+    # Read the real class count back from the saved head rather than trusting
+    # num_classes, which is meaningless on the use_pretrained path.
+    class_embed_bias = state_dict.get("class_embed.bias")
+    resolved_num_classes = int(class_embed_bias.shape[0]) - 1 if class_embed_bias is not None else num_classes
 
     # Simulate the args SimpleNamespace that rfdetr training attaches to checkpoints.
     # Keys reflect the union of fields checked by validate_checkpoint_compatibility
     # and class-name extraction in load_pretrain_weights across all versions.
     args = SimpleNamespace(
-        class_names=[f"class_{i}" for i in range(num_classes)],
+        class_names=[f"class_{i}" for i in range(resolved_num_classes)],
         patch_size=patch_size,
-        num_classes=num_classes,
+        num_classes=resolved_num_classes,
         segmentation_head=False,
     )
 
@@ -176,6 +286,16 @@ def generate_checkpoint(
         # Record provenance so test failure messages can identify the source version.
         "rfdetr_version": installed_version,
     }
+
+    if use_pretrained:
+        reference_image = _get_reference_image_path()
+        detections = model.predict(str(reference_image), threshold=0.5)
+        reference_prediction = _top_detection(detections)
+        print(
+            f"[generate_checkpoint] reference prediction: {reference_prediction['class_name']!r} "
+            f"(class_id={reference_prediction['class_id']}, confidence={reference_prediction['confidence']:.4f})"
+        )
+        checkpoint["reference_prediction"] = reference_prediction
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -198,7 +318,7 @@ def main() -> None:
         type=int,
         default=2,
         dest="num_classes",
-        help="Number of foreground classes (default: 2).",
+        help="Number of foreground classes (default: 2). Ignored when --use-pretrained is set.",
     )
     parser.add_argument(
         "--model",
@@ -206,11 +326,21 @@ def main() -> None:
         dest="model",
         help="rfdetr class name to try first (default: RFDETRSmall).",
     )
+    parser.add_argument(
+        "--use-pretrained",
+        action="store_true",
+        dest="use_pretrained",
+        help=(
+            "Build with real (COCO-)pretrained weights instead of a random init, and capture a "
+            "reference prediction for regression checking against the reloaded model."
+        ),
+    )
     args = parser.parse_args()
     generate_checkpoint(
         output_path=args.output,
         num_classes=args.num_classes,
         preferred_class=args.model,
+        use_pretrained=args.use_pretrained,
     )
 
 
