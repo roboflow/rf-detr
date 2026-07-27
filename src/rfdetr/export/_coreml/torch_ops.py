@@ -38,7 +38,7 @@ def _bitwise_not_allowing_float_bool_masks(context: Any, node: Any) -> None:
     Raises:
         ValueError: If the input dtype is not int, bool, or float.
     """
-    from coremltools.converters.mil import Builder as mb
+    from coremltools.converters.mil import Builder as mb  # noqa: N813
     from coremltools.converters.mil.frontend.torch.ops import _get_inputs
     from coremltools.converters.mil.mil import types
 

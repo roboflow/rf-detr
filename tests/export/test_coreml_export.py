@@ -27,7 +27,7 @@ from unittest import mock
 import numpy as np
 import pytest
 import torch
-import torchvision.transforms.functional as TF
+import torchvision.transforms.functional as TF  # noqa: N812
 from PIL import Image
 from supervision.assets import ImageAssets, download_assets
 
@@ -223,7 +223,7 @@ class TestCheckCoremltoolsAvailable:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr("builtins.__import__", _block_coremltools)
-        assert _check_coremltools_available() is False
+        assert _check_coremltools_available(raise_error=False) is False
 
     @coreml_only
     def test_returns_true_when_installed(self) -> None:
@@ -245,7 +245,7 @@ class TestExportCoremlValidation:
         """``export_coreml`` must surface the install hint when coremltools is absent."""
         monkeypatch.setattr(
             "rfdetr.export._coreml.converter._check_coremltools_available",
-            mock.Mock(return_value=False),
+            mock.Mock(side_effect=ImportError("pip install rfdetr[coreml]")),
         )
         model = torch.nn.Linear(1, 1)
         example = torch.zeros(1, 3, 32, 32)
