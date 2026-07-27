@@ -1079,28 +1079,183 @@ class TestBuildTrainerDDPFields:
         assert tc.devices == "auto"
 
 
-class TestBuildTrainerKeypointDistributedGuard:
-    """Keypoint mode must fail fast for unsupported distributed training settings."""
+class TestBuildTrainerKeypointDistributed:
+    """Keypoint mode supports DistributedDataParallel and rejects only sharded strategies."""
 
-    def test_keypoint_ddp_strategy_raises_clear_error(self, tmp_path):
-        """Keypoint mode rejects explicit distributed strategy requests with a clear error."""
+    def test_keypoint_ddp_strategy_wrapped_with_find_unused_parameters(self, tmp_path):
+        """Keypoint mode with strategy='ddp' produces DDPStrategy(find_unused_parameters=True)."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
         tc = _kp_tc(tmp_path, use_ema=False, strategy="ddp")
         mc = _mc(use_grouppose_keypoints=True)
-
-        with pytest.raises(NotImplementedError, match="Keypoint training currently does not support distributed"):
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
             build_trainer(tc, mc)
 
-    def test_keypoint_auto_devices_raises_when_cuda_has_multiple_devices(self, tmp_path):
-        """Keypoint mode rejects devices='auto' when it would resolve to multi-GPU execution."""
-        tc = _kp_tc(tmp_path, use_ema=False, devices="auto")
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
+
+    def test_keypoint_multiple_devices_builds_ddp(self, tmp_path):
+        """Keypoint mode with devices>1 builds a DDP trainer (no error) with find_unused_parameters."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _kp_tc(tmp_path, use_ema=False, strategy="auto", devices=2)
+        mc = _mc(use_grouppose_keypoints=True)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
+        assert captured["devices"] == 2
+
+    @pytest.mark.parametrize(
+        "strategy",
+        [
+            pytest.param("fsdp", id="fsdp"),
+            pytest.param("deepspeed", id="deepspeed"),
+        ],
+    )
+    def test_keypoint_sharded_strategy_string_raises_clear_error(self, tmp_path, strategy):
+        """Keypoint mode still rejects sharded strategy strings (FSDP/DeepSpeed) with a clear error."""
+        tc = _kp_tc(tmp_path, use_ema=False, strategy=strategy)
         mc = _mc(use_grouppose_keypoints=True)
 
+        with pytest.raises(NotImplementedError, match="sharded distributed strategies"):
+            build_trainer(tc, mc)
+
+    def test_keypoint_model_parallel_strategy_object_raises_clear_error(self, tmp_path):
+        """Keypoint mode rejects a ModelParallelStrategy (FSDP2) object, whose repr has no 'fsdp' token."""
+        from pytorch_lightning.strategies import ModelParallelStrategy
+
+        tc = _kp_tc(tmp_path, use_ema=False)
+        mc = _mc(use_grouppose_keypoints=True)
+
+        # Strategy objects reach build_trainer via trainer_kwargs (TrainConfig.strategy is a string field).
+        with pytest.raises(NotImplementedError, match="sharded distributed strategies"):
+            build_trainer(tc, mc, strategy=ModelParallelStrategy(), devices=2)
+
+    def test_keypoint_auto_devices_multi_gpu_builds_ddp(self, tmp_path):
+        """Keypoint mode with devices='auto' resolving to multiple CUDA devices builds DDP (no error)."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _kp_tc(tmp_path, use_ema=False, strategy="auto", devices="auto", accelerator="cuda")
+        mc = _mc(use_grouppose_keypoints=True)
         with (
-            patch("rfdetr.training.trainer.torch.cuda.is_available", return_value=True),
-            patch("rfdetr.training.trainer.torch.cuda.device_count", return_value=2),
-            pytest.raises(NotImplementedError, match="Keypoint training currently does not support distributed"),
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("torch.cuda.device_count", return_value=2),
+            mock.patch("torch.cuda.is_bf16_supported", return_value=True),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
             build_trainer(tc, mc)
+
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
+
+    @pytest.mark.parametrize(
+        "strategy_name",
+        [
+            pytest.param("ddp_notebook", id="ddp_notebook"),
+            pytest.param("ddp_spawn", id="ddp_spawn"),
+        ],
+    )
+    def test_keypoint_spawn_strategies_use_interactive_spawn(self, tmp_path, strategy_name):
+        """Keypoint mode with ddp_spawn/ddp_notebook builds spawn-based DDP with find_unused_parameters."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _kp_tc(tmp_path, use_ema=False, strategy=strategy_name)
+        mc = _mc(use_grouppose_keypoints=True)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._start_method == "spawn"
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
+
+    def test_keypoint_num_nodes_multiple_builds_ddp(self, tmp_path):
+        """Keypoint mode with num_nodes>1 builds DDP (no error) and forwards num_nodes."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _kp_tc(tmp_path, use_ema=False, strategy="ddp", num_nodes=2)
+        mc = _mc(use_grouppose_keypoints=True)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        assert captured["num_nodes"] == 2
+        assert isinstance(captured["strategy"], DDPStrategy)
+
+    def test_keypoint_ddp_strategy_object_without_find_unused_parameters_raises(self, tmp_path):
+        """A supplied DDPStrategy() object lacking find_unused_parameters=True is rejected for keypoint DDP."""
+        from pytorch_lightning.strategies import DDPStrategy
+
+        tc = _kp_tc(tmp_path, use_ema=False)
+        mc = _mc(use_grouppose_keypoints=True)
+
+        with pytest.raises(ValueError, match="find_unused_parameters=True"):
+            build_trainer(tc, mc, strategy=DDPStrategy(), devices=2)
+
+    def test_keypoint_ddp_strategy_object_with_find_unused_parameters_ok(self, tmp_path):
+        """A supplied DDPStrategy(find_unused_parameters=True) object passes through unchanged for keypoint DDP."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        supplied = DDPStrategy(find_unused_parameters=True)
+        tc = _kp_tc(tmp_path, use_ema=False)
+        mc = _mc(use_grouppose_keypoints=True)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc, strategy=supplied, devices=2)
+
+        assert captured["strategy"] is supplied
+        assert captured["strategy"]._ddp_kwargs.get("find_unused_parameters") is True
 
     def test_non_keypoint_ddp_strategy_wrapped_with_find_unused_parameters(self, tmp_path):
         """Non-keypoint mode with strategy='ddp' produces DDPStrategy(find_unused_parameters=True)."""
