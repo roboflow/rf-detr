@@ -1545,6 +1545,168 @@ class TestConvertTargets:
         assert set(out[0].keys()) == {"boxes", "labels"}
 
 
+class TestConvertTargetsWithPreds:
+    """_convert_targets(targets, preds) resizes each target's masks to its own paired prediction's grid (preds[index]),
+    falling back to orig_size when preds is None or an entry lacks 'masks'."""
+
+    @pytest.mark.parametrize(
+        ("pred_masks_0", "pred_masks_1", "expected_shape_0", "expected_shape_1"),
+        [
+            pytest.param(
+                torch.zeros(1, 4, 4, dtype=torch.bool),
+                torch.zeros(1, 3, 3, dtype=torch.bool),
+                (4, 4),
+                (3, 3),
+                id="both-images-resize-to-distinct-pred-grids",
+            ),
+            pytest.param(
+                torch.zeros(1, 10, 10, dtype=torch.bool),
+                torch.zeros(1, 3, 3, dtype=torch.bool),
+                (10, 10),
+                (3, 3),
+                id="first-image-pred-grid-matches-orig-size-second-needs-resize",
+            ),
+        ],
+    )
+    def test_batch_resizes_each_target_to_its_own_paired_pred_grid(
+        self,
+        pred_masks_0: torch.Tensor,
+        pred_masks_1: torch.Tensor,
+        expected_shape_0: tuple[int, int],
+        expected_shape_1: tuple[int, int],
+    ) -> None:
+        """2-image batch with differing orig_size AND differing pred grids: target[i]'s masks must resize to preds[i]'s
+        own grid, never the other image's — verifies index-based pairing, not a swap."""
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([10, 10]),
+                "masks": torch.ones(1, 10, 10, dtype=torch.bool),
+            },
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.2]]),
+                "labels": torch.tensor([1]),
+                "orig_size": torch.tensor([6, 6]),
+                "masks": torch.ones(1, 6, 6, dtype=torch.bool),
+            },
+        ]
+        preds = [{"masks": pred_masks_0}, {"masks": pred_masks_1}]
+
+        out = cb._convert_targets(targets, preds)
+
+        assert out[0]["masks"].shape[-2:] == expected_shape_0
+        assert out[1]["masks"].shape[-2:] == expected_shape_1
+
+    def test_batch_with_one_image_missing_masks_key_leaves_it_absent(self) -> None:
+        """Mixed batch: an image without a GT 'masks' key stays maskless while its sibling still resizes to its own
+        paired pred grid."""
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([10, 10]),
+                # no "masks" key -> detection-only target in an otherwise-segmentation batch.
+            },
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.2]]),
+                "labels": torch.tensor([1]),
+                "orig_size": torch.tensor([6, 6]),
+                "masks": torch.ones(1, 6, 6, dtype=torch.bool),
+            },
+        ]
+        preds = [{"boxes": torch.zeros(1, 4)}, {"masks": torch.zeros(1, 3, 3, dtype=torch.bool)}]
+
+        out = cb._convert_targets(targets, preds)
+
+        assert "masks" not in out[0]
+        assert out[1]["masks"].shape[-2:] == (3, 3)
+
+    def test_upsize_via_preds_branch_preserves_extent_and_dtype(self) -> None:
+        """GT masks at 2x2 resized through the preds-aware branch (NOT the preds=None/orig_size path) to a larger 4x4
+        pred grid must nearest-upsize, staying bool and preserving the filled region's extent."""
+        cb = COCOEvalCallback()
+        gt_masks = torch.zeros(1, 2, 2, dtype=torch.bool)
+        gt_masks[0, 0, 0] = True  # top-left cell
+        targets = [
+            {
+                "boxes": torch.zeros(1, 4),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([2, 2]),  # matches GT already -> orig_size alone would be a no-op
+                "masks": gt_masks,
+            }
+        ]
+        preds = [{"masks": torch.zeros(1, 4, 4, dtype=torch.bool)}]
+
+        out = cb._convert_targets(targets, preds)
+
+        assert out[0]["masks"].shape[-2:] == (4, 4)
+        assert out[0]["masks"].dtype == torch.bool
+        # nearest-neighbor upsize must preserve the filled top-left quadrant's extent.
+        assert out[0]["masks"][0, :2, :2].all()
+        assert not out[0]["masks"][0, 2:, :].any()
+        assert not out[0]["masks"][0, :, 2:].any()
+
+    def test_preds_shorter_than_targets_raises_assertion_error(self) -> None:
+        """Preds and targets must be 1:1 per-image; a shorter preds list must fail loudly instead of silently
+        misaligning images to the wrong prediction."""
+        cb = COCOEvalCallback()
+        targets = [
+            {"boxes": torch.zeros(1, 4), "labels": torch.tensor([0]), "orig_size": torch.tensor([10, 10])},
+            {"boxes": torch.zeros(1, 4), "labels": torch.tensor([0]), "orig_size": torch.tensor([10, 10])},
+        ]
+        preds = [{"masks": torch.zeros(1, 4, 4, dtype=torch.bool)}]
+
+        with pytest.raises(AssertionError):
+            cb._convert_targets(targets, preds)
+
+    def test_empty_targets_and_empty_preds_returns_empty_list(self) -> None:
+        """An empty batch (no images) through the preds-aware branch is a no-op, not an error."""
+        cb = COCOEvalCallback()
+
+        out = cb._convert_targets([], [])
+
+        assert out == []
+
+    def test_pred_entry_without_masks_key_falls_back_to_orig_size(self) -> None:
+        """A prediction dict lacking 'masks' (e.g. detection-only fallback) must not crash; GT resizes to orig_size as
+        if preds were None for that image."""
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.zeros(1, 4),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([5, 5]),
+                "masks": torch.ones(1, 4, 4, dtype=torch.bool),
+            }
+        ]
+        preds = [{"boxes": torch.zeros(1, 4)}]
+
+        out = cb._convert_targets(targets, preds)
+
+        assert out[0]["masks"].shape[-2:] == (5, 5)
+
+    def test_empty_mask_tensor_through_preds_path_yields_zero_instances_at_pred_grid(self) -> None:
+        """K=0 GT masks (an image with no annotated instances) must resize through the preds-aware branch without
+        raising, yielding shape (0, pred_h, pred_w)."""
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.zeros(0, 4),
+                "labels": torch.zeros(0, dtype=torch.long),
+                "orig_size": torch.tensor([10, 10]),
+                "masks": torch.zeros(0, 10, 10, dtype=torch.bool),
+            }
+        ]
+        preds = [{"masks": torch.zeros(3, 4, 4, dtype=torch.bool)}]
+
+        out = cb._convert_targets(targets, preds)
+
+        assert out[0]["masks"].shape == (0, 4, 4)
+
+
 def _ema_callback() -> MagicMock:
     """Return a mock that ``_get_ema_callback`` recognises (has ``get_ema_model_state_dict``)."""
     cb = MagicMock(name="ema_callback")
