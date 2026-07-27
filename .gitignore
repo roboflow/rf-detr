@@ -221,3 +221,7 @@ demo_*.ipynb
 docs/cookbooks/datasets/
 docs/cookbooks/output/
 docs/cookbooks/*.py
+
+# export artifacts written by the export cookbooks when run in place (.pte/.trt weigh 100+ MB)
+docs/cookbooks/export_executorch/
+docs/cookbooks/export_tensorrt/

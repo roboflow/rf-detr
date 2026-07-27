@@ -85,6 +85,24 @@ def _static_dim(value: Any, fallback: int) -> int:
     return dim if dim > 0 else fallback
 
 
+def _ensure_contiguous(image: Tensor, target: dict[str, Any] | None = None) -> tuple[Tensor, dict[str, Any] | None]:
+    """Materialize *image* as a contiguous tensor, leaving *target* untouched.
+
+    ``ToImage`` permutes a decoded HWC buffer to CHW without copying, so the pipeline otherwise
+    yields a channels_last view. Runtimes that read the input buffer directly rather than honoring
+    strides — the ExecuTorch runtime among them — then misread the image and silently return wrong
+    predictions, so the copy is forced here where every export inference path picks it up.
+
+    Args:
+        image: CHW image tensor, possibly a non-contiguous view.
+        target: Optional annotation dict, passed through unchanged.
+
+    Returns:
+        Tuple of ``(contiguous_image, target)``.
+    """
+    return image.contiguous(), target
+
+
 def infer_transforms(size: tuple[int, int] = _DEFAULT_INPUT_SIZE) -> Any:
     """Build the benchmark preprocessing pipeline for a given model input size.
 
@@ -93,7 +111,8 @@ def infer_transforms(size: tuple[int, int] = _DEFAULT_INPUT_SIZE) -> Any:
             :data:`_DEFAULT_INPUT_SIZE` for dynamic-axis models where a static size cannot be read.
 
     Returns:
-        A ``torchvision.transforms.v2.Compose`` that resizes, tensorizes, and normalizes an image.
+        A ``torchvision.transforms.v2.Compose`` that resizes, tensorizes, normalizes, and returns
+        the image as a contiguous tensor.
     """
     from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
@@ -105,6 +124,7 @@ def infer_transforms(size: tuple[int, int] = _DEFAULT_INPUT_SIZE) -> Any:
             ToImage(),
             ToDtype(torch.float32, scale=True),
             Normalize(),
+            _ensure_contiguous,
         ]
     )
 

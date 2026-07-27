@@ -194,7 +194,21 @@ def compute_l1_keypoint_loss(
             int(target_classes.max()),
             num_classes,
         )
-        zeros = all_pred_keypoints.new_zeros(n_targets)
+        # Keep the returned zeros connected to the autograd graph via ``all_pred_keypoints``.
+        # A detached zero (e.g. ``new_zeros``) would leave the keypoint-head parameters
+        # without a gradient path on this batch. Under DistributedDataParallel that desyncs
+        # the gradient reducer across ranks whenever this guard fires on some ranks but not
+        # others (e.g. one rank has an out-of-schema class label), producing a hang or a
+        # "parameter did not receive grad" error. Adding a graph-connected scalar zero keeps
+        # the gradient numerically zero while ensuring the head is seen as "used".
+        #
+        # Use an empty reduction rather than ``all_pred_keypoints.sum() * 0.0``: the latter
+        # yields NaN when predictions contain NaN/Inf (``nan * 0 == nan``) or when a finite
+        # fp16 tensor overflows in ``.sum()`` (``inf * 0 == nan``), poisoning the loss. An
+        # empty differentiable reduction is exactly zero regardless of prediction values while
+        # staying connected to every producer parameter.
+        graph_zero = all_pred_keypoints.reshape(-1)[:0].sum()
+        zeros = all_pred_keypoints.new_zeros(n_targets) + graph_zero
         return zeros, zeros, zeros, zeros
 
     if total_padded_num_keypoints % num_classes != 0:

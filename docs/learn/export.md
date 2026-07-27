@@ -60,24 +60,25 @@ This command saves the ONNX model to the `output` directory by default.
 
 The `export()` method accepts several parameters to customize the export process:
 
-| Parameter          | Default    | Description                                                                                                                                                                                     |
-| ------------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `output_dir`       | `"output"` | Directory where the exported model will be saved.                                                                                                                                               |
-| `format`           | `"onnx"`   | Export format: `"onnx"`, `"tflite"`, `"tensorrt"` (alias: `"trt"`), or `"executorch"`.                                                                                                          |
-| `quantization`     | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`.                                                                                             |
-| `calibration_data` | `None`     | Calibration data for TFLite export. Image directory, `.npy` file path, NumPy array, or `None`. See [TFLite Export](#tflite-export).                                                             |
-| `max_images`       | `100`      | Maximum number of images to load from a calibration directory for TFLite INT8 quantization. Ignored for other calibration data formats.                                                         |
-| `infer_dir`        | `None`     | Optional directory of sample images for inference validation during export tracing. If not provided, a random dummy image is generated.                                                         |
-| `backbone_only`    | `False`    | Export only the backbone feature extractor instead of the full model.                                                                                                                           |
-| `opset_version`    | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                                                                                                  |
-| `verbose`          | `True`     | Whether to print verbose export information.                                                                                                                                                    |
-| `shape`            | `None`     | Input shape as tuple `(height, width)`. Each dimension must be divisible by the selected model's block size (`patch_size * num_windows`). If not provided, uses the model's default resolution. |
-| `batch_size`       | `1`        | Batch size for the exported model.                                                                                                                                                              |
-| `dynamic_batch`    | `False`    | If `True`, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime.                                                                                     |
-| `patch_size`       | `None`     | Backbone patch size override. Defaults to the value from `model_config.patch_size`. Must match the instantiated model's patch size when provided.                                               |
-| `backend`          | `None`     | Backend for ExecuTorch: `"xnnpack"` (CPU, fp32), `"coreml"` (Apple, fp16), or `"qnn"` (Qualcomm HTP, fp16). Required when `format="executorch"`.                                                |
-| `soc`              | `None`     | Target SoC chip identifier for the `"qnn"` backend (e.g. `"SM8650"` for Snapdragon 8 Gen 3). Required when `backend="qnn"`.                                                                     |
-| `notes`            | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the `"rfdetr_notes"` metadata property.                           |
+| Parameter          | Default    | Description                                                                                                                                                                                      |
+| ------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `output_dir`       | `"output"` | Directory where the exported model will be saved.                                                                                                                                                |
+| `format`           | `"onnx"`   | Export format: `"onnx"`, `"tflite"`, `"tensorrt"` (alias: `"trt"`), or `"executorch"`.                                                                                                           |
+| `quantization`     | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`.                                                                                              |
+| `calibration_data` | `None`     | Calibration data for TFLite export. Image directory, `.npy` file path, NumPy array, or `None`. See [TFLite Export](#tflite-export).                                                              |
+| `max_images`       | `100`      | Maximum number of images to load from a calibration directory for TFLite INT8 quantization. Ignored for other calibration data formats.                                                          |
+| `infer_dir`        | `None`     | Optional directory of sample images for inference validation during export tracing. If not provided, a random dummy image is generated.                                                          |
+| `backbone_only`    | `False`    | Export only the backbone feature extractor instead of the full model.                                                                                                                            |
+| `opset_version`    | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                                                                                                   |
+| `verbose`          | `True`     | Whether to print verbose export information.                                                                                                                                                     |
+| `shape`            | `None`     | Input shape as tuple `(height, width)`. Each dimension must be divisible by the selected model's block size (`patch_size * num_windows`). If not provided, uses the model's default resolution.  |
+| `batch_size`       | `1`        | Batch size for the exported model.                                                                                                                                                               |
+| `dynamic_batch`    | `False`    | If `True`, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime.                                                                                      |
+| `patch_size`       | `None`     | Backbone patch size override. Defaults to the value from `model_config.patch_size`. Must match the instantiated model's patch size when provided.                                                |
+| `backend`          | `None`     | Backend for ExecuTorch: `"xnnpack"` (CPU, fp32), `"coreml"` (Apple, fp16), or `"qnn"` (Qualcomm HTP, fp16). Required when `format="executorch"`.                                                 |
+| `soc`              | `None`     | Target SoC chip identifier for the `"qnn"` backend (e.g. `"SM8650"` for Snapdragon 8 Gen 3). Required when `backend="qnn"`.                                                                      |
+| `fp16`             | `True`     | Build the TensorRT engine with FP16 precision (only used when `format="tensorrt"`). Pass `False` to build an FP32 engine — required on TensorRT builds that do not expose the FP16 builder flag. |
+| `notes`            | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the `"rfdetr_notes"` metadata property.                            |
 
 ## Advanced Export Examples
 
@@ -565,6 +566,15 @@ device. For example, `"SM8650"` targets the Snapdragon 8 Gen 3.
     with an `undefined symbol` / `dlopen` error at import time, since ExecuTorch's prebuilt wheels
     are compiled against whichever `torch` ABI existed at their release time.
 
+!!! warning "The input tensor must be contiguous"
+
+    The ExecuTorch runtime reads the input buffer as contiguous NCHW and ignores tensor strides.
+    Preprocessing steps that permute axes — `np.transpose`, `Tensor.permute`, torchvision's
+    `ToImage` — return a strided view rather than a copy, and such a view is misread as a
+    scrambled image. Nothing errors: the model runs without error and returns plausible-shaped
+    output, but every detection's score collapses below threshold. Finish preprocessing with
+    `np.ascontiguousarray(...)` (or `Tensor.contiguous()`) before calling `execute`.
+
 ```python
 import numpy as np
 import torch
@@ -585,6 +595,10 @@ image_array = (image_array - mean) / std
 
 image_array = np.transpose(image_array, (2, 0, 1))  # HWC -> CHW
 image_array = np.expand_dims(image_array, axis=0)  # add batch dimension: (1, 3, H, W)
+# np.transpose returns a strided view, not a copy. The ExecuTorch runtime reads the input
+# buffer as contiguous NCHW and ignores strides, so a non-contiguous tensor is silently
+# misread as a scrambled image and every detection collapses below threshold.
+image_array = np.ascontiguousarray(image_array)
 input_tensor = torch.from_numpy(image_array).float()
 
 # Run inference

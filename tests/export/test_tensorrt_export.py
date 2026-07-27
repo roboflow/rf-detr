@@ -9,9 +9,21 @@ The engine is built via the TensorRT Python API through `polygraphy`; these test
 points so they run without TensorRT, a GPU, or `polygraphy` installed.
 """
 
+import sys
+
 import pytest
 
 from rfdetr.export import _tensorrt as tensorrt_export
+
+
+def _patch_polygraphy_chain(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """Stub the polygraphy build chain and return the dict that captures CreateConfig kwargs."""
+    config_kwargs: dict = {}
+    monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", lambda path: ("network", path))
+    monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: config_kwargs.update(kwargs) or "config")
+    monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda network, config: "engine")
+    monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
+    return config_kwargs
 
 
 @pytest.mark.parametrize(
@@ -81,3 +93,21 @@ def test_build_engine_invokes_polygraphy_and_saves_trt(monkeypatch: pytest.Monke
     assert config_kwargs == {"fp16": fp16}
     assert build_args == {"network": ("network", "/tmp/model.onnx"), "config": "config-sentinel"}
     assert saved == {"engine": "engine-sentinel", "path": "/tmp/model.trt"}
+
+
+def test_build_engine_downgrades_to_fp32_when_fp16_flag_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A TensorRT build without the FP16 builder flag must fall back to an FP32 engine instead of aborting."""
+
+    class _FakeTrt:
+        __version__ = "11.1.0.106"
+
+        class BuilderFlag:  # deliberately lacks an ``FP16`` attribute
+            INT8 = 0
+
+    config_kwargs = _patch_polygraphy_chain(monkeypatch)
+    monkeypatch.setitem(sys.modules, "tensorrt", _FakeTrt)
+
+    result = tensorrt_export.build_engine("/tmp/model.onnx", fp16=True)
+
+    assert result == "/tmp/model.trt"
+    assert config_kwargs == {"fp16": False}
