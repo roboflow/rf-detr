@@ -88,10 +88,10 @@ See `pyproject.toml` for complete dependency specifications:
 
 ```bash
 # CPU tests (default for local development; mirrors CI)
-uv run --no-sync pytest src/ tests/ -n 1 -m "not gpu" --ignore=tests/run_smoke_all_models.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
+uv run --no-sync pytest src/ tests/ -n 1 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
 
 # GPU tests (requires GPU; mirrors CI)
-uv run --no-sync pytest tests/ -m gpu -n 2 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
+uv run --no-sync pytest tests/ -m gpu --ignore=tests/legacy/test_checkpoint_compat.py -n 2 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
 
 # Pre-commit checks (ALWAYS run before committing)
 pre-commit run --all-files
@@ -230,8 +230,8 @@ uv run twine check --strict dist/*
 ```python
 # Prefer direct project imports. Standard aliases such as `numpy as np`,
 # `torch.nn.functional as F`, and lazy module aliases are allowed when conventional.
-from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.distributed import get_rank, get_world_size, is_main_process, save_on_master
+from rfdetr.utilities.logger import get_logger
 
 # Logger usage
 logger = get_logger()  # Default name: "rf-detr", reads LOG_LEVEL env var
@@ -295,7 +295,7 @@ result = subprocess.run(
 4. **Testing:**
     - Bug fixes: Write test first, then fix
     - Features: Test all major use cases
-    - Run: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --timeout=240 --durations=50`
+    - Run: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --timeout=240 --durations=50`
 5. **Quality checks:** `pre-commit run --all-files`
 6. **Build (if needed):** `uv build`
 7. **Commit:** Pre-commit hooks run automatically
@@ -320,6 +320,7 @@ GitHub Actions workflows in `.github/workflows/`:
 
 - **ci-tests-cpu.yml:** CPU tests across OS/Python versions
 - **ci-tests-gpu.yml:** GPU-dependent tests
+- **ci-legacy-checkpoints.yml:** Backward-compatibility checkpoint-loading tests across historical rfdetr releases (advisory only — not a required check; a compat break does not block merge)
 - **build-package.yml:** Build and validate distributions
 - **ci-build-docs.yml:** Documentation builds
 - **publish-docs.yml:** Deploy docs to GitHub Pages

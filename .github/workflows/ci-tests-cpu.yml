@@ -61,6 +61,7 @@ jobs:
           uv run --no-sync pytest src/ tests/ \
             -n 2 -m "not gpu and not coco17" \
             --ignore=tests/run_smoke_all_models.py \
+            --ignore=tests/legacy/test_checkpoint_compat.py \
             --cov=rfdetr --cov-report=xml \
             --timeout=420 \
             --durations=50

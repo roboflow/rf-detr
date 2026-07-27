@@ -1,0 +1,171 @@
+name: Checkpoint Backward-Compatibility
+
+# Verify that the current codebase can load checkpoints produced by every past
+# stable minor release listed in tests/legacy/checkpoint_versions.txt.
+#
+# Flow:
+#   get-versions  →  generate (matrix, one job per version)  →  test-compat
+#
+# Each "generate" job installs a specific released rfdetr version, runs
+# tests/legacy/generate_checkpoint.py, and uploads the .pth file as a
+# workflow artifact.  The final "test-compat" job downloads all artifacts,
+# installs the current (dev) code, and runs the parametrized compat test suite.
+
+on:
+  push:
+    branches: ["main", "develop", "release/*"]
+    paths:
+      - "src/**"
+      - "tests/legacy/**"
+      - ".github/workflows/ci-legacy-checkpoints.yml"
+  pull_request:
+    branches: ["main", "develop", "release/*"]
+    paths:
+      - "src/**"
+      - "tests/legacy/**"
+      - ".github/workflows/ci-legacy-checkpoints.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: checkpoint-compat-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# ---------------------------------------------------------------------------
+# Job 1 — read versions file and expose as matrix
+# ---------------------------------------------------------------------------
+jobs:
+  get-versions:
+    name: Read versions file
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.parse.outputs.matrix }}
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 📋 Parse checkpoint_versions.txt
+        id: parse
+        run: |
+          # Strip comment lines and blank lines, then build a JSON array.
+          matrix=$(
+            grep -Ev '^[[:space:]]*#' tests/legacy/checkpoint_versions.txt \
+            | grep -Ev '^[[:space:]]*$' \
+            | jq -R . \
+            | jq -sc .
+          )
+          echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
+          echo "Versions to test: ${matrix}"
+
+  # ---------------------------------------------------------------------------
+  # Job 2 — generate one checkpoint per released version (parallel matrix)
+  # ---------------------------------------------------------------------------
+  generate:
+    name: Generate checkpoint (rfdetr ${{ matrix.version }})
+    needs: get-versions
+    runs-on: ubuntu-latest
+    # Bumped from 10: --use-pretrained now downloads a real published checkpoint
+    # (~100MB+) plus the fixed reference image, instead of a fast random init.
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJson(needs.get-versions.outputs.matrix) }}
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Set up Python + uv
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          python-version: "3.11"
+          activate-environment: true
+          cache-dependency-glob: "tests/legacy/frozen_dependencies/req-${{ matrix.version }}.txt"
+
+      - name: 📦 Install rfdetr ${{ matrix.version }} (CPU-only torch)
+        env:
+          UV_TORCH_BACKEND: cpu
+          MATRIX_VERSION: ${{ matrix.version }}
+        # Install from the frozen requirements file for this version so the
+        # generate script uses that version's model API and checkpoint format,
+        # plus any extra transitive pins needed to keep the install
+        # reproducible.  The torch extras flag keeps the install CPU-only and fast.
+        run: |
+          uv pip install -r "tests/legacy/frozen_dependencies/req-$MATRIX_VERSION.txt" \
+            --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: 🏗️ Generate checkpoint
+        env:
+          MATRIX_VERSION: ${{ matrix.version }}
+        # --use-pretrained builds with the real (COCO-)pretrained checkpoint for
+        # this version and captures a reference prediction (fixed real image) so
+        # test-compat can assert the reloaded model predicts the same thing.
+        run: |
+          python tests/legacy/generate_checkpoint.py \
+            --output "checkpoints/checkpoint_v$MATRIX_VERSION.pth" \
+            --use-pretrained
+
+      - name: 📤 Upload checkpoint artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: checkpoint-v${{ matrix.version }}
+          path: checkpoints/checkpoint_v${{ matrix.version }}.pth
+          retention-days: 7
+
+      - name: Minimize uv cache
+        continue-on-error: true
+        run: uv cache prune --ci
+
+  # ---------------------------------------------------------------------------
+  # Job 3 — download all checkpoints and run compat tests with current code
+  # ---------------------------------------------------------------------------
+  test-compat:
+    name: Test checkpoint loading compatibility
+    needs: generate
+    runs-on: ubuntu-latest
+    # Bumped from 15: now runs one real CPU forward pass per version plus a
+    # small reference-image download, on top of the existing load checks.
+    timeout-minutes: 20
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Set up Python + uv
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          python-version: "3.11"
+          activate-environment: true
+          cache-dependency-glob: "tests/legacy/frozen_dependencies/*.txt"
+
+      - name: 📦 Install current rfdetr from source (CPU-only torch)
+        env:
+          UV_TORCH_BACKEND: cpu
+        run: uv pip install -e ".[train,cli]" --group tests
+
+      - name: 📥 Download all checkpoint artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          # Download every artifact whose name starts with "checkpoint-v"
+          # into tests/legacy/checkpoints/ so the test knows where to look.
+          pattern: checkpoint-v*
+          path: tests/legacy/checkpoints
+          merge-multiple: true
+
+      - name: 🗂️ List downloaded checkpoints
+        run: ls -lh tests/legacy/checkpoints/
+
+      - name: 🧪 Run checkpoint compatibility tests
+        run: |
+          uv run --no-sync pytest tests/legacy/ -v --tb=short --timeout=120
+
+      - name: Minimize uv cache
+        continue-on-error: true
+        run: uv cache prune --ci
