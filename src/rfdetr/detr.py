@@ -1428,8 +1428,8 @@ class RFDETR:
                     TFLite and ExecuTorch export are experimental and subject to change; upstream dependency
                     instabilities (``onnx2tf``, ``ai_edge_litert``, ``executorch``) may affect results.
             quantization: TFLite quantization mode (ignored when
-                ``format="onnx"``, ``format="openvino"``, or ``format="executorch"``).  One of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``.  
-                ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally 
+                ``format="onnx"``, ``format="openvino"``, or ``format="executorch"``).  One of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``.
+                ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally
                 produces an INT8-quantized model.
             calibration_data: Representative images for INT8 calibration and ``onnx2tf`` output validation.  Accepts:
 
@@ -1517,8 +1517,7 @@ class RFDETR:
                 from rfdetr.export.main import make_infer_image
             except ImportError:
                 logger.error(
-                    "It seems some dependencies for export are missing."
-                    " Please run `pip install rfdetr` and try again.",
+                    "It seems some dependencies for export are missing. Please run `pip install rfdetr` and try again.",
                 )
                 raise
 
@@ -1622,7 +1621,7 @@ class RFDETR:
                 except ImportError:
                     logger.error(
                         "It seems OpenVINO is not installed."
-                        " Please run `pip install \"rfdetr[openvino]\"` and try again.",
+                        ' Please run `pip install "rfdetr[openvino]"` and try again.',
                     )
                     raise
 

@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """OpenVINO inference utilities for exported RF-DETR models."""
 
 from __future__ import annotations
@@ -5,7 +11,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 from numpy.typing import NDArray
 
 from rfdetr.utilities.logger import get_logger
@@ -18,7 +23,7 @@ class OpenVINOInference:
 
     Example:
         >>> from rfdetr.export._openvino.inference import OpenVINOInference
-        >>> 
+        >>>
         >>> model = OpenVINOInference("output/inference_model.xml")
         >>> # Prepare input image (NCHW format, ImageNet normalized)
         >>> outputs = model.infer(image_array)
@@ -39,7 +44,7 @@ class OpenVINOInference:
             import openvino as ov
         except ImportError:
             logger.error(
-                "OpenVINO is not installed. Please run `pip install \"rfdetr[openvino]\"` and try again.",
+                'OpenVINO is not installed. Please run `pip install "rfdetr[openvino]"` and try again.',
             )
             raise
 

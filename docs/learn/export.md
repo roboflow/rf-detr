@@ -24,7 +24,7 @@ Install the export dependencies you need:
 # ONNX export only
 pip install "rfdetr[onnx]"
 
-# OpenVINO IR export 
+# OpenVINO IR export
 pip install "rfdetr[openvino]"
 
 # TFLite export
@@ -537,15 +537,16 @@ benchmark_app -m output/rfdetr-medium.xml -data_shape [1,3,576,576]
 
 The exported OpenVINO IR model produces the following outputs:
 
-- **Object Detection Models**: 
-  - Output 0: Bounding boxes `[batch, 300, 4]` (x, y, w, h in normalized coordinates)
-  - Output 1: Class logits `[batch, 300, num_classes]`
+- **Object Detection Models**:
+
+    - Output 0: Bounding boxes `[batch, 300, 4]` (x, y, w, h in normalized coordinates)
+    - Output 1: Class logits `[batch, 300, num_classes]`
 
 - **Segmentation Models**:
-  - Output 0: Bounding boxes `[batch, 300, 4]`
-  - Output 1: Class logits `[batch, 300, num_classes]`
-  - Output 2: Instance masks (if segmentation head is present)
 
+    - Output 0: Bounding boxes `[batch, 300, 4]`
+    - Output 1: Class logits `[batch, 300, num_classes]`
+    - Output 2: Instance masks (if segmentation head is present)
 
 ## ExecuTorch Export
 
