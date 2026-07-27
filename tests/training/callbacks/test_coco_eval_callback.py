@@ -1266,9 +1266,9 @@ class TestValidationBatchEndEvalEmaOnly:
     def test_on_validation_batch_end_resizes_native_gt_directly_to_prediction_grid(self) -> None:
         """Native-head evaluation must not round-trip transformed GT masks through ``orig_size``.
 
-        A 4x4 model-input mask with one pixel at ``[1, 1]`` is empty after direct nearest
-        downsampling to 2x2. The historical 4x4 -> 5x5 -> 2x2 path instead retains that
-        pixel, changing the metric target for the same model output.
+        A 4x4 model-input mask with one pixel at ``[1, 1]`` is empty after direct nearest downsampling to 2x2. The
+        historical 4x4 -> 5x5 -> 2x2 path instead retains that pixel, changing the metric target for the same model
+        output.
         """
         cb = COCOEvalCallback(segmentation=True)
         trainer = _make_trainer()
