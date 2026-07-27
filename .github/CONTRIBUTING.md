@@ -151,10 +151,10 @@ uv sync --group build      # Build tools only
 
 ```bash
 # Run CPU tests (default for local development; mirrors CI)
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
+uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
 
 # Run GPU tests (requires GPU; mirrors CI)
-uv run --no-sync pytest tests/ -m gpu -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
+uv run --no-sync pytest tests/ -m gpu --ignore=tests/legacy/test_checkpoint_compat.py -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
 ```
 
 **Development vs. PR Requirements:**
@@ -286,10 +286,13 @@ Our continuous integration tests run on:
 
 This ensures your changes work across all supported platforms and Python versions.
 
+**Legacy checkpoint compatibility is advisory only.** `ci-legacy-checkpoints.yml` is not among develop's required status checks (`Test docs build`, `pre-commit.ci - pr`, `testing-guardian`, and `Testing`). The required `Testing` job invokes pytest with `--ignore=tests/legacy/test_checkpoint_compat.py`, so it excludes legacy tests. Branch-protection required-check configuration is repo-admin config outside this PR's diff. This is a deliberate advisory-only tradeoff: a legacy-compatibility failure, including an intentional future checkpoint-format break, does not block merge.
+
 **Key GitHub Actions workflow files** (in `.github/workflows/`):
 
 - **ci-tests-cpu.yml** — CPU tests across Ubuntu/Windows/macOS × Python 3.10–3.13
 - **ci-tests-gpu.yml** — GPU-dependent tests
+- **ci-legacy-checkpoints.yml** — Backward-compatibility checkpoint-loading tests across historical rfdetr releases (advisory only — not a required check; a compat break does not block merge)
 - **build-package.yml** — Build and validate distributions (`uv build` + `twine check`)
 - **ci-build-docs.yml** — Documentation build validation
 - **publish-docs.yml** — Deploy docs to GitHub Pages on release
@@ -300,7 +303,7 @@ This ensures your changes work across all supported platforms and Python version
 
 ```bash
 # Run tests with parallel execution (recommended)
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --timeout=240 --durations=50
+uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --timeout=240 --durations=50
 
 # Run a specific test file
 uv run --no-sync pytest tests/models/test_model.py
