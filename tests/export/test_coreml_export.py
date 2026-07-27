@@ -234,13 +234,6 @@ class TestCheckCoremltoolsAvailable:
 class TestExportCoremlValidation:
     """Argument and dependency behaviour of ``export_coreml()`` (no real convert)."""
 
-    def test_dynamic_batch_raises_not_implemented(self, tmp_path: Path) -> None:
-        """``dynamic_batch=True`` must be refused (ANE / static-shape friendly export)."""
-        model = torch.nn.Linear(1, 1)
-        example = torch.zeros(1, 3, 32, 32)
-        with pytest.raises(NotImplementedError, match="dynamic_batch"):
-            export_coreml(model, example, tmp_path, dynamic_batch=True)
-
     def test_missing_coremltools_raises_import_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """``export_coreml`` must surface the install hint when coremltools is absent."""
         monkeypatch.setattr(

@@ -199,7 +199,6 @@ def _export_coreml_format(
     output_dir_path: Path,
     *,
     variant_name: str | None,
-    dynamic_batch: bool,
     verbose: bool,
     notes: object,
 ) -> Path:
@@ -213,7 +212,6 @@ def _export_coreml_format(
         input_tensors: Example input tensor used to trace the graph.
         output_dir_path: Directory where the ``.mlpackage`` is written.
         variant_name: Model variant identifier used to name the output bundle.
-        dynamic_batch: Whether a dynamic batch dimension was requested (always rejected by the converter).
         verbose: Forwarded to :func:`~rfdetr.export._coreml.converter.export_coreml`.
         notes: User-supplied export metadata; CoreML has no ONNX-style metadata slot, so a non-``None`` value warns.
 
@@ -222,12 +220,12 @@ def _export_coreml_format(
 
     Raises:
         ImportError: If the optional ``coreml`` dependency is not installed.
-        NotImplementedError: If ``dynamic_batch`` is requested, or if the exported graph has CoreML registry gaps.
+        NotImplementedError: If the exported graph has CoreML registry gaps.
 
     Examples:
         >>> _export_coreml_format(  # doctest: +SKIP
         ...     model, input_tensors, output_dir_path,
-        ...     variant_name="small", dynamic_batch=False, verbose=True, notes=None,
+        ...     variant_name="small", verbose=True, notes=None,
         ... )
         PosixPath('out/model.mlpackage')
     """
@@ -260,7 +258,6 @@ def _export_coreml_format(
         input_tensors=input_tensors,
         output_dir=str(output_dir_path),
         variant_name=variant_name,
-        dynamic_batch=dynamic_batch,
         verbose=verbose,
     )
     logger.info(f"Successfully exported CoreML model to: {mlpackage_path}")

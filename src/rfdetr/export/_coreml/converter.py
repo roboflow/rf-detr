@@ -61,7 +61,6 @@ def export_coreml(
     output_dir: str | os.PathLike[str],
     *,
     variant_name: str | None = None,
-    dynamic_batch: bool = False,
     verbose: bool = True,
     compute_precision: ct.precision | None = None,
 ) -> Path:
@@ -77,8 +76,6 @@ def export_coreml(
         output_dir: Directory where the ``.mlpackage`` is written.
         variant_name: Model variant identifier (e.g. ``"rfdetr-nano"``). When provided, the bundle
             is named ``{variant_name}.mlpackage`` instead of ``inference_model.mlpackage``.
-        dynamic_batch: Variable batch size at runtime. Not supported — CoreML / ANE prefer fixed
-            shapes; raises :class:`NotImplementedError`.
         verbose: When ``True``, log export progress at info level.
         compute_precision: coremltools precision for ``ct.convert`` (e.g. ``ct.precision.FLOAT32`` /
             ``FLOAT16``). ``None`` selects ``FLOAT32`` (tight CPU parity with eager PyTorch).
@@ -89,16 +86,10 @@ def export_coreml(
 
     Raises:
         ImportError: If ``coremltools`` is not installed.
-        NotImplementedError: If ``dynamic_batch`` is requested, or if the exported graph
-            contains op kinds missing from coremltools' Torch registry (fast-fail checklist).
+        NotImplementedError: If the exported graph contains op kinds missing from coremltools'
+            Torch registry (fast-fail checklist).
         RuntimeError: If ``torch.export`` or ``coremltools.convert`` fails.
     """
-    if dynamic_batch:
-        raise NotImplementedError(
-            "CoreML export does not support dynamic_batch (fixed shapes are required for reliable "
-            "ANE / GPU scheduling). Export one .mlpackage per batch size instead."
-        )
-
     _check_coremltools_available()
     import coremltools as ct
 

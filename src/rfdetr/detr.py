@@ -1497,8 +1497,7 @@ class RFDETR:
         backend, soc = _resolve_export_backend(format, backend, soc)
         # Fail fast: dynamic_batch is statically incompatible with ExecuTorch / CoreML; refuse before any forward
         # pass so the user doesn't pay the full DINOv2 forward (seconds + GBs) before seeing the error. These are
-        # intentional lightweight duplicates of the authoritative checks in the converters — the detailed "why"
-        # lives there; these copies exist only to fail before heavy optional imports, so keep the messages compatible.
+        # intentional early checks before heavy optional imports (ExecuTorch also checks in the converter).
         if dynamic_batch and format == "executorch":
             raise NotImplementedError(
                 "ExecuTorch export does not support dynamic_batch (see export_executorch for details). "
@@ -1506,8 +1505,8 @@ class RFDETR:
             )
         if dynamic_batch and format == "coreml":
             raise NotImplementedError(
-                "CoreML export does not support dynamic_batch (see export_coreml for details). "
-                "Export one .mlpackage per batch size instead."
+                "CoreML export does not support dynamic_batch (fixed shapes are required for reliable "
+                "ANE / GPU scheduling). Export one .mlpackage per batch size instead."
             )
         logger.info(f"Exporting model to {format} format")
         try:
@@ -1635,7 +1634,6 @@ class RFDETR:
                     input_tensors,
                     output_dir_path,
                     variant_name=getattr(self, "size", None),
-                    dynamic_batch=dynamic_batch,
                     verbose=verbose,
                     notes=notes,
                 )
