@@ -12,6 +12,7 @@ Covers ``_get_state_dict``, ``_get_patch_size``, ``_build_model``, and an integr
 
 from __future__ import annotations
 
+import hashlib
 import sys
 import types
 from pathlib import Path
@@ -24,9 +25,69 @@ import torch
 from tests.legacy.generate_checkpoint import (
     _build_model,
     _get_patch_size,
+    _get_reference_image_path,
     _get_state_dict,
     generate_checkpoint,
 )
+
+# ---------------------------------------------------------------------------
+# _get_reference_image_path
+# ---------------------------------------------------------------------------
+
+
+class TestGetReferenceImagePath:
+    """Unit tests for _get_reference_image_path — cache hit, MD5-mismatch redownload, and hard failure."""
+
+    def test_returns_cached_path_without_downloading_when_md5_matches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cached file whose MD5 matches must be returned as-is, with no network call."""
+        monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path))
+        cache_dir = tmp_path / "rfdetr-legacy-test-assets"
+        cache_dir.mkdir(parents=True)
+        content = b"correct cached bytes"
+        monkeypatch.setattr("tests.legacy.generate_checkpoint._REFERENCE_IMAGE_MD5", hashlib.md5(content).hexdigest())
+        (cache_dir / "people-walking.jpg").write_bytes(content)
+        mock_get = MagicMock()
+        monkeypatch.setattr("requests.get", mock_get)
+
+        result = _get_reference_image_path()
+
+        assert result.read_bytes() == content
+        mock_get.assert_not_called()
+
+    def test_redownloads_when_cached_file_md5_mismatches(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A cached file with a stale/corrupt MD5 must be redownloaded, not reused."""
+        monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path))
+        cache_dir = tmp_path / "rfdetr-legacy-test-assets"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "people-walking.jpg").write_bytes(b"stale garbage bytes")
+        fresh_content = b"freshly downloaded correct bytes"
+        monkeypatch.setattr(
+            "tests.legacy.generate_checkpoint._REFERENCE_IMAGE_MD5", hashlib.md5(fresh_content).hexdigest()
+        )
+        mock_response = SimpleNamespace(content=fresh_content, raise_for_status=MagicMock())
+        mock_get = MagicMock(return_value=mock_response)
+        monkeypatch.setattr("requests.get", mock_get)
+
+        result = _get_reference_image_path()
+
+        mock_get.assert_called_once()
+        assert result.read_bytes() == fresh_content
+
+    def test_raises_value_error_when_downloaded_content_md5_mismatches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A freshly-downloaded payload whose MD5 does not match the expected hash must raise, not be cached."""
+        monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path))
+        mock_response = SimpleNamespace(content=b"wrong bytes entirely", raise_for_status=MagicMock())
+        monkeypatch.setattr("requests.get", MagicMock(return_value=mock_response))
+
+        with pytest.raises(ValueError, match="MD5 mismatch"):
+            _get_reference_image_path()
+
+        assert not (tmp_path / "rfdetr-legacy-test-assets" / "people-walking.jpg").is_file()
+
 
 # ---------------------------------------------------------------------------
 # _get_state_dict

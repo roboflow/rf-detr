@@ -57,7 +57,7 @@ jobs:
         run: |
           uv run --no-sync pytest tests/ \
           -m gpu \
-          --ignore=tests/legacy \
+          --ignore=tests/legacy/test_checkpoint_compat.py \
           -n 3 \
           --reruns 1 --only-rerun "OutOfMemoryError" \
           --cov=rfdetr --cov-report=xml \

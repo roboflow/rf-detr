@@ -22,6 +22,8 @@ The list of versions under test is authoritative in
 
 from __future__ import annotations
 
+import os
+import pickle
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +34,26 @@ from PIL import Image
 
 from tests.legacy.generate_checkpoint import _get_reference_image_path, _top_detection
 
+
+def _skip_or_fail_missing_reference(version: str) -> None:
+    """Skip locally, but hard-fail in CI, when a checkpoint has no reference_prediction.
+
+    ``ci-legacy-checkpoints.yml`` always generates checkpoints with ``--use-pretrained``,
+    so a missing ``reference_prediction`` under CI signals a real generation-pipeline
+    regression, not the expected local-dev shortcut (skipping ``--use-pretrained`` to avoid
+    a slow pretrained-weights download). A plain ``pytest.skip`` here would let that
+    regression disappear silently if ``--use-pretrained`` were ever accidentally dropped
+    from the workflow — this is the *only* check that catches load-path weight corruption.
+
+    Args:
+        version: rfdetr version string, used in the skip/fail message.
+    """
+    message = f"v{version} checkpoint has no reference_prediction (generated without --use-pretrained)"
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        pytest.fail(message)
+    pytest.skip(message)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -39,6 +61,7 @@ from tests.legacy.generate_checkpoint import _get_reference_image_path, _top_det
 _VERSIONS_FILE = Path(__file__).parent / "checkpoint_versions.txt"
 _CHECKPOINTS_DIR = Path(__file__).parent / "checkpoints"
 _LEGACY_VISUALIZATIONS_DIR = Path(__file__).parent / "legacy_predictions"
+_FROZEN_DEPENDENCIES_DIR = Path(__file__).parent / "frozen_dependencies"
 
 
 def _read_versions(versions_file: Path | None = None) -> list[str]:
@@ -138,6 +161,26 @@ def loaded_checkpoint(request: pytest.FixtureRequest) -> tuple[str, Path, dict]:
     return version, ckpt_path, ckpt
 
 
+def test_torch_load_on_corrupt_checkpoint_raises_clear_error(tmp_path: Path) -> None:
+    """A present-but-corrupt .pth file must fail with torch's own load error, not hang or crash silently.
+
+    ``loaded_checkpoint`` only asserts ``ckpt_path.is_file()`` (the missing-file case) before
+    calling ``torch.load(...)`` directly with no error wrapping — a present-but-corrupt checkpoint
+    would otherwise raise mid-fixture with no assertion pinning what is raised. This test does not
+    change production code (there is no wrapping to change); it pins the natural failure mode of
+    ``torch.load`` on a truncated/corrupt file so a future change to the loading code cannot
+    silently swallow the failure or turn it into an unrelated, harder-to-diagnose traceback.
+
+    Args:
+        tmp_path: Pytest-provided temporary directory.
+    """
+    corrupt_path = tmp_path / "checkpoint_vcorrupt.pth"
+    corrupt_path.write_bytes(b"not a valid torch checkpoint - truncated garbage")
+
+    with pytest.raises(pickle.UnpicklingError, match=r".+"):
+        torch.load(corrupt_path, map_location="cpu", weights_only=False)
+
+
 class TestCheckpointBackwardCompat:
     """Load past-version checkpoints with the current rfdetr codebase.
 
@@ -163,9 +206,11 @@ class TestCheckpointBackwardCompat:
 
         version, ckpt_path, raw = loaded_checkpoint
 
-        # Read the stored class count so we can pass an explicit num_classes
-        # and avoid the 90-class COCO default triggering a head mismatch with
-        # the 2-class test checkpoint.
+        # Read the stored class count so we can pass an explicit num_classes and avoid the
+        # constructor's 90-class COCO default triggering a head mismatch with the checkpoint's
+        # actual class count — 2 for a locally-generated (non-pretrained) checkpoint, or 90 for
+        # the CI --use-pretrained path (see generate_checkpoint.py); either way, RFDETRSmall's
+        # implicit default must not silently diverge from what this checkpoint was saved with.
         stored_num_classes: int | None = None
         if "model" in raw and "class_embed.bias" in raw["model"]:
             stored_num_classes = int(raw["model"]["class_embed.bias"].shape[0]) - 1
@@ -235,8 +280,9 @@ class TestCheckpointBackwardCompat:
         checkpoint stores the top detection captured at generation time on a
         fixed reference image (``generate_checkpoint.py --use-pretrained``);
         reloading with current code and re-running the same image must
-        reproduce it. Skipped for checkpoints generated without
-        ``--use-pretrained`` (no ``reference_prediction`` key).
+        reproduce it. Skipped locally for checkpoints generated without
+        ``--use-pretrained`` (no ``reference_prediction`` key); hard-fails
+        instead under CI, where ``--use-pretrained`` is always passed.
 
         Args:
             loaded_checkpoint: Shared (version, path, raw checkpoint dict) fixture.
@@ -246,7 +292,7 @@ class TestCheckpointBackwardCompat:
         version, ckpt_path, ckpt = loaded_checkpoint
         reference = ckpt.get("reference_prediction")
         if reference is None:
-            pytest.skip(f"v{version} checkpoint has no reference_prediction (generated without --use-pretrained)")
+            _skip_or_fail_missing_reference(version)
 
         loaded = RFDETRSmall(pretrain_weights=str(ckpt_path), device="cpu")
         reference_image_path = _get_reference_image_path()
@@ -273,6 +319,54 @@ class TestCheckpointBackwardCompat:
         iou = float(sv.box_iou_batch(np.array([reference["xyxy"]]), np.array([actual["xyxy"]]))[0, 0])
         assert iou > 0.9, f"v{version}: top detection box IoU dropped to {iou:.4f} after reload (expected > 0.9)"
 
+    def test_load_checkpoint_with_custom_resolution_interpolates_position_embeddings(
+        self, loaded_checkpoint: tuple[str, Path, dict]
+    ) -> None:
+        """Loading with an explicit non-default resolution must not raise and must keep predictions stable.
+
+        ``RFDETRSmall`` defaults to ``resolution=512`` (a 32x32 DINOv2 patch grid,
+        ``positional_encoding_size=32``). Passing an explicit ``resolution=1280`` (an 80x80 grid)
+        forces ``n_source != n_target`` in ``interpolate_position_embeddings``
+        (``src/rfdetr/models/weights.py:205-262``, invoked from ``load_pretrain_weights`` at
+        line 554), which must bicubic-interpolate the checkpoint's positional embeddings rather
+        than raising a shape-mismatch ``RuntimeError`` from ``load_state_dict``. Skipped for
+        checkpoints generated without ``--use-pretrained`` (no ``reference_prediction`` key).
+
+        Args:
+            loaded_checkpoint: Shared (version, path, raw checkpoint dict) fixture.
+        """
+        from rfdetr import RFDETRSmall
+
+        version, ckpt_path, ckpt = loaded_checkpoint
+        reference = ckpt.get("reference_prediction")
+        if reference is None:
+            pytest.skip(f"v{version} checkpoint has no reference_prediction (generated without --use-pretrained)")
+
+        # This must not raise — interpolate_position_embeddings must handle n_source != n_target cleanly.
+        loaded = RFDETRSmall(pretrain_weights=str(ckpt_path), resolution=1280, device="cpu")
+
+        # Confirm the resolution override actually drove a PE-grid mismatch (32x32 -> 80x80),
+        # i.e. that the interpolation code path was genuinely exercised, not skipped as a no-op.
+        assert loaded.model_config.positional_encoding_size == 80, (
+            f"v{version}: expected positional_encoding_size=80 (1280 // patch_size=16) after "
+            f"resolution=1280 override, got {loaded.model_config.positional_encoding_size}"
+        )
+
+        params = list(loaded.model.model.parameters())
+        assert params, f"Loaded model for v{version} (resolution=1280) has no parameters."
+
+        reference_image_path = _get_reference_image_path()
+        detections = loaded.predict(str(reference_image_path), threshold=0.5)
+        actual = _top_detection(detections)
+
+        # Interpolating positional embeddings to a much larger grid shifts confidence/box precision
+        # more than a native-resolution reload, so this checks identity stability of the top
+        # detection (the load path did not corrupt or permute weights), not exact reproduction.
+        assert actual["class_id"] == reference["class_id"], (
+            f"v{version}: top detection class_id changed after reload at resolution=1280 (expected "
+            f"{reference['class_id']} {reference['class_name']!r}, got {actual['class_id']} {actual['class_name']!r})"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Sanity check for checkpoint_versions.txt parsing
@@ -282,3 +376,44 @@ class TestCheckpointBackwardCompat:
 def test_legacy_versions_are_parsed() -> None:
     """checkpoint_versions.txt must parse to at least one version."""
     assert _LEGACY_VERSIONS, "failed parsing legacy versions"
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        pytest.param("1.5.0\n1.6.0\n", ["1.5.0", "1.6.0"], id="plain-versions"),
+        pytest.param("# header comment\n1.5.0\n# trailing comment\n", ["1.5.0"], id="comment-lines-skipped"),
+        pytest.param("\n\n1.5.0\n\n\n1.6.0\n\n", ["1.5.0", "1.6.0"], id="blank-lines-skipped"),
+        pytest.param("  1.5.0  \n\t1.6.0\t\n", ["1.5.0", "1.6.0"], id="whitespace-stripped"),
+        pytest.param("# only comments\n# nothing else\n", [], id="comments-only-yields-empty"),
+        pytest.param("", [], id="empty-file-yields-empty"),
+    ],
+)
+def test_read_versions_parsing_edge_cases(tmp_path: Path, content: str, expected: list[str]) -> None:
+    """_read_versions must skip blank lines and comments, and strip whitespace, for each edge case."""
+    versions_file = tmp_path / "checkpoint_versions.txt"
+    versions_file.write_text(content)
+
+    assert _read_versions(versions_file) == expected
+
+
+def test_read_versions_missing_file_yields_empty() -> None:
+    """_read_versions must return an empty list (not raise) when the file does not exist."""
+    assert _read_versions(Path("/nonexistent/checkpoint_versions.txt")) == []
+
+
+def test_every_version_has_matching_frozen_requirements_file() -> None:
+    """Every version listed in checkpoint_versions.txt must have a frozen_dependencies/req-<version>.txt.
+
+    The CI ``generate`` matrix job (``ci-legacy-checkpoints.yml``) installs
+    ``tests/legacy/frozen_dependencies/req-<version>.txt`` for each version in
+    ``checkpoint_versions.txt``; a version listed without a matching file
+    would fail the CI matrix at install time with no local signal beforehand.
+    """
+    missing = [
+        version for version in _LEGACY_VERSIONS if not (_FROZEN_DEPENDENCIES_DIR / f"req-{version}.txt").is_file()
+    ]
+    assert not missing, (
+        f"checkpoint_versions.txt lists version(s) with no matching frozen requirements file: {missing} "
+        f"(expected tests/legacy/frozen_dependencies/req-<version>.txt for each)"
+    )

@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import hashlib
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -45,6 +46,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import torch
+
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
 
 # supervision's own "people-walking.jpg" example image (same file served by
 # supervision.assets.ImageAssets.PEOPLE_WALKING). Fetched by direct URL rather
@@ -110,6 +115,10 @@ def _top_detection(detections: Any) -> dict[str, Any]:
     """
     if len(detections) == 0:
         raise ValueError("No detections above threshold on the reference image.")
+    # Near-tie flakiness: on a near-equal-confidence pair, argmax can pick a different index
+    # across gen vs. reload, tripping the class_id/IoU comparison in the caller. Fails *closed*
+    # (a spurious mismatch assertion, not a silent pass), so it is a rare-flake risk, not a
+    # correctness bug — not worth a tie-break heuristic given the reference image is fixed.
     top_idx = int(detections.confidence.argmax())
     class_names = detections.data.get("class_name")
     return {
@@ -207,19 +216,66 @@ def _build_model(preferred_class: str, device: str, *, num_classes: int | None =
         build_kwargs["num_classes"] = num_classes
 
     errors: list[str] = []
+    saw_non_transient_error = False
     for class_name in seen:
         cls = getattr(rfdetr_module, class_name, None)
         if cls is None:
             errors.append(f"{class_name}: not found in rfdetr module")
+            saw_non_transient_error = True
             continue
         try:
             model = cls(**build_kwargs)
             return model
         except Exception as exc:
+            logger.debug("Failed to instantiate %s during fallback probing: %s", class_name, exc)
             errors.append(f"{class_name}: {exc}")
+            if not _is_transient_network_error(exc):
+                saw_non_transient_error = True
             continue
 
-    raise RuntimeError("Could not instantiate any rfdetr model class.\n" + "\n".join(f"  {e}" for e in errors))
+    message = "Could not instantiate any rfdetr model class.\n" + "\n".join(f"  {e}" for e in errors)
+    if saw_non_transient_error:
+        raise RuntimeError(message)
+    # Every candidate failed with what looks like a network/infra error (e.g. the
+    # pretrained-weights download used by use_pretrained=True) rather than a real
+    # code regression — raise a distinguishable type so main() can exit with a
+    # "temporary failure" code instead of a generic one.
+    raise TransientFetchError(message)
+
+
+class TransientFetchError(RuntimeError):
+    """Raised when model instantiation fails only due to what looks like a network/infra error.
+
+    Distinguishes a real code regression (any other exception) from a likely-transient fetch failure (e.g. the
+    pretrained-weights download), so callers like ``main()`` can report and exit differently — mirroring the reference-
+    image fetch's existing MD5-guard skip-vs-fail posture.
+    """
+
+
+def _is_transient_network_error(exc: BaseException) -> bool:
+    """Best-effort check for whether *exc* looks like a network/infra failure, not a code bug.
+
+    Walks the exception's ``__cause__``/``__context__`` chain (a wrapped download error
+    surfaces its original ``requests`` exception this way) looking for
+    ``requests.exceptions.RequestException`` or a bare ``TimeoutError``/``ConnectionError``.
+
+    Args:
+        exc: The caught exception to classify.
+
+    Returns:
+        True if *exc* (or something in its cause/context chain) is a recognized
+        network-related exception type.
+    """
+    import requests
+
+    seen_ids: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen_ids:
+        seen_ids.add(id(current))
+        if isinstance(current, requests.exceptions.RequestException | TimeoutError | ConnectionError):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def generate_checkpoint(
@@ -336,12 +392,19 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
-    generate_checkpoint(
-        output_path=args.output,
-        num_classes=args.num_classes,
-        preferred_class=args.model,
-        use_pretrained=args.use_pretrained,
-    )
+    try:
+        generate_checkpoint(
+            output_path=args.output,
+            num_classes=args.num_classes,
+            preferred_class=args.model,
+            use_pretrained=args.use_pretrained,
+        )
+    except TransientFetchError as exc:
+        # Looks like a network/infra failure (e.g. the pretrained-weights download), not a
+        # real code regression — exit with the POSIX "temporary failure" code so CI logs and
+        # any future retry logic can tell this apart from a genuine test failure.
+        print(f"[generate_checkpoint] TRANSIENT INFRA ERROR (not a code regression): {exc}", file=sys.stderr)
+        sys.exit(getattr(os, "EX_TEMPFAIL", 75))
 
 
 if __name__ == "__main__":
