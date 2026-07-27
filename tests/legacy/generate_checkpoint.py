@@ -47,7 +47,21 @@ from typing import Any
 
 import torch
 
-from rfdetr.utilities.logger import get_logger
+# Installed rfdetr is the *matrix version under test*, not current HEAD — versions
+# older than 1.6.0 (e.g. 1.4.3, 1.5.2) predate the rfdetr.utilities package and only
+# ship rfdetr.util.logger; anything older still may ship no bundled logger at all.
+try:
+    from rfdetr.utilities.logger import get_logger
+except ModuleNotFoundError:
+    try:
+        from rfdetr.util.logger import get_logger  # rfdetr < 1.6.0
+    except ModuleNotFoundError:
+        import logging
+
+        def get_logger(name: str = "rf-detr") -> logging.Logger:
+            """Stdlib fallback for rfdetr versions with no bundled logger module."""
+            return logging.getLogger(name)
+
 
 logger = get_logger()
 

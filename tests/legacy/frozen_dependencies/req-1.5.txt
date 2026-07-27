@@ -1,12 +1,13 @@
-# Frozen dependency set for generating the rfdetr==1.5.2 legacy checkpoint.
+# Frozen dependency set for generating the rfdetr~=1.5.0 legacy checkpoint
+# (floats to the latest 1.5.x patch — currently 1.5.2).
 # Installed with CPU-only torch (UV_TORCH_BACKEND=cpu / --extra-index-url
 # https://download.pytorch.org/whl/cpu) by .github/workflows/ci-legacy-checkpoints.yml.
 # Add extra pins below (e.g. numpy==X.Y.Z) if a newer transitive dependency
 # breaks checkpoint generation for this version.
-rfdetr==1.5.2
-# rfdetr 1.5.2 on PyPI declares transformers>4.0.0,<5.0.0 (its own historical
+rfdetr~=1.5.0
+# rfdetr 1.5.x on PyPI declares transformers>4.0.0,<5.0.0 (its own historical
 # constraint). Bounded to the latest release still inside that range: rfdetr
-# 1.5.2's DINOv2 backbone calls BackboneMixin._init_backbone directly, which
+# 1.5.x's DINOv2 backbone calls BackboneMixin._init_backbone directly, which
 # transformers 5.1 removed — an unpinned resolve would otherwise stay <5.0.0
 # per rfdetr's own constraint, so this bound just keeps the range narrow and
 # reproducible rather than changing what actually resolves today.
