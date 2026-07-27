@@ -88,10 +88,10 @@ See `pyproject.toml` for complete dependency specifications:
 
 ```bash
 # CPU tests (default for local development; mirrors CI)
-uv run --no-sync pytest src/ tests/ -n 1 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
+uv run --no-sync pytest src/ tests/ -n 1 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
 
 # GPU tests (requires GPU; mirrors CI)
-uv run --no-sync pytest tests/ -m gpu --ignore=tests/legacy -n 2 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
+uv run --no-sync pytest tests/ -m gpu --ignore=tests/legacy/test_checkpoint_compat.py -n 2 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
 
 # Pre-commit checks (ALWAYS run before committing)
 pre-commit run --all-files
@@ -295,7 +295,7 @@ result = subprocess.run(
 4. **Testing:**
     - Bug fixes: Write test first, then fix
     - Features: Test all major use cases
-    - Run: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy --timeout=240 --durations=50`
+    - Run: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --timeout=240 --durations=50`
 5. **Quality checks:** `pre-commit run --all-files`
 6. **Build (if needed):** `uv build`
 7. **Commit:** Pre-commit hooks run automatically

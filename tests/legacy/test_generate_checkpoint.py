@@ -13,6 +13,7 @@ Covers ``_get_state_dict``, ``_get_patch_size``, ``_build_model``, and an integr
 from __future__ import annotations
 
 import hashlib
+import os
 import sys
 import types
 from pathlib import Path
@@ -20,15 +21,102 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 import torch
 
 from tests.legacy.generate_checkpoint import (
+    TransientFetchError,
     _build_model,
     _get_patch_size,
     _get_reference_image_path,
     _get_state_dict,
+    _is_transient_network_error,
     generate_checkpoint,
+    main,
 )
+
+# ---------------------------------------------------------------------------
+# _is_transient_network_error
+# ---------------------------------------------------------------------------
+
+
+class TestIsTransientNetworkError:
+    """Unit tests for _is_transient_network_error — classifies network/infra vs.
+
+    real errors.
+    """
+
+    def test_detects_request_exception_directly(self) -> None:
+        """A bare requests.exceptions.RequestException is recognized as transient."""
+        assert _is_transient_network_error(requests.exceptions.ConnectionError("refused")) is True
+
+    def test_detects_timeout_error(self) -> None:
+        """A bare (non-requests) TimeoutError is recognized as transient."""
+        assert _is_transient_network_error(TimeoutError("timed out")) is True
+
+    def test_detects_connection_error(self) -> None:
+        """A bare (non-requests) ConnectionError is recognized as transient."""
+        assert _is_transient_network_error(ConnectionError("connection reset")) is True
+
+    def test_detects_network_error_wrapped_via_cause(self) -> None:
+        """A network error re-raised with `raise ...
+
+        from exc` (__cause__) is still detected.
+        """
+        try:
+            try:
+                raise requests.exceptions.Timeout("slow")
+            except requests.exceptions.Timeout as inner:
+                raise RuntimeError("wrapped") from inner
+        except RuntimeError as outer:
+            assert _is_transient_network_error(outer) is True
+
+    def test_detects_network_error_wrapped_via_context(self) -> None:
+        """A network error implicitly chained (__context__, no `from`) is still detected."""
+        try:
+            try:
+                raise requests.exceptions.ConnectionError("refused")
+            except requests.exceptions.ConnectionError:
+                raise RuntimeError("wrapped")
+        except RuntimeError as outer:
+            assert _is_transient_network_error(outer) is True
+
+    def test_is_cycle_safe_for_self_referential_context(self) -> None:
+        """A self-referential __context__/__cause__ chain must not infinite-loop."""
+        exc = RuntimeError("self-referential")
+        exc.__cause__ = exc
+        assert _is_transient_network_error(exc) is False
+
+    def test_returns_false_for_plain_non_network_error(self) -> None:
+        """A plain, unrelated exception is not misclassified as transient."""
+        assert _is_transient_network_error(ValueError("bad value")) is False
+
+
+# ---------------------------------------------------------------------------
+# main()
+# ---------------------------------------------------------------------------
+
+
+class TestMain:
+    """Unit tests for main() — CLI entry-point exit-code behavior on TransientFetchError."""
+
+    def test_exits_with_ex_tempfail_on_transient_fetch_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Main() exits with the POSIX temporary-failure code on TransientFetchError."""
+        monkeypatch.setattr(
+            sys, "argv", ["generate_checkpoint.py", "--output", str(tmp_path / "out.pth"), "--use-pretrained"]
+        )
+        monkeypatch.setattr(
+            "tests.legacy.generate_checkpoint.generate_checkpoint",
+            MagicMock(side_effect=TransientFetchError("network down")),
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == getattr(os, "EX_TEMPFAIL", 75)
+
 
 # ---------------------------------------------------------------------------
 # _get_reference_image_path
@@ -182,6 +270,30 @@ class TestBuildModel:
         with patch.dict(sys.modules, {"rfdetr": fake_rfdetr}):
             with pytest.raises(RuntimeError, match="Could not instantiate"):
                 _build_model("NonExistentClass", num_classes=2, device="cpu")
+
+    def test_raises_transient_fetch_error_when_every_candidate_fails_with_network_error(self) -> None:
+        """TransientFetchError (not plain RuntimeError) when every candidate fails on a network-shaped error."""
+        fake_rfdetr = types.ModuleType("rfdetr")
+        fake_rfdetr.RFDETRSmall = MagicMock(side_effect=requests.exceptions.ConnectionError("refused"))  # type: ignore[attr-defined]
+        fake_rfdetr.RFDETRBase = MagicMock(side_effect=TimeoutError("timed out"))  # type: ignore[attr-defined]
+        fake_rfdetr.RFDETR = MagicMock(side_effect=requests.exceptions.Timeout("slow"))  # type: ignore[attr-defined]
+
+        with patch.dict(sys.modules, {"rfdetr": fake_rfdetr}):
+            with pytest.raises(TransientFetchError):
+                _build_model("RFDETRSmall", num_classes=2, device="cpu")
+
+    def test_raises_plain_runtime_error_when_a_candidate_fails_with_non_network_error(self) -> None:
+        """Plain RuntimeError (not TransientFetchError) when at least one failure is not network-shaped."""
+        fake_rfdetr = types.ModuleType("rfdetr")
+        fake_rfdetr.RFDETRSmall = MagicMock(side_effect=requests.exceptions.ConnectionError("refused"))  # type: ignore[attr-defined]
+        fake_rfdetr.RFDETRBase = MagicMock(side_effect=ValueError("bad config"))  # type: ignore[attr-defined]
+        fake_rfdetr.RFDETR = MagicMock(side_effect=requests.exceptions.Timeout("slow"))  # type: ignore[attr-defined]
+
+        with patch.dict(sys.modules, {"rfdetr": fake_rfdetr}):
+            with pytest.raises(RuntimeError) as exc_info:
+                _build_model("RFDETRSmall", num_classes=2, device="cpu")
+
+        assert not isinstance(exc_info.value, TransientFetchError)
 
 
 # ---------------------------------------------------------------------------

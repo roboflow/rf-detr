@@ -54,6 +54,29 @@ def _skip_or_fail_missing_reference(version: str) -> None:
     pytest.skip(message)
 
 
+class TestSkipOrFailMissingReference:
+    """Unit tests for _skip_or_fail_missing_reference — the CI-vs-local skip/fail split.
+
+    Pins the one safety property this helper exists to guarantee: under CI it hard-fails
+    (catching a real generation-pipeline regression), while local dev runs soften to a skip.
+    An accidental inversion of the GITHUB_ACTIONS check must fail these tests, not pass silently.
+    """
+
+    def test_fails_under_ci(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Under CI (GITHUB_ACTIONS=true), a missing reference_prediction must hard-fail."""
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+
+        with pytest.raises(pytest.fail.Exception):
+            _skip_or_fail_missing_reference("1.5.0")
+
+    def test_skips_locally(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Locally (GITHUB_ACTIONS unset), a missing reference_prediction must skip, not fail."""
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+        with pytest.raises(pytest.skip.Exception):
+            _skip_or_fail_missing_reference("1.5.0")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

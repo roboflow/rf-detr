@@ -199,7 +199,11 @@ def _build_model(preferred_class: str, device: str, *, num_classes: int | None =
         Instantiated rfdetr facade.
 
     Raises:
-        RuntimeError: If none of the candidate classes are importable.
+        RuntimeError: If none of the candidate classes are importable, or if
+            instantiation fails for a reason other than a network/infra error.
+        TransientFetchError: If every candidate fails to instantiate and every
+            failure looks like a network/infra error (e.g. the pretrained-
+            weights download timing out) rather than a real code regression.
     """
     candidates = [preferred_class, "RFDETRBase", "RFDETR"]
     # Deduplicate while preserving order
