@@ -96,7 +96,7 @@ def _adapt_input_conv(num_channels: int, conv_weight: torch.Tensor) -> torch.Ten
     return weight_out
 
 
-def _build_model_context(model_config: ModelConfig) -> ModelContext:
+def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = False) -> ModelContext:
     """Build a ModelContext from ModelConfig without using legacy main.py:Model.
 
     Replicates ``Model.__init__`` logic: builds the nn.Module, optionally loads pretrain weights and applies LoRA.  The
@@ -107,6 +107,10 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
 
     Args:
         model_config: Architecture configuration.
+        trust_checkpoint: Forwarded to :func:`~rfdetr.models.weights.load_pretrain_weights` as its
+            ``trust`` argument — set ``True`` only when ``model_config.pretrain_weights`` is a
+            checkpoint the caller explicitly trusts (mirrors ``RFDETR.from_checkpoint(...,
+            trust_checkpoint=True)``).
 
     Returns:
         ModelContext with the model on CPU, ready for lazy device placement.
@@ -129,7 +133,7 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
 
     class_names: list[str] = []
     if model_config.pretrain_weights is not None:
-        class_names = load_pretrain_weights(nn_model, model_config)
+        class_names = load_pretrain_weights(nn_model, model_config, trust=trust_checkpoint)
         # ``load_pretrain_weights`` can mutate ``model_config.num_classes`` and
         # ``model_config.num_keypoints_per_class`` when aligning to checkpoint schema.
         # Keep the derived namespace in sync so postprocess and predict() use correct values.

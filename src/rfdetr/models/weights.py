@@ -264,6 +264,8 @@ def interpolate_position_embeddings(
 def load_pretrain_weights(
     nn_model: LWDETR,
     model_config: ModelConfig,
+    *,
+    trust: bool = False,
 ) -> list[str]:
     """Load pretrained checkpoint weights into *nn_model* in-place.
 
@@ -287,6 +289,10 @@ def load_pretrain_weights(
         nn_model: The model whose weights will be updated in-place.
         model_config: Pydantic ``ModelConfig`` instance. Must have
             ``pretrain_weights``, ``num_classes``, ``num_queries``, and ``group_detr`` attributes.
+        trust: Forwarded to :func:`rfdetr.utilities.io._safe_torch_load` as its ``trust``
+            argument. Set ``True`` only when ``model_config.pretrain_weights`` points to a
+            checkpoint the caller explicitly trusts (mirrors ``RFDETR.from_checkpoint(...,
+            trust_checkpoint=True)``); the safe-load default otherwise applies here too.
 
     Returns:
         List of class name strings from the checkpoint, or an empty list if none are present or if
@@ -316,11 +322,11 @@ def load_pretrain_weights(
     validate_pretrain_weights(pretrain_weights, strict=False)
 
     try:
-        checkpoint = _safe_torch_load(pretrain_weights)
+        checkpoint = _safe_torch_load(pretrain_weights, trust=trust)
     except Exception:
         logger.info("Failed to load pretrain weights, re-downloading")
         download_pretrain_weights(pretrain_weights, redownload=True)
-        checkpoint = _safe_torch_load(pretrain_weights)
+        checkpoint = _safe_torch_load(pretrain_weights, trust=trust)
 
     # Normalize PyTorch Lightning native .ckpt format to the expected {"model": {...}}
     # structure.  PTL stores model weights in "state_dict" with keys prefixed by

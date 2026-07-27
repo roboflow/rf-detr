@@ -101,6 +101,6 @@ class _DummyRFDETR(RFDETR):
         """Return a minimal namespace with just ``num_channels``."""
         return SimpleNamespace(num_channels=3)
 
-    def get_model(self, config: SimpleNamespace) -> _DummyModel:
+    def get_model(self, config: SimpleNamespace, *, trust_checkpoint: bool = False) -> _DummyModel:
         """Return a fresh ``_DummyModel`` instance."""
         return _DummyModel()
