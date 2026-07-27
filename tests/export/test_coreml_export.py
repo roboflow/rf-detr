@@ -210,8 +210,8 @@ def validate_segmentation_coreml_vs_pytorch(
 class TestCheckCoremltoolsAvailable:
     """Tests for ``_check_coremltools_available``."""
 
-    def test_raises_import_error_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Missing ``coremltools`` must raise ImportError with install hint."""
+    def test_returns_false_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Missing ``coremltools`` must return ``False``."""
         if "coremltools" in sys.modules:
             monkeypatch.delitem(sys.modules, "coremltools", raising=False)
 
@@ -223,13 +223,12 @@ class TestCheckCoremltoolsAvailable:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr("builtins.__import__", _block_coremltools)
-        with pytest.raises(ImportError, match="rfdetr\\[coreml\\]"):
-            _check_coremltools_available()
+        assert _check_coremltools_available() is False
 
     @coreml_only
-    def test_succeeds_when_installed(self) -> None:
-        """Installed ``coremltools`` must not raise."""
-        _check_coremltools_available()
+    def test_returns_true_when_installed(self) -> None:
+        """Installed ``coremltools`` must return ``True``."""
+        assert _check_coremltools_available() is True
 
 
 class TestExportCoremlValidation:
@@ -246,7 +245,7 @@ class TestExportCoremlValidation:
         """``export_coreml`` must surface the install hint when coremltools is absent."""
         monkeypatch.setattr(
             "rfdetr.export._coreml.converter._check_coremltools_available",
-            mock.Mock(side_effect=ImportError("pip install rfdetr[coreml]")),
+            mock.Mock(return_value=False),
         )
         model = torch.nn.Linear(1, 1)
         example = torch.zeros(1, 3, 32, 32)

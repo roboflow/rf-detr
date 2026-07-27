@@ -3,21 +3,13 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""CoreML export: PyTorch ``torch.export`` -> ``.mlpackage`` via coremltools."""
-
-from rfdetr.export._coreml.converter import _check_coremltools_available, export_coreml
-from rfdetr.export._coreml.op_coverage import unsupported_coreml_ops
-from rfdetr.export._coreml.torch_ops import ensure_coreml_torch_op_patches
+"""CoreML export availability. Import converters from submodules, not this package root."""
 
 try:
-    _check_coremltools_available()
-    _IS_COREMLTOOLS_AVAILABLE: bool = True
+    import coremltools  # noqa: F401
+
+    _IS_COREMLTOOLS_AVAILABLE = True
 except ImportError:
     _IS_COREMLTOOLS_AVAILABLE = False
 
-__all__ = [
-    "export_coreml",
-    "_IS_COREMLTOOLS_AVAILABLE",
-    "unsupported_coreml_ops",
-    "ensure_coreml_torch_op_patches",
-]
+__all__ = ["_IS_COREMLTOOLS_AVAILABLE"]

@@ -44,21 +44,13 @@ logger = get_logger()
 _INSTALL_HINT = "CoreML export requires `coremltools`. Install it with: pip install rfdetr[coreml]"
 
 
-def _check_coremltools_available() -> None:
-    """Verify that ``coremltools`` is importable.
-
-    Raises:
-        ImportError: If ``coremltools`` is missing or cannot be loaded on this platform.
-    """
+def _check_coremltools_available() -> bool:
+    """Return whether ``coremltools`` is importable."""
     try:
         import coremltools  # noqa: F401
-    except ImportError as exc:
-        raise ImportError(_INSTALL_HINT) from exc
-    except Exception as exc:
-        raise ImportError(
-            f"coremltools could not be imported ({type(exc).__name__}: {exc}). "
-            "CoreML export requires a working coremltools install on this platform."
-        ) from exc
+    except Exception:
+        return False
+    return True
 
 
 def export_coreml(
@@ -105,7 +97,8 @@ def export_coreml(
             "ANE / GPU scheduling). Export one .mlpackage per batch size instead."
         )
 
-    _check_coremltools_available()
+    if not _check_coremltools_available():
+        raise ImportError(_INSTALL_HINT)
     import coremltools as ct
 
     output_dir_path = Path(output_dir)
