@@ -15,6 +15,7 @@ on:
   push:
     branches: ["main", "develop", "release/*"]
   pull_request:
+    branches: ["main", "develop", "release/*"]
   workflow_dispatch:
 
 permissions:
@@ -139,9 +140,4 @@ jobs:
 
       - name: 🧪 Run checkpoint compatibility tests
         run: |
-          uv run --no-sync pytest \
-            tests/legacy/test_checkpoint_compat.py \
-            tests/legacy/test_generate_checkpoint.py \
-            -v \
-            --tb=short \
-            --timeout=120
+          uv run --no-sync pytest tests/legacy/ -v --tb=short --timeout=120
