@@ -28,6 +28,7 @@ import numpy as np
 import pytest
 import supervision as sv
 import torch
+from PIL import Image
 
 from tests.legacy.generate_checkpoint import _get_reference_image_path, _top_detection
 
@@ -37,6 +38,7 @@ from tests.legacy.generate_checkpoint import _get_reference_image_path, _top_det
 
 _VERSIONS_FILE = Path(__file__).parent / "checkpoint_versions.txt"
 _CHECKPOINTS_DIR = Path(__file__).parent / "checkpoints"
+_LEGACY_VISUALIZATIONS_DIR = Path(__file__).parent / "legacy_predictions"
 
 
 def _read_versions(versions_file: Path | None = None) -> list[str]:
@@ -73,6 +75,45 @@ def _checkpoint_path(version: str) -> Path:
 
 
 _LEGACY_VERSIONS: list[str] = _read_versions()
+
+
+def _prediction_visualization_path(version: str) -> Path:
+    """Return the artifact path for a legacy checkpoint prediction image.
+
+    Args:
+        version: Legacy RF-DETR version encoded in the checkpoint filename.
+
+    Returns:
+        Ignored test-artifact path whose filename includes the legacy version.
+    """
+    return _LEGACY_VISUALIZATIONS_DIR / f"prediction_legacy_v{version}.png"
+
+
+def _save_prediction_visualization(detections: sv.Detections, image_path: Path, output_path: Path) -> None:
+    """Save the reference image annotated with all reloaded-model detections.
+
+    Args:
+        detections: Predictions returned while loading a legacy checkpoint.
+        image_path: Fixed reference image used for compatibility inference.
+        output_path: Destination for the annotated PNG artifact.
+    """
+    with Image.open(image_path) as image:
+        scene = np.asarray(image.convert("RGB")).copy()
+
+    labels = [
+        f"class_id={class_id} confidence={confidence:.3f}"
+        for class_id, confidence in zip(detections.class_id, detections.confidence)
+    ]
+    scene = sv.BoxAnnotator().annotate(scene=scene, detections=detections)
+    scene = sv.LabelAnnotator().annotate(scene=scene, detections=detections, labels=labels)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(scene).save(output_path)
+
+
+def test_prediction_visualization_path_includes_legacy_version() -> None:
+    """Prediction visualization filenames identify the checkpoint version."""
+    assert _prediction_visualization_path("1.5.2") == (_LEGACY_VISUALIZATIONS_DIR / "prediction_legacy_v1.5.2.png")
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +249,11 @@ class TestCheckpointBackwardCompat:
             pytest.skip(f"v{version} checkpoint has no reference_prediction (generated without --use-pretrained)")
 
         loaded = RFDETRSmall(pretrain_weights=str(ckpt_path), device="cpu")
-        detections = loaded.predict(str(_get_reference_image_path()), threshold=0.5)
+        reference_image_path = _get_reference_image_path()
+        detections = loaded.predict(str(reference_image_path), threshold=0.5)
+        visualization_path = _prediction_visualization_path(version)
+        _save_prediction_visualization(detections, reference_image_path, visualization_path)
+        assert visualization_path.is_file(), f"v{version}: prediction visualization was not saved: {visualization_path}"
         actual = _top_detection(detections)
 
         # class_id (not class_name) is the identity check: class-name mapping

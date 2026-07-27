@@ -185,6 +185,7 @@ train_test.py
 
 # test artifacts
 test_visualizations/
+legacy_predictions/
 
 # datasets
 data/
