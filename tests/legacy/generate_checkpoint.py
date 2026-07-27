@@ -214,10 +214,9 @@ def _init_backbone_shim(self: Any, config: Any) -> None:
 def _install_transformers_compat() -> None:
     """Install transformers compatibility shims required by old RF-DETR.
 
-    RF-DETR 1.4 imports helpers from transformer modules where newer
-    transformers releases no longer expose them, and calls
-    ``BackboneMixin._init_backbone`` which was removed in transformers v5.
-    These shims are intentionally scoped to this legacy generator process.
+    RF-DETR 1.4 imports helpers from transformer modules where newer transformers releases no longer expose them, and
+    calls ``BackboneMixin._init_backbone`` which was removed in transformers v5. These shims are intentionally scoped to
+    this legacy generator process.
     """
     pytorch_utils = importlib.import_module("transformers.pytorch_utils")
     if not hasattr(pytorch_utils, "find_pruneable_heads_and_indices"):

@@ -6,8 +6,8 @@
 
 """Tests for the legacy checkpoint generation utility.
 
-Covers the compat shims, ``_get_state_dict``, ``_get_patch_size``,
-``_build_model``, and an integration smoke-test for ``generate_checkpoint()``.
+Covers the compat shims, ``_get_state_dict``, ``_get_patch_size``, ``_build_model``, and an integration smoke-test for
+``generate_checkpoint()``.
 """
 
 from __future__ import annotations
@@ -200,8 +200,7 @@ class TestBuildModel:
     def test_falls_through_to_rfdetr_base_when_preferred_missing(self) -> None:
         """Falls back to RFDETRBase when the preferred class is absent.
 
-        Simulates a release that ships RFDETRBase but not the caller's preferred
-        class (e.g. RFDETRSmall added later).
+        Simulates a release that ships RFDETRBase but not the caller's preferred class (e.g. RFDETRSmall added later).
         """
         fake_rfdetr = types.ModuleType("rfdetr")
         fake_instance = object()
