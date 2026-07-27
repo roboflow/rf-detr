@@ -1,0 +1,11 @@
+# Frozen dependency set for generating the rfdetr~=1.6.0 legacy checkpoint
+# (floats to the latest 1.6.x patch — currently 1.6.5).
+# Installed with CPU-only torch (UV_TORCH_BACKEND=cpu / --extra-index-url
+# https://download.pytorch.org/whl/cpu) by .github/workflows/ci-legacy-checkpoints.yml.
+# Add extra pins below (e.g. numpy==X.Y.Z) if a newer transitive dependency
+# breaks checkpoint generation for this version.
+rfdetr~=1.6.0
+# rfdetr 1.6.x on PyPI declares transformers>=5.1.0,<6.0.0 (its own historical
+# constraint). Bounded to the latest release available as of the newest 1.6.x
+# patch (1.6.5, 2026-04-22) for reproducibility.
+transformers>=5.1.0,<=5.6.0
