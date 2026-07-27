@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import contextlib
 import importlib.metadata
+import os
+import socket
 import sys
 import types
 from pathlib import Path
@@ -717,33 +719,45 @@ class TestPackageAvailabilityFlag:
 # ---------------------------------------------------------------------------
 
 
-def _photo_like_image(size: tuple[int, int]) -> Any:
-    """Build a deterministic, spatially structured RGB image for parity checks.
+_ASSET_HOST = "media.roboflow.com"
+_ASSET_PORT = 443
 
-    A photo, not noise: the ExecuTorch runtime reads its input buffer as contiguous NCHW, so a
-    non-contiguous input is only detectably wrong when the pixel values vary across the layout it
+
+def _is_online(host: str, port: int, timeout_s: float = 3.0) -> bool:
+    """Report whether *host* accepts a TCP connection on *port* within *timeout_s*."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout_s):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.fixture(scope="module")
+def photo_asset(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Download a real photograph from supervision's image assets.
+
+    A photograph, not noise: the ExecuTorch runtime reads its input buffer as contiguous NCHW, so
+    a non-contiguous input is only detectably wrong when pixel values vary across the layout it
     misreads. Constant and all-zero images are layout-invariant and a ``torch.randn`` tensor is
-    already contiguous, which is why neither exposes issue #1233. Drawn rather than downloaded so
-    the test stays hermetic and deterministic in CI.
-
-    Args:
-        size: Target ``(height, width)`` of the generated image.
+    already contiguous, which is why neither exposes issue #1233.
 
     Returns:
-        A ``PIL.Image.Image`` in RGB mode with smooth gradients and hard edges.
+        Path to the downloaded JPEG.
     """
-    from PIL import Image, ImageDraw
+    if not _is_online(_ASSET_HOST, _ASSET_PORT):
+        pytest.skip(f"Offline environment, cannot reach {_ASSET_HOST} for supervision image assets.")
 
-    height, width = size
-    image = Image.new("RGB", (width, height))
-    pixels = image.load()
-    for y in range(height):
-        for x in range(width):
-            pixels[x, y] = (x * 255 // max(width - 1, 1), y * 255 // max(height - 1, 1), (x + y) % 256)
-    draw = ImageDraw.Draw(image)
-    draw.rectangle([width // 8, height // 8, width // 2, height // 2], fill=(240, 32, 16))
-    draw.ellipse([width // 2, height // 3, (7 * width) // 8, (5 * height) // 6], fill=(16, 64, 240))
-    return image
+    from supervision.assets import ImageAssets, download_assets
+
+    # download_assets writes to the process working directory and has no destination argument.
+    destination = tmp_path_factory.mktemp("assets")
+    previous = os.getcwd()
+    os.chdir(destination)
+    try:
+        filename = download_assets(ImageAssets.SOCCER)
+    finally:
+        os.chdir(previous)
+    return destination / filename
 
 
 @pytest.fixture(scope="module")
@@ -785,7 +799,9 @@ class TestExecutorchEndToEnd:
         # while still failing on a structural regression (those diverge by >=1e-3).
         assert max(diffs) < 5e-5, f"ExecuTorch outputs diverge from PyTorch: max abs diff {max(diffs)}"
 
-    def test_preprocessed_image_detections_match_pytorch(self, exported: tuple[Any, torch.Tensor, Path]) -> None:
+    def test_preprocessed_image_detections_match_pytorch(
+        self, exported: tuple[Any, torch.Tensor, Path], photo_asset: Path
+    ) -> None:
         """Detections from an image fed through ``infer_transforms`` must match the eager forward.
 
         Regression for issue #1233. ``infer_transforms`` emitted a channels_last (non-contiguous)
@@ -798,11 +814,13 @@ class TestExecutorchEndToEnd:
         query x class grid, so it is invariant to the query-order swaps that near-tied two-stage
         selection scores produce between the two backends.
         """
+        from PIL import Image
+
         from rfdetr.export.benchmark import infer_transforms, post_process
 
         model, example, pte_path = exported
         resolution = int(example.shape[-1])
-        image = _photo_like_image((resolution, resolution))
+        image = Image.open(photo_asset).convert("RGB")
         tensor, _ = infer_transforms((resolution, resolution))(image, None)
         pixel_values = tensor[None].float()
 
@@ -820,7 +838,7 @@ class TestExecutorchEndToEnd:
 
         max_diff = (eager_scores - runtime_scores).abs().max().item()
         # Scores agree to fp32 delegate noise once the input is contiguous. Against the non-contiguous
-        # input this asserted 2.9e-2 with the random weights used here, where the untrained score range
+        # input this asserted 1.4e-2 with the random weights used here, where the untrained score range
         # is compressed; on a pretrained model the same fault drops every real detection below threshold.
         assert max_diff < 1e-3, f"ExecuTorch detections diverge from PyTorch: max abs score diff {max_diff}"
 
@@ -834,10 +852,17 @@ class TestInferTransformsContiguity:
     """``infer_transforms`` must hand exported runtimes a buffer they can read (issue #1233)."""
 
     def test_output_is_contiguous(self) -> None:
-        """The preprocessing pipeline must emit a contiguous tensor, not a channels_last view."""
+        """The preprocessing pipeline must emit a contiguous tensor, not a channels_last view.
+
+        Contiguity is a property of the transform chain (``ToImage`` permutes a decoded HWC buffer to CHW as a view),
+        not of the pixels, so this runs on a synthetic image and stays offline — the end-to-end parity check above is
+        the one that needs a real photograph.
+        """
+        from PIL import Image
+
         from rfdetr.export.benchmark import infer_transforms
 
-        image = _photo_like_image((64, 64))
+        image = Image.new("RGB", (64, 64))
         tensor, _ = infer_transforms((32, 32))(image, None)
         assert tensor.is_contiguous(), f"infer_transforms returned a non-contiguous tensor: stride {tensor.stride()}"
 
