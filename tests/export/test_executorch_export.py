@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib.metadata
+import os
 import socket
 import sys
 import types
@@ -25,7 +26,6 @@ from typing import Any
 from unittest import mock
 
 import pytest
-import requests
 import torch
 
 from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
@@ -719,9 +719,8 @@ class TestPackageAvailabilityFlag:
 # ---------------------------------------------------------------------------
 
 
-_IMAGE_URL = "https://media.roboflow.com/dog.jpg"
-_IMAGE_HOST = "media.roboflow.com"
-_IMAGE_PORT = 443
+_ASSET_HOST = "media.roboflow.com"
+_ASSET_PORT = 443
 
 
 def _is_online(host: str, port: int, timeout_s: float = 3.0) -> bool:
@@ -735,7 +734,7 @@ def _is_online(host: str, port: int, timeout_s: float = 3.0) -> bool:
 
 @pytest.fixture(scope="module")
 def photo_asset(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Download the dog photograph the project README uses in its inference examples.
+    """Download a real photograph from supervision's image assets.
 
     A photograph, not noise: the ExecuTorch runtime reads its input buffer as contiguous NCHW, so
     a non-contiguous input is only detectably wrong when pixel values vary across the layout it
@@ -745,14 +744,20 @@ def photo_asset(tmp_path_factory: pytest.TempPathFactory) -> Path:
     Returns:
         Path to the downloaded JPEG.
     """
-    if not _is_online(_IMAGE_HOST, _IMAGE_PORT):
-        pytest.skip(f"Offline environment, cannot reach {_IMAGE_HOST} for the test image.")
+    if not _is_online(_ASSET_HOST, _ASSET_PORT):
+        pytest.skip(f"Offline environment, cannot reach {_ASSET_HOST} for supervision image assets.")
 
-    response = requests.get(_IMAGE_URL, timeout=30)
-    response.raise_for_status()
-    destination = tmp_path_factory.mktemp("assets") / "dog.jpg"
-    destination.write_bytes(response.content)
-    return destination
+    from supervision.assets import ImageAssets, download_assets
+
+    # download_assets writes to the process working directory and has no destination argument.
+    destination = tmp_path_factory.mktemp("assets")
+    previous = os.getcwd()
+    os.chdir(destination)
+    try:
+        filename = download_assets(ImageAssets.SOCCER)
+    finally:
+        os.chdir(previous)
+    return destination / filename
 
 
 @pytest.fixture(scope="module")
