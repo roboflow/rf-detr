@@ -474,10 +474,9 @@ class TestGenerateCocoDatasetWithSegmentation:
     def test_empty_polygon_falls_back_to_empty_segmentation(self, tmp_path):
         """An empty polygon entry silently falls back to ``segmentation=[]``.
 
-        The ``len(polygon_data) < len(detections)`` guard only checks array
-        length, not contents.  An element that is an empty list passes the
-        guard and takes the ``else`` branch producing ``segmentation=[]``.
-        This test documents the existing silent-fallback behaviour.
+        The ``len(polygon_data) < len(detections)`` guard only checks array length, not contents.  An element that is an
+        empty list passes the guard and takes the ``else`` branch producing ``segmentation=[]``. This test documents the
+        existing silent-fallback behaviour.
         """
         annotations_path = tmp_path / "_annotations.coco.json"
         polygon_data = np.empty(1, dtype=object)
@@ -595,9 +594,8 @@ class TestDrawSyntheticShapeEdgeCases:
         ],
     )
     def test_degenerate_size_returns_polygon_without_crashing(self, shape, size, expected_n_coords):
-        """draw_synthetic_shape with size=0 or size=1 must not raise and must
-        return the expected number of flat coordinate values.
-        """
+        """draw_synthetic_shape with size=0 or size=1 must not raise and must return the expected number of flat
+        coordinate values."""
         img = np.zeros((100, 100, 3), dtype=np.uint8)
         _, poly = draw_synthetic_shape(img, shape, sv.Color.WHITE, (50, 50), size)
         assert len(poly) == expected_n_coords

@@ -13,20 +13,22 @@
 # Copied from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
-
 """Greedy matching and accumulation functions for evaluation metrics."""
 
-from typing import Any
+from __future__ import annotations
+
+from typing import Any, cast
 
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
+from torch import Tensor
 from torchvision.ops import box_iou
 
 from rfdetr.utilities import all_gather
 
 
-def _compute_mask_iou(pred_masks: torch.Tensor, gt_masks: torch.Tensor) -> torch.Tensor:
+def _compute_mask_iou(pred_masks: Tensor, gt_masks: Tensor) -> Tensor:
     """Compute pairwise boolean-mask IoU between N predictions and M ground truths.
 
     Args:
@@ -51,18 +53,22 @@ def _compute_mask_iou(pred_masks: torch.Tensor, gt_masks: torch.Tensor) -> torch
 
 
 def _match_single_class(
-    pred_scores: torch.Tensor,
-    pred_items: torch.Tensor,
-    gt_items: torch.Tensor,
-    gt_crowd: torch.Tensor,
+    pred_scores: Tensor,
+    pred_items: Tensor,
+    gt_items: Tensor,
+    gt_crowd: Tensor,
     iou_threshold: float,
     iou_type: str,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+) -> tuple[
+    np.ndarray[Any, np.dtype[np.float32]],
+    np.ndarray[Any, np.dtype[np.int64]],
+    np.ndarray[Any, np.dtype[np.bool_]],
+    int,
+]:
     """Greedy highest-score-first matching for one class in one image.
 
-    Implements the COCO matching algorithm: each GT is matched at most once;
-    detections are processed in descending score order; detections matched to
-    crowd GTs are marked as ignored rather than false positives.
+    Implements the COCO matching algorithm: each GT is matched at most once; detections are processed in descending
+    score order; detections matched to crowd GTs are marked as ignored rather than false positives.
 
     Args:
         pred_scores: Float tensor of shape [N] with detection confidences.
@@ -91,53 +97,63 @@ def _match_single_class(
     else:
         iou_matrix = _compute_mask_iou(pred_sorted, gt_items)  # [N, M]
 
-    device = pred_scores.device
-    gt_matched = torch.zeros(m, dtype=torch.bool, device=device)
-    pred_match = torch.zeros(n, dtype=torch.long, device=device)
-    pred_ignore = torch.zeros(n, dtype=torch.bool, device=device)
+    # The greedy matching below is inherently sequential (each GT can only be claimed
+    # once, so iteration i depends on the outcome of i-1) — it cannot be vectorized away.
+    # But on CUDA, comparing a 0-dim tensor against a Python float inside the loop
+    # (`if best_nc_iou >= iou_threshold`) forces a device-to-host sync every iteration,
+    # turning what should be O(1) host-side work into O(N) GPU pipeline stalls. Move the
+    # IoU matrix and crowd mask to host memory once, then run the loop on plain
+    # numpy/Python values so no per-iteration tensor sync occurs (regression: #416).
+    iou_matrix_np = iou_matrix.detach().float().cpu().numpy()  # [N, M] -- float() guards bf16/fp16 (no numpy dtype)
+    gt_crowd_np = gt_crowd.detach().cpu().numpy()  # [M]
+
+    gt_matched_np = np.zeros(m, dtype=np.bool_)
+    pred_match_np = np.zeros(n, dtype=np.int64)
+    pred_ignore_np = np.zeros(n, dtype=np.bool_)
+    any_crowd = bool(gt_crowd_np.any())
+    not_crowd_np = ~gt_crowd_np  # crowd mask is loop-invariant — compute the negation once
 
     for i in range(n):
-        ious = iou_matrix[i]  # [M]
+        ious = iou_matrix_np[i]  # [M]
 
         # Try to match to a non-crowd GT (each non-crowd GT matched at most once).
-        nc_ious = ious.clone()
-        nc_ious[gt_crowd] = -1.0
-        nc_ious[gt_matched & ~gt_crowd] = -1.0  # already claimed
+        nc_ious = ious.copy()
+        nc_ious[gt_crowd_np] = -1.0
+        nc_ious[gt_matched_np & not_crowd_np] = -1.0  # already claimed
 
-        best_nc_iou, best_nc_idx = nc_ious.max(dim=0)
+        best_nc_idx = int(np.argmax(nc_ious))
+        best_nc_iou = nc_ious[best_nc_idx]
         if best_nc_iou >= iou_threshold:
-            pred_match[i] = 1
-            gt_matched[best_nc_idx] = True
-        else:
-            # A detection matched to a crowd GT is ignored (not a false positive).
-            if gt_crowd.any():
-                crowd_ious = ious.clone()
-                crowd_ious[~gt_crowd] = -1.0
-                if crowd_ious.max() >= iou_threshold:
-                    pred_ignore[i] = True
-            # else: false positive — pred_match stays 0
+            pred_match_np[i] = 1
+            gt_matched_np[best_nc_idx] = True
+        # A detection matched to a crowd GT is ignored (not a false positive).
+        elif any_crowd:
+            crowd_ious = ious.copy()
+            crowd_ious[not_crowd_np] = -1.0
+            if crowd_ious.max() >= iou_threshold:
+                pred_ignore_np[i] = True
+            # else: false positive — pred_match_np stays 0
 
-    total_gt = int((~gt_crowd).sum().item())
+    total_gt = int((~gt_crowd_np).sum())
     return (
-        pred_scores_sorted.float().cpu().numpy().astype(np.float32),
-        pred_match.cpu().numpy(),
-        pred_ignore.cpu().numpy().astype(bool),
+        np.asarray(pred_scores_sorted.float().cpu().numpy(), dtype=np.float32),
+        pred_match_np,
+        pred_ignore_np,
         total_gt,
     )
 
 
 def build_matching_data(
-    preds_list: list[dict[str, torch.Tensor]],
-    targets_list: list[dict[str, torch.Tensor]],
+    preds_list: list[dict[str, Tensor]],
+    targets_list: list[dict[str, Tensor]],
     iou_threshold: float = 0.5,
     iou_type: str = "bbox",
 ) -> dict[int, dict[str, Any]]:
     """Build compact per-class matching data from a batch of predictions and targets.
 
-    Implements greedy highest-score-first matching compatible with the COCO
-    algorithm. The returned dict can be passed directly to
-    ``merge_matching_data()`` and ultimately consumed by
-    ``sweep_confidence_thresholds()`` after conversion to list form.
+    Implements greedy highest-score-first matching compatible with the COCO algorithm. The returned dict can be passed
+    directly to ``merge_matching_data()`` and ultimately consumed by ``sweep_confidence_thresholds()`` after conversion
+    to list form.
 
     Args:
         preds_list: Per-image predictions. Each dict must contain:
@@ -166,7 +182,7 @@ def build_matching_data(
             - ``"ignore"``: bool ndarray (True if matched to a crowd GT).
             - ``"total_gt"``: int, count of non-crowd GT instances.
     """
-    acc: dict[int, dict[str, list | int]] = {}
+    acc: dict[int, dict[str, list[Any] | int]] = {}
 
     for preds, targets in zip(preds_list, targets_list):
         pred_boxes = preds["boxes"]  # [N, 4]
@@ -183,7 +199,9 @@ def build_matching_data(
         )
         gt_crowd = raw_crowd.bool()
 
-        all_class_ids: set[int] = set(gt_labels.tolist()) | set(pred_labels.tolist())
+        gt_label_ids = cast(list[int], gt_labels.tolist())
+        pred_label_ids = cast(list[int], pred_labels.tolist())
+        all_class_ids: set[int] = set(gt_label_ids) | set(pred_label_ids)
 
         for class_id in all_class_ids:
             pred_mask_c = pred_labels == class_id
@@ -200,21 +218,21 @@ def build_matching_data(
             )
 
             if n_pred == 0:
-                entry["total_gt"] += int((~gt_crowd_c).sum().item())
+                entry["total_gt"] = cast(int, entry["total_gt"]) + int((~gt_crowd_c).sum().item())
                 continue
 
             if n_gt == 0:
                 # TODO: support bfloat16 natively once numpy adds bf16 dtype
-                sc = p_scores.float().cpu().numpy()
+                sc = np.asarray(p_scores.float().cpu().numpy(), dtype=np.float32)
                 order = np.argsort(-sc)
-                entry["scores"].extend(sc[order].tolist())
-                entry["matches"].extend([0] * n_pred)
-                entry["ignore"].extend([False] * n_pred)
+                cast(list[float], entry["scores"]).extend(sc[order].tolist())
+                cast(list[int], entry["matches"]).extend([0] * n_pred)
+                cast(list[bool], entry["ignore"]).extend([False] * n_pred)
                 continue
 
             if iou_type == "bbox":
-                p_items: torch.Tensor = pred_boxes[pred_mask_c]  # [n_pred, 4]
-                gt_items: torch.Tensor = gt_boxes[gt_mask_c]  # [n_gt, 4]
+                p_items: Tensor = pred_boxes[pred_mask_c]  # [n_pred, 4]
+                gt_items: Tensor = gt_boxes[gt_mask_c]  # [n_gt, 4]
             else:
                 if pred_masks is None or gt_masks is None:
                     raise ValueError("iou_type='segm' requires 'masks' in both preds and targets")
@@ -225,16 +243,16 @@ def build_matching_data(
                 p_scores, p_items, gt_items, gt_crowd_c, iou_threshold, iou_type
             )
 
-            entry["scores"].extend(scores_np.tolist())
-            entry["matches"].extend(matches_np.tolist())
-            entry["ignore"].extend(ignore_np.tolist())
-            entry["total_gt"] += total_gt
+            cast(list[float], entry["scores"]).extend(float(score) for score in scores_np)
+            cast(list[int], entry["matches"]).extend(int(match) for match in matches_np)
+            cast(list[bool], entry["ignore"]).extend(bool(ignore) for ignore in ignore_np)
+            entry["total_gt"] = cast(int, entry["total_gt"]) + total_gt
 
     return {
         class_id: {
             "scores": np.array(data["scores"], dtype=np.float32),
             "matches": np.array(data["matches"], dtype=np.int64),
-            "ignore": np.array(data["ignore"], dtype=bool),
+            "ignore": np.array(data["ignore"], dtype=np.bool_),
             "total_gt": data["total_gt"],
         }
         for class_id, data in acc.items()
@@ -256,10 +274,9 @@ def merge_matching_data(
 ) -> dict[int, dict[str, Any]]:
     """Merge *new_data* into *accumulator* in place.
 
-    Both arguments share the dict schema produced by ``build_matching_data()``:
-    each class-keyed sub-dict contains ``"scores"`` (float32 ndarray),
-    ``"matches"`` (int64 ndarray), ``"ignore"`` (bool ndarray), and
-    ``"total_gt"`` (int).
+    Both arguments share the dict schema produced by ``build_matching_data()``: each class-keyed sub-dict contains
+    ``"scores"`` (float32 ndarray), ``"matches"`` (int64 ndarray), ``"ignore"`` (bool ndarray), and ``"total_gt"``
+    (int).
 
     Args:
         accumulator: Running accumulator, modified in place.
@@ -290,9 +307,8 @@ def distributed_merge_matching_data(
 ) -> dict[int, dict[str, Any]]:
     """Gather per-rank matching data from all DDP ranks and merge into one dict.
 
-    Uses ``rfdetr.utilities.all_gather`` (pickle-based) so the data need not be a tensor.
-    In single-process (non-distributed) mode, returns a merged copy of *local_data*
-    unchanged.
+    Uses ``rfdetr.utilities.all_gather`` (pickle-based) so the data need not be a tensor. In single-process
+    (non-distributed) mode, returns a merged copy of *local_data* unchanged.
 
     Args:
         local_data: Per-rank accumulator produced by ``merge_matching_data()``.

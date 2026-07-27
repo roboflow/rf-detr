@@ -11,43 +11,38 @@
 # ------------------------------------------------------------------------------------------------
 # Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
 # ------------------------------------------------------------------------------------------------
-"""
-Multi-Scale Deformable Attention Module
-"""
+"""Multi-Scale Deformable Attention Module."""
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
 import math
 import warnings
+from typing import cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from torch import nn
+from torch import Tensor, nn
 from torch.nn.init import constant_, xavier_uniform_
 
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 
 
-def _is_power_of_2(n):
+def _is_power_of_2(n: int) -> bool:
     if (not isinstance(n, int)) or (n < 0):
-        raise ValueError("invalid input for _is_power_of_2: {} (type: {})".format(n, type(n)))
+        raise ValueError(f"invalid input for _is_power_of_2: {n} (type: {type(n)})")
     return (n & (n - 1) == 0) and n != 0
 
 
 class MSDeformAttn(nn.Module):
-    """Multi-Scale Deformable Attention Module"""
+    """Multi-Scale Deformable Attention Module."""
 
-    def __init__(self, d_model=256, n_levels=4, n_heads=8, n_points=4):
-        """
-        Multi-Scale Deformable Attention Module
-        :param d_model      hidden dimension
-        :param n_levels     number of feature levels
-        :param n_heads      number of attention heads
-        :param n_points     number of sampling points per attention head per feature level
-        """
+    def __init__(self, d_model: int = 256, n_levels: int = 4, n_heads: int = 8, n_points: int = 4) -> None:
+        """Multi-Scale Deformable Attention Module :param d_model      hidden dimension :param n_levels     number of
+        feature levels :param n_heads      number of attention heads :param n_points     number of sampling points per
+        attention head per feature level."""
         super().__init__()
         if d_model % n_heads != 0:
-            raise ValueError("d_model must be divisible by n_heads, but got {} and {}".format(d_model, n_heads))
+            raise ValueError(f"d_model must be divisible by n_heads, but got {d_model} and {n_heads}")
         _d_per_head = d_model // n_heads
         # you'd better set _d_per_head to a power of 2 which is more efficient in our CUDA implementation
         if not _is_power_of_2(_d_per_head):
@@ -73,11 +68,26 @@ class MSDeformAttn(nn.Module):
 
         self._export = False
 
-    def export(self):
-        """export mode"""
+    def export(self) -> None:
+        """Switch module to export mode for torch.export / TFLite compatibility.
+
+        In export mode the module uses ``torch._assert`` instead of Python ``assert`` for shape
+        checks (FakeTensor tracing cannot evaluate data-dependent asserts), and the forward pass
+        routes through the rank-5 tensor path that avoids runtime tensor-shape reads incompatible
+        with ``torch.export.export``.
+
+        Note:
+            There is no corresponding ``unexport()`` — export mode is one-way.  If you need the
+            original eager-mode behaviour after calling ``export()``, deepcopy the module before
+            calling this method::
+
+                import copy
+                attn_eager = copy.deepcopy(attn)
+                attn.export()
+        """
         self._export = True
 
-    def _reset_parameters(self):
+    def _reset_parameters(self) -> None:
         constant_(self.sampling_offsets.weight.data, 0.0)
         thetas = torch.arange(self.n_heads, dtype=torch.float32) * (2.0 * math.pi / self.n_heads)
         grid_init = torch.stack([thetas.cos(), thetas.sin()], -1)
@@ -99,21 +109,22 @@ class MSDeformAttn(nn.Module):
 
     def forward(
         self,
-        query,
-        reference_points,
-        input_flatten,
-        input_spatial_shapes,
-        input_level_start_index,
-        input_padding_mask=None,
+        query: Tensor,
+        reference_points: Tensor,
+        input_flatten: Tensor,
+        input_spatial_shapes: Tensor,
+        input_level_start_index: Tensor,
+        input_padding_mask: Tensor | None = None,
         input_spatial_shapes_hw: list[tuple[int, int]] | None = None,
-    ):
+    ) -> Tensor:
         """Forward pass of MSDeformAttn.
 
         Args:
             query: (N, Length_{query}, C)
             reference_points: (N, Length_{query}, n_levels, 2) with range in [0, 1],
-                top-left (0,0), bottom-right (1, 1), including padding area; or
-                (N, Length_{query}, n_levels, 4) adding additional (w, h) to form reference boxes.
+                top-left (0,0), bottom-right (1, 1), including padding area; or (N, Length_{query}, n_levels, 4) adding
+                additional (w, h) to form reference boxes. In export mode, the level dim may also be 1
+                (e.g. a single shared decoder reference box); it is broadcast to n_levels internally.
             input_flatten: (N, sum_{l=0}^{L-1} H_l * W_l, C)
             input_spatial_shapes: (n_levels, 2), [(H_0, W_0), (H_1, W_1), ..., (H_{L-1}, W_{L-1})]
             input_level_start_index: (n_levels,), [0, H_0*W_0, H_0*W_0+H_1*W_1, ...,
@@ -121,20 +132,41 @@ class MSDeformAttn(nn.Module):
             input_padding_mask: (N, sum_{l=0}^{L-1} H_l * W_l), True for padding elements,
                 False for non-padding elements.
             input_spatial_shapes_hw: List of (H, W) int pairs, same ordering as
-                input_spatial_shapes. When provided, these Python ints are used for tensor
-                split/view operations inside ms_deform_attn_core_pytorch so that the function
-                is compatible with torch.export.export (FakeTensor tracing cannot extract
-                concrete values from a tensor).
+                input_spatial_shapes. When provided, these Python ints are used for tensor split/view operations inside
+                ms_deform_attn_core_pytorch so that the function is compatible with torch.export.export (FakeTensor
+                tracing cannot extract concrete values from a tensor).
 
         Returns:
             Output tensor of shape (N, Length_{query}, C).
+
+        Raises:
+            ValueError: If ``input_spatial_shapes_hw`` is ``None`` in export mode; if the last
+                dimension of ``reference_points`` is not 2 or 4; or if the level dimension is
+                neither 1 nor ``n_levels`` (checked in both eager and export mode).
         """
         batch_size, len_query, _ = query.shape
         batch_size, len_input, _ = input_flatten.shape
-        expected_len_in = (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()
+        # Export mode requires the Python (H, W) pairs: without them the core (ms_deform_attn_core_pytorch)
+        # silently falls back to reading shapes off the ``input_spatial_shapes`` tensor — the exact
+        # data-dependent path torch.export cannot trace. Fail loud here rather than emit a broken graph.
+        # This is a plain ``is None`` check on a Python object, so it stays static under torch.export.
+        if self._export and input_spatial_shapes_hw is None:
+            raise ValueError(
+                "input_spatial_shapes_hw (per-level Python (H, W) pairs) is required in export mode; "
+                "without it the deformable-attention core falls back to the untraceable tensor-shape path."
+            )
+        # When Python int (H, W) pairs are available, derive the expected length from them so the
+        # check stays a plain Python comparison. Reading the value out of the ``input_spatial_shapes``
+        # tensor produces an unbacked symbolic int under ``torch.export``, which turns this sanity
+        # check into a data-dependent guard that aborts the export.
+        expected_len_in: int | Tensor
+        if input_spatial_shapes_hw is not None:
+            expected_len_in = sum(height * width for height, width in input_spatial_shapes_hw)
+        else:
+            expected_len_in = (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()
         error_msg = "input_spatial_shapes must match the flattened input length"
         if self._export:
-            torch._assert(expected_len_in == len_input, error_msg)
+            torch._assert(expected_len_in == len_input, error_msg)  # type: ignore[no-untyped-call]
         else:
             assert expected_len_in == len_input, error_msg
 
@@ -142,29 +174,74 @@ class MSDeformAttn(nn.Module):
         if input_padding_mask is not None:
             value = value.masked_fill(input_padding_mask[..., None], float(0))
 
-        sampling_offsets = self.sampling_offsets(query).view(
-            batch_size, len_query, self.n_heads, self.n_levels, self.n_points, 2
-        )
         attention_weights = self.attention_weights(query).view(
             batch_size, len_query, self.n_heads, self.n_levels * self.n_points
         )
 
-        # N, Len_q, n_heads, n_levels, n_points, 2
-        if reference_points.shape[-1] == 2:
-            offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
-            sampling_locations = (
-                reference_points[:, :, None, :, None, :]
-                + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
+        # Reference points carry either one box per level (level dim == n_levels) or a single
+        # shared box (level dim == 1) broadcast across all levels. Validate here — before the
+        # export/eager split — so malformed input is rejected with the same clear message on both
+        # paths; without this hoist eager silently mis-broadcasts or raises an opaque torch shape
+        # error depending on self._export. Only the export path materializes the singleton via
+        # .expand() below; eager relies on natural broadcasting over the None-inserted level axis.
+        n_ref_levels = reference_points.shape[2]
+        if n_ref_levels not in (1, self.n_levels):
+            raise ValueError(f"reference_points level dim must be 1 or n_levels={self.n_levels}, got {n_ref_levels}")
+
+        if self._export:
+            # Export path: build sampling_locations at rank 5 by merging (n_levels, n_points) -> n_levels*n_points,
+            # so no tensor exceeds rank 5. CoreML's MIL backend rejects rank-6 tensors; XNNPACK is unaffected. The
+            # merged layout is bit-identical to the rank-6 path below (offset_normalizer / reference_points are
+            # repeat_interleaved over n_points to match the [n_levels, n_points] flattening order). The core consumes
+            # the rank-5 form (detected by ndim). Only reached in export mode, so eager train/inference is unchanged.
+            #
+            # Decoder export mode passes reference_points with level dim 1 (shared across levels); the rank-6 path
+            # broadcasts via None dims. Expand here before repeat_interleave so the merged axis is n_levels*n_points.
+            sampling_offsets = self.sampling_offsets(query).view(
+                batch_size, len_query, self.n_heads, self.n_levels * self.n_points, 2
             )
-        elif reference_points.shape[-1] == 4:
-            sampling_locations = (
-                reference_points[:, :, None, :, None, :2]
-                + sampling_offsets / self.n_points * reference_points[:, :, None, :, None, 2:] * 0.5
-            )
+            if n_ref_levels == 1:
+                reference_points = reference_points.expand(-1, -1, self.n_levels, -1)
+            if reference_points.shape[-1] == 2:
+                offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
+                offset_normalizer = offset_normalizer.repeat_interleave(self.n_points, dim=0)  # n_levels*n_points, 2
+                ref = reference_points.repeat_interleave(self.n_points, dim=2)  # N, Len_q, n_levels*n_points, 2
+                sampling_locations = (
+                    ref[:, :, None, :, :] + sampling_offsets / offset_normalizer[None, None, None, :, :]
+                )
+            elif reference_points.shape[-1] == 4:
+                ref = reference_points.repeat_interleave(self.n_points, dim=2)  # N, Len_q, n_levels*n_points, 4
+                sampling_locations = (
+                    ref[:, :, None, :, :2] + sampling_offsets / self.n_points * ref[:, :, None, :, 2:] * 0.5
+                )
+            else:
+                raise ValueError(
+                    "Last dim of reference_points must be 2 or 4, but get {} instead.".format(
+                        reference_points.shape[-1]
+                    )
+                )
         else:
-            raise ValueError(
-                "Last dim of reference_points must be 2 or 4, but get {} instead.".format(reference_points.shape[-1])
+            sampling_offsets = self.sampling_offsets(query).view(
+                batch_size, len_query, self.n_heads, self.n_levels, self.n_points, 2
             )
+            # N, Len_q, n_heads, n_levels, n_points, 2
+            if reference_points.shape[-1] == 2:
+                offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
+                sampling_locations = (
+                    reference_points[:, :, None, :, None, :]
+                    + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
+                )
+            elif reference_points.shape[-1] == 4:
+                sampling_locations = (
+                    reference_points[:, :, None, :, None, :2]
+                    + sampling_offsets / self.n_points * reference_points[:, :, None, :, None, 2:] * 0.5
+                )
+            else:
+                raise ValueError(
+                    "Last dim of reference_points must be 2 or 4, but get {} instead.".format(
+                        reference_points.shape[-1]
+                    )
+                )
         attention_weights = F.softmax(attention_weights, -1)
 
         value = (
@@ -177,5 +254,4 @@ class MSDeformAttn(nn.Module):
             attention_weights,
             value_spatial_shapes_hw=input_spatial_shapes_hw,
         )
-        output = self.output_proj(output)
-        return output
+        return cast(Tensor, self.output_proj(output))

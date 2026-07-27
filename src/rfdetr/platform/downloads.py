@@ -4,28 +4,24 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-try:
-    from rfdetr_plus.models import downloads as _downloads
+# The availability check here avoids importing `rfdetr_plus` when the optional
+# dependency is not installed. Nested import-time dependencies continue to
+# propagate from inside this guarded path.
+from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 
+if _IS_RFDETR_PLUS_AVAILABLE:
     try:
-        PLATFORM_MODELS = _downloads._PLATFORM_MODELS
-    except AttributeError:
-        PLATFORM_MODELS = _downloads.PLATFORM_MODELS
-except ImportError:
-    try:
-        from rfdetr_plus.models.downloads import PLATFORM_MODELS
-    except ImportError as ex:
+        from rfdetr_plus.models import downloads as _downloads
+
+        if hasattr(_downloads, "_PLATFORM_MODELS"):
+            PLATFORM_MODELS = _downloads._PLATFORM_MODELS
+        else:
+            PLATFORM_MODELS = _downloads.PLATFORM_MODELS
+    except ModuleNotFoundError as ex:
         missing_name = getattr(ex, "name", "")
-        if missing_name.startswith("rfdetr_plus") or "rfdetr_plus" in str(ex):
-            import warnings
-
-            from rfdetr.platform import _INSTALL_MSG
-
-            warnings.warn(
-                _INSTALL_MSG.format(name="platform model downloads"),
-                ImportWarning,
-                stacklevel=2,
-            )
+        if missing_name in {"rfdetr_plus", "rfdetr_plus.models", "rfdetr_plus.models.downloads"}:
             PLATFORM_MODELS = {}
         else:
             raise
+else:
+    PLATFORM_MODELS = {}

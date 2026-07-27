@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.6.0"
+version = "1.8.3"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -36,13 +36,14 @@ keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DE
 
 dependencies = [
     "requests",                        # weight download from remote URLs
+    "numpy",                           # array conversion throughout inference, evaluation, export, and visualization
     "torch>=2.2.0",                    # core tensor ops and model forward pass
     "torchvision>=0.17.0",             # image transforms and ops (aligned with torch>=2.2.0)
     "tqdm",                            # progress bars during weight download
     "transformers>=5.1.0,<6.0.0",     # DINOv2 backbone loading
     "pydantic>=2.0,<3",               # ModelConfig / TrainConfig validation
-    "supervision",                     # inference output (Detections, Masks)
-    "pyDeprecate>=0.6,<0.8",             # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
+    "supervision>=0.29.0",       # inference output (Detections, Masks)
+    "pyDeprecate>=0.9,<0.10",             # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
 ]
 
 [project.optional-dependencies]
@@ -51,41 +52,51 @@ lora = [
 ]
 train = [
     "peft",                            # LoRA backbone fine-tuning (available during training)
-    "pytorch_lightning>=2.6,<3",
+    "pytorch_lightning>=2.6,<3,!=2.6.2,!=2.6.3",  # Keep exclusions; see issue #1016 / related advisory for why 2.6.2 and 2.6.3 are blocked
     "torchmetrics[detection]>=1.2",
     "faster-coco-eval>=1.7.2",
     "pycocotools",
     "scipy",
-    "albumentations>=1.4.24,<3.0.0",
     "roboflow",
     "rf100vl",
 ]
+augment = [
+    "albumentations>=1.4.24,<3.0.0",  # optional custom CPU augmentations
+    "kornia>=0.7,<1",                  # optional GPU-side augmentation
+]
 onnx = [
-    "onnx>=1.16.0,<1.20",
+    "onnx>=1.16.0,<2.0",
     "onnxsim<0.6.0",  # TODO: onnxsim 0.6.0+ hangs on install
     "onnx_graphsurgeon",
     "onnxruntime",
     "polygraphy",
 ]
-trt = [
+tensorrt = [
     "pycuda",
     "onnxruntime-gpu",
     "tensorrt>=8.6.1",
     "polygraphy",
 ]
 tflite = [
-    "onnx2tf>=1.26.0,<2.0.0",
-    "flatbuffers>=23.5.26",
-    "onnx>=1.16.0,<1.20",
-    "tf-keras>=2.16.0",
-    "tensorflow>=2.16.0",
+    # TFLite conversion routes every export through the ONNX pipeline first (export_onnx's
+    # graph optimization/simplification), so these are needed here directly rather than via
+    # the separate [onnx] extra — onnxruntime is NOT included: it's only for running ONNX
+    # inference, never touched by the TFLite export path.
+    "onnx>=1.20.0,<2.0; python_version >= '3.12' and python_version < '3.13'",
+    "onnxsim<0.6.0; python_version >= '3.12' and python_version < '3.13'",  # TODO: onnxsim 0.6.0+ hangs on install
+    "onnx_graphsurgeon; python_version >= '3.12' and python_version < '3.13'",
+    "polygraphy; python_version >= '3.12' and python_version < '3.13'",
+    "onnx2tf>=2.4.0,<3.0.0; python_version >= '3.12' and python_version < '3.13'",
+    "flatbuffers>=23.5.26; python_version >= '3.12' and python_version < '3.13'",
+    "tf-keras>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
+    "tensorflow>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
 ]
-kornia = [
-    "kornia>=0.7,<1",              # GPU-side augmentation via on_after_batch_transfer
+executorch = [
+    "executorch>=1.3,<2.0",  # torch.export -> .pte, XNNPACK CPU delegate; validated on 1.3.1
 ]
 loggers = [
     "tensorboard>=2.13.0",
-    "protobuf>=3.20.0,<4.0.0",  # Pins protobuf below 4.x to avoid TensorBoard descriptor crash with protobuf>=4 (see #844)
+    "protobuf>=3.20.0",  # Cap <4.0.0 removed — tensorflow>=2.16.0 (required by [tflite]) needs protobuf>=3.20.3 and is incompatible with <4.0.0 (see #1041)
     "wandb",
     "mlflow",
     "clearml",
@@ -104,6 +115,19 @@ plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
 #   Does not affect users installing rfdetr from PyPI.
 ci-gpu-pin = [
     "torch<2.11",
+    "torchvision<0.26",
+]
+
+# TODO: Temporary: executorch==1.3.1's prebuilt wheel is compiled against ~torch-2.12.x's C10 ABI
+#   (executorch itself only floors torch>=2.12.0a0, no ceiling). torch>=2.13.0 removed/changed a C10
+#   symbol the wheel links, breaking executorch.runtime at dlopen (undefined symbol). Empirically
+#   validated: torch==2.12.1 + executorch==1.3.1 imports executorch.runtime cleanly; torch==2.13.0
+#   does not. Remove this group and the --group ci-executorch-pin reference in CI once executorch
+#   ships a release compatible with newer torch. Does not affect users installing rfdetr from PyPI —
+#   see rfdetr.export._executorch.converter._check_executorch_available(require_runtime=True) for the
+#   equivalent runtime guidance surfaced to end users who hit this.
+ci-executorch-pin = [
+    "torch<2.13",
 ]
 
 build = [
@@ -113,16 +137,18 @@ build = [
 ]
 
 tests = [
-  "pytest>=7.2,<9",
+  "pytest>=7.2,<10",
   "pytest-cov>=4,<8",
   "pytest-xdist>=3.6,<4",
   "pytest-rerunfailures>=10,<15",
   "pytest-timeout>=2,<3",
+  "pytest-doctestplus>=1.2,<2",
   "tomli>=2.0; python_version < '3.11'",
 ]
 
 typing = [
-    "mypy>=1.0",
+    # Keep this pin aligned with the local mypy hook in .pre-commit-config.yaml.
+    "mypy==1.19.1",
     # mypy 1.19.x can crash while processing NumPy 2.4 symbols in strict mode.
     "numpy<2.4",
     "types-PyYAML",
@@ -146,6 +172,28 @@ Homepage = "https://github.com/roboflow/rf-detr"
 
 [project.scripts]
 rfdetr = "rfdetr.cli:main"
+
+[tool.uv]
+# onnx2tf>=2.4.0 pins numpy==1.26.4 (exact). Its dependency ml-dtypes==0.5.1 in turn requires
+# numpy>=2.1.0 on python_full_version>='3.13' — contradicting the numpy==1.26.4 pin on 3.13.
+# tflite deps carry python_version>='3.12' and <'3.13' markers because onnx2tf's numpy pin
+# cannot be satisfied on 3.13 via any available release; when onnx2tf relaxes the exact pin,
+# remove the <'3.13' upper bound from the tflite deps AND from the override below.
+override-dependencies = [
+    "ml-dtypes==0.5.1; python_version >= '3.12' and python_version < '3.13'",
+]
+
+# ci-gpu-pin (torch<2.11, GPU-driver constraint) and the executorch extra (torch>=2.12.0a0,
+# from executorch's own metadata) are unsatisfiable together -- no CI job combines them, but
+# `uv sync --all-groups` and a plain `uv lock` need to know that so the universal resolver
+# forks the two instead of failing to find one lockfile that satisfies both at once.
+conflicts = [
+    [
+        { group = "ci-gpu-pin" },
+        { extra = "executorch" },
+    ],
+]
+
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -179,23 +227,56 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "notebooks/*.py" = ["E402"]  # cell-local imports are intentional in percent-format scripts
+"docs/cookbooks/*.ipynb" = [
+    "E402",  # cell-local imports are intentional in percent-format scripts
+    "E501",  # jupytext notebook — markdown prose lines are intentionally unwrapped
+]
+"docs/cookbooks/*.py" = [
+    "E402",  # cell-local imports are intentional in percent-format scripts
+    "E501",  # .py mirror of jupytext notebook — markdown prose lines are intentionally unwrapped
+]
+
+[tool.docformatter]
+wrap-summaries = 120
+wrap-descriptions = 120
 
 [tool.pytest.ini_options]
 addopts = [
     "-v",                   # verbose output
     "--color=yes",          # colored output
-    "--doctest-modules",    # run doctests from all modules
+    "--doctest-plus",       # run doctests from all modules (pytest-doctestplus)
 ]
+# Skip doctest COLLECTION for test modules (they are not doc sources; src/ doctests unaffected).
+# Without this, doctestplus walks every test module's attributes; when the TF/ai_edge_litert
+# stack has been imported by the tflite export tests, scanning a module that exposes
+# `unittest.mock.call` (a `_Call` that auto-creates and caches child mocks on attribute access)
+# grows the object graph unboundedly — observed 38 GB RSS and a silent SIGKILL during
+# collection. The value must be a glob ("tests/*"): matching is per-file via fnmatch.
+doctest_norecursedirs = ["tests/*"]
 pythonpath = ["src"]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
+    "coco17: tests that require COCO 2017 images or annotations",
     "flaky: tests that may fail due to nondeterminism",
     "tflite: tests requiring onnx2tf and TFLite dependencies",
+    "executorch: tests requiring the executorch package",
 ]
 filterwarnings = [
     # pytest-xdist workers close their channel before teardown completes;
     # this is a known false-positive that does not affect test results.
     "ignore::pluggy.PluggyTeardownRaisedWarning",
+    # Many tests instantiate ModelConfig variants with `pretrain_weights=None`
+    # to skip downloads.  The pretrain-compat warning is intentional UX for
+    # end users; silence it globally for the test suite and re-enable it
+    # explicitly in the dedicated tests via `warnings.catch_warnings` plus
+    # `warnings.simplefilter("always")`.
+    # NOTE: expressed as a message regex (not as
+    # ``ignore::rfdetr.config.PretrainWeightsCompatibilityWarning``) because a
+    # class-path filter forces pytest to import ``rfdetr.config`` at
+    # config-parse time — before ``pytest-cov`` starts tracing — which makes
+    # the module's top-level statements appear uncovered.
+    "ignore:.*was instantiated with pretrain_weights=None:UserWarning",
+    "ignore:.*was instantiated with overrides that differ from the variant:UserWarning",
 ]
 
 [tool.codespell]
@@ -224,6 +305,7 @@ overrides = [
     "timm", "timm.*",
     "einops", "einops.*",
     "deprecate", "deprecate.*",
+    "faster_coco_eval", "faster_coco_eval.*",
     "matplotlib", "matplotlib.*",
     "pandas", "pandas.*",
     "requests", "requests.*",
@@ -232,7 +314,22 @@ overrides = [
     "kornia", "kornia.*",
     "onnx", "onnx.*",
     "onnx2tf", "onnx2tf.*",
+    "onnx_graphsurgeon", "onnx_graphsurgeon.*",
+    "onnxruntime", "onnxruntime.*",
+    "onnxsim", "onnxsim.*",
+    "polygraphy", "polygraphy.*",
+    "tensorrt", "tensorrt.*",
+    "pycuda", "pycuda.*",
+    "jsonargparse", "jsonargparse.*",
+    "tflite_runtime", "tflite_runtime.*",
+    "tensorflow", "tensorflow.*",
+    "executorch", "executorch.*",
+    "rfdetr_plus", "rfdetr_plus.*",
   ], ignore_missing_imports = true },
+  # Optional-import None assignments in console.py: type: ignore[assignment, misc] is needed when
+  # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the
+  # pre-commit hook (which runs mypy with --ignore-missing-imports so rich types are unresolved).
+  { module = ["rfdetr.utilities.console"], warn_unused_ignores = false },
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [
     "rfdetr",
@@ -246,48 +343,6 @@ overrides = [
     "rfdetr.datasets.transforms",
     "rfdetr.datasets.yolo",
     "rfdetr.detr",
-    "rfdetr.evaluation.coco_eval",
-    "rfdetr.evaluation.matching",
-    "rfdetr.export._onnx.exporter",
-    "rfdetr.export._onnx.symbolic",
-    "rfdetr.export.benchmark",
-    "rfdetr.export.main",
-    "rfdetr.export.tensorrt",
-    "rfdetr.models.backbone",
-    "rfdetr.models.backbone.backbone",
-    "rfdetr.models.backbone.base",
-    "rfdetr.models.backbone.dinov2",
-    "rfdetr.models.backbone.dinov2_with_windowed_attn",
-    "rfdetr.models.backbone.projector",
-    "rfdetr.models.criterion",
-    "rfdetr.models.heads.detection",
-    "rfdetr.models.heads.segmentation",
-    "rfdetr.models.lwdetr",
-    "rfdetr.models.math",
-    "rfdetr.models.matcher",
-    "rfdetr.models.ops.functions.ms_deform_attn_func",
-    "rfdetr.models.ops.modules.ms_deform_attn",
-    "rfdetr.models.position_encoding",
-    "rfdetr.models.postprocess",
-    "rfdetr.models.transformer",
-    "rfdetr.models.weights",
-    "rfdetr.platform",
-    "rfdetr.platform.downloads",
-    "rfdetr.platform.models",
-    "rfdetr.training.callbacks.best_model",
-    "rfdetr.training.callbacks.coco_eval",
-    "rfdetr.training.callbacks.drop_schedule",
-    "rfdetr.training.callbacks.ema",
-    "rfdetr.training.cli",
-    "rfdetr.training.drop_schedule",
-    "rfdetr.training.model_ema",
-    "rfdetr.training.module_data",
-    "rfdetr.training.module_model",
-    "rfdetr.training.trainer",
-    "rfdetr.utilities.distributed",
-    "rfdetr.utilities.logger",
-    "rfdetr.utilities.state_dict",
-    "rfdetr.utilities.tensors",
     "rfdetr.variants",
   ], ignore_errors = true },
 ]

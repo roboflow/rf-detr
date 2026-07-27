@@ -69,11 +69,9 @@ class TestHungarianMatcherNonFiniteCosts:
     ) -> None:
         """When ALL costs are non-finite, the fallback sentinel (``dtype_info.max``)
         should allow ``linear_sum_assignment`` to complete with a valid 1-to-1
-        assignment: exactly one match, query index in [0, num_queries), target
-        index 0.
+        assignment: exactly one match, query index in [0, num_queries), target index 0.
 
-        This exercises the ``else: replacement_cost = C.new_tensor(dtype_info.max)``
-        branch.
+        This exercises the ``else: replacement_cost = C.new_tensor(dtype_info.max)`` branch.
         """
         nan = float("nan")
         outputs = {
@@ -100,12 +98,11 @@ class TestHungarianMatcherNonFiniteCosts:
         matcher: HungarianMatcher,
         standard_target: dict[str, torch.Tensor],
     ) -> None:
-        """Regression test: when all finite costs are negative and one query
-        produces NaN, the matcher must select the valid query, not the NaN one.
+        """Regression test: when all finite costs are negative and one query produces NaN, the matcher must select the
+        valid query, not the NaN one.
 
-        This guards against the bug where ``max_cost * 2`` (the old replacement
-        formula) could be smaller than ``max_cost`` when all costs are negative,
-        causing the NaN query to appear cheaper than valid queries.
+        This guards against the bug where ``max_cost * 2`` (the old replacement formula) could be smaller than
+        ``max_cost`` when all costs are negative, causing the NaN query to appear cheaper than valid queries.
         """
         nan = float("nan")
         # Query 0: NaN box coordinates -> produces non-finite costs
@@ -144,8 +141,8 @@ class TestHungarianMatcherNonFiniteCosts:
     ) -> None:
         """Exercises the ``C.split(sizes, -1)`` loop with batch_size > 1.
 
-        Each image has 2 queries and 1 target. One query per image has NaN
-        coordinates; the matcher must select the valid query in each case.
+        Each image has 2 queries and 1 target. One query per image has NaN coordinates; the matcher must select the
+        valid query in each case.
         """
         nan = float("nan")
         outputs = {
@@ -194,11 +191,11 @@ class TestHungarianMatcherNonFiniteCosts:
         matcher: HungarianMatcher,
         standard_target: dict[str, torch.Tensor],
     ) -> None:
-        """Sanitization runs on the full cost matrix before splitting by group, so
-        non-finite entries must be handled correctly when ``group_detr > 1``.
+        """Sanitization runs on the full cost matrix before splitting by group, so non-finite entries must be handled
+        correctly when ``group_detr > 1``.
 
-        4 queries, 2 groups of 2. Query 0 has a NaN box; query 2 (the best valid
-        match in group 1) must be selected across groups.
+        4 queries, 2 groups of 2. Query 0 has a NaN box; query 2 (the best valid match in group 1) must be selected
+        across groups.
         """
         nan = float("nan")
         outputs = {
@@ -318,3 +315,182 @@ class TestHungarianMatcherSanitization:
 
         assert torch.isfinite(sanitized).all()
         assert sanitized[0, 1] == dtype_max
+
+
+class TestHungarianMatcherFocalAlpha:
+    """The configured ``focal_alpha`` must drive the classification matching cost."""
+
+    def test_focal_alpha_changes_assignment(self) -> None:
+        """Two matchers differing only in ``focal_alpha`` must be able to produce different assignments.
+
+        ``focal_alpha`` is accepted, documented as "used in the classification cost", and stored on the matcher, so it
+        must actually influence matching. This input is chosen so the optimal query->target pairing flips between
+        ``focal_alpha=0.25`` and ``focal_alpha=0.90``; if the cost ignores the configured alpha, both assignments
+        collapse to the same result.
+        """
+        outputs = {
+            "pred_logits": torch.tensor(
+                [[[2.3936, -1.4217], [2.3731, -2.1974]]],
+                dtype=torch.float32,
+            ),
+            "pred_boxes": torch.tensor(
+                [[[0.3898, 0.4340, 0.5331, 0.1901], [0.4256, 0.1002, 0.6955, 0.7815]]],
+                dtype=torch.float32,
+            ),
+        }
+        targets = [
+            {
+                "labels": torch.tensor([0, 1], dtype=torch.int64),
+                "boxes": torch.tensor(
+                    [[0.2111, 0.6630, 0.7569, 0.8855], [0.7750, 0.4393, 0.8838, 0.8792]],
+                    dtype=torch.float32,
+                ),
+            }
+        ]
+
+        def assignment(focal_alpha: float) -> list[int]:
+            matcher = HungarianMatcher(cost_class=2.0, cost_bbox=5.0, cost_giou=2.0, focal_alpha=focal_alpha)
+            matched_queries, matched_targets = matcher(outputs, targets)[0]
+            # Queries ordered by the target index they are matched to.
+            return matched_queries[matched_targets.argsort()].tolist()
+
+        assert assignment(0.25) != assignment(0.90)
+        # Pin the exact expected mappings so a misapplied-alpha refactor is caught even when
+        # the two values remain different for unrelated reasons.
+        assert assignment(0.25) == [0, 1]
+        assert assignment(0.90) == [1, 0]
+
+    @pytest.mark.parametrize(
+        "focal_alpha, expected",
+        [
+            pytest.param(0.0, [0, 1], id="alpha_zero_pos_cost_zeroed"),
+            pytest.param(1.0, [1, 0], id="alpha_one_neg_cost_zeroed"),
+        ],
+    )
+    def test_focal_alpha_boundary_values_no_nan(self, focal_alpha: float, expected: list[int]) -> None:
+        """Degenerate focal_alpha values (0.0 and 1.0) must not produce NaN and must yield a valid assignment.
+
+        focal_alpha=0.0 zeroes ``pos_cost_class``; focal_alpha=1.0 zeroes ``neg_cost_class``. Neither path touches
+        ``log(prob)`` directly (formula uses logsigmoid of logits), so no division-by-zero or NaN can occur.
+        """
+        outputs = {
+            "pred_logits": torch.tensor(
+                [[[2.3936, -1.4217], [2.3731, -2.1974]]],
+                dtype=torch.float32,
+            ),
+            "pred_boxes": torch.tensor(
+                [[[0.3898, 0.4340, 0.5331, 0.1901], [0.4256, 0.1002, 0.6955, 0.7815]]],
+                dtype=torch.float32,
+            ),
+        }
+        targets = [
+            {
+                "labels": torch.tensor([0, 1], dtype=torch.int64),
+                "boxes": torch.tensor(
+                    [[0.2111, 0.6630, 0.7569, 0.8855], [0.7750, 0.4393, 0.8838, 0.8792]],
+                    dtype=torch.float32,
+                ),
+            }
+        ]
+
+        matcher = HungarianMatcher(cost_class=2.0, cost_bbox=5.0, cost_giou=2.0, focal_alpha=focal_alpha)
+        matched_queries, matched_targets = matcher(outputs, targets)[0]
+
+        assert not matcher._warned_non_finite_costs, "boundary focal_alpha produced non-finite costs"
+        result = matched_queries[matched_targets.argsort()].tolist()
+        assert result == expected
+
+
+def _reference_indices_full_class_materialization(
+    matcher: HungarianMatcher,
+    outputs: dict[str, torch.Tensor],
+    targets: list[dict[str, torch.Tensor]],
+) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    """Reference matching that materializes the focal class cost over ALL classes before slicing."""
+    from scipy.optimize import linear_sum_assignment
+
+    from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
+
+    bs, num_queries = outputs["pred_logits"].shape[:2]
+    logits = outputs["pred_logits"].flatten(0, 1)
+    prob = logits.sigmoid()
+    out_bbox = outputs["pred_boxes"].flatten(0, 1)
+    tgt_ids = torch.cat([t["labels"] for t in targets])
+    tgt_bbox = torch.cat([t["boxes"] for t in targets])
+    alpha = matcher.focal_alpha
+    gamma = matcher_module._FOCAL_LOSS_GAMMA
+    neg_cost_class = (1 - alpha) * (prob**gamma) * (-torch.nn.functional.logsigmoid(-logits))
+    pos_cost_class = alpha * ((1 - prob) ** gamma) * (-torch.nn.functional.logsigmoid(logits))
+    cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
+    cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
+    cost_giou = -generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
+    cost = matcher.cost_bbox * cost_bbox + matcher.cost_class * cost_class + matcher.cost_giou * cost_giou
+    cost = cost.view(bs, num_queries, -1).float().cpu()
+    sizes = [len(t["boxes"]) for t in targets]
+    indices = [linear_sum_assignment(c[i]) for i, c in enumerate(cost.split(sizes, -1))]
+    return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+
+
+class TestClassCostGatherFirst:
+    """Class cost computed on gathered target columns must reproduce the full-materialization matching."""
+
+    def test_forward_matches_full_class_materialization_reference(self, matcher: HungarianMatcher) -> None:
+        """Random batch: matcher assignment equals the reference that builds [bs*nq, num_classes] first."""
+        torch.manual_seed(7)
+        bs, num_queries, num_classes = 2, 8, 11
+        outputs = {
+            "pred_logits": torch.randn(bs, num_queries, num_classes),
+            "pred_boxes": torch.rand(bs, num_queries, 4) * 0.4 + 0.3,
+        }
+        targets = [
+            {
+                "labels": torch.tensor([1, 3, 3], dtype=torch.int64),
+                "boxes": torch.tensor(
+                    [[0.3, 0.3, 0.2, 0.2], [0.6, 0.6, 0.1, 0.1], [0.5, 0.4, 0.3, 0.2]], dtype=torch.float32
+                ),
+            },
+            {
+                "labels": torch.tensor([0], dtype=torch.int64),
+                "boxes": torch.tensor([[0.5, 0.5, 0.4, 0.4]], dtype=torch.float32),
+            },
+        ]
+
+        actual = matcher(outputs, targets)
+
+        expected = _reference_indices_full_class_materialization(matcher, outputs, targets)
+        for (act_q, act_t), (exp_q, exp_t) in zip(actual, expected):
+            assert torch.equal(act_q, exp_q)
+            assert torch.equal(act_t, exp_t)
+
+    def test_forward_matches_reference_when_one_batch_element_has_zero_targets(self, matcher: HungarianMatcher) -> None:
+        """A zero-GT batch element must gather-first-match the reference (empty tgt_ids column selection).
+
+        The gather-first refactor indexes ``flat_pred_logits[:, tgt_ids]`` where ``tgt_ids`` is the concatenation of
+        every batch element's labels; an empty-labels element degenerates that slice to a ``[N, 0]`` selection for its
+        own queries. This boundary was previously unexercised — every existing test target has >=1 GT box.
+        """
+        torch.manual_seed(11)
+        bs, num_queries, num_classes = 2, 6, 7
+        outputs = {
+            "pred_logits": torch.randn(bs, num_queries, num_classes),
+            "pred_boxes": torch.rand(bs, num_queries, 4) * 0.4 + 0.3,
+        }
+        targets = [
+            {
+                "labels": torch.tensor([2, 4], dtype=torch.int64),
+                "boxes": torch.tensor([[0.3, 0.3, 0.2, 0.2], [0.6, 0.6, 0.1, 0.1]], dtype=torch.float32),
+            },
+            {
+                "labels": torch.zeros(0, dtype=torch.int64),
+                "boxes": torch.zeros(0, 4, dtype=torch.float32),
+            },
+        ]
+
+        actual = matcher(outputs, targets)
+
+        expected = _reference_indices_full_class_materialization(matcher, outputs, targets)
+        for (act_q, act_t), (exp_q, exp_t) in zip(actual, expected):
+            assert torch.equal(act_q, exp_q)
+            assert torch.equal(act_t, exp_t)
+        assert actual[1][0].shape == (0,)
+        assert actual[1][1].shape == (0,)

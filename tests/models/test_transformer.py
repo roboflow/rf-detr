@@ -13,7 +13,7 @@ import torch
 
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
-from rfdetr.models.transformer import gen_encoder_output_proposals
+from rfdetr.models.transformer import gen_encoder_output_proposals, gen_sineembed_for_position
 
 
 @pytest.fixture(autouse=True)
@@ -88,6 +88,26 @@ def test_gen_encoder_output_proposals_passes_ij_indexing_to_meshgrid(monkeypatch
     assert call_count == 1
 
 
+def test_gen_sineembed_for_position_keeps_box_dimensions_in_sin_cos_order() -> None:
+    """4D box positional embeddings must use the pretrained sin/cos order for all dimensions."""
+    pos_tensor = torch.tensor([[[0.125, 0.25, 0.5, 0.75]]], dtype=torch.float32)
+    dim = 4
+    scale = 2 * torch.pi
+    dim_t = torch.arange(dim, dtype=pos_tensor.dtype)
+    dim_t = 10000 ** (2 * (dim_t // 2) / dim)
+
+    expected_parts = []
+    for coord_idx in (1, 0, 2, 3):
+        coord = pos_tensor[:, :, coord_idx] * scale
+        encoded = coord[:, :, None] / dim_t
+        expected_parts.append(torch.stack((encoded[:, :, 0::2].sin(), encoded[:, :, 1::2].cos()), dim=3).flatten(2))
+    expected = torch.cat(expected_parts, dim=2)
+
+    actual = gen_sineembed_for_position(pos_tensor, dim=dim)
+
+    torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
+
+
 def test_gen_encoder_output_proposals_rejects_non_square_ij_indexing(monkeypatch) -> None:
     """Wrong meshgrid indexing (xy vs ij) produces different proposals for non-square spatial shapes."""
     original_meshgrid = torch.meshgrid
@@ -147,11 +167,9 @@ def test_gen_encoder_output_proposals_accepts_python_int_pair_spatial_shapes() -
 class TestMSDeformAttnCorePytorch:
     """Tests for ms_deform_attn_core_pytorch with Python int pair spatial shapes.
 
-    Regression suite for torch.export.export compatibility: iterating over a
-    spatial_shapes tensor yields FakeTensor scalars during FakeTensor tracing,
-    which cannot be used as Python int split/view sizes.  The function now
-    accepts an optional ``value_spatial_shapes_hw`` list of Python int pairs
-    that bypasses tensor iteration.
+    Regression suite for torch.export.export compatibility: iterating over a spatial_shapes tensor yields FakeTensor
+    scalars during FakeTensor tracing, which cannot be used as Python int split/view sizes.  The function now accepts an
+    optional ``value_spatial_shapes_hw`` list of Python int pairs that bypasses tensor iteration.
     """
 
     @pytest.fixture
@@ -177,9 +195,9 @@ class TestMSDeformAttnCorePytorch:
     def test_with_python_int_pair_spatial_shapes(self, make_inputs: _MSDeformInputs) -> None:
         """Regression: value_spatial_shapes_hw list of Python int pairs must be accepted.
 
-        This is the torch.export.export-compatible code path: tensor scalar values
-        (from iterating over a FakeTensor) cannot be used as split/view sizes, so the
-        caller passes explicit Python int pairs via value_spatial_shapes_hw instead.
+        This is the torch.export.export-compatible code path: tensor scalar values (from iterating over a FakeTensor)
+        cannot be used as split/view sizes, so the caller passes explicit Python int pairs via value_spatial_shapes_hw
+        instead.
         """
         value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = make_inputs
 
@@ -230,8 +248,8 @@ class TestMSDeformAttnCorePytorch:
 class TestMSDeformAttnModule:
     """Tests for MSDeformAttn.forward covering the export-compatibility changes.
 
-    Validates the module-level parameter threading and export-mode assert guard
-    introduced in the torch.export.export compatibility fix.
+    Validates the module-level parameter threading and export-mode assert guard introduced in the torch.export.export
+    compatibility fix.
     """
 
     _d_model = 32
@@ -311,6 +329,33 @@ class TestMSDeformAttnModule:
         bsz, len_q, _ = query.shape
         assert output.shape == (bsz, len_q, self._d_model)
 
+    def test_export_mode_forward_with_full_level_dim_and_last_dim_4(self) -> None:
+        """Export mode forward with reference_points level dim == n_levels and last dim 4 must match eager output.
+
+        Regression: test_export_mode_forward_with_hw_param only exercises the n_ref_levels==n_levels skip-branch
+        (ms_deform_attn.py:206-210) with last dim 2. This covers the sibling last-dim-4 branch combined with a
+        level dim that is already n_levels (not the singleton-broadcast case).
+        """
+        module = MSDeformAttn(
+            d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=self._n_points
+        )
+        module.eval()
+        query, _, input_flatten, spatial_shapes, level_start_index, hw_pairs = self._make_module_inputs()
+        ref_pts = torch.rand(query.shape[0], query.shape[1], self._n_levels, 4)
+
+        with torch.no_grad():
+            eager_out = module(
+                query, ref_pts, input_flatten, spatial_shapes, level_start_index, input_spatial_shapes_hw=hw_pairs
+            )
+            module.export()
+            export_out = module(
+                query, ref_pts, input_flatten, spatial_shapes, level_start_index, input_spatial_shapes_hw=hw_pairs
+            )
+
+        bsz, len_q, _ = query.shape
+        assert export_out.shape == (bsz, len_q, self._d_model)
+        torch.testing.assert_close(export_out, eager_out, rtol=1e-5, atol=1e-5)
+
     def test_export_flag_set_after_export_call(self) -> None:
         """Calling .export() must set _export=True, enabling the torch._assert guard path."""
         module = MSDeformAttn(
@@ -322,13 +367,215 @@ class TestMSDeformAttnModule:
 
         assert module._export
 
+    @pytest.mark.parametrize(
+        "last_dim,batch_size",
+        [
+            pytest.param(4, 1, id="last-dim-4-batch-1"),
+            pytest.param(2, 1, id="last-dim-2-batch-1"),
+            pytest.param(4, 2, id="last-dim-4-batch-2"),
+        ],
+    )
+    def test_export_mode_broadcasts_singleton_level_dim(self, last_dim: int, batch_size: int) -> None:
+        """Checks export mode accepts decoder-style ``(B, Q, 1, last_dim)`` refs when ``n_levels > 1``.
+
+        Regression: the original case only covered last_dim=4 with batch_size=1. The singleton-broadcast
+        ``.expand()`` (ms_deform_attn.py:194) feeds both the last-dim-2 (ms_deform_attn.py:199-205) and
+        last-dim-4 (ms_deform_attn.py:206-210) sampling-location branches, and must also broadcast
+        correctly when batch_size > 1 since the expand only touches the level axis, not batch. This also
+        checks that gradients flow back through the ``.expand()`` view to the original singleton-shaped
+        reference_points.
+        """
+        # Use n_points > 1 so a missing expand would yield length n_points vs n_levels*n_points.
+        module = MSDeformAttn(d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=2)
+        module.eval()
+        hw_pairs = self._hw_pairs
+        total_len = sum(ht * wd for ht, wd in hw_pairs)
+        num_queries = 3
+        query = torch.randn(batch_size, num_queries, self._d_model)
+        # Decoder export shape: one shared box broadcast across feature levels.
+        ref_pts = torch.rand(batch_size, num_queries, 1, last_dim, requires_grad=True)
+        input_flatten = torch.randn(batch_size, total_len, self._d_model)
+        spatial_shapes = torch.tensor(hw_pairs, dtype=torch.long)
+        starts = [sum(ht * wd for ht, wd in hw_pairs[:idx]) for idx in range(self._n_levels)]
+        level_start_index = torch.tensor(starts, dtype=torch.long)
+        assert ref_pts.shape[2] == 1
+        assert self._n_levels > 1
+
+        with torch.no_grad():
+            eager_out = module(
+                query,
+                ref_pts,
+                input_flatten,
+                spatial_shapes,
+                level_start_index,
+                input_spatial_shapes_hw=hw_pairs,
+            )
+        module.export()
+        export_out = module(
+            query,
+            ref_pts,
+            input_flatten,
+            spatial_shapes,
+            level_start_index,
+            input_spatial_shapes_hw=hw_pairs,
+        )
+
+        torch.testing.assert_close(export_out.detach(), eager_out, rtol=1e-5, atol=1e-5)
+
+        # Backward-pass check on the new `.expand()` view op (ms_deform_attn.py:194): gradients must
+        # flow back to the original singleton-shaped reference_points, not just the expanded view.
+        export_out.sum().backward()
+        assert ref_pts.grad is not None
+        assert ref_pts.grad.shape == ref_pts.shape
+
+    @pytest.mark.parametrize(
+        "last_dim",
+        [pytest.param(2, id="last-dim-2"), pytest.param(4, id="last-dim-4")],
+    )
+    def test_export_mode_single_level_config_matches_eager(self, last_dim: int) -> None:
+        """Export mode with n_levels=1 (degenerate no-op expand branch) must match eager output.
+
+        Regression: TestMSDeformAttnModule hardcodes n_levels=2 everywhere else, so the
+        ``n_ref_levels == 1`` no-op ``.expand(-1, -1, 1, -1)`` branch (ms_deform_attn.py:192-194) that
+        fires specifically when self.n_levels == 1 was never exercised.
+        """
+        hw_pairs: list[tuple[int, int]] = [(4, 4)]
+        d_model, n_heads, n_points, n_levels = 32, 4, 2, 1
+        module = MSDeformAttn(d_model=d_model, n_levels=n_levels, n_heads=n_heads, n_points=n_points)
+        module.eval()
+        total_len = sum(ht * wd for ht, wd in hw_pairs)
+        batch_size, num_queries = 1, 3
+        query = torch.randn(batch_size, num_queries, d_model)
+        ref_pts = torch.rand(batch_size, num_queries, n_levels, last_dim)
+        input_flatten = torch.randn(batch_size, total_len, d_model)
+        spatial_shapes = torch.tensor(hw_pairs, dtype=torch.long)
+        level_start_index = torch.tensor([0], dtype=torch.long)
+
+        with torch.no_grad():
+            eager_out = module(
+                query, ref_pts, input_flatten, spatial_shapes, level_start_index, input_spatial_shapes_hw=hw_pairs
+            )
+            module.export()
+            export_out = module(
+                query, ref_pts, input_flatten, spatial_shapes, level_start_index, input_spatial_shapes_hw=hw_pairs
+            )
+
+        assert export_out.shape == (batch_size, num_queries, d_model)
+        torch.testing.assert_close(export_out, eager_out, rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.parametrize(
+        "last_dim,n_points",
+        [
+            pytest.param(4, 1, id="last-dim-4-points-1"),
+            pytest.param(2, 1, id="last-dim-2-points-1"),
+            pytest.param(4, 2, id="last-dim-4-points-2"),
+        ],
+    )
+    def test_export_mode_rejects_invalid_reference_level_dim(self, last_dim: int, n_points: int) -> None:
+        """Checks export mode raises when reference level dim is neither 1 nor ``n_levels``.
+
+        Regression: the original case only covered last_dim=4 with n_points=1 (self._n_points). The
+        level-dim guard (ms_deform_attn.py:195-198) fires before the last-dim branch and before the
+        n_points-dependent merged axis is built, so it must also be verified with last_dim=2 and with
+        n_points>1 (which changes the size of the merged n_levels*n_points sampling axis).
+        """
+        module = MSDeformAttn(d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=n_points)
+        module.export()
+        query, _, input_flatten, spatial_shapes, level_start_index, hw_pairs = self._make_module_inputs()
+        bad_ref = torch.rand(query.shape[0], query.shape[1], self._n_levels + 1, last_dim)
+
+        with pytest.raises(ValueError, match="level dim must be 1 or n_levels"):
+            module(
+                query,
+                bad_ref,
+                input_flatten,
+                spatial_shapes,
+                level_start_index,
+                input_spatial_shapes_hw=hw_pairs,
+            )
+
+    def test_eager_mode_rejects_invalid_reference_level_dim(self) -> None:
+        """Eager mode forward must raise ValueError when reference level dim is neither 1 nor n_levels.
+
+        Regression: the level-dim guard was hoisted above the export/eager split so both modes
+        reject malformed input with the same message (ms_deform_attn.py:192-198), but only the
+        export-mode path (test_export_mode_rejects_invalid_reference_level_dim) was covered.
+        """
+        module = MSDeformAttn(
+            d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=self._n_points
+        )
+        query, _, input_flatten, spatial_shapes, level_start_index, hw_pairs = self._make_module_inputs()
+        bad_ref = torch.rand(query.shape[0], query.shape[1], self._n_levels + 1, 4)
+
+        with pytest.raises(ValueError, match="level dim must be 1 or n_levels"):
+            module(
+                query,
+                bad_ref,
+                input_flatten,
+                spatial_shapes,
+                level_start_index,
+                input_spatial_shapes_hw=hw_pairs,
+            )
+
+    @pytest.mark.parametrize(
+        "last_dim",
+        [pytest.param(1, id="last-dim-1"), pytest.param(3, id="last-dim-3")],
+    )
+    def test_eager_mode_rejects_invalid_reference_last_dim(self, last_dim: int) -> None:
+        """Eager mode forward must raise ValueError when reference_points last dim is neither 2 nor 4.
+
+        Regression: the ``Raises:`` docstring entry for MSDeformAttn.forward names this contract
+        explicitly (ms_deform_attn.py:233-238), but no test previously exercised it.
+        """
+        module = MSDeformAttn(
+            d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=self._n_points
+        )
+        query, _, input_flatten, spatial_shapes, level_start_index, hw_pairs = self._make_module_inputs()
+        bad_ref = torch.rand(query.shape[0], query.shape[1], self._n_levels, last_dim)
+
+        with pytest.raises(ValueError, match="Last dim of reference_points must be 2 or 4"):
+            module(
+                query,
+                bad_ref,
+                input_flatten,
+                spatial_shapes,
+                level_start_index,
+                input_spatial_shapes_hw=hw_pairs,
+            )
+
+    @pytest.mark.parametrize(
+        "last_dim",
+        [pytest.param(1, id="last-dim-1"), pytest.param(3, id="last-dim-3")],
+    )
+    def test_export_mode_rejects_invalid_reference_last_dim(self, last_dim: int) -> None:
+        """Export mode forward must raise ValueError when reference_points last dim is neither 2 nor 4.
+
+        Regression: the ``Raises:`` docstring entry for MSDeformAttn.forward names this contract
+        explicitly (ms_deform_attn.py:211-216), but no test previously exercised it.
+        """
+        module = MSDeformAttn(
+            d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=self._n_points
+        )
+        module.export()
+        query, _, input_flatten, spatial_shapes, level_start_index, hw_pairs = self._make_module_inputs()
+        bad_ref = torch.rand(query.shape[0], query.shape[1], self._n_levels, last_dim)
+
+        with pytest.raises(ValueError, match="Last dim of reference_points must be 2 or 4"):
+            module(
+                query,
+                bad_ref,
+                input_flatten,
+                spatial_shapes,
+                level_start_index,
+                input_spatial_shapes_hw=hw_pairs,
+            )
+
 
 class TestGenEncoderOutputProposalsDynamicBatch:
     """Regression tests for dynamic batch support in gen_encoder_output_proposals.
 
-    Ensures that the ONNX-symbolic refactoring (PR #950 / issue #949) does not bake a
-    fixed batch dimension into proposals and that output shapes are correct for varying
-    batch sizes.
+    Ensures that the ONNX-symbolic refactoring (PR #950 / issue #949) does not bake a fixed batch dimension into
+    proposals and that output shapes are correct for varying batch sizes.
     """
 
     @pytest.mark.parametrize("batch_size", [1, 2, 4, 8])
@@ -373,9 +620,8 @@ class TestGenEncoderOutputProposalsDynamicBatch:
     def test_output_shape_invariant_with_padding_mask(self, batch_size: int) -> None:
         """Output shapes must be correct when memory_padding_mask is provided with varying batch sizes.
 
-        Regression for PR #950 / issue #949: the masked branch used .reshape(-1, h, w, 1) to
-        infer the batch dimension dynamically; this test verifies the branch handles varying
-        batch sizes without error.
+        Regression for PR #950 / issue #949: the masked branch used .reshape(-1, h, w, 1) to infer the batch dimension
+        dynamically; this test verifies the branch handles varying batch sizes without error.
 
         Args:
             batch_size: Number of images in the batch.
@@ -398,11 +644,9 @@ class TestGenEncoderOutputProposalsDynamicBatch:
     def test_onnx_export_with_dynamic_batch_axis(self, batch_size: int) -> None:
         """ONNX export with dynamic batch axis must run inference for batch sizes other than the trace batch.
 
-        Regression for issue #949: exporting with a fixed trace batch baked `Reshape([8,...])` as
-        a constant ONNX node, causing TRT engines to fail at inference for any batch != 8.
-        Skipped when onnx or onnxruntime is not installed.
+        Regression for issue #949: exporting with a fixed trace batch baked `Reshape([8,...])` as a constant ONNX node,
+        causing TRT engines to fail at inference for any batch != 8. Skipped when onnx or onnxruntime is not installed.
         """
-
         pytest.importorskip("onnx")
         onnxruntime = pytest.importorskip("onnxruntime")
 
@@ -444,10 +688,9 @@ class TestGenEncoderOutputProposalsDynamicBatch:
 def test_ms_deform_attn_core_pytorch_export_compatible() -> None:
     """torch.export.export must succeed on a module using ms_deform_attn_core_pytorch with hw param.
 
-    Regression test for the FakeTensor tracing failure: iterating over spatial_shapes
-    and using the scalar elements as split/view sizes fails during torch.export.export
-    because FakeTensor data is not allocated. Passing value_spatial_shapes_hw (concrete
-    Python ints from a module attribute) bypasses the tensor iteration entirely.
+    Regression test for the FakeTensor tracing failure: iterating over spatial_shapes and using the scalar elements as
+    split/view sizes fails during torch.export.export because FakeTensor data is not allocated. Passing
+    value_spatial_shapes_hw (concrete Python ints from a module attribute) bypasses the tensor iteration entirely.
     """
     levels: list[tuple[int, int]] = [(4, 4), (2, 2)]
     bsz, n_heads, head_dim = 1, 2, 4
@@ -485,4 +728,62 @@ def test_ms_deform_attn_core_pytorch_export_compatible() -> None:
     module = _MinimalDeformAttn(hw=levels)
 
     exported = torch.export.export(module, args=(value, spatial_shapes, sampling_locations, attention_weights))
+    assert exported is not None
+
+
+def test_ms_deform_attn_module_export_compatible_with_singleton_level_dim() -> None:
+    """torch.export.export must succeed on MSDeformAttn.forward with decoder-style singleton-level refs.
+
+    Regression test: TestMSDeformAttnModule.test_export_mode_broadcasts_singleton_level_dim only calls
+    module.export() and then runs the module eagerly in Python — it never traces through
+    torch.export.export itself, so the reference_points.shape[2] control-flow branch
+    (ms_deform_attn.py:192-198) was never verified under a real FakeTensor-traced export, which is
+    the actual regime the export() mode is designed for.
+    """
+    hw_pairs: list[tuple[int, int]] = [(4, 4), (2, 2)]
+    d_model, n_heads, n_levels, n_points = 32, 4, 2, 2
+    total_len = sum(ht * wd for ht, wd in hw_pairs)
+    batch_size, num_queries = 1, 3
+
+    class _MSDeformAttnExportWrapper(torch.nn.Module):
+        """Thin wrapper exporting MSDeformAttn.forward via torch.export.export."""
+
+        def __init__(self, hw: list[tuple[int, int]]) -> None:
+            super().__init__()
+            self.attn = MSDeformAttn(d_model=d_model, n_levels=n_levels, n_heads=n_heads, n_points=n_points)
+            self.attn.export()
+            self.hw = hw
+
+        def forward(
+            self,
+            query: torch.Tensor,
+            reference_points: torch.Tensor,
+            input_flatten: torch.Tensor,
+            input_spatial_shapes: torch.Tensor,
+            input_level_start_index: torch.Tensor,
+        ) -> torch.Tensor:
+            """Forward using the module's Python int pairs for export compatibility."""
+            return self.attn(
+                query,
+                reference_points,
+                input_flatten,
+                input_spatial_shapes,
+                input_level_start_index,
+                input_spatial_shapes_hw=self.hw,
+            )
+
+    query = torch.randn(batch_size, num_queries, d_model)
+    # Decoder export shape: one shared box broadcast across feature levels (n_ref_levels == 1 branch).
+    reference_points = torch.rand(batch_size, num_queries, 1, 4)
+    input_flatten = torch.randn(batch_size, total_len, d_model)
+    input_spatial_shapes = torch.tensor(hw_pairs, dtype=torch.long)
+    starts = [sum(ht * wd for ht, wd in hw_pairs[:idx]) for idx in range(n_levels)]
+    input_level_start_index = torch.tensor(starts, dtype=torch.long)
+
+    module = _MSDeformAttnExportWrapper(hw=hw_pairs)
+
+    exported = torch.export.export(
+        module,
+        args=(query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index),
+    )
     assert exported is not None

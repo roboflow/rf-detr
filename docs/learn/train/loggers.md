@@ -1,10 +1,10 @@
 ---
-description: Track RF-DETR training with TensorBoard, Weights and Biases, ClearML, and MLflow. Configure multiple experiment loggers simultaneously.
+description: Track RF-DETR training with TensorBoard, Weights and Biases, and MLflow. Configure multiple experiment loggers simultaneously.
 ---
 
 # Training Loggers
 
-RF-DETR supports integration with popular experiment tracking and visualization platforms. You can enable one or more loggers to monitor your training runs, compare experiments, and track metrics over time.
+RF-DETR supports integration with popular experiment tracking and visualization platforms. You can enable one or more supported loggers to monitor your training runs, compare experiments, and track metrics over time.
 
 ## CSV (always active)
 
@@ -146,7 +146,7 @@ All logged metric keys are listed in the [Logged Metrics Reference](customizatio
 
 [ClearML](https://clear.ml) is an open-source platform for managing, tracking, and automating machine learning experiments.
 
-**ClearML is not yet integrated as a native PTL logger.** Passing `clearml=True` to `model.train()` emits a `UserWarning` and has no other effect — metrics are not logged to ClearML.
+**ClearML is not yet integrated as a native PTL logger.** Passing `clearml=True` to `model.train()` raises `NotImplementedError`; metrics are not logged to ClearML through RF-DETR's built-in logger wiring.
 
 ### Workaround: ClearML SDK auto-binding
 
@@ -167,7 +167,7 @@ model.train(
     grad_accum_steps=4,
     lr=1e-4,
     output_dir="output",
-    # Do NOT pass clearml=True — it does nothing
+    # Do NOT pass clearml=True — RF-DETR raises NotImplementedError for that flag
 )
 ```
 
@@ -277,7 +277,7 @@ This allows you to leverage the strengths of different platforms:
 - **W&B**: Cloud-based collaboration and experiment comparison
 - **MLflow**: Model registry and deployment tracking
 
-Note: `clearml=True` is accepted but has no effect in the current version — the flag does not attach a ClearML logger. Use the [ClearML SDK workaround](#clearml) instead.
+Note: `clearml=True` is accepted by the config schema but raises `NotImplementedError` when the trainer is built. Use the [ClearML SDK workaround](#clearml) instead.
 
 ---
 
@@ -309,6 +309,8 @@ trainer.loggers.append(CSVLogger(save_dir="output", name="extra"))
 trainer.fit(module, datamodule)
 ```
 
-CSVLogger is always active (it requires no extra packages). All logged metric keys — `train/loss`, `val/mAP_50_95`, `val/F1`, `val/ema_mAP_50_95`, `val/AP/<class>`, etc. — are written to every logger in the list.
+CSVLogger is always active (it requires no extra packages). All logged metric keys — `train/loss`, `val/mAP_50_95`,
+`val/keypoint_map_50_95`, `val/F1`, `val/ema_mAP_50_95`, `val/AP/<class>`, etc. — are written to every logger in the
+list.
 
 → **[Full list of logged metrics](customization.md#logged-metrics-reference)**

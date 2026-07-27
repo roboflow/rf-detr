@@ -3,10 +3,12 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """LightningDataModule for RF-DETR dataset construction and loaders."""
 
-from typing import Any, List, Optional, Tuple
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
 import torch
 import torch.utils.data
@@ -14,9 +16,9 @@ from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader
 
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.config import AugmentationBackend, ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
-from rfdetr.datasets.aug_config import AUG_CONFIG
+from rfdetr.datasets.aug_configs import AUG_CONFIG
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import make_collate_fn
@@ -25,33 +27,52 @@ logger = get_logger()
 
 _MIN_TRAIN_BATCHES = 5
 
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
+
+
+def _worker_init_fn(worker_id: int) -> None:
+    """Seed NumPy and the ``random`` module per DataLoader worker.
+
+    PyTorch seeds ``torch``'s RNG per worker automatically but leaves NumPy and the stdlib ``random`` module unseeded,
+    so without this hook every worker would draw identical NumPy/``random`` sequences (a well-known augmentation
+    duplication footgun). Deriving the seed from ``torch.initial_seed()`` keeps augmentation reproducible while still
+    giving each worker a distinct stream.
+
+    Args:
+        worker_id: Index of the DataLoader worker (unused; seed is derived from the per-worker torch seed).
+    """
+    import random
+
+    import numpy as np
+
+    seed = torch.initial_seed() % (2**32)
+    np.random.seed(seed)
+    random.seed(seed)
+
 
 def _has_cuda_device() -> bool:
     """Return ``True`` when the runtime has a CUDA accelerator available.
 
-    Uses the fork-safe global ``DEVICE`` constant instead of direct
-    ``torch.cuda.is_available()`` calls to avoid creating a CUDA context in
-    fork-based notebook/DDP workflows.
+    Uses the fork-safe global ``DEVICE`` constant instead of direct ``torch.cuda.is_available()`` calls to avoid
+    creating a CUDA context in fork-based notebook/DDP workflows.
     """
     from rfdetr.config import DEVICE
 
     return str(DEVICE).startswith("cuda")
 
 
-class GradAccumAlignedDataset(torch.utils.data.Dataset):
+class GradAccumAlignedDataset(torch.utils.data.Dataset[Any]):
     """Dataset wrapper that pads length to a multiple of ``effective_batch_size * world_size``.
 
-    Workaround for https://github.com/Lightning-AI/pytorch-lightning/issues/19987:
-    PTL fires the optimizer on partial accumulation windows at the tail of the
-    dataset, causing the last optimizer step to be under-scaled.  Padding the
-    dataset to a multiple of ``effective_batch_size * world_size`` ensures that
-    ``drop_last=True`` on the DataLoader becomes a true no-op — every
-    accumulation window is always complete.
+    Workaround for https://github.com/Lightning-AI/pytorch-lightning/issues/19987: PTL fires the optimizer on partial
+    accumulation windows at the tail of the dataset, causing the last optimizer step to be under-scaled.  Padding the
+    dataset to a multiple of ``effective_batch_size * world_size`` ensures that ``drop_last=True`` on the DataLoader
+    becomes a true no-op — every accumulation window is always complete.
 
-    Padding indices are drawn randomly from the original dataset.  Because RF-DETR
-    uses online augmentation, each padded sample receives a fresh random
-    augmentation at ``__getitem__`` time, so it behaves like a new training
-    example rather than a true duplicate.
+    Padding indices are drawn randomly from the original dataset.  Because RF-DETR uses online augmentation, each padded
+    sample receives a fresh random augmentation at ``__getitem__`` time, so it behaves like a new training example
+    rather than a true duplicate.
 
     This wrapper can be removed once the upstream PTL issue is resolved.
 
@@ -59,14 +80,13 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset):
         dataset: The underlying dataset to wrap.
         effective_batch_size: ``batch_size * grad_accum_steps``.
         world_size: Number of DDP processes (default 1 for single-GPU/CPU).
-            The alignment unit is ``effective_batch_size * world_size`` so that
-            after PTL's ``DistributedSampler`` splits samples across ranks each
-            rank still receives an exact multiple of ``effective_batch_size``.
+            The alignment unit is ``effective_batch_size * world_size`` so that after PTL's ``DistributedSampler``
+            splits samples across ranks each rank still receives an exact multiple of ``effective_batch_size``.
     """
 
     def __init__(
         self,
-        dataset: torch.utils.data.Dataset,
+        dataset: torch.utils.data.Dataset[Any],
         effective_batch_size: int,
         world_size: int = 1,
     ) -> None:
@@ -106,41 +126,6 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset):
         return self._dataset[dataset_idx]
 
 
-def _resolve_augmentation_backend(backend: str) -> str:
-    """Resolve ``"auto"`` to ``"cpu"`` or ``"gpu"`` based on runtime availability.
-
-    For ``"cpu"`` and ``"gpu"`` the value is returned unchanged.  For
-    ``"auto"`` the function checks CUDA and kornia availability and returns
-    ``"gpu"`` only when both are present; otherwise ``"cpu"``.
-
-    Called before dataset construction so that ``gpu_postprocess`` in the
-    dataset builders always matches what the DataModule will actually do in
-    ``on_after_batch_transfer``.
-
-    Args:
-        backend: Value of ``TrainConfig.augmentation_backend``.
-
-    Returns:
-        Resolved backend string, either ``"cpu"`` or ``"gpu"``.
-
-    Examples:
-        >>> _resolve_augmentation_backend("cpu")
-        'cpu'
-        >>> _resolve_augmentation_backend("gpu")
-        'gpu'
-    """
-    if backend != "auto":
-        return backend
-    if not _has_cuda_device():
-        return "cpu"
-    try:
-        import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
-
-        return "gpu"
-    except ImportError:
-        return "cpu"
-
-
 class RFDETRDataModule(LightningDataModule):
     """LightningDataModule wrapping RF-DETR dataset construction and data loading.
 
@@ -169,13 +154,16 @@ class RFDETRDataModule(LightningDataModule):
             block_size=block_size,
         )
 
-        self._dataset_train: Optional[torch.utils.data.Dataset] = None
-        self._dataset_val: Optional[torch.utils.data.Dataset] = None
-        self._dataset_test: Optional[torch.utils.data.Dataset] = None
+        self._dataset_train: torch.utils.data.Dataset[Any] | None = None
+        self._dataset_val: torch.utils.data.Dataset[Any] | None = None
+        self._dataset_test: torch.utils.data.Dataset[Any] | None = None
 
         # GPU augmentation pipeline (Kornia); built lazily in setup("fit").
         self._kornia_pipeline: Any | None = None
         self._kornia_normalize: Any | None = None
+        # Resolved backend for the pending/most recent _setup_kornia_pipeline() call; set by
+        # setup("fit") just before that call so _setup_kornia_pipeline can stay a zero-arg method.
+        self._resolved_augmentation_backend: AugmentationBackend | None = None
         # Sentinel: True once _setup_kornia_pipeline has run (even on fallback paths
         # where _kornia_pipeline stays None), preventing redundant re-runs on repeated
         # setup("fit") calls (e.g. during validation loops in some PTL strategies).
@@ -199,6 +187,7 @@ class RFDETRDataModule(LightningDataModule):
             if self.train_config.persistent_workers is None
             else bool(self.train_config.persistent_workers)
         )
+        self._prefetch_factor: int | None
         if self._num_workers > 0:
             self._prefetch_factor = (
                 self.train_config.prefetch_factor if self.train_config.prefetch_factor is not None else 2
@@ -213,9 +202,8 @@ class RFDETRDataModule(LightningDataModule):
     def setup(self, stage: str) -> None:
         """Build datasets for the requested stage.
 
-        PTL calls this on every process before the corresponding
-        dataloader method.  Datasets are built lazily — a dataset is
-        only constructed once even if ``setup`` is called multiple times.
+        PTL calls this on every process before the corresponding dataloader method.  Datasets are built lazily — a
+        dataset is only constructed once even if ``setup`` is called multiple times.
 
         Args:
             stage: PTL stage identifier — one of ``"fit"``, ``"validate"``,
@@ -224,22 +212,56 @@ class RFDETRDataModule(LightningDataModule):
         resolution = self.model_config.resolution
         ns = _namespace_from_configs(self.model_config, self.train_config)
         if stage == "fit":
+            requested_backend = self.train_config.augmentation_backend
+            # Keypoint transforms are incompatible with the Kornia GPU pipeline outright, so an
+            # explicit 'kornia'/'gpu' request is rejected here -- before the CUDA readiness check
+            # below -- so a keypoint model without CUDA still sees the keypoint error, not an
+            # unrelated "no CUDA" one.
+            if self.model_config.use_grouppose_keypoints and requested_backend in (
+                AugmentationBackend.KORNIA,
+                "kornia",
+                "gpu",
+            ):
+                raise ValueError(
+                    f"augmentation_backend={requested_backend!r} does not support keypoint transforms. "
+                    "Set augmentation_backend='cpu' or 'albumentations' when use_grouppose_keypoints=True."
+                )
+            from rfdetr.datasets.kornia_transforms import (
+                is_gpu_postprocess,
+                require_gpu_backend_ready,
+                resolve_augmentation_backend,
+            )
+
+            require_gpu_backend_ready(requested_backend, has_cuda=_has_cuda_device())
             # Resolve 'auto' to an actual backend before building datasets so that
             # gpu_postprocess in dataset builders always matches what the DataModule
             # will actually do in on_after_batch_transfer.  Without this, 'auto' on
             # a machine without CUDA/kornia would strip CPU Normalize from datasets
             # while _kornia_pipeline stays None, leaving training inputs unnormalized.
-            resolved = _resolve_augmentation_backend(self.train_config.augmentation_backend)
-            if resolved != self.train_config.augmentation_backend:
-                ns.augmentation_backend = resolved
+            resolved = resolve_augmentation_backend(requested_backend, has_cuda=_has_cuda_device())
+            if resolved != requested_backend:
+                # 'auto'/'cpu' (and legacy aliases) were resolved above only to decide the
+                # DataModule-side Kornia pipeline and AUG_CONFIG injection below. Dataset
+                # builders do their own environment-aware CPU sub-backend pick (Albumentations
+                # vs. torchvision), so forward the simplified sentinel -- not e.g. the specific
+                # TV/ALBU pick -- to stay consistent with the gpu_postprocess flag they compute.
+                ns.augmentation_backend = "kornia" if is_gpu_postprocess(resolved) else "cpu"
+            # ALBU forces Albumentations even when aug_config is None
+            if resolved == AugmentationBackend.ALBU and ns.aug_config is None:
+                ns.aug_config = AUG_CONFIG
+            if self.model_config.use_grouppose_keypoints and is_gpu_postprocess(resolved):
+                raise ValueError(
+                    f"augmentation_backend='{resolved}' does not support keypoint transforms. "
+                    "Set augmentation_backend='cpu' or 'albumentations' when use_grouppose_keypoints=True."
+                )
             if self._dataset_train is None:
                 self._dataset_train = build_dataset("train", ns, resolution)
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
-            # Build Kornia GPU augmentation pipeline (once).
-            # Use _kornia_setup_done (not _kornia_pipeline is None) so that fallback
-            # paths — where the pipeline stays None — do not re-run on every setup("fit").
+            # Build Kornia pipeline (once); use _kornia_setup_done so fallback paths
+            # (pipeline stays None) do not re-run on repeated setup("fit") calls.
             if not self._kornia_setup_done:
+                self._resolved_augmentation_backend = resolved
                 self._setup_kornia_pipeline()
                 self._kornia_setup_done = True
         elif stage == "validate":
@@ -253,34 +275,57 @@ class RFDETRDataModule(LightningDataModule):
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
 
-    def train_dataloader(self) -> DataLoader:
+    def _resolve_batch_size(self) -> int:
+        """Return the concrete training batch size.
+
+        Raises:
+            RuntimeError: If ``train_config.batch_size == "auto"`` was never resolved. Auto-batch sizing
+                probes the live model and is only performed by ``RFDETR.train()``
+                (:func:`rfdetr.training.auto_batch.resolve_auto_batch_config`); the PTL CLI path does not
+                resolve it automatically.
+        """
+        batch_size = self.train_config.batch_size
+        if batch_size == "auto":
+            raise RuntimeError(
+                "train_config.batch_size='auto' was not resolved before dataloader construction. "
+                "Auto-batch sizing requires probing the live model and is only performed by "
+                "RFDETR.train(); set batch_size to a concrete integer when using the PTL CLI path directly."
+            )
+        return batch_size
+
+    @staticmethod
+    def _require_dataset(dataset: torch.utils.data.Dataset[Any] | None, split: str) -> torch.utils.data.Dataset[Any]:
+        """Return *dataset*, raising if ``setup()`` has not built it yet."""
+        if dataset is None:
+            raise RuntimeError(f"{split} dataset was not built; call setup({split!r}) before requesting a dataloader.")
+        return dataset
+
+    def train_dataloader(self) -> DataLoader[Any]:
         """Return the training DataLoader.
 
-        Uses a replacement sampler when the dataset is too small to fill
-        ``_MIN_TRAIN_BATCHES`` effective batches (matching legacy behaviour in
-        ``main.py``).  Otherwise wraps the dataset with
-        :class:`GradAccumAlignedDataset` to ensure its length is an exact
-        multiple of ``effective_batch_size * world_size`` (workaround for
-        https://github.com/Lightning-AI/pytorch-lightning/issues/19987) and
-        then uses ``shuffle=True, drop_last=True`` so that PTL can
-        auto-inject ``DistributedSampler`` in DDP mode.
+        Uses a replacement sampler when the dataset is too small to fill ``_MIN_TRAIN_BATCHES`` effective batches
+        (matching legacy behaviour in ``main.py``).  Otherwise wraps the dataset with :class:`GradAccumAlignedDataset`
+        to ensure its length is an exact multiple of ``effective_batch_size * world_size`` (workaround for
+        https://github.com/Lightning-AI/pytorch-lightning/issues/19987) and then uses ``shuffle=True, drop_last=True``
+        so that PTL can auto-inject ``DistributedSampler`` in DDP mode.
 
         Returns:
             DataLoader for the training dataset.
         """
-        dataset = self._dataset_train
-        batch_size = self.train_config.batch_size
+        dataset: torch.utils.data.Dataset[Any] = self._require_dataset(self._dataset_train, "fit")
+        batch_size = self._resolve_batch_size()
         effective_batch_size = batch_size * self.train_config.grad_accum_steps
         num_workers = self._num_workers
 
-        if len(dataset) < effective_batch_size * _MIN_TRAIN_BATCHES:
+        dataset_length = len(dataset)  # type: ignore[arg-type]
+        if dataset_length < effective_batch_size * _MIN_TRAIN_BATCHES:
             logger.info(
                 "Training with uniform sampler because dataset is too small: %d < %d",
-                len(dataset),
+                dataset_length,
                 effective_batch_size * _MIN_TRAIN_BATCHES,
             )
             sampler = torch.utils.data.RandomSampler(
-                dataset,
+                dataset,  # type: ignore[arg-type]
                 replacement=True,
                 num_samples=effective_batch_size * _MIN_TRAIN_BATCHES,
             )
@@ -293,6 +338,7 @@ class RFDETRDataModule(LightningDataModule):
                 pin_memory=self._pin_memory,
                 persistent_workers=self._persistent_workers,
                 prefetch_factor=self._prefetch_factor,
+                worker_init_fn=_worker_init_fn,
             )
 
         # Pad the dataset to a multiple of effective_batch_size * world_size so
@@ -300,10 +346,10 @@ class RFDETRDataModule(LightningDataModule):
         # optimizer on a partial accumulation window.
         # See https://github.com/Lightning-AI/pytorch-lightning/issues/19987
         world_size: int = getattr(self.trainer, "world_size", 1) if self.trainer else 1
-        dataset = GradAccumAlignedDataset(dataset, effective_batch_size, world_size)
+        aligned_dataset = GradAccumAlignedDataset(dataset, effective_batch_size, world_size)
 
         return DataLoader(
-            dataset,
+            aligned_dataset,
             batch_size=batch_size,
             shuffle=True,
             drop_last=True,  # no-op after alignment, but keeps intent explicit
@@ -312,110 +358,287 @@ class RFDETRDataModule(LightningDataModule):
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
+            worker_init_fn=_worker_init_fn,
         )
 
-    def val_dataloader(self) -> DataLoader:
+    def val_dataloader(self) -> DataLoader[Any]:
         """Return the validation DataLoader.
 
         Returns:
             DataLoader for the validation dataset with sequential sampling.
         """
+        dataset = self._require_dataset(self._dataset_val, "validate")
         return DataLoader(
-            self._dataset_val,
-            batch_size=self.train_config.batch_size,
-            sampler=torch.utils.data.SequentialSampler(self._dataset_val),
+            dataset,
+            batch_size=self._resolve_batch_size(),
+            sampler=torch.utils.data.SequentialSampler(dataset),  # type: ignore[arg-type]
             drop_last=False,
             collate_fn=self._collate_fn,
             num_workers=self._num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
+            worker_init_fn=_worker_init_fn,
         )
 
-    def test_dataloader(self) -> DataLoader:
+    def test_dataloader(self) -> DataLoader[Any]:
         """Return the test DataLoader.
 
         Returns:
             DataLoader for the test dataset with sequential sampling.
         """
+        dataset = self._require_dataset(self._dataset_test, "test")
         return DataLoader(
-            self._dataset_test,
-            batch_size=self.train_config.batch_size,
-            sampler=torch.utils.data.SequentialSampler(self._dataset_test),
+            dataset,
+            batch_size=self._resolve_batch_size(),
+            sampler=torch.utils.data.SequentialSampler(dataset),  # type: ignore[arg-type]
             drop_last=False,
             collate_fn=self._collate_fn,
             num_workers=self._num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
+            worker_init_fn=_worker_init_fn,
         )
 
-    def predict_dataloader(self) -> DataLoader:
+    def predict_dataloader(self) -> DataLoader[Any]:
         """Return the predict DataLoader (reuses the validation dataset, no augmentation).
 
         Returns:
             DataLoader for the validation dataset with sequential sampling.
         """
+        dataset = self._require_dataset(self._dataset_val, "predict")
         return DataLoader(
-            self._dataset_val,
-            batch_size=self.train_config.batch_size,
-            sampler=torch.utils.data.SequentialSampler(self._dataset_val),
+            dataset,
+            batch_size=self._resolve_batch_size(),
+            sampler=torch.utils.data.SequentialSampler(dataset),  # type: ignore[arg-type]
             drop_last=False,
             collate_fn=self._collate_fn,
             num_workers=self._num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
+            worker_init_fn=_worker_init_fn,
         )
 
-    def _setup_kornia_pipeline(self) -> None:
-        """Resolve augmentation backend and build the Kornia pipeline if applicable.
+    def _show_samples(
+        self,
+        count: int,
+        split: Literal["train", "val", "test"] = "train",
+        *,
+        columns: int = 3,
+        figure_size: tuple[float, float] | None = None,
+    ) -> "Figure":
+        """Build a private diagnostic figure for transformed dataset samples.
 
-        Called once during ``setup("fit")``.  When ``augmentation_backend``
-        is ``"cpu"`` this is a no-op.  For ``"auto"`` the method falls back
-        silently when CUDA or Kornia are unavailable.  For ``"gpu"`` missing
-        requirements raise hard errors.
+        Samples the dataset after RF-DETR dataset transforms, so boxes and
+        keypoints match the model input tensors rather than raw annotation JSON.
+
+        Args:
+            count: Maximum number of samples to render.
+            split: Dataset split to visualize.
+            columns: Number of subplot columns.
+            figure_size: Optional Matplotlib figure size ``(width, height)`` in
+                inches. When omitted, the size is derived from the grid shape.
+
+        Returns:
+            Matplotlib figure containing the annotated sample grid. When the
+            dataset includes instance masks, they are rendered as coloured
+            overlays before bounding boxes and labels.
+
+        Raises:
+            ValueError: If ``count`` or ``columns`` is not positive.
+
+        Example:
+            >>> # dm = RFDETRDataModule(model_config, train_config)
+            >>> # figure = dm._show_samples(3, split="train")
         """
-        backend = self.train_config.augmentation_backend
-        if backend == "cpu":
+        try:
+            import matplotlib.pyplot as plt
+            import numpy as np
+            import supervision as sv
+            import torchvision.transforms as T  # noqa: N812
+        except ImportError as err:
+            raise ImportError(
+                "RFDETRDataModule._show_samples() requires visualization dependencies. "
+                "Install them with `pip install 'rfdetr[visual]'`."
+            ) from err
+
+        from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
+
+        if count <= 0:
+            raise ValueError(f"count must be positive, got {count}.")
+        if columns <= 0:
+            raise ValueError(f"columns must be positive, got {columns}.")
+        if figure_size is not None:
+            if len(figure_size) != 2:
+                raise ValueError(f"figure_size must contain two values, got {figure_size}.")
+            if figure_size[0] <= 0 or figure_size[1] <= 0:
+                raise ValueError(f"figure_size values must be positive, got {figure_size}.")
+
+        dataset = self._get_dataset_for_visualization(split)
+        if dataset is None:
+            raise RuntimeError(f"Could not build dataset split {split!r} for visualization.")
+
+        inv_normalize = T.Normalize(
+            mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
+            std=[1 / 0.229, 1 / 0.224, 1 / 0.225],
+        )
+        dataset_length = len(dataset)  # type: ignore[arg-type]
+        rows = max(1, (min(count, dataset_length) + columns - 1) // columns)
+        figure, axes = plt.subplots(rows, columns, figsize=figure_size or (5 * columns, 5 * rows))
+        axes_array = np.asarray(axes, dtype=object).reshape(-1)
+        for axis in axes_array:
+            axis.axis("off")
+
+        class_names = self.class_names
+        for axis, sample_index in zip(axes_array, range(min(count, dataset_length)), strict=False):
+            image_tensor, target = dataset[sample_index]
+            image_path = self._source_image_path(dataset, sample_index)
+            image = inv_normalize(image_tensor)
+            image_array = image.detach().cpu().numpy()
+            scene = np.ascontiguousarray((np.clip(image_array.transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8))
+
+            size = target.get("size")
+            if isinstance(size, torch.Tensor):
+                height, width = int(size[0]), int(size[1])
+            else:
+                height, width = int(image_tensor.shape[-2]), int(image_tensor.shape[-1])
+
+            boxes = target.get("boxes", torch.zeros((0, 4), dtype=torch.float32))
+            labels = target.get("labels", torch.zeros((0,), dtype=torch.int64))
+            if boxes.numel() > 0:
+                scale = torch.tensor([width, height, width, height], dtype=torch.float32)
+                xyxy = box_cxcywh_to_xyxy(boxes.detach().cpu()) * scale
+                class_ids = labels.detach().cpu().numpy().astype(int)
+                masks_tensor = target.get("masks")
+                mask_array = (
+                    masks_tensor.detach().cpu().numpy()
+                    if masks_tensor is not None and masks_tensor.numel() > 0
+                    else None
+                )
+                detections = sv.Detections(xyxy=xyxy.numpy().astype(np.float32), class_id=class_ids, mask=mask_array)
+                labels_text = [
+                    class_names[class_id] if class_names is not None and class_id < len(class_names) else str(class_id)
+                    for class_id in class_ids
+                ]
+                if mask_array is not None:
+                    scene = sv.MaskAnnotator().annotate(scene=scene, detections=detections)
+                scene = sv.BoxAnnotator(thickness=1).annotate(scene=scene, detections=detections)
+                # LabelAnnotator.annotate() is typed as PIL-only, but its @ensure_cv2_image_for_class_method
+                # decorator accepts and returns ndarray at runtime too (see its docstring).
+                scene = sv.LabelAnnotator(text_scale=0.4, text_padding=2).annotate(  # type: ignore[assignment]
+                    scene=scene,  # type: ignore[arg-type]
+                    detections=detections,
+                    labels=labels_text,
+                )
+
+            keypoints = target.get("keypoints")
+            if keypoints is not None and keypoints.numel() > 0:
+                keypoints_array = keypoints.detach().cpu().numpy().astype(np.float32)
+                keypoint_xy = keypoints_array[..., :2] * np.asarray([width, height], dtype=np.float32)
+                keypoint_visibility = keypoints_array[..., 2] > 0
+                key_points = sv.KeyPoints(
+                    xy=keypoint_xy,
+                    keypoint_confidence=keypoint_visibility.astype(np.float32),
+                    class_id=labels.detach().cpu().numpy().astype(int),
+                    visible=keypoint_visibility,
+                    data={"visible": keypoint_visibility},
+                )
+                scene = sv.VertexAnnotator(radius=3).annotate(scene=scene, key_points=key_points)
+
+            axis.imshow(scene)
+            title = image_path.name if image_path is not None else f"{split}[{sample_index}]"
+            axis.set_title(self._ellipsize_sample_title(title), fontsize=10)
+            axis.axis("off")
+
+        figure.tight_layout()
+        return figure
+
+    @staticmethod
+    def _ellipsize_sample_title(title: str, max_length: int = 48) -> str:
+        """Shorten long sample titles so subplot grids do not overflow.
+
+        Args:
+            title: Raw title text, usually an image file name.
+            max_length: Maximum returned character count including the ellipsis.
+
+        Returns:
+            Original title when it already fits, otherwise a middle-ellipsized
+            string that preserves the start and file suffix.
+        """
+        if len(title) <= max_length:
+            return title
+        if max_length <= 3:
+            return "." * max_length
+        keep_left = max(1, (max_length - 3) // 2)
+        keep_right = max_length - 3 - keep_left
+        return f"{title[:keep_left]}...{title[-keep_right:]}"
+
+    def _get_dataset_for_visualization(
+        self,
+        split: Literal["train", "val", "test"],
+    ) -> torch.utils.data.Dataset[Any] | None:
+        """Return a built dataset split for private visualization."""
+        if split == "train":
+            self.setup("fit")
+            return self._dataset_train
+        if split == "val":
+            self.setup("validate")
+            return self._dataset_val
+        if split == "test":
+            self.setup("test")
+            return self._dataset_test
+        raise ValueError(f"Unsupported split {split!r}.")
+
+    @staticmethod
+    def _source_image_path(dataset: torch.utils.data.Dataset[Any], sample_index: int) -> Path | None:
+        """Return a source image path for common COCO-style datasets."""
+        image_folder = getattr(dataset, "root", None)
+        image_ids = getattr(dataset, "ids", None)
+        coco = getattr(dataset, "coco", None)
+        if image_folder is None or image_ids is None or coco is None:
+            return None
+        image_id = image_ids[sample_index]
+        image_info = coco.loadImgs(image_id)[0]
+        return Path(image_folder) / image_info["file_name"]  # type: ignore[no-any-return]
+
+    def _setup_kornia_pipeline(self) -> None:
+        """Build the Kornia pipeline for ``self._resolved_augmentation_backend``.
+
+        ``TV`` and ``ALBU`` are no-ops.  ``KORNIA`` validates that kornia is installed then builds the pipeline on
+        whatever device the batch arrives on.
+
+        ``self._resolved_augmentation_backend`` (set by :meth:`setup` just before this call) is the concrete backend
+        returned by :func:`rfdetr.datasets.kornia_transforms.resolve_augmentation_backend`.
+        """
+        from rfdetr.datasets.kornia_transforms import is_gpu_postprocess
+
+        resolved = self._resolved_augmentation_backend
+        if resolved is None or not is_gpu_postprocess(resolved):
             return
 
-        if backend == "auto":
-            if not _has_cuda_device():
-                logger.warning("augmentation_backend='auto': no CUDA, falling back to CPU augmentation")
-                return
-            try:
-                import kornia.augmentation  # type: ignore[import-not-found]
-            except ImportError:
-                logger.warning("augmentation_backend='auto': kornia not installed, using CPU augmentation")
-                return
-        elif backend == "gpu":
-            if not _has_cuda_device():
-                raise RuntimeError("augmentation_backend='gpu' requires a CUDA device")
-            try:
-                import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
-            except ImportError as err:
-                raise ImportError(
-                    "GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'"
-                ) from err
+        if not AugmentationBackend._is_kornia_available():
+            raise ImportError("Kornia augmentation requires kornia. Install with: pip install 'rfdetr[augment]'")
 
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize
 
         self._kornia_pipeline = build_kornia_pipeline(
             self.train_config.aug_config if self.train_config.aug_config is not None else AUG_CONFIG,
             self.model_config.resolution,
+            with_masks=self.model_config.segmentation_head,
         )
         self._kornia_normalize = build_normalize()
-        logger.info("Kornia GPU augmentation pipeline built (backend=%s)", backend)
+        logger.info("Kornia augmentation pipeline built (resolved=%s)", resolved)
 
-    def on_after_batch_transfer(self, batch: Tuple, dataloader_idx: int) -> Tuple:
+    def on_after_batch_transfer(self, batch: tuple[Any, Any], dataloader_idx: int) -> tuple[Any, Any]:
         """Apply Kornia GPU augmentation after the batch is transferred to device.
 
-        When ``_kornia_pipeline`` is set and the trainer is in training mode,
-        augmentation and normalization are applied on the GPU.  Validation
-        and test batches pass through unchanged.
+        When ``_kornia_pipeline`` is set and the trainer is in training mode, augmentation and normalization are applied
+        on the GPU.  Validation and test batches pass through unchanged.
 
-        Segmentation models skip GPU augmentation in phase 1 with a warning.
+        Segmentation models use a mask-aware pipeline (``with_masks=True``) so images, boxes, and per-instance masks are
+        augmented in sync.
 
         Args:
             batch: Tuple of ``(NestedTensor, list[dict])`` already on device.
@@ -424,26 +647,37 @@ class RFDETRDataModule(LightningDataModule):
         Returns:
             The (possibly augmented) batch.
         """
-        if self.trainer is None or not self.trainer.training or self._kornia_pipeline is None:
+        kornia_pipeline = self._kornia_pipeline
+        kornia_normalize = self._kornia_normalize
+        if self.trainer is None or not self.trainer.training or kornia_pipeline is None or kornia_normalize is None:
             return batch
 
-        if self.model_config.segmentation_head:
-            logger.warning_once("Kornia GPU augmentation skipped for segmentation models (phase 2)")
-            return batch
-
-        from rfdetr.datasets.kornia_transforms import collate_boxes, unpack_boxes
+        from rfdetr.datasets.kornia_transforms import collate_boxes, collate_masks, unpack_boxes
         from rfdetr.utilities.tensors import NestedTensor
 
         samples, targets = batch
         img = samples.tensors  # [B, C, H, W]
         # Move Kornia modules to the batch device (no-op if already there).
         # nn.Module.to() is in-place; no reassignment needed.
-        self._kornia_pipeline.to(img.device)
-        self._kornia_normalize.to(img.device)
+        kornia_pipeline.to(img.device)
+        kornia_normalize.to(img.device)
         boxes_padded, valid = collate_boxes(targets, img.device)
-        img_aug, boxes_aug = self._kornia_pipeline(img, boxes_padded)
-        img_aug = self._kornia_normalize(img_aug)
-        targets = unpack_boxes(boxes_aug, valid, targets, *img_aug.shape[-2:])
+
+        if self.model_config.segmentation_head:
+            image_height, image_width = img.shape[-2:]
+            masks_padded = collate_masks(
+                targets, img.device, n_max=valid.shape[1], image_height=image_height, image_width=image_width
+            )
+            img_aug, boxes_aug, masks_aug = kornia_pipeline(img, boxes_padded, masks_padded)
+            img_aug = kornia_normalize(img_aug)
+            aug_height, aug_width = img_aug.shape[-2:]
+            targets = unpack_boxes(boxes_aug, valid, targets, aug_height, aug_width, masks_aug=masks_aug)
+        else:
+            img_aug, boxes_aug = kornia_pipeline(img, boxes_padded)
+            img_aug = kornia_normalize(img_aug)
+            aug_height, aug_width = img_aug.shape[-2:]
+            targets = unpack_boxes(boxes_aug, valid, targets, aug_height, aug_width)
+
         height, width = img_aug.shape[-2:]
         for target in targets:
             boxes = target["boxes"]
@@ -459,29 +693,41 @@ class RFDETRDataModule(LightningDataModule):
     # ------------------------------------------------------------------
 
     @property
-    def class_names(self) -> Optional[List[str]]:
+    def class_names(self) -> list[str] | None:
         """Class names from the training or validation dataset annotation file.
 
-        Reads category names from the first available COCO-style dataset.
-        Returns ``None`` if no dataset has been set up yet or the dataset
-        does not expose COCO-style category information.
+        Reads category names from the first available COCO-style dataset. Returns ``None`` if no dataset has been set up
+        yet or the dataset does not expose COCO-style category information.
 
         Returns:
             Sorted list of class name strings, or ``None``.
         """
-        for dataset in (self._dataset_train, self._dataset_val):
+        for dataset in (self._dataset_train, self._dataset_val, self._dataset_test):
             if dataset is None:
                 continue
             coco = getattr(dataset, "coco", None)
             if coco is not None and hasattr(coco, "cats"):
+                label2cat = getattr(dataset, "label2cat", None)
+                if label2cat is None:
+                    label2cat = getattr(coco, "label2cat", None)
+                if isinstance(label2cat, dict) and label2cat:
+                    max_label = max(label2cat)
+                    names = [""] * (max_label + 1)
+                    for label, category_id in sorted(label2cat.items()):
+                        category = coco.cats.get(category_id)
+                        if category is not None:
+                            names[label] = category["name"]
+                    return names
                 return [coco.cats[k]["name"] for k in sorted(coco.cats.keys())]
         return None
 
-    def transfer_batch_to_device(self, batch: Tuple, device: torch.device, dataloader_idx: int) -> Tuple:
+    def transfer_batch_to_device(
+        self, batch: tuple[Any, Any], device: torch.device, dataloader_idx: int
+    ) -> tuple[Any, Any]:
         """Move a ``(NestedTensor, targets)`` batch to *device*.
 
-        PTL's default iterates tuple elements and calls ``.to(device)``; that
-        works for plain tensors but ``NestedTensor`` must be moved explicitly.
+        PTL's default iterates tuple elements and calls ``.to(device)``; that works for plain tensors but
+        ``NestedTensor`` must be moved explicitly.
 
         Args:
             batch: Tuple of (NestedTensor samples, list of target dicts).

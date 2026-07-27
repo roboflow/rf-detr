@@ -4,14 +4,17 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from __future__ import annotations
+
 import json
 import math
 import os
 import types
+from typing import Any, cast
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
+from torch import Tensor, nn
 from transformers import AutoBackbone
 
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
@@ -42,32 +45,78 @@ size_to_config_with_registers = {
 }
 
 
-def get_config(size, use_registers):
+def get_config(size: str, use_registers: bool) -> dict[str, Any]:
     config_dict = size_to_config_with_registers if use_registers else size_to_config
     current_dir = os.path.dirname(os.path.abspath(__file__))
     configs_dir = os.path.join(current_dir, "dinov2_configs")
     config_path = os.path.join(configs_dir, config_dict[size])
-    with open(config_path, "r") as f:
-        dino_config = json.load(f)
+    with open(config_path) as f:
+        dino_config: dict[str, Any] = json.load(f)
     return dino_config
+
+
+def compute_window_block_indexes(
+    out_feature_indexes: list[int], window_block_indexes: list[int] | None = None
+) -> list[int]:
+    """Derive which 0-indexed encoder blocks use windowed self-attention (the rest use global).
+
+    When `window_block_indexes` is provided explicitly, it is returned unchanged — this is the
+    override path for callers that want to pin an exact routing (e.g. to match a published
+    architecture spec) without disturbing the derived default used by existing configs/checkpoints.
+    This override is only wired through `ModelDefaults` (`rfdetr/models/_defaults.py`) or direct
+    `Backbone`/`DinoV2` construction — not the public pydantic `RFDETR*Config` classes, which set
+    `ConfigDict(extra="forbid")` and raise on unknown fields.
+
+    When omitted, the windowed set is derived as the complement of `out_feature_indexes` (treated
+    as raw block indices) within `range(0, out_feature_indexes[-1] + 1)`. This mirrors the
+    historical behavior relied upon by all released RF-DETR checkpoints; it does not renumber
+    `out_feature_indexes` (1-indexed HF stage numbers) to 0-indexed block indices, so it is not
+    guaranteed to match any particular paper-specified layer schedule. The derivation assumes
+    `out_feature_indexes` is given in ascending order: it uses `out_feature_indexes[-1]` (not
+    `max(out_feature_indexes)`) as the upper bound, so an unsorted list whose maximum is not last
+    would under-cover the intended range.
+
+    Args:
+        out_feature_indexes: Encoder stage numbers whose feature maps are exported to the decoder.
+        window_block_indexes: Explicit windowed-block override. `None` derives from
+            `out_feature_indexes` using the legacy formula.
+
+    Returns:
+        0-indexed encoder block positions that should run windowed attention.
+
+    Examples:
+        >>> compute_window_block_indexes([3, 6, 9, 12])
+        [0, 1, 2, 4, 5, 7, 8, 10, 11]
+        >>> compute_window_block_indexes([3, 6, 9, 12], window_block_indexes=[0, 1, 3, 4, 6, 7, 9, 10])
+        [0, 1, 3, 4, 6, 7, 9, 10]
+    """
+    if window_block_indexes is not None:
+        return window_block_indexes
+    window_block_indexes_set = set(range(out_feature_indexes[-1] + 1))
+    window_block_indexes_set.difference_update(out_feature_indexes)
+    return sorted(window_block_indexes_set)
 
 
 class DinoV2(nn.Module):
     def __init__(
         self,
-        shape=(640, 640),
-        out_feature_indexes=[2, 4, 5, 9],
-        size="base",
-        use_registers=True,
-        use_windowed_attn=True,
-        gradient_checkpointing=False,
-        load_dinov2_weights=True,
-        patch_size=14,
-        num_windows=4,
-        positional_encoding_size=37,
-        drop_path_rate=0.0,
-    ):
+        shape: tuple[int, int] = (640, 640),
+        out_feature_indexes: list[int] | None = None,
+        size: str = "base",
+        use_registers: bool = True,
+        use_windowed_attn: bool = True,
+        gradient_checkpointing: bool = False,
+        load_dinov2_weights: bool = True,
+        patch_size: int = 14,
+        num_windows: int = 4,
+        positional_encoding_size: int = 37,
+        drop_path_rate: float = 0.0,
+        window_block_indexes: list[int] | None = None,
+    ) -> None:
         super().__init__()
+
+        if out_feature_indexes is None:
+            out_feature_indexes = [2, 4, 5, 9]
 
         name = f"facebook/dinov2-with-registers-{size}" if use_registers else f"facebook/dinov2-{size}"
 
@@ -85,17 +134,26 @@ class DinoV2(nn.Module):
                     "drop_path_rate > 0.0 is not supported for non-windowed DinoV2 backbones."
                     " drop_path will be ignored."
                 )
-            self.encoder = AutoBackbone.from_pretrained(
+            self.encoder = AutoBackbone.from_pretrained(  # type: ignore[no-untyped-call]
                 name,
                 out_features=[f"stage{i}" for i in out_feature_indexes],
                 return_dict=False,
             )
         else:
-            window_block_indexes = set(range(out_feature_indexes[-1] + 1))
-            window_block_indexes.difference_update(out_feature_indexes)
-            window_block_indexes = list(window_block_indexes)
-
             dino_config = get_config(size, use_registers)
+
+            num_hidden_layers = dino_config["num_hidden_layers"]
+            if not out_feature_indexes:
+                raise ValueError("out_feature_indexes must be non-empty.")
+            if window_block_indexes is not None and (
+                len(set(window_block_indexes)) != len(window_block_indexes)
+                or any(not (0 <= idx < num_hidden_layers) for idx in window_block_indexes)
+            ):
+                raise ValueError(
+                    f"window_block_indexes entries must be unique and within "
+                    f"[0, {num_hidden_layers}); got {window_block_indexes}."
+                )
+            window_block_indexes = compute_window_block_indexes(out_feature_indexes, window_block_indexes)
 
             dino_config["return_dict"] = False
             dino_config["out_features"] = [f"stage{i}" for i in out_feature_indexes]
@@ -148,13 +206,15 @@ class DinoV2(nn.Module):
         self._out_feature_channels = [size_to_width[size]] * len(out_feature_indexes)
         self._export = False
 
-    def export(self):
+    def export(self) -> None:
         if self._export:
             return
         self._export = True
         shape = self.shape
 
-        def make_new_interpolated_pos_encoding(position_embeddings, patch_size, height, width):
+        def make_new_interpolated_pos_encoding(
+            position_embeddings: Tensor, patch_size: int, height: int, width: int
+        ) -> Tensor:
 
             num_positions = position_embeddings.shape[1] - 1
             dim = position_embeddings.shape[-1]
@@ -195,19 +255,20 @@ class DinoV2(nn.Module):
         # Create a new Parameter with the new size
         old_interpolate_pos_encoding = self.encoder.embeddings.interpolate_pos_encoding
 
-        def new_interpolate_pos_encoding(self_mod, embeddings, height, width):
+        def new_interpolate_pos_encoding(self_mod: Any, embeddings: Tensor, height: int, width: int) -> Tensor:
             num_patches = embeddings.shape[1] - 1
             num_positions = self_mod.position_embeddings.shape[1] - 1
-            if num_patches == num_positions and height == width:
-                return self_mod.position_embeddings
-            return old_interpolate_pos_encoding(embeddings, height, width)
+            # The precomputed table is valid only for this exact static export grid.
+            if num_patches == num_positions and (height, width) == shape:
+                return cast(Tensor, self_mod.position_embeddings)
+            return cast(Tensor, old_interpolate_pos_encoding(embeddings, height, width))
 
         self.encoder.embeddings.position_embeddings = nn.Parameter(new_positions)
         self.encoder.embeddings.interpolate_pos_encoding = types.MethodType(
             new_interpolate_pos_encoding, self.encoder.embeddings
         )
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> list[Tensor]:
         block_size = self.patch_size * self.num_windows
         assert x.shape[2] % block_size == 0 and x.shape[3] % block_size == 0, (
             f"Backbone requires input shape to be divisible by {block_size}, but got {x.shape}"

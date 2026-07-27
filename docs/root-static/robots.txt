@@ -25,6 +25,10 @@ User-agent: Bytespider
 User-agent: GoogleOther
 User-agent: OAI-SearchBot
 User-agent: ChatGPT-User
+User-agent: Amazonbot
+User-agent: FacebookBot
+User-agent: Cohere-ai
+User-agent: Applebot-Extended
 Allow: /
 
 Sitemap: https://rfdetr.roboflow.com/sitemap.xml

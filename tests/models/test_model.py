@@ -13,8 +13,8 @@ from rfdetr import RFDETRBase, RFDETRLarge
 def _get_patch_embed_projection(model) -> torch.nn.Conv2d:
     """Return the patch-embedding projection layer for an RF-DETR model.
 
-    RFDETR wrappers are not nn.Module; the underlying PyTorch module lives at
-    ``model.model.model``.  Walk named_modules() on that object.
+    RFDETR wrappers are not nn.Module; the underlying PyTorch module lives at ``model.model.model``.  Walk
+    named_modules() on that object.
 
     Args:
         model: Instantiated RF-DETR wrapper (RFDETRBase / RFDETRLarge).
@@ -25,7 +25,7 @@ def _get_patch_embed_projection(model) -> torch.nn.Conv2d:
     Raises:
         AssertionError: If the patch-embedding projection cannot be located.
     """
-    # model.model → rfdetr.main.Model; model.model.model → nn.Module
+    # model.model → model context; model.model.model → nn.Module
     nn_model = model.model.model
     proj = nn_model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection
     if isinstance(proj, torch.nn.Conv2d):

@@ -12,13 +12,15 @@
 # Copied from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
+"""Backbone modules."""
 
-"""
-Backbone modules.
-"""
+from __future__ import annotations
+
+from typing import Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
+from torch import Tensor
 
 from rfdetr.models.backbone.base import BackboneBase
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -37,12 +39,12 @@ class Backbone(BackboneBase):
     def __init__(
         self,
         name: str,
-        pretrained_encoder: str = None,
-        window_block_indexes: list = None,
-        drop_path=0.0,
-        out_channels=256,
-        out_feature_indexes: list = None,
-        projector_scale: list = None,
+        pretrained_encoder: str | None = None,
+        window_block_indexes: list[int] | None = None,
+        drop_path: float = 0.0,
+        out_channels: int = 256,
+        out_feature_indexes: list[int] | None = None,
+        projector_scale: list[str] | None = None,
         use_cls_token: bool = False,
         freeze_encoder: bool = False,
         layer_norm: bool = False,
@@ -54,7 +56,8 @@ class Backbone(BackboneBase):
         patch_size: int = 14,
         num_windows: int = 4,
         positional_encoding_size: int = 0,
-    ):
+        dual_projector: bool = False,
+    ) -> None:
         super().__init__()
         # an example name here would be "dinov2_base" or "dinov2_registers_windowed_base"
         # if "registers" is in the name, then use_registers is set to True, otherwise it is set to False
@@ -87,6 +90,7 @@ class Backbone(BackboneBase):
             num_windows=num_windows,
             positional_encoding_size=positional_encoding_size,
             drop_path_rate=drop_path,
+            window_block_indexes=window_block_indexes,
         )
         # build encoder + projector as backbone module
         if freeze_encoder:
@@ -94,7 +98,7 @@ class Backbone(BackboneBase):
                 param.requires_grad = False
 
         self.projector_scale = projector_scale
-        assert len(self.projector_scale) > 0
+        assert self.projector_scale is not None and len(self.projector_scale) > 0
         # x[0]
         assert sorted(self.projector_scale) == self.projector_scale, (
             "only support projector scale P3/P4/P5/P6 in ascending order."
@@ -109,13 +113,24 @@ class Backbone(BackboneBase):
             layer_norm=layer_norm,
             rms_norm=rms_norm,
         )
+        self.cross_attn_projector = (
+            MultiScaleProjector(
+                in_channels=self.encoder._out_feature_channels,
+                out_channels=out_channels,
+                scale_factors=scale_factors,
+                layer_norm=layer_norm,
+                rms_norm=rms_norm,
+            )
+            if dual_projector
+            else None
+        )
 
         self._export = False
 
-    def export(self):
+    def export(self) -> None:
         self._export = True
         self._forward_origin = self.forward
-        self.forward = self.forward_export
+        self.forward = self.forward_export  # type: ignore[method-assign,assignment]
 
         if not hasattr(self.encoder, "merge_and_unload"):
             return
@@ -133,11 +148,11 @@ class Backbone(BackboneBase):
             logger.info("Merging and unloading LoRA weights")
             self.encoder = self.encoder.merge_and_unload()
 
-    def forward(self, tensor_list: NestedTensor):
-        """ """
+    def forward(self, tensor_list: NestedTensor) -> tuple[list[NestedTensor], list[NestedTensor] | None]:
+        """"""
         # (H, W, B, C)
-        feats = self.encoder(tensor_list.tensors)
-        feats = self.projector(feats)
+        raw_feats = self.encoder(tensor_list.tensors)
+        feats = self.projector(raw_feats)
         # x: [(B, C, H, W)]
         out = []
         for feat in feats:
@@ -145,11 +160,22 @@ class Backbone(BackboneBase):
             assert m is not None
             mask = F.interpolate(m[None].float(), size=feat.shape[-2:]).to(torch.bool)[0]
             out.append(NestedTensor(feat, mask))
-        return out
 
-    def forward_export(self, tensors: torch.Tensor):
-        feats = self.encoder(tensors)
-        feats = self.projector(feats)
+        cross_attn_out = None
+        if self.cross_attn_projector is not None:
+            cross_attn_out = []
+            cross_attn_feats = self.cross_attn_projector(raw_feats)
+            for feat in cross_attn_feats:
+                m = tensor_list.mask
+                assert m is not None
+                mask = F.interpolate(m[None].float(), size=feat.shape[-2:]).to(torch.bool)[0]
+                cross_attn_out.append(NestedTensor(feat, mask))
+
+        return out, cross_attn_out
+
+    def forward_export(self, tensors: Tensor) -> tuple[list[Tensor], list[Tensor], list[Tensor] | None]:
+        raw_feats = self.encoder(tensors)
+        feats = self.projector(raw_feats)
         out_feats = []
         out_masks = []
         for feat in feats:
@@ -157,9 +183,14 @@ class Backbone(BackboneBase):
             b, _, h, w = feat.shape
             out_masks.append(torch.zeros((b, h, w), dtype=torch.bool, device=feat.device))
             out_feats.append(feat)
-        return out_feats, out_masks
 
-    def get_named_param_lr_pairs(self, args, prefix: str = "backbone.0"):
+        cross_attn_feats = None
+        if self.cross_attn_projector is not None:
+            cross_attn_feats = list(self.cross_attn_projector(raw_feats))
+
+        return out_feats, out_masks, cross_attn_feats
+
+    def get_named_param_lr_pairs(self, args: Any, prefix: str = "backbone.0") -> dict[str, dict[str, Any]]:
         num_layers = args.out_feature_indexes[-1] + 1
         backbone_key = "backbone.0.encoder"
         named_param_lr_pairs = {}
@@ -185,8 +216,7 @@ class Backbone(BackboneBase):
 
 
 def get_dinov2_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int = 12) -> float:
-    """
-    Calculate lr decay rate for different ViT blocks.
+    """Calculate lr decay rate for different ViT blocks.
 
     Args:
         name: Parameter name.
@@ -196,6 +226,9 @@ def get_dinov2_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: 
     Returns:
         Lr decay rate for the given parameter.
     """
+    # NOTE: near-duplicate of get_vit_lr_decay_rate in training/param_groups.py (same formula,
+    # different layer-key pattern: this matches ".layer.", that matches ".blocks.").
+    # If updating this formula, update the sibling too.
     layer_id = num_layers + 1
     if name.startswith("backbone"):
         if "embeddings" in name:
@@ -205,7 +238,7 @@ def get_dinov2_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: 
     return lr_decay_rate ** (num_layers + 1 - layer_id)
 
 
-def get_dinov2_weight_decay_rate(name, weight_decay_rate=1.0):
+def get_dinov2_weight_decay_rate(name: str, weight_decay_rate: float = 1.0) -> float:
     if (
         ("gamma" in name)
         or ("pos_embed" in name)

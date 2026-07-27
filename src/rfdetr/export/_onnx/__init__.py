@@ -7,10 +7,7 @@
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
-"""
-onnx optimizer and symbolic registry
-"""
+"""Onnx optimizer and symbolic registry."""
 
 from rfdetr.export._onnx import exporter, symbolic
 from rfdetr.export._onnx.exporter import OnnxOptimizer

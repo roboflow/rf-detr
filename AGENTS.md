@@ -24,7 +24,7 @@ As an AI agent contributing to RF-DETR, you are responsible for:
 
     - Run `pre-commit run --all-files` before every commit
     - Follow type hint and docstring requirements
-    - Use direct imports (not `import ... as` pattern)
+    - Prefer direct project imports; conventional third-party aliases are allowed
 
 3. **Maintaining agentic documentation**
 
@@ -68,8 +68,8 @@ uv sync --all-groups
 
 See `pyproject.toml` for complete dependency specifications:
 
-- **Core:** PyTorch, torchvision, transformers, pycocotools, supervision, peft, pydantic
-- **Optional:** `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb)
+- **Core:** PyTorch, torchvision, transformers, supervision, pydantic, pyDeprecate
+- **Optional:** `[train]` (minimal training loop dependencies), `[augment]` (custom Albumentations CPU augmentations and Kornia GPU augmentations), `[lora]` (LoRA fine-tuning), `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb, mlflow, clearml)
 - **Development:** `tests`, `docs`, `build` groups
 
 **Important version constraints:**
@@ -87,11 +87,11 @@ See `pyproject.toml` for complete dependency specifications:
 ### Commands
 
 ```bash
-# CPU tests (default for local development) - matches CI
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
+# CPU tests (default for local development; mirrors CI)
+uv run --no-sync pytest src/ tests/ -n 1 -m "not gpu" --ignore=tests/run_smoke_all_models.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
 
-# GPU tests (requires GPU)
-uv run --no-sync pytest src/ tests/ -n 2 -m gpu
+# GPU tests (requires GPU; mirrors CI)
+uv run --no-sync pytest tests/ -m gpu -n 2 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
 
 # Pre-commit checks (ALWAYS run before committing)
 pre-commit run --all-files
@@ -172,7 +172,7 @@ uv run mkdocs build
 - **Config:** `mkdocs.yaml` (uses custom YAML tags: `!!python/name`)
 - **Deployment:** GitHub Actions publishes to GitHub Pages
 
-**Note:** `mkdocs.yaml` is excluded from `check-yaml` pre-commit hook due to custom YAML tags.
+**Note:** `mkdocs.yaml` is checked by the `check-yaml` pre-commit hook with `--unsafe` so custom YAML tags such as `!!python/name` are accepted.
 
 ## Package Building
 
@@ -205,16 +205,31 @@ uv run twine check --strict dist/*
 
 ### Key Patterns
 
+**Augmentations:**
+
+- Default training, validation, prediction, and export preprocessing use torchvision-native transforms.
+- Custom non-empty `aug_config` values on the CPU path use Albumentations and require `rfdetr[augment]`.
+- `augmentation_backend="gpu"` uses Kornia and requires `rfdetr[augment]`; `augmentation_backend="auto"` falls back to CPU when CUDA or Kornia is unavailable.
+
 **Model Architecture:**
 
-- RFDETR wrappers: `self.model` is `rfdetr.main.Model` instance
+- RFDETR wrappers: `self.model` is the model context returned by `get_model()`
 - Underlying PyTorch module: `self.model.model`
 - Segmentation models return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
+
+**Model Selection (examples, docs, tests, defaults):**
+
+- **Default to `RFDETRSmall` / `"rfdetr-small"`.** Use it wherever an example needs a concrete detection model.
+- **Never use base models** (`RFDETRBase` / `"rfdetr-base"`) in new examples, docs, or tests — treat as deprecated; substitute `small`.
+- **Released detection sizes** — `nano`, `small`, `medium`, `large` (plus `xlarge`/`2xlarge` Plus models). Always pick one of these for plain object detection; never a `-preview` variant.
+- **Released segmentation sizes** — `RFDETRSegNano`/`Small`/`Medium`/`Large` / `"rfdetr-seg-{nano,small,medium,large}"` (plus `xlarge`/`2xlarge`). Use a sized seg model for segmentation; `RFDETRSegPreview` / `"rfdetr-seg-preview"` is now superseded — do not use it in new examples, docs, or tests.
+- **`-preview` variants** are for capabilities with **no released sized version yet**. Only keypoints remain preview-only: `RFDETRKeypointPreview` / `"rfdetr-keypoint-preview"`. Use a preview variant **only** for that task — never as a stand-in for detection or segmentation.
 
 **Imports:**
 
 ```python
-# Always use direct imports (NOT import ... as pattern)
+# Prefer direct project imports. Standard aliases such as `numpy as np`,
+# `torch.nn.functional as F`, and lazy module aliases are allowed when conventional.
 from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
 from rfdetr.util.logger import get_logger
 
@@ -280,7 +295,7 @@ result = subprocess.run(
 4. **Testing:**
     - Bug fixes: Write test first, then fix
     - Features: Test all major use cases
-    - Run: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu"`
+    - Run: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --timeout=240 --durations=50`
 5. **Quality checks:** `pre-commit run --all-files`
 6. **Build (if needed):** `uv build`
 7. **Commit:** Pre-commit hooks run automatically

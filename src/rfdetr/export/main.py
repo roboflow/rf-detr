@@ -6,24 +6,30 @@
 # Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
+"""CLI orchestrator for ONNX and TensorRT model export."""
 
-"""
-CLI orchestrator for ONNX and TensorRT model export.
-"""
+from __future__ import annotations
 
+import argparse
 import os
 import random
+import warnings
+from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
+from torch import Tensor
 from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
 from rfdetr.export._onnx.exporter import export_onnx
-from rfdetr.export.tensorrt import trtexec
-from rfdetr.models import build_model
+from rfdetr.export._tensorrt import build_engine
+from rfdetr.models import BuilderArgs, build_model
+from rfdetr.models.backbone.backbone import Backbone
+from rfdetr.models.lwdetr import LWDETR
 from rfdetr.utilities.distributed import get_rank
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_sha, get_version
@@ -31,7 +37,84 @@ from rfdetr.utilities.package import get_sha, get_version
 logger = get_logger()
 
 
-def make_infer_image(infer_dir, shape, batch_size, device="cuda", num_channels: int = 3):
+def _convert_onnx_export(
+    output_file: str,
+    format: str,
+    output_dir_path: Path,
+    *,
+    quantization: str | None,
+    calibration_data: str | np.ndarray[Any, Any] | None,
+    max_images: int,
+    verbose: bool,
+) -> Path:
+    """Dispatch :meth:`rfdetr.detr.RFDETR.export`'s post-ONNX-export conversion (TFLite / TensorRT / none).
+
+    Args:
+        output_file: Path to the already-exported ONNX model.
+        format: Export format; one of ``"onnx"``, ``"tflite"``, ``"tensorrt"``.
+        output_dir_path: Directory where converted artifacts are written.
+        quantization: TFLite quantization mode (ignored for other formats).
+        calibration_data: Representative images for TFLite INT8 calibration (ignored for other formats).
+        max_images: Maximum calibration images to load from a directory (ignored for other formats).
+        verbose: Print conversion progress information.
+
+    Returns:
+        Path to the final exported artifact (``.onnx``, ``.tflite``, or ``.trt``).
+    """
+    if format == "tflite":
+        warnings.warn(
+            "TFLite export is experimental and work-in-progress. "
+            "Upstream dependency instabilities (onnx2tf, ai_edge_litert) may affect results.",
+            UserWarning,
+            stacklevel=3,
+        )
+        try:
+            from rfdetr.export._tflite.converter import export_tflite
+        except ImportError:
+            logger.error(
+                "It seems some dependencies for TFLite export are missing."
+                " Please run `pip install rfdetr[tflite]` and try again.",
+            )
+            raise
+
+        tflite_path = export_tflite(
+            onnx_path=output_file,
+            output_dir=str(output_dir_path),
+            quantization=quantization,
+            calibration_data=calibration_data,
+            verbosity="info" if verbose else "error",
+            max_images=max_images,
+            verbose=verbose,
+        )
+        logger.info(f"Successfully exported TFLite model to: {tflite_path}")
+        return tflite_path
+
+    if format == "tensorrt":
+        # Lazy re-import (not the module-level `build_engine` above): tests monkeypatch
+        # rfdetr.export._tensorrt.build_engine, which only takes effect on a fresh lookup here.
+        from rfdetr.export._tensorrt import build_engine
+
+        logger.info("Converting ONNX model to TensorRT engine")
+        engine_file = build_engine(output_file, verbose=verbose)
+        logger.info(f"Successfully exported TensorRT engine to: {engine_file}")
+        return Path(engine_file)
+
+    logger.info("Export completed successfully")
+    return Path(output_file)
+
+
+def _num_parameters(module: nn.Module) -> int:
+    """Count trainable and non-trainable parameters in a module."""
+    return sum(int(p.numel()) for p in module.parameters())
+
+
+def make_infer_image(
+    infer_dir: str | None,
+    shape: tuple[int, int],
+    batch_size: int,
+    device: str | torch.device = "cuda",
+    num_channels: int = 3,
+) -> Tensor:
     if infer_dir is None:
         if num_channels == 3:
             dummy = np.random.randint(0, 256, (shape[0], shape[1], 3), dtype=np.uint8)
@@ -64,18 +147,17 @@ def make_infer_image(infer_dir, shape, batch_size, device="cuda", num_channels: 
 
     inps, _ = transforms(image, None)
     inps = inps.to(device)
-    # inps = utils.nested_tensor_from_tensor_list([inps for _ in range(args.batch_size)])
     inps = torch.stack([inps for _ in range(batch_size)])
     return inps
 
 
-def no_batch_norm(model):
+def no_batch_norm(model: nn.Module) -> None:
     for module in model.modules():
         if isinstance(module, nn.BatchNorm2d):
             raise ValueError("BatchNorm2d found in the model. Please remove it.")
 
 
-def main(args):
+def main(args: argparse.Namespace) -> None:
     git_info = get_sha()
     if git_info != "unknown":
         logger.info(f"Running from git repository: {git_info}")
@@ -98,26 +180,55 @@ def main(args):
     os.environ["CUDA_VISIBLE_DEVICES"] = device_id
 
     # fix the seed for reproducibility
-    seed = args.seed + get_rank()
+    seed: int = args.seed + get_rank()
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
 
-    result = build_model(args)
-    model = result[0] if isinstance(result, tuple) else result
-    n_parameters = sum(p.numel() for p in model.parameters())
+    result = build_model(cast(BuilderArgs, args))
+    model = cast(LWDETR, result[0] if isinstance(result, tuple) else result)
+    backbone = model.backbone
+    backbone_model = cast(Backbone, backbone[0])
+    n_parameters = _num_parameters(model)
     logger.info(f"number of parameters: {n_parameters}")
-    n_backbone_parameters = sum(p.numel() for p in model.backbone.parameters())
+    n_backbone_parameters = _num_parameters(backbone)
     logger.info(f"number of backbone parameters: {n_backbone_parameters}")
-    n_projector_parameters = sum(p.numel() for p in model.backbone[0].projector.parameters())
+    n_projector_parameters = _num_parameters(backbone_model.projector)
     logger.info(f"number of projector parameters: {n_projector_parameters}")
-    n_backbone_encoder_parameters = sum(p.numel() for p in model.backbone[0].encoder.parameters())
+    n_backbone_encoder_parameters = _num_parameters(backbone_model.encoder)
     logger.info(f"number of backbone encoder parameters: {n_backbone_encoder_parameters}")
-    n_transformer_parameters = sum(p.numel() for p in model.transformer.parameters())
+    n_transformer_parameters = _num_parameters(cast(nn.Module, model.transformer))
     logger.info(f"number of transformer parameters: {n_transformer_parameters}")
     if args.resume:
-        checkpoint = torch.load(args.resume, map_location="cpu")
-        model.load_state_dict(checkpoint["model"], strict=True)
+        # --resume points at RF-DETR-produced checkpoints that may embed
+        # argparse.Namespace objects requiring full-pickle deserialization.
+        # Mirror RFDETR.from_checkpoint(trust_checkpoint=...): honour an optional
+        # `trust_checkpoint` attribute on args (default True for backward
+        # compatibility, since --resume is a developer/ops flag).  Setting
+        # args.trust_checkpoint=False enforces safe-tensors-only loading and
+        # raises if the checkpoint needs pickle.
+        from rfdetr.utilities.io import _safe_torch_load
+
+        trust_checkpoint = getattr(args, "trust_checkpoint", True)
+        if trust_checkpoint:
+            # Explicit pre-load warning: --resume has no CLI opt-in gate, so make
+            # the pickle-deserialization risk (CWE-502) visible before loading.
+            warnings.warn(
+                f"Loading --resume checkpoint {args.resume!r} with full pickle "
+                "deserialization (weights_only=False fallback). This can execute "
+                "arbitrary code if the checkpoint comes from an untrusted source. "
+                "Set args.trust_checkpoint=False to require safe-tensors-only loading.",
+                UserWarning,
+                stacklevel=2,
+            )
+        checkpoint = _safe_torch_load(args.resume, trust=trust_checkpoint)
+        result = model.load_state_dict(checkpoint["model"], strict=False)
+        if result.missing_keys or result.unexpected_keys:
+            logger.warning(
+                "load_state_dict strict=False: missing=%s unexpected=%s",
+                result.missing_keys[:5],
+                result.unexpected_keys[:5],
+            )
         logger.info(f"load checkpoints {args.resume}")
 
     if args.layer_norm:
@@ -137,9 +248,16 @@ def main(args):
         dynamic_axes = {name: {0: "batch"} for name in input_names + output_names}
     else:
         dynamic_axes = None
-    # Run model inference in pytorch mode
-    model.eval().to("cuda")
-    input_tensors = input_tensors.to("cuda")
+    # Run model inference in pytorch mode.
+    # Use the export device (args.device) — not a hard-coded "cuda" — so that
+    # CPU-only export paths work correctly.  Fall back to CPU when CUDA was
+    # requested but is not available (e.g. in a CPU-only CI environment).
+    run_device = torch.device(args.device)
+    if run_device.type == "cuda" and not torch.cuda.is_available():
+        logger.warning("CUDA requested but not available; falling back to CPU for sanity forward pass.")
+        run_device = torch.device("cpu")
+    model.eval().to(run_device)
+    input_tensors = input_tensors.to(run_device)
     with torch.no_grad():
         if args.backbone_only:
             features = model(input_tensors)
@@ -184,15 +302,10 @@ def main(args):
         variant_name=getattr(args, "variant_name", None),
     )
 
-    if args.simplify:
-        logger.warning(
-            "The simplify flag is deprecated and ignored. RF-DETR no longer runs ONNX simplification automatically."
-        )
-
     onnx_path = output_file  # preserve ONNX path before any post-processing step overwrites it
 
     if args.tensorrt:
-        output_file = trtexec(onnx_path, args)
+        output_file = build_engine(onnx_path, verbose=args.verbose, dry_run=args.dry_run)
 
     # TODO: register --tflite, --quantization, --calibration-data, --max-images in the
     # argparser to enable TFLite export via CLI.  Until then, use RFDETR.export(format="tflite").

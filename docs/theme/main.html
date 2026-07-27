@@ -10,6 +10,17 @@
 
 {% block extrahead %}
   {{ super() }}
+  {% set ga4_measurement_id = "G-5M220DKLMB" %}
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id={{ ga4_measurement_id }}"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){window.dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', '{{ ga4_measurement_id }}');
+  </script>
+  <link rel="preconnect" href="https://storage.googleapis.com">
 
   {% if page %}
   {% set og_image_url = page.meta.image | default(config.extra.og_image | default('')) %}
@@ -18,7 +29,9 @@
   <meta property="og:description" content="{{ page.meta.description | default(config.site_description) }}">
   <meta property="og:type" content="{% if page.is_homepage %}website{% else %}article{% endif %}">
   <meta property="og:url" content="{{ page.canonical_url }}">
-  {% if og_image_url %}<meta property="og:image" content="{{ og_image_url }}">{% endif %}
+  {% if og_image_url %}<meta property="og:image" content="{{ og_image_url }}">
+  {% if og_image_url == config.extra.og_image %}<meta property="og:image:width" content="840">
+  <meta property="og:image:height" content="630">{% endif %}{% endif %}
 
   {# Twitter Card — all pages #}
   <meta name="twitter:card" content="summary_large_image">
@@ -40,7 +53,7 @@
         "url": "https://roboflow.com",
         "logo": {
           "@type": "ImageObject",
-          "url": "{{ page.canonical_url }}assets/roboflow-logo.svg",
+          "url": "https://rfdetr.roboflow.com/latest/assets/roboflow-logo.svg",
           "width": 400,
           "height": 400
         },
@@ -50,7 +63,9 @@
           "https://www.linkedin.com/company/roboflow-ai/",
           "https://twitter.com/roboflow",
           "https://www.youtube.com/@Roboflow",
-          "https://en.wikipedia.org/wiki/Roboflow"
+          "https://en.wikipedia.org/wiki/Roboflow",
+          "https://huggingface.co/roboflow",
+          "https://www.crunchbase.com/organization/roboflow"
         ]
       },
       {
@@ -59,12 +74,20 @@
         "name": "RF-DETR",
         "alternateName": "rfdetr",
         "applicationCategory": "DeveloperApplication",
+        "applicationSubCategory": "Computer vision model",
         "operatingSystem": "Linux, macOS, Windows",
         "url": "{{ config.site_url }}",
         "downloadUrl": "https://pypi.org/project/rfdetr/",
         "softwareVersion": {{ config.extra.software_version | tojson }},
+        "softwareRequirements": "Python >=3.10; torch >=2.2.0; torchvision >=0.17.0; transformers >=5.1.0,<6.0.0",
+        "identifier": [
+          {"@type": "PropertyValue", "propertyID": "Python package", "value": "rfdetr"},
+          {"@type": "PropertyValue", "propertyID": "GitHub repository", "value": "roboflow/rf-detr"},
+          {"@type": "PropertyValue", "propertyID": "arXiv", "value": "2511.09554"}
+        ],
         "releaseNotes": "https://github.com/roboflow/rf-detr/blob/main/CHANGELOG.md",
         "description": "RF-DETR is a real-time transformer architecture for object detection and instance segmentation by Roboflow. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). ICLR 2026. Apache 2.0.",
+        "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, real-time detection transformer, DINOv2, COCO, RF100-VL, ONNX, TensorRT",
         "featureList": [
           "Real-time object detection",
           "Instance segmentation",
@@ -78,6 +101,9 @@
         "license": "https://www.apache.org/licenses/LICENSE-2.0",
         "codeRepository": "https://github.com/roboflow/rf-detr",
         "programmingLanguage": "Python",
+        "runtimePlatform": "Python 3.10+",
+        "isAccessibleForFree": true,
+        "citation": "https://arxiv.org/abs/2511.09554",
         "offers": {
           "@type": "Offer",
           "price": "0",
@@ -97,7 +123,15 @@
         "name": "RF-DETR Documentation",
         "url": "{{ config.site_url }}",
         "description": {{ config.site_description | tojson }},
-        "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"}
+        "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+        "potentialAction": {
+          "@type": "SearchAction",
+          "target": {
+            "@type": "EntryPoint",
+            "urlTemplate": "https://rfdetr.roboflow.com/latest/?q={search_term_string}"
+          },
+          "query-input": "required name=search_term_string"
+        }
       }
     ]
   }
@@ -176,7 +210,7 @@
         "name": "How do I export RF-DETR to ONNX or TensorRT?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Call model.export(format='onnx') after training or loading a checkpoint. ONNX export works on CPU and produces a single .onnx file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, first export to ONNX and then convert the .onnx model with TensorRT tooling such as trtexec; this requires TensorRT and a CUDA GPU."
+          "text": "Call model.export(format='onnx') after training or loading a checkpoint. ONNX export works on CPU and produces a single .onnx file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, use model.export(format='tensorrt'), which builds a .trt engine in-process via the TensorRT Python API; this requires pip install rfdetr[trt] and a CUDA GPU."
         }
       },
       {
@@ -192,7 +226,8 @@
   </script>
   {% else %}
   {# article:modified_time — content pages only; emit only when a full ISO-8601 date-time is available #}
-  {% if page.meta.git_revision_date_localized and "T" in page.meta.git_revision_date_localized %}<meta property="article:modified_time" content="{{ page.meta.git_revision_date_localized }}">{% endif %}
+  {# striptags: plugin may return a <time> HTML element (Markup-safe); strip tags before embedding in content attr #}
+  {% if page.meta.git_revision_date_localized %}<meta property="article:modified_time" content="{{ page.meta.git_revision_date_localized | string | striptags | replace(' ', 'T') | e }}">{% endif %}
   {# JSON-LD: TechArticle — content pages #}
   <script type="application/ld+json">
   {
@@ -201,9 +236,15 @@
     "headline": {{ page.title | tojson }},
     "description": {{ (page.meta.description | default(config.site_description)) | tojson }},
     "url": "{{ page.canonical_url }}",
-    {% if page.meta.git_revision_date_localized %}"dateModified": {{ page.meta.git_revision_date_localized | tojson }},
-    {% endif %}{% if page.meta.image %}"image": {{ page.meta.image | tojson }},
-    {% endif %}"author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    "isPartOf": {"@id": "{{ config.site_url }}#website"},
+    "about": {"@id": "{{ config.site_url }}#software"},
+    "proficiencyLevel": "Beginner to advanced",
+    "inLanguage": "en",
+    "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
+    "datePublished": "2025-03-01",
+    {% if page.meta.git_revision_date_localized %}"dateModified": {{ page.meta.git_revision_date_localized | string | striptags | replace(' ', 'T') | tojson }},
+    {% endif %}"image": {{ (page.meta.image | default(config.extra.og_image | default('https://rfdetr.roboflow.com/latest/assets/roboflow-logo.svg'))) | tojson }},
+    "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "{{ page.canonical_url }}"},
     "speakable": {
@@ -212,7 +253,7 @@
     }
   }
   </script>
-  {# JSON-LD: BreadcrumbList — content pages (2-level: root -> page) #}
+  {# JSON-LD: BreadcrumbList — content pages; 3-level for pages inside a section #}
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -223,13 +264,27 @@
         "position": 1,
         "name": "RF-DETR",
         "item": "{{ config.site_url }}"
+      }{% if page.parent %},
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": {{ page.parent.title | tojson }},
+        "item": "{% if page.parent.children and page.parent.children[0].canonical_url %}{{ page.parent.children[0].canonical_url }}{% else %}{{ config.site_url }}{% endif %}"
       },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": {{ page.title | tojson }},
+        "item": "{{ page.canonical_url }}"
+      }
+      {% else %},
       {
         "@type": "ListItem",
         "position": 2,
         "name": {{ page.title | tojson }},
         "item": "{{ page.canonical_url }}"
       }
+      {% endif %}
     ]
   }
   </script>
