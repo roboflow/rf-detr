@@ -1,0 +1,6 @@
+# Frozen dependency set for generating the rfdetr==1.5.2 legacy checkpoint.
+# Installed with CPU-only torch (UV_TORCH_BACKEND=cpu / --extra-index-url
+# https://download.pytorch.org/whl/cpu) by .github/workflows/ci-legacy-checkpoints.yml.
+# Add extra pins below (e.g. numpy==X.Y.Z) if a newer transitive dependency
+# breaks checkpoint generation for this version.
+rfdetr==1.5.2

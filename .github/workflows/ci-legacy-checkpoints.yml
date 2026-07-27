@@ -80,11 +80,12 @@ jobs:
       - name: 📦 Install rfdetr ${{ matrix.version }} (CPU-only torch)
         env:
           UV_TORCH_BACKEND: cpu
-        # Install a pinned released version of rfdetr so the generate script
-        # uses that version's model API and checkpoint format.  The torch
-        # extras flag keeps the install CPU-only and fast.
+        # Install from the frozen requirements file for this version so the
+        # generate script uses that version's model API and checkpoint format,
+        # plus any extra transitive pins needed to keep the install
+        # reproducible.  The torch extras flag keeps the install CPU-only and fast.
         run: |
-          uv pip install "rfdetr==${{ matrix.version }}" \
+          uv pip install -r "tests/legacy/frozen_dependencies/req-${{ matrix.version }}.txt" \
             --extra-index-url https://download.pytorch.org/whl/cpu
 
       - name: 🏗️ Generate checkpoint

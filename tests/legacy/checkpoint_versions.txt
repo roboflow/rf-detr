@@ -2,6 +2,10 @@
 # One version per line. Comment lines (#) and blank lines are ignored.
 # Add new minor-version milestones here; patch releases are optional.
 #
+# Each version listed here must have a matching frozen requirements file at
+# tests/legacy/frozen_dependencies/req-<version>.txt (pins rfdetr==<version>
+# plus any transitive dependency needed to keep the install reproducible).
+#
 # 1.1.0–1.3.0 disabled: the rfdetr package was not yet stable enough to
 # generate checkpoints via the CLI used here (pretrain_weights=None was not
 # supported until 1.4.0).
@@ -11,3 +15,5 @@
 1.4.3
 1.5.2
 1.6.0
+1.7.0
+1.8.0
