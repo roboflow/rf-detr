@@ -72,10 +72,16 @@ onnx = [
     "polygraphy",
 ]
 tensorrt = [
-    "pycuda",
     "onnxruntime-gpu",
     "tensorrt>=8.6.1",
     "polygraphy",
+]
+# pycuda is only used by async TRTInference in rfdetr.export.benchmark. It ships as an sdist
+# and builds against the CUDA toolkit dev headers (cuda.h), which a GPU driver alone does not
+# provide. Keep it out of the base [tensorrt] extra so the ONNX->engine parity path (polygraphy
+# TrtRunner, no pycuda) installs on a driver-only runner; async benchmarking opts into it here.
+tensorrt-bench = [
+    "pycuda>=2024.1",
 ]
 tflite = [
     # TFLite conversion routes every export through the ONNX pipeline first (export_onnx's
