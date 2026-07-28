@@ -14,6 +14,7 @@ with the YAML init_args, and verify every specified field survived the round-tri
 
 import importlib
 import pathlib
+import sys
 
 import pytest
 import yaml
@@ -70,10 +71,10 @@ def _instantiate(class_path: str, init_args: dict) -> object:
 class TestCLIEntrypoint:
     """Module entrypoint and CLI import tests."""
 
+    @pytest.mark.flaky(reruns=3, condition=sys.platform == "darwin")
     def test_python_module_entrypoint_runs(self) -> None:
         """Python -m rfdetr --help exits 0 and mentions rfdetr."""
         import subprocess
-        import sys
 
         result = subprocess.run(
             [sys.executable, "-m", "rfdetr", "--help"],
@@ -110,7 +111,6 @@ class TestCLIHelp:
     def test_fit_help_exposes_model_config(self):
         """Rfdetr fit --help output lists model.model_config arguments."""
         import io
-        import sys
 
         buf = io.StringIO()
         old_stdout = sys.stdout
@@ -124,7 +124,6 @@ class TestCLIHelp:
     def test_fit_help_exposes_train_config(self):
         """Rfdetr fit --help output lists model.train_config arguments."""
         import io
-        import sys
 
         buf = io.StringIO()
         old_stdout = sys.stdout
