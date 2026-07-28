@@ -370,20 +370,26 @@ class RFDETR:
     _model_config_class: type[ModelConfig] = ModelConfig
     _train_config_class: type[TrainConfig] = TrainConfig
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, *, trust_checkpoint: bool = False, **kwargs: Any) -> None:
         """Initialize with ModelConfig fields as keyword arguments.
 
-        Passes all kwargs to the variant's ModelConfig. Unknown kwargs raise
+        Passes all remaining kwargs to the variant's ModelConfig. Unknown kwargs raise
         ``pydantic.ValidationError``. See the variant's config class for available
         parameters (e.g. ``RFDETRSmallConfig``).
 
         Args:
+            trust_checkpoint: When ``True``, allow ``pretrain_weights`` to fall back to full
+                pickle deserialization (``weights_only=False``) if safe loading fails. Set this
+                only when ``pretrain_weights`` points to a checkpoint you explicitly trust (e.g.
+                when called internally by :meth:`from_checkpoint`); left ``False`` by default for
+                the ordinary construction path, which only ever downloads official Roboflow-hosted
+                weights.
             **kwargs: ModelConfig field values (e.g. ``resolution``, ``num_classes``,
                 ``pretrain_weights``, ``gradient_checkpointing``).
         """
         self.model_config = self.get_model_config(**kwargs)
         self.maybe_download_pretrain_weights()
-        self.model = self.get_model(self.model_config)
+        self.model = self.get_model(self.model_config, trust_checkpoint=trust_checkpoint)
         self.callbacks: dict[str, list[Callable[..., Any]]] = defaultdict(list)
 
         self.means = list(self.means)
@@ -461,6 +467,9 @@ class RFDETR:
                 (full pickle) if safe deserialization fails.  Only set this for
                 checkpoints from fully trusted sources; the default ``False``
                 keeps the safe loading path and raises if it cannot succeed.
+                Applies to both the initial checkpoint read here and the
+                constructor's own reload of the same file via
+                :func:`~rfdetr.models.weights.load_pretrain_weights`.
             **kwargs: Additional keyword arguments forwarded to the model
                 constructor (e.g. ``accept_platform_model_license=True`` for XLarge / 2XLarge models).
 
@@ -729,6 +738,10 @@ class RFDETR:
         # pretrain_weights is placed after **kwargs so it always wins even if
         # a caller accidentally passes pretrain_weights inside kwargs.
         constructor_kwargs["pretrain_weights"] = str(path)
+        # Model construction reloads this same file via load_pretrain_weights(); without this,
+        # trust_checkpoint=True would bypass the safe-load only for the metadata read above and
+        # then fail identically when the constructor re-reads pretrain_weights.
+        constructor_kwargs["trust_checkpoint"] = trust_checkpoint
 
         # Fields injected from the checkpoint but not supplied by the caller must not be
         # treated as explicit user overrides in Pydantic's model_fields_set.  Downstream
@@ -2025,16 +2038,19 @@ class RFDETR:
         """Retrieve the configuration parameters that will be used for training."""
         return self._train_config_class(**kwargs)
 
-    def get_model(self, config: ModelConfig) -> ModelContext:
+    def get_model(self, config: ModelConfig, *, trust_checkpoint: bool = False) -> ModelContext:
         """Retrieve a model context from the provided architecture configuration.
 
         Args:
             config: Architecture configuration.
+            trust_checkpoint: Forwarded to :func:`~rfdetr.inference._build_model_context` — set
+                ``True`` only when ``config.pretrain_weights`` is a checkpoint the caller
+                explicitly trusts (mirrors ``RFDETR.from_checkpoint(..., trust_checkpoint=True)``).
 
         Returns:
             ModelContext with model, postprocess, device, resolution, args, and class_names attributes.
         """
-        return _build_model_context(config)
+        return _build_model_context(config, trust_checkpoint=trust_checkpoint)
 
     @property
     def class_names(self) -> list[str]:

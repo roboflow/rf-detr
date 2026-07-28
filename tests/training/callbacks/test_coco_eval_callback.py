@@ -1263,17 +1263,22 @@ class TestValidationBatchEndEvalEmaOnly:
         ema_underlying.assert_called_once()
         cb.map_metric_ema.update.assert_called_once()
 
-    def test_on_validation_batch_end_aligns_gt_masks_to_native_res_predictions(self) -> None:
-        """When predicted masks are at native (lower) resolution, map_metric.update must receive GT masks downsized to
-        match — otherwise segm IoU is computed on mismatched pixel grids (#416)."""
+    def test_on_validation_batch_end_resizes_native_gt_directly_to_prediction_grid(self) -> None:
+        """Native-head evaluation must not round-trip transformed GT masks through ``orig_size``.
+
+        A 4x4 model-input mask with one pixel at ``[1, 1]`` is empty after direct nearest downsampling to 2x2. The
+        historical 4x4 -> 5x5 -> 2x2 path instead retains that pixel, changing the metric target for the same model
+        output.
+        """
         cb = COCOEvalCallback(segmentation=True)
         trainer = _make_trainer()
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
         cb.map_metric = MagicMock(name="map_metric")
 
-        pred_masks = torch.zeros(1, 4, 4, dtype=torch.bool)
-        gt_masks = torch.ones(1, 8, 8, dtype=torch.bool)
+        pred_masks = torch.zeros(1, 2, 2, dtype=torch.bool)
+        gt_masks = torch.zeros(1, 4, 4, dtype=torch.bool)
+        gt_masks[0, 1, 1] = True
         outputs = {
             "results": [
                 {
@@ -1287,7 +1292,7 @@ class TestValidationBatchEndEvalEmaOnly:
                 {
                     "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
                     "labels": torch.tensor([0]),
-                    "orig_size": torch.tensor([8, 8]),
+                    "orig_size": torch.tensor([5, 5]),
                     "masks": gt_masks,
                 }
             ],
@@ -1296,7 +1301,55 @@ class TestValidationBatchEndEvalEmaOnly:
         cb.on_validation_batch_end(trainer, module, outputs, None, 0)
 
         called_targets = cb.map_metric.update.call_args[0][1]
-        assert called_targets[0]["masks"].shape[-2:] == (4, 4)
+        assert torch.equal(called_targets[0]["masks"], torch.zeros_like(pred_masks))
+
+    def test_ema_validation_resizes_gt_to_ema_prediction_grid(self) -> None:
+        """EMA segmentation metrics must use the EMA predictions' grid, not the base model's grid."""
+        ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
+        cb = COCOEvalCallback(segmentation=True)
+        trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+
+        base_masks = torch.zeros(1, 2, 2, dtype=torch.bool)
+        ema_masks = torch.zeros(1, 3, 3, dtype=torch.bool)
+        gt_masks = torch.zeros(1, 4, 4, dtype=torch.bool)
+        gt_masks[0, 1, 1] = True
+        module.postprocess.return_value = [
+            {
+                "scores": torch.tensor([0.9]),
+                "labels": torch.tensor([0]),
+                "boxes": torch.zeros(1, 4),
+                "masks": ema_masks,
+            }
+        ]
+        outputs = {
+            "results": [
+                {
+                    "scores": torch.tensor([0.9]),
+                    "labels": torch.tensor([0]),
+                    "boxes": torch.zeros(1, 4),
+                    "masks": base_masks,
+                }
+            ],
+            "targets": [
+                {
+                    "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
+                    "labels": torch.tensor([0]),
+                    "orig_size": torch.tensor([5, 5]),
+                    "masks": gt_masks,
+                }
+            ],
+        }
+
+        cb.on_validation_batch_end(trainer, module, outputs, (torch.zeros(1), None), 0)
+
+        expected_masks = torch.zeros_like(ema_masks)
+        expected_masks[0, 1, 1] = True
+        called_targets = cb.map_metric_ema.update.call_args[0][1]
+        assert torch.equal(called_targets[0]["masks"], expected_masks)
 
     def test_eval_ema_only_and_native_resolution_masks_combined(self) -> None:
         """eval_ema_only=True and native-resolution mask predictions active together (the #416 commenter's actual
@@ -1447,6 +1500,22 @@ class TestConvertTargets:
         assert "masks" in out[0]
         assert out[0]["masks"].dtype == torch.bool
 
+    def test_masks_resize_to_original_grid_without_predictions(self) -> None:
+        """Default full-resolution evaluation keeps the original-image mask grid."""
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.zeros(1, 4),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([5, 5]),
+                "masks": torch.ones(1, 4, 4, dtype=torch.uint8),
+            }
+        ]
+
+        out = cb._convert_targets(targets)
+
+        assert out[0]["masks"].shape == (1, 5, 5)
+
     def test_iscrowd_passed_through(self) -> None:
         """Iscrowd tensor is included when present."""
         cb = COCOEvalCallback()
@@ -1476,73 +1545,166 @@ class TestConvertTargets:
         assert set(out[0].keys()) == {"boxes", "labels"}
 
 
-class TestAlignGtMasksToPredResolution:
-    """_align_gt_masks_to_pred_resolution() keeps GT/pred mask comparisons size-consistent when
-    PostProcess.upsample_masks_to_image_size=False returns predictions at native, lower resolution
-    (TrainConfig.eval_masks_head_resolution — regression coverage for #416)."""
+class TestConvertTargetsWithPreds:
+    """_convert_targets(targets, preds) resizes each target's masks to its own paired prediction's grid (preds[index]),
+    falling back to orig_size when preds is None or an entry lacks 'masks'."""
 
-    def test_downsizes_gt_masks_to_match_smaller_pred_resolution(self) -> None:
-        """GT masks at 8x8 must be nearest-downsized to match 4x4 predicted masks."""
-        pred_masks = torch.zeros(1, 4, 4, dtype=torch.bool)
-        gt_masks = torch.zeros(1, 8, 8, dtype=torch.bool)
-        gt_masks[0, :4, :4] = True  # top-left quadrant filled
-        preds = [{"masks": pred_masks}]
-        targets = [{"masks": gt_masks, "labels": torch.tensor([0])}]
+    @pytest.mark.parametrize(
+        ("pred_masks_0", "pred_masks_1", "expected_shape_0", "expected_shape_1"),
+        [
+            pytest.param(
+                torch.zeros(1, 4, 4, dtype=torch.bool),
+                torch.zeros(1, 3, 3, dtype=torch.bool),
+                (4, 4),
+                (3, 3),
+                id="both-images-resize-to-distinct-pred-grids",
+            ),
+            pytest.param(
+                torch.zeros(1, 10, 10, dtype=torch.bool),
+                torch.zeros(1, 3, 3, dtype=torch.bool),
+                (10, 10),
+                (3, 3),
+                id="first-image-pred-grid-matches-orig-size-second-needs-resize",
+            ),
+        ],
+    )
+    def test_batch_resizes_each_target_to_its_own_paired_pred_grid(
+        self,
+        pred_masks_0: torch.Tensor,
+        pred_masks_1: torch.Tensor,
+        expected_shape_0: tuple[int, int],
+        expected_shape_1: tuple[int, int],
+    ) -> None:
+        """2-image batch with differing orig_size AND differing pred grids: target[i]'s masks must resize to preds[i]'s
+        own grid, never the other image's — verifies index-based pairing, not a swap."""
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([10, 10]),
+                "masks": torch.ones(1, 10, 10, dtype=torch.bool),
+            },
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.2]]),
+                "labels": torch.tensor([1]),
+                "orig_size": torch.tensor([6, 6]),
+                "masks": torch.ones(1, 6, 6, dtype=torch.bool),
+            },
+        ]
+        preds = [{"masks": pred_masks_0}, {"masks": pred_masks_1}]
 
-        out = COCOEvalCallback._align_gt_masks_to_pred_resolution(preds, targets)
+        out = cb._convert_targets(targets, preds)
+
+        assert out[0]["masks"].shape[-2:] == expected_shape_0
+        assert out[1]["masks"].shape[-2:] == expected_shape_1
+
+    def test_batch_with_one_image_missing_masks_key_leaves_it_absent(self) -> None:
+        """Mixed batch: an image without a GT 'masks' key stays maskless while its sibling still resizes to its own
+        paired pred grid."""
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([10, 10]),
+                # no "masks" key -> detection-only target in an otherwise-segmentation batch.
+            },
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.2]]),
+                "labels": torch.tensor([1]),
+                "orig_size": torch.tensor([6, 6]),
+                "masks": torch.ones(1, 6, 6, dtype=torch.bool),
+            },
+        ]
+        preds = [{"boxes": torch.zeros(1, 4)}, {"masks": torch.zeros(1, 3, 3, dtype=torch.bool)}]
+
+        out = cb._convert_targets(targets, preds)
+
+        assert "masks" not in out[0]
+        assert out[1]["masks"].shape[-2:] == (3, 3)
+
+    def test_upsize_via_preds_branch_preserves_extent_and_dtype(self) -> None:
+        """GT masks at 2x2 resized through the preds-aware branch (NOT the preds=None/orig_size path) to a larger 4x4
+        pred grid must nearest-upsize, staying bool and preserving the filled region's extent."""
+        cb = COCOEvalCallback()
+        gt_masks = torch.zeros(1, 2, 2, dtype=torch.bool)
+        gt_masks[0, 0, 0] = True  # top-left cell
+        targets = [
+            {
+                "boxes": torch.zeros(1, 4),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([2, 2]),  # matches GT already -> orig_size alone would be a no-op
+                "masks": gt_masks,
+            }
+        ]
+        preds = [{"masks": torch.zeros(1, 4, 4, dtype=torch.bool)}]
+
+        out = cb._convert_targets(targets, preds)
 
         assert out[0]["masks"].shape[-2:] == (4, 4)
         assert out[0]["masks"].dtype == torch.bool
+        # nearest-neighbor upsize must preserve the filled top-left quadrant's extent.
+        assert out[0]["masks"][0, :2, :2].all()
+        assert not out[0]["masks"][0, 2:, :].any()
+        assert not out[0]["masks"][0, :, 2:].any()
 
-    def test_upsizes_gt_masks_to_match_larger_pred_resolution(self) -> None:
-        """GT masks at 4x4 must be nearest-upsized to match 8x8 predicted (native-resolution) masks — the reverse of the
-        downsize case; F.interpolate(mode="nearest") fires on any shape mismatch, either direction."""
-        pred_masks = torch.zeros(1, 8, 8, dtype=torch.bool)
-        gt_masks = torch.zeros(1, 4, 4, dtype=torch.bool)
-        gt_masks[0, :2, :2] = True  # top-left quadrant filled
-        preds = [{"masks": pred_masks}]
-        targets = [{"masks": gt_masks, "labels": torch.tensor([0])}]
+    def test_preds_shorter_than_targets_raises_assertion_error(self) -> None:
+        """Preds and targets must be 1:1 per-image; a shorter preds list must fail loudly instead of silently
+        misaligning images to the wrong prediction."""
+        cb = COCOEvalCallback()
+        targets = [
+            {"boxes": torch.zeros(1, 4), "labels": torch.tensor([0]), "orig_size": torch.tensor([10, 10])},
+            {"boxes": torch.zeros(1, 4), "labels": torch.tensor([0]), "orig_size": torch.tensor([10, 10])},
+        ]
+        preds = [{"masks": torch.zeros(1, 4, 4, dtype=torch.bool)}]
 
-        out = COCOEvalCallback._align_gt_masks_to_pred_resolution(preds, targets)
+        with pytest.raises(AssertionError):
+            cb._convert_targets(targets, preds)
 
-        assert out[0]["masks"].shape[-2:] == (8, 8)
-        assert out[0]["masks"].dtype == torch.bool
-        # nearest-neighbor upsize must preserve the filled quadrant's extent (top-left half).
-        assert out[0]["masks"][0, :4, :4].all()
-        assert not out[0]["masks"][0, 4:, :].any()
-        assert not out[0]["masks"][0, :, 4:].any()
+    def test_empty_targets_and_empty_preds_returns_empty_list(self) -> None:
+        """An empty batch (no images) through the preds-aware branch is a no-op, not an error."""
+        cb = COCOEvalCallback()
 
-    def test_leaves_targets_unchanged_when_resolutions_already_match(self) -> None:
-        """No resize (and no copy) is needed when pred and GT masks already share a resolution."""
-        pred_masks = torch.zeros(1, 8, 8, dtype=torch.bool)
-        gt_masks = torch.ones(1, 8, 8, dtype=torch.bool)
-        preds = [{"masks": pred_masks}]
-        targets = [{"masks": gt_masks, "labels": torch.tensor([0])}]
+        out = cb._convert_targets([], [])
 
-        out = COCOEvalCallback._align_gt_masks_to_pred_resolution(preds, targets)
+        assert out == []
 
-        assert out[0] is targets[0]
-        assert torch.equal(out[0]["masks"], gt_masks)
-
-    def test_leaves_targets_unchanged_when_no_masks_present(self) -> None:
-        """Detection-only (no 'masks' key) inputs pass through untouched."""
+    def test_pred_entry_without_masks_key_falls_back_to_orig_size(self) -> None:
+        """A prediction dict lacking 'masks' (e.g. detection-only fallback) must not crash; GT resizes to orig_size as
+        if preds were None for that image."""
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.zeros(1, 4),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([5, 5]),
+                "masks": torch.ones(1, 4, 4, dtype=torch.bool),
+            }
+        ]
         preds = [{"boxes": torch.zeros(1, 4)}]
-        targets = [{"boxes": torch.zeros(1, 4), "labels": torch.tensor([0])}]
 
-        out = COCOEvalCallback._align_gt_masks_to_pred_resolution(preds, targets)
+        out = cb._convert_targets(targets, preds)
 
-        assert out[0] is targets[0]
+        assert out[0]["masks"].shape[-2:] == (5, 5)
 
-    def test_original_target_dict_not_mutated(self) -> None:
-        """Resizing must return a new dict, never mutate the caller's target in place."""
-        pred_masks = torch.zeros(1, 4, 4, dtype=torch.bool)
-        gt_masks = torch.ones(1, 8, 8, dtype=torch.bool)
-        preds = [{"masks": pred_masks}]
-        targets = [{"masks": gt_masks, "labels": torch.tensor([0])}]
+    def test_empty_mask_tensor_through_preds_path_yields_zero_instances_at_pred_grid(self) -> None:
+        """K=0 GT masks (an image with no annotated instances) must resize through the preds-aware branch without
+        raising, yielding shape (0, pred_h, pred_w)."""
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.zeros(0, 4),
+                "labels": torch.zeros(0, dtype=torch.long),
+                "orig_size": torch.tensor([10, 10]),
+                "masks": torch.zeros(0, 10, 10, dtype=torch.bool),
+            }
+        ]
+        preds = [{"masks": torch.zeros(3, 4, 4, dtype=torch.bool)}]
 
-        COCOEvalCallback._align_gt_masks_to_pred_resolution(preds, targets)
+        out = cb._convert_targets(targets, preds)
 
-        assert targets[0]["masks"].shape[-2:] == (8, 8)
+        assert out[0]["masks"].shape == (0, 4, 4)
 
 
 def _ema_callback() -> MagicMock:
