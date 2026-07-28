@@ -66,7 +66,7 @@ augment = [
 ]
 onnx = [
     "onnx>=1.16.0,<2.0",
-    "onnxsim<0.6.0",  # TODO: onnxsim 0.6.0+ hangs on install
+    "onnxsim>=0.7.0",  # 0.7.0 ships wheels for cp310/311/312-abi3 (3.10-3.13) on linux x86_64+aarch64, win_amd64 and macOS arm64. The old <0.6.0 pin resolved to 0.5.0, which lacks cp311/cp313/aarch64 wheels, so pip built onnxsim's bundled onnxruntime/onnx from source and the install hung (#749).
     "onnx_graphsurgeon",
     "onnxruntime",
     "polygraphy",
@@ -83,7 +83,7 @@ tflite = [
     # the separate [onnx] extra — onnxruntime is NOT included: it's only for running ONNX
     # inference, never touched by the TFLite export path.
     "onnx>=1.20.0,<2.0; python_version >= '3.12' and python_version < '3.13'",
-    "onnxsim<0.6.0; python_version >= '3.12' and python_version < '3.13'",  # TODO: onnxsim 0.6.0+ hangs on install
+    "onnxsim>=0.7.0; python_version >= '3.12' and python_version < '3.13'",  # 0.7.0 ships a cp312 abi3 wheel; the old <0.6.0 pin resolved to 0.5.0 whose wheels don't cover every platform, so pip built from source and hung (#749).
     "onnx_graphsurgeon; python_version >= '3.12' and python_version < '3.13'",
     "polygraphy; python_version >= '3.12' and python_version < '3.13'",
     "onnx2tf>=2.4.0,<3.0.0; python_version >= '3.12' and python_version < '3.13'",
