@@ -19,7 +19,6 @@ only appears on correlated image structure.
 from __future__ import annotations
 
 import contextlib
-import sys
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -212,17 +211,11 @@ class TestCheckCoremltoolsAvailable:
 
     def test_returns_false_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Missing ``coremltools`` must return ``False``."""
-        if "coremltools" in sys.modules:
-            monkeypatch.delitem(sys.modules, "coremltools", raising=False)
-
-        real_import = __import__
-
-        def _block_coremltools(name: str, *args: Any, **kwargs: Any) -> Any:
-            if name == "coremltools" or name.startswith("coremltools."):
-                raise ImportError("blocked for test")
-            return real_import(name, *args, **kwargs)
-
-        monkeypatch.setattr("builtins.__import__", _block_coremltools)
+        # _check_coremltools_available reads the module-level _IS_COREMLTOOLS_AVAILABLE flag
+        # (computed once, at rfdetr.export._coreml import time) rather than importing
+        # coremltools live, so the flag itself — as bound into converter's namespace by its
+        # `from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE` — is what must be patched.
+        monkeypatch.setattr("rfdetr.export._coreml.converter._IS_COREMLTOOLS_AVAILABLE", False)
         assert _check_coremltools_available(raise_error=False) is False
 
     @coreml_only
@@ -331,18 +324,17 @@ class TestExportFormatParameter:
         obj.model_config.num_channels = 3
         return obj
 
-    def test_coreml_format_calls_export_coreml(self) -> None:
-        """``format="coreml"`` must dispatch to ``export_coreml`` and warn (experimental)."""
-        obj = self._make_rfdetr()
+    @pytest.mark.parametrize(
+        "segmentation_head",
+        [pytest.param(False, id="detection"), pytest.param(True, id="segmentation")],
+    )
+    def test_coreml_format_dispatches_to_export_coreml_not_onnx(self, segmentation_head: bool) -> None:
+        """``format="coreml"`` must dispatch to ``export_coreml`` (not ``export_onnx``) and warn (experimental), for
+        both detection and segmentation models."""
+        obj = self._make_rfdetr(segmentation_head=segmentation_head)
         with pytest.warns(UserWarning, match="experimental"):
             obj.export(format="coreml", output_dir=str(self._tmp_path / "out"))
         self._mock_export_coreml.assert_called_once()
-
-    def test_coreml_format_does_not_call_export_onnx(self) -> None:
-        """Native CoreML must not go through the ONNX interchange path."""
-        obj = self._make_rfdetr()
-        with pytest.warns(UserWarning, match="experimental"):
-            obj.export(format="coreml", output_dir=str(self._tmp_path / "out"))
         self._mock_export_onnx.assert_not_called()
 
     def test_onnx_format_does_not_call_export_coreml(self) -> None:
@@ -350,13 +342,6 @@ class TestExportFormatParameter:
         obj = self._make_rfdetr()
         obj.export(format="onnx", output_dir=str(self._tmp_path / "out"))
         self._mock_export_coreml.assert_not_called()
-
-    def test_segmentation_model_still_dispatches_to_coreml(self) -> None:
-        """Seg models use the same ``format="coreml"`` path (outputs from model config)."""
-        obj = self._make_rfdetr(segmentation_head=True)
-        with pytest.warns(UserWarning, match="experimental"):
-            obj.export(format="coreml", output_dir=str(self._tmp_path / "out"))
-        self._mock_export_coreml.assert_called_once()
 
     def test_notes_warns_and_is_ignored(self) -> None:
         """``notes`` must warn for CoreML (no ONNX-style metadata slot) but still export."""
@@ -384,36 +369,33 @@ class TestExportFormatParameter:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def coreml_detection_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, torch.Tensor, Path]:
-    """Export RFDETRNano to a ``.mlpackage`` once for e2e tests."""
-    from rfdetr import RFDETRNano
+# (model class name, validate function) — both share the same fixture setup shape (export once,
+# reuse for the mlpackage-written / structured-parity / supervision-image checks below), so the
+# fixture and its consuming tests are parametrized over this pair instead of duplicated per variant.
+_COREML_E2E_VARIANTS = [
+    ("RFDETRNano", validate_detection_coreml_vs_pytorch),
+    ("RFDETRSegNano", validate_segmentation_coreml_vs_pytorch),
+]
 
-    out_dir = tmp_path_factory.mktemp("coreml_det")
-    detector = RFDETRNano(pretrain_weights=None)
+
+@pytest.fixture(scope="module", params=_COREML_E2E_VARIANTS, ids=["detection", "segmentation"])
+def coreml_export(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> tuple[Any, torch.Tensor, Path, Any]:
+    """Export RFDETRNano/RFDETRSegNano to a ``.mlpackage`` once per variant for e2e tests."""
+    import rfdetr
+
+    model_cls_name, validate_fn = request.param
+    model_cls = getattr(rfdetr, model_cls_name)
+    out_dir = tmp_path_factory.mktemp(f"coreml_{model_cls_name.lower()}")
+    detector = model_cls(pretrain_weights=None)
     mlpackage_path = detector.export(output_dir=str(out_dir), format="coreml", verbose=False)
 
     model = detector.model.model.to("cpu").eval()
     model.export()
     resolution = int(detector.model.resolution)
     example = _structured_parity_input(1, 3, resolution, resolution)
-    return model, example, Path(mlpackage_path)
-
-
-@pytest.fixture(scope="module")
-def coreml_segmentation_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, torch.Tensor, Path]:
-    """Export RFDETRSegNano to a ``.mlpackage`` once for e2e tests."""
-    from rfdetr import RFDETRSegNano
-
-    out_dir = tmp_path_factory.mktemp("coreml_seg")
-    detector = RFDETRSegNano(pretrain_weights=None)
-    mlpackage_path = detector.export(output_dir=str(out_dir), format="coreml", verbose=False)
-
-    model = detector.model.model.to("cpu").eval()
-    model.export()
-    resolution = int(detector.model.resolution)
-    example = _structured_parity_input(1, 3, resolution, resolution)
-    return model, example, Path(mlpackage_path)
+    return model, example, Path(mlpackage_path), validate_fn
 
 
 @coreml_only
@@ -421,63 +403,31 @@ def coreml_segmentation_export(tmp_path_factory: pytest.TempPathFactory) -> tupl
 class TestCoreMLEndToEnd:
     """Real CoreML export + FLOAT32 CPU numerical parity (``-m coreml_e2e``)."""
 
-    def test_mlpackage_written_for_detection(self, coreml_detection_export: tuple[Any, torch.Tensor, Path]) -> None:
-        """Detection export must write a non-empty ``.mlpackage`` directory/bundle."""
-        _, _, mlpackage_path = coreml_detection_export
+    def test_mlpackage_written(self, coreml_export: tuple[Any, torch.Tensor, Path, Any]) -> None:
+        """Export must write a non-empty ``.mlpackage`` directory/bundle."""
+        _, _, mlpackage_path, _ = coreml_export
         assert mlpackage_path.exists()
         assert mlpackage_path.suffix == ".mlpackage" or mlpackage_path.name.endswith(".mlpackage")
 
-    def test_mlpackage_written_for_segmentation(
-        self, coreml_segmentation_export: tuple[Any, torch.Tensor, Path]
-    ) -> None:
-        """Segmentation export must write a non-empty ``.mlpackage`` bundle."""
-        _, _, mlpackage_path = coreml_segmentation_export
-        assert mlpackage_path.exists()
-        assert mlpackage_path.suffix == ".mlpackage" or mlpackage_path.name.endswith(".mlpackage")
+    def test_outputs_match_pytorch_structured(self, coreml_export: tuple[Any, torch.Tensor, Path, Any]) -> None:
+        """CoreML output matches eager on structured (gradient+checkerboard) input."""
+        model, example, mlpackage_path, validate_fn = coreml_export
+        validate_fn(mlpackage_path, model, example)
 
-    def test_detection_outputs_match_pytorch_structured(
-        self, coreml_detection_export: tuple[Any, torch.Tensor, Path]
-    ) -> None:
-        """CoreML detection matches eager on structured (gradient+checkerboard) input."""
-        model, example, mlpackage_path = coreml_detection_export
-        validate_detection_coreml_vs_pytorch(mlpackage_path, model, example)
-
-    def test_segmentation_outputs_match_pytorch_structured(
-        self, coreml_segmentation_export: tuple[Any, torch.Tensor, Path]
-    ) -> None:
-        """CoreML segmentation matches eager on structured (gradient+checkerboard) input."""
-        model, example, mlpackage_path = coreml_segmentation_export
-        validate_segmentation_coreml_vs_pytorch(mlpackage_path, model, example)
-
-    def test_detection_outputs_match_pytorch_supervision_image(
+    def test_outputs_match_pytorch_supervision_image(
         self,
-        coreml_detection_export: tuple[Any, torch.Tensor, Path],
+        coreml_export: tuple[Any, torch.Tensor, Path, Any],
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """CoreML detection matches eager on ``ImageAssets.PEOPLE_WALKING``."""
-        model, structured, mlpackage_path = coreml_detection_export
+        """CoreML output matches eager on ``ImageAssets.PEOPLE_WALKING``."""
+        model, structured, mlpackage_path, validate_fn = coreml_export
         monkeypatch.chdir(tmp_path)
         example = _parity_input_from_image(
             Path(download_assets(ImageAssets.PEOPLE_WALKING)),
             int(structured.shape[-1]),
         )
-        validate_detection_coreml_vs_pytorch(mlpackage_path, model, example)
-
-    def test_segmentation_outputs_match_pytorch_supervision_image(
-        self,
-        coreml_segmentation_export: tuple[Any, torch.Tensor, Path],
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """CoreML segmentation matches eager on ``ImageAssets.PEOPLE_WALKING``."""
-        model, structured, mlpackage_path = coreml_segmentation_export
-        monkeypatch.chdir(tmp_path)
-        example = _parity_input_from_image(
-            Path(download_assets(ImageAssets.PEOPLE_WALKING)),
-            int(structured.shape[-1]),
-        )
-        validate_segmentation_coreml_vs_pytorch(mlpackage_path, model, example)
+        validate_fn(mlpackage_path, model, example)
 
 
 class TestCoreMLParityInputHelpers:

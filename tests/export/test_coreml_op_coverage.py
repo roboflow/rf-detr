@@ -95,7 +95,6 @@ def _restore_coreml_torch_op_registry() -> Generator[None, None, None]:
 
 
 @coreml_only
-@pytest.mark.coreml
 class TestEnsureCoremlTorchOpPatches:
     """Package-local coremltools registry patches."""
 
@@ -159,7 +158,6 @@ class TestEnsureCoremlTorchOpPatches:
 
 
 @coreml_only
-@pytest.mark.coreml
 class TestUnsupportedCoremlOps:
     """Checklist against the real coremltools registry."""
 
@@ -190,7 +188,7 @@ class TestUnsupportedCoremlOps:
         assert "__and__" not in gaps
         assert gaps == Counter()
 
-    def test_unpatched_dunder_and_is_detected_as_unsupported(self) -> None:
+    def test_unpatched_dunder_and_is_detected_as_unsupported(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Scanner must still flag ``__and__`` when the package patch is not applied."""
         from coremltools.converters.mil.frontend.torch.ops import _TORCH_OPS_REGISTRY
 
@@ -203,8 +201,11 @@ class TestUnsupportedCoremlOps:
         ep = _export_decomposed(_RangeMaskAnd().eval(), torch.rand(1, 4, 4))
         mapping = _TORCH_OPS_REGISTRY.name_to_func_mapping
         mapping.pop("__and__", None)
-        # Keep ensure inside unsupported_coreml_ops from re-adding ``__and__``.
-        torch_ops._PATCHED = True
+        # Bypass the real patcher entirely — faking `_PATCHED = True` no longer works: the
+        # identity-validated check in ensure_coreml_torch_op_patches would see mapping["__and__"]
+        # missing and correctly re-patch it regardless of the flag (that's the fix under test
+        # elsewhere; here we need the *unpatched* state to actually hold).
+        monkeypatch.setattr(torch_ops, "ensure_coreml_torch_op_patches", lambda: None)
         gaps = unsupported_coreml_ops(ep)
         assert "__and__" in gaps
 

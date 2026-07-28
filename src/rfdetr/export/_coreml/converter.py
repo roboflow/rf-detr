@@ -17,8 +17,8 @@ Note:
     The produced ``.mlpackage`` expects ImageNet mean/std normalization
     (``mean=[0.485, 0.456, 0.406]``, ``std=[0.229, 0.224, 0.225]``), same as ONNX.
     :func:`export_coreml` defaults to ``compute_precision=FLOAT32`` for tight CPU parity with
-    eager PyTorch. Pass ``ct.precision.FLOAT16`` (or the string ``"float16"``) when you want a
-    smaller ANE-oriented bundle (expect larger numeric drift) — either directly to
+    eager PyTorch. Pass ``coremltools.precision.FLOAT16`` (or the string ``"float16"``) when you
+    want a smaller ANE-oriented bundle (expect larger numeric drift) — either directly to
     :func:`export_coreml`, or via :meth:`rfdetr.detr.RFDETR.export`'s ``coreml_precision``
     argument (string form only, so callers don't need to import ``coremltools``).
 """
@@ -37,7 +37,7 @@ from rfdetr.export._coreml.op_coverage import unsupported_coreml_ops
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
-    import coremltools as ct
+    from coremltools import precision as ct_precision
 
 logger = get_logger()
 
@@ -58,7 +58,7 @@ def export_coreml(
     *,
     variant_name: str | None = None,
     verbose: bool = True,
-    compute_precision: "ct.precision | str | None" = None,
+    compute_precision: ct_precision | str | None = None,
 ) -> Path:
     """Export an RF-DETR model to a CoreML ``.mlpackage``.
 
@@ -73,9 +73,10 @@ def export_coreml(
         variant_name: Model variant identifier (e.g. ``"rfdetr-nano"``). When provided, the bundle
             is named ``{variant_name}.mlpackage`` instead of ``inference_model.mlpackage``.
         verbose: When ``True``, log export progress at info level.
-        compute_precision: coremltools precision for ``ct.convert`` — a ``ct.precision`` value
-            (e.g. ``ct.precision.FLOAT32`` / ``FLOAT16``), the equivalent string (``"float32"`` /
-            ``"float16"``), or ``None`` to select ``FLOAT32`` (tight CPU parity with eager PyTorch).
+        compute_precision: coremltools precision for ``coremltools.convert`` — a
+            ``coremltools.precision`` value (e.g. ``coremltools.precision.FLOAT32`` / ``FLOAT16``),
+            the equivalent string (``"float32"`` / ``"float16"``), or ``None`` to select
+            ``FLOAT32`` (tight CPU parity with eager PyTorch).
             The string form is what :meth:`rfdetr.detr.RFDETR.export` forwards via its
             ``coreml_precision`` argument, so callers don't need to import ``coremltools`` just to
             pick a precision.
@@ -97,7 +98,15 @@ def export_coreml(
         RuntimeError: If ``torch.export`` or ``coremltools.convert`` fails for any other reason.
     """
     _check_coremltools_available()
-    import coremltools as ct
+    from coremltools import convert as ct_convert
+    from coremltools import precision as ct_precision
+    from coremltools import target as ct_target
+
+    # ct_precision is an Enum class, not a module — FLOAT32/FLOAT16 are members accessed via
+    # attribute lookup (`ct_precision.FLOAT32`), not independently `from`-importable. Bind them
+    # to flat local names via plain assignment so the rest of this function reads uniformly.
+    coreml_float32 = ct_precision.FLOAT32
+    coreml_float16 = ct_precision.FLOAT16
 
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
@@ -109,14 +118,14 @@ def export_coreml(
     output_file = output_dir_path / f"{export_name}.mlpackage"
 
     if compute_precision is None:
-        compute_precision = ct.precision.FLOAT32
+        compute_precision = coreml_float32
     elif isinstance(compute_precision, str):
         try:
-            compute_precision = {"float32": ct.precision.FLOAT32, "float16": ct.precision.FLOAT16}[compute_precision]
+            compute_precision = {"float32": coreml_float32, "float16": coreml_float16}[compute_precision]
         except KeyError:
             raise ValueError(
-                f"compute_precision must be 'float32', 'float16', a ct.precision value, or None, "
-                f"got {compute_precision!r}"
+                f"compute_precision must be 'float32', 'float16', a coremltools.precision value, or "
+                f"None, got {compute_precision!r}"
             ) from None
 
     model = model.eval()
@@ -139,10 +148,10 @@ def export_coreml(
                 raise NotImplementedError(
                     f"{summary}. Fix these ops before convert (see tests/export/test_coreml_op_coverage.py)."
                 )
-            mlmodel = ct.convert(
+            mlmodel = ct_convert(
                 exported_program,
                 convert_to="mlprogram",
-                minimum_deployment_target=ct.target.iOS16,
+                minimum_deployment_target=ct_target.iOS16,
                 compute_precision=compute_precision,
             )
     except (ImportError, NotImplementedError, ValueError):

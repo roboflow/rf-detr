@@ -219,10 +219,10 @@ def _export_coreml_format(
             :func:`~rfdetr.export._coreml.converter.export_coreml`'s ``compute_precision``.
 
     Note:
-        Unlike the ONNX path, output names are not forwarded to ``ct.convert`` — coremltools infers
-        its own output names for the ``.mlpackage`` spec. Consumers must rely on **output position**,
-        not name, to match the ``(dets, labels)`` / ``(dets, labels, masks)`` / ``(dets, labels,
-        keypoints)`` contract documented on :meth:`rfdetr.detr.RFDETR.export`.
+        Unlike the ONNX path, output names are not forwarded to ``coremltools.convert`` —
+        coremltools infers its own output names for the ``.mlpackage`` spec. Consumers must rely on
+        **output position**, not name, to match the ``(dets, labels)`` / ``(dets, labels, masks)`` /
+        ``(dets, labels, keypoints)`` contract documented on :meth:`rfdetr.detr.RFDETR.export`.
 
     Returns:
         Path to the exported ``.mlpackage`` bundle.
@@ -232,11 +232,16 @@ def _export_coreml_format(
         NotImplementedError: If the exported graph has CoreML registry gaps.
 
     Examples:
-        >>> _export_coreml_format(  # doctest: +SKIP
-        ...     model, input_tensors, output_dir_path,
-        ...     variant_name="small", verbose=True, notes=None,
-        ... )
-        PosixPath('out/model.mlpackage')
+        Requires the optional ``coremltools`` dependency and a prepared model/input pair, so this
+        is documentation only (not a doctest):
+
+        ```python
+        _export_coreml_format(
+            model, input_tensors, output_dir_path,
+            variant_name="small", verbose=True, notes=None,
+        )
+        # -> PosixPath('out/model.mlpackage')
+        ```
     """
     if notes is not None:
         warnings.warn(

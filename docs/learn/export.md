@@ -649,8 +649,6 @@ ONNX intermediary and no ExecuTorch runtime dependency — the lowest-friction p
 pip install "rfdetr[coreml]"
 ```
 
-Requires macOS and `coremltools>=8.0,<10.0`.
-
 ### Basic CoreML Export
 
 === "Object Detection"
