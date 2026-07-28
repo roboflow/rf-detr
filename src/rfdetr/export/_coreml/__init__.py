@@ -14,4 +14,3 @@ try:
     _IS_COREMLTOOLS_AVAILABLE = True
 except ImportError:
     _IS_COREMLTOOLS_AVAILABLE = False
-
