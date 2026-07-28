@@ -47,7 +47,7 @@ def _export_decomposed(model: nn.Module, example: torch.Tensor) -> ExportedProgr
 
 def _reset_patches_for_test() -> None:
     """Clear package patch flag so the next ``ensure_*`` call re-applies handlers."""
-    import rfdetr.export._coreml.torch_ops as torch_ops
+    from rfdetr.export._coreml import torch_ops
 
     torch_ops._PATCHED = False
 
@@ -62,7 +62,7 @@ def _restore_coreml_torch_op_registry() -> Generator[None, None, None]:
     """
     from coremltools.converters.mil.frontend.torch.ops import _TORCH_OPS_REGISTRY
 
-    import rfdetr.export._coreml.torch_ops as torch_ops
+    from rfdetr.export._coreml import torch_ops
 
     mapping = _TORCH_OPS_REGISTRY.name_to_func_mapping
     saved_handlers: dict[str, Any] = {key: mapping.get(key) for key in _REGISTRY_KEYS_MUTATED_IN_TESTS}
@@ -113,7 +113,7 @@ class TestEnsureCoremlTorchOpPatches:
         """Our ``bitwise_not`` override must be installed (float-typed bool masks)."""
         from coremltools.converters.mil.frontend.torch.ops import _TORCH_OPS_REGISTRY
 
-        import rfdetr.export._coreml.torch_ops as torch_ops
+        from rfdetr.export._coreml import torch_ops
 
         _reset_patches_for_test()
         ensure_coreml_torch_op_patches()
@@ -183,7 +183,7 @@ class TestUnsupportedCoremlOps:
         """Scanner must still flag ``__and__`` when the package patch is not applied."""
         from coremltools.converters.mil.frontend.torch.ops import _TORCH_OPS_REGISTRY
 
-        import rfdetr.export._coreml.torch_ops as torch_ops
+        from rfdetr.export._coreml import torch_ops
 
         class _RangeMaskAnd(nn.Module):
             def forward(self, x: torch.Tensor) -> torch.Tensor:

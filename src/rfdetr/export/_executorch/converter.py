@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from rfdetr.utilities.logger import get_logger
 

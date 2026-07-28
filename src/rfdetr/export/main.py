@@ -19,7 +19,7 @@ from typing import Any, cast
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 from PIL import Image
 from torch import Tensor
 from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
