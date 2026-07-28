@@ -1403,6 +1403,7 @@ class RFDETR:
         soc: str | None = None,
         fp16: bool = True,
         notes: object = None,
+        coreml_precision: str | None = None,
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, or CoreML format.
 
@@ -1438,7 +1439,15 @@ class RFDETR:
                 ``pip install rfdetr[executorch]``.
                 When ``"coreml"`` is selected the model is exported via ``torch.export`` + ``coremltools`` to a
                 native ``.mlpackage`` (no ONNX step; requires ``pip install rfdetr[coreml]``). This is distinct from
-                ExecuTorch's ``format="executorch", backend="coreml"`` path, which still produces a ``.pte``.
+                ExecuTorch's ``format="executorch", backend="coreml"`` path, which still produces a ``.pte``. If
+                you know that ExecuTorch delegate and expect ``format="coreml"`` to mean the same thing: it does
+                not — pass ``format="executorch", backend="coreml"`` for the ``.pte`` route instead. Passing both
+                ``format="coreml"`` and ``backend="coreml"`` together does **not** fall through to the ExecuTorch
+                delegate; ``backend`` is ignored (with a warning) and the native ``.mlpackage`` path always runs.
+                Keypoint models are untested with ``format="coreml"`` — detection and segmentation have
+                registry-clean and numerical-parity test coverage (see
+                ``tests/export/test_coreml_op_coverage.py`` / ``test_coreml_export.py``), keypoint models
+                currently do not.
 
                 .. warning::
                     TFLite, ExecuTorch, and CoreML export are experimental and subject to change; upstream dependency
@@ -1485,6 +1494,9 @@ class RFDETR:
                 information.  **Ignored for ``format="executorch"`` and ``format="coreml"``**: those artifacts have
                 no ONNX-style metadata slot, and a non-``None`` value emits a ``UserWarning`` instead of being
                 embedded.
+            coreml_precision: ``ct.convert`` compute precision for ``format="coreml"`` — ``None`` (default) or
+                ``"float32"`` selects FP32 (tight CPU parity with eager PyTorch); ``"float16"`` selects a smaller
+                ANE-oriented bundle (expect larger numeric drift). Ignored for every other format.
 
         Returns:
             Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``, ``.pte``, or ``.mlpackage``).
@@ -1649,6 +1661,7 @@ class RFDETR:
                     variant_name=getattr(self, "size", None),
                     verbose=verbose,
                     notes=notes,
+                    compute_precision=coreml_precision,
                 )
 
             output_file = export_onnx(

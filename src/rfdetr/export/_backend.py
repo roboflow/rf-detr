@@ -201,6 +201,7 @@ def _export_coreml_format(
     variant_name: str | None,
     verbose: bool,
     notes: object,
+    compute_precision: str | None = None,
 ) -> Path:
     """Dispatch :meth:`rfdetr.detr.RFDETR.export` to the native CoreML converter.
 
@@ -214,6 +215,14 @@ def _export_coreml_format(
         variant_name: Model variant identifier used to name the output bundle.
         verbose: Forwarded to :func:`~rfdetr.export._coreml.converter.export_coreml`.
         notes: User-supplied export metadata; CoreML has no ONNX-style metadata slot, so a non-``None`` value warns.
+        compute_precision: ``"float32"``/``"float16"``/``None`` — forwarded to
+            :func:`~rfdetr.export._coreml.converter.export_coreml`'s ``compute_precision``.
+
+    Note:
+        Unlike the ONNX path, output names are not forwarded to ``ct.convert`` — coremltools infers
+        its own output names for the ``.mlpackage`` spec. Consumers must rely on **output position**,
+        not name, to match the ``(dets, labels)`` / ``(dets, labels, masks)`` / ``(dets, labels,
+        keypoints)`` contract documented on :meth:`rfdetr.detr.RFDETR.export`.
 
     Returns:
         Path to the exported ``.mlpackage`` bundle.
@@ -259,6 +268,7 @@ def _export_coreml_format(
         output_dir=str(output_dir_path),
         variant_name=variant_name,
         verbose=verbose,
+        compute_precision=compute_precision,
     )
     logger.info(f"Successfully exported CoreML model to: {mlpackage_path}")
     return mlpackage_path
