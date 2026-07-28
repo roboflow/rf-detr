@@ -23,8 +23,8 @@ from PIL import Image
 
 # ImageNet statistics used by predict-style preprocessing; parity inputs are normalized to
 # roughly this range so the backbone sees realistic activations.
-_IMAGENET_MEAN = (0.485, 0.456, 0.406)
-_IMAGENET_STD = (0.229, 0.224, 0.225)
+_IMAGENET_MEAN: tuple[float, float, float] = (0.485, 0.456, 0.406)
+_IMAGENET_STD: tuple[float, float, float] = (0.229, 0.224, 0.225)
 
 
 def _structured_parity_input(
