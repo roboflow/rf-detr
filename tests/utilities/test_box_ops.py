@@ -6,7 +6,81 @@
 
 import torch
 
-from rfdetr.utilities.box_ops import box_iou, generalized_box_iou, masks_to_boxes
+from rfdetr.utilities.box_ops import (
+    box_iou,
+    elementwise_box_iou,
+    elementwise_generalized_box_iou,
+    generalized_box_iou,
+    masks_to_boxes,
+)
+
+
+def _random_xyxy_boxes(n: int, seed: int = 0) -> torch.Tensor:
+    """Generate ``n`` non-degenerate random boxes in xyxy format."""
+    gen = torch.Generator().manual_seed(seed)
+    xy1 = torch.rand(n, 2, generator=gen)
+    xy2 = xy1 + torch.rand(n, 2, generator=gen) * 0.5 + 0.01
+    return torch.cat([xy1, xy2], dim=-1)
+
+
+def test_elementwise_box_iou_matches_pairwise_diagonal() -> None:
+    """Elementwise IoU/union equal the diagonal of the pairwise ``box_iou``, including gradients."""
+    boxes1 = _random_xyxy_boxes(64, seed=2).requires_grad_(True)
+    boxes2 = _random_xyxy_boxes(64, seed=3).requires_grad_(True)
+
+    boxes1_ref = boxes1.detach().clone().requires_grad_(True)
+    boxes2_ref = boxes2.detach().clone().requires_grad_(True)
+
+    iou, union = elementwise_box_iou(boxes1, boxes2)
+    iou_ref, union_ref = box_iou(boxes1_ref, boxes2_ref)
+
+    torch.testing.assert_close(iou, torch.diag(iou_ref))
+    torch.testing.assert_close(union, torch.diag(union_ref))
+
+    iou.sum().backward()
+    torch.diag(iou_ref).sum().backward()
+
+    torch.testing.assert_close(boxes1.grad, boxes1_ref.grad)
+    torch.testing.assert_close(boxes2.grad, boxes2_ref.grad)
+
+
+def test_elementwise_generalized_box_iou_matches_pairwise_diagonal() -> None:
+    """Elementwise GIoU equals the diagonal of the pairwise ``generalized_box_iou``, including gradients."""
+    boxes1 = _random_xyxy_boxes(64, seed=0).requires_grad_(True)
+    boxes2 = _random_xyxy_boxes(64, seed=1).requires_grad_(True)
+
+    boxes1_ref = boxes1.detach().clone().requires_grad_(True)
+    boxes2_ref = boxes2.detach().clone().requires_grad_(True)
+
+    result = elementwise_generalized_box_iou(boxes1, boxes2)
+    expected = torch.diag(generalized_box_iou(boxes1_ref, boxes2_ref))
+
+    torch.testing.assert_close(result, expected)
+
+    result.sum().backward()
+    expected.sum().backward()
+
+    torch.testing.assert_close(boxes1.grad, boxes1_ref.grad)
+    torch.testing.assert_close(boxes2.grad, boxes2_ref.grad)
+
+
+def test_elementwise_box_iou_zero_area_boxes_are_finite() -> None:
+    """Zero-area boxes yield finite elementwise IoU/union instead of a 0/0 NaN."""
+    zero_box = torch.tensor([[10.0, 10.0, 10.0, 10.0]])  # w = h = 0
+
+    iou, union = elementwise_box_iou(zero_box, zero_box)
+
+    assert torch.isfinite(iou).all()
+    assert torch.isfinite(union).all()
+
+
+def test_elementwise_generalized_box_iou_zero_area_boxes_are_finite() -> None:
+    """Degenerate zero-area boxes give finite elementwise GIoU instead of NaN/inf."""
+    zero_box = torch.tensor([[10.0, 10.0, 10.0, 10.0]])  # w = h = 0
+
+    giou = elementwise_generalized_box_iou(zero_box, zero_box)
+
+    assert torch.isfinite(giou).all()
 
 
 def test_box_iou_zero_area_boxes_are_finite() -> None:

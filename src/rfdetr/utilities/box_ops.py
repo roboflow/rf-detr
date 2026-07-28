@@ -69,6 +69,59 @@ def box_iou(boxes1: Tensor, boxes2: Tensor) -> tuple[Tensor, Tensor]:
     return iou, union
 
 
+def elementwise_box_iou(boxes1: Tensor, boxes2: Tensor) -> tuple[Tensor, Tensor]:
+    """Compute IoU and union for pre-matched box pairs.
+
+    Unlike ``box_iou``, this avoids materializing the full NxN pairwise matrix
+    (of which only the diagonal is used for matched pairs), so peak memory is
+    O(N) instead of O(N^2). ``boxes1`` and ``boxes2`` must have the same length
+    and be in [x0, y0, x1, y1] format.
+
+    Returns:
+        iou: the [N] tensor of IoU values for each matched pair.
+        union: the [N] tensor of union areas for each matched pair.
+    """
+    area1 = box_area(boxes1)
+    area2 = box_area(boxes2)
+
+    lt = torch.max(boxes1[:, :2], boxes2[:, :2])  # [N,2]
+    rb = torch.min(boxes1[:, 2:], boxes2[:, 2:])  # [N,2]
+
+    wh = (rb - lt).clamp(min=0)  # [N,2]
+    inter = wh[:, 0] * wh[:, 1]  # [N]
+
+    union = area1 + area2 - inter
+
+    eps = 1e-7
+    # Clamp only the degenerate (union==0) case so identical non-degenerate boxes
+    # yield IoU==1.0 exactly; adding eps unconditionally would break that identity.
+    iou = inter / union.clamp(min=eps)
+    return iou, union
+
+
+def elementwise_generalized_box_iou(boxes1: Tensor, boxes2: Tensor) -> Tensor:
+    """Generalized IoU from https://giou.stanford.edu/ for pre-matched box pairs.
+
+    Equivalent to the diagonal of ``generalized_box_iou`` but without building the
+    NxN matrix, giving O(N) instead of O(N^2) peak memory. The boxes should be in
+    [x0, y0, x1, y1] format, and ``boxes1``/``boxes2`` must have the same length.
+
+    Returns a [N] tensor, one GIoU value per matched pair.
+    """
+    # Degenerate (zero-area) boxes would divide 0/0; eps in the denominators keeps results finite.
+    iou, union = elementwise_box_iou(boxes1, boxes2)
+
+    lt = torch.min(boxes1[:, :2], boxes2[:, :2])
+    rb = torch.max(boxes1[:, 2:], boxes2[:, 2:])
+
+    wh = (rb - lt).clamp(min=0)  # [N,2]
+    area = wh[:, 0] * wh[:, 1]
+
+    eps = 1e-7
+    # Clamp only when enclosing area is zero (degenerate enclosing box) so normal boxes remain exact.
+    return iou - (area - union) / area.clamp(min=eps)
+
+
 def generalized_box_iou(boxes1: Tensor, boxes2: Tensor) -> Tensor:
     """Generalized IoU from https://giou.stanford.edu/
 
