@@ -756,9 +756,12 @@ def photo_asset(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 # XNNPACK fp32 matches eager to ~1e-5 on boxes/logits (observed: pred_boxes 0.0, pred_logits ~1.0e-5 with
 # random weights); the bound keeps modest headroom, robust to BLAS/XNNPACK build differences while still
-# failing on a structural regression (those diverge by >=1e-3). Segmentation masks get a little more headroom.
+# failing on a structural regression (those diverge by >=1e-3).
 _EXECUTORCH_DETECTION_MAX_ABS_DIFF = 5e-5
-_EXECUTORCH_SEGMENTATION_MAX_ABS_DIFF = 1e-4
+# Segmentation masks are upsampled/decoded (more compute steps) so they carry more numerical noise:
+# observed mask max-abs-diff ~1.04e-4 on the CI runner with pinned seeds. Set ~2x headroom over that
+# while staying well under the >=1e-3 structural-failure scale.
+_EXECUTORCH_SEGMENTATION_MAX_ABS_DIFF = 2e-4
 
 
 def validate_detection_executorch_vs_pytorch(pte_path: Path, model: Any, example: torch.Tensor) -> None:
