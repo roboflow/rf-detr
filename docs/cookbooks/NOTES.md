@@ -41,6 +41,8 @@ If jupytext is not installed: `pip install jupytext` (or `uv add jupytext --dev`
 Available labels (reuse these to keep tags standardised): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`.
 Current tag colours are assigned dynamically by the docs UI, so they may change if cards or labels are added or reordered.
 
+Write markdown cells in plain, notebook-portable Markdown only — no MkDocs Material syntax (`!!! note`, `=== "Tab"`, admonition blocks). `mkdocs-jupyter` renders the site copy through the same plain renderer as a raw `.ipynb`, so MkDocs-only syntax shows up as literal text (e.g. `!!! warning "..."`) instead of a styled callout. Use a blockquote (`> **Note:** ...`) for callouts instead.
+
 ## Removing a notebook
 
 1. Delete the `.ipynb` file.
@@ -52,8 +54,9 @@ Current tag colours are assigned dynamically by the docs UI, so they may change 
 | ----------------------------------- | ----------------------------------------------- | ------- |
 | `custom-augmentations.ipynb`        | Custom Augmentations and Live Training Progress | v1.5.0  |
 | `custom-optimizer-scheduler.ipynb`  | Custom Optimizer and LR Scheduler               | v1.9.0  |
-| `export-tensorrt.ipynb`             | Export to TensorRT & Run Inference              | v1.8.3  |
-| `export-executorch.ipynb`           | Export to ExecuTorch & Run Inference            | v1.8.3  |
+| `export-coreml.ipynb`               | Export to Native CoreML & Run Inference         | v1.9.0  |
+| `export-tensorrt.ipynb`             | Export to TensorRT & Run Inference              | v1.9.0  |
+| `export-executorch.ipynb`           | Export to ExecuTorch & Run Inference            | v1.9.0  |
 | `fine-tune_detection.ipynb`         | Fine-Tune RF-DETR Object Detection              | v1.8.0  |
 | `fine-tune_keypoints.ipynb`         | Fine-Tune RF-DETR Keypoint Detection            | v1.8.0  |
 | `fine-tune_segmentation.ipynb`      | Fine-Tune RF-DETR Instance Segmentation         | v1.8.2  |
