@@ -204,7 +204,9 @@ class TestUnsupportedCoremlOps:
         # Bypass the real patcher entirely — faking `_PATCHED = True` no longer works: the
         # identity-validated check in ensure_coreml_torch_op_patches would see mapping["__and__"]
         # missing and correctly re-patch it regardless of the flag (that's the fix under test
-        # elsewhere; here we need the *unpatched* state to actually hold).
+        # elsewhere; here we need the *unpatched* state to actually hold). Patch must target
+        # torch_ops (the source module unsupported_coreml_ops lazily imports from on every call),
+        # not op_coverage — op_coverage never reads its own namespace for this name.
         monkeypatch.setattr(torch_ops, "ensure_coreml_torch_op_patches", lambda: None)
         gaps = unsupported_coreml_ops(ep)
         assert "__and__" in gaps
@@ -237,10 +239,11 @@ class TestUnsupportedCoremlOps:
         import rfdetr
 
         model_cls = getattr(rfdetr, model_cls_name)
-        model = model_cls(pretrain_weights=None).model.model
+        detector = model_cls(pretrain_weights=None)
+        model = detector.model.model
         model.eval()
         model.export()
-        resolution = int(getattr(model, "resolution", 384))
+        resolution = int(detector.model.resolution)
         example = torch.randn(1, 3, resolution, resolution)
         gaps = unsupported_coreml_ops(_export_decomposed(model, example))
         unexpected = set(gaps) - _KNOWN_NANO_UNSUPPORTED_KINDS
