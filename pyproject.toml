@@ -288,6 +288,9 @@ pythonpath = ["src", "."]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
     "coco17: tests that require COCO 2017 images or annotations",
+    # `flaky` is provided by pytest-rerunfailures; registered here too for clarity and to stay
+    # safe under --strict-markers (used by tests/benchmarks/test_training_*.py).
+    "flaky: tests that may fail due to nondeterminism and are retried via pytest-rerunfailures",
     "e2e_executorch: ExecuTorch end-to-end export + numerical parity (opt-in)",
     "e2e_coreml: CoreML end-to-end convert + numerical parity (structured and photo inputs; opt-in)",
     "e2e_tensorrt: TensorRT end-to-end ONNX->engine build + parity (GPU, opt-in)",
