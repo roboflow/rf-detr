@@ -23,6 +23,8 @@ def unsupported_coreml_ops(exported_program: ExportedProgram) -> Counter[str]:
     Raises:
         ImportError: If ``coremltools`` is not installed.
     """
+    # `_TORCH_OPS_REGISTRY` and `sanitize_op_kind` are coremltools PRIVATE internals — see the pin
+    # rationale + fail-loud policy note in torch_ops.py's `ensure_coreml_torch_op_patches`.
     from coremltools.converters.mil.frontend.torch.ops import _TORCH_OPS_REGISTRY
     from coremltools.converters.mil.frontend.torch.utils import sanitize_op_kind
 

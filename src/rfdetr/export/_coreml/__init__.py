@@ -9,7 +9,7 @@ Import converters from submodules, not this package root.
 """
 
 try:
-    import coremltools  # noqa: F401
+    import coremltools  # noqa: F401 — availability check only, never referenced by name
 
     _IS_COREMLTOOLS_AVAILABLE = True
 except ImportError:

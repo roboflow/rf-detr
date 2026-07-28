@@ -17,10 +17,10 @@ Note:
     The produced ``.mlpackage`` expects ImageNet mean/std normalization
     (``mean=[0.485, 0.456, 0.406]``, ``std=[0.229, 0.224, 0.225]``), same as ONNX.
     :func:`export_coreml` defaults to ``compute_precision=FLOAT32`` for tight CPU parity with
-    eager PyTorch. Pass ``ct.precision.FLOAT16`` to :func:`export_coreml` directly when you want
-    a smaller ANE-oriented bundle (expect larger numeric drift).
-    :meth:`rfdetr.detr.RFDETR.export` ``format="coreml"`` does not expose this knob and always
-    uses the FLOAT32 default.
+    eager PyTorch. Pass ``ct.precision.FLOAT16`` (or the string ``"float16"``) when you want a
+    smaller ANE-oriented bundle (expect larger numeric drift) — either directly to
+    :func:`export_coreml`, or via :meth:`rfdetr.detr.RFDETR.export`'s ``coreml_precision``
+    argument (string form only, so callers don't need to import ``coremltools``).
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ from typing import TYPE_CHECKING
 import torch
 from torch import nn
 
+from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.op_coverage import unsupported_coreml_ops
-from rfdetr.export._coreml.torch_ops import ensure_coreml_torch_op_patches
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
@@ -44,13 +44,9 @@ logger = get_logger()
 
 def _check_coremltools_available(*, raise_error: bool = True) -> bool:
     """Return whether ``coremltools`` is importable."""
-    try:
-        import coremltools  # noqa: F401
-    except Exception as exc:
+    if not _IS_COREMLTOOLS_AVAILABLE:
         if raise_error:
-            raise ImportError(
-                "CoreML export requires `coremltools`. Install it with: pip install rfdetr[coreml]"
-            ) from exc
+            raise ImportError("CoreML export requires `coremltools`. Install it with: pip install rfdetr[coreml]")
         return False
     return True
 
@@ -62,7 +58,7 @@ def export_coreml(
     *,
     variant_name: str | None = None,
     verbose: bool = True,
-    compute_precision: ct.precision | None = None,
+    compute_precision: "ct.precision | str | None" = None,
 ) -> Path:
     """Export an RF-DETR model to a CoreML ``.mlpackage``.
 
@@ -77,18 +73,28 @@ def export_coreml(
         variant_name: Model variant identifier (e.g. ``"rfdetr-nano"``). When provided, the bundle
             is named ``{variant_name}.mlpackage`` instead of ``inference_model.mlpackage``.
         verbose: When ``True``, log export progress at info level.
-        compute_precision: coremltools precision for ``ct.convert`` (e.g. ``ct.precision.FLOAT32`` /
-            ``FLOAT16``). ``None`` selects ``FLOAT32`` (tight CPU parity with eager PyTorch).
-            Only available on this function — :meth:`rfdetr.detr.RFDETR.export` does not forward it.
+        compute_precision: coremltools precision for ``ct.convert`` — a ``ct.precision`` value
+            (e.g. ``ct.precision.FLOAT32`` / ``FLOAT16``), the equivalent string (``"float32"`` /
+            ``"float16"``), or ``None`` to select ``FLOAT32`` (tight CPU parity with eager PyTorch).
+            The string form is what :meth:`rfdetr.detr.RFDETR.export` forwards via its
+            ``coreml_precision`` argument, so callers don't need to import ``coremltools`` just to
+            pick a precision.
 
     Returns:
-        Path to the exported ``.mlpackage`` bundle.
+        Path to the exported ``.mlpackage`` bundle. Output tensor names in the saved spec are
+        coremltools-inferred, not renamed to ``dets``/``labels``/etc. — consumers must match outputs
+        by **position**, in the same order as the model's ONNX ``output_names`` contract.
 
     Raises:
-        ImportError: If ``coremltools`` is not installed.
+        ImportError: If ``coremltools`` is not installed, or if ``coremltools.convert`` triggers a
+            lazy import of a private submodule that fails even though the top-level package is
+            installed (e.g. a partial/ABI-mismatched install).
         NotImplementedError: If the exported graph contains op kinds missing from coremltools'
             Torch registry (fast-fail checklist).
-        RuntimeError: If ``torch.export`` or ``coremltools.convert`` fails.
+        ValueError: If ``torch.export`` or ``coremltools.convert`` raises it directly (e.g. invalid
+            precision/shape arguments) — passed through unwrapped rather than re-wrapped as
+            ``RuntimeError``.
+        RuntimeError: If ``torch.export`` or ``coremltools.convert`` fails for any other reason.
     """
     _check_coremltools_available()
     import coremltools as ct
@@ -104,6 +110,14 @@ def export_coreml(
 
     if compute_precision is None:
         compute_precision = ct.precision.FLOAT32
+    elif isinstance(compute_precision, str):
+        try:
+            compute_precision = {"float32": ct.precision.FLOAT32, "float16": ct.precision.FLOAT16}[compute_precision]
+        except KeyError:
+            raise ValueError(
+                f"compute_precision must be 'float32', 'float16', a ct.precision value, or None, "
+                f"got {compute_precision!r}"
+            ) from None
 
     model = model.eval()
     if verbose:
@@ -115,8 +129,9 @@ def export_coreml(
             # break lowering under strict=True on current torch.export + converter stacks.
             exported_program = torch.export.export(model, (input_tensors,), strict=False)
             exported_program = exported_program.run_decompositions({})
-            # Patch registry gaps (e.g. aten.alias → coremltools noop) before checklist + convert.
-            ensure_coreml_torch_op_patches()
+            # unsupported_coreml_ops() applies ensure_coreml_torch_op_patches() itself before
+            # scanning (registry gaps, e.g. aten.alias → coremltools noop, must be patched before
+            # the checklist runs) — no separate call needed here.
             coverage = unsupported_coreml_ops(exported_program)
             if coverage:
                 summary = f"CoreML op registry gaps: {dict(coverage)}"
@@ -131,6 +146,10 @@ def export_coreml(
                 compute_precision=compute_precision,
             )
     except (ImportError, NotImplementedError, ValueError):
+        # ImportError here is not dead code even though _check_coremltools_available() already
+        # verified the top-level `coremltools` package above: ct.convert() lazily imports private
+        # submodules (MIL passes, backend components) that can still fail on a partial/ABI-mismatched
+        # install even after the top-level import succeeds.
         raise
     except Exception as exc:
         logger.exception("CoreML export failed")
