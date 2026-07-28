@@ -15,4 +15,3 @@ try:
 except ImportError:
     _IS_COREMLTOOLS_AVAILABLE = False
 
-__all__ = ["_IS_COREMLTOOLS_AVAILABLE"]
