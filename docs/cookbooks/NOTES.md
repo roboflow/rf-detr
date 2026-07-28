@@ -41,7 +41,7 @@ If jupytext is not installed: `pip install jupytext` (or `uv add jupytext --dev`
 Available labels (reuse these to keep tags standardised): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`.
 Current tag colours are assigned dynamically by the docs UI, so they may change if cards or labels are added or reordered.
 
-Write markdown cells in plain, notebook-portable Markdown only — no MkDocs Material syntax (`!!! note`, `=== "Tab"`, admonition blocks). `mkdocs-jupyter` renders the site copy through the same plain renderer as a raw `.ipynb`, so MkDocs-only syntax shows up as literal text (e.g. `!!! warning "..."`) instead of a styled callout. Use a blockquote (`> **Note:** ...`) for callouts instead.
+For newly added or updated notebooks, write markdown cells in plain, notebook-portable Markdown only — no MkDocs Material syntax (`!!! note`, `=== "Tab"`, admonition blocks). `mkdocs-jupyter` renders the site copy through the same plain renderer as a raw `.ipynb`, so MkDocs-only syntax shows up as literal text (e.g. `!!! warning "..."`) instead of a styled callout. Use a blockquote (`> **Note:** ...`) for callouts instead.
 
 ## Removing a notebook
 
