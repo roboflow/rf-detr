@@ -311,7 +311,8 @@ class TRTInference:
         if not self.sync_mode:
             if not cuda:
                 raise ImportError(
-                    "pycuda is not installed. Please install `pycuda` to use TRTInference with async mode."
+                    "pycuda is not installed. Install the `tensorrt-bench` extra "
+                    "(pip install 'rfdetr[tensorrt-bench]') to use TRTInference with async mode."
                 )
 
             self.stream = cuda.Stream()

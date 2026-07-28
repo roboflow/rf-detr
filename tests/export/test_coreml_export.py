@@ -8,10 +8,10 @@
 Covers:
 * ``export_coreml()`` — argument/dependency behaviour (``coremltools`` mocked where needed)
 * ``format="coreml"`` wiring through ``RFDETR.export()``
-* End-to-end convert + numerical parity (``@pytest.mark.coreml_e2e``, opt-in)
+* End-to-end convert + numerical parity (``@pytest.mark.e2e_coreml``, opt-in)
 
 Parity inputs are spatially structured (gradient + checkerboard) and
-``download_assets(ImageAssets.PEOPLE_WALKING)`` under ``coreml_e2e`` (no committed images).
+``download_assets(ImageAssets.PEOPLE_WALKING)`` under ``e2e_coreml`` (no committed images).
 Random Gaussian noise is intentionally avoided: it can hide export/runtime divergence that
 only appears on correlated image structure.
 """
@@ -27,82 +27,23 @@ from unittest import mock
 import numpy as np
 import pytest
 import torch
-import torchvision.transforms.functional as TF  # noqa: N812 — standard torchvision alias
 from PIL import Image
 from supervision.assets import ImageAssets, download_assets
 
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.converter import _check_coremltools_available, export_coreml
+from tests.export.conftest import (
+    _parity_input_from_image,
+    _structured_parity_input,
+    eager_reference_tensors,
+    max_abs_output_diffs,
+)
 
 coreml_only = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="coremltools not installed")
 
 # FLOAT32 CoreML convert matches eager to ~1e-5 on boxes/logits; masks need a bit more
 # headroom (~8e-5 observed on SegNano). Bound stays well under structural-failure scale (>=1e-3).
 _COREML_MAX_ABS_DIFF = 1e-4
-
-# ImageNet stats used by RF-DETR preprocess / exported CoreML bundles.
-_IMAGENET_MEAN = (0.485, 0.456, 0.406)
-_IMAGENET_STD = (0.229, 0.224, 0.225)
-
-
-def _structured_parity_input(
-    batch: int,
-    channels: int,
-    height: int,
-    width: int,
-) -> torch.Tensor:
-    """Build a deterministic, spatially correlated ``NCHW`` tensor for export parity.
-
-    Combines a smooth spatial gradient with a coarse checkerboard so the backbone sees
-    local structure (unlike ``torch.randn``, which can mask export/runtime divergence).
-
-    Args:
-        batch: Batch size.
-        channels: Channel count (typically 3).
-        height: Spatial height.
-        width: Spatial width.
-
-    Returns:
-        Float tensor shaped ``(batch, channels, height, width)`` in roughly ImageNet-normalized range.
-    """
-    ys = torch.linspace(-1.0, 1.0, height).view(1, 1, height, 1)
-    xs = torch.linspace(-1.0, 1.0, width).view(1, 1, 1, width)
-    gradient = (0.35 * ys + 0.25 * xs).expand(1, channels, height, width).clone()
-    # Per-channel offset so RGB planes are not identical.
-    for c in range(channels):
-        gradient[:, c] = gradient[:, c] + 0.05 * (c - 1)
-
-    tile = 16
-    yy = (torch.arange(height).view(height, 1) // tile) % 2
-    xx = (torch.arange(width).view(1, width) // tile) % 2
-    checker = ((yy + xx) % 2).to(dtype=torch.float32).view(1, 1, height, width)
-    checker = (checker * 0.4 - 0.2).expand(1, channels, height, width)
-
-    sample = gradient + checker
-    return sample.expand(batch, channels, height, width).contiguous()
-
-
-def _parity_input_from_image(path: Path, resolution: int) -> torch.Tensor:
-    """Load an RGB image, resize to square ``resolution``, and ImageNet-normalize (predict-style).
-
-    Args:
-        path: Path to an RGB image file.
-        resolution: Square side length matching the exported model.
-
-    Returns:
-        Float tensor shaped ``(1, 3, resolution, resolution)``.
-
-    Raises:
-        FileNotFoundError: If ``path`` does not exist.
-    """
-    if not path.is_file():
-        raise FileNotFoundError(f"parity fixture image not found: {path}")
-    with Image.open(path) as img:
-        image = img.convert("RGB")
-    tensor = TF.to_tensor(image)
-    tensor = TF.resize(tensor, [resolution, resolution], antialias=False)
-    tensor = TF.normalize(tensor, _IMAGENET_MEAN, _IMAGENET_STD)
-    return tensor.unsqueeze(0)
 
 
 def _coreml_parity_diffs(
@@ -129,11 +70,7 @@ def _coreml_parity_diffs(
     """
     import coremltools as ct
 
-    with torch.no_grad():
-        eager_out = pytorch_model(example_input.clone())
-    if not isinstance(eager_out, tuple):
-        raise AssertionError(f"export-mode forward must return a tuple, got {type(eager_out)!r}")
-    eager_tensors = [t.detach().float().cpu() for t in eager_out if isinstance(t, torch.Tensor)]
+    eager_tensors = eager_reference_tensors(pytorch_model, example_input)
 
     # CPU_ONLY avoids ANE/GPU fp16 execution drift when validating FLOAT32 bundles.
     mlmodel = ct.models.MLModel(str(mlpackage_path), compute_units=ct.ComputeUnit.CPU_ONLY)
@@ -143,17 +80,7 @@ def _coreml_parity_diffs(
     prediction = mlmodel.predict({input_name: np.ascontiguousarray(example_input.detach().cpu().numpy())})
     coreml_tensors = [torch.from_numpy(np.asarray(prediction[name], dtype=np.float32)) for name in output_names]
 
-    assert len(coreml_tensors) == len(eager_tensors), (
-        f"CoreML output count {len(coreml_tensors)} != PyTorch {len(eager_tensors)} (spec names={output_names})"
-    )
-    diffs: list[float] = []
-    for idx, (eager, coreml) in enumerate(zip(eager_tensors, coreml_tensors)):
-        assert eager.shape == coreml.shape, (
-            f"output[{idx}] shape mismatch: PyTorch {tuple(eager.shape)} vs CoreML {tuple(coreml.shape)} "
-            f"(name={output_names[idx]!r})"
-        )
-        diffs.append((eager - coreml).abs().max().item())
-    return diffs
+    return max_abs_output_diffs(eager_tensors, coreml_tensors, check_shape=True, names=output_names)
 
 
 def validate_detection_coreml_vs_pytorch(
@@ -442,9 +369,9 @@ def coreml_export(
 
 
 @coreml_only
-@pytest.mark.coreml_e2e
+@pytest.mark.e2e_coreml
 class TestCoreMLEndToEnd:
-    """Real CoreML export + FLOAT32 CPU numerical parity (``-m coreml_e2e``)."""
+    """Real CoreML export + FLOAT32 CPU numerical parity (``-m e2e_coreml``)."""
 
     def test_mlpackage_written(self, coreml_export: tuple[Any, torch.Tensor, Path, Any]) -> None:
         """Export must write a non-empty ``.mlpackage`` directory/bundle."""

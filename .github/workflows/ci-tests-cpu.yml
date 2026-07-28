@@ -65,7 +65,7 @@ jobs:
       - name: 🧪 Run the Test
         run: |
           uv run --no-sync pytest src/ tests/ \
-            -n 2 -m "not gpu and not coco17 and not coreml_e2e" \
+            -n 2 -m "not gpu and not coco17 and not e2e_coreml and not e2e_executorch" \
             --ignore=tests/run_smoke_all_models.py \
             --ignore=tests/legacy/test_checkpoint_compat.py \
             --cov=rfdetr --cov-report=xml \
