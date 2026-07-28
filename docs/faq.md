@@ -43,7 +43,7 @@ It is the recommended target, not a hard requirement. Effective batch size is `b
 
 ## What export formats are supported?
 
-ONNX, TFLite (FP32/FP16/INT8), and ExecuTorch (XNNPACK, CoreML, QNN). TensorRT runs via the exported ONNX model. Install the matching extra — `rfdetr[onnx]`, `rfdetr[tflite]`, or `rfdetr[executorch]` — then call `model.export()`. See [Export Model](learn/export.md).
+ONNX, TFLite (FP32/FP16/INT8), ExecuTorch (XNNPACK, CoreML, QNN), and native CoreML (`.mlpackage`). TensorRT runs via the exported ONNX model. Install the matching extra — `rfdetr[onnx]`, `rfdetr[tflite]`, `rfdetr[executorch]`, or `rfdetr[coreml]` — then call `model.export()`. Native CoreML (`format="coreml"`) is distinct from the ExecuTorch CoreML backend (`format="executorch", backend="coreml"`) — the former produces a `.mlpackage` directly, the latter a `.pte`. See [Export Model](learn/export.md).
 
 ## How do I evaluate a trained model and get mAP?
 

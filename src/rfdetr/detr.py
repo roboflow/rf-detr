@@ -1403,8 +1403,9 @@ class RFDETR:
         soc: str | None = None,
         fp16: bool = True,
         notes: object = None,
+        coreml_precision: str | None = None,
     ) -> Path:
-        """Export the trained model to ONNX, TFLite, TensorRT, or ExecuTorch format.
+        """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, or CoreML format.
 
         See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_ for more information.
 
@@ -1421,12 +1422,13 @@ class RFDETR:
                 at runtime (spatial dimensions always stay fixed).  Applies to the ONNX and TFLite graphs.  Not
                 supported for ExecuTorch export on executorch 1.3.1 (raises ``NotImplementedError``): the runtime
                 cannot resize RF-DETR's windowed-attention reshapes, so a dynamic ``.pte`` runs only at the traced
-                batch — export one ``.pte`` per batch size instead.
+                batch — export one ``.pte`` per batch size instead.  Also unsupported for native CoreML
+                (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
             patch_size: Backbone patch size. Defaults to the value stored in
                 ``model_config.patch_size`` (typically 14 or 16). When provided explicitly it must match the
                 instantiated model's patch size. Shape divisibility is validated against ``patch_size * num_windows``.
-            format: Export format — ``"onnx"`` (default), ``"tflite"``, ``"tensorrt"`` (alias: ``"trt"``), or
-                ``"executorch"`` (alias: ``"pte"``).
+            format: Export format — ``"onnx"`` (default), ``"tflite"``, ``"tensorrt"`` (alias: ``"trt"``),
+                ``"executorch"`` (alias: ``"pte"``), or ``"coreml"``.
                 ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: ``"tflite"`` via
                 ``onnx2tf`` (requires ``pip install rfdetr[tflite]``); ``"tensorrt"`` via the TensorRT
                 Python API (requires ``pip install rfdetr[tensorrt]``).  Unlike ``"onnx"``/
@@ -1435,10 +1437,21 @@ class RFDETR:
                 When ``"executorch"`` is selected the model is exported directly via ``torch.export`` to an ExecuTorch
                 ``.pte`` file (no ONNX step), configured by *backend* / *soc* below.  Requires
                 ``pip install rfdetr[executorch]``.
+                When ``"coreml"`` is selected the model is exported via ``torch.export`` + ``coremltools`` to a
+                native ``.mlpackage`` (no ONNX step; requires ``pip install rfdetr[coreml]``). This is distinct from
+                ExecuTorch's ``format="executorch", backend="coreml"`` path, which still produces a ``.pte``. If
+                you know that ExecuTorch delegate and expect ``format="coreml"`` to mean the same thing: it does
+                not — pass ``format="executorch", backend="coreml"`` for the ``.pte`` route instead. Passing both
+                ``format="coreml"`` and ``backend="coreml"`` together does **not** fall through to the ExecuTorch
+                delegate; ``backend`` is ignored (with a warning) and the native ``.mlpackage`` path always runs.
+                Keypoint models are untested with ``format="coreml"`` — detection and segmentation have
+                registry-clean and numerical-parity test coverage (see
+                ``tests/export/test_coreml_op_coverage.py`` / ``test_coreml_export.py``), keypoint models
+                currently do not.
 
                 .. warning::
-                    TFLite and ExecuTorch export are experimental and subject to change; upstream dependency
-                    instabilities (``onnx2tf``, ``ai_edge_litert``, ``executorch``) may affect results.
+                    TFLite, ExecuTorch, and CoreML export are experimental and subject to change; upstream dependency
+                    instabilities (``onnx2tf``, ``ai_edge_litert``, ``executorch``, ``coremltools``) may affect results.
             quantization: TFLite quantization mode (ignored when
                 ``format="onnx"``).  One of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``.  ``None`` / ``"fp32"`` /
                 ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally produces an INT8-quantized
@@ -1478,21 +1491,25 @@ class RFDETR:
                 property.  When ``None`` no metadata entry is written.  String values are stored verbatim; all other
                 types are JSON-encoded so consumers must call ``json.loads()`` to recover a dict or list.  The same
                 value can be passed to :meth:`train` so the checkpoint and the ONNX file share the same provenance
-                information.  **Ignored for ``format="executorch"``**: the ``.pte`` file has no metadata slot, and
-                a non-``None`` value emits a ``UserWarning`` instead of being embedded.
+                information.  **Ignored for ``format="executorch"`` and ``format="coreml"``**: those artifacts have
+                no ONNX-style metadata slot, and a non-``None`` value emits a ``UserWarning`` instead of being
+                embedded.
+            coreml_precision: ``ct.convert`` compute precision for ``format="coreml"`` — ``None`` (default) or
+                ``"float32"`` selects FP32 (tight CPU parity with eager PyTorch); ``"float16"`` selects a smaller
+                ANE-oriented bundle (expect larger numeric drift). Ignored for every other format.
 
         Returns:
-            Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``, or ``.pte``).
+            Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``, ``.pte``, or ``.mlpackage``).
 
         Raises:
             ValueError: If ``format`` is unrecognized; if ``format="executorch"`` and ``backend`` is missing,
                 unrecognized, or (for ``backend="qnn"``) ``soc`` is missing; or if the resolved export shape is
                 not divisible by ``patch_size * num_windows``.
-            NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"`` — the
-                ExecuTorch runtime cannot resize RF-DETR's windowed-attention reshapes for a variable batch size.
+            NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"`` or
+                ``format="coreml"`` — those paths require a fixed batch size.
             ImportError: If the optional dependencies for the requested ``format``/``backend`` are not installed
-                (e.g. ``rfdetr[onnx]``, ``rfdetr[executorch]``, ``coremltools`` for ``backend="coreml"``, or an
-                ExecuTorch source build against the QAIRT SDK for ``backend="qnn"``).
+                (e.g. ``rfdetr[onnx]``, ``rfdetr[executorch]``, ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
+                ``backend="coreml"``, or an ExecuTorch source build against the QAIRT SDK for ``backend="qnn"``).
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
@@ -1503,15 +1520,18 @@ class RFDETR:
         from rfdetr.export._backend import _resolve_export_backend
 
         backend, soc = _resolve_export_backend(format, backend, soc)
-        # Fail fast: dynamic_batch is statically incompatible with ExecuTorch; refuse before any forward pass
-        # so the user doesn't pay the full DINOv2 forward (seconds + GBs) before seeing the error. This is an
-        # intentional lightweight duplicate of the authoritative check in
-        # ``rfdetr.export._executorch.converter.export_executorch`` — the detailed "why" lives there; this copy
-        # exists only to fail before the heavy ``[executorch]`` import, so keep the two messages compatible.
+        # Fail fast: dynamic_batch is statically incompatible with ExecuTorch / CoreML; refuse before any forward
+        # pass so the user doesn't pay the full DINOv2 forward (seconds + GBs) before seeing the error. These are
+        # intentional early checks before heavy optional imports (ExecuTorch also checks in the converter).
         if dynamic_batch and format == "executorch":
             raise NotImplementedError(
                 "ExecuTorch export does not support dynamic_batch (see export_executorch for details). "
                 "Export one .pte per batch size instead."
+            )
+        if dynamic_batch and format == "coreml":
+            raise NotImplementedError(
+                "CoreML export does not support dynamic_batch (fixed shapes are required for reliable "
+                "ANE / GPU scheduling). Export one .mlpackage per batch size instead."
             )
         logger.info(f"Exporting model to {format} format")
         try:
@@ -1629,6 +1649,19 @@ class RFDETR:
                     variant_name=getattr(self, "size", None),
                     dynamic_batch=dynamic_batch,
                     notes=notes,
+                )
+
+            if format == "coreml":
+                from rfdetr.export._backend import _export_coreml_format
+
+                return _export_coreml_format(
+                    model,
+                    input_tensors,
+                    output_dir_path,
+                    variant_name=getattr(self, "size", None),
+                    verbose=verbose,
+                    notes=notes,
+                    compute_precision=coreml_precision,
                 )
 
             output_file = export_onnx(
