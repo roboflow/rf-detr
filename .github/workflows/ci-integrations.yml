@@ -198,7 +198,7 @@ jobs:
 
       - name: 🚀 Install Packages (tensorrt + onnx extras)
         timeout-minutes: 8
-        # [tensorrt] provides pycuda/tensorrt/polygraphy for the engine build; [onnx] provides the ONNX
+        # [tensorrt] provides tensorrt/polygraphy for the engine build; [onnx] provides the ONNX
         # export toolchain (the e2e exports RFDETRNano to ONNX first). --group ci-gpu-pin matches the GPU
         # runner's CUDA driver (torch<2.11), same as ci-tests-gpu.yml.
         run: uv pip install -e ".[tensorrt,onnx,train,augment,cli,visual]" --group tests --group ci-gpu-pin
@@ -211,6 +211,42 @@ jobs:
 
           assert _IS_TENSORRT_AVAILABLE, "tensorrt/polygraphy installed but not detected as available"
           print("tensorrt import OK")
+        shell: python
+
+      - name: 🔗 Expose CUDA runtime (libcudart.so) to the loader
+        # The engine build succeeds, but polygraphy's TrtRunner separately dlopen's the *unversioned*
+        # `libcudart.so` for CUDA stream management. The GPU wheels ship it only as `libcudart.so.12`
+        # (e.g. under torch/lib), which the dynamic loader does not resolve by bare name — hence
+        # `OSError: libcudart.so: cannot open shared object file` at runtime. Symlink the versioned
+        # library to `libcudart.so` in a job-local dir and prepend it to LD_LIBRARY_PATH.
+        run: |
+          import glob
+          import os
+          import pathlib
+          import site
+
+          roots = list(site.getsitepackages())
+          venv = os.environ.get("VIRTUAL_ENV")
+          if venv:
+              roots.append(os.path.join(venv, "lib"))
+          candidates = []
+          for root in roots:
+              candidates += glob.glob(os.path.join(root, "**", "libcudart.so*"), recursive=True)
+          candidates += glob.glob("/usr/local/cuda*/lib64/libcudart.so*")
+          candidates = sorted({c for c in candidates if os.path.exists(c)}, key=len)
+          assert candidates, "libcudart.so* not found in installed wheels or system CUDA"
+          source = candidates[0]
+
+          lib_dir = pathlib.Path(os.environ["RUNNER_TEMP"]) / "cudalibs"
+          lib_dir.mkdir(parents=True, exist_ok=True)
+          link = lib_dir / "libcudart.so"
+          if link.is_symlink() or link.exists():
+              link.unlink()
+          link.symlink_to(source)
+          print(f"linked {link} -> {source}")
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"LD_LIBRARY_PATH={lib_dir}{os.pathsep}{os.environ.get('LD_LIBRARY_PATH', '')}\n")
         shell: python
 
       - name: 🧪 Run TensorRT end-to-end parity tests
