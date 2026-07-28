@@ -8,10 +8,10 @@
 Covers:
 * ``export_coreml()`` — argument/dependency behaviour (``coremltools`` mocked where needed)
 * ``format="coreml"`` wiring through ``RFDETR.export()``
-* End-to-end convert + numerical parity (``@pytest.mark.coreml_e2e``, opt-in)
+* End-to-end convert + numerical parity (``@pytest.mark.e2e_coreml``, opt-in)
 
 Parity inputs are spatially structured (gradient + checkerboard) and
-``download_assets(ImageAssets.PEOPLE_WALKING)`` under ``coreml_e2e`` (no committed images).
+``download_assets(ImageAssets.PEOPLE_WALKING)`` under ``e2e_coreml`` (no committed images).
 Random Gaussian noise is intentionally avoided: it can hide export/runtime divergence that
 only appears on correlated image structure.
 """
@@ -442,9 +442,9 @@ def coreml_export(
 
 
 @coreml_only
-@pytest.mark.coreml_e2e
+@pytest.mark.e2e_coreml
 class TestCoreMLEndToEnd:
-    """Real CoreML export + FLOAT32 CPU numerical parity (``-m coreml_e2e``)."""
+    """Real CoreML export + FLOAT32 CPU numerical parity (``-m e2e_coreml``)."""
 
     def test_mlpackage_written(self, coreml_export: tuple[Any, torch.Tensor, Path, Any]) -> None:
         """Export must write a non-empty ``.mlpackage`` directory/bundle."""

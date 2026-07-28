@@ -770,7 +770,7 @@ def exported(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, torch.Tenso
 
 
 @executorch_only
-@pytest.mark.executorch
+@pytest.mark.e2e_executorch
 class TestExecutorchEndToEnd:
     """End-to-end export of a real RF-DETR model, gated on the executorch package."""
 

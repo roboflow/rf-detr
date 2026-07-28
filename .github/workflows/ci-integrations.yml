@@ -107,7 +107,7 @@ jobs:
         # executorch export is heavy; run single-worker as advised for this suite.
         run: |
           uv run --no-sync pytest tests/export/test_executorch_export.py \
-            -m executorch -n 1 \
+            -m e2e_executorch -n 1 \
             --timeout=600 \
             --durations=20
 
@@ -179,11 +179,11 @@ jobs:
 
       - name: 🧪 Run CoreML end-to-end parity tests
         # Real ct.convert + mlmodel.predict + download_assets is heavy/network; single-worker,
-        # opt-in marker (see pyproject.toml `coreml_e2e`) — deliberately excluded from the
-        # ci-tests-cpu.yml default filter (`and not coreml_e2e`) so it only runs here.
+        # opt-in marker (see pyproject.toml `e2e_coreml`) — deliberately excluded from the
+        # ci-tests-cpu.yml default filter (`and not e2e_coreml`) so it only runs here.
         run: |
           uv run --no-sync pytest tests/export/test_coreml_export.py \
-            -m coreml_e2e -n 1 \
+            -m e2e_coreml -n 1 \
             --timeout=600 \
             --durations=20
 
