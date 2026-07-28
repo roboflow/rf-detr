@@ -69,18 +69,33 @@ def box_iou(boxes1: Tensor, boxes2: Tensor) -> tuple[Tensor, Tensor]:
     return iou, union
 
 
+def _assert_equal_length(boxes1: Tensor, boxes2: Tensor) -> None:
+    """Reject unequal-length operands so a length-1 side cannot silently broadcast."""
+    if boxes1.shape[0] != boxes2.shape[0]:
+        raise ValueError(
+            "elementwise box ops expect boxes1 and boxes2 to have the same length, "
+            f"got {boxes1.shape[0]} and {boxes2.shape[0]}"
+        )
+
+
 def elementwise_box_iou(boxes1: Tensor, boxes2: Tensor) -> tuple[Tensor, Tensor]:
     """Compute IoU and union for pre-matched box pairs.
 
     Unlike ``box_iou``, this avoids materializing the full NxN pairwise matrix
     (of which only the diagonal is used for matched pairs), so peak memory is
     O(N) instead of O(N^2). ``boxes1`` and ``boxes2`` must have the same length
-    and be in [x0, y0, x1, y1] format.
+    and be in [x0, y0, x1, y1] format; a length mismatch raises ``ValueError``
+    rather than silently broadcasting a length-1 operand.
+
+    The numerics (op order and the ``eps=1e-7`` union clamp) are identical to the
+    diagonal of ``box_iou``, so results carry no dtype dependence beyond that of
+    the pairwise version under FP16/FP32.
 
     Returns:
         iou: the [N] tensor of IoU values for each matched pair.
         union: the [N] tensor of union areas for each matched pair.
     """
+    _assert_equal_length(boxes1, boxes2)
     area1 = box_area(boxes1)
     area2 = box_area(boxes2)
 
@@ -104,10 +119,12 @@ def elementwise_generalized_box_iou(boxes1: Tensor, boxes2: Tensor) -> Tensor:
 
     Equivalent to the diagonal of ``generalized_box_iou`` but without building the
     NxN matrix, giving O(N) instead of O(N^2) peak memory. The boxes should be in
-    [x0, y0, x1, y1] format, and ``boxes1``/``boxes2`` must have the same length.
+    [x0, y0, x1, y1] format, and ``boxes1``/``boxes2`` must have the same length; a
+    length mismatch raises ``ValueError`` rather than silently broadcasting.
 
     Returns a [N] tensor, one GIoU value per matched pair.
     """
+    _assert_equal_length(boxes1, boxes2)
     # Degenerate (zero-area) boxes would divide 0/0; eps in the denominators keeps results finite.
     iou, union = elementwise_box_iou(boxes1, boxes2)
 
