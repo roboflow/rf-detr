@@ -1,5 +1,5 @@
 ---
-description: Export RF-DETR models to ONNX, TensorRT, TFLite, and ExecuTorch (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.
+description: Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, and native CoreML (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.
 ---
 
 # Export RF-DETR Model
@@ -12,8 +12,10 @@ description: Export RF-DETR models to ONNX, TensorRT, TFLite, and ExecuTorch (FP
     - INT8 quantization requires calibration data from your dataset for accurate results
     - Custom input resolutions supported (must be divisible by `patch_size × num_windows`, which varies by model variant)
     - Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN)
+    - Export directly to native CoreML (`.mlpackage`) for Xcode / Apple-platform deployment — see
+        [Native CoreML Export](#native-coreml-export-mlpackage)
 
-RF-DETR supports exporting models to ONNX, TFLite, and ExecuTorch formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
+RF-DETR supports exporting models to ONNX, TFLite, ExecuTorch, and native CoreML formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
 
 ## Installation
 
@@ -28,6 +30,9 @@ pip install "rfdetr[tflite]"
 
 # ExecuTorch export (on-device inference: XNNPACK/CoreML/QNN)
 pip install "rfdetr[executorch]"
+
+# Native CoreML export (.mlpackage; macOS only)
+pip install "rfdetr[coreml]"
 ```
 
 ## Basic Export
@@ -63,7 +68,7 @@ The `export()` method accepts several parameters to customize the export process
 | Parameter          | Default    | Description                                                                                                                                                                                      |
 | ------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `output_dir`       | `"output"` | Directory where the exported model will be saved.                                                                                                                                                |
-| `format`           | `"onnx"`   | Export format: `"onnx"`, `"tflite"`, `"tensorrt"` (alias: `"trt"`), or `"executorch"`.                                                                                                           |
+| `format`           | `"onnx"`   | Export format: `"onnx"`, `"tflite"`, `"tensorrt"` (alias: `"trt"`), `"executorch"`, or `"coreml"`.                                                                                               |
 | `quantization`     | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`.                                                                                              |
 | `calibration_data` | `None`     | Calibration data for TFLite export. Image directory, `.npy` file path, NumPy array, or `None`. See [TFLite Export](#tflite-export).                                                              |
 | `max_images`       | `100`      | Maximum number of images to load from a calibration directory for TFLite INT8 quantization. Ignored for other calibration data formats.                                                          |
@@ -79,6 +84,7 @@ The `export()` method accepts several parameters to customize the export process
 | `soc`              | `None`     | Target SoC chip identifier for the `"qnn"` backend (e.g. `"SM8650"` for Snapdragon 8 Gen 3). Required when `backend="qnn"`.                                                                      |
 | `fp16`             | `True`     | Build the TensorRT engine with FP16 precision (only used when `format="tensorrt"`). Pass `False` to build an FP32 engine — required on TensorRT builds that do not expose the FP16 builder flag. |
 | `notes`            | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the `"rfdetr_notes"` metadata property.                            |
+| `coreml_precision` | `None`     | Compute precision for `format="coreml"`: `None`/`"float32"` (tight CPU parity with eager PyTorch) or `"float16"` (smaller, ANE-oriented bundle). Ignored for every other format.                 |
 
 ## Advanced Export Examples
 
@@ -121,6 +127,9 @@ model.export(backbone_only=True)
 After running the export, you will find the following files in your output directory:
 
 - `inference_model.onnx` - The exported ONNX model (or `backbone_model.onnx` if `backbone_only=True`)
+- `{variant}.mlpackage` - The exported native CoreML model when `format="coreml"` (see
+    [Native CoreML Export](#native-coreml-export-mlpackage)); `inference_model.mlpackage` if no
+    variant name is available.
 
 ## Optional: Convert ONNX to TensorRT
 
@@ -504,6 +513,13 @@ This produces `output/rfdetr-seg-medium.pte` — the file is named after the mod
 
 ### CoreML Backend (Apple Neural Engine, fp16)
 
+!!! note "Not the same as native CoreML export"
+
+    This is the ExecuTorch delegate — `format="executorch", backend="coreml"` — which produces a
+    `.pte` file for the ExecuTorch runtime. It is distinct from `format="coreml"`, which produces a
+    native `.mlpackage` directly (no ExecuTorch runtime involved); see
+    [Native CoreML Export](#native-coreml-export-mlpackage) below.
+
 The `"coreml"` backend targets Apple devices (iPhone, iPad, Mac) and runs in fp16 on the
 Neural Engine. It requires `coremltools`, which is **not** included in the `rfdetr[executorch]`
 extra — install it separately:
@@ -603,6 +619,99 @@ input_tensor = torch.from_numpy(image_array).float()
 
 # Run inference
 outputs = method.execute([input_tensor])
+boxes, labels = outputs[0], outputs[1]
+```
+
+## Native CoreML Export (`.mlpackage`)
+
+!!! warning "Experimental — Use with Caution"
+
+    Native CoreML export is **experimental and work-in-progress**. `dynamic_batch=True` is not
+    supported — fixed shapes are required for reliable ANE / GPU scheduling. Export one
+    `.mlpackage` per batch size instead.
+
+!!! note "Not the same as the ExecuTorch CoreML backend"
+
+    `format="coreml"` exports directly via `torch.export` + `coremltools` to a native
+    `.mlpackage` (mlprogram, iOS 16+) — no ONNX and no ExecuTorch runtime involved. This is
+    distinct from [`format="executorch", backend="coreml"`](#coreml-backend-apple-neural-engine-fp16),
+    which produces a `.pte` file for the ExecuTorch runtime. Passing both `format="coreml"` and
+    `backend="coreml"` together does not fall through to the ExecuTorch delegate — `backend` is
+    ignored (with a warning) and the native `.mlpackage` path always runs.
+
+RF-DETR's native CoreML export produces a `.mlpackage` you can drag directly into Xcode, with no
+ONNX intermediary and no ExecuTorch runtime dependency — the lowest-friction path for Apple-native
+(iOS / macOS) developers.
+
+### Prerequisites
+
+```bash
+pip install "rfdetr[coreml]"
+```
+
+Requires macOS and `coremltools>=8.0,<10.0`.
+
+### Basic CoreML Export
+
+=== "Object Detection"
+
+    ```python
+    from rfdetr import RFDETRMedium
+
+    model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
+
+    model.export(format="coreml")
+    ```
+
+=== "Image Segmentation"
+
+    ```python
+    from rfdetr import RFDETRSegMedium
+
+    model = RFDETRSegMedium(pretrain_weights="<path/to/checkpoint.pth>")
+
+    model.export(format="coreml")
+    ```
+
+This produces `output/rfdetr-medium.mlpackage` — the file is named after the model variant
+(`{variant}.mlpackage`), not a generic `inference_model.mlpackage`.
+
+### Compute Precision
+
+CoreML export defaults to `FLOAT32` for tight CPU parity with eager PyTorch. Pass
+`coreml_precision="float16"` for a smaller, ANE-oriented bundle (expect larger numeric drift):
+
+```python
+model.export(format="coreml", coreml_precision="float16")
+```
+
+!!! note
+
+    Output tensor names in the saved `.mlpackage` spec are coremltools-inferred, not renamed to
+    `dets`/`labels`/etc. — match outputs by **position**, in the same order as the ONNX
+    `output_names` contract (`dets, labels` for detection; `dets, labels, masks` for segmentation).
+
+### CoreML Inference Example
+
+```python
+import coremltools as ct
+import numpy as np
+from PIL import Image
+
+mlmodel = ct.models.MLModel("output/rfdetr-medium.mlpackage")
+
+image = Image.open("image.jpg").convert("RGB").resize((576, 576))
+image_array = np.array(image, dtype=np.float32) / 255.0
+
+mean = np.array([0.485, 0.456, 0.406])
+std = np.array([0.229, 0.224, 0.225])
+image_array = (image_array - mean) / std
+
+image_array = np.transpose(image_array, (2, 0, 1))  # HWC -> CHW
+image_array = np.expand_dims(image_array, axis=0)  # add batch dimension: (1, 3, H, W)
+
+# Outputs are positional (see the precision note above) — dets, labels, in that order.
+outputs = list(mlmodel.predict({"input": image_array.astype(np.float32)}).values())
 boxes, labels = outputs[0], outputs[1]
 ```
 

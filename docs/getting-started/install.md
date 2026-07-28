@@ -96,6 +96,7 @@ RF-DETR provides several optional extras for additional functionality:
 | `onnx`       | `pip install "rfdetr[onnx]"`       | ONNX export                                              |
 | `tflite`     | `pip install "rfdetr[tflite]"`     | TFLite export (Python 3.12 only)                         |
 | `executorch` | `pip install "rfdetr[executorch]"` | ExecuTorch export (.pte)                                 |
+| `coreml`     | `pip install "rfdetr[coreml]"`     | Native CoreML export (.mlpackage; macOS only)            |
 | `tensorrt`   | `pip install "rfdetr[tensorrt]"`   | TensorRT inference (pycuda, onnxruntime-gpu, tensorrt)   |
 | `augment`    | `pip install "rfdetr[augment]"`    | Custom CPU (Albumentations) + GPU (Kornia) augmentations |
 | `lora`       | `pip install "rfdetr[lora]"`       | LoRA fine-tuning with PEFT                               |
