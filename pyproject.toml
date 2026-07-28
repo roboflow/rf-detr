@@ -95,10 +95,22 @@ executorch = [
     "executorch>=1.3,<2.0",  # torch.export -> .pte, XNNPACK CPU delegate; validated on 1.3.1
 ]
 coreml = [
-    # torch.export (ExportedProgram) support added in coremltools 8.0. Tested matrix: coremltools 9.0
-    # + torch 2.12 (see src/rfdetr/export/_coreml/torch_ops.py, op_coverage.py for the private-API
-    # surface this pin guards — coremltools._TORCH_OPS_REGISTRY internals can rename across minors).
+    # torch.export (ExportedProgram) support added in coremltools 8.0 (see
+    # src/rfdetr/export/_coreml/torch_ops.py, op_coverage.py for the private-API surface this pin
+    # guards — coremltools._TORCH_OPS_REGISTRY internals can rename across minors).
     "coremltools>=8.0,<10.0",
+    # torch>=2.12 sharply raises the rate of a CoreML/eager numeric-parity divergence on real-image
+    # input (coremltools 9.0): bisected 2026-07-28 on RFDETRNano with random-init weights —
+    # torch<2.12 failed ~1/6 repeat runs, torch>=2.12.0 failed ~6/7 (up to ~1.0 abs diff on raw
+    # query outputs; tests/export/test_coreml_export.py::TestCoreMLEndToEnd::
+    # test_outputs_match_pytorch_supervision_image[detection]). Same decomposed op set both sides —
+    # looks like a coremltools MIL lowering regression exposed by torch 2.12's export graph, not a
+    # missing/renamed op. This pin reduces the failure rate, it does not eliminate it — the
+    # underlying instability (random/untrained-weight activations pushing some op toward
+    # overflow/nan during MIL conversion; see the divide-by-zero/overflow RuntimeWarnings logged
+    # during convert) is present at some low rate on torch<2.12 too. Raise this cap once the root
+    # cause is understood/fixed upstream; don't treat it as a guaranteed-deterministic fix.
+    "torch<2.12",
 ]
 loggers = [
     "tensorboard>=2.13.0",
@@ -193,9 +205,16 @@ override-dependencies = [
 # from executorch's own metadata) are unsatisfiable together -- no CI job combines them, but
 # `uv sync --all-groups` and a plain `uv lock` need to know that so the universal resolver
 # forks the two instead of failing to find one lockfile that satisfies both at once.
+#
+# coreml (torch<2.12, see coreml extra comment) and executorch (torch>=2.12.0a0) are likewise
+# unsatisfiable together -- no CI job combines them either, same fork rationale.
 conflicts = [
     [
         { group = "ci-gpu-pin" },
+        { extra = "executorch" },
+    ],
+    [
+        { extra = "coreml" },
         { extra = "executorch" },
     ],
 ]

@@ -148,7 +148,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.13"]
+        # 3.11 not 3.10 for this job specifically (bumped alongside the coreml extra's torch<2.12
+        # pin, see pyproject.toml) — other CI jobs keep testing 3.10 as the project floor.
+        python-version: ["3.11", "3.13"]
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1

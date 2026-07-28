@@ -21,6 +21,14 @@ Note:
     want a smaller ANE-oriented bundle (expect larger numeric drift) — either directly to
     :func:`export_coreml`, or via :meth:`rfdetr.detr.RFDETR.export`'s ``coreml_precision``
     argument (string form only, so callers don't need to import ``coremltools``).
+
+Note:
+    ``torch>=2.12`` sharply raises the rate of a CoreML/eager numeric-parity divergence on
+    real-image input with coremltools 9.0 (bisected: torch<2.12 failed ~1/6 repeat runs,
+    torch>=2.12.0 failed ~6/7) — the ``coreml`` extra pins ``torch<2.12`` in ``pyproject.toml``
+    until this is understood/fixed upstream. That pin reduces the failure rate, it does not
+    guarantee determinism. See ``tests/export/test_coreml_export.py::TestCoreMLEndToEnd::
+    test_outputs_match_pytorch_supervision_image``.
 """
 
 from __future__ import annotations
