@@ -880,7 +880,7 @@ class TestExecutorchEndToEnd:
 
         from rfdetr.export.benchmark import infer_transforms, post_process
 
-        model, example, pte_path = exported
+        model, example, pte_path, _ = exported
         resolution = int(example.shape[-1])
         image = Image.open(photo_asset).convert("RGB")
         tensor, _ = infer_transforms((resolution, resolution))(image, None)
