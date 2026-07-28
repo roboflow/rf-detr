@@ -9,8 +9,8 @@
 walk ``call_function`` nodes, and check each op kind against coremltools' Torch registry (via
 ``unsupported_coreml_ops``, after the package-local patches in ``torch_ops.py``) before converting.
 
-Prefer registry patches over model call-site rewrites. After patches, Nano must have no registry gaps;
-``_KNOWN_NANO_UNSUPPORTED_KINDS`` stays empty unless a gap is accepted deliberately.
+Prefer registry patches over model call-site rewrites. After patches, every released size (detection + segmentation)
+must have no registry gaps; ``_KNOWN_NANO_UNSUPPORTED_KINDS`` stays empty unless a gap is accepted deliberately.
 """
 
 from __future__ import annotations
@@ -43,6 +43,24 @@ def _export_decomposed(model: nn.Module, example: torch.Tensor) -> ExportedProgr
     """Match ``export_coreml`` graph prep: ``torch.export`` then ``run_decompositions``."""
     with torch.no_grad():
         return torch.export.export(model, (example,), strict=False).run_decompositions({})
+
+
+@pytest.fixture(scope="module")
+def _nano_decomposed_ep() -> ExportedProgram:
+    """Build + decompose ``RFDETRNano`` once per test module.
+
+    Both Nano-specific tests below (alias-emission + registry-clean) only *read* the graph via
+    ``unsupported_coreml_ops`` (cheap); the export itself (full DINOv2-backbone ``torch.export``) is seconds + GBs, so
+    share one decomposed program instead of exporting Nano twice.
+    """
+    from rfdetr import RFDETRNano
+
+    model = RFDETRNano(pretrain_weights=None).model.model
+    model.eval()
+    model.export()
+    resolution = int(getattr(model, "resolution", 384))
+    example = torch.randn(1, 3, resolution, resolution)
+    return _export_decomposed(model, example)
 
 
 def _reset_patches_for_test() -> None:
@@ -121,16 +139,9 @@ class TestEnsureCoremlTorchOpPatches:
             _TORCH_OPS_REGISTRY.name_to_func_mapping["bitwise_not"] is torch_ops._bitwise_not_allowing_float_bool_masks
         )
 
-    def test_nano_still_emits_alias_but_is_registry_clean(self) -> None:
+    def test_nano_still_emits_alias_but_is_registry_clean(self, _nano_decomposed_ep: ExportedProgram) -> None:
         """Nano's export graph must still contain ``aten.alias``; the registry patch must clear it."""
-        from rfdetr import RFDETRNano
-
-        model = RFDETRNano(pretrain_weights=None).model.model
-        model.eval()
-        model.export()
-        resolution = int(getattr(model, "resolution", 384))
-        example = torch.randn(1, 3, resolution, resolution)
-        ep = _export_decomposed(model, example)
+        ep = _nano_decomposed_ep
         alias_kinds = []
         for node in ep.graph_module.graph.nodes:
             if node.op != "call_function":
@@ -197,18 +208,42 @@ class TestUnsupportedCoremlOps:
         gaps = unsupported_coreml_ops(ep)
         assert "__and__" in gaps
 
-    def test_nano_registry_clean_after_patches(self) -> None:
+    def test_nano_registry_clean_after_patches(self, _nano_decomposed_ep: ExportedProgram) -> None:
         """Nano must have no registry gaps after package-local Torch-op patches."""
-        from rfdetr import RFDETRNano
+        gaps = unsupported_coreml_ops(_nano_decomposed_ep)
+        unexpected = set(gaps) - _KNOWN_NANO_UNSUPPORTED_KINDS
+        assert not unexpected, f"new CoreML registry gaps: {dict(gaps)}"
+        missing = _KNOWN_NANO_UNSUPPORTED_KINDS - set(gaps)
+        assert not missing, f"allowlist stale (gaps cleared?): {sorted(missing)}; actual={dict(gaps)}"
+        assert gaps == Counter(), f"expected registry-clean Nano, got {dict(gaps)}"
 
-        model = RFDETRNano(pretrain_weights=None).model.model
+    @pytest.mark.parametrize(
+        "model_cls_name",
+        [
+            pytest.param("RFDETRSmall", id="small"),
+            pytest.param("RFDETRMedium", id="medium"),
+            pytest.param("RFDETRLarge", id="large"),
+            pytest.param("RFDETRSegNano", id="seg-nano"),
+        ],
+    )
+    def test_registry_clean_after_patches(self, model_cls_name: str) -> None:
+        """Each other released size (detection + one segmentation) must have no registry gaps after patches.
+
+        Previously proven only for Nano-detection (see ``test_nano_registry_clean_after_patches`` above, which reuses
+        the shared Nano fixture) — a flagged op kind on an untested size/variant could otherwise false-fail a valid
+        export with no evidence it is actually unclean.
+        """
+        import rfdetr
+
+        model_cls = getattr(rfdetr, model_cls_name)
+        model = model_cls(pretrain_weights=None).model.model
         model.eval()
         model.export()
         resolution = int(getattr(model, "resolution", 384))
         example = torch.randn(1, 3, resolution, resolution)
         gaps = unsupported_coreml_ops(_export_decomposed(model, example))
         unexpected = set(gaps) - _KNOWN_NANO_UNSUPPORTED_KINDS
-        assert not unexpected, f"new CoreML registry gaps: {dict(gaps)}"
+        assert not unexpected, f"new CoreML registry gaps for {model_cls_name}: {dict(gaps)}"
         missing = _KNOWN_NANO_UNSUPPORTED_KINDS - set(gaps)
         assert not missing, f"allowlist stale (gaps cleared?): {sorted(missing)}; actual={dict(gaps)}"
-        assert gaps == Counter(), f"expected registry-clean Nano, got {dict(gaps)}"
+        assert gaps == Counter(), f"expected registry-clean {model_cls_name}, got {dict(gaps)}"

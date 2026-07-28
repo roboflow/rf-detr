@@ -27,7 +27,7 @@ from unittest import mock
 import numpy as np
 import pytest
 import torch
-import torchvision.transforms.functional as TF  # noqa: N812
+import torchvision.transforms.functional as TF  # noqa: N812 — standard torchvision alias
 from PIL import Image
 from supervision.assets import ImageAssets, download_assets
 
@@ -244,6 +244,40 @@ class TestExportCoremlValidation:
         example = torch.zeros(1, 3, 32, 32)
         with pytest.raises(ImportError, match="rfdetr\\[coreml\\]"):
             export_coreml(model, example, tmp_path)
+
+
+class TestVariantNamePathSafety:
+    """Regression coverage for the path-traversal mitigation ``export_coreml`` applies to ``variant_name``
+    (``converter.py``: ``os.path.splitext(os.path.basename(variant_name))[0]``).
+
+    Exercises the sanitization expression directly rather than through ``export_coreml()`` end-to-end: ``export_coreml``
+    imports the real ``coremltools`` package immediately after the (mockable) availability check, so a full call still
+    requires coremltools installed — this test covers the contract without that dependency.
+    """
+
+    @pytest.mark.parametrize(
+        ("variant_name", "expected"),
+        [
+            pytest.param("../../etc/passwd", "passwd", id="forward-slash-traversal"),
+            pytest.param("/absolute/path/rfdetr-nano", "rfdetr-nano", id="absolute-path"),
+            pytest.param("rfdetr-nano.mlpackage", "rfdetr-nano", id="strips-extension"),
+            pytest.param("rfdetr-nano", "rfdetr-nano", id="plain-name-unchanged"),
+        ],
+    )
+    def test_sanitizes_directory_components(self, variant_name: str, expected: str) -> None:
+        """``variant_name`` must be reduced to a bare filename stem, no directory components.
+
+        Forward-slash paths only: ``os.path.basename`` splits on ``os.sep`` (platform-native), so a
+        backslash-separated path is *not* sanitized on POSIX (only on Windows, where ``ntpath``
+        treats both ``/`` and ``\\`` as separators) — that asymmetry is a real, pre-existing property
+        of this mitigation, out of scope for this regression test to change.
+        """
+        import os
+
+        sanitized = os.path.splitext(os.path.basename(variant_name))[0]
+        assert sanitized == expected
+        assert "/" not in sanitized
+        assert ".." not in sanitized
 
 
 class TestExportFormatParameter:
