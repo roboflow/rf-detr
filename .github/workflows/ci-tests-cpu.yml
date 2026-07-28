@@ -56,10 +56,15 @@ jobs:
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
         run: uv pip install -e ".[train,augment,cli,visual]" --group tests
 
+      - name: 🍎 Install CoreML extra (macOS only)
+        if: runner.os == 'macOS'
+        timeout-minutes: 5
+        run: uv pip install -e ".[coreml]"
+
       - name: 🧪 Run the Test
         run: |
           uv run --no-sync pytest src/ tests/ \
-            -n 2 -m "not gpu and not coco17" \
+            -n 2 -m "not gpu and not coco17 and not coreml_e2e" \
             --ignore=tests/run_smoke_all_models.py \
             --ignore=tests/legacy/test_checkpoint_compat.py \
             --cov=rfdetr --cov-report=xml \
