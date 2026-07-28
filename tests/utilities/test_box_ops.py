@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import pytest
 import torch
 
 from rfdetr.utilities.box_ops import (
@@ -64,42 +65,141 @@ def test_elementwise_generalized_box_iou_matches_pairwise_diagonal() -> None:
     torch.testing.assert_close(boxes2.grad, boxes2_ref.grad)
 
 
-def test_elementwise_box_iou_zero_area_boxes_are_finite() -> None:
-    """Zero-area boxes yield finite elementwise IoU/union instead of a 0/0 NaN."""
-    zero_box = torch.tensor([[10.0, 10.0, 10.0, 10.0]])  # w = h = 0
+@pytest.mark.parametrize(
+    "boxes1,boxes2",
+    [
+        pytest.param(
+            torch.tensor([[0.0, 0.0, 1.0, 1.0]]),
+            torch.tensor([[5.0, 5.0, 6.0, 6.0]]),
+            id="disjoint",
+        ),
+        pytest.param(
+            torch.tensor([[0.0, 0.0, 1.0, 1.0]]),
+            torch.tensor([[1.0, 0.0, 2.0, 1.0]]),
+            id="edge-touch",
+        ),
+        pytest.param(
+            torch.tensor([[0.0, 0.0, 1e8, 1e8]]),
+            torch.tensor([[5e7, 5e7, 1.5e8, 1.5e8]]),
+            id="large-coord",
+        ),
+    ],
+)
+def test_elementwise_matches_pairwise_diagonal_edge_regimes(boxes1: torch.Tensor, boxes2: torch.Tensor) -> None:
+    """Elementwise IoU/GIoU match the pairwise diagonal across disjoint, edge-touch, and large-coord regimes."""
+    iou, _ = elementwise_box_iou(boxes1, boxes2)
+    giou = elementwise_generalized_box_iou(boxes1, boxes2)
 
-    iou, union = elementwise_box_iou(zero_box, zero_box)
+    iou_ref, _ = box_iou(boxes1, boxes2)
+    giou_ref = generalized_box_iou(boxes1, boxes2)
+
+    torch.testing.assert_close(iou, torch.diag(iou_ref))
+    torch.testing.assert_close(giou, torch.diag(giou_ref))
+
+
+def test_elementwise_box_iou_identical_boxes_give_exact_unit_iou() -> None:
+    """Identical boxes give IoU exactly 1.0 — the union clamp preserves the identity (not just assert_close)."""
+    boxes = _random_xyxy_boxes(16, seed=7)
+
+    iou, _ = elementwise_box_iou(boxes, boxes)
+
+    assert torch.equal(iou, torch.ones_like(iou))
+
+
+def test_elementwise_generalized_box_iou_identical_boxes_give_exact_unit_giou() -> None:
+    """Identical boxes give GIoU exactly 1.0 (enclosing area equals union, so the correction is zero)."""
+    boxes = _random_xyxy_boxes(16, seed=7)
+
+    giou = elementwise_generalized_box_iou(boxes, boxes)
+
+    assert torch.equal(giou, torch.ones_like(giou))
+
+
+def test_elementwise_box_iou_mixed_degeneracy_batch_is_finite_and_matches_diagonal() -> None:
+    """A normal/zero-area/disjoint batch stays finite and its non-degenerate rows match the pairwise diagonal."""
+    boxes1 = torch.tensor([[0.0, 0.0, 2.0, 2.0], [5.0, 5.0, 5.0, 5.0], [0.0, 0.0, 1.0, 1.0]])
+    boxes2 = torch.tensor([[1.0, 1.0, 3.0, 3.0], [5.0, 5.0, 5.0, 5.0], [10.0, 10.0, 11.0, 11.0]])
+
+    iou, union = elementwise_box_iou(boxes1, boxes2)
+    iou_ref, _ = box_iou(boxes1, boxes2)
 
     assert torch.isfinite(iou).all()
     assert torch.isfinite(union).all()
+    torch.testing.assert_close(iou[[0, 2]], torch.diag(iou_ref)[[0, 2]])
 
 
-def test_elementwise_generalized_box_iou_zero_area_boxes_are_finite() -> None:
-    """Degenerate zero-area boxes give finite elementwise GIoU instead of NaN/inf."""
+def test_elementwise_box_iou_degenerate_row_does_not_pollute_neighbour_grads() -> None:
+    """A degenerate zero-area row keeps the gradients of its neighbour rows finite under ``backward()``."""
+    boxes1 = torch.tensor(
+        [[0.0, 0.0, 2.0, 2.0], [5.0, 5.0, 5.0, 5.0], [0.0, 0.0, 1.0, 1.0]],
+        requires_grad=True,
+    )
+    boxes2 = torch.tensor(
+        [[1.0, 1.0, 3.0, 3.0], [5.0, 5.0, 5.0, 5.0], [10.0, 10.0, 11.0, 11.0]],
+        requires_grad=True,
+    )
+
+    iou, _ = elementwise_box_iou(boxes1, boxes2)
+    iou.sum().backward()
+
+    assert torch.isfinite(boxes1.grad[[0, 2]]).all()
+    assert torch.isfinite(boxes2.grad[[0, 2]]).all()
+
+
+def test_elementwise_box_iou_empty_input_returns_empty() -> None:
+    """Empty (N=0) input returns empty IoU/union tensors without error."""
+    empty = torch.empty(0, 4)
+
+    iou, union = elementwise_box_iou(empty, empty)
+
+    assert iou.shape == (0,)
+    assert union.shape == (0,)
+
+
+def test_elementwise_generalized_box_iou_empty_input_returns_empty() -> None:
+    """Empty (N=0) input returns an empty GIoU tensor without error."""
+    empty = torch.empty(0, 4)
+
+    giou = elementwise_generalized_box_iou(empty, empty)
+
+    assert giou.shape == (0,)
+
+
+def test_elementwise_box_iou_rejects_unequal_length() -> None:
+    """Mismatched operand lengths raise ValueError instead of silently broadcasting a length-1 side."""
+    boxes1 = _random_xyxy_boxes(3, seed=4)
+    boxes2 = _random_xyxy_boxes(1, seed=5)
+
+    with pytest.raises(ValueError, match="same length"):
+        elementwise_box_iou(boxes1, boxes2)
+
+
+def test_elementwise_generalized_box_iou_rejects_unequal_length() -> None:
+    """The GIoU variant also raises ValueError on mismatched operand lengths."""
+    boxes1 = _random_xyxy_boxes(3, seed=4)
+    boxes2 = _random_xyxy_boxes(1, seed=5)
+
+    with pytest.raises(ValueError, match="same length"):
+        elementwise_generalized_box_iou(boxes1, boxes2)
+
+
+@pytest.mark.parametrize(
+    "iou_fn",
+    [
+        pytest.param(box_iou, id="box_iou"),
+        pytest.param(elementwise_box_iou, id="elementwise_box_iou"),
+        pytest.param(generalized_box_iou, id="generalized_box_iou"),
+        pytest.param(elementwise_generalized_box_iou, id="elementwise_generalized_box_iou"),
+    ],
+)
+def test_zero_area_boxes_are_finite(iou_fn) -> None:
+    """Degenerate zero-area boxes yield finite results (no 0/0 NaN) across every IoU/GIoU variant."""
     zero_box = torch.tensor([[10.0, 10.0, 10.0, 10.0]])  # w = h = 0
 
-    giou = elementwise_generalized_box_iou(zero_box, zero_box)
+    result = iou_fn(zero_box, zero_box)
+    tensors = result if isinstance(result, tuple) else (result,)
 
-    assert torch.isfinite(giou).all()
-
-
-def test_box_iou_zero_area_boxes_are_finite() -> None:
-    """Zero-area boxes yield finite IoU/union instead of a 0/0 NaN."""
-    zero_box = torch.tensor([[10.0, 10.0, 10.0, 10.0]])  # w = h = 0
-
-    iou, union = box_iou(zero_box, zero_box)
-
-    assert torch.isfinite(iou).all()
-    assert torch.isfinite(union).all()
-
-
-def test_generalized_box_iou_zero_area_boxes_are_finite() -> None:
-    """Degenerate zero-area boxes give finite GIoU instead of NaN/inf."""
-    zero_box = torch.tensor([[10.0, 10.0, 10.0, 10.0]])  # w = h = 0
-
-    giou = generalized_box_iou(zero_box, zero_box)
-
-    assert torch.isfinite(giou).all()
+    assert all(torch.isfinite(t).all() for t in tensors)
 
 
 def test_masks_to_boxes_passes_ij_indexing_to_meshgrid(monkeypatch) -> None:
