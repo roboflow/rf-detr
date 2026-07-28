@@ -284,6 +284,7 @@ markers = [
     "coco17: tests that require COCO 2017 images or annotations",
     "e2e_executorch: ExecuTorch end-to-end export + numerical parity (opt-in)",
     "e2e_coreml: CoreML end-to-end convert + numerical parity (structured and photo inputs; opt-in)",
+    "e2e_tensorrt: TensorRT end-to-end ONNX->engine build + parity (GPU, opt-in)",
 ]
 filterwarnings = [
     # pytest-xdist workers close their channel before teardown completes;

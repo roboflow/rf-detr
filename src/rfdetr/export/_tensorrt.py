@@ -41,11 +41,15 @@ try:
         network_from_onnx_path,
         save_engine,
     )
+
+    _IS_TENSORRT_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised via the guard in build_engine
     CreateConfig = None
     engine_from_network = None
     network_from_onnx_path = None
     save_engine = None
+
+    _IS_TENSORRT_AVAILABLE = False
 
 
 def build_engine(onnx_path: str, *, fp16: bool = True, verbose: bool = False, dry_run: bool = False) -> str:

@@ -34,28 +34,31 @@ from rfdetr.export._executorch.converter import (
     export_executorch,
 )
 from tests._online import is_online
+from tests.export.conftest import eager_reference_tensors, max_abs_output_diffs
 
 executorch_only = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
 
 
-def _runtime_parity(model: Any, example: torch.Tensor, pte_path: Path) -> list[float]:
+def _executorch_runtime_tensors(pte_path: Path, example: torch.Tensor) -> list[torch.Tensor]:
+    """Load the ``.pte`` and run *example* through the ExecuTorch ``forward`` method; return output tensors.
+
+    The export-mode forward mutates its input in place, so a fresh clone is fed to the runtime.
+    """
+    _check_executorch_available(require_runtime=True)
+    from executorch.runtime import Runtime
+
+    method = Runtime.get().load_program(str(pte_path)).load_method("forward")
+    return [t for t in method.execute([example.clone()]) if isinstance(t, torch.Tensor)]
+
+
+def _runtime_parity(model: Any, example: torch.Tensor, pte_path: Path, *, check_shape: bool = True) -> list[float]:
     """Run *example* through the eager model and the ExecuTorch runtime; return per-output max-abs-diff.
 
     The export-mode forward mutates its input in place, so a fresh clone is fed to each run.
     """
-    _check_executorch_available(require_runtime=True)
-    from executorch.runtime import Runtime
-    from torch.utils._pytree import tree_flatten
-
-    with torch.no_grad():
-        eager_out = model(example.clone())
-    eager_tensors = [t for t in tree_flatten(eager_out)[0] if isinstance(t, torch.Tensor)]
-
-    method = Runtime.get().load_program(str(pte_path)).load_method("forward")
-    runtime_tensors = [t for t in method.execute([example.clone()]) if isinstance(t, torch.Tensor)]
-
-    assert len(runtime_tensors) == len(eager_tensors), "ExecuTorch output count differs from the source model"
-    return [(eager - runtime).abs().max().item() for eager, runtime in zip(eager_tensors, runtime_tensors)]
+    eager_tensors = eager_reference_tensors(model, example)
+    runtime_tensors = _executorch_runtime_tensors(pte_path, example)
+    return max_abs_output_diffs(eager_tensors, runtime_tensors, check_shape=check_shape)
 
 
 # ---------------------------------------------------------------------------
@@ -751,14 +754,69 @@ def photo_asset(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return destination / filename
 
 
-@pytest.fixture(scope="module")
-def exported(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, torch.Tensor, Path]:
-    """Export RFDETRNano to a ``.pte`` once and reuse it across the parity checks."""
-    from rfdetr import RFDETRNano
+# XNNPACK fp32 matches eager to ~1e-5 on boxes/logits (observed: pred_boxes 0.0, pred_logits ~1.0e-5 with
+# random weights); the bound keeps modest headroom, robust to BLAS/XNNPACK build differences while still
+# failing on a structural regression (those diverge by >=1e-3). Segmentation masks get a little more headroom.
+_EXECUTORCH_DETECTION_MAX_ABS_DIFF = 5e-5
+_EXECUTORCH_SEGMENTATION_MAX_ABS_DIFF = 1e-4
 
+
+def validate_detection_executorch_vs_pytorch(pte_path: Path, model: Any, example: torch.Tensor) -> None:
+    """Compare ExecuTorch detection outputs (boxes, logits) to eager export-mode PyTorch.
+
+    Args:
+        pte_path: Path to the exported ``.pte``.
+        model: Export-mode PyTorch module on CPU.
+        example: ``(N, C, H, W)`` tensor used for both forwards.
+
+    Raises:
+        AssertionError: When output count/shape disagrees or max-abs-diff exceeds tolerance.
+    """
+    diffs = _runtime_parity(model, example, pte_path)
+    assert len(diffs) == 2, f"detection export must yield (boxes, logits), got {len(diffs)} outputs"
+    assert max(diffs) < _EXECUTORCH_DETECTION_MAX_ABS_DIFF, (
+        f"ExecuTorch detection outputs diverge from PyTorch: max abs diff {max(diffs)} "
+        f"(boxes={diffs[0]}, logits={diffs[1]}, bound={_EXECUTORCH_DETECTION_MAX_ABS_DIFF})"
+    )
+
+
+def validate_segmentation_executorch_vs_pytorch(pte_path: Path, model: Any, example: torch.Tensor) -> None:
+    """Compare ExecuTorch segmentation outputs (boxes, logits, masks) to eager export-mode PyTorch.
+
+    Args:
+        pte_path: Path to the exported ``.pte``.
+        model: Export-mode PyTorch segmentation module on CPU.
+        example: ``(N, C, H, W)`` tensor used for both forwards.
+
+    Raises:
+        AssertionError: When output count/shape disagrees or max-abs-diff exceeds tolerance.
+    """
+    diffs = _runtime_parity(model, example, pte_path)
+    assert len(diffs) == 3, f"segmentation export must yield (boxes, logits, masks), got {len(diffs)} outputs"
+    assert max(diffs) < _EXECUTORCH_SEGMENTATION_MAX_ABS_DIFF, (
+        f"ExecuTorch segmentation outputs diverge from PyTorch: max abs diff {max(diffs)} "
+        f"(boxes={diffs[0]}, logits={diffs[1]}, masks={diffs[2]}, bound={_EXECUTORCH_SEGMENTATION_MAX_ABS_DIFF})"
+    )
+
+
+_EXECUTORCH_E2E_VARIANTS = [
+    ("RFDETRNano", validate_detection_executorch_vs_pytorch),
+    ("RFDETRSegNano", validate_segmentation_executorch_vs_pytorch),
+]
+
+
+@pytest.fixture(scope="module", params=_EXECUTORCH_E2E_VARIANTS, ids=["detection", "segmentation"])
+def exported(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> tuple[Any, torch.Tensor, Path, Any]:
+    """Export RFDETRNano/RFDETRSegNano to a ``.pte`` once per variant and reuse across the parity checks."""
+    import rfdetr
+
+    model_cls_name, validate_fn = request.param
+    model_cls = getattr(rfdetr, model_cls_name)
     torch.manual_seed(42)
-    out_dir = tmp_path_factory.mktemp("executorch")
-    detector = RFDETRNano(pretrain_weights=None)
+    out_dir = tmp_path_factory.mktemp(f"executorch_{model_cls_name.lower()}")
+    detector = model_cls(pretrain_weights=None)
     pte_path = detector.export(output_dir=str(out_dir), format="executorch", backend="xnnpack", verbose=False)
 
     model = detector.model.model.to("cpu").eval()
@@ -766,32 +824,45 @@ def exported(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, torch.Tenso
     # .contiguous() is a no-op for a fresh randn but states the runtime's requirement explicitly:
     # ExecuTorch ignores input strides and reads the buffer as contiguous NCHW (see issue #1233).
     example = torch.randn(1, 3, detector.model.resolution, detector.model.resolution).contiguous()
-    return model, example, Path(pte_path)
+    return model, example, Path(pte_path), validate_fn
 
 
 @executorch_only
 @pytest.mark.e2e_executorch
 class TestExecutorchEndToEnd:
-    """End-to-end export of a real RF-DETR model, gated on the executorch package."""
+    """End-to-end export of a real RF-DETR model (detection + segmentation), gated on the executorch package."""
 
-    def test_pte_file_written(self, exported: tuple[Any, torch.Tensor, Path]) -> None:
-        _, _, pte_path = exported
+    def test_pte_file_written(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
+        """The exported artifact must be a non-empty ``.pte`` file."""
+        _, _, pte_path, _ = exported
         assert pte_path.is_file()
         assert pte_path.suffix == ".pte"
         assert pte_path.stat().st_size > 0
 
-    def test_runtime_output_matches_pytorch(self, exported: tuple[Any, torch.Tensor, Path]) -> None:
+    def test_forward_method_loads(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
+        """The exported ``.pte`` must expose a loadable ``forward`` method (runtime metadata smoke check)."""
+        _, _, pte_path, _ = exported
+        _check_executorch_available(require_runtime=True)
+        from executorch.runtime import Runtime
+
+        method = Runtime.get().load_program(str(pte_path)).load_method("forward")
+        assert method is not None
+
+    def test_output_shapes_and_dtypes_match(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
+        """Each ExecuTorch runtime output must match the eager forward's shape and be float32."""
+        model, example, pte_path, _ = exported
+        eager = eager_reference_tensors(model, example)
+        runtime = _executorch_runtime_tensors(pte_path, example)
+        assert [tuple(r.shape) for r in runtime] == [tuple(e.shape) for e in eager]
+        assert {r.dtype for r in runtime} == {torch.float32}
+
+    def test_runtime_output_matches_pytorch(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
         """ExecuTorch runtime output must match the eager PyTorch forward within XNNPACK fp32 tolerance."""
-        model, example, pte_path = exported
-        diffs = _runtime_parity(model, example, pte_path)
-        assert diffs, "expected at least one output to compare"
-        # XNNPACK fp32 path matches eager to ~1e-5 (observed: pred_boxes 0.0, pred_logits ~1.0e-5 with random
-        # weights).  The bound keeps modest headroom over that so it is robust to BLAS/XNNPACK build differences
-        # while still failing on a structural regression (those diverge by >=1e-3).
-        assert max(diffs) < 5e-5, f"ExecuTorch outputs diverge from PyTorch: max abs diff {max(diffs)}"
+        model, example, pte_path, validate_fn = exported
+        validate_fn(pte_path, model, example)
 
     def test_preprocessed_image_detections_match_pytorch(
-        self, exported: tuple[Any, torch.Tensor, Path], photo_asset: Path
+        self, exported: tuple[Any, torch.Tensor, Path, Any], photo_asset: Path
     ) -> None:
         """Detections from an image fed through ``infer_transforms`` must match the eager forward.
 

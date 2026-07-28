@@ -211,3 +211,81 @@ jobs:
       - name: ✅ tests succeeded
         if: needs.coreml-parity.result == 'success'
         run: echo "All CoreML parity tests completed successfully in job 'coreml-parity'."
+
+  tensorrt-parity:
+    name: TensorRT parity
+    # TensorRT engine build + runtime inference need a real GPU + CUDA driver, so unlike the CPU
+    # integration jobs this runs on the self-hosted GPU runner (same as ci-tests-gpu.yml).
+    runs-on: Roboflow-GPU-VM-Runner
+    timeout-minutes: 25
+    concurrency:
+      group: pytest-tensorrt-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    env:
+      # UV_TORCH_BACKEND=auto (GPU) works only with uv pip, not uv sync; overrides the workflow-level
+      # "cpu" default which is wrong for this GPU job.
+      UV_TORCH_BACKEND: "auto"
+    steps:
+      - name: 🖥️ Print GPU information
+        run: nvidia-smi
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: "3.12"
+          activate-environment: true
+
+      - name: 🚀 Install Packages (tensorrt + onnx extras)
+        timeout-minutes: 8
+        # [tensorrt] provides pycuda/tensorrt/polygraphy for the engine build; [onnx] provides the ONNX
+        # export toolchain (the e2e exports RFDETRNano to ONNX first). --group ci-gpu-pin matches the GPU
+        # runner's CUDA driver (torch<2.11), same as ci-tests-gpu.yml.
+        run: uv pip install -e ".[tensorrt,onnx,train,augment,cli,visual]" --group tests --group ci-gpu-pin
+
+      - name: 🔎 Verify tensorrt import
+        # Guard against a silently-skipped parity test: TestTensorRTEndToEnd is gated by a skipif on
+        # tensorrt availability, so a broken/missing wheel would skip it (false green) instead of failing red.
+        run: |
+          from rfdetr.export._tensorrt import _IS_TENSORRT_AVAILABLE
+
+          assert _IS_TENSORRT_AVAILABLE, "tensorrt/polygraphy installed but not detected as available"
+          print("tensorrt import OK")
+        shell: python
+
+      - name: 🧪 Run TensorRT end-to-end parity tests
+        # Real ONNX->engine build + GPU inference is heavy; single-worker, opt-in marker (see pyproject.toml
+        # `e2e_tensorrt`) — excluded from the ci-tests-gpu.yml default filter (`and not e2e_tensorrt`) so it
+        # only runs here.
+        run: |
+          uv run --no-sync pytest tests/export/test_tensorrt_export.py \
+            -m e2e_tensorrt -n 1 \
+            --timeout=600 \
+            --durations=20
+
+      - name: Minimize uv cache
+        continue-on-error: true
+        run: uv cache prune --ci
+
+  tensorrt-guardian:
+    runs-on: ubuntu-latest
+    needs: tensorrt-parity
+    if: always()
+    steps:
+      - name: 📋 Display test result
+        run: echo "${{ needs.tensorrt-parity.result }}"
+      - name: ❌ Fail guardian on test failure
+        if: needs.tensorrt-parity.result == 'failure'
+        run: exit 1
+      # Ensure that cancelled or skipped test runs still cause this guardian job to fail,
+      # using an explicit exit code instead of relying on timeout behavior.
+      - name: ⚠️ cancelled or skipped...
+        if: contains(fromJSON('["cancelled", "skipped"]'), needs.tensorrt-parity.result)
+        run: |
+          echo "tensorrt-parity job result is '${{ needs.tensorrt-parity.result }}'; failing explicitly."
+          exit 1
+      - name: ✅ tests succeeded
+        if: needs.tensorrt-parity.result == 'success'
+        run: echo "All TensorRT parity tests completed successfully in job 'tensorrt-parity'."
