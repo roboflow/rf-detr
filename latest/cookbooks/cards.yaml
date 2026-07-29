@@ -1,4 +1,22 @@
 cards:
+  - href: export-coreml/
+    name: "Export to Native CoreML & Run Inference"
+    labels: [EXPORT, INFERENCE, DEPLOY]
+    version: v1.9.0
+    author: Borda
+    description: "Export RF-DETR directly to a native CoreML .mlpackage (no ONNX, no ExecuTorch) and run it with coremltools — the lowest-friction path for Xcode / Apple-platform deployment."
+  - href: export-tensorrt/
+    name: "Export to TensorRT & Run Inference"
+    labels: [EXPORT, INFERENCE, DEPLOY]
+    version: v1.9.0
+    author: Borda
+    description: "Export RF-DETR to a TensorRT FP16 engine and run inference on it directly — low-latency NVIDIA GPU deployment with supervision-annotated detections."
+  - href: export-executorch/
+    name: "Export to ExecuTorch & Run Inference"
+    labels: [EXPORT, INFERENCE, DEPLOY]
+    version: v1.9.0
+    author: Borda
+    description: "Export RF-DETR to a portable ExecuTorch .pte program (XNNPACK / CoreML / QNN backends) and run it on the CPU — on-device mobile and edge deployment with supervision-annotated detections."
   - href: fine-tune_detection/
     name: "Fine-Tune RF-DETR Object Detection"
     labels: [TRAINING, PYTORCH LIGHTNING, INFERENCE]
@@ -28,10 +46,16 @@ cards:
     labels: [TRAINING, AUGMENTATION]
     version: v1.5.0
     author: Borda
-    description: "Add custom Albumentations augmentations and monitor training metrics in real time."
+    description: "Add optional custom Albumentations augmentations and monitor training metrics in real time."
   - href: pytorch-lightning/
     name: "Training with PyTorch Lightning"
     labels: [TRAINING, PYTORCH LIGHTNING]
     version: v1.6.0
     author: Borda
     description: "Train RF-DETR with PyTorch Lightning — callbacks, checkpointing, and the LightningModule API."
+  - href: custom-optimizer-scheduler/
+    name: "Custom Optimizer and LR Scheduler"
+    labels: [TRAINING, PYTORCH LIGHTNING]
+    version: v1.9.0
+    author: Borda
+    description: "Swap RF-DETR's optimizer and LR scheduler via TrainConfig — native torch.optim, a third-party optimizer by import path, or a functools.partial — fine-tuned on a small Roboflow Universe dataset."

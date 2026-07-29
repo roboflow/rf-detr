@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-06-25T12:15:19">
+  <meta property="article:modified_time" content="2026-07-23T18:37:33">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-06-25T12:15:19",
+    "dateModified": "2026-07-23T18:37:33",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -205,7 +205,7 @@
       data-md-component="logo"
     >
       
-  <img src="../../../assets/roboflow-logo.svg" alt="logo">
+  <img src="../../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
 
     </a>
 
@@ -234,7 +234,7 @@
             id="item-logo"
             >
             
-  <img src="../../../assets/roboflow-logo.svg" alt="logo">
+  <img src="../../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
 
             </a>
             
@@ -256,7 +256,7 @@
         </label>
 
         <!-- Search interface -->
-        <div class="md-search" data-md-component="search" role="dialog">
+        <div class="md-search" data-md-component="search" role="dialog" aria-modal="true" aria-label="Search">
   <label class="md-search__overlay" for="__search"></label>
   <div class="md-search__inner" role="search">
     <form class="md-search__form" name="search">
@@ -294,7 +294,7 @@
 
     <ul class="header-list">
         <li style="align-items: center;" id="resources-list">
-            <label for="dropdown-resources"><span>Resources <img src="https://ka-p.fontawesome.com/releases/v6.6.0/svgs/regular/chevron-down.svg?v=2&token=a463935e93" style="height: 0.5rem;" /></span></label>
+            <label for="dropdown-resources"><span>Resources <span class="header-chevron" aria-hidden="true"></span></span></label>
             <input type="radio" name="dropdown" id="dropdown-resources" style="display: none;" />
             <ul class="resources-sublist sublist">
                 <li><a href="https://blog.roboflow.com">Blog</a></li>
@@ -304,7 +304,7 @@
             </ul>
         </li>
         <li style="align-items: center;" id="products-list">
-            <label for="dropdown-products"><span>Docs <img src="https://ka-p.fontawesome.com/releases/v6.6.0/svgs/regular/chevron-down.svg?v=2&token=a463935e93" style="height: 0.5rem;" /></span></label>
+            <label for="dropdown-products"><span>Docs <span class="header-chevron" aria-hidden="true"></span></span></label>
             <input type="radio" name="dropdown" id="dropdown-products" style="display: none;" />
             <ul class="products-sublist sublist">
                 <li><a href="https://inference.roboflow.com">Inference</a></li>
@@ -315,79 +315,72 @@
                 <li><a href="https://docs.roboflow.com">Roboflow</a></li>
             </ul>
         </li>
-        <script>
-          document.addEventListener('click', function(event) {
-            const resourcesList = document.getElementById('resources-list');
-            const productsList = document.getElementById('products-list');
-            const dropdownResources = document.getElementById('dropdown-resources');
-            const dropdownProducts = document.getElementById('dropdown-products');
-
-            if (!resourcesList.contains(event.target)) {
-              dropdownResources.checked = false;
-            }
-            if (!productsList.contains(event.target)) {
-              dropdownProducts.checked = false;
-            }
-          });
-          // on mouse over
-          document.getElementById('resources-list').addEventListener('mouseover', function() {
-            document.getElementById('dropdown-resources').checked = true;
-          });
-          document.getElementById('products-list').addEventListener('mouseover', function() {
-            document.getElementById('dropdown-products').checked = true;
-          });
-          // on mouse out
-          document.getElementById('resources-list').addEventListener('mouseout', function() {
-            // if not hovering over the sublist or the label, uncheck the dropdown
-            // wait 1 sec
-            setTimeout(function() {
-              if (!document.querySelector('.resources-sublist:hover') && !document.querySelector('#resources-list:hover')) {
-                document.getElementById('dropdown-resources').checked = false;
-              }
-            }, 350);
-          });
-          // if mouseout of sublist, uncheck immediately
-          document.querySelector('.resources-sublist').addEventListener('mouseout', function() {
-            setTimeout(function() {
-              if (!document.querySelector('.resources-sublist:hover') && !document.querySelector('#resources-list:hover')) {
-                document.getElementById('dropdown-resources').checked = false;
-              }
-            }, 450);
-          });
-          document.getElementById('products-list').addEventListener('mouseout', function() {
-            // if not hovering over the sublist, uncheck the dropdown
-            // wait 1 sec
-            setTimeout(function() {
-              if (!document.querySelector('.products-sublist:hover') && !document.querySelector('#products-list:hover')) {
-                document.getElementById('dropdown-products').checked = false;
-              }
-            }, 500);
-          });
-          // if mouseout of sublist, uncheck immediately
-          document.querySelector('.products-sublist').addEventListener('mouseout', function() {
-            setTimeout(function() {
-              if (!document.querySelector('.products-sublist:hover') && !document.querySelector('#products-list:hover')) {
-                document.getElementById('dropdown-products').checked = false;
-              }
-            }, 500);
-          });
-
-        </script>
-        <style>
-          #dropdown-resources:checked ~ .resources-sublist {
-            display: block;
-          }
-          #dropdown-products:checked ~ .products-sublist {
-            display: block;
-          }
-          /* Hide dropdown if clicking outside */
-          body:not(:has(#dropdown-resources:checked)) .resources-sublist,
-          body:not(:has(#dropdown-products:checked)) .products-sublist {
-            display: none;
-          }
-        </style>
-        <a href="https://github.com/roboflow/rf-detr"><li class="header-btn" style="border-radius: 5px; color: white; background: var(--md-typeset-a-color); padding-top: 0.25rem; padding-left: 0.5rem; padding-bottom: 0.25rem; padding-right: 0.5rem; border: 1px solid #8315F9;">Go to GitHub</li></a>
+        <li>
+          <a href="https://github.com/roboflow/rf-detr" class="header-btn" style="border-radius: 5px; color: white; background: var(--md-typeset-a-color); padding-top: 0.25rem; padding-left: 0.5rem; padding-bottom: 0.25rem; padding-right: 0.5rem; border: 1px solid #8315F9;">Go to GitHub</a>
+        </li>
     </ul>
+    <script>
+      document.addEventListener('click', function(event) {
+        const resourcesList = document.getElementById('resources-list');
+        const productsList = document.getElementById('products-list');
+        const dropdownResources = document.getElementById('dropdown-resources');
+        const dropdownProducts = document.getElementById('dropdown-products');
+
+        if (!resourcesList.contains(event.target)) {
+          dropdownResources.checked = false;
+        }
+        if (!productsList.contains(event.target)) {
+          dropdownProducts.checked = false;
+        }
+      });
+      document.getElementById('resources-list').addEventListener('mouseover', function() {
+        document.getElementById('dropdown-resources').checked = true;
+      });
+      document.getElementById('products-list').addEventListener('mouseover', function() {
+        document.getElementById('dropdown-products').checked = true;
+      });
+      document.getElementById('resources-list').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.resources-sublist:hover') && !document.querySelector('#resources-list:hover')) {
+            document.getElementById('dropdown-resources').checked = false;
+          }
+        }, 350);
+      });
+      document.querySelector('.resources-sublist').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.resources-sublist:hover') && !document.querySelector('#resources-list:hover')) {
+            document.getElementById('dropdown-resources').checked = false;
+          }
+        }, 450);
+      });
+      document.getElementById('products-list').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.products-sublist:hover') && !document.querySelector('#products-list:hover')) {
+            document.getElementById('dropdown-products').checked = false;
+          }
+        }, 500);
+      });
+      document.querySelector('.products-sublist').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.products-sublist:hover') && !document.querySelector('#products-list:hover')) {
+            document.getElementById('dropdown-products').checked = false;
+          }
+        }, 500);
+      });
+      function labelCurrentVersion() {
+        document.querySelectorAll('.md-version__current').forEach(function(button) {
+          const label = button.textContent.trim();
+          if (label) {
+            button.setAttribute('aria-label', label);
+          }
+        });
+      }
+      labelCurrentVersion();
+      const versionMenu = document.querySelector('.md-version');
+      if (versionMenu) {
+        new MutationObserver(labelCurrentVersion).observe(versionMenu, { childList: true, subtree: true });
+      }
+    </script>
   </nav>
 
   <!-- Navigation tabs (sticky) -->
@@ -468,6 +461,25 @@
         </a>
       </li>
     
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../faq/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  FAQ
+
+      </a>
+    </li>
   
 
       
@@ -558,7 +570,7 @@
   <label class="md-nav__title" for="__drawer">
     <a href="../../.." title="RF-DETR" class="md-nav__button md-logo" aria-label="RF-DETR" data-md-component="logo">
       
-  <img src="../../../assets/roboflow-logo.svg" alt="logo">
+  <img src="../../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
 
     </a>
     RF-DETR
@@ -1169,6 +1181,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Learning Rate Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#custom-optimizer-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Optimizer Example
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2473,6 +2502,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../cookbooks/" class="md-nav__link">
         
   
@@ -2620,6 +2676,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Learning Rate Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#custom-optimizer-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Optimizer Example
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2902,9 +2975,9 @@
 </tr>
 <tr>
 <td><code>batch_size</code></td>
-<td><code>int</code></td>
+<td><code>int or "auto"</code></td>
 <td><code>4</code></td>
-<td>Number of samples processed per iteration. Higher values require more GPU memory.</td>
+<td>Number of samples processed per iteration. Higher values require more GPU memory. Set to <code>"auto"</code> to probe the GPU for the largest safe batch size automatically.</td>
 </tr>
 <tr>
 <td><code>grad_accum_steps</code></td>
@@ -2990,6 +3063,18 @@
 <td><code>1.5e-4</code></td>
 <td>Learning rate specifically for the backbone encoder. Can be set lower than <code>lr</code> if you want to fine-tune the encoder more conservatively than the rest of the model.</td>
 </tr>
+<tr>
+<td><code>optimizer</code></td>
+<td><code>str \| Callable</code></td>
+<td><code>"adamw"</code></td>
+<td>Optimizer as a native <code>torch.optim</code> short name, dotted import path, or callable. Managed short names (native <code>torch.optim</code> only, e.g. <code>"adamw"</code>, <code>"sgd"</code>) have RF-DETR inject <code>lr</code>/<code>weight_decay</code>; a dotted import path (<code>"torch.optim.AdamW"</code>, <code>"pytorch_optimizer.Lion"</code>) or callable is built from <code>optimizer_kwargs</code> / its own bound arguments only. See <a href="../customization/#custom-optimizer">Custom optimizer</a>.</td>
+</tr>
+<tr>
+<td><code>optimizer_kwargs</code></td>
+<td><code>dict</code></td>
+<td><code>{}</code></td>
+<td>Keyword arguments for the optimizer constructor. Managed short names reserve <code>params</code>/<code>lr</code>/<code>weight_decay</code>/<code>fused</code>; explicit import paths take them here; ignored (with a warning) for callables.</td>
+</tr>
 </tbody>
 </table>
 <div class="admonition tip">
@@ -3000,6 +3085,14 @@
 <li>For training from scratch (not recommended), you may need higher learning rates</li>
 </ul>
 </div>
+<h3 id="custom-optimizer-example">Custom Optimizer Example<a class="headerlink" href="#custom-optimizer-example" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">optimizer</span><span class="o">=</span><span class="s2">&quot;pytorch_optimizer.Lion&quot;</span><span class="p">,</span>  <span class="c1"># third-party optimizer by import path (install it yourself)</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">optimizer_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;weight_decouple&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">},</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>Bare short names resolve to native <code>torch.optim</code> optimizers; any other optimizer is given by full dotted import path or a callable, always preserving RF-DETR's parameter groups and layer-wise learning rates.</p>
 <h2 id="resolution-parameters">Resolution Parameters<a class="headerlink" href="#resolution-parameters" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3058,14 +3151,14 @@
 <tr>
 <td><code>device</code></td>
 <td><code>str</code></td>
-<td><code>"cuda"</code></td>
-<td>Device to run training on. Options: <code>"cuda"</code>, <code>"cpu"</code>, <code>"mps"</code> (Apple Silicon).</td>
+<td><code>None</code></td>
+<td>Device to run training on. <code>None</code> means auto-detected by PyTorch Lightning. Options: <code>"cuda"</code>, <code>"cpu"</code>, <code>"mps"</code> (Apple Silicon).</td>
 </tr>
 <tr>
 <td><code>gradient_checkpointing</code></td>
 <td><code>bool</code></td>
 <td><code>False</code></td>
-<td>Re-computes parts of the forward pass during backpropagation to reduce memory usage. Lowers memory needs but increases training time.</td>
+<td><strong>Constructor-only parameter</strong> — pass to the model constructor (<code>RFDETRMedium(gradient_checkpointing=True)</code>), not to <code>train()</code>. Re-computes activations during backprop to reduce memory usage by ~30-40% at the cost of ~20% slower training.</td>
 </tr>
 </tbody>
 </table>
@@ -3085,6 +3178,12 @@
 <td><code>bool</code></td>
 <td><code>True</code></td>
 <td>Enables Exponential Moving Average of weights. Produces a smoothed checkpoint that often improves final performance.</td>
+</tr>
+<tr>
+<td><code>eval_ema_only</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>Validation-only: forward through the EMA model instead of the base model, halving per-batch validation compute. Requires <code>use_ema=True</code>. <code>val/mAP_*</code> then reports EMA-model quality, not base-model quality — see Evaluation Parameters.</td>
 </tr>
 </tbody>
 </table>
@@ -3195,15 +3294,15 @@ keypoint AP for keypoint preview.</p>
 </tbody>
 </table>
 <h3 id="early-stopping-example">Early Stopping Example<a class="headerlink" href="#early-stopping-example" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">early_stopping</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">early_stopping_patience</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">early_stopping_min_delta</span><span class="o">=</span><span class="mf">0.005</span><span class="p">,</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">skip_best_epochs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">early_stopping</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">early_stopping_patience</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">early_stopping_min_delta</span><span class="o">=</span><span class="mf">0.005</span><span class="p">,</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">skip_best_epochs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>This configuration will:</p>
 <ul>
@@ -3256,14 +3355,14 @@ best-checkpoint selection and patience counting until the model has had time to 
 </tbody>
 </table>
 <h3 id="logging-example">Logging Example<a class="headerlink" href="#logging-example" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">tensorboard</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">wandb</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">project</span><span class="o">=</span><span class="s2">&quot;my-detection-project&quot;</span><span class="p">,</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">run</span><span class="o">=</span><span class="s2">&quot;experiment-001&quot;</span><span class="p">,</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">tensorboard</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">wandb</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">project</span><span class="o">=</span><span class="s2">&quot;my-detection-project&quot;</span><span class="p">,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">run</span><span class="o">=</span><span class="s2">&quot;experiment-001&quot;</span><span class="p">,</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="evaluation-parameters">Evaluation Parameters<a class="headerlink" href="#evaluation-parameters" title="Permanent link">&para;</a></h2>
 <table>
@@ -3286,13 +3385,25 @@ best-checkpoint selection and patience counting until the model has had time to 
 <td><code>eval_interval</code></td>
 <td><code>int</code></td>
 <td><code>1</code></td>
-<td>Run COCO evaluation every N epochs. Set to a higher value to reduce evaluation overhead during long training runs.</td>
+<td>Skip the whole COCO validation loop (forward pass, metric compute, EMA forward) on epochs that aren't a multiple of N, to reduce evaluation overhead during long training runs. The final epoch always validates regardless of this setting.</td>
 </tr>
 <tr>
 <td><code>log_per_class_metrics</code></td>
 <td><code>bool</code></td>
 <td><code>True</code></td>
-<td>Log per-class AP metrics to the console and loggers. Disable to reduce log verbosity when there are many classes.</td>
+<td>Log per-class AP metrics to the console and loggers. Disable to also skip the underlying per-class <code>torchmetrics</code> computation (not just its display), reducing per-epoch compute when there are many classes.</td>
+</tr>
+<tr>
+<td><code>eval_ema_only</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>Forward through the EMA model only during validation, skipping the duplicate base-model pass. Requires <code>use_ema=True</code>. See <a href="#ema-exponential-moving-average">EMA</a>.</td>
+</tr>
+<tr>
+<td><code>eval_masks_head_resolution</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>Segmentation only. Skip upsampling predicted masks to full image resolution during validation, comparing at the mask head's native (lower) resolution instead. <code>val/segm_mAP</code> is then not comparable to a full-resolution run. No effect on <code>RFDETR.predict</code> output.</td>
 </tr>
 <tr>
 <td><code>progress_bar</code></td>
@@ -3318,7 +3429,7 @@ best-checkpoint selection and patience counting until the model has had time to 
 <td><code>num_keypoints_per_class</code></td>
 <td><code>list[int]</code></td>
 <td><code>[17]</code></td>
-<td>Keypoint schema by model label slot. A zero entry marks a detection-only class slot; legacy checkpoints may use a background-first <code>[0, 17]</code> schema.</td>
+<td><strong>Constructor parameter</strong> — pass to <code>RFDETRKeypointPreview(num_keypoints_per_class=...)</code>. Keypoint schema by model label slot. A zero entry marks a detection-only class slot; legacy checkpoints may use a background-first <code>[0, 17]</code> schema.</td>
 </tr>
 <tr>
 <td><code>keypoint_flip_pairs</code></td>
@@ -3377,21 +3488,57 @@ best-checkpoint selection and patience counting until the model has had time to 
 <tbody>
 <tr>
 <td><code>lr_scheduler</code></td>
+<td><code>str \| Callable</code></td>
+<td><code>"step"</code></td>
+<td>Scheduler preset (<code>"step"</code>/<code>"cosine"</code>), dotted import path, or callable. See <a href="../customization/#custom-lr-scheduler">Custom LR scheduler</a>.</td>
+</tr>
+<tr>
+<td><code>lr_scheduler_kwargs</code></td>
+<td><code>dict</code></td>
+<td><code>{}</code></td>
+<td>Keyword arguments forwarded to an explicit scheduler; also carries <code>lr_drop</code> / <code>min_factor</code> for the managed presets.</td>
+</tr>
+<tr>
+<td><code>lr_scheduler_interval</code></td>
 <td><code>str</code></td>
 <td><code>"step"</code></td>
-<td>Learning rate scheduler type. Options: <code>"step"</code> (step decay at <code>lr_drop</code>) or <code>"cosine"</code> (cosine annealing).</td>
+<td>Stepping cadence for explicit schedulers: <code>"step"</code> (per optimizer step) or <code>"epoch"</code>. Managed presets always step per step.</td>
+</tr>
+<tr>
+<td><code>lr_scheduler_monitor</code></td>
+<td><code>str</code></td>
+<td><code>"val/loss"</code></td>
+<td>Metric fed to <code>ReduceLROnPlateau</code> (stepped once per epoch).</td>
 </tr>
 <tr>
 <td><code>lr_min_factor</code></td>
 <td><code>float</code></td>
 <td><code>0.0</code></td>
-<td>Floor for the cosine scheduler, expressed as a fraction of the initial LR. Ignored when using <code>"step"</code>.</td>
+<td><strong>Deprecated</strong> — pass <code>lr_scheduler_kwargs={"min_factor": ...}</code> instead. Cosine-preset floor, as a fraction of the initial LR.</td>
+</tr>
+<tr>
+<td><code>lr_drop</code></td>
+<td><code>int</code></td>
+<td><code>100</code></td>
+<td><strong>Deprecated</strong> — pass <code>lr_scheduler_kwargs={"lr_drop": ...}</code> instead. Epoch at which the <code>"step"</code> preset drops the LR by 10x.</td>
+</tr>
+<tr>
+<td><code>optimizer</code></td>
+<td><code>str \| Callable</code></td>
+<td><code>"adamw"</code></td>
+<td>Optimizer name, dotted import path, or callable. See <a href="../customization/#custom-optimizer">Custom optimizer</a>.</td>
+</tr>
+<tr>
+<td><code>optimizer_kwargs</code></td>
+<td><code>dict</code></td>
+<td><code>{}</code></td>
+<td>Keyword arguments forwarded to the optimizer constructor; ignored (with a warning) for callables.</td>
 </tr>
 <tr>
 <td><code>warmup_epochs</code></td>
 <td><code>float</code></td>
 <td><code>0.0</code></td>
-<td>Number of epochs for linear learning rate warmup at the start of training.</td>
+<td>Epochs of linear LR warmup. For explicit schedulers this prepends a <code>SequentialLR</code> warmup ramp (skipped for <code>ReduceLROnPlateau</code>).</td>
 </tr>
 <tr>
 <td><code>drop_path</code></td>
@@ -3507,9 +3654,9 @@ best-checkpoint selection and patience counting until the model has had time to 
 </tr>
 <tr>
 <td><code>batch_size</code></td>
-<td>int</td>
+<td>int or "auto"</td>
 <td>4</td>
-<td>Samples per iteration. Balance with <code>grad_accum_steps</code>.</td>
+<td>Samples per iteration. Set to <code>"auto"</code> to let RF-DETR probe the GPU for the largest safe batch size. Balance with <code>grad_accum_steps</code>.</td>
 </tr>
 <tr>
 <td><code>grad_accum_steps</code></td>
@@ -3629,13 +3776,25 @@ best-checkpoint selection and patience counting until the model has had time to 
 <td><code>eval_interval</code></td>
 <td>int</td>
 <td>1</td>
-<td>Run COCO evaluation every N epochs.</td>
+<td>Skip the whole validation loop on epochs not a multiple of N; final epoch always validates.</td>
 </tr>
 <tr>
 <td><code>log_per_class_metrics</code></td>
 <td>bool</td>
 <td>True</td>
-<td>Log per-class AP metrics to the console and loggers.</td>
+<td>Log per-class AP metrics; disable to also skip the underlying per-class compute.</td>
+</tr>
+<tr>
+<td><code>eval_ema_only</code></td>
+<td>bool</td>
+<td>False</td>
+<td>Forward through the EMA model only during validation. Requires use_ema=True.</td>
+</tr>
+<tr>
+<td><code>eval_masks_head_resolution</code></td>
+<td>bool</td>
+<td>False</td>
+<td>Segmentation only. Compare masks at native (lower) resolution instead of upsampling; not comparable across runs.</td>
 </tr>
 <tr>
 <td><code>progress_bar</code></td>
@@ -3657,15 +3816,39 @@ best-checkpoint selection and patience counting until the model has had time to 
 </tr>
 <tr>
 <td><code>lr_scheduler</code></td>
+<td>str | Callable</td>
+<td>"step"</td>
+<td>Scheduler preset ("step"/"cosine"), dotted import path, or callable.</td>
+</tr>
+<tr>
+<td><code>lr_scheduler_kwargs</code></td>
+<td>dict</td>
+<td>{}</td>
+<td>Keyword arguments for an explicit scheduler; also carries lr_drop / min_factor for the managed presets.</td>
+</tr>
+<tr>
+<td><code>lr_scheduler_interval</code></td>
 <td>str</td>
 <td>"step"</td>
-<td>Learning rate scheduler type: "step" or "cosine".</td>
+<td>Explicit-scheduler stepping cadence: "step" or "epoch".</td>
+</tr>
+<tr>
+<td><code>lr_scheduler_monitor</code></td>
+<td>str</td>
+<td>"val/loss"</td>
+<td>Metric fed to ReduceLROnPlateau.</td>
 </tr>
 <tr>
 <td><code>lr_min_factor</code></td>
 <td>float</td>
 <td>0.0</td>
-<td>Minimum LR as a fraction of the initial LR (cosine scheduler floor).</td>
+<td>Deprecated — use lr_scheduler_kwargs["min_factor"]. Cosine-preset floor as a fraction of the initial LR.</td>
+</tr>
+<tr>
+<td><code>lr_drop</code></td>
+<td>int</td>
+<td>100</td>
+<td>Deprecated — use lr_scheduler_kwargs["lr_drop"]. Epoch at which the "step" preset drops the LR by 10x.</td>
 </tr>
 <tr>
 <td><code>warmup_epochs</code></td>
@@ -3737,7 +3920,7 @@ best-checkpoint selection and patience counting until the model has had time to 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 25, 2026 12:15:19 UTC">2026-06-25 12:15:19</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 23, 2026 18:37:33 UTC">2026-07-23 18:37:33</span>
   </span>
 
     

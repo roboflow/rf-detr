@@ -18,7 +18,7 @@
         <link rel="prev" href="../keypoint_train_config/">
       
       
-        <link rel="next" href="../../cookbooks/">
+        <link rel="next" href="../../faq/">
       
       
         
@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-04-23T15:22:59">
+  <meta property="article:modified_time" content="2026-07-03T14:22:23">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-04-23T15:22:59",
+    "dateModified": "2026-07-03T14:22:23",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -205,7 +205,7 @@
       data-md-component="logo"
     >
       
-  <img src="../../assets/roboflow-logo.svg" alt="logo">
+  <img src="../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
 
     </a>
 
@@ -234,7 +234,7 @@
             id="item-logo"
             >
             
-  <img src="../../assets/roboflow-logo.svg" alt="logo">
+  <img src="../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
 
             </a>
             
@@ -256,7 +256,7 @@
         </label>
 
         <!-- Search interface -->
-        <div class="md-search" data-md-component="search" role="dialog">
+        <div class="md-search" data-md-component="search" role="dialog" aria-modal="true" aria-label="Search">
   <label class="md-search__overlay" for="__search"></label>
   <div class="md-search__inner" role="search">
     <form class="md-search__form" name="search">
@@ -294,7 +294,7 @@
 
     <ul class="header-list">
         <li style="align-items: center;" id="resources-list">
-            <label for="dropdown-resources"><span>Resources <img src="https://ka-p.fontawesome.com/releases/v6.6.0/svgs/regular/chevron-down.svg?v=2&token=a463935e93" style="height: 0.5rem;" /></span></label>
+            <label for="dropdown-resources"><span>Resources <span class="header-chevron" aria-hidden="true"></span></span></label>
             <input type="radio" name="dropdown" id="dropdown-resources" style="display: none;" />
             <ul class="resources-sublist sublist">
                 <li><a href="https://blog.roboflow.com">Blog</a></li>
@@ -304,7 +304,7 @@
             </ul>
         </li>
         <li style="align-items: center;" id="products-list">
-            <label for="dropdown-products"><span>Docs <img src="https://ka-p.fontawesome.com/releases/v6.6.0/svgs/regular/chevron-down.svg?v=2&token=a463935e93" style="height: 0.5rem;" /></span></label>
+            <label for="dropdown-products"><span>Docs <span class="header-chevron" aria-hidden="true"></span></span></label>
             <input type="radio" name="dropdown" id="dropdown-products" style="display: none;" />
             <ul class="products-sublist sublist">
                 <li><a href="https://inference.roboflow.com">Inference</a></li>
@@ -315,79 +315,72 @@
                 <li><a href="https://docs.roboflow.com">Roboflow</a></li>
             </ul>
         </li>
-        <script>
-          document.addEventListener('click', function(event) {
-            const resourcesList = document.getElementById('resources-list');
-            const productsList = document.getElementById('products-list');
-            const dropdownResources = document.getElementById('dropdown-resources');
-            const dropdownProducts = document.getElementById('dropdown-products');
-
-            if (!resourcesList.contains(event.target)) {
-              dropdownResources.checked = false;
-            }
-            if (!productsList.contains(event.target)) {
-              dropdownProducts.checked = false;
-            }
-          });
-          // on mouse over
-          document.getElementById('resources-list').addEventListener('mouseover', function() {
-            document.getElementById('dropdown-resources').checked = true;
-          });
-          document.getElementById('products-list').addEventListener('mouseover', function() {
-            document.getElementById('dropdown-products').checked = true;
-          });
-          // on mouse out
-          document.getElementById('resources-list').addEventListener('mouseout', function() {
-            // if not hovering over the sublist or the label, uncheck the dropdown
-            // wait 1 sec
-            setTimeout(function() {
-              if (!document.querySelector('.resources-sublist:hover') && !document.querySelector('#resources-list:hover')) {
-                document.getElementById('dropdown-resources').checked = false;
-              }
-            }, 350);
-          });
-          // if mouseout of sublist, uncheck immediately
-          document.querySelector('.resources-sublist').addEventListener('mouseout', function() {
-            setTimeout(function() {
-              if (!document.querySelector('.resources-sublist:hover') && !document.querySelector('#resources-list:hover')) {
-                document.getElementById('dropdown-resources').checked = false;
-              }
-            }, 450);
-          });
-          document.getElementById('products-list').addEventListener('mouseout', function() {
-            // if not hovering over the sublist, uncheck the dropdown
-            // wait 1 sec
-            setTimeout(function() {
-              if (!document.querySelector('.products-sublist:hover') && !document.querySelector('#products-list:hover')) {
-                document.getElementById('dropdown-products').checked = false;
-              }
-            }, 500);
-          });
-          // if mouseout of sublist, uncheck immediately
-          document.querySelector('.products-sublist').addEventListener('mouseout', function() {
-            setTimeout(function() {
-              if (!document.querySelector('.products-sublist:hover') && !document.querySelector('#products-list:hover')) {
-                document.getElementById('dropdown-products').checked = false;
-              }
-            }, 500);
-          });
-
-        </script>
-        <style>
-          #dropdown-resources:checked ~ .resources-sublist {
-            display: block;
-          }
-          #dropdown-products:checked ~ .products-sublist {
-            display: block;
-          }
-          /* Hide dropdown if clicking outside */
-          body:not(:has(#dropdown-resources:checked)) .resources-sublist,
-          body:not(:has(#dropdown-products:checked)) .products-sublist {
-            display: none;
-          }
-        </style>
-        <a href="https://github.com/roboflow/rf-detr"><li class="header-btn" style="border-radius: 5px; color: white; background: var(--md-typeset-a-color); padding-top: 0.25rem; padding-left: 0.5rem; padding-bottom: 0.25rem; padding-right: 0.5rem; border: 1px solid #8315F9;">Go to GitHub</li></a>
+        <li>
+          <a href="https://github.com/roboflow/rf-detr" class="header-btn" style="border-radius: 5px; color: white; background: var(--md-typeset-a-color); padding-top: 0.25rem; padding-left: 0.5rem; padding-bottom: 0.25rem; padding-right: 0.5rem; border: 1px solid #8315F9;">Go to GitHub</a>
+        </li>
     </ul>
+    <script>
+      document.addEventListener('click', function(event) {
+        const resourcesList = document.getElementById('resources-list');
+        const productsList = document.getElementById('products-list');
+        const dropdownResources = document.getElementById('dropdown-resources');
+        const dropdownProducts = document.getElementById('dropdown-products');
+
+        if (!resourcesList.contains(event.target)) {
+          dropdownResources.checked = false;
+        }
+        if (!productsList.contains(event.target)) {
+          dropdownProducts.checked = false;
+        }
+      });
+      document.getElementById('resources-list').addEventListener('mouseover', function() {
+        document.getElementById('dropdown-resources').checked = true;
+      });
+      document.getElementById('products-list').addEventListener('mouseover', function() {
+        document.getElementById('dropdown-products').checked = true;
+      });
+      document.getElementById('resources-list').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.resources-sublist:hover') && !document.querySelector('#resources-list:hover')) {
+            document.getElementById('dropdown-resources').checked = false;
+          }
+        }, 350);
+      });
+      document.querySelector('.resources-sublist').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.resources-sublist:hover') && !document.querySelector('#resources-list:hover')) {
+            document.getElementById('dropdown-resources').checked = false;
+          }
+        }, 450);
+      });
+      document.getElementById('products-list').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.products-sublist:hover') && !document.querySelector('#products-list:hover')) {
+            document.getElementById('dropdown-products').checked = false;
+          }
+        }, 500);
+      });
+      document.querySelector('.products-sublist').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.products-sublist:hover') && !document.querySelector('#products-list:hover')) {
+            document.getElementById('dropdown-products').checked = false;
+          }
+        }, 500);
+      });
+      function labelCurrentVersion() {
+        document.querySelectorAll('.md-version__current').forEach(function(button) {
+          const label = button.textContent.trim();
+          if (label) {
+            button.setAttribute('aria-label', label);
+          }
+        });
+      }
+      labelCurrentVersion();
+      const versionMenu = document.querySelector('.md-version');
+      if (versionMenu) {
+        new MutationObserver(labelCurrentVersion).observe(versionMenu, { childList: true, subtree: true });
+      }
+    </script>
   </nav>
 
   <!-- Navigation tabs (sticky) -->
@@ -466,6 +459,25 @@
         </a>
       </li>
     
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../faq/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  FAQ
+
+      </a>
+    </li>
   
 
       
@@ -556,7 +568,7 @@
   <label class="md-nav__title" for="__drawer">
     <a href="../.." title="RF-DETR" class="md-nav__button md-logo" aria-label="RF-DETR" data-md-component="logo">
       
-  <img src="../../assets/roboflow-logo.svg" alt="logo">
+  <img src="../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
 
     </a>
     RF-DETR
@@ -2802,6 +2814,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rfdetr.training.trainer.build_trainer(include_training_callbacks)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;include_training_callbacks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rfdetr.training.trainer.build_trainer(**trainer_kwargs)" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3349,6 +3372,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback(eval_ema_only)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;eval_ema_only
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback-functions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3418,6 +3452,33 @@
           </ul>
         </nav>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -4152,6 +4213,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rfdetr.training.trainer.build_trainer(include_training_callbacks)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;include_training_callbacks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rfdetr.training.trainer.build_trainer(**trainer_kwargs)" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4699,6 +4771,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback(eval_ema_only)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;eval_ema_only
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback-functions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4919,7 +5002,7 @@ the same object.</p>
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.on_train_batch_start(batch)" class="doc doc-heading doc-heading-parameter">                  <code>batch</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.on_train_batch_start(batch)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="typing.Tuple">Tuple</span></code>
+                  <code><span title="tuple">tuple</span>[<span title="typing.Any">Any</span>, <span title="typing.Any">Any</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -4987,7 +5070,7 @@ independently; detection and segmentation models keep Lightning's automatic opti
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.training_step(batch)" class="doc doc-heading doc-heading-parameter">                  <code>batch</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.training_step(batch)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="typing.Tuple">Tuple</span></code>
+                  <code><span title="tuple">tuple</span>[<span title="typing.Any">Any</span>, <span title="typing.Any">Any</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5097,7 +5180,7 @@ independently; detection and segmentation models keep Lightning's automatic opti
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.validation_step(batch)" class="doc doc-heading doc-heading-parameter">                  <code>batch</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.validation_step(batch)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="typing.Tuple">Tuple</span></code>
+                  <code><span title="tuple">tuple</span>[<span title="typing.Any">Any</span>, <span title="typing.Any">Any</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5139,7 +5222,7 @@ independently; detection and segmentation models keep Lightning's automatic opti
       <tbody>
           <tr class="doc-section-item">
             <td>
-                  <code><span title="typing.Dict">Dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5188,7 +5271,7 @@ training).</p>
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.test_step(batch)" class="doc doc-heading doc-heading-parameter">                  <code>batch</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.test_step(batch)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="typing.Tuple">Tuple</span></code>
+                  <code><span title="tuple">tuple</span>[<span title="typing.Any">Any</span>, <span title="typing.Any">Any</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5230,7 +5313,7 @@ training).</p>
       <tbody>
           <tr class="doc-section-item">
             <td>
-                  <code><span title="typing.Dict">Dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5276,7 +5359,7 @@ training).</p>
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.predict_step(batch)" class="doc doc-heading doc-heading-parameter">                  <code>batch</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.predict_step(batch)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="typing.Tuple">Tuple</span></code>
+                  <code><span title="tuple">tuple</span>[<span title="typing.Any">Any</span>, <span title="typing.Any">Any</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5361,9 +5444,11 @@ training).</p>
 
     <div class="doc doc-contents ">
 
-        <p>Build AdamW optimizer with layer-wise LR decay and LambdaLR scheduler.</p>
+        <p>Build the configured optimizer with layer-wise LR decay and scheduler.</p>
 <p>Uses <code>trainer.estimated_stepping_batches</code> for total step count so cosine annealing covers the full training
-run regardless of dataset size or accumulation settings.</p>
+run regardless of dataset size or accumulation settings.
+<code>optimizer="adamw"</code> keeps RF-DETR's fused torch AdamW path;
+other names can be loaded from <code>pytorch-optimizer</code>.</p>
 
 
     <p><span class="doc-section-title">Returns:</span></p>
@@ -5377,7 +5462,7 @@ run regardless of dataset size or accumulation settings.</p>
       <tbody>
           <tr class="doc-section-item">
             <td>
-                  <code><span title="typing.Dict">Dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>
+                  <code><span title="pytorch_lightning.utilities.types.OptimizerLRSchedulerConfig">OptimizerLRSchedulerConfig</span></code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5426,7 +5511,7 @@ non-fused path (FP16 + GradScaler or FP32) we delegate to <code>super()</code> t
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.clip_gradients(optimizer)" class="doc doc-heading doc-heading-parameter">                  <code>optimizer</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(optimizer)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="torch.optim.Optimizer">Optimizer</span></code>
+                  <code><span title="torch.optim.Optimizer">Optimizer</span> | <span title="pytorch_lightning.core.optimizer.LightningOptimizer">LightningOptimizer</span></code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5442,7 +5527,7 @@ non-fused path (FP16 + GradScaler or FP32) we delegate to <code>super()</code> t
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_val)" class="doc doc-heading doc-heading-parameter">                  <code>gradient_clip_val</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_val)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="typing.Optional">Optional</span>[<span title="float">float</span>]</code>
+                  <code><span title="float">float</span> | None</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5458,7 +5543,7 @@ non-fused path (FP16 + GradScaler or FP32) we delegate to <code>super()</code> t
 <h4 id="rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_algorithm)" class="doc doc-heading doc-heading-parameter">                  <code>gradient_clip_algorithm</code>
 <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_algorithm)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="typing.Optional">Optional</span>[<span title="str">str</span>]</code>
+                  <code><span title="str">str</span> | None</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5724,7 +5809,7 @@ yet or the dataset does not expose COCO-style category information.</p>
       <tbody>
           <tr class="doc-section-item">
             <td>
-                  <code><span title="typing.Optional">Optional</span>[<span title="typing.List">List</span>[<span title="str">str</span>]]</code>
+                  <code><span title="list">list</span>[<span title="str">str</span>] | None</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5839,7 +5924,7 @@ so that PTL can auto-inject <code>DistributedSampler</code> in DDP mode.</p>
       <tbody>
           <tr class="doc-section-item">
             <td>
-                  <code><span title="torch.utils.data.DataLoader">DataLoader</span></code>
+                  <code><span title="torch.utils.data.DataLoader">DataLoader</span>[<span title="typing.Any">Any</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5880,7 +5965,7 @@ so that PTL can auto-inject <code>DistributedSampler</code> in DDP mode.</p>
       <tbody>
           <tr class="doc-section-item">
             <td>
-                  <code><span title="torch.utils.data.DataLoader">DataLoader</span></code>
+                  <code><span title="torch.utils.data.DataLoader">DataLoader</span>[<span title="typing.Any">Any</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -5921,7 +6006,7 @@ so that PTL can auto-inject <code>DistributedSampler</code> in DDP mode.</p>
       <tbody>
           <tr class="doc-section-item">
             <td>
-                  <code><span title="torch.utils.data.DataLoader">DataLoader</span></code>
+                  <code><span title="torch.utils.data.DataLoader">DataLoader</span>[<span title="typing.Any">Any</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -6025,6 +6110,25 @@ Defaults to <code>None</code> which reads from <code>train_config.accelerator</c
           </tr>
           <tr class="doc-section-item">
             <td>
+<h2 id="rfdetr.training.trainer.build_trainer(include_training_callbacks)" class="doc doc-heading doc-heading-parameter">                  <code>include_training_callbacks</code>
+<a href="#rfdetr.training.trainer.build_trainer(include_training_callbacks)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>When <code>True</code> (default) the full training stack is wired (EMA, drop-path,
+checkpointing, best-model selection, early stopping) along with the configured loggers. When <code>False</code> an
+evaluation-only trainer is built that keeps just the metric callback (and the progress bar): no
+checkpoints or logs are written. Used by :meth:<code>rfdetr.detr.RFDETR.evaluate</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
 <h2 id="rfdetr.training.trainer.build_trainer(**trainer_kwargs)" class="doc doc-heading doc-heading-parameter">                  <code>**trainer_kwargs</code>
 <a href="#rfdetr.training.trainer.build_trainer(**trainer_kwargs)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
             <td>
@@ -6051,6 +6155,19 @@ keypoint config raises a <code>UserWarning</code> to make the override explicit.
       </tbody>
     </table>
 
+
+<details class="note" open>
+  <summary>Note</summary>
+  <p>Two process-wide side effects: (1) unconditionally calls
+<code>torch.set_float32_matmul_precision("high")</code>, which persists after this function
+returns and overrides any caller-set precision (e.g. <code>"highest"</code>) with no opt-out —
+mirrors the import-time guard in <code>rfdetr.detr</code> so the Lightning CLI path
+(<code>rfdetr fit</code>) gets the same TF32 behavior as the python API path. (2) sets
+<code>check_val_every_n_epoch=tc.eval_interval</code>, so <code>eval_interval</code> now gates the whole
+validation loop (forward pass, metric compute, EMA forward), not just result logging;
+a <code>_ForceLastEpochValidationCallback</code> still guarantees the final epoch always
+validates even when <code>epochs</code> is not a multiple of <code>eval_interval</code>.</p>
+</details>
 
     <p><span class="doc-section-title">Returns:</span></p>
     <table>
@@ -6179,6 +6296,34 @@ effective decay ramps from 0 towards <em>decay</em> following <code>decay * (1 -
     </table>
 
 
+<p><span class="doc-section-title">Attributes:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td><code><span title="rfdetr.training.callbacks.ema.RFDETREMACallback.suppress_test_swap">suppress_test_swap</span></code></td>
+            <td>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>When <code>True</code> the test-epoch hooks skip the EMA weight swap.  Set (and restored) by
+:class:<code>~rfdetr.training.callbacks.best_model.BestModelCallback</code> around its fit-end <code>trainer.test()</code>
+run, which has already loaded the best checkpoint weights into the module — swapping in the final EMA
+weights there would make the reported <code>test/*</code> metrics reflect the wrong model.  Standalone
+<code>trainer.test()</code> runs keep the default <code>False</code> and evaluate EMA weights as before.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
 
 
 
@@ -6237,7 +6382,11 @@ effective decay ramps from 0 towards <em>decay</em> following <code>decay * (1 -
 files (instead of full <code>.ckpt</code> files) and to track a separate EMA checkpoint in parallel.</p>
 <p>At the end of training the overall winner (regular vs EMA, strict <code>&gt;</code> for EMA) is copied to
 <code>checkpoint_best_total.pth</code> and optimizer/scheduler state is stripped via
-:func:<code>rfdetr.util.misc.strip_checkpoint</code>.</p>
+:func:<code>rfdetr.utilities.state_dict.strip_checkpoint</code>.  The stripped payload records <code>best_total_source</code>
+(<code>"ema"</code> or <code>"regular"</code>) so the winning source is recoverable after reload.</p>
+<p>When EMA tracking is enabled (<code>monitor_ema</code> set), EMA-named checkpoints are always left on disk for clarity:
+<code>checkpoint_best_ema.pth</code> (backfilled with the final EMA weights if the EMA metric never improved) and
+<code>last_ema.pth</code> (final EMA weights, mirroring <code>last.pth</code> for the live model).</p>
 <p>Checkpoints are only updated on validation epochs where the monitor metric is actually logged.  On non-eval epochs
 (when <code>eval_interval &gt; 1</code> causes COCO evaluation to be skipped) the callback is a no-op.</p>
 <p><code>state_dict()</code> and <code>load_state_dict()</code> are overridden to persist <code>_best_ema</code> in the Lightning callback state,
@@ -6888,11 +7037,31 @@ always computed when <code>trainer.test()</code> is called.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>When <code>False</code>, skip per-class AP logging/table.</p>
+                <p>When <code>False</code>, skip per-class AP computation
+(<code>MeanAveragePrecision(class_metrics=False)</code>) as well as the per-class logging/table.</p>
               </div>
             </td>
             <td>
                   <code>True</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.training.callbacks.coco_eval.COCOEvalCallback(eval_ema_only)" class="doc doc-heading doc-heading-parameter">                  <code>eval_ema_only</code>
+<a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback(eval_ema_only)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>When <code>True</code>, <code>validation_step</code> already forwarded through the EMA
+model directly (see <code>TrainConfig.eval_ema_only</code>), so the independent duplicate
+EMA forward pass this callback would otherwise run every validation batch is
+skipped.</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
             </td>
           </tr>
       </tbody>
@@ -6921,7 +7090,7 @@ always computed when <code>trainer.test()</code> is called.</p>
 
 
 <h3 id="rfdetr.training.callbacks.coco_eval.COCOEvalCallback.__init__" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">max_dets</span><span class="o">=</span><span class="n">DEFAULT_KEYPOINT_MAX_DETS</span><span class="p">,</span> <span class="n">segmentation</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">eval_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">log_per_class_metrics</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">keypoint_oks_sigmas</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">in_notebook</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">max_dets</span><span class="o">=</span><span class="n">DEFAULT_KEYPOINT_MAX_DETS</span><span class="p">,</span> <span class="n">segmentation</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">eval_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">log_per_class_metrics</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">keypoint_oks_sigmas</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">in_notebook</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_ema_only</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></code>
 
 <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback.__init__" class="headerlink" title="Permanent link">&para;</a></h3>
 
@@ -6941,13 +7110,19 @@ always computed when <code>trainer.test()</code> is called.</p>
 
 </div><hr />
 <h2 id="rfdetrcli">RFDETRCli<a class="headerlink" href="#rfdetrcli" title="Permanent link">&para;</a></h2>
+<div class="admonition info">
+<p class="admonition-title">CLI requires the <code>train</code> and <code>cli</code> extras</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;rfdetr[train,cli]&quot;</span>
+</span></code></pre></div>
+<p>The <code>rfdetr</code> console script and its <code>--config</code> / <code>--print_config</code> flags are provided by <code>jsonargparse</code>, which is included in the <code>cli</code> extra.</p>
+</div>
 <p><code>RFDETRCli</code> is the command-line entry point for RF-DETR. It wraps
 <code>RFDETRModelModule</code> and <code>RFDETRDataModule</code> under a single <code>rfdetr</code> command and
 auto-generates four subcommands from the PyTorch Lightning CLI machinery:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>rfdetr<span class="w"> </span>fit<span class="w">      </span>--config<span class="w"> </span>configs/rfdetr_base.yaml
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>rfdetr<span class="w"> </span>validate<span class="w"> </span>--ckpt_path<span class="w"> </span>output/best.ckpt
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>rfdetr<span class="w"> </span><span class="nb">test</span><span class="w">     </span>--ckpt_path<span class="w"> </span>output/best.ckpt
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>rfdetr<span class="w"> </span>predict<span class="w">  </span>--ckpt_path<span class="w"> </span>output/best.ckpt
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>rfdetr<span class="w"> </span>fit<span class="w">      </span>--config<span class="w"> </span>configs/rfdetr_base.yaml
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>rfdetr<span class="w"> </span>validate<span class="w"> </span>--ckpt_path<span class="w"> </span>output/best.ckpt
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>rfdetr<span class="w"> </span><span class="nb">test</span><span class="w">     </span>--ckpt_path<span class="w"> </span>output/best.ckpt
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>rfdetr<span class="w"> </span>predict<span class="w">  </span>--ckpt_path<span class="w"> </span>output/best.ckpt
 </span></code></pre></div>
 <p>Both <code>model_config</code> and <code>train_config</code> are specified once; <code>RFDETRCli</code>
 automatically links them to the datamodule so you do not need to repeat the
@@ -7015,7 +7190,7 @@ same arguments under <code>--data.*</code>.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="April 23, 2026 15:22:59 UTC">2026-04-23 15:22:59</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 3, 2026 14:22:23 UTC">2026-07-03 14:22:23</span>
   </span>
 
     
