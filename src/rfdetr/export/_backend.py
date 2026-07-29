@@ -118,6 +118,7 @@ def _export_executorch_format(
     variant_name: str | None,
     dynamic_batch: bool,
     notes: object,
+    output_name: str | None = None,
 ) -> Path:
     """Dispatch :meth:`rfdetr.detr.RFDETR.export` to the ExecuTorch converter.
 
@@ -131,6 +132,8 @@ def _export_executorch_format(
         variant_name: Model variant identifier used to name the output file.
         dynamic_batch: Whether a dynamic batch dimension was requested (always rejected below).
         notes: User-supplied export metadata; ExecuTorch has no metadata slot, so a non-``None`` value warns.
+        output_name: Full filename override (without extension); forwarded verbatim to
+            :func:`~rfdetr.export._executorch.converter.export_executorch`.
 
     Returns:
         Path to the exported ``.pte`` file.
@@ -187,6 +190,7 @@ def _export_executorch_format(
         backend=backend_literal,
         variant_name=variant_name,
         dynamic_batch=dynamic_batch,
+        output_name=output_name,
         **soc_kwargs,
     )
     logger.info(f"Successfully exported ExecuTorch model to: {pte_path}")
@@ -202,6 +206,7 @@ def _export_coreml_format(
     verbose: bool,
     notes: object,
     compute_precision: str | None = None,
+    output_name: str | None = None,
 ) -> Path:
     """Dispatch :meth:`rfdetr.detr.RFDETR.export` to the native CoreML converter.
 
@@ -217,6 +222,8 @@ def _export_coreml_format(
         notes: User-supplied export metadata; CoreML has no ONNX-style metadata slot, so a non-``None`` value warns.
         compute_precision: ``"float32"``/``"float16"``/``None`` — forwarded to
             :func:`~rfdetr.export._coreml.converter.export_coreml`'s ``compute_precision``.
+        output_name: Full filename override (without extension); forwarded verbatim to
+            :func:`~rfdetr.export._coreml.converter.export_coreml`.
 
     Note:
         Unlike the ONNX path, output names are not forwarded to ``coremltools.convert`` —
@@ -274,6 +281,7 @@ def _export_coreml_format(
         variant_name=variant_name,
         verbose=verbose,
         compute_precision=compute_precision,
+        output_name=output_name,
     )
     logger.info(f"Successfully exported CoreML model to: {mlpackage_path}")
     return mlpackage_path

@@ -51,20 +51,28 @@ class TestBuildEngineDryRun:
     @pytest.mark.parametrize(
         ("onnx_path", "expected_engine"),
         [
-            pytest.param("/output/rfdetr.onnx", "/output/rfdetr.trt", id="plain-path"),
-            pytest.param("/path with spaces/model.onnx", "/path with spaces/model.trt", id="path-with-spaces"),
-            pytest.param("/model;rm -rf /.onnx", "/model;rm -rf /.onnx.trt", id="shell-metachar"),
-            pytest.param("/data/my.onnx.backup/model.onnx", "/data/my.onnx.backup/model.trt", id="earlier-onnx-in-dir"),
+            pytest.param("/output/rfdetr.onnx", "/output/rfdetr_fp16.trt", id="plain-path"),
+            pytest.param("/path with spaces/model.onnx", "/path with spaces/model_fp16.trt", id="path-with-spaces"),
+            pytest.param("/model;rm -rf /.onnx", "/model;rm -rf /.onnx_fp16.trt", id="shell-metachar"),
             pytest.param(
-                "/output/model_v1.onnx.old.onnx", "/output/model_v1.onnx.old.trt", id="double-onnx-in-filename"
+                "/data/my.onnx.backup/model.onnx",
+                "/data/my.onnx.backup/model_fp16.trt",
+                id="earlier-onnx-in-dir",
             ),
             pytest.param(
-                "/output/model_without_extension", "/output/model_without_extension.trt", id="no-onnx-extension"
+                "/output/model_v1.onnx.old.onnx",
+                "/output/model_v1.onnx.old_fp16.trt",
+                id="double-onnx-in-filename",
+            ),
+            pytest.param(
+                "/output/model_without_extension",
+                "/output/model_without_extension_fp16.trt",
+                id="no-onnx-extension",
             ),
         ],
     )
     def test_derives_trt_path(self, onnx_path: str, expected_engine: str) -> None:
-        """Only the final suffix is swapped to ``.trt``; earlier ``.onnx`` segments are never corrupted."""
+        """Only the final suffix is swapped to ``_fp16.trt``; earlier ``.onnx`` segments are never corrupted."""
         result = tensorrt_export.build_engine(onnx_path, dry_run=True)
 
         assert result == expected_engine
@@ -76,8 +84,14 @@ class TestBuildEngineDryRun:
 
         result = tensorrt_export.build_engine("/tmp/model.onnx", dry_run=True)
 
-        assert result == "/tmp/model.trt"
+        assert result == "/tmp/model_fp16.trt"
         assert not called, "dry_run must not invoke the polygraphy build chain"
+
+    def test_output_name_overrides_and_suppresses_precision_suffix(self) -> None:
+        """``output_name`` names the engine verbatim, in the ONNX's directory, with no ``_fp16``/``_fp32`` suffix."""
+        result = tensorrt_export.build_engine("/output/rfdetr-medium.onnx", dry_run=True, output_name="my-engine")
+
+        assert result == "/output/my-engine.trt"
 
 
 class TestBuildEngineDependencyGuard:
@@ -119,11 +133,12 @@ class TestBuildEngineWiring:
         monkeypatch.setattr(tensorrt_export, "save_engine", _save_engine)
 
         result = tensorrt_export.build_engine("/tmp/model.onnx", fp16=fp16)
+        expected_path = f"/tmp/model_{'fp16' if fp16 else 'fp32'}.trt"
 
-        assert result == "/tmp/model.trt"
+        assert result == expected_path
         assert config_kwargs == {"fp16": fp16}
         assert build_args == {"network": ("network", "/tmp/model.onnx"), "config": "config-sentinel"}
-        assert saved == {"engine": "engine-sentinel", "path": "/tmp/model.trt"}
+        assert saved == {"engine": "engine-sentinel", "path": expected_path}
 
 
 class TestBuildEngineFp16Fallback:
@@ -143,7 +158,7 @@ class TestBuildEngineFp16Fallback:
 
         result = tensorrt_export.build_engine("/tmp/model.onnx", fp16=True)
 
-        assert result == "/tmp/model.trt"
+        assert result == "/tmp/model_fp32.trt"
         assert config_kwargs == {"fp16": False}
 
 

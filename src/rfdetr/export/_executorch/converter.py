@@ -59,6 +59,7 @@ from typing import Any, Literal
 import torch
 from torch import nn
 
+from rfdetr.export._naming import resolve_export_stem
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -283,6 +284,7 @@ def export_executorch(
     variant_name: str | None = None,
     soc: str = "SM8650",
     dynamic_batch: bool = False,
+    output_name: str | None = None,
 ) -> Path:
     """Export an RF-DETR model to an ExecuTorch ``.pte`` file.
 
@@ -302,13 +304,17 @@ def export_executorch(
             devices, fp16; requires ``coremltools``), or ``"qnn"`` (Qualcomm Snapdragon HTP, fp16; requires an
             ExecuTorch source build against the QNN SDK).
         variant_name: Model variant identifier (e.g. ``"rfdetr-nano"``).  When provided, the file is named
-            ``{variant_name}.pte`` instead of the generic ``inference_model.pte``.
+            ``{variant_name}_{backend}.pte`` (``{variant_name}_qnn_{soc}.pte`` for the SoC-locked ``qnn`` backend)
+            instead of the generic ``inference_model_{backend}.pte`` -- the backend (and SoC, for ``qnn``) is always
+            encoded since it determines which hardware/runtime can load the file.
         soc: Target SoC for backends that compile for a specific chip (currently ``"qnn"``), a ``QcomChipset`` name
             (default ``"SM8650"`` = Snapdragon 8 Gen 3).  Ignored for backends that do not target a specific SoC.
         dynamic_batch: Variable batch size at runtime.  Not supported on executorch 1.3.1 (raises
             ``NotImplementedError``): ``torch.export`` keeps the batch axis symbolic, but the runtime cannot resize
             RF-DETR's windowed-attention reshapes, so a dynamic ``.pte`` runs only at the traced batch.  Export one
             ``.pte`` per batch size for now.
+        output_name: Full filename override (without extension). Takes precedence over *variant_name* and
+            suppresses the ``_{backend}``/``_qnn_{soc}`` suffix -- the file is named ``{output_name}.pte`` verbatim.
 
     Returns:
         Path to the exported ``.pte`` file.
@@ -357,12 +363,13 @@ def export_executorch(
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    if variant_name:
-        # Sanitize against path traversal (mirrors export_onnx): "foo/bar" -> "bar".
-        variant_name = os.path.splitext(os.path.basename(variant_name))[0]
-        export_name = variant_name
+    stem, is_custom = resolve_export_stem(variant_name, output_name)
+    if is_custom:
+        export_name = stem
     else:
-        export_name = "inference_model"
+        # backend (+ SoC for qnn) determines what can load the file -- always encode it.
+        backend_token = f"qnn_{soc}" if backend_name == "qnn" else backend_name
+        export_name = f"{stem}_{backend_token}"
     output_file = output_dir / f"{export_name}.pte"
 
     model = model.eval()

@@ -377,13 +377,15 @@ class TestExportTfliteConverter:
         fake_onnx2tf: Any,
         mock_prepare_calib: Any,
     ) -> None:
-        """Fallback returns a stem-scoped file when the primary *_float32.tflite is absent."""
+        """Fallback returns a stem-scoped file when the primary *_fp32.tflite is absent."""
         out = tmp_path / "out"
         out.mkdir()
-        # Scoped fallback: must match {stem}_*.tflite (stem == "model" here).
+        # Scoped fallback: must match {stem}_*.tflite (stem == "model" here). Written pre-renamed
+        # ("_float16") to mirror onnx2tf's real output naming -- _rename_precision_outputs renames it
+        # to "_fp16" before the fallback glob runs.
         (out / "model_float16.tflite").write_bytes(b"fb")
         result = export_tflite(onnx_model, out)
-        assert result.name == "model_float16.tflite"
+        assert result.name == "model_fp16.tflite"
 
     def test_fallback_does_not_return_unrelated_tflite(
         self,

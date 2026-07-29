@@ -374,9 +374,12 @@ class TestCoreMLEndToEnd:
     """Real CoreML export + FLOAT32 CPU numerical parity (``-m e2e_coreml``)."""
 
     def test_mlpackage_written(self, coreml_export: tuple[Any, torch.Tensor, Path, Any]) -> None:
-        """Export must write a non-empty ``.mlpackage`` directory/bundle."""
+        """Export must write a non-empty ``.mlpackage`` directory/bundle, named with the resolved precision."""
         _, _, mlpackage_path, _ = coreml_export
         assert mlpackage_path.exists()
+        # Default compute_precision resolves to FLOAT32 (see export_coreml docstring); the filename must
+        # always encode it, since precision materially changes the artifact.
+        assert mlpackage_path.stem.endswith("_fp32")
         assert mlpackage_path.suffix == ".mlpackage" or mlpackage_path.name.endswith(".mlpackage")
 
     def test_outputs_match_pytorch_structured(self, coreml_export: tuple[Any, torch.Tensor, Path, Any]) -> None:
