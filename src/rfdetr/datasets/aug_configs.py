@@ -41,7 +41,7 @@ model.train(dataset_dir="...", aug_config={"HorizontalFlip": {"p": 0.5}})
 - Perspective: Perspective, ElasticTransform, GridDistortion
 
 **Pixel-level transforms** (preserve bounding boxes):
-- Color: ColorJitter, HueSaturationValue, RandomBrightnessContrast
+- Color: ColorJitter, HueSaturationValue, RandomBrightnessContrast, ToGray
 - Blur/Noise: GaussianBlur, GaussNoise, Blur
 - Enhancement: CLAHE, Sharpen, Equalize
 
@@ -79,6 +79,7 @@ or torchvision defaults. Install it with ``pip install 'rfdetr[augment]'``.
 | ``Rotate`` | ``K.RandomRotation`` | ``limit`` may be scalar or tuple |
 | ``Affine`` | ``K.RandomAffine`` | ``translate_percent`` treated as fraction |
 | ``ColorJitter`` | ``K.ColorJiggle`` | Same multiplicative semantics |
+| ``ToGray`` | ``K.RandomGrayscale`` | Grayscale, kept at three channels |
 | ``RandomBrightnessContrast`` | ``K.ColorJiggle`` | ``brightness_limit`` / ``contrast_limit`` direct |
 | ``GaussianBlur`` | ``K.RandomGaussianBlur`` | ``blur_limit`` rounded up to odd; ``sigma=(0.1, 2.0)`` |
 | ``GaussNoise`` | ``K.RandomGaussianNoise`` | Upper bound of ``std_range`` used as fixed std |

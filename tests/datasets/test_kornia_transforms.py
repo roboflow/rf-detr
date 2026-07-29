@@ -71,6 +71,42 @@ class TestBuildKorniaPipeline:
         with pytest.raises(ValueError, match="BogusTransform"):
             build_kornia_pipeline(mixed, 560)
 
+    def test_to_gray_builds_random_grayscale(self):
+        """``ToGray`` maps onto ``K.RandomGrayscale`` (issue #1227)."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {"p": 0.5}}, 560)
+        transform_names = [child.__class__.__name__ for child in pipeline.children()]
+        assert "RandomGrayscale" in transform_names
+
+    def test_to_gray_keeps_three_channels_and_greys(self):
+        """``ToGray`` matches Albumentations: grayscale content, still three channels."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {"p": 1.0}}, 560)
+        image = torch.rand(1, 3, 32, 32)
+        boxes = torch.tensor([[[0.0, 0.0, 10.0, 10.0]]])
+        out, _ = pipeline(image, boxes)
+
+        assert out.shape == image.shape, "ToGray must preserve the three-channel shape"
+        # A greyscale image has identical values across the channel axis.
+        assert torch.allclose(out[:, 0], out[:, 1], atol=1e-5)
+        assert torch.allclose(out[:, 1], out[:, 2], atol=1e-5)
+
+    def test_to_gray_accepted_by_both_backends(self):
+        """The same config is readable by the Albumentations backend too (issue #1227).
+
+        ``ToGray`` resolved on Albumentations via ``getattr`` long before it was a Kornia
+        built-in, so a config that worked on one backend raised on the other.
+        """
+        pytest.importorskip("albumentations")
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+        from rfdetr.datasets.transforms import AlbumentationsWrapper
+
+        config = {"ToGray": {"p": 0.5}}
+        assert build_kornia_pipeline(config, 560) is not None
+        assert AlbumentationsWrapper.from_config(config) is not None
+
     def test_hflip_disabled_for_keypoint_pipeline(self):
         """Keypoint-mode Kornia augmentation drops hflip transforms with a warning."""
         from unittest import mock
