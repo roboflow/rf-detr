@@ -113,6 +113,42 @@ class TestBuildKorniaPipeline:
         built_names = [t.__class__.__name__ for t in wrappers[0].transform.transforms]
         assert "ToGray" in built_names, f"expected a ToGray transform, got {built_names}"
 
+    def test_to_gray_defaults_p_to_point_five_when_omitted(self):
+        """Omitting p resolves to 0.5, matching Albumentations (not Kornia's native 0.1 default)."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {}}, 560)
+        to_gray = next(child for child in pipeline.children() if child.__class__.__name__ == "RandomGrayscale")
+        assert to_gray.p == pytest.approx(0.5)
+
+    def test_to_gray_p_zero_is_a_no_op(self):
+        """p=0.0 never applies: forward pass returns the input unchanged."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {"p": 0.0}}, 560)
+        image = torch.rand(1, 3, 32, 32)
+        boxes = torch.tensor([[[0.0, 0.0, 10.0, 10.0]]])
+        out, _ = pipeline(image, boxes)
+
+        assert torch.equal(out, image), "p=0.0 must never apply ToGray"
+
+    def test_to_gray_ignores_method_and_num_output_channels_on_kornia(self):
+        """method/num_output_channels have no Kornia equivalent and are currently ignored there.
+
+        Pins the divergence documented on ``_make_to_gray``: Albumentations honors both, Kornia always uses BT.601
+        weights and returns 3 channels. If this is ever fixed, this test should be updated to assert the new (parity)
+        behavior instead.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {"method": "max", "num_output_channels": 1, "p": 1.0}}, 560)
+        image = torch.rand(1, 3, 32, 32)
+        boxes = torch.tensor([[[0.0, 0.0, 10.0, 10.0]]])
+        out, _ = pipeline(image, boxes)
+
+        assert out.shape == image.shape, "num_output_channels=1 is currently ignored -- output stays 3-channel"
+        assert torch.allclose(out[:, 0], out[:, 1], atol=1e-5), "method='max' is currently ignored on Kornia"
+
     def test_hflip_disabled_for_keypoint_pipeline(self):
         """Keypoint-mode Kornia augmentation drops hflip transforms with a warning."""
         from unittest import mock
