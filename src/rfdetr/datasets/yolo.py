@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 from PIL import Image, ImageDraw
 from torchvision.datasets import VisionDataset
 
+from rfdetr.datasets._aug_utils import resolve_keypoint_flip_pairs
 from rfdetr.datasets._keypoint_schema import (
     YoloKeypointSchema,
     _extract_yolo_class_names_from_data,
@@ -1009,9 +1010,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     scale_jitter = getattr(args, "scale_jitter", True)
     include_keypoints = getattr(args, "use_grouppose_keypoints", False)
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
-    keypoint_flip_pairs: list[int] | None = (
-        (getattr(args, "keypoint_flip_pairs", []) or []) if include_keypoints else None
-    )
+    keypoint_flip_pairs = resolve_keypoint_flip_pairs(args, include_keypoints=include_keypoints)
     resolved_augmentation_backend = resolve_backend_for_build(getattr(args, "augmentation_backend", "cpu"))
     gpu_postprocess = is_gpu_postprocess(resolved_augmentation_backend)
 
