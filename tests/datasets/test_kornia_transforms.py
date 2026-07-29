@@ -105,7 +105,13 @@ class TestBuildKorniaPipeline:
 
         config = {"ToGray": {"p": 0.5}}
         assert build_kornia_pipeline(config, 560) is not None
-        assert AlbumentationsWrapper.from_config(config) is not None
+
+        wrappers = AlbumentationsWrapper.from_config(config)
+        assert len(wrappers) == 1, (
+            "from_config(strict=False) silently drops unresolved transforms, so length must be checked"
+        )
+        built_names = [t.__class__.__name__ for t in wrappers[0].transform.transforms]
+        assert "ToGray" in built_names, f"expected a ToGray transform, got {built_names}"
 
     def test_hflip_disabled_for_keypoint_pipeline(self):
         """Keypoint-mode Kornia augmentation drops hflip transforms with a warning."""
