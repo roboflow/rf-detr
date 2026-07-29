@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] — 2026-07-27
+
 - Default dataset augmentations now use torchvision-native transforms **unless Albumentations is installed**, in which case `augmentation_backend="auto"`/`"cpu"` (the default) auto-selects Albumentations instead — identical user code can therefore resolve to a different resize backend (and slightly different pixel values / mAP) purely based on whether `rfdetr[augment]` is installed. Pass `augmentation_backend="torchvision"` to pin torchvision regardless of what is installed. Non-empty custom `aug_config` dictionaries use the optional Albumentations integration and Kornia GPU backend, both via `pip install 'rfdetr[augment]'`. The `[train]` extra no longer installs Albumentations or Kornia. See the migration guide's "Upgrade 1.8 → 1.9" section for remediation steps. ([#1112](https://github.com/roboflow/rf-detr/pull/1112))
 
 ### Added
@@ -27,16 +29,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keypoint L1-loss helper (`compute_l1_keypoint_loss`) now returns **graph-connected** zeros on its out-of-schema class-index guard instead of detached `new_zeros`. A detached zero left the keypoint-head parameters without a gradient path on that batch, which desyncs `DistributedDataParallel`'s gradient reducer across ranks (hang or "parameter did not receive grad") when the guard fires on some ranks but not others. This is a prerequisite for the multi-GPU keypoint training above.
 - Non-square Albumentations training resize (`aug_config` set, `augmentation_backend` resolving to `"albumentations"`) no longer silently inflates every image's longest side to `max_size` (1333 by default). `SmallestMaxSize` → `LongestMaxSize` always forces an exact resize in Albumentations, not a conditional cap; a new `CappedLongestMaxSize` internal transform only shrinks, never upscales, matching torchvision's `RandomResize` semantics.
 - Explicit `augmentation_backend="albumentations"` now raises a clear `ImportError` immediately if Albumentations is not installed, instead of resolving successfully and failing later, deep in dataset construction.
+- `RFDETR.from_checkpoint(..., trust_checkpoint=True)` now actually works. It previously bypassed the safe-load check only for the checkpoint's own metadata read; model construction then silently reloaded the same file through `load_pretrain_weights()` with the unsafe-load default, so `trust_checkpoint=True` had no effect on checkpoints that genuinely needed it and raised the same `RuntimeError` it was supposed to bypass. ([#1239](https://github.com/roboflow/rf-detr/pull/1239))
 - Segmentation evaluation resized ground-truth masks to each image's original resolution before comparison, a lossy round trip vs. the mask head's native grid; GT masks now resize directly to each prediction's own pixel grid, so segm mAP is computed on consistent pixel grids. ([#1241](https://github.com/roboflow/rf-detr/pull/1241))
-- `pip install 'rfdetr[onnx]'` (and `[tflite]`) no longer hangs building `onnxsim` from source on CPython 3.11/3.13 and Linux aarch64. The previous `onnxsim<0.6.0` pin resolved to 0.5.0, which ships no wheels for those targets, so pip compiled onnxsim's bundled onnxruntime/onnx from source. The constraint is now `onnxsim>=0.7.0`, which publishes prebuilt wheels across CPython 3.10–3.13 on Linux x86_64/aarch64, Windows x86_64, and macOS arm64. ([#749](https://github.com/roboflow/rf-detr/pull/749))
+- `pip install 'rfdetr[onnx]'` (and `[tflite]`) no longer hangs building `onnxsim` from source on CPython 3.11/3.13 and Linux aarch64. The previous `onnxsim<0.6.0` pin resolved to 0.5.0, which ships no wheels for those targets, so pip compiled onnxsim's bundled onnxruntime/onnx from source. The constraint is now `onnxsim>=0.7.0`, which publishes prebuilt wheels across CPython 3.10–3.13 on Linux x86_64/aarch64, Windows x86_64, and macOS arm64. ([#1242](https://github.com/roboflow/rf-detr/pull/1242))
 
 ### Deprecated
 
 - `RFDETR.optimize_for_inference()` renamed to `RFDETR.inference()` (same signature). The old name is kept as a deprecated alias that forwards to `inference()` and emits a `FutureWarning`. Deprecated since v1.9.0, will be removed in v1.11.0.
 
+### Changed
+
+- Matched-pair IoU targets in the classification/matching losses now compute via `elementwise_box_iou`/`elementwise_generalized_box_iou` (new public helpers in `rfdetr.utilities.box_ops`) instead of `torch.diag(box_iou(...))`. The old path built the full NxN pairwise IoU matrix just to read its diagonal; the new one computes only the N matched pairs directly, reducing peak GPU memory during loss calculation. Both new helpers raise `ValueError` on mismatched-length inputs instead of silently broadcasting. ([#1245](https://github.com/roboflow/rf-detr/pull/1245))
+- The `[tensorrt]` extra no longer installs `pycuda`. It's only needed for `TRTInference`'s async benchmarking mode, which now requires the separate `[tensorrt-bench]` extra (`pip install 'rfdetr[tensorrt-bench]'`) — the standard export→engine path (`polygraphy`, no `pycuda`) is unaffected. ([#1246](https://github.com/roboflow/rf-detr/pull/1246))
+
+### Security
+
+- `RFDETR.from_checkpoint()` now uses safe deserialization by default (`weights_only=True`) instead of always running full pickle deserialization. Checkpoints containing custom Python objects beyond `argparse.Namespace` or `types.SimpleNamespace` need the new keyword-only `trust_checkpoint: bool = False` parameter set to `True` to opt into the old (unsafe) behavior; resume-from-checkpoint during training honors the same `trust_checkpoint` flag. ([#1179](https://github.com/roboflow/rf-detr/pull/1179))
+- TensorRT export no longer shells out to the `trtexec` CLI — engines are built in-process through the `polygraphy` Python API, removing the subprocess/shell-injection surface entirely. ([#853](https://github.com/roboflow/rf-detr/pull/853))
+
 ### Removed
 
-- `[kornia]` extra renamed to `[augment]`. A deprecated `[kornia]` alias extra (`pip install 'rfdetr[kornia]'` → installs `rfdetr[augment]`) is kept for one release for backward compatibility.
+- `[kornia]` extra removed — GPU-side augmentation now installs via `[augment]` (`pip install 'rfdetr[augment]'`) instead. There is no `[kornia]` alias extra; `pip install 'rfdetr[kornia]'` will fail.
 - `rfdetr.util.*` and `rfdetr.deploy` import paths, deprecated since v1.6.0 with `remove_in="1.9.0"`. Use `rfdetr.utilities.*`, `rfdetr.assets.coco_classes`, `rfdetr.training.drop_schedule`, `rfdetr.training.param_groups`, `rfdetr.visualize.data`, `rfdetr.models.heads.segmentation`, and `rfdetr.export` instead.
 - `rfdetr._namespace.build_namespace(model_config, train_config)`, deprecated since v1.7.0 with `remove_in="1.9.0"`. Use `rfdetr.models.build_model_from_config` and `build_criterion_from_config` instead.
 - The `train_config` argument to `load_pretrain_weights(nn_model, model_config, train_config)`, deprecated since v1.7.0 with `remove_in="1.9.0"`. Call it with just `(nn_model, model_config)`.
@@ -50,14 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `trust_checkpoint: bool = False` keyword-only parameter on `RFDETR.from_checkpoint()` to opt into full pickle deserialization for trusted checkpoint files.
 - `optimize_for_inference(inplace=True)` — new keyword-only argument on `RFDETR.optimize_for_inference()`; skips the deep-copy of the base model for memory-constrained inference-only deployments (~0.5× model-weight peak memory reduction). Requires `compile=False`. After inplace optimization, `export()` raises `RuntimeError` and `remove_optimized_model()` issues a `UserWarning` and returns cleanly instead of silently clearing state. New `RFDETR.is_optimized_inplace` property returns `True` after a successful inplace optimization. ([#1089](https://github.com/roboflow/rf-detr/pull/1089))
 - `CocoKeypointSchema.keypoint_flip_pairs` and `YoloKeypointSchema.keypoint_flip_pairs` fields — horizontal-flip swap pairs inferred automatically from keypoint names (left/right naming convention) for COCO schemas, and from `flip_idx` permutation for YOLO schemas. Auto-populated by `infer_coco_keypoint_schema` and `infer_yolo_keypoint_schema` respectively. ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
 - `infer_coco_keypoint_schema` and `infer_yolo_keypoint_schema` re-exported from `rfdetr.datasets` (previously only accessible from `rfdetr.datasets._keypoint_schema`). ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
 
 ### Changed
 
-- `RFDETR.from_checkpoint()` now uses safe deserialization by default (`weights_only=True`). Checkpoints containing custom Python objects beyond `argparse.Namespace` or `types.SimpleNamespace` must pass `trust_checkpoint=True`. Previously, full pickle deserialization was always used.
 - Horizontal flip detection in `AlbumentationsWrapper` now uses Albumentations `ReplayCompose` replay metadata instead of heuristic bbox-center mirroring; eliminates false positives on non-flip transforms that shift box centers. Falls back to `alb.Compose` with a `UserWarning` when `albumentations <1.3` is detected. ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
 - Keypoint schema inference now supports native COCO format (`dataset_file="coco"`) in addition to `"roboflow"` and `"yolo"`. ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
 - `_keypoint_schema_cache` key changed from `dataset_dir` (string) to `(dataset_file, dataset_dir)` tuple to prevent cross-format cache collisions when the same directory is used with different dataset formats. ([#1164](https://github.com/roboflow/rf-detr/pull/1164))
