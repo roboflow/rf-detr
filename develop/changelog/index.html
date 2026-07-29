@@ -2333,6 +2333,7 @@ Use the release feed to review versioned package changes, migration notes, and m
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h2 id="190-2026-07-27">[1.9.0] — 2026-07-27<a class="headerlink" href="#190-2026-07-27" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Default dataset augmentations now use torchvision-native transforms <strong>unless Albumentations is installed</strong>, in which case <code>augmentation_backend="auto"</code>/<code>"cpu"</code> (the default) auto-selects Albumentations instead — identical user code can therefore resolve to a different resize backend (and slightly different pixel values / mAP) purely based on whether <code>rfdetr[augment]</code> is installed. Pass <code>augmentation_backend="torchvision"</code> to pin torchvision regardless of what is installed. Non-empty custom <code>aug_config</code> dictionaries use the optional Albumentations integration and Kornia GPU backend, both via <code>pip install 'rfdetr[augment]'</code>. The <code>[train]</code> extra no longer installs Albumentations or Kornia. See the migration guide's "Upgrade 1.8 → 1.9" section for remediation steps. (<a href="https://github.com/roboflow/rf-detr/pull/1112">#1112</a>)</li>
 </ul>
@@ -2354,16 +2355,27 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Keypoint L1-loss helper (<code>compute_l1_keypoint_loss</code>) now returns <strong>graph-connected</strong> zeros on its out-of-schema class-index guard instead of detached <code>new_zeros</code>. A detached zero left the keypoint-head parameters without a gradient path on that batch, which desyncs <code>DistributedDataParallel</code>'s gradient reducer across ranks (hang or "parameter did not receive grad") when the guard fires on some ranks but not others. This is a prerequisite for the multi-GPU keypoint training above.</li>
 <li>Non-square Albumentations training resize (<code>aug_config</code> set, <code>augmentation_backend</code> resolving to <code>"albumentations"</code>) no longer silently inflates every image's longest side to <code>max_size</code> (1333 by default). <code>SmallestMaxSize</code> → <code>LongestMaxSize</code> always forces an exact resize in Albumentations, not a conditional cap; a new <code>CappedLongestMaxSize</code> internal transform only shrinks, never upscales, matching torchvision's <code>RandomResize</code> semantics.</li>
 <li>Explicit <code>augmentation_backend="albumentations"</code> now raises a clear <code>ImportError</code> immediately if Albumentations is not installed, instead of resolving successfully and failing later, deep in dataset construction.</li>
+<li><code>RFDETR.from_checkpoint(..., trust_checkpoint=True)</code> now actually works. It previously bypassed the safe-load check only for the checkpoint's own metadata read; model construction then silently reloaded the same file through <code>load_pretrain_weights()</code> with the unsafe-load default, so <code>trust_checkpoint=True</code> had no effect on checkpoints that genuinely needed it and raised the same <code>RuntimeError</code> it was supposed to bypass. (<a href="https://github.com/roboflow/rf-detr/pull/1239">#1239</a>)</li>
 <li>Segmentation evaluation resized ground-truth masks to each image's original resolution before comparison, a lossy round trip vs. the mask head's native grid; GT masks now resize directly to each prediction's own pixel grid, so segm mAP is computed on consistent pixel grids. (<a href="https://github.com/roboflow/rf-detr/pull/1241">#1241</a>)</li>
-<li><code>pip install 'rfdetr[onnx]'</code> (and <code>[tflite]</code>) no longer hangs building <code>onnxsim</code> from source on CPython 3.11/3.13 and Linux aarch64. The previous <code>onnxsim&lt;0.6.0</code> pin resolved to 0.5.0, which ships no wheels for those targets, so pip compiled onnxsim's bundled onnxruntime/onnx from source. The constraint is now <code>onnxsim&gt;=0.7.0</code>, which publishes prebuilt wheels across CPython 3.10–3.13 on Linux x86_64/aarch64, Windows x86_64, and macOS arm64. (<a href="https://github.com/roboflow/rf-detr/pull/749">#749</a>)</li>
+<li><code>pip install 'rfdetr[onnx]'</code> (and <code>[tflite]</code>) no longer hangs building <code>onnxsim</code> from source on CPython 3.11/3.13 and Linux aarch64. The previous <code>onnxsim&lt;0.6.0</code> pin resolved to 0.5.0, which ships no wheels for those targets, so pip compiled onnxsim's bundled onnxruntime/onnx from source. The constraint is now <code>onnxsim&gt;=0.7.0</code>, which publishes prebuilt wheels across CPython 3.10–3.13 on Linux x86_64/aarch64, Windows x86_64, and macOS arm64. (<a href="https://github.com/roboflow/rf-detr/pull/1242">#1242</a>)</li>
 </ul>
 <h3 id="deprecated_1">Deprecated<a class="headerlink" href="#deprecated_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>RFDETR.optimize_for_inference()</code> renamed to <code>RFDETR.inference()</code> (same signature). The old name is kept as a deprecated alias that forwards to <code>inference()</code> and emits a <code>FutureWarning</code>. Deprecated since v1.9.0, will be removed in v1.11.0.</li>
 </ul>
+<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Matched-pair IoU targets in the classification/matching losses now compute via <code>elementwise_box_iou</code>/<code>elementwise_generalized_box_iou</code> (new public helpers in <code>rfdetr.utilities.box_ops</code>) instead of <code>torch.diag(box_iou(...))</code>. The old path built the full NxN pairwise IoU matrix just to read its diagonal; the new one computes only the N matched pairs directly, reducing peak GPU memory during loss calculation. Both new helpers raise <code>ValueError</code> on mismatched-length inputs instead of silently broadcasting. (<a href="https://github.com/roboflow/rf-detr/pull/1245">#1245</a>)</li>
+<li>The <code>[tensorrt]</code> extra no longer installs <code>pycuda</code>. It's only needed for <code>TRTInference</code>'s async benchmarking mode, which now requires the separate <code>[tensorrt-bench]</code> extra (<code>pip install 'rfdetr[tensorrt-bench]'</code>) — the standard export→engine path (<code>polygraphy</code>, no <code>pycuda</code>) is unaffected. (<a href="https://github.com/roboflow/rf-detr/pull/1246">#1246</a>)</li>
+</ul>
+<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>RFDETR.from_checkpoint()</code> now uses safe deserialization by default (<code>weights_only=True</code>) instead of always running full pickle deserialization. Checkpoints containing custom Python objects beyond <code>argparse.Namespace</code> or <code>types.SimpleNamespace</code> need the new keyword-only <code>trust_checkpoint: bool = False</code> parameter set to <code>True</code> to opt into the old (unsafe) behavior; resume-from-checkpoint during training honors the same <code>trust_checkpoint</code> flag. (<a href="https://github.com/roboflow/rf-detr/pull/1179">#1179</a>)</li>
+<li>TensorRT export no longer shells out to the <code>trtexec</code> CLI — engines are built in-process through the <code>polygraphy</code> Python API, removing the subprocess/shell-injection surface entirely. (<a href="https://github.com/roboflow/rf-detr/pull/853">#853</a>)</li>
+</ul>
 <h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>[kornia]</code> extra renamed to <code>[augment]</code>. A deprecated <code>[kornia]</code> alias extra (<code>pip install 'rfdetr[kornia]'</code> → installs <code>rfdetr[augment]</code>) is kept for one release for backward compatibility.</li>
+<li><code>[kornia]</code> extra removed — GPU-side augmentation now installs via <code>[augment]</code> (<code>pip install 'rfdetr[augment]'</code>) instead. There is no <code>[kornia]</code> alias extra; <code>pip install 'rfdetr[kornia]'</code> will fail.</li>
 <li><code>rfdetr.util.*</code> and <code>rfdetr.deploy</code> import paths, deprecated since v1.6.0 with <code>remove_in="1.9.0"</code>. Use <code>rfdetr.utilities.*</code>, <code>rfdetr.assets.coco_classes</code>, <code>rfdetr.training.drop_schedule</code>, <code>rfdetr.training.param_groups</code>, <code>rfdetr.visualize.data</code>, <code>rfdetr.models.heads.segmentation</code>, and <code>rfdetr.export</code> instead.</li>
 <li><code>rfdetr._namespace.build_namespace(model_config, train_config)</code>, deprecated since v1.7.0 with <code>remove_in="1.9.0"</code>. Use <code>rfdetr.models.build_model_from_config</code> and <code>build_criterion_from_config</code> instead.</li>
 <li>The <code>train_config</code> argument to <code>load_pretrain_weights(nn_model, model_config, train_config)</code>, deprecated since v1.7.0 with <code>remove_in="1.9.0"</code>. Call it with just <code>(nn_model, model_config)</code>.</li>
@@ -2375,14 +2387,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="183-2026-06-27">[1.8.3] — 2026-06-27<a class="headerlink" href="#183-2026-06-27" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>trust_checkpoint: bool = False</code> keyword-only parameter on <code>RFDETR.from_checkpoint()</code> to opt into full pickle deserialization for trusted checkpoint files.</li>
 <li><code>optimize_for_inference(inplace=True)</code> — new keyword-only argument on <code>RFDETR.optimize_for_inference()</code>; skips the deep-copy of the base model for memory-constrained inference-only deployments (~0.5× model-weight peak memory reduction). Requires <code>compile=False</code>. After inplace optimization, <code>export()</code> raises <code>RuntimeError</code> and <code>remove_optimized_model()</code> issues a <code>UserWarning</code> and returns cleanly instead of silently clearing state. New <code>RFDETR.is_optimized_inplace</code> property returns <code>True</code> after a successful inplace optimization. (<a href="https://github.com/roboflow/rf-detr/pull/1089">#1089</a>)</li>
 <li><code>CocoKeypointSchema.keypoint_flip_pairs</code> and <code>YoloKeypointSchema.keypoint_flip_pairs</code> fields — horizontal-flip swap pairs inferred automatically from keypoint names (left/right naming convention) for COCO schemas, and from <code>flip_idx</code> permutation for YOLO schemas. Auto-populated by <code>infer_coco_keypoint_schema</code> and <code>infer_yolo_keypoint_schema</code> respectively. (<a href="https://github.com/roboflow/rf-detr/pull/1164">#1164</a>)</li>
 <li><code>infer_coco_keypoint_schema</code> and <code>infer_yolo_keypoint_schema</code> re-exported from <code>rfdetr.datasets</code> (previously only accessible from <code>rfdetr.datasets._keypoint_schema</code>). (<a href="https://github.com/roboflow/rf-detr/pull/1164">#1164</a>)</li>
 </ul>
-<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<h3 id="changed_1">Changed<a class="headerlink" href="#changed_1" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>RFDETR.from_checkpoint()</code> now uses safe deserialization by default (<code>weights_only=True</code>). Checkpoints containing custom Python objects beyond <code>argparse.Namespace</code> or <code>types.SimpleNamespace</code> must pass <code>trust_checkpoint=True</code>. Previously, full pickle deserialization was always used.</li>
 <li>Horizontal flip detection in <code>AlbumentationsWrapper</code> now uses Albumentations <code>ReplayCompose</code> replay metadata instead of heuristic bbox-center mirroring; eliminates false positives on non-flip transforms that shift box centers. Falls back to <code>alb.Compose</code> with a <code>UserWarning</code> when <code>albumentations &lt;1.3</code> is detected. (<a href="https://github.com/roboflow/rf-detr/pull/1164">#1164</a>)</li>
 <li>Keypoint schema inference now supports native COCO format (<code>dataset_file="coco"</code>) in addition to <code>"roboflow"</code> and <code>"yolo"</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1164">#1164</a>)</li>
 <li><code>_keypoint_schema_cache</code> key changed from <code>dataset_dir</code> (string) to <code>(dataset_file, dataset_dir)</code> tuple to prevent cross-format cache collisions when the same directory is used with different dataset formats. (<a href="https://github.com/roboflow/rf-detr/pull/1164">#1164</a>)</li>
@@ -2403,7 +2413,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Instance segmentation fine-tuning cookbook (<code>docs/cookbooks/fine-tune_segmentation.ipynb</code>) — end-to-end walkthrough using <code>RFDETRSegSmall</code> across seven diverse segmentation datasets. (<a href="https://github.com/roboflow/rf-detr/pull/1159">#1159</a>)</li>
 <li>Inference latency benchmark cookbook (<code>docs/cookbooks/inference-latency-benchmark.ipynb</code>) — benchmarks CPU/GPU throughput across model sizes with reproducible measurement methodology. (<a href="https://github.com/roboflow/rf-detr/pull/1152">#1152</a>)</li>
 </ul>
-<h3 id="changed_1">Changed<a class="headerlink" href="#changed_1" title="Permanent link">&para;</a></h3>
+<h3 id="changed_2">Changed<a class="headerlink" href="#changed_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Default <code>num_keypoints_per_class</code> in <code>RFDETRKeypointPreviewConfig</code> changed from <code>[0, 17]</code> (background-first) to <code>[17]</code> (active-first). Legacy bg-first checkpoints auto-align on load via <code>_kp_active_mask</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1160">#1160</a>)</li>
 </ul>
@@ -2419,7 +2429,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <hr />
 <h2 id="181-2026-06-19">[1.8.1] — 2026-06-19<a class="headerlink" href="#181-2026-06-19" title="Permanent link">&para;</a></h2>
-<h3 id="changed_2">Changed<a class="headerlink" href="#changed_2" title="Permanent link">&para;</a></h3>
+<h3 id="changed_3">Changed<a class="headerlink" href="#changed_3" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Config path parameters (e.g. <code>dataset_dir</code>, <code>output_dir</code>, <code>pretrain_weights</code>) now accept <code>pathlib.Path</code> objects in addition to strings. Paths are coerced to <code>str</code> automatically via the <code>expand_paths</code> validator. No API changes required; existing string usage unaffected. (<a href="https://github.com/roboflow/rf-detr/pull/1124">#1124</a>)</li>
 <li>Keypoint training now disables horizontal flip augmentation until keypoint flip-pair swapping is implemented. Previously, flipping was applied without reordering keypoint pairs, producing incorrect labels. (<a href="https://github.com/roboflow/rf-detr/pull/1122">#1122</a>)</li>
@@ -2444,7 +2454,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Keypoint fine-tuning cookbook (<code>docs/cookbooks/fine-tune_keypoints.ipynb</code>) — end-to-end walkthrough: dataset download, schema inference, <code>KeypointTrainConfig</code>, training metrics, and inference with covariance uncertainty. (<a href="https://github.com/roboflow/rf-detr/pull/1104">#1104</a>)</li>
 <li><code>MetricKeypointOKS</code> — reusable OKS metric facade over <code>CocoEvaluator</code>, exported from <code>rfdetr.evaluation</code>. Supports arbitrary keypoint counts, per-category OKS sigma values, DDP-safe evaluation with first-rank-wins deduplication, and an <code>OKSKey</code> enum (<code>mAP</code>, <code>mAP@50</code>, <code>mAP@75</code>, <code>mAR</code>) for standardised metric keys. (<a href="https://github.com/roboflow/rf-detr/pull/1107">#1107</a>)</li>
 </ul>
-<h3 id="changed_3">Changed<a class="headerlink" href="#changed_3" title="Permanent link">&para;</a></h3>
+<h3 id="changed_4">Changed<a class="headerlink" href="#changed_4" title="Permanent link">&para;</a></h3>
 <ul>
 <li>DDP strategy now enables <code>find_unused_parameters=True</code> for all detection, keypoint, and segmentation models when running under <code>strategy='ddp'</code> or <code>strategy='auto'</code> with a distributed launcher. Previously only enabled for segmentation. Opt out via <code>trainer_kwargs={"strategy": DDPStrategy(find_unused_parameters=False)}</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1094">#1094</a>)</li>
 <li><code>rfdetr.datasets.aug_config</code> module renamed to <code>rfdetr.datasets.aug_configs</code> (plural). Direct imports from <code>rfdetr.datasets.aug_config</code> must be updated to <code>rfdetr.datasets.aug_configs</code>; the augmentation preset constants (<code>AUG_AGGRESSIVE</code>, etc.) are unchanged. (<a href="https://github.com/roboflow/rf-detr/pull/1103">#1103</a>)</li>
@@ -2494,7 +2504,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>TFLite inference now decodes segmentation mask outputs into <code>sv.Detections.mask</code>. Mask logits are upsampled to the source image size using Pillow bilinear resampling and thresholded at zero, matching the behaviour of <code>PostProcess.forward</code>. The mask tensor is detected by output name (<code>"masks"</code> substring) with a rank-4 shape fallback. (<a href="https://github.com/roboflow/rf-detr/pull/1053">#1053</a>)</li>
 <li><code>PretrainWeightsCompatibilityWarning</code> — new warning class emitted when a <code>ModelConfig</code> override (e.g. custom <code>encoder</code>, <code>num_queries</code>, or <code>num_feature_levels</code>) risks breaking pretrained weight loading. Importable as <code>from rfdetr.config import PretrainWeightsCompatibilityWarning</code> for targeted filtering. (<a href="https://github.com/roboflow/rf-detr/pull/1017">#1017</a>)</li>
 </ul>
-<h3 id="changed_4">Changed<a class="headerlink" href="#changed_4" title="Permanent link">&para;</a></h3>
+<h3 id="changed_5">Changed<a class="headerlink" href="#changed_5" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>peft</code> is no longer installed as part of the default <code>rfdetr</code> package. It has moved to the <code>[lora]</code> and <code>[train]</code> optional extras. If you use LoRA fine-tuning, install with <code>pip install 'rfdetr[lora]'</code>. (<a href="https://github.com/roboflow/rf-detr/pull/838">#838</a>)</li>
 <li>Native RLE annotation support in the COCO segmentation pipeline: <code>convert_coco_poly_to_mask</code> now explicitly detects and decodes both compressed (string counts) and uncompressed (int-list counts) RLE formats alongside existing polygon support. Malformed annotations now raise instead of being silently swallowed. (<a href="https://github.com/roboflow/rf-detr/pull/897">#897</a>)</li>
@@ -2572,7 +2582,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Fixed <code>predict()</code> emitting a misleading "class_id out of range" warning for the background/no-object class (class index <code>num_classes</code>). Background-class detections now map <code>data["class_name"]</code> to <code>"__background__"</code> without any warning. (<a href="https://github.com/roboflow/rf-detr/issues/970">#970</a>)</li>
 </ul>
 <h2 id="164-2026-04-10">[1.6.4] — 2026-04-10<a class="headerlink" href="#164-2026-04-10" title="Permanent link">&para;</a></h2>
-<h3 id="changed_5">Changed<a class="headerlink" href="#changed_5" title="Permanent link">&para;</a></h3>
+<h3 id="changed_6">Changed<a class="headerlink" href="#changed_6" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>predict()</code> now includes <code>class_name</code> in <code>detections.data</code>, mapping each detection's 0-indexed class ID to its human-readable name. (<a href="https://github.com/roboflow/rf-detr/pull/914">#914</a>)</li>
 </ul>
@@ -2588,7 +2598,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><code>download_pretrain_weights()</code> no longer overwrites fine-tuned checkpoints that share a filename with a registry model (e.g. <code>rf-detr-nano.pth</code>). Previously, an MD5 mismatch would fall through to <code>_download_file()</code> and silently replace the user's weights with the original COCO checkpoint. The function now returns early whenever the file exists and <code>redownload=False</code>, regardless of MD5 status — a warning is emitted when the hash differs. Pass <code>redownload=True</code> to force a fresh download. (<a href="https://github.com/roboflow/rf-detr/pull/935">#935</a>)</li>
 </ul>
 <h2 id="163-2026-04-02">[1.6.3] — 2026-04-02<a class="headerlink" href="#163-2026-04-02" title="Permanent link">&para;</a></h2>
-<h3 id="changed_6">Changed<a class="headerlink" href="#changed_6" title="Permanent link">&para;</a></h3>
+<h3 id="changed_7">Changed<a class="headerlink" href="#changed_7" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>predict()</code> now stores the original image and its shape on returned <code>sv.Detections</code> objects — <code>detections.data["source_image"]</code> (NumPy array) and <code>detections.data["source_shape"]</code> (NumPy array of shape <code>(N, 2)</code> where each row is <code>[height, width]</code>) let you annotate results without loading the image separately. (<a href="https://github.com/roboflow/rf-detr/pull/892">#892</a>)</li>
 <li><code>RFDETR.train()</code> auto-detects <code>num_classes</code> from the dataset directory when not explicitly set, reinitializing the detection head to the correct class count automatically. A warning is emitted when the configured value differs from the dataset count. (<a href="https://github.com/roboflow/rf-detr/pull/893">#893</a>)</li>
@@ -2606,7 +2616,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li><code>RFDETR.predict(shape=...)</code> — optional <code>(height, width)</code> tuple overrides the default square inference resolution; useful when matching a non-square ONNX export. Both dimensions must be positive integers divisible by <code>patch_size × num_windows</code> as determined by the model configuration. (<a href="https://github.com/roboflow/rf-detr/pull/866">#866</a>)</li>
 </ul>
-<h3 id="changed_7">Changed<a class="headerlink" href="#changed_7" title="Permanent link">&para;</a></h3>
+<h3 id="changed_8">Changed<a class="headerlink" href="#changed_8" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>ModelConfig.device</code> and <code>RFDETR.train(device=...)</code> now accept <code>torch.device</code> objects and indexed device strings such as <code>"cuda:0"</code>. Values are normalized to canonical torch-style strings. <code>RFDETR.train()</code> warns when an unmapped device type is passed to PyTorch Lightning auto-detection. (<a href="https://github.com/roboflow/rf-detr/pull/872">#872</a>)</li>
 </ul>
@@ -2643,7 +2653,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><code>python -m rfdetr</code> entry point alongside the <code>rfdetr</code> console script.</li>
 <li><code>py.typed</code> marker — RF-DETR is now PEP 561–compliant.</li>
 </ul>
-<h3 id="changed_8">Changed<a class="headerlink" href="#changed_8" title="Permanent link">&para;</a></h3>
+<h3 id="changed_9">Changed<a class="headerlink" href="#changed_9" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Breaking:</strong> Minimum <code>transformers</code> version bumped to <code>&gt;=5.1.0,&lt;6.0.0</code>. The DINOv2 windowed-attention backbone now uses the transformers v5 API (<code>BackboneMixin._init_transformers_backbone()</code>, removed <code>head_mask</code> plumbing). Projects still on transformers v4 must pin <code>rfdetr&lt;1.6.0</code>. (<a href="https://github.com/roboflow/rf-detr/pull/760">#760</a>)</li>
 <li><strong>Breaking:</strong> PyPI install extras renamed — <code>rfdetr[metrics]</code> → <code>rfdetr[loggers]</code>, <code>rfdetr[onnxexport]</code> → <code>rfdetr[onnx]</code>.</li>
@@ -2690,7 +2700,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>Added support for nested Albumentations containers (<code>OneOf</code>, <code>Sequential</code>) inside <code>aug_config</code>. (<a href="https://github.com/roboflow/rf-detr/pull/752">#752</a>)</li>
 </ul>
-<h3 id="changed_9">Changed<a class="headerlink" href="#changed_9" title="Permanent link">&para;</a></h3>
+<h3 id="changed_10">Changed<a class="headerlink" href="#changed_10" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Migrated dataset transform pipeline to torchvision-native <code>Compose</code>, <code>ToImage</code>, and <code>ToDtype</code>; <code>Normalize</code> now defaults to ImageNet mean/std. (<a href="https://github.com/roboflow/rf-detr/pull/745">#745</a>)</li>
 </ul>
@@ -2714,7 +2724,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Added <code>device</code> field to <code>TrainConfig</code> for explicit device selection. (<a href="https://github.com/roboflow/rf-detr/pull/687">#687</a>)</li>
 <li><code>ModelConfig</code> now raises an error on unknown parameters, preventing silent misconfiguration. (<a href="https://github.com/roboflow/rf-detr/pull/196">#196</a>)</li>
 </ul>
-<h3 id="changed_10">Changed<a class="headerlink" href="#changed_10" title="Permanent link">&para;</a></h3>
+<h3 id="changed_11">Changed<a class="headerlink" href="#changed_11" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Deprecated <code>OPEN_SOURCE_MODELS</code> constant in favour of <code>ModelWeights</code> enum. (<a href="https://github.com/roboflow/rf-detr/pull/696">#696</a>)</li>
 <li>Added MD5 checksum validation for pretrained weight downloads. (<a href="https://github.com/roboflow/rf-detr/pull/679">#679</a>)</li>
@@ -2736,7 +2746,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <hr />
 <h2 id="143-2026-02-16">[1.4.3] — 2026-02-16<a class="headerlink" href="#143-2026-02-16" title="Permanent link">&para;</a></h2>
-<h3 id="changed_11">Changed<a class="headerlink" href="#changed_11" title="Permanent link">&para;</a></h3>
+<h3 id="changed_12">Changed<a class="headerlink" href="#changed_12" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Pretrained weight downloads now validate against an MD5 checksum to detect corrupted files. (<a href="https://github.com/roboflow/rf-detr/pull/679">#679</a>)</li>
 </ul>
@@ -2751,7 +2761,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Added <code>generate_coco_dataset()</code> utility for generating synthetic COCO-format datasets with configurable class counts, split ratios, and bounding box annotations. (<a href="https://github.com/roboflow/rf-detr/pull/617">#617</a>)</li>
 <li>Added <code>run_test=False</code> to <code>TrainConfig</code> — skip test-split evaluation when your dataset has no test set. (<a href="https://github.com/roboflow/rf-detr/pull/628">#628</a>)</li>
 </ul>
-<h3 id="changed_12">Changed<a class="headerlink" href="#changed_12" title="Permanent link">&para;</a></h3>
+<h3 id="changed_13">Changed<a class="headerlink" href="#changed_13" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>model.predict()</code> now accepts image URLs directly — no need to download images before inference. (<a href="https://github.com/roboflow/rf-detr/pull/629">#629</a>)</li>
 <li>Plus models (<code>RFDETRXLarge</code>, <code>RFDETR2XLarge</code>) are now distributed as a separate <code>rfdetr_plus</code> package under the Roboflow Model License. (<a href="https://github.com/roboflow/rf-detr/pull/645">#645</a>)</li>
@@ -2766,7 +2776,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Added native YOLO dataset format support alongside COCO. (<a href="https://github.com/roboflow/rf-detr/pull/74">#74</a>)</li>
 <li>Added <code>--print-freq</code> CLI argument to control training log frequency. (<a href="https://github.com/roboflow/rf-detr/pull/603">#603</a>)</li>
 </ul>
-<h3 id="changed_13">Changed<a class="headerlink" href="#changed_13" title="Permanent link">&para;</a></h3>
+<h3 id="changed_14">Changed<a class="headerlink" href="#changed_14" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Pinned <code>transformers</code> to <code>&lt;5.0.0</code> to prevent incompatibility with the transformers v5 API. (<a href="https://github.com/roboflow/rf-detr/pull/599">#599</a>)</li>
 </ul>
