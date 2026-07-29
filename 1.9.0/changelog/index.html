@@ -1,0 +1,2925 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="RF-DETR release history and changelog.">
+      
+      
+        <meta name="author" content="Roboflow">
+      
+      
+        <link rel="canonical" href="https://rfdetr.roboflow.com/1.9.0/changelog/">
+      
+      
+        <link rel="prev" href="../resources/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/roboflow-logo.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+  
+    
+      
+        <title>Changelog - RF-DETR</title>
+      
+    
+  
+
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CIBM+Plex+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"IBM Plex Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../stylesheets/rf.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  
+  
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-5M220DKLMB"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){window.dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-5M220DKLMB');
+  </script>
+  <link rel="preconnect" href="https://storage.googleapis.com">
+
+  
+  
+  
+  <meta property="og:title" content="Changelog - RF-DETR">
+  <meta property="og:description" content="RF-DETR release history and changelog.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://rfdetr.roboflow.com/1.9.0/changelog/">
+  <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
+  <meta property="og:image:width" content="840">
+  <meta property="og:image:height" content="630">
+
+  
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@roboflow">
+  <meta name="twitter:title" content="Changelog - RF-DETR">
+  <meta name="twitter:description" content="RF-DETR release history and changelog.">
+  <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
+
+  
+  
+  
+  
+  <meta property="article:modified_time" content="2026-05-18T15:03:45">
+  
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Changelog",
+    "description": "RF-DETR release history and changelog.",
+    "url": "https://rfdetr.roboflow.com/1.9.0/changelog/",
+    "isPartOf": {"@id": "https://rfdetr.roboflow.com/1.9.0#website"},
+    "about": {"@id": "https://rfdetr.roboflow.com/1.9.0#software"},
+    "proficiencyLevel": "Beginner to advanced",
+    "inLanguage": "en",
+    "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
+    "datePublished": "2025-03-01",
+    "dateModified": "2026-05-18T15:03:45",
+    "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
+    "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/1.9.0/changelog/"},
+    "speakable": {
+      "@type": "SpeakableSpecification",
+      "cssSelector": [".md-content h1", ".md-typeset > p:first-child"]
+    }
+  }
+  </script>
+  
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "RF-DETR",
+        "item": "https://rfdetr.roboflow.com/1.9.0"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Changelog",
+        "item": "https://rfdetr.roboflow.com/1.9.0/changelog/"
+      }
+      
+    ]
+  }
+  </script>
+  
+  
+
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#changelog" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+
+<!-- Header -->
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav
+    class="md-header__inner md-grid"
+    aria-label="Header"
+  >
+
+    <!-- Link to home -->
+    <a
+      href=".."
+      title="RF-DETR"
+      class="md-header__button md-logo"
+      aria-label="RF-DETR"
+      data-md-component="logo"
+    >
+      
+  <img src="../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
+
+    </a>
+
+    <!-- Button to open drawer -->
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+
+    <!-- Header title -->
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            RF-DETR Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis" style="display: flex; align-items: center; gap: 0.5rem;">
+            <a
+            href=".."
+            title="RF-DETR"
+            class="md-header__button md-logo"
+            aria-label="RF-DETR"
+            data-md-component="logo"
+            id="item-logo"
+            >
+            
+  <img src="../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
+
+            </a>
+            
+              Changelog
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    <!-- Button to open search modal -->
+    
+      
+
+      <!-- Check if search is actually enabled - see https://t.ly/DT_0V -->
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+
+        <!-- Search interface -->
+        <div class="md-search" data-md-component="search" role="dialog" aria-modal="true" aria-label="Search">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+
+
+    <ul class="header-list">
+        <li style="align-items: center;" id="resources-list">
+            <label for="dropdown-resources"><span>Resources <span class="header-chevron" aria-hidden="true"></span></span></label>
+            <input type="radio" name="dropdown" id="dropdown-resources" style="display: none;" />
+            <ul class="resources-sublist sublist">
+                <li><a href="https://blog.roboflow.com">Blog</a></li>
+                <li><a href="https://discuss.roboflow.com">Community Forum</a></li>
+                <li><a href="https://roboflow.com/sales">Contact Sales</a></li>
+                <li><a href="https://universe.roboflow.com">Universe</a></li>
+            </ul>
+        </li>
+        <li style="align-items: center;" id="products-list">
+            <label for="dropdown-products"><span>Docs <span class="header-chevron" aria-hidden="true"></span></span></label>
+            <input type="radio" name="dropdown" id="dropdown-products" style="display: none;" />
+            <ul class="products-sublist sublist">
+                <li><a href="https://inference.roboflow.com">Inference</a></li>
+                <li><a href="https://supervision.roboflow.com">Supervision</a></li>
+                <li><a href="https://trackers.roboflow.com">Trackers</a></li>
+                <li><a href="https://rfdetr.roboflow.com">RF-DETR</a></li>
+                <li><a href="https://maestro.roboflow.com">Maestro</a></li>
+                <li><a href="https://docs.roboflow.com">Roboflow</a></li>
+            </ul>
+        </li>
+        <li>
+          <a href="https://github.com/roboflow/rf-detr" class="header-btn" style="border-radius: 5px; color: white; background: var(--md-typeset-a-color); padding-top: 0.25rem; padding-left: 0.5rem; padding-bottom: 0.25rem; padding-right: 0.5rem; border: 1px solid #8315F9;">Go to GitHub</a>
+        </li>
+    </ul>
+    <script>
+      document.addEventListener('click', function(event) {
+        const resourcesList = document.getElementById('resources-list');
+        const productsList = document.getElementById('products-list');
+        const dropdownResources = document.getElementById('dropdown-resources');
+        const dropdownProducts = document.getElementById('dropdown-products');
+
+        if (!resourcesList.contains(event.target)) {
+          dropdownResources.checked = false;
+        }
+        if (!productsList.contains(event.target)) {
+          dropdownProducts.checked = false;
+        }
+      });
+      document.getElementById('resources-list').addEventListener('mouseover', function() {
+        document.getElementById('dropdown-resources').checked = true;
+      });
+      document.getElementById('products-list').addEventListener('mouseover', function() {
+        document.getElementById('dropdown-products').checked = true;
+      });
+      document.getElementById('resources-list').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.resources-sublist:hover') && !document.querySelector('#resources-list:hover')) {
+            document.getElementById('dropdown-resources').checked = false;
+          }
+        }, 350);
+      });
+      document.querySelector('.resources-sublist').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.resources-sublist:hover') && !document.querySelector('#resources-list:hover')) {
+            document.getElementById('dropdown-resources').checked = false;
+          }
+        }, 450);
+      });
+      document.getElementById('products-list').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.products-sublist:hover') && !document.querySelector('#products-list:hover')) {
+            document.getElementById('dropdown-products').checked = false;
+          }
+        }, 500);
+      });
+      document.querySelector('.products-sublist').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.products-sublist:hover') && !document.querySelector('#products-list:hover')) {
+            document.getElementById('dropdown-products').checked = false;
+          }
+        }, 500);
+      });
+      function labelCurrentVersion() {
+        document.querySelectorAll('.md-version__current').forEach(function(button) {
+          const label = button.textContent.trim();
+          if (label) {
+            button.setAttribute('aria-label', label);
+          }
+        });
+      }
+      labelCurrentVersion();
+      const versionMenu = document.querySelector('.md-version');
+      if (versionMenu) {
+        new MutationObserver(labelCurrentVersion).observe(versionMenu, { childList: true, subtree: true });
+      }
+    </script>
+  </nav>
+
+  <!-- Navigation tabs (sticky) -->
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  How to
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../reference/rfdetr/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../faq/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  FAQ
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../cookbooks/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Cookbooks
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../resources/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Resources
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Changelog
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+                
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" hidden>
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="RF-DETR" class="md-nav__button md-logo" aria-label="RF-DETR" data-md-component="logo">
+      
+  <img src="../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
+
+    </a>
+    RF-DETR
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/roboflow/rf-detr" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    roboflow/rf-detr
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How to
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How to
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_1" id="__nav_2_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_2" id="__nav_2_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run Model
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Run Model
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/run/detection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Detection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/run/segmentation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Segmentation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/run/keypoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keypoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/pretrained/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pretrained Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Train Model
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Train Model
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/train/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/train/dataset-formats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset Formats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/train/training-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Training Parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/train/advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Training
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/train/customization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Custom Training API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/train/augmentations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Augmentations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/train/loggers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Training Loggers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/rfdetr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Detection Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Detection Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/nano/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Nano
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/small/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Small
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/medium/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Medium
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/large/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Large
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/xlarge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR XLarge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/2xlarge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR 2XLarge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Segmentation Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Segmentation Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/seg_nano/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg Nano
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/seg_small/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg Small
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/seg_medium/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg Medium
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/seg_large/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg Large
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/seg_xlarge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg XLarge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/seg_2xlarge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg 2XLarge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keypoint Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Keypoint Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/kp_preview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Keypoint Preview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Training Configs
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Training Configs
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/train_config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Train Config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/segmentation_train_config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Segmentation Train Config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/keypoint_train_config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keypoint Train Config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lightning Training
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Lightning Training
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/training/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Training Primitives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cookbooks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cookbooks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../resources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Resources
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+                
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+
+
+
+  
+  
+
+
+<h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h1>
+<p>RF-DETR release notes are maintained on <a href="https://github.com/roboflow/rf-detr/releases">GitHub Releases</a>.
+Use the release feed to review versioned package changes, migration notes, and model updates.</p>
+<ul>
+<li><a href="https://pypi.org/project/rfdetr/">Install the latest PyPI package</a></li>
+<li><a href="../getting-started/migration/">Migration guide</a> — upgrade steps between major versions</li>
+<li><a href="../cookbooks/">Cookbooks</a> — runnable notebooks for training, fine-tuning, export, and deployment</li>
+</ul>
+<hr />
+<h1 id="changelog_1">Changelog<a class="headerlink" href="#changelog_1" title="Permanent link">&para;</a></h1>
+<p>All notable changes to RF-DETR are documented here.</p>
+<p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
+and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
+<h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h2 id="190-2026-07-27">[1.9.0] — 2026-07-27<a class="headerlink" href="#190-2026-07-27" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Default dataset augmentations now use torchvision-native transforms <strong>unless Albumentations is installed</strong>, in which case <code>augmentation_backend="auto"</code>/<code>"cpu"</code> (the default) auto-selects Albumentations instead — identical user code can therefore resolve to a different resize backend (and slightly different pixel values / mAP) purely based on whether <code>rfdetr[augment]</code> is installed. Pass <code>augmentation_backend="torchvision"</code> to pin torchvision regardless of what is installed. Non-empty custom <code>aug_config</code> dictionaries use the optional Albumentations integration and Kornia GPU backend, both via <code>pip install 'rfdetr[augment]'</code>. The <code>[train]</code> extra no longer installs Albumentations or Kornia. See the migration guide's "Upgrade 1.8 → 1.9" section for remediation steps. (<a href="https://github.com/roboflow/rf-detr/pull/1112">#1112</a>)</li>
+</ul>
+<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Native CoreML export: <code>format="coreml"</code> on <code>RFDETR.export()</code> produces a <code>.mlpackage</code> (mlprogram, iOS 16+) directly from <code>torch.export</code>, with no ONNX intermediary — distinct from ExecuTorch's <code>format="executorch", backend="coreml"</code> <code>.pte</code> path. Install with <code>pip install 'rfdetr[coreml]'</code> (macOS only; <code>coremltools&gt;=8.0,&lt;10.0</code>). (<a href="https://github.com/roboflow/rf-detr/pull/1235">#1235</a>)</li>
+<li>Multi-GPU / multi-node <strong>keypoint (pose) training</strong> under <code>DistributedDataParallel</code>. Keypoint models (<code>RFDETRKeypointPreview</code>) previously raised <code>NotImplementedError</code> for any distributed strategy, <code>num_nodes &gt; 1</code>, or <code>devices &gt; 1</code>; they now train with <code>strategy="ddp"</code> / <code>strategy="auto"</code> on multiple GPUs and nodes, launched with <code>torchrun</code> exactly like detection models. Because keypoint models use manual optimization, gradients synchronize on every microbatch — keep <code>grad_accum_steps=1</code> on multi-GPU for best throughput (<code>grad_accum_steps &gt; 1</code> is correct but performs redundant all-reduces). Sharded strategies (FSDP / DeepSpeed) remain unsupported for keypoint models and raise a clear error. See the "Keypoint / Pose models" note in <code>docs/learn/train/advanced.md</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1232">#1232</a>)</li>
+<li><code>scale_jitter: bool = True</code> on <code>TrainConfig</code> — independent control for the resize → crop → resize branch (Option B) in the training resize pipeline. Previously, disabling this branch required passing <code>aug_config={}</code>, which also disabled the entire Albumentations augmentation stack; <code>aug_config</code> now controls only that stack. Set <code>scale_jitter=False</code> to use direct resize only, with annotations near image borders never clipped.</li>
+<li><code>AugmentationBackend.TV</code> (<code>augmentation_backend="torchvision"</code>) — forces the torchvision-native default pipeline. Unlike <code>"cpu"</code>/<code>"auto"</code>, which auto-select the best <em>installed</em> backend (Albumentations &gt; Kornia &gt; torchvision) and can therefore resolve differently across environments, <code>"torchvision"</code> always resolves to torchvision regardless of what optional packages happen to be installed. <code>AugmentationBackend</code> now only holds concrete, directly-usable backends (<code>TV</code>, <code>ALBU</code>, <code>KORNIA</code>); <code>"cpu"</code>/<code>"auto"</code> remain accepted <code>augmentation_backend</code> input strings (resolved lazily at dataset-build time, keeping saved configs portable across environments) but are no longer enum members. <code>AugmentationBackend.TV</code>/<code>.ALBU</code> values changed from <code>"tv"</code>/<code>"albu"</code> to <code>"torchvision"</code>/<code>"albumentations"</code>; the old <code>"tv"</code>/<code>"albu"</code>/<code>"gpu"</code> strings are still accepted as legacy input aliases.</li>
+<li><code>TrainConfig.optimizer</code> (<code>str | Callable</code>) and <code>optimizer_kwargs</code> — configurable training optimizer. <code>optimizer="adamw"</code> (the default) keeps RF-DETR's built-in fused <code>torch.optim.AdamW</code> path unchanged. A bare short name selects a native <code>torch.optim</code> optimizer only (e.g. <code>"sgd"</code>, <code>"adam"</code>); any other optimizer — including third-party ones such as <a href="https://github.com/kozistr/pytorch_optimizer"><code>pytorch-optimizer</code></a> (install separately) — is selected by a full dotted import path (<code>"pytorch_optimizer.Lion"</code>) or a callable / <code>functools.partial</code> called with the RF-DETR parameter groups. <code>optimizer_kwargs</code> forwards constructor arguments (ignored for callables, which bake their own arguments in). (<a href="https://github.com/roboflow/rf-detr/pull/1006">#1006</a>)</li>
+<li><code>TrainConfig.lr_scheduler</code> (<code>str | Callable</code>) plus <code>lr_scheduler_kwargs</code>, <code>lr_scheduler_interval</code>, and <code>lr_scheduler_monitor</code> — configurable LR scheduler, mirroring <code>optimizer</code>. <code>lr_scheduler="step"</code>/<code>"cosine"</code> (the managed presets) keep RF-DETR's built-in warmup-aware schedules unchanged; any other scheduler is selected by a full dotted import path (<code>"torch.optim.lr_scheduler.OneCycleLR"</code>) or a callable / <code>functools.partial</code> called with the optimizer. Explicit schedulers are built from <code>lr_scheduler_kwargs</code> only (no <code>total_steps</code>/<code>T_max</code> injected), are auto-wrapped in a <code>SequentialLR</code> linear warmup when <code>warmup_epochs&gt;0</code>, and step at <code>lr_scheduler_interval</code> (<code>"step"</code>/<code>"epoch"</code>). <code>ReduceLROnPlateau</code> is supported end-to-end: it steps once per epoch on the metric named by <code>lr_scheduler_monitor</code> (default <code>"val/loss"</code>), in both the automatic and manual (keypoint) optimization paths.</li>
+</ul>
+<h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>TrainConfig.lr_drop</code> and <code>lr_min_factor</code> — pass them through <code>lr_scheduler_kwargs</code> instead (<code>{"lr_drop": ...}</code> / <code>{"min_factor": ...}</code>). Deprecated since v1.9.0, will be removed in v1.11.0. The fields still work in the meantime and are folded into <code>lr_scheduler_kwargs</code> for the managed presets with a <code>FutureWarning</code>; default values (e.g. on config reload) do not warn. Set with an explicit (non-managed) scheduler they are inert and emit a <code>FutureWarning</code>.</li>
+</ul>
+<h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Keypoint L1-loss helper (<code>compute_l1_keypoint_loss</code>) now returns <strong>graph-connected</strong> zeros on its out-of-schema class-index guard instead of detached <code>new_zeros</code>. A detached zero left the keypoint-head parameters without a gradient path on that batch, which desyncs <code>DistributedDataParallel</code>'s gradient reducer across ranks (hang or "parameter did not receive grad") when the guard fires on some ranks but not others. This is a prerequisite for the multi-GPU keypoint training above.</li>
+<li>Non-square Albumentations training resize (<code>aug_config</code> set, <code>augmentation_backend</code> resolving to <code>"albumentations"</code>) no longer silently inflates every image's longest side to <code>max_size</code> (1333 by default). <code>SmallestMaxSize</code> → <code>LongestMaxSize</code> always forces an exact resize in Albumentations, not a conditional cap; a new <code>CappedLongestMaxSize</code> internal transform only shrinks, never upscales, matching torchvision's <code>RandomResize</code> semantics.</li>
+<li>Explicit <code>augmentation_backend="albumentations"</code> now raises a clear <code>ImportError</code> immediately if Albumentations is not installed, instead of resolving successfully and failing later, deep in dataset construction.</li>
+<li><code>RFDETR.from_checkpoint(..., trust_checkpoint=True)</code> now actually works. It previously bypassed the safe-load check only for the checkpoint's own metadata read; model construction then silently reloaded the same file through <code>load_pretrain_weights()</code> with the unsafe-load default, so <code>trust_checkpoint=True</code> had no effect on checkpoints that genuinely needed it and raised the same <code>RuntimeError</code> it was supposed to bypass. (<a href="https://github.com/roboflow/rf-detr/pull/1239">#1239</a>)</li>
+<li>Segmentation evaluation resized ground-truth masks to each image's original resolution before comparison, a lossy round trip vs. the mask head's native grid; GT masks now resize directly to each prediction's own pixel grid, so segm mAP is computed on consistent pixel grids. (<a href="https://github.com/roboflow/rf-detr/pull/1241">#1241</a>)</li>
+<li><code>pip install 'rfdetr[onnx]'</code> (and <code>[tflite]</code>) no longer hangs building <code>onnxsim</code> from source on CPython 3.11/3.13 and Linux aarch64. The previous <code>onnxsim&lt;0.6.0</code> pin resolved to 0.5.0, which ships no wheels for those targets, so pip compiled onnxsim's bundled onnxruntime/onnx from source. The constraint is now <code>onnxsim&gt;=0.7.0</code>, which publishes prebuilt wheels across CPython 3.10–3.13 on Linux x86_64/aarch64, Windows x86_64, and macOS arm64. (<a href="https://github.com/roboflow/rf-detr/pull/1242">#1242</a>)</li>
+</ul>
+<h3 id="deprecated_1">Deprecated<a class="headerlink" href="#deprecated_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>RFDETR.optimize_for_inference()</code> renamed to <code>RFDETR.inference()</code> (same signature). The old name is kept as a deprecated alias that forwards to <code>inference()</code> and emits a <code>FutureWarning</code>. Deprecated since v1.9.0, will be removed in v1.11.0.</li>
+</ul>
+<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Matched-pair IoU targets in the classification/matching losses now compute via <code>elementwise_box_iou</code>/<code>elementwise_generalized_box_iou</code> (new public helpers in <code>rfdetr.utilities.box_ops</code>) instead of <code>torch.diag(box_iou(...))</code>. The old path built the full NxN pairwise IoU matrix just to read its diagonal; the new one computes only the N matched pairs directly, reducing peak GPU memory during loss calculation. Both new helpers raise <code>ValueError</code> on mismatched-length inputs instead of silently broadcasting. (<a href="https://github.com/roboflow/rf-detr/pull/1245">#1245</a>)</li>
+<li>The <code>[tensorrt]</code> extra no longer installs <code>pycuda</code>. It's only needed for <code>TRTInference</code>'s async benchmarking mode, which now requires the separate <code>[tensorrt-bench]</code> extra (<code>pip install 'rfdetr[tensorrt-bench]'</code>) — the standard export→engine path (<code>polygraphy</code>, no <code>pycuda</code>) is unaffected. (<a href="https://github.com/roboflow/rf-detr/pull/1246">#1246</a>)</li>
+</ul>
+<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>RFDETR.from_checkpoint()</code> now uses safe deserialization by default (<code>weights_only=True</code>) instead of always running full pickle deserialization. Checkpoints containing custom Python objects beyond <code>argparse.Namespace</code> or <code>types.SimpleNamespace</code> need the new keyword-only <code>trust_checkpoint: bool = False</code> parameter set to <code>True</code> to opt into the old (unsafe) behavior; resume-from-checkpoint during training honors the same <code>trust_checkpoint</code> flag. (<a href="https://github.com/roboflow/rf-detr/pull/1179">#1179</a>)</li>
+<li>TensorRT export no longer shells out to the <code>trtexec</code> CLI — engines are built in-process through the <code>polygraphy</code> Python API, removing the subprocess/shell-injection surface entirely. (<a href="https://github.com/roboflow/rf-detr/pull/853">#853</a>)</li>
+</ul>
+<h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>[kornia]</code> extra removed — GPU-side augmentation now installs via <code>[augment]</code> (<code>pip install 'rfdetr[augment]'</code>) instead. There is no <code>[kornia]</code> alias extra; <code>pip install 'rfdetr[kornia]'</code> will fail.</li>
+<li><code>rfdetr.util.*</code> and <code>rfdetr.deploy</code> import paths, deprecated since v1.6.0 with <code>remove_in="1.9.0"</code>. Use <code>rfdetr.utilities.*</code>, <code>rfdetr.assets.coco_classes</code>, <code>rfdetr.training.drop_schedule</code>, <code>rfdetr.training.param_groups</code>, <code>rfdetr.visualize.data</code>, <code>rfdetr.models.heads.segmentation</code>, and <code>rfdetr.export</code> instead.</li>
+<li><code>rfdetr._namespace.build_namespace(model_config, train_config)</code>, deprecated since v1.7.0 with <code>remove_in="1.9.0"</code>. Use <code>rfdetr.models.build_model_from_config</code> and <code>build_criterion_from_config</code> instead.</li>
+<li>The <code>train_config</code> argument to <code>load_pretrain_weights(nn_model, model_config, train_config)</code>, deprecated since v1.7.0 with <code>remove_in="1.9.0"</code>. Call it with just <code>(nn_model, model_config)</code>.</li>
+<li>The <code>start_epoch</code>, <code>do_benchmark</code>, and <code>callbacks</code> keyword arguments to <code>.train()</code>/<code>.evaluate()</code>, deprecated since v1.7.0 with <code>remove_in="1.9.0"</code>. PTL resumes automatically via <code>resume=</code>; use the <code>rfdetr.export.benchmark</code> module for benchmarking; pass PTL <code>Callback</code> objects directly instead of a <code>callbacks</code> dict.</li>
+<li><code>TrainConfig.group_detr</code>, <code>TrainConfig.ia_bce_loss</code>, <code>TrainConfig.segmentation_head</code>, <code>TrainConfig.num_select</code>, and <code>ModelConfig.cls_loss_coef</code>, deprecated since v1.7.0 with <code>remove_in="1.9.0"</code>. <code>group_detr</code>, <code>ia_bce_loss</code>, <code>segmentation_head</code>, and <code>num_select</code> now live only on <code>ModelConfig</code>; <code>cls_loss_coef</code> now lives only on <code>TrainConfig</code>.</li>
+<li><code>RFDETRLarge</code>'s automatic silent fallback to <code>RFDETRLargeDeprecatedConfig</code> on checkpoint/config incompatibility errors. Loading legacy deprecated-Large weights through <code>RFDETRLarge</code> now raises the original error instead of retrying; use <code>RFDETRLargeDeprecated</code> directly to load those checkpoints.</li>
+</ul>
+<hr />
+<h2 id="183-2026-06-27">[1.8.3] — 2026-06-27<a class="headerlink" href="#183-2026-06-27" title="Permanent link">&para;</a></h2>
+<h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>optimize_for_inference(inplace=True)</code> — new keyword-only argument on <code>RFDETR.optimize_for_inference()</code>; skips the deep-copy of the base model for memory-constrained inference-only deployments (~0.5× model-weight peak memory reduction). Requires <code>compile=False</code>. After inplace optimization, <code>export()</code> raises <code>RuntimeError</code> and <code>remove_optimized_model()</code> issues a <code>UserWarning</code> and returns cleanly instead of silently clearing state. New <code>RFDETR.is_optimized_inplace</code> property returns <code>True</code> after a successful inplace optimization. (<a href="https://github.com/roboflow/rf-detr/pull/1089">#1089</a>)</li>
+<li><code>CocoKeypointSchema.keypoint_flip_pairs</code> and <code>YoloKeypointSchema.keypoint_flip_pairs</code> fields — horizontal-flip swap pairs inferred automatically from keypoint names (left/right naming convention) for COCO schemas, and from <code>flip_idx</code> permutation for YOLO schemas. Auto-populated by <code>infer_coco_keypoint_schema</code> and <code>infer_yolo_keypoint_schema</code> respectively. (<a href="https://github.com/roboflow/rf-detr/pull/1164">#1164</a>)</li>
+<li><code>infer_coco_keypoint_schema</code> and <code>infer_yolo_keypoint_schema</code> re-exported from <code>rfdetr.datasets</code> (previously only accessible from <code>rfdetr.datasets._keypoint_schema</code>). (<a href="https://github.com/roboflow/rf-detr/pull/1164">#1164</a>)</li>
+</ul>
+<h3 id="changed_1">Changed<a class="headerlink" href="#changed_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Horizontal flip detection in <code>AlbumentationsWrapper</code> now uses Albumentations <code>ReplayCompose</code> replay metadata instead of heuristic bbox-center mirroring; eliminates false positives on non-flip transforms that shift box centers. Falls back to <code>alb.Compose</code> with a <code>UserWarning</code> when <code>albumentations &lt;1.3</code> is detected. (<a href="https://github.com/roboflow/rf-detr/pull/1164">#1164</a>)</li>
+<li>Keypoint schema inference now supports native COCO format (<code>dataset_file="coco"</code>) in addition to <code>"roboflow"</code> and <code>"yolo"</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1164">#1164</a>)</li>
+<li><code>_keypoint_schema_cache</code> key changed from <code>dataset_dir</code> (string) to <code>(dataset_file, dataset_dir)</code> tuple to prevent cross-format cache collisions when the same directory is used with different dataset formats. (<a href="https://github.com/roboflow/rf-detr/pull/1164">#1164</a>)</li>
+</ul>
+<h3 id="fixed_1">Fixed<a class="headerlink" href="#fixed_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Predicted bounding boxes are now clamped to image bounds <code>[0, width] × [0, height]</code> in <code>PostProcess._postprocess_boxes()</code>; model regression is unbounded and could previously produce negative or out-of-frame coordinates. <code>scale_fct</code> is also cast to <code>boxes.dtype</code> before multiplication to prevent dtype mismatch when boxes are <code>float16</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1168">#1168</a>)</li>
+<li><code>SegmentationTrainConfig.cls_loss_coef</code> default corrected from <code>5.0</code> to <code>1.0</code> to restore the pre-v1.7 effective classification loss weight. The <code>5.0</code> value was present in <code>SegmentationTrainConfig</code> since v1.6 but was dead code until the v1.7 TrainConfig ownership migration activated it, silently over-penalising classification relative to mask losses during segmentation fine-tuning. To reproduce pre-fix behaviour, pass <code>cls_loss_coef=5.0</code> explicitly. (<a href="https://github.com/roboflow/rf-detr/pull/1165">#1165</a>)</li>
+<li><code>KeypointTrainConfig.keypoint_nll_loss_coef</code> default restored to <code>1.0</code> to align with the other keypoint loss terms (<code>keypoint_l1_loss_coef</code>, <code>keypoint_findable_loss_coef</code>, <code>keypoint_visible_loss_coef</code>). The previous default of <code>0.5</code> was set to dampen OKS@75 oscillation but under-weighted the NLL loss relative to other terms in practice. (<a href="https://github.com/roboflow/rf-detr/pull/1165">#1165</a>)</li>
+</ul>
+<hr />
+<h2 id="182-2026-06-25">[1.8.2] — 2026-06-25<a class="headerlink" href="#182-2026-06-25" title="Permanent link">&para;</a></h2>
+<h3 id="added_2">Added<a class="headerlink" href="#added_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>YOLO pose keypoint dataset support: load Ultralytics YOLO pose datasets (<code>.yaml</code> with <code>kpt_shape</code>) directly for keypoint fine-tuning. Schema is inferred automatically via <code>infer_yolo_keypoint_schema</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1156">#1156</a>)</li>
+<li><code>is_bg_first_schema</code>, <code>to_active_first</code>, <code>to_bg_first</code>, <code>schemas_semantically_equal</code> utilities in <code>rfdetr.utilities.keypoints</code> (and re-exported from <code>rfdetr.utilities</code>) for schema-aware keypoint processing. (<a href="https://github.com/roboflow/rf-detr/pull/1160">#1160</a>)</li>
+<li><code>amp_dtype</code> field on <code>TrainConfig</code> (<code>"auto"</code> / <code>"bf16"</code> / <code>"fp16"</code>): pin the mixed-precision autocast dtype instead of relying on device-capability auto-detection. <code>"auto"</code> (default) preserves the historical behaviour — <code>bf16-mixed</code> on Ampere+ CUDA, <code>16-mixed</code> otherwise. Invalid values degrade gracefully to <code>"auto"</code> with a <code>UserWarning</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1143">#1143</a>)</li>
+<li>Instance segmentation fine-tuning cookbook (<code>docs/cookbooks/fine-tune_segmentation.ipynb</code>) — end-to-end walkthrough using <code>RFDETRSegSmall</code> across seven diverse segmentation datasets. (<a href="https://github.com/roboflow/rf-detr/pull/1159">#1159</a>)</li>
+<li>Inference latency benchmark cookbook (<code>docs/cookbooks/inference-latency-benchmark.ipynb</code>) — benchmarks CPU/GPU throughput across model sizes with reproducible measurement methodology. (<a href="https://github.com/roboflow/rf-detr/pull/1152">#1152</a>)</li>
+</ul>
+<h3 id="changed_2">Changed<a class="headerlink" href="#changed_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Default <code>num_keypoints_per_class</code> in <code>RFDETRKeypointPreviewConfig</code> changed from <code>[0, 17]</code> (background-first) to <code>[17]</code> (active-first). Legacy bg-first checkpoints auto-align on load via <code>_kp_active_mask</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1160">#1160</a>)</li>
+</ul>
+<h3 id="fixed_2">Fixed<a class="headerlink" href="#fixed_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>RFDETR.from_checkpoint()</code> now correctly infers <code>num_classes</code> and <code>num_keypoints_per_class</code> from checkpoint weights (<code>class_embed.weight.shape[0] - 1</code> and <code>_kp_active_mask</code> respectively). Previously, <code>num_classes</code> was read as <code>shape[0]</code> (i.e. <code>num_classes + 1</code> including the background class), causing <code>load_state_dict</code> shape mismatches or a silent extra output class on every load. <code>BestModelCallback._serialize_model_config</code> is also fixed to persist the correct foreground-only <code>num_classes</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1158">#1158</a>)</li>
+<li><code>HungarianMatcher.forward()</code> now uses the configured <code>focal_alpha</code> in the focal classification matching cost. Previously the value was hardcoded to <code>0.25</code>, silently ignoring any non-default <code>focal_alpha</code> passed to the constructor or <code>build_matcher</code>. This misaligned the bipartite matching cost with the focal classification loss in <code>criterion.py</code>, which correctly used <code>self.focal_alpha</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1147">#1147</a>)</li>
+<li><code>spatial_shapes</code> in <code>Transformer.forward()</code> is now built from symbolic <code>Shape</code> ops (<code>torch.stack</code> of per-level <code>torch._shape_as_tensor</code> slices) instead of <code>torch.empty</code> + in-place index assignment. The previous pattern emitted a <code>ScatterND</code> feeding a shape tensor (<code>level_start_index</code>), which TensorRT rejected with "IScatterLayer cannot be used to compute a shape tensor". This fix is required to export any RF-DETR model to a TensorRT engine. (<a href="https://github.com/roboflow/rf-detr/pull/1155">#1155</a>)</li>
+<li>Keypoint model inference now returns the correct <code>class_name</code> field in predictions. (<a href="https://github.com/roboflow/rf-detr/pull/1151">#1151</a>)</li>
+<li><code>predict()</code> now re-asserts eval mode before each call for unoptimized models, preventing silent train-mode inference after the first prediction. (<a href="https://github.com/roboflow/rf-detr/pull/1146">#1146</a>)</li>
+<li>TFLite inference preprocessing and mask decoder aligned with PyTorch <code>predict()</code> behaviour. (<a href="https://github.com/roboflow/rf-detr/pull/1131">#1131</a>)</li>
+<li>Python version mismatch in optional-dependency version overrides resolved. (<a href="https://github.com/roboflow/rf-detr/pull/1137">#1137</a>)</li>
+</ul>
+<hr />
+<h2 id="181-2026-06-19">[1.8.1] — 2026-06-19<a class="headerlink" href="#181-2026-06-19" title="Permanent link">&para;</a></h2>
+<h3 id="changed_3">Changed<a class="headerlink" href="#changed_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Config path parameters (e.g. <code>dataset_dir</code>, <code>output_dir</code>, <code>pretrain_weights</code>) now accept <code>pathlib.Path</code> objects in addition to strings. Paths are coerced to <code>str</code> automatically via the <code>expand_paths</code> validator. No API changes required; existing string usage unaffected. (<a href="https://github.com/roboflow/rf-detr/pull/1124">#1124</a>)</li>
+<li>Keypoint training now disables horizontal flip augmentation until keypoint flip-pair swapping is implemented. Previously, flipping was applied without reordering keypoint pairs, producing incorrect labels. (<a href="https://github.com/roboflow/rf-detr/pull/1122">#1122</a>)</li>
+<li>Training metric plots improved with optional seaborn error bands, AP@0.75 metric grouping, and custom AP metric group configuration. (<a href="https://github.com/roboflow/rf-detr/pull/1122">#1122</a>)</li>
+</ul>
+<h3 id="fixed_3">Fixed<a class="headerlink" href="#fixed_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Keypoint encoder in eval mode now routes all queries through head 0 instead of splitting across group heads. Previously, <code>group_detr = len(self.enc_out_keypoint_embed)</code> caused the encoder keypoint path to split <code>num_queries</code> queries across all group heads in eval; now uses <code>if self.training else 1</code> guard. (<a href="https://github.com/roboflow/rf-detr/pull/1135">#1135</a>)</li>
+<li><code>config.use_return_dict</code> (deprecated in <code>transformers</code>) replaced with <code>config.return_dict</code> in DINOv2 windowed attention backbone. (<a href="https://github.com/roboflow/rf-detr/pull/1135">#1135</a>)</li>
+<li>Epoch metric tables now display correctly when a Rich progress bar callback is active. Tables are printed through the progress bar's owned Rich console, preventing cursor conflicts with active live displays. (<a href="https://github.com/roboflow/rf-detr/pull/1128">#1128</a>)</li>
+<li>Keypoint fine-tuning checkpoint selection stabilised with smoothed (EMA) best-metric comparison to avoid spurious checkpoint switches on noisy OKS metrics. Smoothing state is correctly restored on training resume. (<a href="https://github.com/roboflow/rf-detr/pull/1122">#1122</a>)</li>
+<li>Group DETR train-time metric evaluation now evaluates only the primary query group, preventing crashes on non-tensor mask outputs from auxiliary decoder layers. (<a href="https://github.com/roboflow/rf-detr/pull/1122">#1122</a>)</li>
+<li><code>_detect_horizontal_flip</code> in Albumentations transform pipeline now uses <code>len(bboxes) == 0</code> instead of <code>not bboxes</code> to correctly handle Albumentations 2.x where bboxes is a NumPy array (falsy even when non-empty). (<a href="https://github.com/roboflow/rf-detr/pull/1126">#1126</a>)</li>
+<li>TensorBoard logger is now disabled gracefully when <code>tensorboard</code> is installed alongside a NumPy-2.0-incompatible <code>tensorflow</code>. Training degrades to CSV-only logging with a clear warning instead of crashing inside <code>_log_hyperparams</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1123">#1123</a>)</li>
+</ul>
+<hr />
+<h2 id="180-2026-06-13">[1.8.0] — 2026-06-13<a class="headerlink" href="#180-2026-06-13" title="Permanent link">&para;</a></h2>
+<h3 id="added_3">Added<a class="headerlink" href="#added_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>RFDETRKeypointPreview</code> — keypoint detection model variant with GroupPose-style head, covariance-based uncertainty (precision-Cholesky parameterization), and COCO keypoint AP evaluation. Public config classes: <code>KeypointTrainConfig</code>, <code>RFDETRKeypointPreviewConfig</code> (from <code>rfdetr.config</code>). Utility: <code>precision_cholesky_to_pixel_covariance</code> (from <code>rfdetr.utilities</code>). Schema helpers <code>infer_coco_keypoint_schema</code>, <code>CocoKeypointSchema</code>, <code>active_keypoint_counts</code> accessible via <code>rfdetr.datasets._keypoint_schema</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1099">#1099</a>)</li>
+<li><code>RFDETR.export_for_roboflow(output_dir)</code> — writes a Roboflow upload bundle (<code>weights.pt</code> + <code>class_names.txt</code>) without a network call; extracted from <code>deploy_to_roboflow</code>, which now delegates to it. (<a href="https://github.com/roboflow/rf-detr/pull/1086">#1086</a>)</li>
+<li>Keypoint fine-tuning cookbook (<code>docs/cookbooks/fine-tune_keypoints.ipynb</code>) — end-to-end walkthrough: dataset download, schema inference, <code>KeypointTrainConfig</code>, training metrics, and inference with covariance uncertainty. (<a href="https://github.com/roboflow/rf-detr/pull/1104">#1104</a>)</li>
+<li><code>MetricKeypointOKS</code> — reusable OKS metric facade over <code>CocoEvaluator</code>, exported from <code>rfdetr.evaluation</code>. Supports arbitrary keypoint counts, per-category OKS sigma values, DDP-safe evaluation with first-rank-wins deduplication, and an <code>OKSKey</code> enum (<code>mAP</code>, <code>mAP@50</code>, <code>mAP@75</code>, <code>mAR</code>) for standardised metric keys. (<a href="https://github.com/roboflow/rf-detr/pull/1107">#1107</a>)</li>
+</ul>
+<h3 id="changed_4">Changed<a class="headerlink" href="#changed_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>DDP strategy now enables <code>find_unused_parameters=True</code> for all detection, keypoint, and segmentation models when running under <code>strategy='ddp'</code> or <code>strategy='auto'</code> with a distributed launcher. Previously only enabled for segmentation. Opt out via <code>trainer_kwargs={"strategy": DDPStrategy(find_unused_parameters=False)}</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1094">#1094</a>)</li>
+<li><code>rfdetr.datasets.aug_config</code> module renamed to <code>rfdetr.datasets.aug_configs</code> (plural). Direct imports from <code>rfdetr.datasets.aug_config</code> must be updated to <code>rfdetr.datasets.aug_configs</code>; the augmentation preset constants (<code>AUG_AGGRESSIVE</code>, etc.) are unchanged. (<a href="https://github.com/roboflow/rf-detr/pull/1103">#1103</a>)</li>
+</ul>
+<h3 id="removed_1">Removed<a class="headerlink" href="#removed_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>RFDETR.export(simplify=..., force=...)</code> — both kwargs removed from the signature. Deprecated since v1.6.0 with <code>remove_in="1.8.0"</code>; both were no-ops during the deprecation window. Callers passing these args must remove them before upgrading. (<a href="https://github.com/roboflow/rf-detr/pull/1102">#1102</a>)</li>
+</ul>
+<h3 id="fixed_4">Fixed<a class="headerlink" href="#fixed_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>RFDETR.from_checkpoint()</code> no longer treats <code>num_classes</code> loaded from the checkpoint as a user-supplied override. Previously, fine-tuning a checkpoint model on a dataset with a different class count was silently refused — the head refused to re-initialise and trained against the stale class count. An explicit <code>num_classes</code> kwarg from the caller still wins over both the checkpoint value and the dataset. (<a href="https://github.com/roboflow/rf-detr/pull/1106">#1106</a>)</li>
+<li>Scale jitter restored in non-square training crop. <code>RandomCrop</code> in the <code>option_b</code> branch replaced with <code>RandomSizedCrop</code>, restoring the scale-augmentation behaviour lost during the Albumentations migration. (<a href="https://github.com/roboflow/rf-detr/pull/1088">#1088</a>)</li>
+<li>Multi-GPU validation deadlock in COCO mAP synchronization prevented. <code>_merge_metric_state_across_ranks</code> now safe across zero-batch ranks. (<a href="https://github.com/roboflow/rf-detr/pull/1085">#1085</a>)</li>
+<li><code>import rfdetr</code> no longer fails on NumPy 2.x when a transitive dependency references the removed <code>np.complex_</code> alias. (<a href="https://github.com/roboflow/rf-detr/pull/1064">#1064</a>)</li>
+<li><code>rfdetr_plus</code> module availability check corrected; false-positive hit when the package was partially installed. (<a href="https://github.com/roboflow/rf-detr/pull/1083">#1083</a>)</li>
+<li>Fixed spurious "Keypoint class-logit boost has N classes but detection head has M" warning on custom (non-Roboflow) keypoint datasets: <code>_align_num_classes_from_dataset</code> now zero-pads <code>num_keypoints_per_class</code> when auto-adjusting <code>num_classes</code> beyond the schema length (<a href="https://github.com/roboflow/rf-detr/pull/1113">#1113</a>)</li>
+<li>Loss scaling corrected for keypoint training under gradient accumulation (<code>accumulate_grad_batches &gt; 1</code>). Keypoint models now use manual optimization to normalize losses by the accumulated box count across the effective batch; detection and segmentation remain on Lightning's automatic-optimization path. Optimizer-step scheduling, LR warmup/decay, and epoch-boundary flushing are correctly handled in both paths. (<a href="https://github.com/roboflow/rf-detr/pull/1117">#1117</a>)</li>
+<li>Device auto-detection now verifies accelerator runtime availability before selecting a device (PyTorch ≥ 2.4: <code>torch.accelerator.current_accelerator</code>; older builds: <code>torch.cuda.is_available()</code>). Previously, a machine with CUDA headers but no GPU driver could be assigned a CUDA device that fails at first use. (<a href="https://github.com/roboflow/rf-detr/pull/1111">#1111</a>)</li>
+<li><code>RFDETR.from_checkpoint()</code> and related APIs now honor an explicit <code>num_classes</code> argument even when its value equals the model default. Previously, passing <code>num_classes=N</code> where <code>N</code> is the default (e.g. 80 for COCO) was silently treated as unset, causing fine-tuning on a different class count to be refused. (<a href="https://github.com/roboflow/rf-detr/pull/1109">#1109</a>)</li>
+<li><code>RFDETR.from_checkpoint()</code> correctly infers the model variant from the checkpoint filename when <code>pretrain_weights</code> is absent or unset-like (empty string, <code>None</code>, whitespace). Previously, starter-like checkpoints without an explicit <code>pretrain_weights</code> entry raised an error or silently loaded the wrong model class. (<a href="https://github.com/roboflow/rf-detr/pull/1065">#1065</a>)</li>
+</ul>
+<hr />
+<h2 id="170-2026-04-29">[1.7.0] — 2026-04-29<a class="headerlink" href="#170-2026-04-29" title="Permanent link">&para;</a></h2>
+<h3 id="added_4">Added<a class="headerlink" href="#added_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>augmentation_backend</code> field on <code>TrainConfig</code> (<code>"cpu"</code> / <code>"auto"</code> / <code>"gpu"</code>): opt-in GPU-side augmentation via <a href="https://kornia.readthedocs.io">Kornia</a> applied in <code>RFDETRDataModule.on_after_batch_transfer</code> after the batch is resident on the GPU. CPU path is unchanged and remains the default. Install with <code>pip install 'rfdetr[augment]'</code>. Supports detection and segmentation (see below). (<a href="https://github.com/roboflow/rf-detr/pull/1003">#1003</a>)</li>
+<li>Kornia GPU augmentation now supports instance segmentation: images, boxes, and per-instance masks are augmented in sync on the GPU. New public helper <code>collate_masks</code> packs <code>[N_i, H, W]</code> boolean masks into a <code>[B, N_max, H, W]</code> float32 tensor for Kornia; <code>build_kornia_pipeline</code> gains a <code>with_masks: bool = False</code> parameter; <code>unpack_boxes</code> gains an optional <code>masks_aug</code> tensor that re-binarises and filters masks in sync with boxes. Previously <code>augmentation_backend="gpu"/"auto"</code> was silently ignored for segmentation models; now it works identically to detection. <strong>Note</strong>: the mask buffer is <code>[B, N_max, H, W]</code> float32 — approximately 500 MB at <code>B=8, N_max=50, H=W=560</code>; use <code>augmentation_backend="cpu"</code> on cards with limited VRAM. (<a href="https://github.com/roboflow/rf-detr/pull/1003">#1003</a>, closes <a href="https://github.com/roboflow/rf-detr/issues/997">#997</a>)</li>
+<li><code>BuilderArgs</code> — a <code>@runtime_checkable</code> <code>typing.Protocol</code> documenting the minimum attribute set consumed by <code>build_model()</code>, <code>build_backbone()</code>, <code>build_transformer()</code>, and <code>build_criterion_and_postprocessors()</code>. Enables static type-checker support for custom builder integrations. Exported from <code>rfdetr.models</code>. (<a href="https://github.com/roboflow/rf-detr/pull/841">#841</a>)</li>
+<li><code>build_model_from_config(model_config, train_config=None, defaults=MODEL_DEFAULTS)</code> — config-native alternative to <code>build_model(build_namespace(mc, tc))</code>; accepts Pydantic config objects directly and constructs the internal namespace automatically. Exported from <code>rfdetr.models</code>. (<a href="https://github.com/roboflow/rf-detr/pull/845">#845</a>)</li>
+<li><code>build_criterion_from_config(model_config, train_config, defaults=MODEL_DEFAULTS)</code> — config-native alternative to <code>build_criterion_and_postprocessors(build_namespace(mc, tc))</code>; returns a <code>(SetCriterion, PostProcess)</code> tuple. Exported from <code>rfdetr.models</code>. (<a href="https://github.com/roboflow/rf-detr/pull/845">#845</a>)</li>
+<li><code>ModelDefaults</code> dataclass — exposes the 35 hardcoded architectural constants previously buried inside <code>build_namespace()</code>. Pass a <code>dataclasses.replace(MODEL_DEFAULTS, ...)</code> override to the new config-native builders to customise individual constants. <strong>Note:</strong> fields may be promoted to <code>ModelConfig</code>/<code>TrainConfig</code> in future phases. Exported from <code>rfdetr.models</code>. (<a href="https://github.com/roboflow/rf-detr/pull/845">#845</a>)</li>
+<li><code>MODEL_DEFAULTS</code> — the canonical <code>ModelDefaults</code> singleton with production defaults. Exported from <code>rfdetr.models</code>. (<a href="https://github.com/roboflow/rf-detr/pull/845">#845</a>)</li>
+<li><code>RFDETR.predict(include_source_image=...)</code> — opt-out flag (default <code>True</code>) to skip storing the source image in <code>detections.metadata["source_image"]</code>; set to <code>False</code> to reduce memory use when the image is not needed for annotation. (<a href="https://github.com/roboflow/rf-detr/pull/912">#912</a>)</li>
+<li><code>model_name</code> is now stored in checkpoint files during training so that <code>RFDETR.from_checkpoint()</code> can resolve the correct model class directly from the checkpoint, without requiring the caller to know or pass a class hint. <code>strip_checkpoint()</code> preserves this key. Backward-compatible: checkpoints without <code>model_name</code> continue to resolve via <code>pretrain_weights</code> filename matching. (<a href="https://github.com/roboflow/rf-detr/pull/895">#895</a>)</li>
+<li><code>rfdetr_version</code> is now stored in checkpoint files during training for provenance tracking and compatibility hints. <code>strip_checkpoint()</code> preserves this key. The key is omitted gracefully when the package version cannot be resolved (e.g. editable install without metadata). Backward-compatible: checkpoints without <code>rfdetr_version</code> continue to load normally. (<a href="https://github.com/roboflow/rf-detr/pull/918">#918</a>)</li>
+<li><code>notes</code> parameter on <code>RFDETR.train()</code> and <code>RFDETR.export()</code> — embed arbitrary JSON-serialisable provenance metadata (labeller, date, class names, etc.) into best-model <code>.pth</code> checkpoints (under <code>checkpoint["args"]["notes"]</code>) and ONNX files (under the <code>"rfdetr_notes"</code> metadata property). String values are stored verbatim; all other types are JSON-encoded. (<a href="https://github.com/roboflow/rf-detr/pull/1025">#1025</a>, closes <a href="https://github.com/roboflow/rf-detr/issues/1021">#1021</a>)</li>
+<li><code>RF_HOME</code> environment variable controls where pretrained model weights are cached (default: <code>~/.roboflow/models</code>). Bare filenames passed as <code>pretrain_weights</code> (e.g. <code>"rf-detr-base.pth"</code>) are now resolved relative to this directory; paths with a directory component are used as-is with parent directories created automatically. (<a href="https://github.com/roboflow/rf-detr/pull/130">#130</a>)</li>
+<li>Grayscale and multispectral imagery support: RF-DETR models now accept inputs with any number of channels (not just 3). The pretrained DINOv2 patch-embedding weights are automatically adapted to the specified channel count at model construction time — no additional dependencies required. (<a href="https://github.com/roboflow/rf-detr/pull/180">#180</a>, closes <a href="https://github.com/roboflow/rf-detr/issues/75">#75</a>)</li>
+<li>Training configuration is now saved to <code>training_config.json</code> in the output directory after training completes. The file captures the full <code>TrainConfig</code>, <code>ModelConfig</code>, effective training parameters, class names, and number of classes — useful for reproducibility and debugging predictions from older checkpoints. (<a href="https://github.com/roboflow/rf-detr/pull/194">#194</a>)</li>
+<li><code>dinov2_registers_windowed_small</code> backbone is now available as a config option in <code>ModelConfig.encoder</code>. (<a href="https://github.com/roboflow/rf-detr/pull/236">#236</a>)</li>
+<li><code>rfdetr.from_checkpoint(path)</code> — new top-level convenience function that loads a checkpoint and infers the correct model subclass automatically, without requiring the caller to specify a class. Equivalent to <code>RFDETR.from_checkpoint(path)</code> but importable directly from the <code>rfdetr</code> package. (<a href="https://github.com/roboflow/rf-detr/pull/664">#664</a>)</li>
+<li>ONNX export filenames now include the model variant name (e.g. <code>rfdetr-medium.onnx</code>) instead of the generic <code>inference_model.onnx</code>. Exporting multiple variants to the same directory no longer overwrites previous exports. (<a href="https://github.com/roboflow/rf-detr/pull/910">#910</a>)</li>
+<li>Background images (images without a matching label file) are now included in YOLO detection datasets as empty-detection samples instead of being silently dropped. Both detection and segmentation paths now use <code>_LazyYoloDetectionDataset</code> for consistent behaviour. (<a href="https://github.com/roboflow/rf-detr/pull/915">#915</a>)</li>
+<li>TFLite export via <code>model.export(format="tflite")</code>. Converts through ONNX using <code>onnx2tf</code>; FP32 and FP16 outputs are always produced, INT8 quantization is available with a calibration image directory: <code>model.export(format="tflite", quantization="int8", calibration_data="path/to/images/")</code>. Requires <code>pip install 'rfdetr[onnx,tflite]'</code>. (<a href="https://github.com/roboflow/rf-detr/pull/920">#920</a>)</li>
+<li>PyTorch Lightning <code>.ckpt</code> files are now accepted as <code>pretrain_weights</code>. Keys are automatically normalized from PTL format (<code>state_dict</code> with <code>model.</code>-prefixed keys, <code>hyper_parameters</code> → <code>args</code>) so that <code>load_pretrain_weights</code>, class-name extraction, and compatibility checks work without manual conversion. (<a href="https://github.com/roboflow/rf-detr/pull/951">#951</a>)</li>
+<li><code>skip_best_epochs</code> parameter for <code>RFDETR.train()</code> and <code>TrainConfig</code>: the first N epochs are excluded from best-checkpoint selection and early-stopping comparison, preventing strong pretrained weights or resumed checkpoints from locking in a suboptimal early score. (<a href="https://github.com/roboflow/rf-detr/pull/1000">#1000</a>, closes <a href="https://github.com/roboflow/rf-detr/issues/789">#789</a>)</li>
+<li>TFLite inference now decodes segmentation mask outputs into <code>sv.Detections.mask</code>. Mask logits are upsampled to the source image size using Pillow bilinear resampling and thresholded at zero, matching the behaviour of <code>PostProcess.forward</code>. The mask tensor is detected by output name (<code>"masks"</code> substring) with a rank-4 shape fallback. (<a href="https://github.com/roboflow/rf-detr/pull/1053">#1053</a>)</li>
+<li><code>PretrainWeightsCompatibilityWarning</code> — new warning class emitted when a <code>ModelConfig</code> override (e.g. custom <code>encoder</code>, <code>num_queries</code>, or <code>num_feature_levels</code>) risks breaking pretrained weight loading. Importable as <code>from rfdetr.config import PretrainWeightsCompatibilityWarning</code> for targeted filtering. (<a href="https://github.com/roboflow/rf-detr/pull/1017">#1017</a>)</li>
+</ul>
+<h3 id="changed_5">Changed<a class="headerlink" href="#changed_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>peft</code> is no longer installed as part of the default <code>rfdetr</code> package. It has moved to the <code>[lora]</code> and <code>[train]</code> optional extras. If you use LoRA fine-tuning, install with <code>pip install 'rfdetr[lora]'</code>. (<a href="https://github.com/roboflow/rf-detr/pull/838">#838</a>)</li>
+<li>Native RLE annotation support in the COCO segmentation pipeline: <code>convert_coco_poly_to_mask</code> now explicitly detects and decodes both compressed (string counts) and uncompressed (int-list counts) RLE formats alongside existing polygon support. Malformed annotations now raise instead of being silently swallowed. (<a href="https://github.com/roboflow/rf-detr/pull/897">#897</a>)</li>
+<li>Pinned PyTorch Lightning to exclude known-compromised versions. (<a href="https://github.com/roboflow/rf-detr/pull/1020">#1020</a>)</li>
+</ul>
+<h3 id="deprecated_2">Deprecated<a class="headerlink" href="#deprecated_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>build_namespace(model_config, train_config)</code> — no longer used internally and deprecated in this release; use <code>build_model_from_config</code>, <code>build_criterion_from_config</code>, or <code>_namespace_from_configs</code> directly. It will be removed in v1.9 and currently emits a <code>DeprecationWarning</code> on use. (<a href="https://github.com/roboflow/rf-detr/pull/845">#845</a>)</li>
+<li><code>load_pretrain_weights(nn_model, model_config, train_config)</code> — the <code>train_config</code> positional argument is deprecated and will be removed in v1.9; it is no longer used internally. Omit it: <code>load_pretrain_weights(nn_model, model_config)</code>. Passing a non-<code>None</code> value emits a <code>DeprecationWarning</code>. (<a href="https://github.com/roboflow/rf-detr/pull/845">#845</a>)</li>
+<li><code>TrainConfig.group_detr</code> (architecture decision → <code>ModelConfig</code>), <code>TrainConfig.ia_bce_loss</code> (loss type tied to architecture family → <code>ModelConfig</code>), <code>TrainConfig.segmentation_head</code> (architecture flag → <code>ModelConfig</code>), <code>TrainConfig.num_select</code> (postprocessor count → <code>ModelConfig</code>; <code>SegmentationTrainConfig</code> users: remove the <code>num_select</code> override — the model config value is always used), <code>ModelConfig.cls_loss_coef</code> (training hyperparameter → <code>TrainConfig</code>) — each now emits <code>DeprecationWarning</code> when set on the wrong config object and will be <strong>removed</strong> in v1.9. (<a href="https://github.com/roboflow/rf-detr/pull/841">#841</a>)</li>
+<li><code>RFDETRBase</code> — use <code>RFDETRNano</code>, <code>RFDETRSmall</code>, <code>RFDETRMedium</code>, or <code>RFDETRLarge</code> instead. Emits <code>FutureWarning</code> on instantiation; scheduled for removal in v2.0. (<a href="https://github.com/roboflow/rf-detr/pull/900">#900</a>)</li>
+<li><code>RFDETRSegPreview</code> — use <code>RFDETRSegNano</code>, <code>RFDETRSegSmall</code>, <code>RFDETRSegMedium</code>, or <code>RFDETRSegLarge</code> instead. Emits <code>FutureWarning</code> on instantiation; scheduled for removal in v2.0. (<a href="https://github.com/roboflow/rf-detr/pull/900">#900</a>)</li>
+<li><code>rfdetr.util</code> and <code>rfdetr.deploy</code> sub-modules are deprecated and will be removed in v1.9. A <code>__getattr__</code> hook on the <code>rfdetr</code> package now emits a clear <code>ImportError</code> with migration guidance when these legacy paths are accessed. (<a href="https://github.com/roboflow/rf-detr/pull/839">#839</a>)</li>
+</ul>
+<h3 id="fixed_5">Fixed<a class="headerlink" href="#fixed_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li>
+<p>Fixed TFLite export (<code>format="tflite"</code>) producing detection scores that collapse to ~0.02 (vs ~0.62 from ONNX) on real inputs. Root cause is a long-standing onnx2tf bug (<a href="https://github.com/PINTO0309/onnx2tf/issues/274">PINTO0309/onnx2tf#274</a>) where the <code>GridSample</code> lowering diverges numerically from ONNX while onnx2tf's own validator silently passes. RF-DETR's deformable cross-attention uses <code>F.grid_sample</code> once per decoder layer; drift compounds and is amplified by the attention softmax. The converter now detects onnx2tf's <code>GridSample → pseudo-GridSample</code> replacement kwarg at runtime (introspecting <code>convert()</code> via <code>inspect.signature</code>) and passes it as <code>True</code>; a warning is logged when the kwarg is absent. (<a href="https://github.com/roboflow/rf-detr/pull/1041">#1041</a>)</p>
+</li>
+<li>
+<p><code>WindowedDinov2WithRegistersEmbeddings.forward()</code> now raises <code>ValueError</code> (instead of silently failing under <code>-O</code>) when input spatial dimensions are not divisible by <code>patch_size * num_windows</code>, with a clear message identifying the divisor and actual shape. (<a href="https://github.com/roboflow/rf-detr/pull/167">#167</a>)</p>
+</li>
+<li>
+<p>Fixed <code>_namespace.py</code>: <code>num_select</code> in the builder namespace now always reads from <code>ModelConfig</code>, eliminating a regression where <code>TrainConfig.num_select</code> (default 300) silently overrode model-specific values of 100–200 for segmentation variants (<code>RFDETRSegNano</code>, <code>RFDETRSegSmall</code>, <code>RFDETRSegMedium</code>, <code>RFDETRSegLarge</code>, <code>RFDETRSegPreview</code>). Post-processing now uses the correct top-k count for each model. (<a href="https://github.com/roboflow/rf-detr/pull/841">#841</a>)</p>
+</li>
+<li>
+<p>Fixed <code>models/weights.py</code>: <code>load_pretrain_weights</code> now correctly auto-aligns the model head when the checkpoint has fewer classes than the configured default, preventing a silent mismatch when <code>num_classes</code> was not explicitly set by the caller. (<a href="https://github.com/roboflow/rf-detr/pull/845">#845</a>)</p>
+</li>
+<li>
+<p>Fixed <code>models/weights.py</code>: <code>load_pretrain_weights</code> now slices <code>refpoint_embed.weight</code> and <code>query_feat.weight</code> per-group when reshaping checkpoint queries, instead of taking a flat <code>tensor[: num_queries * group_detr]</code> slice. The flat slice silently scrambled groups 1+ when <code>num_queries</code> decreased and <code>group_detr &gt; 1</code>; inference (which only reads group 0) was unaffected, but training-resume corrupted query embeddings for groups 1 onward. (<a href="https://github.com/roboflow/rf-detr/pull/1019">#1019</a>)</p>
+</li>
+<li>
+<p>Fixed YOLO segmentation training on large datasets hitting OS out-of-memory: <code>supervision.DetectionDataset.from_yolo(force_masks=True)</code> was eager-rasterising H×W boolean masks for every image at dataset construction time (≈1 GB/1 000 images at 1024 px). A new <code>_LazyYoloDetectionDataset</code> stores polygon coordinates only and defers dense mask rasterisation to <code>__getitem__</code>, keeping RAM proportional to annotation count rather than (N × H × W). (<a href="https://github.com/roboflow/rf-detr/pull/851">#851</a>)</p>
+</li>
+<li>
+<p>Fixed ONNX/TRT dynamic batch inference: <code>gen_encoder_output_proposals</code> and <code>Transformer.forward</code> extracted the batch size as a Python int and passed it to <code>torch.full</code>, <code>.view(N_, ...)</code>, <code>.expand(N_, ...)</code>, and <code>.repeat(bs, ...)</code>, causing the ONNX tracer to bake the training batch size (e.g. 8) as a compile-time constant. TRT engines built with <code>--minShapes</code> smaller than the trace batch would fail at inference with <code>Reshape: reshaping failed</code>. All six call sites are now replaced with ONNX-symbolic equivalents (<code>zeros_like</code>, <code>-1</code> reshapes, <code>expand(memory.shape[0], ...)</code>), keeping the batch dimension fully dynamic. (<a href="https://github.com/roboflow/rf-detr/pull/950">#950</a>, closes <a href="https://github.com/roboflow/rf-detr/issues/949">#949</a>)</p>
+</li>
+<li>
+<p>Fixed training failure when <code>square_resize_div_64=False</code>: the non-square resize pipeline (<code>SmallestMaxSize</code> + <code>LongestMaxSize</code>) did not guarantee output dimensions divisible by <code>patch_size * num_windows</code>, causing <code>WindowedDinov2WithRegistersEmbeddings.forward</code> to raise <code>ValueError</code>. A <code>PadIfNeeded</code> step (with <code>pad_height_divisor</code> and <code>pad_width_divisor</code> set to <code>patch_size * num_windows</code>) is now appended after the resize pair in both the train and val/test pipelines. (<a href="https://github.com/roboflow/rf-detr/pull/991">#991</a>, closes <a href="https://github.com/roboflow/rf-detr/issues/983">#983</a>)</p>
+</li>
+<li>
+<p>Fixed non-square batch padding correctness: batch-level <code>block_size</code> rounding is now applied in the DataLoader collator (<code>nested_tensor_from_tensor_list</code> via <code>make_collate_fn</code>) in addition to the transform-level <code>PadIfNeeded</code>, ensuring divisibility by <code>patch_size * num_windows</code> survives any <code>Compose</code> reordering and applies uniformly to custom evaluation harnesses. (<a href="https://github.com/roboflow/rf-detr/pull/992">#992</a>)</p>
+</li>
+<li>
+<p>Fixed <code>RFDETRModelModule.on_load_checkpoint</code> crashing with <code>RuntimeError</code> when resuming training from a checkpoint saved at a different image resolution: DINOv2 positional embeddings in the checkpoint are now bicubic-interpolated to match <code>model_config.positional_encoding_size</code> before PyTorch Lightning applies the state dict. (<a href="https://github.com/roboflow/rf-detr/pull/1002">#1002</a>, closes <a href="https://github.com/roboflow/rf-detr/issues/998">#998</a>)</p>
+</li>
+<li>
+<p>Fixed <code>RFDETRLarge</code> initialization showing two conflicting <code>ValueError</code>s (for <code>patch_size=14</code> and <code>patch_size=16</code>) when the deprecated-config fallback retry also fails. The fallback now re-raises the original error without chained context, so users see a single deterministic message. (<a href="https://github.com/roboflow/rf-detr/pull/975">#975</a>)</p>
+</li>
+<li>
+<p>Fixed <code>RFDETRModelModule.__init__</code> crashing with <code>RuntimeError: size mismatch for backbone.0.encoder.encoder.embeddings.position_embeddings</code> when training segmentation models at a custom resolution (e.g. <code>RFDETRSegLarge(resolution=1008).train(...)</code>). The training entry path now delegates to the canonical <code>load_pretrain_weights</code> helper, which bicubic-interpolates the DINOv2 positional embeddings before <code>load_state_dict</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1040">#1040</a>, closes <a href="https://github.com/roboflow/rf-detr/issues/1038">#1038</a>, <a href="https://github.com/roboflow/rf-detr/issues/1023">#1023</a>)</p>
+</li>
+<li>
+<p>Fixed TFLite detection scores collapsing for all queries (scores ~0.02 vs ~0.62 from ONNX) when <code>GridSample</code> was used as an onnx2tf pseudo-operator. The <code>GridSample</code> ONNX node is now rewritten to <code>Gather</code>-based integer-index arithmetic before conversion, eliminating all numerical drift from attention position sampling. This supersedes the pseudo-<code>GridSample</code> runtime-kwarg approach added in <a href="https://github.com/roboflow/rf-detr/pull/1041">#1041</a>. (<a href="https://github.com/roboflow/rf-detr/pull/1054">#1054</a>)</p>
+</li>
+<li>
+<p>Fixed <code>class_name</code> lookup for pretrained COCO models: COCO category IDs are sparse (1–90 with gaps for 80 classes), so flat 0-based indexing returned the wrong name (e.g. <code>class_id=18</code> ("dog") incorrectly returned <code>class_names[18]</code> instead of <code>class_names[16]</code>). Detection now uses a <code>coco_id → class_name</code> mapping built from the canonical <code>COCO_CLASSES</code> list so every COCO category resolves to its correct label. Fine-tuned models continue to use direct 0-based indexing unchanged. (<a href="https://github.com/roboflow/rf-detr/pull/1051">#1051</a>)</p>
+</li>
+</ul>
+<hr />
+<h2 id="165-2026-04-22">[1.6.5] — 2026-04-22<a class="headerlink" href="#165-2026-04-22" title="Permanent link">&para;</a></h2>
+<h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>predict()</code> now stores the source image in <code>detections.metadata["source_image"]</code> instead of <code>detections.data["source_image"]</code>. supervision indexes every value in <code>data</code> by the detection mask; <code>source_image</code> is per-image, not per-detection, so boolean/integer indexing raised <code>IndexError</code>. Moving it to <code>metadata</code> (passed through unchanged) fixes the issue. Update any code that reads <code>detections.data["source_image"]</code>. (<a href="https://github.com/roboflow/rf-detr/pull/972">#972</a>, <a href="https://github.com/roboflow/rf-detr/issues/968">#968</a>)</li>
+</ul>
+<h3 id="fixed_6">Fixed<a class="headerlink" href="#fixed_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed segmentation training crash on T4 and P100 GPUs: cuDNN engine selection fails for depthwise convolution backward on some CUDA stacks (Kaggle, Colab). A custom <code>autograd.Function</code> now disables cuDNN in both forward and backward passes. (<a href="https://github.com/roboflow/rf-detr/pull/967">#967</a>)</li>
+<li>Fixed <code>ema_segm_mAP_50_95</code> and <code>ema_segm_mAP_50</code> being computed from the base (non-EMA) metric accumulator instead of the EMA accumulator, producing misleading validation scores for segmentation models. (<a href="https://github.com/roboflow/rf-detr/pull/980">#980</a>)</li>
+<li>Fixed <code>BestModelCallback</code> losing the best EMA score on training resume because <code>_best_ema</code> was not persisted in <code>state_dict()</code>. (<a href="https://github.com/roboflow/rf-detr/pull/973">#973</a>)</li>
+<li>Fixed <code>positional_encoding_size</code> not updating when <code>resolution</code> is set at construction time (e.g. <code>RFDETRLarge(resolution=640)</code>), causing shape mismatches during forward. A model validator now auto-syncs PE size. (<a href="https://github.com/roboflow/rf-detr/pull/956">#956</a>)</li>
+<li>Fixed pretrained weight loading crash with custom resolution: DINOv2 positional embeddings are now bicubic-interpolated to match the target grid before <code>load_state_dict</code>. (<a href="https://github.com/roboflow/rf-detr/pull/964">#964</a>)</li>
+<li>Fixed <code>validate_checkpoint_compatibility</code> producing a cryptic <code>RuntimeError</code> on <code>patch_size</code> mismatch when checkpoint lacks explicit <code>args.patch_size</code>. The function now infers <code>patch_size</code> from the DINOv2 projection weight shape and raises a descriptive <code>ValueError</code>. (<a href="https://github.com/roboflow/rf-detr/pull/971">#971</a>)</li>
+<li>Fixed <code>predict()</code> storing <code>detections.data["source_shape"]</code> as a Python <code>tuple</code>, which caused <code>TypeError</code> whenever <code>sv.Detections</code> was iterated. The value is now an <code>np.ndarray</code> of shape <code>(N, 2)</code> and dtype <code>int64</code>. (<a href="https://github.com/roboflow/rf-detr/pull/966">#966</a>, <a href="https://github.com/roboflow/rf-detr/issues/963">#963</a>)</li>
+<li>Fixed <code>predict()</code> emitting a misleading "class_id out of range" warning for the background/no-object class (class index <code>num_classes</code>). Background-class detections now map <code>data["class_name"]</code> to <code>"__background__"</code> without any warning. (<a href="https://github.com/roboflow/rf-detr/issues/970">#970</a>)</li>
+</ul>
+<h2 id="164-2026-04-10">[1.6.4] — 2026-04-10<a class="headerlink" href="#164-2026-04-10" title="Permanent link">&para;</a></h2>
+<h3 id="changed_6">Changed<a class="headerlink" href="#changed_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>predict()</code> now includes <code>class_name</code> in <code>detections.data</code>, mapping each detection's 0-indexed class ID to its human-readable name. (<a href="https://github.com/roboflow/rf-detr/pull/914">#914</a>)</li>
+</ul>
+<h3 id="fixed_7">Fixed<a class="headerlink" href="#fixed_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed segmentation multi-GPU DDP training crash: <code>build_trainer()</code> now wraps <code>strategy="ddp"</code> with <code>DDPStrategy(find_unused_parameters=True)</code> when <code>segmentation_head=True</code>. The segmentation head's <code>sparse_forward()</code> leaves parameters unused on some forward steps; plain <code>"ddp"</code> raised <code>RuntimeError: It looks like your LightningModule has parameters that were not used in producing the loss</code>. Non-segmentation DDP and other strategies are unchanged. (<a href="https://github.com/roboflow/rf-detr/pull/942">#942</a>, <a href="https://github.com/roboflow/rf-detr/pull/947">#947</a>)</li>
+<li>Fixed fused AdamW crash under FP32 multi-GPU training: <code>configure_optimizers()</code> and <code>clip_gradients()</code> now gate fused AdamW on the trainer's actual precision (requiring a BF16 variant) rather than GPU capability alone. On Ampere+ hardware <code>torch.cuda.is_bf16_supported()</code> is always <code>True</code>, so the old code enabled fused AdamW even with <code>precision="32-true"</code>, causing <code>RuntimeError: params, grads, exp_avgs, and exp_avg_sqs must have same dtype, device, and layout</code> from DDP gradient bucket view stride mismatches. (<a href="https://github.com/roboflow/rf-detr/pull/942">#942</a>, <a href="https://github.com/roboflow/rf-detr/pull/947">#947</a>)</li>
+<li>Fixed multi-GPU DDP training crashing in Jupyter notebooks and Kaggle: replaced fork-based <code>ddp_notebook</code> strategy with a spawn-based DDP strategy that avoids OpenMP thread pool corruption after <code>fork()</code>. (<a href="https://github.com/roboflow/rf-detr/pull/928">#928</a>)</li>
+<li>Fixed <code>RFDETR.train(resolution=...)</code> being silently ignored — the kwarg is now applied to <code>model_config</code> before training begins, with validation that the value is divisible by <code>patch_size * num_windows</code>. (<a href="https://github.com/roboflow/rf-detr/pull/933">#933</a>)</li>
+<li>Fixed <code>save_dataset_grids</code> being silently a no-op — <code>DatasetGridSaver</code> is now wired into the training loop, saving sample grids to <code>{output_dir}/dataset_grids/</code> when enabled. Grid save failures are caught without interrupting training. (<a href="https://github.com/roboflow/rf-detr/pull/946">#946</a>)</li>
+<li>Fixed partial gradient-accumulation windows at the tail of training epochs: the training dataset is now padded to an exact multiple of <code>effective_batch_size * world_size</code>, ensuring every optimizer step uses a full gradient window. Workaround for <a href="https://github.com/Lightning-AI/pytorch-lightning/issues/19987">pytorch-lightning#19987</a>. (<a href="https://github.com/roboflow/rf-detr/pull/937">#937</a>)</li>
+<li>Fixed <code>torch.export.export</code> failing on the transformer decoder by threading <code>spatial_shapes_hw</code> through all decoder layers. (<a href="https://github.com/roboflow/rf-detr/pull/936">#936</a>)</li>
+<li><code>download_pretrain_weights()</code> no longer overwrites fine-tuned checkpoints that share a filename with a registry model (e.g. <code>rf-detr-nano.pth</code>). Previously, an MD5 mismatch would fall through to <code>_download_file()</code> and silently replace the user's weights with the original COCO checkpoint. The function now returns early whenever the file exists and <code>redownload=False</code>, regardless of MD5 status — a warning is emitted when the hash differs. Pass <code>redownload=True</code> to force a fresh download. (<a href="https://github.com/roboflow/rf-detr/pull/935">#935</a>)</li>
+</ul>
+<h2 id="163-2026-04-02">[1.6.3] — 2026-04-02<a class="headerlink" href="#163-2026-04-02" title="Permanent link">&para;</a></h2>
+<h3 id="changed_7">Changed<a class="headerlink" href="#changed_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>predict()</code> now stores the original image and its shape on returned <code>sv.Detections</code> objects — <code>detections.data["source_image"]</code> (NumPy array) and <code>detections.data["source_shape"]</code> (NumPy array of shape <code>(N, 2)</code> where each row is <code>[height, width]</code>) let you annotate results without loading the image separately. (<a href="https://github.com/roboflow/rf-detr/pull/892">#892</a>)</li>
+<li><code>RFDETR.train()</code> auto-detects <code>num_classes</code> from the dataset directory when not explicitly set, reinitializing the detection head to the correct class count automatically. A warning is emitted when the configured value differs from the dataset count. (<a href="https://github.com/roboflow/rf-detr/pull/893">#893</a>)</li>
+<li><code>optimize_for_inference()</code> now accepts dtype as a string name (e.g. <code>"float16"</code>) in addition to a <code>torch.dtype</code> object; invalid dtype inputs uniformly raise <code>TypeError</code>. (<a href="https://github.com/roboflow/rf-detr/pull/899">#899</a>)</li>
+</ul>
+<h3 id="fixed_8">Fixed<a class="headerlink" href="#fixed_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed <code>models/lwdetr.py</code>: <code>reinitialize_detection_head</code> now replaces <code>nn.Linear</code> modules instead of mutating <code>.data</code> tensors in-place, ensuring <code>out_features</code> metadata stays consistent with the actual weight shape. This prevents ONNX export and <code>torch.jit.trace</code> from emitting stale (pre-fine-tuning) class counts for fine-tuned models. (<a href="https://github.com/roboflow/rf-detr/pull/904">#904</a>)</li>
+<li>Fixed <code>RFDETR.optimize_for_inference()</code> leaking a CUDA context on multi-GPU setups: the deep-copy, export, and JIT-trace steps now run inside <code>torch.cuda.device(device)</code> to pin the context to the correct device. (<a href="https://github.com/roboflow/rf-detr/pull/899">#899</a>)</li>
+<li>Fixed <code>optimize_for_inference()</code> leaving inconsistent state on failure: prior optimized state is now reset and flags are committed only after a successful build/trace; temp download files use unique per-process paths to avoid parallel worker collisions.</li>
+<li>Fixed <code>deploy_to_roboflow</code> failing with <code>FileNotFoundError</code> after PyTorch Lightning migration: <code>class_names.txt</code> is now written to the upload directory and <code>args.class_names</code> is populated before saving the checkpoint. (<a href="https://github.com/roboflow/rf-detr/pull/890">#890</a>)</li>
+</ul>
+<h2 id="162-2026-03-27">[1.6.2] — 2026-03-27<a class="headerlink" href="#162-2026-03-27" title="Permanent link">&para;</a></h2>
+<h3 id="added_5">Added<a class="headerlink" href="#added_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>RFDETR.predict(shape=...)</code> — optional <code>(height, width)</code> tuple overrides the default square inference resolution; useful when matching a non-square ONNX export. Both dimensions must be positive integers divisible by <code>patch_size × num_windows</code> as determined by the model configuration. (<a href="https://github.com/roboflow/rf-detr/pull/866">#866</a>)</li>
+</ul>
+<h3 id="changed_8">Changed<a class="headerlink" href="#changed_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>ModelConfig.device</code> and <code>RFDETR.train(device=...)</code> now accept <code>torch.device</code> objects and indexed device strings such as <code>"cuda:0"</code>. Values are normalized to canonical torch-style strings. <code>RFDETR.train()</code> warns when an unmapped device type is passed to PyTorch Lightning auto-detection. (<a href="https://github.com/roboflow/rf-detr/pull/872">#872</a>)</li>
+</ul>
+<h3 id="fixed_9">Fixed<a class="headerlink" href="#fixed_9" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed ONNX export ignoring an explicit <code>patch_size</code> argument: <code>export()</code> and <code>predict()</code> now resolve <code>patch_size</code> from <code>model_config</code> by default, validate it strictly (positive integer, not bool), and enforce that <code>(H, W)</code> dimensions are divisible by <code>patch_size × num_windows</code>. (<a href="https://github.com/roboflow/rf-detr/pull/876">#876</a>)</li>
+<li>Fixed ONNX export for models with dynamic batch dimensions — replaced <code>H_.expand(N_)</code> with <code>torch.full</code> for Python-int spatial dims to eliminate tracer failures. (<a href="https://github.com/roboflow/rf-detr/pull/871">#871</a>)</li>
+</ul>
+<h2 id="161-2026-03-25">[1.6.1] — 2026-03-25<a class="headerlink" href="#161-2026-03-25" title="Permanent link">&para;</a></h2>
+<h3 id="deprecated_3">Deprecated<a class="headerlink" href="#deprecated_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>RFDETR.export(..., simplify=..., force=...)</code> — both arguments are now no-ops and emit a <code>DeprecationWarning</code>. RF-DETR no longer runs ONNX simplification automatically; remove these arguments from your calls. They will be removed in v1.8. (<a href="https://github.com/roboflow/rf-detr/pull/861">#861</a>)</li>
+</ul>
+<h3 id="fixed_10">Fixed<a class="headerlink" href="#fixed_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed <code>RFDETR.train()</code>: a missing <code>rfdetr[train]</code> install (e.g. plain <code>pip install rfdetr</code> in Colab) now raises an <code>ImportError</code> with an actionable message — <code>pip install "rfdetr[train,loggers]"</code> — instead of a raw <code>ModuleNotFoundError</code> with no install hint. (<a href="https://github.com/roboflow/rf-detr/pull/858">#858</a>)</li>
+<li>Fixed <code>AUG_AGGRESSIVE</code> preset: <code>translate_percent</code> was <code>(0.1, 0.1)</code> — a degenerate range that forced Albumentations <code>Affine</code> to always translate right/down by exactly 10%. Corrected to <code>(-0.1, 0.1)</code> for symmetric bidirectional translation. (<a href="https://github.com/roboflow/rf-detr/pull/863">#863</a>)</li>
+<li>Fixed PTL training path: <code>latest.ckpt</code> and per-interval checkpoints (<code>checkpoint_interval_N.ckpt</code>) are now properly written and restored on resume. (<a href="https://github.com/roboflow/rf-detr/pull/847">#847</a>)</li>
+<li>Fixed <code>BestModelCallback</code> and checkpoint monitor raising <code>MisconfigurationException</code> on non-eval epochs when <code>eval_interval &gt; 1</code> — monitor key absence is now handled gracefully. (<a href="https://github.com/roboflow/rf-detr/pull/848">#848</a>)</li>
+<li>Fixed <code>protobuf</code> version constraint in the <code>loggers</code> extra to guard against TensorBoard descriptor crash (<code>TypeError: Descriptors cannot be created directly</code>) with protobuf ≥ 4. (<a href="https://github.com/roboflow/rf-detr/pull/846">#846</a>)</li>
+<li>Fixed duplicate <code>ModelCheckpoint</code> state keys when <code>checkpoint_interval=1</code>; <code>last.ckpt</code> is omitted in that configuration to avoid collision. (<a href="https://github.com/roboflow/rf-detr/pull/859">#859</a>)</li>
+</ul>
+<h2 id="160-2026-03-20">[1.6.0] — 2026-03-20<a class="headerlink" href="#160-2026-03-20" title="Permanent link">&para;</a></h2>
+<h3 id="added_6">Added<a class="headerlink" href="#added_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>PyTorch Lightning training building blocks: <code>RFDETRModelModule</code>, <code>RFDETRDataModule</code>, <code>build_trainer()</code>, and individual callbacks (<code>RFDETREMACallback</code>, <code>COCOEvalCallback</code>, <code>BestModelCallback</code>, <code>DropPathCallback</code>, <code>MetricsPlotCallback</code>) — all standard PTL components, swap/subclass/extend any piece. Level 3: <code>rfdetr fit --config</code> CLI with zero Python required. (<a href="https://github.com/roboflow/rf-detr/pull/757">#757</a>, <a href="https://github.com/roboflow/rf-detr/pull/794">#794</a>)</li>
+<li>Multi-GPU DDP via <code>model.train()</code>: <code>strategy</code>, <code>devices</code>, and <code>num_nodes</code> added to <code>TrainConfig</code>; single-GPU behaviour unchanged when omitted. (<a href="https://github.com/roboflow/rf-detr/pull/808">#808</a>)</li>
+<li><code>batch_size='auto'</code>: CUDA memory probe finds the largest safe micro-batch size, then recommends <code>grad_accum_steps</code> to reach a configurable effective batch target (default 16 via <code>auto_batch_target_effective</code>). (<a href="https://github.com/roboflow/rf-detr/pull/814">#814</a>)</li>
+<li><code>ModelContext</code> promoted from <code>_ModelContext</code> to a public, exported API — inspect <code>class_names</code>, <code>num_classes</code>, and related metadata via <code>model.context</code> after training. (<a href="https://github.com/roboflow/rf-detr/pull/835">#835</a>)</li>
+<li><code>backbone_lora</code> and <code>freeze_encoder</code> added as first-class fields in <code>ModelConfig</code>. (<a href="https://github.com/roboflow/rf-detr/pull/829">#829</a>)</li>
+<li><code>generate_coco_dataset(with_segmentation=True)</code> produces COCO polygon annotations alongside bounding boxes for segmentation fine-tuning with synthetic data. (<a href="https://github.com/roboflow/rf-detr/pull/781">#781</a>)</li>
+<li><code>set_attn_implementation("eager" | "sdpa")</code> on the DINOv2 backbone — switch attention implementation at runtime. (<a href="https://github.com/roboflow/rf-detr/pull/760">#760</a>)</li>
+<li><code>eval_max_dets</code>, <code>eval_interval</code>, and <code>log_per_class_metrics</code> added to <code>TrainConfig</code>.</li>
+<li><code>python -m rfdetr</code> entry point alongside the <code>rfdetr</code> console script.</li>
+<li><code>py.typed</code> marker — RF-DETR is now PEP 561–compliant.</li>
+</ul>
+<h3 id="changed_9">Changed<a class="headerlink" href="#changed_9" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Breaking:</strong> Minimum <code>transformers</code> version bumped to <code>&gt;=5.1.0,&lt;6.0.0</code>. The DINOv2 windowed-attention backbone now uses the transformers v5 API (<code>BackboneMixin._init_transformers_backbone()</code>, removed <code>head_mask</code> plumbing). Projects still on transformers v4 must pin <code>rfdetr&lt;1.6.0</code>. (<a href="https://github.com/roboflow/rf-detr/pull/760">#760</a>)</li>
+<li><strong>Breaking:</strong> PyPI install extras renamed — <code>rfdetr[metrics]</code> → <code>rfdetr[loggers]</code>, <code>rfdetr[onnxexport]</code> → <code>rfdetr[onnx]</code>.</li>
+<li><code>draw_synthetic_shape</code> now returns <code>Tuple[np.ndarray, List[float]]</code> instead of <code>np.ndarray</code>. The second element is a flat COCO-style polygon list <code>[x1, y1, x2, y2, …]</code>. Any caller that previously did <code>img = draw_synthetic_shape(...)</code> must be updated to <code>img, polygon = draw_synthetic_shape(...)</code>. (<a href="https://github.com/roboflow/rf-detr/pull/781">#781</a>)</li>
+<li>Albumentations version constraint broadened to <code>&gt;=1.4.24,&lt;3.0.0</code>; <code>RandomSizedCrop</code> configs using <code>height</code>/<code>width</code> kwargs are automatically adapted to the 2.x <code>size=(height, width)</code> API. (<a href="https://github.com/roboflow/rf-detr/pull/786">#786</a>)</li>
+<li>Current learning rate is now shown in the training progress bar alongside loss. (<a href="https://github.com/roboflow/rf-detr/pull/809">#809</a>)</li>
+<li><code>supervision</code>, <code>pytorch_lightning</code>, and other heavy dependencies are now imported lazily (on first use) rather than at module load, reducing cold-import time in inference-only environments. (<a href="https://github.com/roboflow/rf-detr/pull/801">#801</a>)</li>
+</ul>
+<h3 id="deprecated_4">Deprecated<a class="headerlink" href="#deprecated_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>rfdetr.deploy.*</code> — redirects to <code>rfdetr.export.*</code> with a <code>DeprecationWarning</code>. Migrate before v1.7.</li>
+<li><code>rfdetr.util.*</code> — redirects to <code>rfdetr.utilities.*</code> with a <code>DeprecationWarning</code>. Migrate before v1.7.</li>
+</ul>
+<h3 id="fixed_11">Fixed<a class="headerlink" href="#fixed_11" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Raised a descriptive <code>ValueError</code> instead of a cryptic <code>RuntimeError</code> / tensor-size mismatch when a checkpoint is incompatible with the current model architecture — covers <code>segmentation_head</code> mismatch and <code>patch_size</code> mismatch. (<a href="https://github.com/roboflow/rf-detr/pull/810">#810</a>)</li>
+<li>Fixed <code>class_names</code> not reflecting dataset labels on <code>model.predict()</code> after training — class names are now synced from the dataset so inference always uses the correct label list. (<a href="https://github.com/roboflow/rf-detr/pull/816">#816</a>)</li>
+<li>Fixed detection head reinitialization overwriting fine-tuned weights when loading a checkpoint with fewer classes than the model default. The second <code>reinitialize_detection_head</code> call now fires only in the backbone-pretrain scenario. (<a href="https://github.com/roboflow/rf-detr/pull/815">#815</a>, <a href="https://github.com/roboflow/rf-detr/pull/509">#509</a>)</li>
+<li>Fixed <code>grid_sample</code> and bicubic interpolation silently falling back to CPU on MPS (Apple Silicon) — both now run natively on the MPS device. (<a href="https://github.com/roboflow/rf-detr/pull/821">#821</a>)</li>
+<li>Fixed <code>early_stopping=False</code> in <code>TrainConfig</code> being silently ignored — the setting now propagates correctly. (<a href="https://github.com/roboflow/rf-detr/pull/835">#835</a>)</li>
+<li>Fixed <code>AttributeError</code> crash in <code>update_drop_path</code> when the DINOv2 backbone layer structure does not match any known pattern.</li>
+<li>Added warning when <code>drop_path_rate &gt; 0.0</code> is configured with a non-windowed DINOv2 backbone, where drop-path is silently ignored.</li>
+<li>Fixed <code>ValueError: matrix entries are not finite</code> in <code>HungarianMatcher</code> when the cost matrix contains NaN or Inf — non-finite entries are replaced with a finite sentinel before <code>linear_sum_assignment</code>, warning emitted at most once per matcher instance. (<a href="https://github.com/roboflow/rf-detr/pull/787">#787</a>)</li>
+<li>Fixed YOLO dataset validation rejecting <code>data.yml</code> — both <code>.yaml</code> and <code>.yml</code> are now accepted. (<a href="https://github.com/roboflow/rf-detr/pull/777">#777</a>)</li>
+<li>Silently dropped degenerate bounding boxes (zero width or height) before Albumentations validation instead of raising <code>ValueError</code>. (<a href="https://github.com/roboflow/rf-detr/pull/825">#825</a>)</li>
+</ul>
+<hr />
+<h2 id="152-2026-03-04">[1.5.2] — 2026-03-04<a class="headerlink" href="#152-2026-03-04" title="Permanent link">&para;</a></h2>
+<h3 id="added_7">Added<a class="headerlink" href="#added_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Added peak GPU memory (<code>max_mem</code> in MB) to training and evaluation progress bars on CUDA; omitted on CPU and MPS. (<a href="https://github.com/roboflow/rf-detr/pull/773">#773</a>)</li>
+</ul>
+<h3 id="fixed_12">Fixed<a class="headerlink" href="#fixed_12" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed <code>aug_config</code> being silently ignored when training on YOLO-format datasets — <code>build_roboflow_from_yolo</code> never forwarded the value, so transforms always fell back to the default. (<a href="https://github.com/roboflow/rf-detr/pull/774">#774</a>)</li>
+<li>Fixed segmentation evaluation metrics not being written to <code>results_mask.json</code> during validation and test runs. (<a href="https://github.com/roboflow/rf-detr/pull/772">#772</a>)</li>
+<li>Fixed <code>AttributeError</code> crash in <code>update_drop_path</code> when the DINOv2 backbone layer structure does not match any known pattern — <code>_get_backbone_encoder_layers</code> now returns <code>None</code> for unrecognised architectures. (<a href="https://github.com/roboflow/rf-detr/pull/762">#762</a>)</li>
+<li>Fixed <code>drop_path_rate</code> not being forwarded to the DINOv2 model configuration; stochastic depth was never applied even when explicitly set. Added a warning when <code>drop_path_rate &gt; 0.0</code> is used with a non-windowed backbone. (<a href="https://github.com/roboflow/rf-detr/pull/762">#762</a>)</li>
+<li>Fixed incorrect COCO hierarchy filtering that excluded parent categories from the class list. (<a href="https://github.com/roboflow/rf-detr/pull/759">#759</a>)</li>
+<li>Fixed evaluation metric corruption on 1-indexed Roboflow datasets caused by a flawed contiguity check in <code>_should_use_raw_category_ids</code>. (<a href="https://github.com/roboflow/rf-detr/pull/755">#755</a>)</li>
+</ul>
+<h2 id="151-2026-02-27">[1.5.1] — 2026-02-27<a class="headerlink" href="#151-2026-02-27" title="Permanent link">&para;</a></h2>
+<h3 id="added_8">Added<a class="headerlink" href="#added_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Added support for nested Albumentations containers (<code>OneOf</code>, <code>Sequential</code>) inside <code>aug_config</code>. (<a href="https://github.com/roboflow/rf-detr/pull/752">#752</a>)</li>
+</ul>
+<h3 id="changed_10">Changed<a class="headerlink" href="#changed_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Migrated dataset transform pipeline to torchvision-native <code>Compose</code>, <code>ToImage</code>, and <code>ToDtype</code>; <code>Normalize</code> now defaults to ImageNet mean/std. (<a href="https://github.com/roboflow/rf-detr/pull/745">#745</a>)</li>
+</ul>
+<h3 id="fixed_13">Fixed<a class="headerlink" href="#fixed_13" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed <code>RFDETRMedium</code> missing from the public API — <code>__all__</code> contained a duplicate <code>RFDETRSmall</code> entry. (<a href="https://github.com/roboflow/rf-detr/pull/748">#748</a>)</li>
+<li>Fixed <code>AR50_90</code> reporting an incorrect value in <code>MetricsMLFlowSink</code> due to a wrong COCO evaluation index. (<a href="https://github.com/roboflow/rf-detr/pull/735">#735</a>)</li>
+<li>Fixed supercategory filtering in <code>_load_classes</code> for COCO datasets with flat or mixed supercategory structures. (<a href="https://github.com/roboflow/rf-detr/pull/744">#744</a>)</li>
+<li>Fixed crash in geometric transforms when a sample contained zero-area or empty masks. (<a href="https://github.com/roboflow/rf-detr/pull/727">#727</a>)</li>
+<li>Fixed segmentation training on Colab — <code>DepthwiseConvBlock</code> now disables cuDNN for depthwise separable convolutions. (<a href="https://github.com/roboflow/rf-detr/pull/728">#728</a>)</li>
+<li>Pinned <code>onnxsim&lt;0.6.0</code> to prevent <code>pip install</code> from hanging indefinitely. (<a href="https://github.com/roboflow/rf-detr/pull/749">#749</a>)</li>
+</ul>
+<h2 id="150-2026-02-23">[1.5.0] — 2026-02-23<a class="headerlink" href="#150-2026-02-23" title="Permanent link">&para;</a></h2>
+<h3 id="added_9">Added<a class="headerlink" href="#added_9" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Added custom training augmentations via <code>aug_config</code> in <code>model.train()</code> — accepts a dict of Albumentations transforms, a built-in preset (<code>AUG_CONSERVATIVE</code>, <code>AUG_AGGRESSIVE</code>, <code>AUG_AERIAL</code>, <code>AUG_INDUSTRIAL</code>), or <code>{}</code> to disable. Bounding boxes and segmentation masks are transformed automatically. (<a href="https://github.com/roboflow/rf-detr/pull/263">#263</a>, <a href="https://github.com/roboflow/rf-detr/pull/702">#702</a>)</li>
+<li>Added <code>save_dataset_grids=True</code> in <code>TrainConfig</code> to write 3×3 JPEG grids of augmented samples to <code>output_dir</code> before training begins. (<a href="https://github.com/roboflow/rf-detr/pull/153">#153</a>)</li>
+<li>Added ClearML logger: set <code>clearml=True</code> in <code>TrainConfig</code> to stream per-epoch metrics to ClearML. (<a href="https://github.com/roboflow/rf-detr/pull/520">#520</a>)</li>
+<li>Added MLflow logger: set <code>mlflow=True</code> in <code>TrainConfig</code> to log runs and metrics to MLflow with custom tracking URI support. (<a href="https://github.com/roboflow/rf-detr/pull/109">#109</a>)</li>
+<li>Added live progress bar for training and validation with structured per-epoch logs. (<a href="https://github.com/roboflow/rf-detr/pull/204">#204</a>)</li>
+<li>Added <code>device</code> field to <code>TrainConfig</code> for explicit device selection. (<a href="https://github.com/roboflow/rf-detr/pull/687">#687</a>)</li>
+<li><code>ModelConfig</code> now raises an error on unknown parameters, preventing silent misconfiguration. (<a href="https://github.com/roboflow/rf-detr/pull/196">#196</a>)</li>
+</ul>
+<h3 id="changed_11">Changed<a class="headerlink" href="#changed_11" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Deprecated <code>OPEN_SOURCE_MODELS</code> constant in favour of <code>ModelWeights</code> enum. (<a href="https://github.com/roboflow/rf-detr/pull/696">#696</a>)</li>
+<li>Added MD5 checksum validation for pretrained weight downloads. (<a href="https://github.com/roboflow/rf-detr/pull/679">#679</a>)</li>
+</ul>
+<h3 id="fixed_14">Fixed<a class="headerlink" href="#fixed_14" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed Albumentations bool-mask crash during segmentation training. (<a href="https://github.com/roboflow/rf-detr/pull/706">#706</a>)</li>
+<li>Fixed <code>UnboundLocalError</code> when resuming training from a completed checkpoint. (<a href="https://github.com/roboflow/rf-detr/pull/707">#707</a>)</li>
+<li>Prevented corruption of <code>checkpoint_best_total.pth</code> via atomic checkpoint stripping. (<a href="https://github.com/roboflow/rf-detr/pull/708">#708</a>)</li>
+<li>Fixed PyTorch 2.9+ compatibility issue with CUDA capability detection. (<a href="https://github.com/roboflow/rf-detr/pull/686">#686</a>)</li>
+<li>Fixed dtype mismatch error when <code>use_position_supervised_loss=True</code>. (<a href="https://github.com/roboflow/rf-detr/pull/447">#447</a>)</li>
+<li>Fixed inconsistent return values from <code>build_model</code>. (<a href="https://github.com/roboflow/rf-detr/pull/519">#519</a>)</li>
+<li>Fixed <code>positional_encoding_size</code> type annotation (<code>bool</code> → <code>int</code>). (<a href="https://github.com/roboflow/rf-detr/pull/524">#524</a>)</li>
+<li>Fixed ONNX export <code>output_names</code> to include masks when exporting segmentation models. (<a href="https://github.com/roboflow/rf-detr/pull/402">#402</a>)</li>
+<li>Fixed <code>num_select</code> not being updated correctly during segmentation model fine-tuning. (<a href="https://github.com/roboflow/rf-detr/pull/399">#399</a>)</li>
+<li>Fixed <code>np.argwhere</code> → <code>np.argmax</code> misuse. (<a href="https://github.com/roboflow/rf-detr/pull/536">#536</a>)</li>
+<li>Fixed COCO sparse category ID remapping for non-contiguous or offset category IDs. (<a href="https://github.com/roboflow/rf-detr/pull/712">#712</a>)</li>
+<li>Fixed segmentation mask filtering when using aggressive augmentations. (<a href="https://github.com/roboflow/rf-detr/pull/717">#717</a>)</li>
+</ul>
+<hr />
+<h2 id="143-2026-02-16">[1.4.3] — 2026-02-16<a class="headerlink" href="#143-2026-02-16" title="Permanent link">&para;</a></h2>
+<h3 id="changed_12">Changed<a class="headerlink" href="#changed_12" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Pretrained weight downloads now validate against an MD5 checksum to detect corrupted files. (<a href="https://github.com/roboflow/rf-detr/pull/679">#679</a>)</li>
+</ul>
+<h3 id="fixed_15">Fixed<a class="headerlink" href="#fixed_15" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed <code>deploy_to_roboflow</code> failing for segmentation model exports. (<a href="https://github.com/roboflow/rf-detr/pull/578">#578</a>)</li>
+<li>Fixed missing <code>info</code> key in COCO export format. (<a href="https://github.com/roboflow/rf-detr/pull/681">#681</a>)</li>
+</ul>
+<h2 id="142-2026-02-12">[1.4.2] — 2026-02-12<a class="headerlink" href="#142-2026-02-12" title="Permanent link">&para;</a></h2>
+<h3 id="added_10">Added<a class="headerlink" href="#added_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Added <code>generate_coco_dataset()</code> utility for generating synthetic COCO-format datasets with configurable class counts, split ratios, and bounding box annotations. (<a href="https://github.com/roboflow/rf-detr/pull/617">#617</a>)</li>
+<li>Added <code>run_test=False</code> to <code>TrainConfig</code> — skip test-split evaluation when your dataset has no test set. (<a href="https://github.com/roboflow/rf-detr/pull/628">#628</a>)</li>
+</ul>
+<h3 id="changed_13">Changed<a class="headerlink" href="#changed_13" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>model.predict()</code> now accepts image URLs directly — no need to download images before inference. (<a href="https://github.com/roboflow/rf-detr/pull/629">#629</a>)</li>
+<li>Plus models (<code>RFDETRXLarge</code>, <code>RFDETR2XLarge</code>) are now distributed as a separate <code>rfdetr_plus</code> package under the Roboflow Model License. (<a href="https://github.com/roboflow/rf-detr/pull/645">#645</a>)</li>
+</ul>
+<h3 id="fixed_16">Fixed<a class="headerlink" href="#fixed_16" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed segmentation ONNX export failure. (<a href="https://github.com/roboflow/rf-detr/pull/626">#626</a>)</li>
+</ul>
+<h2 id="141-2026-01-30">[1.4.1] — 2026-01-30<a class="headerlink" href="#141-2026-01-30" title="Permanent link">&para;</a></h2>
+<h3 id="added_11">Added<a class="headerlink" href="#added_11" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Added native YOLO dataset format support alongside COCO. (<a href="https://github.com/roboflow/rf-detr/pull/74">#74</a>)</li>
+<li>Added <code>--print-freq</code> CLI argument to control training log frequency. (<a href="https://github.com/roboflow/rf-detr/pull/603">#603</a>)</li>
+</ul>
+<h3 id="changed_14">Changed<a class="headerlink" href="#changed_14" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Pinned <code>transformers</code> to <code>&lt;5.0.0</code> to prevent incompatibility with the transformers v5 API. (<a href="https://github.com/roboflow/rf-detr/pull/599">#599</a>)</li>
+</ul>
+<h3 id="fixed_17">Fixed<a class="headerlink" href="#fixed_17" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed class count mismatch in <code>train_from_config</code> for Roboflow-uploaded datasets. (<a href="https://github.com/roboflow/rf-detr/pull/588">#588</a>)</li>
+<li>Improved <code>num_classes</code> mismatch warning messages to be actionable rather than misleading. (<a href="https://github.com/roboflow/rf-detr/pull/261">#261</a>)</li>
+<li>Fixed CLI crash when specifying the <code>device</code> argument. (<a href="https://github.com/roboflow/rf-detr/pull/246">#246</a>)</li>
+</ul>
+<h2 id="140-2026-01-22">[1.4.0] — 2026-01-22<a class="headerlink" href="#140-2026-01-22" title="Permanent link">&para;</a></h2>
+<p>Headline release introducing new pre-trained model sizes — L, XL, and 2XL for object detection, and the full N/S/M/L/XL/2XL range for instance segmentation. Also added YOLO format training support, simplified the dependency footprint by removing several heavy packages (<code>cython</code>, <code>fairscale</code>, <code>timm</code>, <code>einops</code>, and others), and fixed per-class precision/recall/F1 computation. Drops Python 3.9 support.</p>
+
+
+
+
+
+
+
+  
+    
+  
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="May 18, 2026 15:03:45 UTC">2026-05-18 15:03:45</span>
+  </span>
+
+    
+    
+    
+    
+  </aside>
+
+
+
+  
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Roboflow 2025–2026. All rights reserved.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/roboflow" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://www.youtube.com/roboflow" target="_blank" rel="noopener" title="www.youtube.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M549.7 124.1c-6.2-23.7-24.8-42.3-48.3-48.6C458.9 64 288.1 64 288.1 64S117.3 64 74.7 75.5c-23.5 6.3-42 24.9-48.3 48.6C15 167 15 256.4 15 256.4s0 89.4 11.4 132.3c6.3 23.6 24.8 41.5 48.3 47.8C117.3 448 288.1 448 288.1 448s170.8 0 213.4-11.5c23.5-6.3 42-24.2 48.3-47.8 11.4-42.9 11.4-132.3 11.4-132.3s0-89.4-11.4-132.3zM232.2 337.6V175.2l142.7 81.2z"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://www.linkedin.com/company/roboflow-ai/mycompany/" target="_blank" rel="noopener" title="www.linkedin.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M416 32H31.9C14.3 32 0 46.5 0 64.3v383.4C0 465.5 14.3 480 31.9 480H416c17.6 0 32-14.5 32-32.3V64.3c0-17.8-14.4-32.3-32-32.3M135.4 416H69V202.2h66.5V416zM102.2 96a38.5 38.5 0 1 1 0 77 38.5 38.5 0 1 1 0-77m282.1 320h-66.4V312c0-24.8-.5-56.7-34.5-56.7-34.6 0-39.9 27-39.9 54.9V416h-66.4V202.2h63.7v29.2h.9c8.9-16.8 30.6-34.5 62.9-34.5 67.2 0 79.7 44.3 79.7 101.9z"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://twitter.com/roboflow" target="_blank" rel="noopener" title="twitter.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M459.4 151.7c.3 4.5.3 9.1.3 13.6 0 138.7-105.6 298.6-298.6 298.6-59.5 0-114.7-17.2-161.1-47.1 8.4 1 16.6 1.3 25.3 1.3 49.1 0 94.2-16.6 130.3-44.8-46.1-1-84.8-31.2-98.1-72.8 6.5 1 13 1.6 19.8 1.6 9.4 0 18.8-1.3 27.6-3.6-48.1-9.7-84.1-52-84.1-103v-1.3c14 7.8 30.2 12.7 47.4 13.3-28.3-18.8-46.8-51-46.8-87.4 0-19.5 5.2-37.4 14.3-53C87.4 130.8 165 172.4 252.1 176.9c-1.6-7.8-2.6-15.9-2.6-24C249.5 95.1 296.3 48 354.4 48c30.2 0 57.5 12.7 76.7 33.1 23.7-4.5 46.5-13.3 66.6-25.3-7.8 24.4-24.4 44.8-46.1 57.8 21.1-2.3 41.6-8.1 60.4-16.2-14.3 20.8-32.2 39.3-52.6 54.3"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
