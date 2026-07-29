@@ -705,6 +705,81 @@ class TestBuilderGpuPostprocess:
         assert call_kwargs["gpu_postprocess"] is expected_gpu_postprocess
 
 
+class TestKeypointFlipPairsDetectionForwarding:
+    """Detection-only builds (no keypoints) must forward ``keypoint_flip_pairs=None``.
+
+    Regression test for GitHub #1243. ``AlbumentationsWrapper.from_config`` treats ``keypoint_flip_pairs=[]`` as
+    "keypoint pipeline with no flip pairs defined" and silently strips ``HorizontalFlip``/``Flip``/``D4`` from any
+    custom ``aug_config`` to avoid corrupting keypoint annotations. ``build_coco``/``build_roboflow_from_coco`` must not
+    forward that ``[]`` sentinel for datasets that have no keypoints at all -- doing so silently disables the user's
+    requested horizontal-flip augmentation. ``yolo.py`` already gates this correctly on ``include_keypoints``; these
+    builders must match.
+    """
+
+    @pytest.mark.parametrize(
+        ("square_resize_div_64", "transform_factory"),
+        [
+            pytest.param(False, "make_coco_transforms", id="standard_resize"),
+            pytest.param(True, "make_coco_transforms_square_div_64", id="square_resize"),
+        ],
+    )
+    def test_build_roboflow_from_coco_forwards_none_for_detection(
+        self,
+        tmp_path: Path,
+        square_resize_div_64: bool,
+        transform_factory: str,
+    ) -> None:
+        """Roboflow detection datasets must forward ``keypoint_flip_pairs=None``, not ``[]``."""
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.coco import build_roboflow_from_coco
+
+        args = types.SimpleNamespace(
+            dataset_dir=str(tmp_path),
+            augmentation_backend="cpu",
+            square_resize_div_64=square_resize_div_64,
+            segmentation_head=False,
+            multi_scale=False,
+            expanded_scales=False,
+            do_random_resize_via_padding=False,
+            patch_size=16,
+            num_windows=4,
+            use_grouppose_keypoints=False,
+            num_keypoints_per_class=[],
+            keypoint_flip_pairs=[],
+            aug_config={"HorizontalFlip": {"p": 0.5}},
+        )
+
+        with (
+            patch(f"rfdetr.datasets.coco.{transform_factory}") as mock_transforms,
+            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
+        ):
+            mock_transforms.return_value = MagicMock()
+            mock_coco.return_value = MagicMock()
+
+            build_roboflow_from_coco("train", args, resolution=640)
+
+        assert mock_transforms.call_args.kwargs["keypoint_flip_pairs"] is None
+
+    def test_build_coco_forwards_none_for_detection(self, tmp_path: Path) -> None:
+        """COCO-format detection datasets must forward ``keypoint_flip_pairs=None``, not ``[]``."""
+        from unittest.mock import MagicMock, patch
+
+        args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=False)
+        args.aug_config = {"HorizontalFlip": {"p": 0.5}}
+
+        with (
+            patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
+            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
+        ):
+            mock_transforms.return_value = MagicMock()
+            mock_coco.return_value = MagicMock()
+
+            build_coco("train", args, resolution=640)
+
+        assert mock_transforms.call_args.kwargs["keypoint_flip_pairs"] is None
+
+
 def _make_keypoint_annotation(
     *,
     category_id: int = 1,

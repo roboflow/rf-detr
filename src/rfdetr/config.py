@@ -1042,7 +1042,10 @@ class TrainConfig(BaseConfig):
     lr_component_decay: float = 0.7
     drop_path: float = 0.0
     cls_loss_coef: float = 1.0
-    keypoint_flip_pairs: list[int] = Field(default_factory=list)
+    # `None` marks a detection pipeline (horizontal flips always permitted); an explicit `[]`
+    # marks a keypoint pipeline with no flip pairs defined (hflip augmentations disabled for
+    # safety). See rfdetr.datasets.transforms.AlbumentationsWrapper.from_config and #1243.
+    keypoint_flip_pairs: list[int] | None = None
     keypoint_l1_loss_coef: float = 0
     keypoint_findable_loss_coef: float = 0
     keypoint_visible_loss_coef: float = 0
