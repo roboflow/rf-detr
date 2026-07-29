@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-07-28T17:30:57">
+  <meta property="article:modified_time" content="2026-07-29T13:21:24">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-07-28T17:30:57",
+    "dateModified": "2026-07-29T13:21:24",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3544,6 +3544,11 @@
 <td><code>None</code></td>
 <td>Compute precision for <code>format="coreml"</code>: <code>None</code>/<code>"float32"</code> (tight CPU parity with eager PyTorch) or <code>"float16"</code> (smaller, ANE-oriented bundle). Ignored for every other format.</td>
 </tr>
+<tr>
+<td><code>output_name</code></td>
+<td><code>None</code></td>
+<td>Full filename override (without extension). Takes precedence over the model's variant name and suppresses the <code>_fp32</code>/<code>_fp16</code>/<code>_{backend}</code> detail suffix — see <a href="#output-files">Output Files</a>.</td>
+</tr>
 </tbody>
 </table>
 <h2 id="advanced-export-examples">Advanced Export Examples<a class="headerlink" href="#advanced-export-examples" title="Permanent link">&para;</a></h2>
@@ -3571,13 +3576,49 @@
 </span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">backbone_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="output-files">Output Files<a class="headerlink" href="#output-files" title="Permanent link">&para;</a></h2>
-<p>After running the export, you will find the following files in your output directory:</p>
-<ul>
-<li><code>inference_model.onnx</code> - The exported ONNX model (or <code>backbone_model.onnx</code> if <code>backbone_only=True</code>)</li>
-<li><code>{variant}.mlpackage</code> - The exported native CoreML model when <code>format="coreml"</code> (see
-    <a href="#native-coreml-export-mlpackage">Native CoreML Export</a>); <code>inference_model.mlpackage</code> if no
-    variant name is available.</li>
-</ul>
+<p>Filenames are built from the model's variant name (e.g. <code>rfdetr-medium</code>, falling back to
+<code>inference_model</code> when unavailable) plus a detail suffix whenever a detail materially changes the
+artifact — even at its default value, since the file needs to say what it actually is:</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Filename pattern</th>
+<th>Detail encoded</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>onnx</code></td>
+<td><code>{variant}.onnx</code> (or <code>{variant}-backbone.onnx</code> if <code>backbone_only=True</code>)</td>
+<td>none — <code>-backbone</code> is structural, not a precision detail</td>
+</tr>
+<tr>
+<td><code>coreml</code></td>
+<td><code>{variant}_fp32.mlpackage</code> / <code>{variant}_fp16.mlpackage</code></td>
+<td><code>coreml_precision</code></td>
+</tr>
+<tr>
+<td><code>executorch</code></td>
+<td><code>{variant}_xnnpack.pte</code> / <code>{variant}_coreml.pte</code> / <code>{variant}_qnn_{soc}.pte</code></td>
+<td><code>backend</code> (+ <code>soc</code> for <code>qnn</code>)</td>
+</tr>
+<tr>
+<td><code>tensorrt</code></td>
+<td><code>{variant}_fp16.trt</code> / <code>{variant}_fp32.trt</code></td>
+<td><code>fp16</code></td>
+</tr>
+<tr>
+<td><code>tflite</code></td>
+<td><code>{variant}_fp32.tflite</code> + <code>{variant}_fp16.tflite</code> (+ <code>{variant}_dynamic_range_quant.tflite</code> for <code>quantization="int8"</code>)</td>
+<td>precision / quantization mode</td>
+</tr>
+</tbody>
+</table>
+<p>Pass <code>output_name="my-model"</code> to override the variant name and write <code>{output_name}.{ext}</code>
+verbatim — this suppresses the detail suffix for every format <strong>except</strong> <code>tflite</code>, which always
+writes multiple files and so keeps its <code>_fp32</code>/<code>_fp16</code>/<code>_dynamic_range_quant</code> suffix even with a
+custom name (<code>{output_name}_fp32.tflite</code>, etc.).</p>
 <h2 id="optional-convert-onnx-to-tensorrt">Optional: Convert ONNX to TensorRT<a class="headerlink" href="#optional-convert-onnx-to-tensorrt" title="Permanent link">&para;</a></h2>
 <p>If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX model to a TensorRT engine.</p>
 <blockquote>
@@ -3598,7 +3639,9 @@ Run TensorRT conversion on the same machine and GPU family where you plan to dep
 </span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
 </span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">&quot;tensorrt&quot;</span><span class="p">)</span>
 </span></code></pre></div>
-<p>This exports <code>output/inference_model.onnx</code> first and then produces <code>output/inference_model.trt</code>.</p>
+<p>This exports <code>output/inference_model.onnx</code> first and then produces <code>output/inference_model_fp16.trt</code>
+(the <code>_fp16</code>/<code>_fp32</code> suffix always reflects the precision actually built — see <code>fp16</code> in
+<a href="#export-parameters">Export Parameters</a> — unless <code>output_name</code> is set).</p>
 <div class="admonition note">
 <p class="admonition-title">Who consumes the <code>.trt</code> engine?</p>
 <p>The <code>.trt</code> engine produced by <code>format="tensorrt"</code> is a standalone artifact for raw
@@ -3614,8 +3657,9 @@ Export a plain ONNX model instead and let <code>inference-models</code> handle t
 <div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._tensorrt</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_engine</span>
 </span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
 </span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">build_engine</span><span class="p">(</span><span class="s2">&quot;output/inference_model.onnx&quot;</span><span class="p">,</span> <span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="c1"># -&gt; &quot;output/inference_model_fp16.trt&quot;</span>
 </span></code></pre></div>
-<p><code>build_engine</code> builds the engine in-process via the TensorRT Python API (no <code>trtexec</code> subprocess) and returns the path to the generated <code>.trt</code> engine file.</p>
+<p><code>build_engine</code> builds the engine in-process via the TensorRT Python API (no <code>trtexec</code> subprocess) and returns the path to the generated <code>.trt</code> engine file. Pass <code>output_name="my-engine"</code> to write <code>output/my-engine.trt</code> verbatim instead.</p>
 <h2 id="run-inference-with-inference-models">Run Inference with <code>inference-models</code><a class="headerlink" href="#run-inference-with-inference-models" title="Permanent link">&para;</a></h2>
 <p><a href="https://github.com/roboflow/inference/tree/main/inference_models"><code>inference-models</code></a> is the
 recommended library for running RF-DETR inference. It supports multiple backends — PyTorch,
@@ -3724,7 +3768,7 @@ releases. You may encounter errors or unexpected results.</p>
 </div>
 </div>
 </div>
-<p>This produces both <code>output/inference_model_float32.tflite</code> and <code>output/inference_model_float16.tflite</code>.</p>
+<p>This produces both <code>output/inference_model_fp32.tflite</code> and <code>output/inference_model_fp16.tflite</code>.</p>
 <h3 id="int8-quantization-with-calibration-data">INT8 Quantization with Calibration Data<a class="headerlink" href="#int8-quantization-with-calibration-data" title="Permanent link">&para;</a></h3>
 <p>For INT8 quantization, provide representative images from your dataset as calibration data. This is <strong>critical</strong> for preserving model accuracy — without real calibration data, the quantizer uses random noise and accuracy will be poor.</p>
 <h4 id="option-1-point-to-an-image-directory-recommended">Option 1: Point to an Image Directory (Recommended)<a class="headerlink" href="#option-1-point-to-an-image-directory-recommended" title="Permanent link">&para;</a></h4>
@@ -3807,15 +3851,15 @@ releases. You may encounter errors or unexpected results.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>inference_model_float32.tflite</code></td>
+<td><code>inference_model_fp32.tflite</code></td>
 <td>FP32 model (always produced)</td>
 </tr>
 <tr>
-<td><code>inference_model_float16.tflite</code></td>
+<td><code>inference_model_fp16.tflite</code></td>
 <td>FP16 model (always produced)</td>
 </tr>
 <tr>
-<td><code>inference_model_integer_quant.tflite</code></td>
+<td><code>inference_model_dynamic_range_quant.tflite</code></td>
 <td>INT8 model (when <code>quantization="int8"</code>)</td>
 </tr>
 </tbody>
@@ -3832,7 +3876,7 @@ releases. You may encounter errors or unexpected results.</p>
 </span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="kn">import</span><span class="w"> </span><span class="nn">tflite_runtime.interpreter</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">tflite</span>
 </span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>
 </span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="c1"># Load model</span>
-</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="n">interpreter</span> <span class="o">=</span> <span class="n">tflite</span><span class="o">.</span><span class="n">Interpreter</span><span class="p">(</span><span class="n">model_path</span><span class="o">=</span><span class="s2">&quot;output/inference_model_float32.tflite&quot;</span><span class="p">)</span>
+</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="n">interpreter</span> <span class="o">=</span> <span class="n">tflite</span><span class="o">.</span><span class="n">Interpreter</span><span class="p">(</span><span class="n">model_path</span><span class="o">=</span><span class="s2">&quot;output/inference_model_fp32.tflite&quot;</span><span class="p">)</span>
 </span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="n">interpreter</span><span class="o">.</span><span class="n">allocate_tensors</span><span class="p">()</span>
 </span><span id="__span-20-10"><a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a>
 </span><span id="__span-20-11"><a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a><span class="n">input_details</span> <span class="o">=</span> <span class="n">interpreter</span><span class="o">.</span><span class="n">get_input_details</span><span class="p">()</span>
@@ -3904,8 +3948,10 @@ default — it must always be passed explicitly for <code>format="executorch"</c
 </div>
 </div>
 </div>
-<p>This produces <code>output/rfdetr-seg-medium.pte</code> — the file is named after the model variant
-(<code>{variant}.pte</code>), not a generic <code>inference_model.pte</code>.</p>
+<p>This produces <code>output/rfdetr-seg-medium_xnnpack.pte</code> — the file is named after the model variant
+plus the backend (<code>{variant}_{backend}.pte</code>, or <code>{variant}_qnn_{soc}.pte</code> for the SoC-locked <code>qnn</code>
+backend), not a generic <code>inference_model_{backend}.pte</code>. The backend is always encoded because it
+determines which hardware/runtime can load the file.</p>
 <h3 id="coreml-backend-apple-neural-engine-fp16">CoreML Backend (Apple Neural Engine, fp16)<a class="headerlink" href="#coreml-backend-apple-neural-engine-fp16" title="Permanent link">&para;</a></h3>
 <div class="admonition note">
 <p class="admonition-title">Not the same as native CoreML export</p>
@@ -3941,7 +3987,10 @@ It <strong>requires a source build</strong> of ExecuTorch against the QAIRT SDK 
 </span><span id="__span-26-5"><a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">&quot;executorch&quot;</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">&quot;qnn&quot;</span><span class="p">,</span> <span class="n">soc</span><span class="o">=</span><span class="s2">&quot;SM8650&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The <code>soc</code> parameter is required for QNN and must be a <code>QcomChipset</code> name matching your target
-device. For example, <code>"SM8650"</code> targets the Snapdragon 8 Gen 3.</p>
+device. For example, <code>"SM8650"</code> targets the Snapdragon 8 Gen 3. This produces
+<code>output/rfdetr-medium_qnn_SM8650.pte</code> — the SoC is baked into the filename (not just the
+backend) since a QNN <code>.pte</code> is compiled ahead-of-time for one specific chip and will not run on
+another.</p>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
 <p>QNN export is validated on-device but cannot be tested in CI (requires QAIRT SDK).
@@ -3981,7 +4030,7 @@ output, but every detection's score collapses below threshold. Finish preprocess
 </span><span id="__span-27-5"><a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a>
 </span><span id="__span-27-6"><a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a><span class="c1"># Load the exported .pte program</span>
 </span><span id="__span-27-7"><a id="__codelineno-27-7" name="__codelineno-27-7" href="#__codelineno-27-7"></a><span class="n">runtime</span> <span class="o">=</span> <span class="n">Runtime</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
-</span><span id="__span-27-8"><a id="__codelineno-27-8" name="__codelineno-27-8" href="#__codelineno-27-8"></a><span class="n">method</span> <span class="o">=</span> <span class="n">runtime</span><span class="o">.</span><span class="n">load_program</span><span class="p">(</span><span class="s2">&quot;output/rfdetr-medium.pte&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">load_method</span><span class="p">(</span><span class="s2">&quot;forward&quot;</span><span class="p">)</span>
+</span><span id="__span-27-8"><a id="__codelineno-27-8" name="__codelineno-27-8" href="#__codelineno-27-8"></a><span class="n">method</span> <span class="o">=</span> <span class="n">runtime</span><span class="o">.</span><span class="n">load_program</span><span class="p">(</span><span class="s2">&quot;output/rfdetr-medium_xnnpack.pte&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">load_method</span><span class="p">(</span><span class="s2">&quot;forward&quot;</span><span class="p">)</span>
 </span><span id="__span-27-9"><a id="__codelineno-27-9" name="__codelineno-27-9" href="#__codelineno-27-9"></a>
 </span><span id="__span-27-10"><a id="__codelineno-27-10" name="__codelineno-27-10" href="#__codelineno-27-10"></a><span class="c1"># Prepare input — the .pte expects the same NCHW, ImageNet-normalized input as the ONNX export</span>
 </span><span id="__span-27-11"><a id="__codelineno-27-11" name="__codelineno-27-11" href="#__codelineno-27-11"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;image.jpg&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">&quot;RGB&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">resize</span><span class="p">((</span><span class="mi">576</span><span class="p">,</span> <span class="mi">576</span><span class="p">))</span>
@@ -4046,11 +4095,14 @@ ONNX intermediary and no ExecuTorch runtime dependency — the lowest-friction p
 </div>
 </div>
 </div>
-<p>This produces <code>output/rfdetr-medium.mlpackage</code> — the file is named after the model variant
-(<code>{variant}.mlpackage</code>), not a generic <code>inference_model.mlpackage</code>.</p>
+<p>This produces <code>output/rfdetr-medium_fp32.mlpackage</code> — the file is named after the model variant
+plus the resolved precision (<code>{variant}_fp32.mlpackage</code> / <code>{variant}_fp16.mlpackage</code>), not a
+generic <code>inference_model_fp32.mlpackage</code>. The precision is always encoded, even at its default
+value, since fp16 vs fp32 materially changes the bundle.</p>
 <h3 id="compute-precision">Compute Precision<a class="headerlink" href="#compute-precision" title="Permanent link">&para;</a></h3>
 <p>CoreML export defaults to <code>FLOAT32</code> for tight CPU parity with eager PyTorch. Pass
-<code>coreml_precision="float16"</code> for a smaller, ANE-oriented bundle (expect larger numeric drift):</p>
+<code>coreml_precision="float16"</code> for a smaller, ANE-oriented bundle (expect larger numeric drift) —
+this also changes the output filename to <code>output/rfdetr-medium_fp16.mlpackage</code>:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">&quot;coreml&quot;</span><span class="p">,</span> <span class="n">coreml_precision</span><span class="o">=</span><span class="s2">&quot;float16&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <div class="admonition note">
@@ -4064,7 +4116,7 @@ ONNX intermediary and no ExecuTorch runtime dependency — the lowest-friction p
 </span><span id="__span-32-2"><a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 </span><span id="__span-32-3"><a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
 </span><span id="__span-32-4"><a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a>
-</span><span id="__span-32-5"><a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a><span class="n">mlmodel</span> <span class="o">=</span> <span class="n">ct</span><span class="o">.</span><span class="n">models</span><span class="o">.</span><span class="n">MLModel</span><span class="p">(</span><span class="s2">&quot;output/rfdetr-medium.mlpackage&quot;</span><span class="p">)</span>
+</span><span id="__span-32-5"><a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a><span class="n">mlmodel</span> <span class="o">=</span> <span class="n">ct</span><span class="o">.</span><span class="n">models</span><span class="o">.</span><span class="n">MLModel</span><span class="p">(</span><span class="s2">&quot;output/rfdetr-medium_fp32.mlpackage&quot;</span><span class="p">)</span>
 </span><span id="__span-32-6"><a id="__codelineno-32-6" name="__codelineno-32-6" href="#__codelineno-32-6"></a>
 </span><span id="__span-32-7"><a id="__codelineno-32-7" name="__codelineno-32-7" href="#__codelineno-32-7"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;image.jpg&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">&quot;RGB&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">resize</span><span class="p">((</span><span class="mi">576</span><span class="p">,</span> <span class="mi">576</span><span class="p">))</span>
 </span><span id="__span-32-8"><a id="__codelineno-32-8" name="__codelineno-32-8" href="#__codelineno-32-8"></a><span class="n">image_array</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span> <span class="o">/</span> <span class="mf">255.0</span>
@@ -4149,7 +4201,7 @@ ONNX intermediary and no ExecuTorch runtime dependency — the lowest-friction p
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 28, 2026 17:30:57 UTC">2026-07-28 17:30:57</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 29, 2026 13:21:24 UTC">2026-07-29 13:21:24</span>
   </span>
 
     
