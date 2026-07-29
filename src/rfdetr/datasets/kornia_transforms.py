@@ -349,8 +349,8 @@ def _make_color_jitter(params: dict[str, Any]) -> Any:
 def _make_to_gray(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomGrayscale`` from aug_config ``ToGray`` params.
 
-    Matches Albumentations' ``ToGray``: the image is converted to grayscale and
-    kept at three channels, so it stays a drop-in for an RGB pipeline.
+    Matches Albumentations' ``ToGray``: the image is converted to grayscale and kept at three channels, so it stays a
+    drop-in for an RGB pipeline.
     """
     from kornia.augmentation import RandomGrayscale
 

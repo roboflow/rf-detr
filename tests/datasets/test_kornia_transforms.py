@@ -96,8 +96,8 @@ class TestBuildKorniaPipeline:
     def test_to_gray_accepted_by_both_backends(self):
         """The same config is readable by the Albumentations backend too (issue #1227).
 
-        ``ToGray`` resolved on Albumentations via ``getattr`` long before it was a Kornia
-        built-in, so a config that worked on one backend raised on the other.
+        ``ToGray`` resolved on Albumentations via ``getattr`` long before it was a Kornia built-in, so a config that
+        worked on one backend raised on the other.
         """
         pytest.importorskip("albumentations")
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
