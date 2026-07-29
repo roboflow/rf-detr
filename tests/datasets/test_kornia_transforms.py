@@ -808,6 +808,47 @@ class TestGaussNoiseStdRangeWarning:
         mock_warning.assert_not_called()
 
 
+class TestToGrayDroppedParamsWarning:
+    """_make_to_gray warns when passed method/num_output_channels, which have no Kornia equivalent."""
+
+    @pytest.fixture(autouse=True)
+    def _require_kornia(self):
+        pytest.importorskip("kornia")
+
+    def test_warns_for_method(self):
+        """A non-default method emits a dropped-param warning at build time."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_to_gray({"method": "max", "p": 0.5})
+
+        mock_warning.assert_called_once()
+
+    def test_warns_for_num_output_channels(self):
+        """A non-default num_output_channels emits a dropped-param warning at build time."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_to_gray({"num_output_channels": 1, "p": 0.5})
+
+        mock_warning.assert_called_once()
+
+    def test_no_warning_for_p_only(self):
+        """A config using only p matches the CPU path's default behavior and stays silent."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_to_gray({"p": 0.5})
+
+        mock_warning.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # TestResolveAugmentationBackend — the single resolution seam that maps backend
 # strings (incl. sentinels/legacy aliases) to concrete AugmentationBackend members.
