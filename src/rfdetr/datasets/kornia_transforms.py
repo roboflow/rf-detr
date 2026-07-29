@@ -350,10 +350,17 @@ def _make_to_gray(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomGrayscale`` from aug_config ``ToGray`` params.
 
     Matches Albumentations' ``ToGray``: the image is converted to grayscale and kept at three channels, so it stays a
-    drop-in for an RGB pipeline.
+    drop-in for an RGB pipeline. Only ``p`` is honored on this (Kornia) backend: ``method`` and ``num_output_channels``
+    are accepted by the CPU (albumentations) path but have no Kornia equivalent, so they are silently ignored here.
     """
     from kornia.augmentation import RandomGrayscale
 
+    if "method" in params or "num_output_channels" in params:
+        logger.warning(
+            "GPU augmentation (Kornia) ToGray ignores 'method' and 'num_output_channels' "
+            "(Kornia's RandomGrayscale always uses BT.601 weights and returns 3 channels). "
+            "CPU augmentation (albumentations) honors both."
+        )
     return RandomGrayscale(p=params.get("p", 0.5))
 
 

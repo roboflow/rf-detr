@@ -79,7 +79,7 @@ or torchvision defaults. Install it with ``pip install 'rfdetr[augment]'``.
 | ``Rotate`` | ``K.RandomRotation`` | ``limit`` may be scalar or tuple |
 | ``Affine`` | ``K.RandomAffine`` | ``translate_percent`` treated as fraction |
 | ``ColorJitter`` | ``K.ColorJiggle`` | Same multiplicative semantics |
-| ``ToGray`` | ``K.RandomGrayscale`` | Grayscale, kept at three channels |
+| ``ToGray`` | ``K.RandomGrayscale`` | Grayscale, 3 channels; only ``p`` honored, method/num_output_channels ignored |
 | ``RandomBrightnessContrast`` | ``K.ColorJiggle`` | ``brightness_limit`` / ``contrast_limit`` direct |
 | ``GaussianBlur`` | ``K.RandomGaussianBlur`` | ``blur_limit`` rounded up to odd; ``sigma=(0.1, 2.0)`` |
 | ``GaussNoise`` | ``K.RandomGaussianNoise`` | Upper bound of ``std_range`` used as fixed std |
