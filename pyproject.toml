@@ -132,6 +132,19 @@ visual = [
 ]
 cli = ["jsonargparse[signatures]>=4.27.7"]
 plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
+# XLA backend for TPU training AND hardware-free XLA validation on CPU/GPU PJRT.
+# torch_xla is built on top of torch (NOT mutually exclusive — it requires torch present) and its
+# _XLAC extension is ABI-locked to ONE torch minor (a mismatch surfaces as an `undefined symbol`
+# ImportError on `import torch_xla`). torch_xla does not hard-pin torch in requires_dist, and PEP 508
+# cannot express "equal minor", so we pin BOTH to the current known-good pair (2.9) — bump the two
+# together when a newer torch_xla ships. Wheels are Linux x86_64 only (py3.10-3.13) -> sys_platform
+# marker keeps macOS/Windows installs of this extra a no-op. The bare wheel runs the CPU PJRT plugin
+# (PJRT_DEVICE=CPU) with no libtpu; real TPU adds torch_xla[tpu] (libtpu), GPU PJRT needs the separate
+# CUDA plugin wheel. Used by ci-tests-xla.yml to exercise @pytest.mark.xla paths.
+xla = [
+    "torch==2.9.*; sys_platform == 'linux'",
+    "torch_xla==2.9.*; sys_platform == 'linux'",
+]
 
 [dependency-groups]
 # TODO: Temporary: GPU runner only has CUDA 12.8 driver (12080); torch>=2.11 requires a newer driver.
@@ -167,6 +180,7 @@ tests = [
   "pytest-rerunfailures>=10,<15",
   "pytest-timeout>=2,<3",
   "pytest-doctestplus>=1.2,<2",
+  "pandas",  # imported directly by tests/training/test_metrics_csv.py to read CSVLogger output
   "tomli>=2.0; python_version < '3.11'",
 ]
 
@@ -292,6 +306,8 @@ doctest_norecursedirs = ["tests/*"]
 pythonpath = ["src", "."]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
+    "xla: tests that require an XLA device or torch_xla runtime (TPU, or CPU/GPU PJRT)",
+    "tpu: tests that require real TPU hardware (libtpu/MXU); not runnable on CPU/GPU PJRT",
     "coco17: tests that require COCO 2017 images or annotations",
     # `flaky` is provided by pytest-rerunfailures; registered here too for clarity and to stay
     # safe under --strict-markers (used by tests/benchmarks/test_training_*.py).
