@@ -58,6 +58,15 @@ jobs:
         run: |
           uv pip install -e ".[train,xla,cli]" --group tests
 
+      - name: 🔧 Expose libpython for torch_xla
+        # torch_xla's _XLAC extension links the shared libpython3.11.so.1.0, which uv's standalone
+        # CPython keeps in the interpreter LIBDIR — not on the loader path. Put LIBDIR on
+        # LD_LIBRARY_PATH for all later steps, else `import torch_xla` fails with
+        # "libpython3.11.so.1.0: cannot open shared object file".
+        run: |
+          LIBDIR=$(uv run --no-sync python -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
+          echo "LD_LIBRARY_PATH=${LIBDIR}:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
       - name: 🔎 Verify torch_xla runtime
         run: |
           uv run --no-sync python -c "import torch, torch_xla, torch_xla.core.xla_model as xm; d = xm.xla_device(); print('torch', torch.__version__, '| torch_xla', torch_xla.__version__, '| device', d); assert str(d).startswith('xla')"
