@@ -5,8 +5,11 @@ name: XLA tests Workflow
 # device.type == "xla" on ANY PJRT backend, so PJRT_DEVICE=CPU exercises every device-gated branch
 # without a TPU. Real-TPU-only concerns (MXU/TFLOPS, bf16-MXU convergence parity) stay on Colab/Kaggle.
 #
-# torch_xla ships Linux x86_64 wheels only -> ubuntu runner. Its minor must match torch's minor;
-# floating both to the latest in torch>=2.2,<3 keeps them aligned (torch_xla 2.9 <-> torch 2.9).
+# torch_xla ships Linux x86_64 wheels only -> ubuntu runner. Its _XLAC extension is ABI-locked to
+# ONE torch minor, and torch_xla's latest (2.9) lags torch's latest in [2.2,3.0) (2.13) — so letting
+# both float does NOT align them; the mismatch surfaces as an `undefined symbol` ImportError on
+# `import torch_xla`. We pin torch to torch_xla's minor (torch==2.9.* <-> torch_xla 2.9); uv then
+# resolves torchvision to the matching minor. Bump both together when a newer torch_xla ships.
 #
 # Trigger is manual + PR for now; the job self-passes while no @pytest.mark.xla tests exist yet
 # (pytest exit code 5 = "no tests collected"). Flip the guard off once Phase 1 lands xla tests.
@@ -53,10 +56,11 @@ jobs:
 
       - name: 🚀 Install Packages (torch + torch_xla, CPU)
         timeout-minutes: 8
-        # [xla] pulls torch_xla; UV_TORCH_BACKEND=cpu keeps torch CPU-only. Both float to the latest
-        # matching minor within torch>=2.2,<3, so torch_xla and torch stay ABI-aligned.
+        # [xla] pulls torch_xla; UV_TORCH_BACKEND=cpu keeps torch CPU-only. torch is pinned to
+        # torch_xla's minor (2.9) — without the pin uv floats torch to 2.13 while torch_xla stays at
+        # 2.9, and the ABI skew breaks `import torch_xla` with an `undefined symbol` error.
         run: |
-          uv pip install -e ".[train,xla,cli]" --group tests
+          uv pip install -e ".[train,xla,cli]" --group tests "torch==2.9.*"
 
       - name: 🔧 Expose libpython for torch_xla
         # torch_xla's _XLAC extension links the shared libpython3.11.so.1.0, which uv's standalone
