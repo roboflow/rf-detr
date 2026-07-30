@@ -149,6 +149,40 @@ class TestBuildKorniaPipeline:
         assert out.shape == image.shape, "num_output_channels=1 is currently ignored -- output stays 3-channel"
         assert torch.allclose(out[:, 0], out[:, 1], atol=1e-5), "method='max' is currently ignored on Kornia"
 
+    @pytest.mark.parametrize(
+        "config",
+        [
+            pytest.param({"GaussianBlur": {"blur_limit": (3, 7), "p": 0.5}}, id="blur_limit-pair"),
+            pytest.param({"GaussianBlur": {"sigma": 1.5, "p": 0.5}}, id="sigma-scalar"),
+            pytest.param({"GaussNoise": {"std_range": 0.05, "p": 0.5}}, id="std_range-scalar"),
+        ],
+    )
+    def test_scalar_or_pair_range_params_build(self, config):
+        """Range params accept a scalar or a pair, as Albumentations does.
+
+        ``_make_rotate`` already accepts either form for ``limit``; these builders used to raise a bare
+        ``TypeError`` from inside Kornia on a config that is valid for the CPU path.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        assert build_kornia_pipeline(config, 560) is not None
+
+    def test_blur_limit_pair_uses_upper_bound(self):
+        """A ``(min, max)`` ``blur_limit`` resolves to the upper bound, since Kornia takes one kernel size."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"GaussianBlur": {"blur_limit": (3, 7), "p": 1.0}}, 560)
+        transform = next(iter(pipeline.children()))
+        assert transform.flags["kernel_size"] == (7, 7)
+
+    def test_scalar_std_range_is_used_verbatim(self):
+        """A scalar ``std_range`` is used as-is rather than being indexed into."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"GaussNoise": {"std_range": 0.05, "p": 1.0}}, 560)
+        transform = next(iter(pipeline.children()))
+        assert transform.flags["std"] == pytest.approx(0.05)
+
     def test_hflip_disabled_for_keypoint_pipeline(self):
         """Keypoint-mode Kornia augmentation drops hflip transforms with a warning."""
         from unittest import mock

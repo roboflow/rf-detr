@@ -266,6 +266,20 @@ def _require_albu() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _as_range(value: Any) -> tuple[float, float]:
+    """Normalise a scalar-or-pair config value to a ``(min, max)`` tuple.
+
+    Albumentations accepts either form for range parameters such as ``sigma`` and ``std_range``, and
+    :func:`_make_rotate` already treats ``limit`` the same way, so the builders below take both rather than raising a
+    bare ``TypeError`` from inside Kornia on a config that is valid for the CPU path.
+    """
+    if isinstance(value, (list, tuple)):
+        if len(value) == 1:
+            return (float(value[0]), float(value[0]))
+        return (float(value[0]), float(value[1]))
+    return (float(value), float(value))
+
+
 def _make_horizontal_flip(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomHorizontalFlip`` from aug_config params."""
     from kornia.augmentation import RandomHorizontalFlip
@@ -378,18 +392,24 @@ def _make_random_brightness_contrast(params: dict[str, Any]) -> Any:
 def _make_gaussian_blur(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomGaussianBlur`` from aug_config params.
 
-    ``blur_limit`` is rounded up to an odd number for the kernel size.
+    ``blur_limit`` is rounded up to an odd number for the kernel size.  Both ``blur_limit`` and ``sigma`` accept a
+    scalar or a ``(min, max)`` pair, since Albumentations accepts either and a config written for the CPU path should
+    not fail here.
     """
     from kornia.augmentation import RandomGaussianBlur
 
+    # Albumentations allows `blur_limit` as a (min, max) pair; Kornia takes a single kernel size, so use the upper
+    # bound, the same direction the GaussNoise builder below resolves its range.
     blur_limit = params.get("blur_limit", 3)
+    if isinstance(blur_limit, (list, tuple)):
+        blur_limit = max(blur_limit)
     # Ensure blur_limit is odd and at least 3 (Kornia requires kernel_size >= 3)
     if blur_limit % 2 == 0:
         blur_limit = blur_limit + 1
     blur_limit = max(3, blur_limit)
     # Match the CPU albumentations default sigma range while allowing an explicit override via config.
     sigma_range = params.get("sigma", (0.1, 2.0))
-    blur_sigma = tuple(sigma_range) if len(sigma_range) == 2 else (sigma_range[0], sigma_range[0])
+    blur_sigma = _as_range(sigma_range)
     return RandomGaussianBlur(
         kernel_size=(blur_limit, blur_limit),
         sigma=blur_sigma,
@@ -406,7 +426,7 @@ def _make_gauss_noise(params: dict[str, Any]) -> Any:
     """
     from kornia.augmentation import RandomGaussianNoise
 
-    std_range = params.get("std_range", (0.01, 0.05))
+    std_range = _as_range(params.get("std_range", (0.01, 0.05)))
     if std_range[0] != std_range[1]:
         logger.warning(
             "GPU augmentation (Kornia) uses fixed std=%.3f for GaussianNoise "
