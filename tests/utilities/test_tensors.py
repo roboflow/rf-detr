@@ -47,23 +47,25 @@ def _call_manual_path(
     grid: torch.Tensor,
     padding_mode: str = "zeros",
     align_corners: bool = False,
+    device_type: str = "mps",
 ) -> torch.Tensor:
     """Force the manual gather-based code path by mocking input.device.type.
 
-    The function checks ``input.device.type != "mps"`` to decide which branch to take.  We patch ``torch.Tensor.device``
-    to return an object whose ``.type`` is ``"mps"`` so the manual path runs on a normal CPU tensor.
+    The function checks ``input.device.type not in ("mps", "xla")`` to decide which branch to take.  We patch
+    ``torch.Tensor.device`` to return an object whose ``.type`` is *device_type* so the manual path runs on a normal CPU
+    tensor without needing real MPS/XLA hardware.
     """
 
-    class _FakeMPSDevice:
-        type = "mps"
+    class _FakeDevice:
+        type = device_type
 
         def __eq__(self, other):
             return False
 
         def __repr__(self):
-            return "device(type='mps')"
+            return f"device(type='{device_type}')"
 
-    with patch.object(torch.Tensor, "device", new_callable=lambda: property(lambda self: _FakeMPSDevice())):
+    with patch.object(torch.Tensor, "device", new_callable=lambda: property(lambda self: _FakeDevice())):
         return _bilinear_grid_sample(input, grid, padding_mode=padding_mode, align_corners=align_corners)
 
 
@@ -256,6 +258,24 @@ class TestBilinearGridSampleDelegation:
         actual = _bilinear_grid_sample(input, grid, padding_mode="border", align_corners=False)
 
         torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+
+
+class TestBilinearGridSampleDeviceRouting:
+    """Both MPS and XLA route through the manual gather path (WP1 Task 1.1)."""
+
+    @pytest.mark.parametrize(
+        "device_type",
+        [pytest.param("mps", id="mps"), pytest.param("xla", id="xla")],
+    )
+    def test_gather_path_taken_and_matches_reference(self, seed, device_type):
+        """Manual gather path is taken for mps/xla and matches F.grid_sample."""
+        input = torch.randn(1, 3, 8, 8)
+        grid = torch.rand(1, 4, 4, 2) * 1.6 - 0.8
+
+        expected = _grid_sample_reference(input, grid, "zeros", False)
+        actual = _call_manual_path(input, grid, "zeros", False, device_type=device_type)
+
+        torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
 
 
 class TestBilinearGridSampleOutputShape:
