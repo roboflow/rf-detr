@@ -56,11 +56,11 @@ jobs:
 
       - name: 🚀 Install Packages (torch + torch_xla, CPU)
         timeout-minutes: 8
-        # [xla] pulls torch_xla; UV_TORCH_BACKEND=cpu keeps torch CPU-only. torch is pinned to
-        # torch_xla's minor (2.9) — without the pin uv floats torch to 2.13 while torch_xla stays at
-        # 2.9, and the ABI skew breaks `import torch_xla` with an `undefined symbol` error.
+        # [xla] pulls torch_xla AND pins torch to its matching minor (see the [xla] extra in
+        # pyproject.toml), so the resolver can't float torch ahead of torch_xla into an
+        # ABI-incompatible combo. UV_TORCH_BACKEND=cpu keeps torch CPU-only.
         run: |
-          uv pip install -e ".[train,xla,cli]" --group tests "torch==2.9.*"
+          uv pip install -e ".[train,xla,cli]" --group tests
 
       - name: 🔧 Expose libpython for torch_xla
         # torch_xla's _XLAC extension links the shared libpython3.11.so.1.0, which uv's standalone
@@ -72,8 +72,29 @@ jobs:
           echo "LD_LIBRARY_PATH=${LIBDIR}:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
       - name: 🔎 Verify torch_xla runtime
+        # shell: python runs under the setup-uv-activated venv interpreter (VIRTUAL_ENV on PATH).
+        shell: python
         run: |
-          uv run --no-sync python -c "import torch, torch_xla, torch_xla.core.xla_model as xm; d = xm.xla_device(); print('torch', torch.__version__, '| torch_xla', torch_xla.__version__, '| device', d); assert str(d).startswith('xla')"
+          import importlib.metadata as md
+
+          # torch_xla's _XLAC is ABI-locked to one torch minor. Read the resolved versions from
+          # metadata BEFORE importing torch_xla — a skew must fail here with a clear message, because
+          # `import torch_xla` itself crashes with a cryptic `undefined symbol` error on mismatch.
+          torch_ver = md.version("torch")
+          xla_ver = md.version("torch_xla")
+          torch_minor = torch_ver.split("+")[0].split(".")[:2]
+          xla_minor = xla_ver.split("+")[0].split(".")[:2]
+          assert torch_minor == xla_minor, (
+              f"torch {torch_ver} and torch_xla {xla_ver} have mismatched minors — ABI-incompatible"
+          )
+
+          import torch
+          import torch_xla
+          import torch_xla.core.xla_model as xm
+
+          device = xm.xla_device()
+          print("torch", torch.__version__, "| torch_xla", torch_xla.__version__, "| device", device)
+          assert str(device).startswith("xla"), f"expected an xla device, got {device!r}"
 
       - name: 🧪 Run the XLA-marked Tests
         run: |
