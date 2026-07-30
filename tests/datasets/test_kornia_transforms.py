@@ -71,6 +71,84 @@ class TestBuildKorniaPipeline:
         with pytest.raises(ValueError, match="BogusTransform"):
             build_kornia_pipeline(mixed, 560)
 
+    def test_to_gray_builds_random_grayscale(self):
+        """``ToGray`` maps onto ``K.RandomGrayscale`` (issue #1227)."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {"p": 0.5}}, 560)
+        transform_names = [child.__class__.__name__ for child in pipeline.children()]
+        assert "RandomGrayscale" in transform_names
+
+    def test_to_gray_keeps_three_channels_and_greys(self):
+        """``ToGray`` matches Albumentations: grayscale content, still three channels."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {"p": 1.0}}, 560)
+        image = torch.rand(1, 3, 32, 32)
+        boxes = torch.tensor([[[0.0, 0.0, 10.0, 10.0]]])
+        out, _ = pipeline(image, boxes)
+
+        assert out.shape == image.shape, "ToGray must preserve the three-channel shape"
+        # A greyscale image has identical values across the channel axis.
+        assert torch.allclose(out[:, 0], out[:, 1], atol=1e-5)
+        assert torch.allclose(out[:, 1], out[:, 2], atol=1e-5)
+
+    def test_to_gray_accepted_by_both_backends(self):
+        """The same config is readable by the Albumentations backend too (issue #1227).
+
+        ``ToGray`` resolved on Albumentations via ``getattr`` long before it was a Kornia built-in, so a config that
+        worked on one backend raised on the other.
+        """
+        pytest.importorskip("albumentations")
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+        from rfdetr.datasets.transforms import AlbumentationsWrapper
+
+        config = {"ToGray": {"p": 0.5}}
+        assert build_kornia_pipeline(config, 560) is not None
+
+        wrappers = AlbumentationsWrapper.from_config(config)
+        assert len(wrappers) == 1, (
+            "from_config(strict=False) silently drops unresolved transforms, so length must be checked"
+        )
+        built_names = [t.__class__.__name__ for t in wrappers[0].transform.transforms]
+        assert "ToGray" in built_names, f"expected a ToGray transform, got {built_names}"
+
+    def test_to_gray_defaults_p_to_point_five_when_omitted(self):
+        """Omitting p resolves to 0.5, matching Albumentations (not Kornia's native 0.1 default)."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {}}, 560)
+        to_gray = next(child for child in pipeline.children() if child.__class__.__name__ == "RandomGrayscale")
+        assert to_gray.p == pytest.approx(0.5)
+
+    def test_to_gray_p_zero_is_a_no_op(self):
+        """p=0.0 never applies: forward pass returns the input unchanged."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {"p": 0.0}}, 560)
+        image = torch.rand(1, 3, 32, 32)
+        boxes = torch.tensor([[[0.0, 0.0, 10.0, 10.0]]])
+        out, _ = pipeline(image, boxes)
+
+        assert torch.equal(out, image), "p=0.0 must never apply ToGray"
+
+    def test_to_gray_ignores_method_and_num_output_channels_on_kornia(self):
+        """method/num_output_channels have no Kornia equivalent and are currently ignored there.
+
+        Pins the divergence documented on ``_make_to_gray``: Albumentations honors both, Kornia always uses BT.601
+        weights and returns 3 channels. If this is ever fixed, this test should be updated to assert the new (parity)
+        behavior instead.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {"method": "max", "num_output_channels": 1, "p": 1.0}}, 560)
+        image = torch.rand(1, 3, 32, 32)
+        boxes = torch.tensor([[[0.0, 0.0, 10.0, 10.0]]])
+        out, _ = pipeline(image, boxes)
+
+        assert out.shape == image.shape, "num_output_channels=1 is currently ignored -- output stays 3-channel"
+        assert torch.allclose(out[:, 0], out[:, 1], atol=1e-5), "method='max' is currently ignored on Kornia"
+
     def test_hflip_disabled_for_keypoint_pipeline(self):
         """Keypoint-mode Kornia augmentation drops hflip transforms with a warning."""
         from unittest import mock
@@ -726,6 +804,47 @@ class TestGaussNoiseStdRangeWarning:
 
         with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
             kornia_transforms._make_gauss_noise({"std_range": (0.05, 0.05), "p": 0.5})
+
+        mock_warning.assert_not_called()
+
+
+class TestToGrayDroppedParamsWarning:
+    """_make_to_gray warns when passed method/num_output_channels, which have no Kornia equivalent."""
+
+    @pytest.fixture(autouse=True)
+    def _require_kornia(self):
+        pytest.importorskip("kornia")
+
+    def test_warns_for_method(self):
+        """A non-default method emits a dropped-param warning at build time."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_to_gray({"method": "max", "p": 0.5})
+
+        mock_warning.assert_called_once()
+
+    def test_warns_for_num_output_channels(self):
+        """A non-default num_output_channels emits a dropped-param warning at build time."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_to_gray({"num_output_channels": 1, "p": 0.5})
+
+        mock_warning.assert_called_once()
+
+    def test_no_warning_for_p_only(self):
+        """A config using only p matches the CPU path's default behavior and stays silent."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_to_gray({"p": 0.5})
 
         mock_warning.assert_not_called()
 
