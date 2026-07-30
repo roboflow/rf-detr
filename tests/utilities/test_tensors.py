@@ -280,6 +280,32 @@ class TestBilinearGridSampleDeviceRouting:
         torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
 
 
+class TestBilinearGridSampleXLAExecution:
+    """Real torch_xla PJRT execution -- proves the gather path takes no aten:: CPU fallback (T1 lane, WP2)."""
+
+    @pytest.mark.xla
+    def test_gather_path_no_cpu_fallback_on_real_xla_device(self, seed):
+        """On a real XLA device (any PJRT backend) the gather path runs with zero aten:: fallback ops."""
+        pytest.importorskip("torch_xla")
+        import torch_xla.core.xla_model as xm
+        import torch_xla.debug.metrics as met
+
+        device = xm.xla_device()
+        input = torch.randn(1, 3, 8, 8, device=device)
+        grid = torch.rand(1, 4, 4, 2, device=device) * 1.6 - 0.8
+
+        met.clear_all()
+        actual = _bilinear_grid_sample(input, grid, padding_mode="zeros", align_corners=False)
+        xm.mark_step()
+
+        report = met.metrics_report()
+        aten_lines = [line for line in report.splitlines() if "aten::" in line.lower()]
+        assert not aten_lines, "CPU fallback ops detected:\n" + "\n".join(aten_lines)
+
+        expected = _grid_sample_reference(input.cpu(), grid.cpu(), "zeros", False)
+        torch.testing.assert_close(actual.cpu(), expected, atol=1e-5, rtol=1e-5)
+
+
 class TestBilinearGridSampleOutputShape:
     """Output shape must be (N, C, Hg, Wg) for all inputs."""
 

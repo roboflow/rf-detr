@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from typing import Any, Literal
 
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
@@ -108,6 +108,29 @@ class _NotebookSpawnDDPStrategy(_DDPStrategy):
                 "it is always constructed with start_method='spawn' in build_trainer()."
             )
         self._launcher = _InteractiveSpawnLauncher(self, start_method=self._start_method)
+
+
+def _normalize_xla_precision(precision: str) -> Literal["32-true", "16-true", "bf16-true"]:
+    """Normalize resolved precision strings to a valid XLAPrecision literal.
+
+    Args:
+        precision: Precision string produced by the local resolver, e.g. ``"16-mixed"``.
+
+    Returns:
+        One of ``"32-true"``, ``"16-true"``, or ``"bf16-true"`` suitable for XLA plugin creation.
+
+    Raises:
+        ValueError: If the resolved precision is not supported by ``XLAPrecision``.
+    """
+    if precision == "32-true":
+        return "32-true"
+    if precision == "16-true":
+        return "16-true"
+    if precision == "bf16-true":
+        return "bf16-true"
+    raise ValueError(
+        f"Unexpected precision value for XLAPrecision: {precision!r}; expected '32-true', '16-true', or 'bf16-true'."
+    )
 
 
 def _is_distributed_strategy_requested(strategy: str) -> bool:
@@ -412,12 +435,22 @@ def build_trainer(
         a ``_ForceLastEpochValidationCallback`` still guarantees the final epoch always
         validates even when ``epochs`` is not a multiple of ``eval_interval``.
 
+        When ``accelerator`` resolves to ``"xla"`` or ``"tpu"``, the resolved precision is
+        set via an ``XLAPrecision`` plugin instead of a ``precision`` argument — PTL's
+        ``XLAStrategy`` only accepts the plugin and raises ``TypeError`` for standard precision
+        strings. The XLA plugin is appended to caller-supplied plugins.
+
     Returns:
         A configured ``pytorch_lightning.Trainer`` instance.
     """
     tc = train_config
     if accelerator is None:
         accelerator = tc.accelerator
+    # XLAStrategy's precision_plugin setter only accepts the XLAPrecision plugin
+    # (Literal["32-true", "16-true", "bf16-true"]); passing precision="bf16-mixed" raises
+    # TypeError. Detected here so trainer_config assembly can translate the resolved precision
+    # into the required XLA plugin after applying caller-provided Trainer arguments.
+    xla_accelerator = str(accelerator).lower() in ("xla", "tpu")
 
     # TF32 matmul for fp32 residual matmuls on Ampere+.  ``rfdetr.detr`` sets this at import
     # time for the python API path, but the Lightning CLI path (``rfdetr fit``) never imports
@@ -657,7 +690,6 @@ def build_trainer(
         "devices": tc.devices,
         "num_nodes": tc.num_nodes,
         "strategy": strategy,
-        "precision": _resolve_precision(),
         "accumulate_grad_batches": accumulate_grad_batches,
         "gradient_clip_val": gradient_clip_val,
         "sync_batchnorm": sync_bn,
@@ -671,7 +703,22 @@ def build_trainer(
         "deterministic": False,
         "check_val_every_n_epoch": tc.eval_interval,
     }
+    if not xla_accelerator:
+        trainer_config["precision"] = _resolve_precision()
     trainer_config.update(trainer_kwargs)
+    if xla_accelerator:
+        from pytorch_lightning.plugins import XLAPrecision
+
+        # XLAStrategy rejects precision= strings. Preserve caller plugins, then append the
+        # one mandatory XLA precision plugin after kwargs have been applied.
+        plugins = trainer_config.pop("plugins", [])
+        if plugins is None:
+            plugins = []
+        elif not isinstance(plugins, (list, tuple)):
+            plugins = [plugins]
+        trainer_config.pop("precision", None)
+        xla_precision = _normalize_xla_precision(_resolve_precision().replace("-mixed", "-true"))
+        trainer_config["plugins"] = [*plugins, XLAPrecision(xla_precision)]
     trainer_config["strategy"] = strategy
     if manual_optimization:
         # Re-apply manual-optimization invariants so a caller-supplied trainer_kwargs

@@ -11,8 +11,8 @@ name: XLA tests Workflow
 # `import torch_xla`. We pin torch to torch_xla's minor (torch==2.9.* <-> torch_xla 2.9); uv then
 # resolves torchvision to the matching minor. Bump both together when a newer torch_xla ships.
 #
-# Trigger is manual + PR for now; the job self-passes while no @pytest.mark.xla tests exist yet
-# (pytest exit code 5 = "no tests collected"). Flip the guard off once Phase 1 lands xla tests.
+# Trigger is manual + PR for now. Enforcing since WP2 (Phase 1 landed the first @pytest.mark.xla
+# test) -- a failing or missing test run now fails this job.
 
 on:
   workflow_dispatch:
@@ -98,20 +98,12 @@ jobs:
 
       - name: 🧪 Run the XLA-marked Tests
         run: |
-          set +e
           uv run --no-sync pytest src/ tests/ \
             -n 1 -m "xla and not gpu and not tpu" \
             --ignore=tests/run_smoke_all_models.py \
             --ignore=tests/legacy/test_checkpoint_compat.py \
             --timeout=420 \
             --durations=50
-          rc=$?
-          set -e
-          if [ "$rc" -eq 5 ]; then
-            echo "No @pytest.mark.xla tests collected yet (Phase 1 not landed) — passing."
-            exit 0
-          fi
-          exit $rc
 
       - name: Minimize uv cache
         continue-on-error: true
