@@ -30,6 +30,7 @@ from torch import Tensor
 from torchvision.transforms.v2 import ToDtype, ToImage
 
 from rfdetr.config import AugmentationBackend
+from rfdetr.datasets._aug_utils import resolve_keypoint_flip_pairs
 from rfdetr.datasets._torchvision import (
     Compose,
     RandomChoice,
@@ -978,7 +979,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
     aug_config = getattr(args, "aug_config", None)
     scale_jitter = getattr(args, "scale_jitter", True)
-    keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
+    keypoint_flip_pairs = resolve_keypoint_flip_pairs(args, include_keypoints=include_keypoints)
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
     resolved_augmentation_backend = resolve_backend_for_build(augmentation_backend)
     # NOTE: `augmentation_backend == "auto"` never reaches here on the RFDETRDataModule path --
@@ -1075,7 +1076,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     # Roboflow detection exports omit keypoint schema/flip-pair fields; missing values mean detection-only.
     include_keypoints = getattr(args, "use_grouppose_keypoints", False)
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
-    keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
+    keypoint_flip_pairs = resolve_keypoint_flip_pairs(args, include_keypoints=include_keypoints)
     aug_config = getattr(args, "aug_config", None)
     scale_jitter = getattr(args, "scale_jitter", True)
     resolved_augmentation_backend = resolve_backend_for_build(getattr(args, "augmentation_backend", "cpu"))
