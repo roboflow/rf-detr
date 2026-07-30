@@ -770,7 +770,7 @@ def _rename_precision_outputs(output_dir: Path, model_stem: str) -> None:
     for old_token, new_token in (("float32", "fp32"), ("float16", "fp16")):
         old_path = output_dir / f"{model_stem}_{old_token}.tflite"
         if old_path.is_file():
-            old_path.rename(output_dir / f"{model_stem}_{new_token}.tflite")
+            old_path.replace(output_dir / f"{model_stem}_{new_token}.tflite")
 
 
 def _quantize_dynamic_range(saved_model_dir: Path, model_stem: str) -> Path:
