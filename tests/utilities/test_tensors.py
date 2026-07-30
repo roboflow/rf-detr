@@ -268,13 +268,15 @@ class TestBilinearGridSampleDeviceRouting:
         [pytest.param("mps", id="mps"), pytest.param("xla", id="xla")],
     )
     def test_gather_path_taken_and_matches_reference(self, seed, device_type):
-        """Manual gather path is taken for mps/xla and matches F.grid_sample."""
+        """Manual gather path is taken for mps/xla -- F.grid_sample itself is never called -- and matches it."""
         input = torch.randn(1, 3, 8, 8)
         grid = torch.rand(1, 4, 4, 2) * 1.6 - 0.8
 
         expected = _grid_sample_reference(input, grid, "zeros", False)
-        actual = _call_manual_path(input, grid, "zeros", False, device_type=device_type)
+        with patch.object(F, "grid_sample", wraps=F.grid_sample) as mock_grid_sample:
+            actual = _call_manual_path(input, grid, "zeros", False, device_type=device_type)
 
+        mock_grid_sample.assert_not_called()
         torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
 
 
