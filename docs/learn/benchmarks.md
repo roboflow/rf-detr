@@ -17,7 +17,7 @@ This page reports RF-DETR benchmark results for object detection, instance segme
 
 ## Methodology
 
-Accuracy is reported using standard COCO metrics computed with pycocotools. For object detection, we report COCO AP50 and COCO AP50:95, and the same metrics are also reported for RF100-VL. COCO results are evaluated on the validation split, following common practice in detector benchmarking. RF100-VL results are averaged across all 100 datasets to reflect performance under diverse real-world data distributions.
+Accuracy is reported using standard COCO metrics computed with pycocotools. For object detection, we report COCO AP50 and COCO AP50:95, and the same metrics are also reported for RF100-VL. COCO results are evaluated on the validation split, following common practice in detector benchmarking. Every model on this page — including third-party models — is re-evaluated in-house with pycocotools in [roboflow/sab](https://github.com/roboflow/single_artifact_benchmarking) under this same protocol, scored over the full 5,000-image `val2017` split, so all rows are directly comparable; numbers may therefore differ from vendor-reported figures. RF100-VL results are averaged across all 100 datasets to reflect performance under diverse real-world data distributions.
 
 Latency is measured as single-image inference latency rather than sustained throughput. All latency numbers are obtained on an NVIDIA T4 GPU using TensorRT 10.4 and CUDA 12.4 with FP16 inference and batch size 1. To reduce variance caused by GPU power throttling and thermal effects, a 200 ms buffer is inserted between consecutive forward passes. This procedure improves reproducibility of latency measurements but is not intended to measure maximum throughput.
 
@@ -27,6 +27,8 @@ Accuracy and latency are always measured using the same model artifact and the s
 
     **AP50**: Detection accuracy at IoU threshold >= 0.50.
     **AP50:95**: Mean accuracy averaged over IoU thresholds 0.50 to 0.95 (step 0.05) — the primary COCO metric.
+    **Params (M)**: Deployment (fused) parameter count, in millions — training-only branches
+    and folded normalization layers are excluded.
     Latency measured on NVIDIA T4, TensorRT 10.4, CUDA 12.4, FP16, batch size 1,
     with 200 ms thermal buffer between passes to reduce GPU thermal variance.
 
@@ -95,18 +97,18 @@ Accuracy and latency are always measured using the same model artifact and the s
 
 <img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="../assets/keypoints/kp-map-latency.png" />
 
-|        Architecture        | COCO AP<sub>50:95</sub> | Latency (ms) |
-| :------------------------: | :---------------------: | :----------: |
-| RF-DETR Keypoint (Preview) |          71.8           |     9.7      |
-|       YOLO11-pose N        |          48.9           |     3.2      |
-|       YOLO11-pose S        |          57.5           |     3.4      |
-|       YOLO11-pose M        |          64.2           |     5.2      |
-|       YOLO11-pose L        |          65.2           |     6.6      |
-|       YOLO11-pose X        |          68.6           |     10.6     |
-|       YOLO26-pose N        |          55.9           |     1.9      |
-|       YOLO26-pose S        |          62.0           |     2.7      |
-|       YOLO26-pose M        |          68.0           |     4.6      |
-|       YOLO26-pose L        |          69.2           |     5.9      |
-|       YOLO26-pose X        |          71.0           |     9.8      |
+|        Architecture        | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) |
+| :------------------------: | :---------------------: | :----------: | :--------: |
+| RF-DETR Keypoint (Preview) |          71.8           |     9.7      |    40.7    |
+|       YOLO11-pose N        |          48.9           |     3.2      |    2.9     |
+|       YOLO11-pose S        |          57.5           |     3.4      |    9.9     |
+|       YOLO11-pose M        |          64.2           |     5.2      |    20.9    |
+|       YOLO11-pose L        |          65.2           |     6.6      |    26.2    |
+|       YOLO11-pose X        |          68.6           |     10.6     |    58.8    |
+|       YOLO26-pose N        |          55.9           |     1.9      |    2.9     |
+|       YOLO26-pose S        |          62.0           |     2.7      |    10.4    |
+|       YOLO26-pose M        |          68.0           |     4.6      |    21.5    |
+|       YOLO26-pose L        |          69.2           |     5.9      |    25.9    |
+|       YOLO26-pose X        |          71.0           |     9.8      |    57.6    |
 
 > Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric.
