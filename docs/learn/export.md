@@ -761,15 +761,17 @@ outputs = session.run(None, {"input": image_array})
 
 # Match outputs by name — do NOT assume positional order or infer role from shape.
 output_names = [out.name for out in session.get_outputs()]
-boxes_idx = next(i for i, name in enumerate(output_names) if "dets" in name)
-logits_idx = next(i for i, name in enumerate(output_names) if "labels" in name)
+boxes_idx = next((i for i, name in enumerate(output_names) if "dets" in name), None)
+logits_idx = next((i for i, name in enumerate(output_names) if "labels" in name), None)
+if boxes_idx is None or logits_idx is None:
+    raise ValueError(f"Could not find expected outputs 'dets'/'labels'. Available outputs: {output_names}")
 
 boxes_cwh = outputs[boxes_idx][0]  # (num_queries, 4) normalized cxcywh
 # Drop the last logit column: RF-DETR appends a no-object slot (num_classes + 1 total).
 logits = outputs[logits_idx][0, :, :-1]  # (num_queries, num_classes)
 
 # RF-DETR uses per-class sigmoid (multi-label), not softmax.
-scores_all = 1.0 / (1.0 + np.exp(-logits))
+scores_all = 1.0 / (1.0 + np.exp(-logits.clip(-88, 88)))
 scores = scores_all.max(axis=-1)
 class_ids = scores_all.argmax(axis=-1)
 
