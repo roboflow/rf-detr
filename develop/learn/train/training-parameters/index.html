@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-07-23T18:37:33">
+  <meta property="article:modified_time" content="2026-07-30T07:48:35">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-07-23T18:37:33",
+    "dateModified": "2026-07-30T07:48:35",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3435,7 +3435,7 @@ best-checkpoint selection and patience counting until the model has had time to 
 <td><code>keypoint_flip_pairs</code></td>
 <td><code>list[int]</code></td>
 <td><code>[]</code></td>
-<td>Flat left/right keypoint index pairs used to swap joints after horizontal-flip augmentation. YOLO <code>flip_idx</code> metadata is a permutation; RF-DETR converts it to this pair-list form during automatic schema inference when possible — it extracts only symmetric mutual pairs where <code>flip_idx[i] == j</code> and <code>flip_idx[j] == i</code>. Asymmetric entries and self-mapped keypoints (<code>flip_idx[i] == i</code>) are silently omitted; supply <code>keypoint_flip_pairs</code> explicitly when your <code>flip_idx</code> includes such entries.</td>
+<td>Flat left/right keypoint index pairs used to swap joints after horizontal-flip augmentation. YOLO <code>flip_idx</code> metadata is a permutation; RF-DETR converts it to this pair-list form during automatic schema inference when possible — it extracts only symmetric mutual pairs where <code>flip_idx[i] == j</code> and <code>flip_idx[j] == i</code>. Asymmetric entries and self-mapped keypoints (<code>flip_idx[i] == i</code>) are silently omitted; supply <code>keypoint_flip_pairs</code> explicitly when your <code>flip_idx</code> includes such entries. See the note below for what an empty list means for horizontal-flip augmentation.</td>
 </tr>
 <tr>
 <td><code>keypoint_l1_loss_coef</code></td>
@@ -3469,6 +3469,16 @@ best-checkpoint selection and patience counting until the model has had time to 
 </tr>
 </tbody>
 </table>
+<div class="admonition warning">
+<p class="admonition-title"><code>keypoint_flip_pairs</code>: <code>None</code> vs <code>[]</code> vs a populated list</p>
+<p>This value is tri-state, and the state — not just the value — controls whether horizontal-flip augmentations run at all when a custom <code>aug_config</code> is supplied:</p>
+<ul>
+<li><code>None</code> marks a detection-only pipeline. Horizontal-flip augmentations (<code>HorizontalFlip</code>, <code>Flip</code>, <code>D4</code>) in your <code>aug_config</code> are always kept, since there are no keypoint annotations that a flip could invalidate.</li>
+<li><code>[]</code> on a keypoint pipeline means no flip pairs are defined. RF-DETR then drops horizontal-flip augmentations from your <code>aug_config</code> rather than flip an image without knowing which keypoints to swap — this is intentional annotation-safety behavior, not a bug, but easy to trip over if you set <code>keypoint_flip_pairs=[]</code> yourself without expecting the augmentation to disappear.</li>
+<li>A populated list on a keypoint pipeline supplies the actual left/right index pairs, so horizontal-flip augmentations run and swap the paired keypoints.</li>
+</ul>
+<p>The current pydantic default for <code>keypoint_flip_pairs</code> is <code>[]</code>, matching the field definition in <code>src/rfdetr/config.py</code>. See <code>AlbumentationsWrapper.from_config</code> in <code>src/rfdetr/datasets/transforms.py</code> for the exact gating check (<code>keypoint_flip_pairs is not None and not keypoint_flip_pairs</code>).</p>
+</div>
 <div class="admonition note">
 <p class="admonition-title">OKS sigma values: flat vs per-keypoint</p>
 <p><code>infer_coco_keypoint_schema</code> and <code>infer_yolo_keypoint_schema</code> return a flat sigma of 0.1 for all inferred keypoints, and the keypoint demos pass those values explicitly for custom datasets. If <code>keypoint_oks_sigmas=None</code>, COCO person-keypoint evaluation uses the standard 17-keypoint COCO sigmas, while non-17 custom keypoint counts use RF-DETR's uniform custom fallback. Flat custom sigmas are not directly comparable to official COCO benchmark numbers.</p>
@@ -3920,7 +3930,7 @@ best-checkpoint selection and patience counting until the model has had time to 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 23, 2026 18:37:33 UTC">2026-07-23 18:37:33</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 30, 2026 07:48:35 UTC">2026-07-30 07:48:35</span>
   </span>
 
     
