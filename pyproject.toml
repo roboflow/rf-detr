@@ -177,6 +177,7 @@ tests = [
   "pytest-rerunfailures>=10,<15",
   "pytest-timeout>=2,<3",
   "pytest-doctestplus>=1.2,<2",
+  "pandas",  # imported directly by tests/training/test_metrics_csv.py to read CSVLogger output
   "tomli>=2.0; python_version < '3.11'",
 ]
 
