@@ -148,10 +148,7 @@ def export_coreml(
         precision_token = "fp32"
     else:
         precision_token = "fp32"
-        logger.warning(
-            f"Unrecognized CoreML compute precision {compute_precision!r}; "
-            "using the fp32 filename label."
-        )
+        logger.warning(f"Unrecognized CoreML compute precision {compute_precision!r}; using the fp32 filename label.")
     export_name = stem if is_custom else f"{stem}_{precision_token}"
     output_file = output_dir_path / f"{export_name}.mlpackage"
 
