@@ -142,7 +142,16 @@ def export_coreml(
     stem, is_custom = resolve_export_stem(variant_name, output_name)
     # Precision materially changes the artifact (fp16 has larger numeric drift, per the module
     # docstring) — always encode it, unless the caller asked for an exact custom filename.
-    precision_token = "fp16" if compute_precision == coreml_float16 else "fp32"
+    if compute_precision == coreml_float16:
+        precision_token = "fp16"
+    elif compute_precision == coreml_float32:
+        precision_token = "fp32"
+    else:
+        precision_token = "fp32"
+        logger.warning(
+            f"Unrecognized CoreML compute precision {compute_precision!r}; "
+            "using the fp32 filename label."
+        )
     export_name = stem if is_custom else f"{stem}_{precision_token}"
     output_file = output_dir_path / f"{export_name}.mlpackage"
 
