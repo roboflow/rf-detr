@@ -100,7 +100,7 @@ jobs:
         run: |
           set +e
           uv run --no-sync pytest src/ tests/ \
-            -n 1 -m "xla and not gpu" \
+            -n 1 -m "xla and not gpu and not tpu" \
             --ignore=tests/run_smoke_all_models.py \
             --ignore=tests/legacy/test_checkpoint_compat.py \
             --timeout=420 \

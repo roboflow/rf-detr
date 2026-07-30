@@ -302,6 +302,7 @@ pythonpath = ["src", "."]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
     "xla: tests that require an XLA device or torch_xla runtime (TPU, or CPU/GPU PJRT)",
+    "tpu: tests that require real TPU hardware (libtpu/MXU); not runnable on CPU/GPU PJRT",
     "coco17: tests that require COCO 2017 images or annotations",
     # `flaky` is provided by pytest-rerunfailures; registered here too for clarity and to stay
     # safe under --strict-markers (used by tests/benchmarks/test_training_*.py).
