@@ -126,12 +126,13 @@ model.export(backbone_only=True)
 ## Output Files
 
 Filenames are built from the model's variant name (e.g. `rfdetr-medium`, falling back to
-`inference_model` when unavailable) plus a detail suffix whenever a detail materially changes the
-artifact — even at its default value, since the file needs to say what it actually is:
+`inference_model` when no variant or `output_name` is set, or `backbone_model` when
+`backbone_only=True` in that same case) plus a detail suffix whenever a detail materially changes
+the artifact — even at its default value, since the file needs to say what it actually is:
 
 | Format       | Filename pattern                                                                                                       | Detail encoded                                           |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `onnx`       | `{variant}.onnx` (or `{variant}-backbone.onnx` if `backbone_only=True`)                                                | none — `-backbone` is structural, not a precision detail |
+| `onnx`       | `{variant}.onnx` (or `{variant}-backbone.onnx` if `backbone_only=True`); without a variant or `output_name`, `inference_model.onnx` (or `backbone_model.onnx` if `backbone_only=True`) | none — `-backbone` is structural, not a precision detail |
 | `coreml`     | `{variant}_fp32.mlpackage` / `{variant}_fp16.mlpackage`                                                                | `coreml_precision`                                       |
 | `executorch` | `{variant}_xnnpack.pte` / `{variant}_coreml.pte` / `{variant}_qnn_{soc}.pte`                                           | `backend` (+ `soc` for `qnn`)                            |
 | `tensorrt`   | `{variant}_fp16.trt` / `{variant}_fp32.trt`                                                                            | `fp16`                                                   |

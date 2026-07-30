@@ -1507,6 +1507,11 @@ class RFDETR:
                 always writes multiple files (one per precision/quantization mode), so the ``_fp32``/``_fp16``/
                 ``_dynamic_range_quant`` suffix is unavoidable even with *output_name* set — it becomes the stem
                 instead of the model's variant name.
+                Exceptions: ``format="onnx"`` with ``backbone_only=True`` appends ``-backbone`` to the filename
+                (``{output_name}-backbone.onnx``); ``format="tflite"`` writes separate per-precision files instead
+                of a single ``{output_name}.tflite`` file. The TFLite filenames may include a ``_gs_patched`` infix
+                before the precision suffix when GridSample ops are patched, e.g.
+                ``{output_name}_gs_patched_fp32.tflite``; this is the standard RF-DETR path.
 
         Returns:
             Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``, ``.pte``, or ``.mlpackage``).
