@@ -465,6 +465,36 @@ class TestExportTfliteConverter:
     def test_valid_quantizations_set(self) -> None:
         assert _VALID_QUANTIZATIONS == {None, "fp32", "fp16", "int8"}
 
+    def test_output_name_end_to_end_filename_includes_gs_patched(
+        self,
+        tmp_path: Path,
+        fake_onnx2tf: Any,
+        mock_prepare_calib: Any,
+    ) -> None:
+        """A real RF-DETR export always contains GridSample nodes (module docstring), so
+        ``_replace_gridsample_for_tflite`` always renames the ONNX stem with a ``_gs_patched`` infix before ``onnx2tf``
+        ever runs. ``output_name="my-model"`` (already baked into the ONNX filename by ``export_onnx``, per
+        ``_convert_onnx_export``'s docstring) must therefore produce ``my-model_gs_patched_fp32.tflite`` — not ``my-
+        model_fp32.tflite`` — confirming the actually-produced filename rather than the docstring's simplified "inherits
+        its stem" claim.
+
+        The ``fake_onnx2tf`` fixture stubs ``_replace_gridsample_for_tflite`` as a pure passthrough (no rename), so this
+        test overrides that stub to reflect the real rename step.
+        """
+        onnx_path = tmp_path / "my-model.onnx"
+        onnx_path.write_bytes(b"\x08\x06")
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        (out_dir / "my-model_gs_patched_float32.tflite").write_bytes(b"tflite")
+
+        with mock.patch(
+            "rfdetr.export._tflite.converter._replace_gridsample_for_tflite",
+            side_effect=lambda path, output_dir: output_dir / f"{path.stem}_gs_patched.onnx",
+        ):
+            result = export_tflite(onnx_path, out_dir)
+
+        assert result.name == "my-model_gs_patched_fp32.tflite"
+
 
 # ---------------------------------------------------------------------------
 # TestExportFormatParameter
