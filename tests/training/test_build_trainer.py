@@ -537,6 +537,25 @@ class TestBuildTrainerPrecision:
         assert "plugins" not in captured
         assert captured["precision"] == "32-true"
 
+    @pytest.mark.xla
+    def test_tpu_accelerator_refuses_to_launch_off_real_tpu(self, tmp_path) -> None:
+        """Resolves plan Sec 1.3 caveat #1: PTL's 'tpu' accelerator needs real TPU chips, not just torch_xla+PJRT.
+
+        Grounded in installed pytorch_lightning source: ``XLAAccelerator.is_available()`` delegates to
+        ``torch_xla._internal.tpu.num_available_devices()``, which scans ``/sys/bus/pci/devices/*`` for Google TPU
+        PCI vendor/device IDs -- zero under ``PJRT_DEVICE=CPU`` (no TPU silicon), so
+        ``_AcceleratorConnector._set_parallel_devices_and_init_accelerator`` raises ``MisconfigurationException`` at
+        ``Trainer.__init__``. This confirms the full ``model.train(accelerator="tpu")`` entry point is not
+        launchable under the T1 (CPU-PJRT) CI lane -- only the device-gated unit tests (Tasks 1.1/1.3/1.6/1.7/1.8,
+        which move tensors to ``xm.xla_device()`` directly) validate Phase 1 correctness there; this test empirically
+        confirms that reasoning once it runs under ``ci-tests-xla.yml``'s Linux + torch_xla runner.
+        """
+        pytest.importorskip("torch_xla")
+        from pytorch_lightning.utilities.exceptions import MisconfigurationException
+
+        with pytest.raises(MisconfigurationException, match="tpu"):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu")
+
     @patch("torch.cuda.is_available", return_value=True)
     @patch("torch.cuda.is_bf16_supported", return_value=False)
     @patch("rfdetr.training.trainer.Trainer")

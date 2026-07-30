@@ -5,8 +5,10 @@
 # ------------------------------------------------------------------------
 """Tests for distributed utility helpers."""
 
+import os
 from unittest.mock import patch
 
+import pytest
 import torch
 
 from rfdetr.utilities.distributed import all_gather
@@ -62,3 +64,32 @@ def test_all_gather_explicit_device_wins_over_cuda_heuristic() -> None:
 
     input_tensor = mock_all_gather.call_args.args[1]
     assert input_tensor.device == torch.device("cpu")
+
+
+@pytest.mark.xla
+def test_all_gather_multiprocess_xla_collective_routing() -> None:
+    """all_gather(device=<xla device>) round-trips per-rank data through ProcessGroupXla under real multiprocess XLA.
+
+    T1-mp lane (plan Sec 1.3): validates Task 1.3's fix -- routing all_gather's intermediate byte tensors through an
+    explicit device instead of the cuda-if-available-else-cpu heuristic -- against a real ``torch_xla`` multi-process
+    collective, not a mock. ``CPU_NUM_DEVICES`` simulates multiple XLA devices under ``PJRT_DEVICE=CPU`` so no TPU is
+    needed (grounded against pytorch/xla r2.9: ``torch_xla.launch`` / ``xla_multiprocessing.spawn`` signatures,
+    ``torch_xla/_internal/tpu.py`` ``CPU_NUM_DEVICES`` env var, and ``test/pjrt/test_collective_ops_tpu.py``'s
+    ``dist.init_process_group("xla", init_method="xla://")`` pattern).
+    """
+    pytest.importorskip("torch_xla")
+    os.environ.setdefault("CPU_NUM_DEVICES", "2")
+
+    import torch.distributed as dist
+    import torch_xla
+    import torch_xla.runtime as xr
+
+    def _worker(_local_index: int) -> None:
+        dist.init_process_group("xla", init_method="xla://")
+        device = torch_xla.device()
+        world_size = xr.world_size()
+        result = all_gather({"rank": xr.global_ordinal()}, device=device)
+        assert len(result) == world_size
+        assert {item["rank"] for item in result} == set(range(world_size))
+
+    torch_xla.launch(_worker)
