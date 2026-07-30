@@ -160,8 +160,8 @@ class TestBuildKorniaPipeline:
     def test_scalar_or_pair_range_params_build(self, config):
         """Range params accept a scalar or a pair, as Albumentations does.
 
-        ``_make_rotate`` already accepts either form for ``limit``; these builders used to raise a bare
-        ``TypeError`` from inside Kornia on a config that is valid for the CPU path.
+        ``_make_rotate`` already accepts either form for ``limit``; these builders used to raise a bare ``TypeError``
+        from inside Kornia on a config that is valid for the CPU path.
         """
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
 
