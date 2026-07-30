@@ -5,15 +5,19 @@
 # ------------------------------------------------------------------------
 """Shared output-filename stem resolution for the export backends.
 
-Every backend (ONNX, CoreML, ExecuTorch, TensorRT) names its output artifact from either a user-supplied full override
-(``output_name``) or a model variant identifier (``variant_name``), falling back to a generic default when neither is
-given. This module centralizes that precedence + sanitization so the five backends stay consistent instead of re-
-implementing it.
+Three of the five export backends (ONNX, CoreML, ExecuTorch) resolve their output-artifact stem entirely through
+:func:`resolve_export_stem`, choosing between a user-supplied full override (``output_name``), a model variant
+identifier (``variant_name``), and a generic default, with consistent path-traversal sanitization. The other two differ:
+TFLite takes no ``output_name`` at all (it inherits its stem from the already-resolved ONNX filename), and TensorRT
+delegates only the ``output_name`` sanitize step here while still building its own engine path and ``_fp16``/``_fp32``
+precision suffix. Centralizing the precedence + sanitization keeps the backends that share it consistent instead of each
+re-implementing it.
 """
 
 from __future__ import annotations
 
 import os
+import re
 
 
 def resolve_export_stem(
@@ -40,6 +44,9 @@ def resolve_export_stem(
         A ``(stem, is_custom)`` tuple. ``is_custom`` is ``True`` only when *output_name*
         was used, signalling that detail suffixes should be omitted.
 
+    Raises:
+        ValueError: If *output_name* sanitizes to an empty filename stem.
+
     Examples:
         >>> resolve_export_stem("rfdetr-small", None)
         ('rfdetr-small', False)
@@ -53,7 +60,10 @@ def resolve_export_stem(
         ('rfdetr-nano', False)
     """
     if output_name:
-        return _sanitize(output_name), True
+        stem = _sanitize(output_name)
+        if not stem:
+            raise ValueError("output_name must resolve to a non-empty filename stem")
+        return stem, True
     if variant_name:
         return _sanitize(variant_name), False
     return default, False
@@ -61,4 +71,4 @@ def resolve_export_stem(
 
 def _sanitize(name: str) -> str:
     """Strip directory components and extension from a caller-supplied name."""
-    return os.path.splitext(os.path.basename(name))[0]
+    return os.path.splitext(re.split(r"[\\/]", name)[-1])[0]

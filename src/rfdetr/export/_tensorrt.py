@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 
+from rfdetr.export._naming import resolve_export_stem
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -94,8 +95,17 @@ def build_engine(
 
     def _engine_path(*, fp16_used: bool) -> str:
         if output_name:
-            stem = os.path.splitext(os.path.basename(output_name))[0]
-            return os.path.join(os.path.dirname(onnx_path), f"{stem}.trt")
+            # Delegate output_name sanitize to the shared resolver so the custom-name stem is derived
+            # identically to the ONNX/CoreML/ExecuTorch backends (single source of truth for basename +
+            # extension stripping); TensorRT still owns its own path prefix and precision suffix below.
+            stem = resolve_export_stem(None, output_name)[0]
+            # Preserve onnx_path's directory prefix verbatim rather than rebuilding it via
+            # os.path.dirname + os.path.join, which inject os.sep (a backslash on Windows) regardless
+            # of onnx_path's own separator style and mis-parse a foreign-separator path. The sibling
+            # suffix branch below deliberately avoids pathlib/os.path for the same reason.
+            sep_idx = max(onnx_path.rfind("/"), onnx_path.rfind("\\"))
+            prefix = onnx_path[: sep_idx + 1] if sep_idx != -1 else ""
+            return f"{prefix}{stem}.trt"
         # Precision materially changes the engine (fp16 vs fp32 accuracy/speed), so it is always
         # encoded — unless a custom name was requested. Swapping only the final suffix (rather than
         # rebuilding the whole path) keeps any earlier ".onnx"-like segment intact and never aliases

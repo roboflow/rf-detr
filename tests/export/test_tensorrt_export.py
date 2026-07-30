@@ -93,6 +93,12 @@ class TestBuildEngineDryRun:
 
         assert result == "/output/my-engine.trt"
 
+    def test_output_name_preserves_windows_directory_separators(self) -> None:
+        """A Windows-style ``onnx_path`` keeps its backslash directory prefix verbatim (no ``os.sep`` rewrite)."""
+        result = tensorrt_export.build_engine(r"C:\out\m.onnx", dry_run=True, output_name="my-engine")
+
+        assert result == r"C:\out\my-engine.trt"
+
 
 class TestBuildEngineDependencyGuard:
     """A missing polygraphy/tensorrt install raises an actionable ImportError."""
