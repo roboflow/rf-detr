@@ -2333,6 +2333,10 @@ Use the release feed to review versioned package changes, migration notes, and m
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Exported artifact filenames now encode precision or backend for variant-derived/default names: TFLite <code>{stem}_float32.tflite</code> / <code>{stem}_float16.tflite</code> → <code>{stem}_fp32.tflite</code> / <code>{stem}_fp16.tflite</code>; ExecuTorch <code>{variant}.pte</code> → <code>{variant}_{backend}.pte</code> (or <code>{variant}_qnn_{soc}.pte</code>); CoreML <code>{variant}.mlpackage</code> → <code>{variant}_fp32.mlpackage</code> / <code>{variant}_fp16.mlpackage</code>; TensorRT <code>{stem}.trt</code> → <code>{stem}_fp16.trt</code> / <code>{stem}_fp32.trt</code>. ONNX filenames are unchanged. Update scripts that hardcode or glob these artifact filenames; explicit <code>output_name</code> overrides remain unchanged.</li>
+</ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>keypoint_flip_pairs</code> no longer silently disables horizontal-flip augmentations (<code>HorizontalFlip</code>, <code>Flip</code>, <code>D4</code>) on detection-only datasets when a custom <code>aug_config</code> is supplied. <code>AlbumentationsWrapper.from_config</code> treats an empty <code>keypoint_flip_pairs</code> as "keypoint pipeline with no flip pairs defined" and drops flip transforms for annotation safety; detection pipelines must pass <code>None</code> instead of <code>[]</code> to keep flips enabled. (<a href="https://github.com/roboflow/rf-detr/pull/1243">#1243</a>)</li>
@@ -2570,7 +2574,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <hr />
 <h2 id="165-2026-04-22">[1.6.5] — 2026-04-22<a class="headerlink" href="#165-2026-04-22" title="Permanent link">&para;</a></h2>
-<h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
+<h3 id="breaking-changes_1">Breaking Changes<a class="headerlink" href="#breaking-changes_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>predict()</code> now stores the source image in <code>detections.metadata["source_image"]</code> instead of <code>detections.data["source_image"]</code>. supervision indexes every value in <code>data</code> by the detection mask; <code>source_image</code> is per-image, not per-detection, so boolean/integer indexing raised <code>IndexError</code>. Moving it to <code>metadata</code> (passed through unchanged) fixes the issue. Update any code that reads <code>detections.data["source_image"]</code>. (<a href="https://github.com/roboflow/rf-detr/pull/972">#972</a>, <a href="https://github.com/roboflow/rf-detr/issues/968">#968</a>)</li>
 </ul>
