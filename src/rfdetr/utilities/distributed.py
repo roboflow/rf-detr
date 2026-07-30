@@ -63,11 +63,15 @@ def save_on_master(obj: Any, f: Any, *args: Any, **kwargs: Any) -> None:
         torch.save(obj, f, *args, **kwargs)
 
 
-def all_gather(data: Any) -> list[Any]:
+def all_gather(data: Any, device: torch.device | None = None) -> list[Any]:
     """Run all_gather on arbitrary picklable data (not necessarily tensors).
 
     Args:
         data: Any picklable object.
+        device: Device for the intermediate byte tensors. If ``None``, derived from the process group
+            backend (``cuda`` for NCCL, ``cpu`` otherwise). XLA callers must pass their local XLA device
+            explicitly — XLA has no dedicated ``dist`` backend name to probe, and defaulting to CPU would
+            place gather buffers on the wrong device.
 
     Returns:
         List of data gathered from each rank.
@@ -77,7 +81,9 @@ def all_gather(data: Any) -> list[Any]:
         return [data]
 
     # Serialize to a byte tensor on the active device.
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device is None:
+        backend = dist.get_backend() if is_dist_avail_and_initialized() else "cpu"
+        device = torch.device("cuda" if backend == "nccl" else "cpu")
     buffer = pickle.dumps(data)
     tensor = torch.tensor(bytearray(buffer), dtype=torch.uint8, device=device)
 
