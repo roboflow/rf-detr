@@ -1042,6 +1042,9 @@ class TrainConfig(BaseConfig):
     lr_component_decay: float = 0.7
     drop_path: float = 0.0
     cls_loss_coef: float = 1.0
+    # Detection-vs-keypoint distinction is derived by callers via `include_keypoints`, not
+    # stored on this field. See rfdetr.datasets.transforms.AlbumentationsWrapper.from_config
+    # for the None/[]/[...] tri-state contract applied at the augmentation-pipeline boundary.
     keypoint_flip_pairs: list[int] = Field(default_factory=list)
     keypoint_l1_loss_coef: float = 0
     keypoint_findable_loss_coef: float = 0
