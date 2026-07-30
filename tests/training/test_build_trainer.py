@@ -453,6 +453,51 @@ class TestBuildTrainerPrecision:
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert captured["precision"] == "bf16-mixed"
 
+    @pytest.mark.parametrize("accelerator", ["xla", "tpu"], ids=["xla", "tpu"])
+    def test_xla_accelerator_uses_xla_precision_plugin_not_precision_string(self, tmp_path, accelerator):
+        """Accelerator='xla'/'tpu' sets an XLAPrecision('bf16-true') plugin, never precision=.
+
+        XLAStrategy's precision_plugin setter only accepts the XLAPrecision plugin and raises TypeError for standard
+        precision strings like 'bf16-mixed'. ``XLAPrecision.__init__`` itself raises ``ModuleNotFoundError`` unless
+        torch_xla is importable (see ``lightning_fabric.accelerators.xla._XLA_AVAILABLE``), so the class is patched
+        here to keep this test backend-neutral -- the behaviour under test is build_trainer's accelerator dispatch,
+        not PTL's own package-availability guard.
+        """
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
+        with (
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True), accelerator=accelerator)
+
+        assert "precision" not in captured
+        mock_xla_precision_cls.assert_called_once_with("bf16-true")
+        assert captured["plugins"] == [mock_xla_precision_cls.return_value]
+
+    def test_non_xla_accelerator_sets_no_plugins_key(self, tmp_path):
+        """A non-XLA accelerator does not add a 'plugins' key -- only the XLA path does."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="cpu")
+
+        assert "plugins" not in captured
+        assert captured["precision"] == "32-true"
+
     @patch("torch.cuda.is_available", return_value=True)
     @patch("torch.cuda.is_bf16_supported", return_value=False)
     @patch("rfdetr.training.trainer.Trainer")

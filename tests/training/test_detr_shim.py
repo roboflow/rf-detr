@@ -432,6 +432,25 @@ class TestRFDETRTrainPTLAbsorption:
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu", devices=[2])
 
+    def test_device_xla_absorbed_as_accelerator_tpu(self, tmp_path, patch_lit):
+        """Device='xla' forwards accelerator='tpu' -- PTL's canonical name for the XLA backend."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, device="xla")
+        config = mock_self.get_train_config.return_value
+        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="tpu")
+        assert "devices" not in mock_bt.call_args.kwargs
+
+    def test_device_torch_device_xla_index_absorbed_as_accelerator_tpu_devices_list(self, tmp_path, patch_lit):
+        """device=torch.device('xla:0') forwards accelerator='tpu' and devices=[0]."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, device=torch.device("xla:0"))
+        config = mock_self.get_train_config.return_value
+        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="tpu", devices=[0])
+
     def test_device_invalid_raises_value_error_with_expected_message(self, tmp_path, patch_lit):
         """Invalid device strings raise a ValueError with the train() device hint."""
         mock_self = _make_rfdetr_self(tmp_path)

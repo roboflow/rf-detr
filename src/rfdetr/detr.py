@@ -786,7 +786,8 @@ class RFDETR:
 
         Returns:
             ``(accelerator, devices)`` where ``devices`` is ``None`` unless an explicit device index is provided (for
-            example ``cuda:1``).
+            example ``cuda:1``). ``device.type == "xla"`` maps to ``accelerator="tpu"`` -- PTL's accelerator
+            registry has no ``"xla"`` string; ``"tpu"`` is its canonical name for the XLA backend.
 
         Raises:
             ValueError: If ``device`` is not a valid torch device specifier.
@@ -807,6 +808,12 @@ class RFDETR:
             return "gpu", [resolved_device.index] if resolved_device.index is not None else None
         if resolved_device.type == "mps":
             return "mps", [resolved_device.index] if resolved_device.index is not None else None
+        if resolved_device.type == "xla":
+            # PTL's accelerator registry has no "xla" string -- "tpu" is its canonical name for
+            # the XLA backend (torch.device("xla") is valid and .type is always "xla", even on
+            # TPU; torch.device("tpu") itself raises RuntimeError). Bridge explicitly instead of
+            # falling through to the auto-detection warning below.
+            return "tpu", [resolved_device.index] if resolved_device.index is not None else None
 
         warnings.warn(
             f"Device type {resolved_device.type!r} is not explicitly mapped to a PyTorch Lightning "
@@ -831,8 +838,9 @@ class RFDETR:
           PE=37 at 560 px) are left unchanged to preserve checkpoint compatibility.
         * ``device`` — normalized via :class:`torch.device` and mapped to PyTorch
           Lightning trainer arguments. ``"cpu"`` becomes ``accelerator="cpu"``; ``"cuda"`` and ``"cuda:N"`` become
-          ``accelerator="gpu"`` and optionally ``devices=[N]``; ``"mps"`` becomes ``accelerator="mps"``. Other valid
-          torch device types fall back to PTL auto-detection and emit a :class:`UserWarning`.
+          ``accelerator="gpu"`` and optionally ``devices=[N]``; ``"mps"`` becomes ``accelerator="mps"``; ``"xla"``
+          becomes ``accelerator="tpu"`` (PTL's canonical name for the XLA backend). Other valid torch device types
+          fall back to PTL auto-detection and emit a :class:`UserWarning`.
         * ``notes`` — optional user-defined metadata (string, dict, list, or
           any JSON-serialisable value) stored under the ``"notes"`` key in every ``.pth`` checkpoint produced during
           training.  The value is also available inside ``args["notes"]`` for full provenance.  Pass the same value to

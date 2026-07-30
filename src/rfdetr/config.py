@@ -1055,6 +1055,8 @@ class TrainConfig(BaseConfig):
     square_resize_div_64: bool = True
     dataset_dir: PathLikeStr | None
     output_dir: PathLikeStr = "output"
+    # XLA/TPU: every distinct (H, W) triggers a separate graph compilation. Set multi_scale=False
+    # for a static shape (zero recompilations after the first batch) when training on TPU.
     multi_scale: bool = True
     expanded_scales: bool = True
     do_random_resize_via_padding: bool = False

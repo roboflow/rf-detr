@@ -412,12 +412,22 @@ def build_trainer(
         a ``_ForceLastEpochValidationCallback`` still guarantees the final epoch always
         validates even when ``epochs`` is not a multiple of ``eval_interval``.
 
+        When ``accelerator`` resolves to ``"xla"`` or ``"tpu"``, precision is set via an
+        ``XLAPrecision("bf16-true")`` plugin instead of ``precision="bf16-mixed"`` — PTL's
+        ``XLAStrategy`` only accepts the ``XLAPrecision`` plugin and raises ``TypeError`` for
+        standard precision strings.
+
     Returns:
         A configured ``pytorch_lightning.Trainer`` instance.
     """
     tc = train_config
     if accelerator is None:
         accelerator = tc.accelerator
+    # XLAStrategy's precision_plugin setter only accepts the XLAPrecision plugin
+    # (Literal["32-true", "16-true", "bf16-true"]); passing precision="bf16-mixed" raises
+    # TypeError. Detected here so trainer_config assembly below can route XLA around
+    # _resolve_precision() entirely instead of setting a precision= string it would reject.
+    xla_accelerator = str(accelerator).lower() in ("xla", "tpu")
 
     # TF32 matmul for fp32 residual matmuls on Ampere+.  ``rfdetr.detr`` sets this at import
     # time for the python API path, but the Lightning CLI path (``rfdetr fit``) never imports
@@ -657,7 +667,6 @@ def build_trainer(
         "devices": tc.devices,
         "num_nodes": tc.num_nodes,
         "strategy": strategy,
-        "precision": _resolve_precision(),
         "accumulate_grad_batches": accumulate_grad_batches,
         "gradient_clip_val": gradient_clip_val,
         "sync_batchnorm": sync_bn,
@@ -671,6 +680,12 @@ def build_trainer(
         "deterministic": False,
         "check_val_every_n_epoch": tc.eval_interval,
     }
+    if xla_accelerator:
+        from pytorch_lightning.plugins import XLAPrecision
+
+        trainer_config["plugins"] = [XLAPrecision("bf16-true")]
+    else:
+        trainer_config["precision"] = _resolve_precision()
     trainer_config.update(trainer_kwargs)
     trainer_config["strategy"] = strategy
     if manual_optimization:
