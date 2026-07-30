@@ -223,6 +223,7 @@ conflicts = [
         { extra = "coreml" },
         { extra = "executorch" },
     ],
+    # executorch and tflite extras are unsatisfiable together; declare a conflict so `uv lock` / `uv sync --all-groups` can fork.
     [
         { extra = "executorch" },
         { extra = "tflite" },
