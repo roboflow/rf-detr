@@ -719,6 +719,20 @@ Once exported, you can use the ONNX model with various inference frameworks:
 
 ### ONNX Runtime
 
+The exported graph returns **raw** tensors — `dets` (`pred_boxes`, normalized `cxcywh`) and
+`labels` (`pred_logits`, un-activated). Nothing is decoded inside the graph, so your inference
+code must apply sigmoid, drop the no-object background column, and convert box format
+yourself.
+
+!!! warning "Match outputs by name, not by shape"
+
+    RF-DETR always adds an implicit no-object class, so the logits tensor's last dimension is
+    `num_classes + 1`. If `num_classes == 3`, that dimension is `4` — identical to the box
+    tensor's last dimension (`4`, `cxcywh`). Disambiguating outputs by shape instead of by name
+    (`"dets"` / `"labels"`) will silently swap boxes and logits at exactly `num_classes == 3`,
+    producing garbage detections while every other `num_classes` value looks fine. Always match
+    by name first.
+
 ```python
 import onnxruntime as ort
 import numpy as np
@@ -744,8 +758,37 @@ image_array = np.expand_dims(image_array, axis=0)
 
 # Run inference
 outputs = session.run(None, {"input": image_array})
-boxes, labels = outputs
+
+# Match outputs by name — do NOT assume positional order or infer role from shape.
+output_names = [out.name for out in session.get_outputs()]
+boxes_idx = next((i for i, name in enumerate(output_names) if "dets" in name), None)
+logits_idx = next((i for i, name in enumerate(output_names) if "labels" in name), None)
+if boxes_idx is None or logits_idx is None:
+    raise ValueError(f"Could not find expected outputs 'dets'/'labels'. Available outputs: {output_names}")
+
+boxes_cwh = outputs[boxes_idx][0]  # (num_queries, 4) normalized cxcywh
+# Drop the last logit column: RF-DETR appends a no-object slot (num_classes + 1 total).
+logits = outputs[logits_idx][0, :, :-1]  # (num_queries, num_classes)
+
+# RF-DETR uses per-class sigmoid (multi-label), not softmax.
+scores_all = 1.0 / (1.0 + np.exp(-logits.clip(-88, 88)))
+scores = scores_all.max(axis=-1)
+class_ids = scores_all.argmax(axis=-1)
+
+threshold = 0.5
+keep = scores > threshold
+
+# cxcywh (normalized) -> xyxy (pixel space)
+cx, cy, bw, bh = boxes_cwh[keep].T
+xyxy = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)
+xyxy *= np.array([image.width, image.height, image.width, image.height], dtype=np.float32)
+
+boxes, labels, confidences = xyxy, class_ids[keep], scores[keep]
 ```
+
+For a fuller reference implementation (name-based matching with a documented shape-based
+fallback), see `_run_inference` in
+[`src/rfdetr/export/_onnx/inference.py`](https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/export/_onnx/inference.py).
 
 ## Next Steps
 
