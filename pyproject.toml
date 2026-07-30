@@ -223,6 +223,10 @@ conflicts = [
         { extra = "coreml" },
         { extra = "executorch" },
     ],
+    [
+        { extra = "executorch" },
+        { extra = "tflite" },
+    ],
 ]
 
 
