@@ -6167,6 +6167,10 @@ mirrors the import-time guard in <code>rfdetr.detr</code> so the Lightning CLI p
 validation loop (forward pass, metric compute, EMA forward), not just result logging;
 a <code>_ForceLastEpochValidationCallback</code> still guarantees the final epoch always
 validates even when <code>epochs</code> is not a multiple of <code>eval_interval</code>.</p>
+<p>When <code>accelerator</code> resolves to <code>"xla"</code> or <code>"tpu"</code>, the resolved precision is
+set via an <code>XLAPrecision</code> plugin instead of a <code>precision</code> argument — PTL's
+<code>XLAStrategy</code> only accepts the plugin and raises <code>TypeError</code> for standard precision
+strings. The XLA plugin is appended to caller-supplied plugins.</p>
 </details>
 
     <p><span class="doc-section-title">Returns:</span></p>
