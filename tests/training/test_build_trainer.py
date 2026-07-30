@@ -473,6 +473,8 @@ class TestBuildTrainerPrecision:
 
         mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
         with (
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("torch.cuda.is_bf16_supported", return_value=True),
             mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
             mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
         ):
@@ -481,6 +483,43 @@ class TestBuildTrainerPrecision:
         assert "precision" not in captured
         mock_xla_precision_cls.assert_called_once_with("bf16-true")
         assert captured["plugins"] == [mock_xla_precision_cls.return_value]
+
+    @pytest.mark.parametrize(
+        ("amp", "expected_precision"),
+        [
+            pytest.param(True, "bf16-true", id="amp_enabled"),
+            pytest.param(False, "32-true", id="amp_disabled"),
+        ],
+    )
+    def test_xla_accelerator_preserves_plugins_and_rejects_precision_kwargs(self, tmp_path, amp, expected_precision):
+        """XLA appends its precision plugin and ignores incompatible precision kwargs."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+        caller_plugin = object()
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
+        with (
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("torch.cuda.is_bf16_supported", return_value=True),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
+        ):
+            build_trainer(
+                _tc(tmp_path, use_ema=False),
+                _mc(amp=amp),
+                accelerator="xla",
+                plugins=[caller_plugin],
+                precision="16-mixed",
+            )
+
+        assert "precision" not in captured
+        mock_xla_precision_cls.assert_called_once_with(expected_precision)
+        assert captured["plugins"] == [caller_plugin, mock_xla_precision_cls.return_value]
 
     def test_non_xla_accelerator_sets_no_plugins_key(self, tmp_path):
         """A non-XLA accelerator does not add a 'plugins' key -- only the XLA path does."""
