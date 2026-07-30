@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from typing import Any, Literal
 
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
@@ -108,6 +108,29 @@ class _NotebookSpawnDDPStrategy(_DDPStrategy):
                 "it is always constructed with start_method='spawn' in build_trainer()."
             )
         self._launcher = _InteractiveSpawnLauncher(self, start_method=self._start_method)
+
+
+def _normalize_xla_precision(precision: str) -> Literal["32-true", "16-true", "bf16-true"]:
+    """Normalize resolved precision strings to a valid XLAPrecision literal.
+
+    Args:
+        precision: Precision string produced by the local resolver, e.g. ``"16-mixed"``.
+
+    Returns:
+        One of ``"32-true"``, ``"16-true"``, or ``"bf16-true"`` suitable for XLA plugin creation.
+
+    Raises:
+        ValueError: If the resolved precision is not supported by ``XLAPrecision``.
+    """
+    if precision == "32-true":
+        return "32-true"
+    if precision == "16-true":
+        return "16-true"
+    if precision == "bf16-true":
+        return "bf16-true"
+    raise ValueError(
+        f"Unexpected precision value for XLAPrecision: {precision!r}; expected '32-true', '16-true', or 'bf16-true'."
+    )
 
 
 def _is_distributed_strategy_requested(strategy: str) -> bool:
@@ -694,7 +717,7 @@ def build_trainer(
         elif not isinstance(plugins, (list, tuple)):
             plugins = [plugins]
         trainer_config.pop("precision", None)
-        xla_precision = _resolve_precision().replace("-mixed", "-true")
+        xla_precision = _normalize_xla_precision(_resolve_precision().replace("-mixed", "-true"))
         trainer_config["plugins"] = [*plugins, XLAPrecision(xla_precision)]
     trainer_config["strategy"] = strategy
     if manual_optimization:
