@@ -17,7 +17,7 @@ This page reports RF-DETR benchmark results for object detection, instance segme
 
 ## Methodology
 
-Accuracy is reported using standard COCO metrics computed with pycocotools. For object detection, we report COCO AP50 and COCO AP50:95, and the same metrics are also reported for RF100-VL. COCO results are evaluated on the validation split, following common practice in detector benchmarking. Every model on this page — including third-party models — is re-evaluated in-house with pycocotools in [roboflow/sab](https://github.com/roboflow/single_artifact_benchmarking) under this same protocol, scored over the full 5,000-image `val2017` split, so all rows are directly comparable; numbers may therefore differ from vendor-reported figures. RF100-VL results are averaged across all 100 datasets to reflect performance under diverse real-world data distributions.
+Accuracy is reported using standard COCO metrics computed with pycocotools. For object detection, we report COCO AP50 and COCO AP50:95, and the same metrics are also reported for RF100-VL. COCO results are evaluated on the validation split, following common practice in detector benchmarking. Every model on this page — including third-party models — is re-evaluated in-house with pycocotools in [roboflow/sab](https://github.com/roboflow/single_artifact_benchmarking) under this same protocol, scored over the full 5,000-image `val2017` split, so all rows are directly comparable; numbers may therefore differ from vendor-reported figures. The sole exception is rows marked †, which are quoted from the original authors' paper and were not run through SAB; these are flagged in the table footnote and should be read as author-reported rather than independently reproduced. RF100-VL results are averaged across all 100 datasets to reflect performance under diverse real-world data distributions.
 
 Latency is measured as single-image inference latency rather than sustained throughput. All latency numbers are obtained on an NVIDIA T4 GPU using TensorRT 10.4 and CUDA 12.4 with FP16 inference and batch size 1. To reduce variance caused by GPU power throttling and thermal effects, a 200 ms buffer is inserted between consecutive forward passes. This procedure improves reproducibility of latency measurements but is not intended to measure maximum throughput.
 
@@ -64,6 +64,9 @@ Accuracy and latency are always measured using the same model artifact and the s
 |   D-FINE-M   |         72.6         |          55.0           |          85.5           |            60.6            |     5.4      |    19.2    |  640x640   |
 |   D-FINE-L   |         74.9         |          57.2           |          86.4           |            61.6            |     7.5      |    31.0    |  640x640   |
 |   D-FINE-X   |         76.8         |          59.3           |          86.9           |            62.2            |     11.5     |    62.0    |  640x640   |
+|   SAM 3 †    |          —           |            —            |            —            |            61.6            |      —       |    ~850    | 1008x1008  |
+
+> † Reported by the SAM 3 authors ([arXiv:2511.16719](https://arxiv.org/abs/2511.16719), Table 36), **not** measured by us in SAB. The value is SAM 3 fine-tuned on the full RF100-VL training set — the same fully-supervised setting as the RF100VL columns above, and distinct from the 15.2 zero-shot / 36.5 10-shot numbers in the paper's main table. SAM 3's paper independently reports LW-DETR-m at 59.8 on this benchmark, matching our own measurement, which confirms the protocols align. Dashes mark results SAM 3 does not report under this protocol. Parameter count is the paper's stated ~850 M (~450 M vision + ~300 M text encoders + ~100 M detector/tracker).
 
 ## Segmentation
 

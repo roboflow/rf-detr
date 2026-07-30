@@ -53,7 +53,7 @@ pip install https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip
 
 ## Benchmarks
 
-RF-DETR achieves state-of-the-art results in both object detection and instance segmentation, with benchmarks reported on Microsoft COCO and RF100-VL (RF100-VL for detection only). The charts and tables below compare RF-DETR against other top real-time models across accuracy and latency for detection and segmentation. All COCO accuracy numbers are measured in-house for every model shown, computed with pycocotools in SAB over the full 5,000-image `val2017` split, so every row is directly comparable and may differ from vendor-reported figures. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Parameter counts are deployment (fused) values. For full benchmarking methodology and reproducibility details, see [roboflow/sab](https://github.com/roboflow/single_artifact_benchmarking).
+RF-DETR achieves state-of-the-art results in both object detection and instance segmentation, with benchmarks reported on Microsoft COCO and RF100-VL (RF100-VL for detection only). The charts and tables below compare RF-DETR against other top real-time models across accuracy and latency for detection and segmentation. All COCO accuracy numbers are measured in-house for every model shown, computed with pycocotools in SAB over the full 5,000-image `val2017` split, so every row is directly comparable and may differ from vendor-reported figures. The sole exception is rows marked †, which are quoted from the original authors' paper and were not measured in SAB. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Parameter counts are deployment (fused) values. For full benchmarking methodology and reproducibility details, see [roboflow/sab](https://github.com/roboflow/single_artifact_benchmarking).
 
 ### Detection
 
@@ -92,6 +92,9 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 |   D-FINE-M    |         72.6         |          55.0           |          85.5           |            60.6            |     5.4      |    19.2    |  640x640   | Apache 2.0 |
 |   D-FINE-L    |         74.9         |          57.2           |          86.4           |            61.6            |     7.5      |    31.0    |  640x640   | Apache 2.0 |
 |   D-FINE-X    |         76.8         |          59.3           |          86.9           |            62.2            |     11.5     |    62.0    |  640x640   | Apache 2.0 |
+|    SAM 3 †    |          —           |            —            |            —            |            61.6            |      —       |    ~850    | 1008x1008  |    SAM     |
+
+> † Reported by the SAM 3 authors ([arXiv:2511.16719](https://arxiv.org/abs/2511.16719), Table 36), **not** measured by us in SAB. The value is SAM 3 fine-tuned on the full RF100-VL training set, which is the same setting as the RF100VL columns above — SAM 3's paper reports LW-DETR-m at 59.8 on this benchmark, matching our own measurement, so the numbers line up. Dashes mark results SAM 3 does not report under this protocol. Parameter count is the paper's stated ~850 M (~450 M vision + ~300 M text encoders + ~100 M detector/tracker).
 
 </details>
 
