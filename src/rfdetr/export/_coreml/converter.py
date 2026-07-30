@@ -42,6 +42,7 @@ from torch import nn
 
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.op_coverage import unsupported_coreml_ops
+from rfdetr.export._naming import resolve_export_stem
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
@@ -67,6 +68,7 @@ def export_coreml(
     variant_name: str | None = None,
     verbose: bool = True,
     compute_precision: ct_precision | str | None = None,
+    output_name: str | None = None,
 ) -> Path:
     """Export an RF-DETR model to a CoreML ``.mlpackage``.
 
@@ -79,15 +81,22 @@ def export_coreml(
             Its spatial shape is baked into the exported program.
         output_dir: Directory where the ``.mlpackage`` is written.
         variant_name: Model variant identifier (e.g. ``"rfdetr-nano"``). When provided, the bundle
-            is named ``{variant_name}.mlpackage`` instead of ``inference_model.mlpackage``.
+            is named ``{variant_name}_fp32.mlpackage`` or ``{variant_name}_fp16.mlpackage`` (matching
+            *compute_precision*) instead of the generic ``inference_model_fp32.mlpackage`` /
+            ``inference_model_fp16.mlpackage``.
         verbose: When ``True``, log export progress at info level.
         compute_precision: coremltools precision for ``coremltools.convert`` — a
             ``coremltools.precision`` value (e.g. ``coremltools.precision.FLOAT32`` / ``FLOAT16``),
             the equivalent string (``"float32"`` / ``"float16"``), or ``None`` to select
-            ``FLOAT32`` (tight CPU parity with eager PyTorch).
+            ``FLOAT32`` (tight CPU parity with eager PyTorch). The resolved precision is always
+            encoded in the output filename (``_fp32``/``_fp16``) since it materially changes the
+            artifact — unless *output_name* is given.
             The string form is what :meth:`rfdetr.detr.RFDETR.export` forwards via its
             ``coreml_precision`` argument, so callers don't need to import ``coremltools`` just to
             pick a precision.
+        output_name: Full filename override (without extension). Takes precedence over
+            *variant_name* and suppresses the ``_fp32``/``_fp16`` suffix — the bundle is named
+            ``{output_name}.mlpackage`` verbatim.
 
     Returns:
         Path to the exported ``.mlpackage`` bundle. Output tensor names in the saved spec are
@@ -118,12 +127,6 @@ def export_coreml(
 
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
-    if variant_name:
-        variant_name = os.path.splitext(os.path.basename(variant_name))[0]
-        export_name = variant_name
-    else:
-        export_name = "inference_model"
-    output_file = output_dir_path / f"{export_name}.mlpackage"
 
     if compute_precision is None:
         compute_precision = coreml_float32
@@ -135,6 +138,19 @@ def export_coreml(
                 f"compute_precision must be 'float32', 'float16', a coremltools.precision value, or "
                 f"None, got {compute_precision!r}"
             ) from None
+
+    stem, is_custom = resolve_export_stem(variant_name, output_name)
+    # Precision materially changes the artifact (fp16 has larger numeric drift, per the module
+    # docstring) — always encode it, unless the caller asked for an exact custom filename.
+    if compute_precision == coreml_float16:
+        precision_token = "fp16"
+    elif compute_precision == coreml_float32:
+        precision_token = "fp32"
+    else:
+        precision_token = "fp32"
+        logger.warning(f"Unrecognized CoreML compute precision {compute_precision!r}; using the fp32 filename label.")
+    export_name = stem if is_custom else f"{stem}_{precision_token}"
+    output_file = output_dir_path / f"{export_name}.mlpackage"
 
     model = model.eval()
     if verbose:

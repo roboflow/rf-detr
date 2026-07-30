@@ -626,7 +626,7 @@ class TestExportExecutorchBody:
                 output_dir=tmp_path,
                 backend=backend,
             )
-        assert out.name == "inference_model.pte"
+        assert out.name == f"inference_model_{backend}.pte"
         assert out.read_bytes() == b"PTE"
 
     def test_variant_name_sanitized_to_basename(self, tmp_path: Path) -> None:
@@ -639,7 +639,20 @@ class TestExportExecutorchBody:
                 backend="xnnpack",
                 variant_name="sub/dir/rfdetr-nano.pte",
             )
-        assert out.name == "rfdetr-nano.pte"
+        assert out.name == "rfdetr-nano_xnnpack.pte"
+
+    def test_output_name_overrides_and_suppresses_backend_suffix(self, tmp_path: Path) -> None:
+        """``output_name`` names the ``.pte`` verbatim, suppressing the ``_{backend}`` suffix."""
+        with mock.patch.dict(sys.modules, self._generic_modules()), mock.patch("torch.export.export"):
+            out = export_executorch(
+                model=mock.MagicMock(),
+                input_tensors=torch.zeros(1, 3, 8, 8),
+                output_dir=tmp_path,
+                backend="xnnpack",
+                variant_name="rfdetr-nano",
+                output_name="my-model",
+            )
+        assert out.name == "my-model.pte"
 
     def test_lowering_failure_wrapped_as_runtime_error(self, tmp_path: Path) -> None:
         mods = self._generic_modules()
@@ -669,6 +682,7 @@ class TestExportExecutorchBody:
             )
         mock_lower.assert_called_once()
         assert out.read_bytes() == b"QNN"
+        assert out.name == "inference_model_qnn_SM8650.pte"
 
 
 class TestPackageAvailabilityFlag:

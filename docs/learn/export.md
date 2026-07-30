@@ -85,6 +85,7 @@ The `export()` method accepts several parameters to customize the export process
 | `fp16`             | `True`     | Build the TensorRT engine with FP16 precision (only used when `format="tensorrt"`). Pass `False` to build an FP32 engine — required on TensorRT builds that do not expose the FP16 builder flag. |
 | `notes`            | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the `"rfdetr_notes"` metadata property.                            |
 | `coreml_precision` | `None`     | Compute precision for `format="coreml"`: `None`/`"float32"` (tight CPU parity with eager PyTorch) or `"float16"` (smaller, ANE-oriented bundle). Ignored for every other format.                 |
+| `output_name`      | `None`     | Full filename override (without extension). Takes precedence over the model's variant name and suppresses the `_fp32`/`_fp16`/`_{backend}` detail suffix — see [Output Files](#output-files).    |
 
 ## Advanced Export Examples
 
@@ -124,12 +125,23 @@ model.export(backbone_only=True)
 
 ## Output Files
 
-After running the export, you will find the following files in your output directory:
+Filenames are built from the model's variant name (e.g. `rfdetr-medium`, falling back to
+`inference_model` when no variant or `output_name` is set, or `backbone_model` when
+`backbone_only=True` in that same case) plus a detail suffix whenever a detail materially changes
+the artifact — even at its default value, since the file needs to say what it actually is:
 
-- `inference_model.onnx` - The exported ONNX model (or `backbone_model.onnx` if `backbone_only=True`)
-- `{variant}.mlpackage` - The exported native CoreML model when `format="coreml"` (see
-    [Native CoreML Export](#native-coreml-export-mlpackage)); `inference_model.mlpackage` if no
-    variant name is available.
+| Format       | Filename pattern                                                                                                                                                                       | Detail encoded                                           |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `onnx`       | `{variant}.onnx` (or `{variant}-backbone.onnx` if `backbone_only=True`); without a variant or `output_name`, `inference_model.onnx` (or `backbone_model.onnx` if `backbone_only=True`) | none — `-backbone` is structural, not a precision detail |
+| `coreml`     | `{variant}_fp32.mlpackage` / `{variant}_fp16.mlpackage`                                                                                                                                | `coreml_precision`                                       |
+| `executorch` | `{variant}_xnnpack.pte` / `{variant}_coreml.pte` / `{variant}_qnn_{soc}.pte`                                                                                                           | `backend` (+ `soc` for `qnn`)                            |
+| `tensorrt`   | `{variant}_fp16.trt` / `{variant}_fp32.trt`                                                                                                                                            | `fp16`                                                   |
+| `tflite`     | `{variant}_fp32.tflite` + `{variant}_fp16.tflite` (+ `{variant}_dynamic_range_quant.tflite` for `quantization="int8"`)                                                                 | precision / quantization mode                            |
+
+Pass `output_name="my-model"` to override the variant name and write `{output_name}.{ext}`
+verbatim — this suppresses the detail suffix for every format **except** `tflite`, which always
+writes multiple files and so keeps its `_fp32`/`_fp16`/`_dynamic_range_quant` suffix even with a
+custom name (`{output_name}_fp32.tflite`, etc.).
 
 ## Optional: Convert ONNX to TensorRT
 
@@ -156,7 +168,9 @@ model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 model.export(format="tensorrt")
 ```
 
-This exports `output/inference_model.onnx` first and then produces `output/inference_model.trt`.
+This exports `output/inference_model.onnx` first and then produces `output/inference_model_fp16.trt`
+(the `_fp16`/`_fp32` suffix always reflects the precision actually built — see `fp16` in
+[Export Parameters](#export-parameters) — unless `output_name` is set).
 
 !!! note "Who consumes the `.trt` engine?"
 
@@ -176,9 +190,10 @@ This exports `output/inference_model.onnx` first and then produces `output/infer
 from rfdetr.export._tensorrt import build_engine
 
 engine_path = build_engine("output/inference_model.onnx", fp16=True)
+# -> "output/inference_model_fp16.trt"
 ```
 
-`build_engine` builds the engine in-process via the TensorRT Python API (no `trtexec` subprocess) and returns the path to the generated `.trt` engine file.
+`build_engine` builds the engine in-process via the TensorRT Python API (no `trtexec` subprocess) and returns the path to the generated `.trt` engine file. Pass `output_name="my-engine"` to write `output/my-engine.trt` verbatim instead.
 
 ## Run Inference with `inference-models`
 
@@ -310,7 +325,7 @@ pip install "rfdetr[tflite]"
     model.export(format="tflite", output_dir="output")
     ```
 
-This produces both `output/inference_model_float32.tflite` and `output/inference_model_float16.tflite`.
+This produces both `output/inference_model_fp32.tflite` and `output/inference_model_fp16.tflite`.
 
 ### INT8 Quantization with Calibration Data
 
@@ -408,11 +423,11 @@ model.export(format="tflite", quantization="fp16", output_dir="output")
 
 The `onnx2tf` converter **always** produces both FP32 and FP16 TFLite files, regardless of the requested quantization mode. When `quantization="int8"` is specified, it additionally produces the INT8-quantized model.
 
-| File                                   | Description                             |
-| -------------------------------------- | --------------------------------------- |
-| `inference_model_float32.tflite`       | FP32 model (always produced)            |
-| `inference_model_float16.tflite`       | FP16 model (always produced)            |
-| `inference_model_integer_quant.tflite` | INT8 model (when `quantization="int8"`) |
+| File                                         | Description                             |
+| -------------------------------------------- | --------------------------------------- |
+| `inference_model_fp32.tflite`                | FP32 model (always produced)            |
+| `inference_model_fp16.tflite`                | FP16 model (always produced)            |
+| `inference_model_dynamic_range_quant.tflite` | INT8 model (when `quantization="int8"`) |
 
 !!! note
 
@@ -428,7 +443,7 @@ from PIL import Image
 import tflite_runtime.interpreter as tflite
 
 # Load model
-interpreter = tflite.Interpreter(model_path="output/inference_model_float32.tflite")
+interpreter = tflite.Interpreter(model_path="output/inference_model_fp32.tflite")
 interpreter.allocate_tensors()
 
 input_details = interpreter.get_input_details()
@@ -508,8 +523,10 @@ default — it must always be passed explicitly for `format="executorch"`.
     model.export(format="executorch", backend="xnnpack")
     ```
 
-This produces `output/rfdetr-seg-medium.pte` — the file is named after the model variant
-(`{variant}.pte`), not a generic `inference_model.pte`.
+This produces `output/rfdetr-seg-medium_xnnpack.pte` — the file is named after the model variant
+plus the backend (`{variant}_{backend}.pte`, or `{variant}_qnn_{soc}.pte` for the SoC-locked `qnn`
+backend), not a generic `inference_model_{backend}.pte`. The backend is always encoded because it
+determines which hardware/runtime can load the file.
 
 ### CoreML Backend (Apple Neural Engine, fp16)
 
@@ -556,7 +573,10 @@ model.export(format="executorch", backend="qnn", soc="SM8650")
 ```
 
 The `soc` parameter is required for QNN and must be a `QcomChipset` name matching your target
-device. For example, `"SM8650"` targets the Snapdragon 8 Gen 3.
+device. For example, `"SM8650"` targets the Snapdragon 8 Gen 3. This produces
+`output/rfdetr-medium_qnn_SM8650.pte` — the SoC is baked into the filename (not just the
+backend) since a QNN `.pte` is compiled ahead-of-time for one specific chip and will not run on
+another.
 
 !!! warning
 
@@ -599,7 +619,7 @@ from PIL import Image
 
 # Load the exported .pte program
 runtime = Runtime.get()
-method = runtime.load_program("output/rfdetr-medium.pte").load_method("forward")
+method = runtime.load_program("output/rfdetr-medium_xnnpack.pte").load_method("forward")
 
 # Prepare input — the .pte expects the same NCHW, ImageNet-normalized input as the ONNX export
 image = Image.open("image.jpg").convert("RGB").resize((576, 576))
@@ -671,13 +691,16 @@ pip install "rfdetr[coreml]"
     model.export(format="coreml")
     ```
 
-This produces `output/rfdetr-medium.mlpackage` — the file is named after the model variant
-(`{variant}.mlpackage`), not a generic `inference_model.mlpackage`.
+This produces `output/rfdetr-medium_fp32.mlpackage` — the file is named after the model variant
+plus the resolved precision (`{variant}_fp32.mlpackage` / `{variant}_fp16.mlpackage`), not a
+generic `inference_model_fp32.mlpackage`. The precision is always encoded, even at its default
+value, since fp16 vs fp32 materially changes the bundle.
 
 ### Compute Precision
 
 CoreML export defaults to `FLOAT32` for tight CPU parity with eager PyTorch. Pass
-`coreml_precision="float16"` for a smaller, ANE-oriented bundle (expect larger numeric drift):
+`coreml_precision="float16"` for a smaller, ANE-oriented bundle (expect larger numeric drift) —
+this also changes the output filename to `output/rfdetr-medium_fp16.mlpackage`:
 
 ```python
 model.export(format="coreml", coreml_precision="float16")
@@ -696,7 +719,7 @@ import coremltools as ct
 import numpy as np
 from PIL import Image
 
-mlmodel = ct.models.MLModel("output/rfdetr-medium.mlpackage")
+mlmodel = ct.models.MLModel("output/rfdetr-medium_fp32.mlpackage")
 
 image = Image.open("image.jpg").convert("RGB").resize((576, 576))
 image_array = np.array(image, dtype=np.float32) / 255.0

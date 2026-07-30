@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Exported artifact filenames now encode precision or backend for variant-derived/default names: TFLite `{stem}_float32.tflite` / `{stem}_float16.tflite` → `{stem}_fp32.tflite` / `{stem}_fp16.tflite`; ExecuTorch `{variant}.pte` → `{variant}_{backend}.pte` (or `{variant}_qnn_{soc}.pte`); CoreML `{variant}.mlpackage` → `{variant}_fp32.mlpackage` / `{variant}_fp16.mlpackage`; TensorRT `{stem}.trt` → `{stem}_fp16.trt` / `{stem}_fp32.trt`. ONNX filenames are unchanged. Update scripts that hardcode or glob these artifact filenames; explicit `output_name` overrides remain unchanged.
+
 ### Fixed
 
 - `keypoint_flip_pairs` no longer silently disables horizontal-flip augmentations (`HorizontalFlip`, `Flip`, `D4`) on detection-only datasets when a custom `aug_config` is supplied. `AlbumentationsWrapper.from_config` treats an empty `keypoint_flip_pairs` as "keypoint pipeline with no flip pairs defined" and drops flip transforms for annotation safety; detection pipelines must pass `None` instead of `[]` to keep flips enabled. ([#1243](https://github.com/roboflow/rf-detr/pull/1243))

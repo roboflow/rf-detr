@@ -755,6 +755,24 @@ def _prepare_calibration_data(
     return npy_path
 
 
+def _rename_precision_outputs(output_dir: Path, model_stem: str) -> None:
+    """Rename onnx2tf's hardcoded ``_float32``/``_float16`` outputs to the ``_fp32``/``_fp16`` tokens.
+
+    ``onnx2tf`` always writes ``{model_stem}_float32.tflite`` and ``{model_stem}_float16.tflite`` — that
+    naming is internal to the library and not configurable. Rename both (when present) so the RF-DETR
+    export surface uses the same ``fp32``/``fp16`` vocabulary as the ONNX/CoreML/ExecuTorch/TensorRT
+    backends. Missing files (e.g. onnx2tf skipped one precision on a given run) are silently ignored.
+
+    Args:
+        output_dir: Directory onnx2tf wrote its ``.tflite`` outputs to.
+        model_stem: Stem of the (possibly GridSample-patched) ONNX file passed to onnx2tf.
+    """
+    for old_token, new_token in (("float32", "fp32"), ("float16", "fp16")):
+        old_path = output_dir / f"{model_stem}_{old_token}.tflite"
+        if old_path.is_file():
+            old_path.replace(output_dir / f"{model_stem}_{new_token}.tflite")
+
+
 def _quantize_dynamic_range(saved_model_dir: Path, model_stem: str) -> Path:
     """Build a dynamic-range INT8 TFLite model from the onnx2tf SavedModel.
 
@@ -793,8 +811,10 @@ def export_tflite(
     Args:
         onnx_path: Path to the source ``.onnx`` file.
         output_dir: Directory where TFLite artifacts will be written.
-            ``onnx2tf`` creates ``{stem}_float32.tflite`` and ``{stem}_float16.tflite``.  When ``quantization="int8"`` a
-            ``{stem}_dynamic_range_quant.tflite`` is additionally written.
+            ``onnx2tf`` creates ``{stem}_float32.tflite`` and ``{stem}_float16.tflite`` (its own hardcoded
+            naming); both are renamed to ``{stem}_fp32.tflite`` / ``{stem}_fp16.tflite`` to match the naming
+            used by the other export backends.  When ``quantization="int8"`` a ``{stem}_dynamic_range_quant.tflite``
+            is additionally written.
         quantization: Quantization mode.
 
             * ``None`` / ``"fp32"`` / ``"fp16"`` — FP32 + FP16 output
@@ -822,9 +842,10 @@ def export_tflite(
             (silent).
 
     Returns:
-        Path to the primary artifact.  ``onnx2tf`` always writes both ``{stem}_float32.tflite`` and
-        ``{stem}_float16.tflite`` to *output_dir*; ``quantization="int8"`` adds ``{stem}_dynamic_range_quant.tflite``.
-        The returned path is the dynamic-range file for ``int8``, otherwise the float32 file.
+        Path to the primary artifact.  ``onnx2tf`` always writes both an FP32 and FP16 model (renamed to
+        ``{stem}_fp32.tflite`` / ``{stem}_fp16.tflite``) to *output_dir*; ``quantization="int8"`` adds
+        ``{stem}_dynamic_range_quant.tflite``. The returned path is the dynamic-range file for ``int8``,
+        otherwise the fp32 file.
 
     Raises:
         FileNotFoundError: If *onnx_path* does not exist or
@@ -961,13 +982,19 @@ def export_tflite(
     # reflects that new name and must match the TFLite files onnx2tf created.
     model_stem = onnx_path.stem
 
+    # onnx2tf always writes both "{stem}_float32.tflite" and "{stem}_float16.tflite"
+    # (its own hardcoded naming, regardless of the requested quantization mode) — rename
+    # to the RF-DETR-wide "fp32"/"fp16" token before either return path below, so both
+    # files carry the same vocabulary as the other export backends.
+    _rename_precision_outputs(output_dir, model_stem)
+
     if quantization == "int8":
         # Dynamic-range INT8; static full-integer INT8 is rejected as unsupported.
         primary = _quantize_dynamic_range(output_dir, model_stem)
         logger.info(f"TFLite model exported to: {primary}")
         return primary
 
-    primary = output_dir / f"{model_stem}_float32.tflite"
+    primary = output_dir / f"{model_stem}_fp32.tflite"
 
     if not primary.is_file():
         # Fallback: look for any .tflite file produced from this specific ONNX stem.
@@ -977,7 +1004,7 @@ def export_tflite(
         if tflite_files:
             primary = tflite_files[0]
             logger.warning(
-                f"Expected TFLite output {output_dir / f'{model_stem}_float32.tflite'} not found; "
+                f"Expected TFLite output {output_dir / f'{model_stem}_fp32.tflite'} not found; "
                 f"searched for '{model_stem}_*.tflite' in {output_dir} and using {primary.name} instead. "
                 "The returned model may have a different dtype (e.g. int8) than the caller expects."
             )

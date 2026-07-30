@@ -1404,6 +1404,7 @@ class RFDETR:
         fp16: bool = True,
         notes: object = None,
         coreml_precision: str | None = None,
+        output_name: str | None = None,
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, or CoreML format.
 
@@ -1497,6 +1498,20 @@ class RFDETR:
             coreml_precision: ``ct.convert`` compute precision for ``format="coreml"`` — ``None`` (default) or
                 ``"float32"`` selects FP32 (tight CPU parity with eager PyTorch); ``"float16"`` selects a smaller
                 ANE-oriented bundle (expect larger numeric drift). Ignored for every other format.
+            output_name: Full filename override (without extension), e.g. ``"my-model"``. When set, takes
+                precedence over the model's variant name (``self.size``) and the exported file is named
+                ``{output_name}.{ext}`` verbatim — this also suppresses the ``_fp32``/``_fp16``/``_{backend}``
+                detail suffix that would otherwise be appended to encode the resolved precision/backend/SoC
+                (see *format* / *coreml_precision* / *backend* / *soc* / *fp16* above). Sanitized against path
+                traversal (only the basename, extension stripped, is used). Exception: ``format="tflite"``
+                always writes multiple files (one per precision/quantization mode), so the ``_fp32``/``_fp16``/
+                ``_dynamic_range_quant`` suffix is unavoidable even with *output_name* set — it becomes the stem
+                instead of the model's variant name.
+                Exceptions: ``format="onnx"`` with ``backbone_only=True`` appends ``-backbone`` to the filename
+                (``{output_name}-backbone.onnx``); ``format="tflite"`` writes separate per-precision files instead
+                of a single ``{output_name}.tflite`` file. The TFLite filenames may include a ``_gs_patched`` infix
+                before the precision suffix when GridSample ops are patched, e.g.
+                ``{output_name}_gs_patched_fp32.tflite``; this is the standard RF-DETR path.
 
         Returns:
             Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``, ``.pte``, or ``.mlpackage``).
@@ -1649,6 +1664,7 @@ class RFDETR:
                     variant_name=getattr(self, "size", None),
                     dynamic_batch=dynamic_batch,
                     notes=notes,
+                    output_name=output_name,
                 )
 
             if format == "coreml":
@@ -1662,6 +1678,7 @@ class RFDETR:
                     verbose=verbose,
                     notes=notes,
                     compute_precision=coreml_precision,
+                    output_name=output_name,
                 )
 
             output_file = export_onnx(
@@ -1676,6 +1693,7 @@ class RFDETR:
                 opset_version=opset_version,
                 variant_name=getattr(self, "size", None),
                 notes=notes,
+                output_name=output_name,
             )
 
             logger.info(f"Successfully exported ONNX model to: {output_file}")
@@ -1691,6 +1709,7 @@ class RFDETR:
                 max_images=max_images,
                 verbose=verbose,
                 fp16=fp16,
+                output_name=output_name,
             )
         finally:
             self.model.model = self.model.model.to(device)

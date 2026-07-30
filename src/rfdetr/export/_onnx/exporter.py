@@ -20,6 +20,7 @@ from typing import Any, Protocol, TypeVar, cast
 import numpy as np
 import torch
 
+from rfdetr.export._naming import resolve_export_stem
 from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
 from rfdetr.utilities.logger import get_logger
 
@@ -170,6 +171,7 @@ def export_onnx(
     variant_name: str | None = None,
     *,
     notes: object = None,
+    output_name: str | None = None,
 ) -> str:
     """Export a model to ONNX.
 
@@ -190,16 +192,22 @@ def export_onnx(
             JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata property.
             Ignored when ``None``. String values are stored verbatim; all other types are JSON-encoded, so consumers
             must call ``json.loads()`` to recover a dict or list.
+        output_name: Full filename override (without extension), e.g. ``"my-model"``. Takes precedence over
+            *variant_name* — the exported file is named ``{output_name}.onnx`` (or ``{output_name}-backbone.onnx``
+            when ``backbone_only=True``) verbatim, ignoring *variant_name*.
 
     Returns:
         Path to the exported ONNX model.
     """
-    if variant_name:
-        # Sanitize against path traversal (e.g. "foo/bar" → "bar", "/tmp/x" → "x")
-        variant_name = os.path.splitext(os.path.basename(variant_name))[0]
-        export_name = f"{variant_name}-backbone" if backbone_only else variant_name
-    else:
-        export_name = "backbone_model" if backbone_only else "inference_model"
+    stem, _ = resolve_export_stem(
+        variant_name,
+        output_name,
+        default="backbone_model" if backbone_only else "inference_model",
+    )
+    # "-backbone" is a structural marker (distinct model graph), not a precision/backend
+    # detail — it is appended whenever a name was supplied, custom or variant-derived, but
+    # not onto the bare "backbone_model" default (which already spells it out).
+    export_name = f"{stem}-backbone" if backbone_only and (variant_name or output_name) else stem
     output_file = os.path.join(output_dir, f"{export_name}.onnx")
 
     # Prepare model for export
