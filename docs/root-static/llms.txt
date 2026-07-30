@@ -1,5 +1,5 @@
 # RF-DETR
-> RF-DETR is a real-time object detection and instance segmentation transformer by Roboflow.
+> RF-DETR is a real-time object detection, instance segmentation, and keypoint detection (preview) transformer by Roboflow.
 > DINOv2 backbone. ICLR 2026. SOTA on COCO (60.1 AP50:95, RF-DETR-2XL).
 > Apache 2.0 for base models (Nano-Large). Install: pip install rfdetr.
 
@@ -11,7 +11,7 @@
 - Source repository: https://github.com/roboflow/rf-detr
 - Paper: https://arxiv.org/abs/2511.09554
 - Runtime: Python 3.10+, torch >=2.2.0, torchvision >=0.17.0, transformers >=5.1.0 and <6.0.0
-- Tasks: object detection and instance segmentation
+- Tasks: object detection, instance segmentation, and keypoint detection (preview)
 - Backbone: DINOv2 vision transformer
 - Dataset formats: COCO JSON and YOLO
 - Export targets: ONNX, TensorRT, and TFLite
@@ -21,6 +21,7 @@
 - [Install](https://rfdetr.roboflow.com/latest/getting-started/install/): pip install rfdetr
 - [Run Detection](https://rfdetr.roboflow.com/latest/learn/run/detection/): Run RF-DETR detection on images, video, webcam, and streams
 - [Run Segmentation](https://rfdetr.roboflow.com/latest/learn/run/segmentation/): Run RF-DETR Seg instance segmentation on images and video
+- [Run Keypoints](https://rfdetr.roboflow.com/latest/learn/run/keypoints/): Run RF-DETR Keypoint (preview) person keypoint detection on images, video, webcam, and streams
 - [Pretrained Models](https://rfdetr.roboflow.com/latest/learn/pretrained/): Nano, Small, Medium, Large, XLarge, and 2XLarge checkpoints
 
 ## Train
@@ -40,6 +41,7 @@
 - [COCO and RF100-VL Results](https://rfdetr.roboflow.com/latest/learn/benchmarks/): T4 TensorRT FP16, batch 1
 - Detection model range: RF-DETR-Nano 2.3 ms and 48.4 COCO AP50:95 through RF-DETR-2XLarge 17.2 ms and 60.1 COCO AP50:95
 - Segmentation model range: RF-DETR-Seg-Nano 3.4 ms and 40.3 COCO AP50:95 through RF-DETR-Seg-2XLarge 21.8 ms and 49.9 COCO AP50:95
+- Keypoint model (preview): RF-DETR Keypoint 9.7 ms and 71.8 COCO AP50:95 (OKS-based) on COCO person keypoints
 
 ## Model Selection Answers
 - Use RF-DETR-Nano for lowest latency edge detection: 2.3 ms on T4 TensorRT FP16, 48.4 AP50:95 on COCO, 30.5 M params.
@@ -47,13 +49,16 @@
 - Use RF-DETR-Large for the best open Apache 2.0 accuracy-latency trade-off: 6.8 ms, 56.5 AP50:95 on COCO.
 - Use RF-DETR-XLarge (11.5 ms, 58.6 AP50:95) or RF-DETR-2XLarge (17.2 ms, 60.1 AP50:95) when maximum accuracy matters; requires rfdetr[plus] and PML 1.0 license.
 - Use RF-DETR-Seg-Large (8.8 ms, 47.1 AP50:95) or RF-DETR-Seg-2XLarge (21.8 ms, 49.9 AP50:95) when instance masks are required; detection-only models return bounding boxes only.
+- Use RF-DETR Keypoint Preview (9.7 ms, 71.8 AP50:95, 40.7 M params) for person keypoint detection: 17 body keypoints per detected person, Apache 2.0. Preview feature, `rfdetr` package only.
 
 ## API Reference
 - [RFDETR base class](https://rfdetr.roboflow.com/latest/reference/rfdetr/): train(), predict(), export(), deploy_to_roboflow()
 - [Detection models](https://rfdetr.roboflow.com/latest/reference/nano/): RFDETRNano through RFDETR2XLarge
 - [Segmentation models](https://rfdetr.roboflow.com/latest/reference/seg_nano/): RFDETRSegNano through RFDETRSeg2XLarge
+- [Keypoint models](https://rfdetr.roboflow.com/latest/reference/kp_preview/): RFDETRKeypointPreview
 - [TrainConfig](https://rfdetr.roboflow.com/latest/reference/train_config/): Detection training configuration schema
 - [SegmentationTrainConfig](https://rfdetr.roboflow.com/latest/reference/segmentation_train_config/): Segmentation training configuration schema
+- [KeypointTrainConfig](https://rfdetr.roboflow.com/latest/reference/keypoint_train_config/): Keypoint training configuration schema
 - [Lightning Training](https://rfdetr.roboflow.com/latest/reference/training/): PyTorch Lightning training module, datamodule, callbacks, and trainer builder
 
 ## Migration
