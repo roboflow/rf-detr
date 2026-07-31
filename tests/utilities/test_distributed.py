@@ -66,6 +66,24 @@ def test_all_gather_explicit_device_wins_over_cuda_heuristic() -> None:
     assert input_tensor.device == torch.device("cpu")
 
 
+def _xla_all_gather_worker(_local_index: int) -> None:
+    """Per-process body for ``xmp.spawn``/``torch_xla.launch`` -- must stay module-level (picklable) not a closure.
+
+    PJRT's multi-process spawn dispatches through ``concurrent.futures.ProcessPoolExecutor``, which pickles the target
+    with stdlib ``pickle``; a nested function fails with ``AttributeError: Can't pickle local object``.
+    """
+    import torch.distributed as dist
+    import torch_xla
+    import torch_xla.runtime as xr
+
+    dist.init_process_group("xla", init_method="xla://")
+    device = torch_xla.device()
+    world_size = xr.world_size()
+    result = all_gather({"rank": xr.global_ordinal()}, device=device)
+    assert len(result) == world_size
+    assert {item["rank"] for item in result} == set(range(world_size))
+
+
 @pytest.mark.xla
 def test_all_gather_multiprocess_xla_collective_routing() -> None:
     """all_gather(device=<xla device>) round-trips per-rank data through ProcessGroupXla under real multiprocess XLA.
@@ -80,16 +98,6 @@ def test_all_gather_multiprocess_xla_collective_routing() -> None:
     pytest.importorskip("torch_xla")
     os.environ.setdefault("CPU_NUM_DEVICES", "2")
 
-    import torch.distributed as dist
     import torch_xla
-    import torch_xla.runtime as xr
 
-    def _worker(_local_index: int) -> None:
-        dist.init_process_group("xla", init_method="xla://")
-        device = torch_xla.device()
-        world_size = xr.world_size()
-        result = all_gather({"rank": xr.global_ordinal()}, device=device)
-        assert len(result) == world_size
-        assert {item["rank"] for item in result} == set(range(world_size))
-
-    torch_xla.launch(_worker)
+    torch_xla.launch(_xla_all_gather_worker)
