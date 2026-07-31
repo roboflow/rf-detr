@@ -125,7 +125,7 @@ class TestUnoptimizedInferenceEvalMode:
         monkeypatch.setattr(
             rfdetr.model,
             "postprocess",
-            lambda preds, target_sizes: [
+            lambda preds, target_sizes, score_threshold=None: [
                 {"scores": torch.zeros(0), "labels": torch.zeros(0, dtype=torch.long), "boxes": torch.zeros(0, 4)}
             ],
             raising=False,

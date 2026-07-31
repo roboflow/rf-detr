@@ -2360,7 +2360,7 @@ class RFDETR:
                     return_predictions["pred_masks"] = predictions[2]
             predictions = return_predictions
         target_sizes = torch.tensor(orig_sizes, device=self.model.device)
-        results = self.model.postprocess(predictions, target_sizes=target_sizes)
+        results = self.model.postprocess(predictions, target_sizes=target_sizes, score_threshold=threshold)
 
         model_class_names = self.class_names
         n = len(model_class_names)
@@ -2403,6 +2403,11 @@ class RFDETR:
             labels = result["labels"]
             boxes = result["boxes"]
 
+            # INVARIANT: this predicate must stay identical (same operator and threshold) to the
+            # pre-filter in PostProcess._postprocess_masks (`scores_i > score_threshold`), which is
+            # fed `score_threshold=threshold` above. The seg path drops below-threshold masks before
+            # upsampling on the strength of that match; diverging here (e.g. `>=`, per-class, top-k)
+            # would make it silently drop rows this filter keeps — a behaviour change with no failing test.
             keep = scores > threshold
             scores = scores[keep]
             labels = labels[keep]
