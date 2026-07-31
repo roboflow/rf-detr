@@ -33,6 +33,37 @@ No. `RFDETR.from_checkpoint(...)` infers `num_classes` from the checkpoint's cla
 
 No. Fine-tuning on a custom dataset retrains the classification head for that dataset's classes; the pretrained COCO classes are not retained. To detect both your classes and some COCO classes, include those COCO classes in your training data.
 
+## How do I load my own weights or a checkpoint from a specific path?
+
+Pass `pretrain_weights=` when you build any model — it accepts a fine-tuned checkpoint, a pretrained backbone, or one of the published names:
+
+```python
+from rfdetr import RFDETRSmall
+
+# A checkpoint anywhere on disk (absolute or relative path)
+model = RFDETRSmall(pretrain_weights="/data/runs/exp1/checkpoint_best_total.pth")
+
+# A published checkpoint by name — downloaded into the cache dir if missing
+model = RFDETRSmall(pretrain_weights="rf-detr-small.pth")
+```
+
+Resolution rules:
+
+- **Bare filename** (no directory, e.g. `rf-detr-small.pth`) → resolved to the model cache directory (see below) and downloaded there if not already present.
+- **Path with a directory** (e.g. `./my.pth`, `/abs/my.pth`, `~/models/my.pth`) → used as-is.
+- **`None`** → train from randomly initialized weights (no pretrained checkpoint).
+
+## Where does RF-DETR store downloaded weights, and how do I change it?
+
+Published checkpoints are cached in `~/.roboflow/models` by default. Override the location for all models by setting an environment variable — `RF_HOME` (canonical) or its alias `ROBOFLOW_HOME`:
+
+```bash
+export RF_HOME=/mnt/shared/models
+# ROBOFLOW_HOME=/mnt/shared/models works too
+```
+
+If both are set, `RF_HOME` wins. This only affects where **bare-filename** weights are cached; an explicit path in `pretrain_weights=` is always honored as given.
+
 ## What input resolutions are allowed?
 
 `resolution` must be a positive integer divisible by `patch_size × num_windows` for the selected variant (for example, current detection checkpoints use a block size of 32). A non-divisible value raises `ValueError` indicating the required divisor. Input is square; each variant ships a sensible default resolution.
