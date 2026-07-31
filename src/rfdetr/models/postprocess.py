@@ -208,9 +208,12 @@ class PostProcess(nn.Module):
         for i in range(out_masks.shape[0]):
             scores_i, labels_i, boxes_i, k_idx = scores[i], labels[i], boxes[i], topk_boxes[i]
             if score_threshold is not None:
-                keep = scores_i > score_threshold
-                scores_i, labels_i = scores_i[keep], labels_i[keep]
-                boxes_i, k_idx = boxes_i[keep], k_idx[keep]
+                # A boolean-mask index (t[mask]) runs `nonzero` internally and forces a device sync
+                # on each use; materialise the kept indices once so the four selections share a single
+                # sync instead of four. Integer indexing preserves row order, so the result is identical.
+                sel = (scores_i > score_threshold).nonzero(as_tuple=True)[0]
+                scores_i, labels_i = scores_i[sel], labels_i[sel]
+                boxes_i, k_idx = boxes_i[sel], k_idx[sel]
             res_i = {"scores": scores_i, "labels": labels_i, "boxes": boxes_i}
             masks_i = torch.gather(
                 out_masks[i],
