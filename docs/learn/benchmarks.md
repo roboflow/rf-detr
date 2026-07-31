@@ -27,8 +27,7 @@ Accuracy and latency are always measured using the same model artifact and the s
 
     **AP50**: Detection accuracy at IoU threshold >= 0.50.
     **AP50:95**: Mean accuracy averaged over IoU thresholds 0.50 to 0.95 (step 0.05) — the primary COCO metric.
-    **Params (M)**: Deployment (fused) parameter count, in millions — training-only branches
-    and folded normalization layers are excluded.
+    **Params (M)**: Deployment (fused) `nn.Module` parameter count (`model.parameters()`) in millions, excluding training-only branches and folded normalization layers, and counting model parameters rather than the raw tensor count of the saved checkpoint. Rows marked † use the authors' reported counts rather than SAB-measured values.
     Latency measured on NVIDIA T4, TensorRT 10.4, CUDA 12.4, FP16, batch size 1,
     with 200 ms thermal buffer between passes to reduce GPU thermal variance.
 
