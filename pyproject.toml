@@ -242,6 +242,12 @@ conflicts = [
         { extra = "executorch" },
         { extra = "tflite" },
     ],
+    # xla (torch==2.9.*, pinned to torch_xla's companion release) and executorch
+    # (torch>=2.12.0a0) are likewise unsatisfiable together -- same fork rationale.
+    [
+        { extra = "executorch" },
+        { extra = "xla" },
+    ],
 ]
 
 

@@ -20,7 +20,7 @@ RF-DETR Keypoint outperforms YOLO26-pose X and YOLO11-pose X at comparable laten
 
 |       Model        |  RF-DETR package class  | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :----------------: | :---------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
-| Keypoint (Preview) | `RFDETRKeypointPreview` |          71.8           |     9.7      |   126.4    |  576x576   | Apache 2.0 |
+| Keypoint (Preview) | `RFDETRKeypointPreview` |          71.8           |     9.7      |    40.7    |  576x576   | Apache 2.0 |
 
 > The keypoint model is available in the `rfdetr` package only. It is not yet available via the `inference` package.
 

@@ -610,6 +610,7 @@ class TestExportExecutorchBody:
         return _fake_executorch_tree(
             {
                 "executorch.exir": {"to_edge_transform_and_lower": mock.MagicMock(return_value=edge)},
+                "executorch.backends.transforms.addmm_mm_to_linear": {"AddmmToLinearTransform": mock.MagicMock()},
                 "executorch.backends.xnnpack.partition.xnnpack_partitioner": {"XnnpackPartitioner": mock.MagicMock()},
                 "executorch.backends.apple.coreml.partition.coreml_partitioner": {
                     "CoreMLPartitioner": mock.MagicMock()
@@ -628,6 +629,27 @@ class TestExportExecutorchBody:
             )
         assert out.name == f"inference_model_{backend}.pte"
         assert out.read_bytes() == b"PTE"
+
+    @pytest.mark.parametrize("backend", [pytest.param("xnnpack", id="xnnpack"), pytest.param("coreml", id="coreml")])
+    def test_generic_backend_lowers_with_addmm_to_linear_transform(self, tmp_path: Path, backend: str) -> None:
+        """Lowering must recombine addmm/mm into ``aten.linear`` via ``AddmmToLinearTransform``.
+
+        ``torch.export`` decomposes every ``nn.Linear`` into ``addmm``; the ops the XNNPACK partitioner does not
+        delegate then fall back to ExecuTorch's slow portable ``addmm.out`` kernel. Passing ``AddmmToLinearTransform``
+        recombines them into ``aten.linear`` (2.5x faster end-to-end on RFDETRNano, numerically identical -- see PR
+        benchmark).
+        """
+        mods = self._generic_modules()
+        transform_cls = mods["executorch.backends.transforms.addmm_mm_to_linear"].AddmmToLinearTransform
+        with mock.patch.dict(sys.modules, mods), mock.patch("torch.export.export"):
+            export_executorch(
+                model=mock.MagicMock(),
+                input_tensors=torch.zeros(1, 3, 8, 8),
+                output_dir=tmp_path,
+                backend=backend,
+            )
+        lower_kwargs = mods["executorch.exir"].to_edge_transform_and_lower.call_args.kwargs
+        assert lower_kwargs.get("transform_passes") == [transform_cls.return_value]
 
     def test_variant_name_sanitized_to_basename(self, tmp_path: Path) -> None:
         """A path-like ``variant_name`` is reduced to its basename stem (mirrors the ONNX exporter)."""
@@ -844,10 +866,49 @@ def exported(
     return model, example, Path(pte_path), validate_fn
 
 
+def _portable_kernel_call_names(pte_path: Path) -> list[str]:
+    """Return the op name of every non-delegated (portable) kernel call in a ``.pte``, one entry per call.
+
+    Args:
+        pte_path: Path to a serialized ExecuTorch program.
+
+    Returns:
+        Qualified op names (e.g. ``"aten::linear.out"``), repeated per kernel-call instruction; delegate
+        calls (XNNPACK/CoreML subgraphs) are excluded.
+    """
+    from executorch.exir._serialize import _deserialize_pte_binary
+
+    plan = _deserialize_pte_binary(pte_path.read_bytes()).program.execution_plan[0]
+    op_names = [f"{op.name}.{op.overload}" if op.overload else op.name for op in plan.operators]
+    return [
+        op_names[instruction.instr_args.op_index]
+        for chain in plan.chains
+        for instruction in chain.instructions
+        if type(instruction.instr_args).__name__ == "KernelCall"
+    ]
+
+
 @executorch_only
 @pytest.mark.e2e_executorch
 class TestExecutorchEndToEnd:
     """End-to-end export of a real RF-DETR model (detection + segmentation), gated on the executorch package."""
+
+    def test_no_portable_addmm_kernel_calls(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
+        """No ``aten::addmm`` may survive lowering as a portable kernel call.
+
+        ``torch.export`` decomposes ``nn.Linear`` into ``addmm``; any instance the XNNPACK partitioner
+        leaves un-delegated runs on the portable ``addmm.out`` kernel, which is ~2 orders of magnitude
+        slower than ``linear.out`` for RF-DETR's encoder-output projections (111 ms -> 44 ms end-to-end
+        on RFDETRNano). ``AddmmToLinearTransform`` in the lowering call recombines them into
+        ``aten.linear``; this guards that the transform stays wired in.
+        """
+        _, _, pte_path, _ = exported
+        portable_ops = _portable_kernel_call_names(pte_path)
+        addmm_calls = [op for op in portable_ops if "addmm" in op]
+        assert not addmm_calls, (
+            f"{len(addmm_calls)} portable addmm kernel call(s) in {pte_path.name}; "
+            "expected AddmmToLinearTransform to recombine them into aten.linear"
+        )
 
     def test_pte_file_written(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
         """The exported artifact must be a non-empty ``.pte`` file."""

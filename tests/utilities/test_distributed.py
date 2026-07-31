@@ -7,6 +7,7 @@
 
 from unittest.mock import patch
 
+import pytest
 import torch
 
 from rfdetr.utilities.distributed import all_gather
@@ -62,3 +63,50 @@ def test_all_gather_explicit_device_wins_over_cuda_heuristic() -> None:
 
     input_tensor = mock_all_gather.call_args.args[1]
     assert input_tensor.device == torch.device("cpu")
+
+
+def _xla_all_gather_worker(_local_index: int) -> None:
+    """Per-process body for ``xmp.spawn``/``torch_xla.launch`` -- must stay module-level (picklable) not a closure.
+
+    PJRT's multi-process spawn dispatches through ``concurrent.futures.ProcessPoolExecutor``, which pickles the target
+    with stdlib ``pickle``; a nested function fails with ``AttributeError: Can't pickle local object``.
+    """
+    import torch.distributed as dist
+    import torch_xla
+    import torch_xla.runtime as xr
+
+    dist.init_process_group("xla", init_method="xla://")
+    device = torch_xla.device()
+    world_size = xr.world_size()
+    result = all_gather({"rank": xr.global_ordinal()}, device=device)
+    assert len(result) == world_size
+    assert {item["rank"] for item in result} == set(range(world_size))
+
+
+@pytest.mark.xla
+def test_all_gather_multiprocess_xla_collective_routing() -> None:
+    """all_gather(device=<xla device>) round-trips per-rank data through ProcessGroupXla under real multiprocess XLA.
+
+    T1-mp lane (plan Sec 1.3): validates Task 1.3's fix -- routing all_gather's intermediate byte tensors through an
+    explicit device instead of the cuda-if-available-else-cpu heuristic -- against a real ``torch_xla`` multi-process
+    collective, not a mock. ``dist.init_process_group("xla", init_method="xla://")`` collectives are TPU/NEURON-only
+    in torch_xla r2.9 -- confirmed against ``torch_xla/_internal/pjrt.py``'s ``run_multiprocess`` (CPU falls through
+    to ``num_processes = 1``, thread-fanout not real multiprocess) and torch_xla's own
+    ``test/torch_distributed/test_torch_distributed_all_gather_xla_backend.py``, which guards the identical
+    collective with ``xm.xla_device_hw(device) in ("TPU", "NEURON")`` and no-ops otherwise. No CPU-PJRT path exists,
+    so this skips off real TPU/NEURON hardware; real multi-replica proof is Phase 2b's Kaggle TPU smoke test
+    (``notebooks/tpu_phase2b_kaggle_smoke.py``).
+    """
+    pytest.importorskip("torch_xla")
+
+    from torch_xla import runtime as xr
+
+    if xr.device_type() not in ("TPU", "NEURON"):
+        pytest.skip(
+            "ProcessGroupXla xla:// collectives are TPU/NEURON-only (torch_xla r2.9); "
+            "no CPU-PJRT path exists. Real proof: Phase 2b Kaggle TPU smoke test."
+        )
+
+    import torch_xla
+
+    torch_xla.launch(_xla_all_gather_worker)

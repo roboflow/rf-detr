@@ -1,6 +1,6 @@
 # RF-DETR — Full Documentation
 
-> RF-DETR is a real-time transformer architecture for object detection and instance segmentation by Roboflow.
+> RF-DETR is a real-time transformer architecture for object detection, instance segmentation, and keypoint detection (preview) by Roboflow.
 > DINOv2 vision transformer backbone. ICLR 2026. SOTA on COCO (60.1 AP50:95, RF-DETR-2XL).
 > Apache 2.0 license for core models (Nano through Large). Python 3.10+.
 > Source: https://github.com/roboflow/rf-detr | Paper: https://arxiv.org/abs/2511.09554
@@ -9,7 +9,7 @@
 
 ## Overview
 
-RF-DETR (Roboflow Detection Transformer) is a real-time object detection and instance segmentation model from Roboflow, accepted at ICLR 2026. It uses a DINOv2 vision transformer backbone and achieves state-of-the-art accuracy–latency trade-offs on Microsoft COCO and RF100-VL.
+RF-DETR (Roboflow Detection Transformer) is a real-time object detection, instance segmentation, and keypoint detection (preview) model from Roboflow, accepted at ICLR 2026. It uses a DINOv2 vision transformer backbone and achieves state-of-the-art accuracy–latency trade-offs on Microsoft COCO and RF100-VL.
 
 RF-DETR is the first real-time model to exceed 60 mean Average Precision (mAP) when benchmarked on the COCO dataset. RF-DETR-2XL achieves 60.1 AP50:95 at 17.2 ms latency on NVIDIA T4 (TensorRT FP16, batch 1).
 
@@ -17,6 +17,7 @@ RF-DETR is the first real-time model to exceed 60 mean Average Precision (mAP) w
 - Core models (Nano, Small, Medium, Large) and all code: Apache 2.0
 - XLarge and 2XLarge detection models: PML 1.0 (requires rfdetr[plus])
 - Segmentation models follow the same tier structure
+- Keypoint model (preview): Apache 2.0
 
 ---
 
@@ -85,6 +86,24 @@ detections = model.predict("image.jpg", threshold=0.5)
 - `RFDETRSeg2XLarge` — 21.8 ms, 73.1 AP50 (49.9 AP50:95), 38.6M params, 768×768
 
 Segmentation models output instance masks in addition to bounding boxes. Masks are returned as a `torch.Tensor` or dict with `spatial_features`, `query_features`, and `bias` keys.
+
+---
+
+## Run Keypoints
+
+```python
+from rfdetr import RFDETRKeypointPreview
+
+model = RFDETRKeypointPreview()
+key_points = model.predict("image.jpg", threshold=0.5)
+```
+
+**Available keypoint model classes:**
+- `RFDETRKeypointPreview` — 9.7 ms, 71.8 AP50:95, 40.7M params, 576×576
+
+Keypoint detection is a preview feature. The model is pretrained on COCO person keypoints and predicts 17 body keypoints per detected person, in addition to bounding boxes. Accuracy is reported as OKS-based AP50:95, the standard COCO keypoint metric.
+
+The keypoint model is available in the `rfdetr` package only; it is not yet available via the `inference` package.
 
 ---
 
@@ -265,6 +284,24 @@ model.deploy_to_roboflow(
 | RF-DETR-Seg-L | 70.5 | 47.1 | 8.8 | 36.2 | 504×504 |
 | RF-DETR-Seg-XL | 72.2 | 48.8 | 13.5 | 38.1 | 624×624 |
 | RF-DETR-Seg-2XL | 73.1 | 49.9 | 21.8 | 38.6 | 768×768 |
+
+### Keypoint Results
+
+COCO person keypoints, OKS-based AP50:95. Params are deployment (fused) counts.
+
+| Architecture | COCO AP50:95 | Latency (ms) | Params (M) | License |
+|---|---|---|---|---|
+| RF-DETR Keypoint (Preview) | 71.8 | 9.7 | 40.7 | Apache 2.0 |
+| YOLO11-pose N | 48.9 | 3.2 | 2.9 | AGPL-3.0 |
+| YOLO11-pose S | 57.5 | 3.4 | 9.9 | AGPL-3.0 |
+| YOLO11-pose M | 64.2 | 5.2 | 20.9 | AGPL-3.0 |
+| YOLO11-pose L | 65.2 | 6.6 | 26.2 | AGPL-3.0 |
+| YOLO11-pose X | 68.6 | 10.6 | 58.8 | AGPL-3.0 |
+| YOLO26-pose N | 55.9 | 1.9 | 2.9 | AGPL-3.0 |
+| YOLO26-pose S | 62.0 | 2.7 | 10.4 | AGPL-3.0 |
+| YOLO26-pose M | 68.0 | 4.6 | 21.5 | AGPL-3.0 |
+| YOLO26-pose L | 69.2 | 5.9 | 25.9 | AGPL-3.0 |
+| YOLO26-pose X | 71.0 | 9.8 | 57.6 | AGPL-3.0 |
 
 ---
 
