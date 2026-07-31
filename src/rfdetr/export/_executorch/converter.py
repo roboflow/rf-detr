@@ -359,7 +359,6 @@ def export_executorch(
         )
 
     _check_executorch_available()
-    from executorch.backends.transforms.addmm_mm_to_linear import AddmmToLinearTransform
     from executorch.exir import to_edge_transform_and_lower
 
     output_dir = Path(output_dir)
@@ -397,8 +396,18 @@ def export_executorch(
                 # lowering fails. Non-strict keeps those inline and lowers cleanly with verified parity. Revisit
                 # strict=True when that upstream torch.export <-> ExecuTorch interaction is fixed.
                 exported_program = torch.export.export(model, (input_tensors,), strict=False)
-                # AddmmToLinearTransform recombines the addmm/mm ops torch.export decomposes nn.Linear
-                # into back into aten.linear. The handful the partitioner leaves un-delegated (the
+                # Imported in the non-QNN path only: the qnn backend never uses this transform, and
+                # some ExecuTorch installs don't ship it -- a top-level import would raise ImportError
+                # they never needed.
+                try:
+                    from executorch.backends.transforms.addmm_mm_to_linear import AddmmToLinearTransform
+                except ImportError as exc:
+                    raise ImportError(
+                        "AddmmToLinearTransform is unavailable in this ExecuTorch install; upgrade "
+                        "executorch to a version shipping executorch.backends.transforms.addmm_mm_to_linear."
+                    ) from exc
+                # AddmmToLinearTransform recombines the addmm/mm ops that torch.export decomposes
+                # nn.Linear into, back into aten.linear. The handful the partitioner leaves un-delegated (the
                 # two-stage encoder-output projections over the full token sequence) otherwise run on the
                 # portable addmm.out kernel, which is ~2 orders of magnitude slower than linear.out:
                 # 111 ms -> 44 ms end-to-end on RFDETRNano/XNNPACK, outputs identical to ~1e-5.
