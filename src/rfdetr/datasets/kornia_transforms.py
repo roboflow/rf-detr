@@ -269,9 +269,21 @@ def _require_albu() -> None:
 def _as_range(value: Any) -> tuple[float, float]:
     """Normalise a scalar-or-pair config value to a ``(min, max)`` tuple.
 
-    Albumentations accepts either form for range parameters such as ``sigma`` and ``std_range``, and
-    :func:`_make_rotate` already treats ``limit`` the same way, so the builders below take both rather than raising a
-    bare ``TypeError`` from inside Kornia on a config that is valid for the CPU path.
+    Albumentations accepts either form for range parameters such as ``sigma`` and ``std_range``, so the builders below
+    take both rather than raising a bare ``TypeError`` from inside Kornia on a config that is valid for the CPU path.
+    :func:`_make_rotate` also accepts a scalar or a pair for ``limit``, but with different scalar semantics: it
+    expands a scalar ``v`` symmetrically to ``(-v, v)``, whereas this helper expands it to the degenerate ``(v, v)``.
+
+    Args:
+        value: A scalar, a 1-element sequence (a degenerate ``(v, v)`` range), or a 2-element ``(min, max)`` pair.
+
+    Returns:
+        The value as a ``(min, max)`` float pair: ``(v, v)`` for a scalar or 1-element sequence, ``(min, max)`` for a
+        pair.
+
+    Raises:
+        ValueError: If ``value`` is an empty sequence or has more than two elements, rather than silently dropping
+            trailing elements.
     """
     if isinstance(value, (list, tuple)):
         if len(value) == 1:
@@ -397,9 +409,11 @@ def _make_random_brightness_contrast(params: dict[str, Any]) -> Any:
 def _make_gaussian_blur(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomGaussianBlur`` from aug_config params.
 
-    ``blur_limit`` is rounded up to an odd number for the kernel size.  Both ``blur_limit`` and ``sigma`` accept a
-    scalar or a ``(min, max)`` pair, since Albumentations accepts either and a config written for the CPU path should
-    not fail here.
+    Both ``blur_limit`` and ``sigma`` accept a scalar or a ``(min, max)`` pair, since Albumentations accepts either and
+    a config written for the CPU path should not fail here, but a pair resolves asymmetrically: ``blur_limit`` takes the
+    pair's upper bound (Kornia uses a single kernel size), rounded up to an odd integer, while ``sigma`` is passed
+    through as a real ``(min, max)`` range. A non-degenerate ``blur_limit`` pair therefore collapses to fixed maximum
+    blur and logs a warning.
     """
     from kornia.augmentation import RandomGaussianBlur
 
