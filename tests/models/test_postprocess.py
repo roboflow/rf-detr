@@ -227,8 +227,8 @@ class TestPostProcessMasks:
     def _mask_case(num_select: int = 16, num_queries: int = 16, mask_hw: int = 8, batch: int = 1):
         """Return (out_masks, scores, labels, boxes, topk_boxes, target_sizes) with known scores.
 
-        Scores descend within each image so a threshold of 0.5 keeps a known prefix, and each image
-        starts lower than the previous one so a batch keeps a different number of rows per image.
+        Scores descend within each image so a threshold of 0.5 keeps a known prefix, and each image starts lower than
+        the previous one so a batch keeps a different number of rows per image.
         """
         out_masks = torch.randn(batch, num_queries, mask_hw, mask_hw)
         scores = torch.stack([torch.linspace(0.95 - 0.3 * i, 0.05, num_select) for i in range(batch)])
@@ -242,10 +242,9 @@ class TestPostProcessMasks:
     def test_score_threshold_upsamples_only_the_kept_masks(self, threshold):
         """Masks that the caller's threshold discards must never reach the interpolation.
 
-        The upsample runs at target-image resolution while the kept fraction is small (at
-        ``num_select=100`` a COCO-style image keeps a handful), so resizing the discarded
-        rows is work whose result is dropped a few lines later. Counting the interpolated
-        rows rather than timing them keeps the test deterministic. A threshold of 1.0 keeps
+        The upsample runs at target-image resolution while the kept fraction is small (at ``num_select=100`` a COCO-
+        style image keeps a handful), so resizing the discarded rows is work whose result is dropped a few lines later.
+        Counting the interpolated rows rather than timing them keeps the test deterministic. A threshold of 1.0 keeps
         nothing and must skip the interpolation altogether rather than resize an empty tensor.
         """
         args = self._mask_case()
@@ -273,9 +272,9 @@ class TestPostProcessMasks:
     def test_score_threshold_matches_filtering_after_upsampling(self, threshold, upsample):
         """Filtering before the resize must return exactly what filtering after it returns.
 
-        The filter sits above the ``upsample_masks_to_image_size`` branch, so the native-resolution
-        path has to drop the same rows as the resized one. A threshold of 1.0 keeps nothing and pins
-        the shape and dtype of the empty result on both branches.
+        The filter sits above the ``upsample_masks_to_image_size`` branch, so the native-resolution path has to drop the
+        same rows as the resized one. A threshold of 1.0 keeps nothing and pins the shape and dtype of the empty result
+        on both branches.
         """
         args = self._mask_case()
 
@@ -308,10 +307,10 @@ class TestPostProcessMasks:
     def test_score_threshold_is_ignored_outside_the_mask_path(self, head):
         """The box-only and keypoint heads must return the same thing with and without the argument.
 
-        ``predict()`` passes the threshold for every model, so the two heads that cannot use it have
-        to ignore it rather than fail. The keypoint path rewrites scores after selection (uncertainty
-        fusion), so filtering on the pre-fusion scores would not match the caller's own filter, and
-        the box-only path has no per-detection resize to skip.
+        ``predict()`` passes the threshold for every model, so the two heads that cannot use it have to ignore it rather
+        than fail. The keypoint path rewrites scores after selection (uncertainty fusion), so filtering on the pre-
+        fusion scores would not match the caller's own filter, and the box-only path has no per-detection resize to
+        skip.
         """
         batch, num_queries, num_classes = 1, 4, 2
         outputs = {
