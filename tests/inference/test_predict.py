@@ -88,7 +88,10 @@ class _TupleOutputModelContext:
         return boxes, logits, keypoints
 
     def postprocess(
-        self, predictions: dict[str, torch.Tensor], target_sizes: torch.Tensor
+        self,
+        predictions: dict[str, torch.Tensor],
+        target_sizes: torch.Tensor,
+        score_threshold: float | None = None,
     ) -> list[dict[str, torch.Tensor]]:
         self.captured_predictions = predictions
         batch = target_sizes.shape[0]

@@ -2360,7 +2360,7 @@ class RFDETR:
                     return_predictions["pred_masks"] = predictions[2]
             predictions = return_predictions
         target_sizes = torch.tensor(orig_sizes, device=self.model.device)
-        results = self.model.postprocess(predictions, target_sizes=target_sizes)
+        results = self.model.postprocess(predictions, target_sizes=target_sizes, score_threshold=threshold)
 
         model_class_names = self.class_names
         n = len(model_class_names)

@@ -42,7 +42,9 @@ class PostProcess(nn.Module):
         self.upsample_masks_to_image_size = upsample_masks_to_image_size
 
     @torch.no_grad()
-    def forward(self, outputs: dict[str, torch.Tensor], target_sizes: torch.Tensor) -> list[dict[str, torch.Tensor]]:
+    def forward(
+        self, outputs: dict[str, torch.Tensor], target_sizes: torch.Tensor, score_threshold: float | None = None
+    ) -> list[dict[str, torch.Tensor]]:
         """Convert raw model tensors into per-image detection dictionaries.
 
         Args:
@@ -50,11 +52,19 @@ class PostProcess(nn.Module):
                 ``pred_masks`` or ``pred_keypoints``.
             target_sizes: Per-image ``(height, width)`` tensor. For inference and evaluation this should be the
                 original image size so normalized boxes and keypoints are returned in source-image pixel coordinates.
+            score_threshold: Optional confidence threshold already known to the caller. Detections scoring at or
+                below it are dropped before masks are resized, so the upsample only runs on detections the caller
+                keeps. Only the segmentation path acts on it: the keypoint path rewrites scores after selection
+                (uncertainty fusion), so filtering on the pre-fusion scores would not match the caller's own filter,
+                and the box-only path has no per-detection work worth skipping. ``None`` (the default) keeps every
+                selected detection, which is what evaluation relies on.
 
         Returns:
             One dictionary per image. Every dictionary contains ``scores``, ``labels``, and ``boxes`` in absolute
             pixel coordinates clamped to the respective image dimensions. Segmentation outputs also contain
-            ``masks``. Keypoint outputs also contain ``keypoints`` and ``keypoint_precision_cholesky``.
+            ``masks``. Keypoint outputs also contain ``keypoints`` and ``keypoint_precision_cholesky``. With
+            ``score_threshold`` set, segmentation dictionaries hold only the detections above it — fewer rows,
+            never different ones.
         """
         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
         out_masks = outputs.get("pred_masks")
@@ -66,7 +76,14 @@ class PostProcess(nn.Module):
 
         if out_masks is not None:
             return self._postprocess_masks(
-                out_masks, scores, labels, boxes, topk_boxes, target_sizes, self.upsample_masks_to_image_size
+                out_masks,
+                scores,
+                labels,
+                boxes,
+                topk_boxes,
+                target_sizes,
+                self.upsample_masks_to_image_size,
+                score_threshold=score_threshold,
             )
         if out_keypoints is not None:
             return self._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)
@@ -155,6 +172,8 @@ class PostProcess(nn.Module):
         topk_boxes: torch.Tensor,
         target_sizes: torch.Tensor,
         upsample_masks_to_image_size: bool = True,
+        *,
+        score_threshold: float | None = None,
     ) -> list[dict[str, torch.Tensor]]:
         """Attach segmentation masks for selected detections.
 
@@ -175,6 +194,10 @@ class PostProcess(nn.Module):
                 (e.g. COCO segm mAP) must downsize the other side to match, or the comparison is
                 meaningless. Intended for opt-in, validation-only cost reduction (see
                 ``TrainConfig.eval_masks_head_resolution``), not for inference output.
+            score_threshold: Optional confidence threshold already known to the caller. Detections scoring at or
+                below it are dropped before the gather, so no mask the caller discards is ever gathered, resized or
+                thresholded. Applies to both ``upsample_masks_to_image_size`` branches. ``None`` (the default) keeps
+                every selected detection.
 
         Returns:
             One result dict per image containing scores, labels, boxes, and boolean masks —
@@ -183,8 +206,12 @@ class PostProcess(nn.Module):
         """
         results = []
         for i in range(out_masks.shape[0]):
-            res_i = {"scores": scores[i], "labels": labels[i], "boxes": boxes[i]}
-            k_idx = topk_boxes[i]
+            scores_i, labels_i, boxes_i, k_idx = scores[i], labels[i], boxes[i], topk_boxes[i]
+            if score_threshold is not None:
+                keep = scores_i > score_threshold
+                scores_i, labels_i = scores_i[keep], labels_i[keep]
+                boxes_i, k_idx = boxes_i[keep], k_idx[keep]
+            res_i = {"scores": scores_i, "labels": labels_i, "boxes": boxes_i}
             masks_i = torch.gather(
                 out_masks[i],
                 0,
