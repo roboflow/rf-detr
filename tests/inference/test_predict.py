@@ -64,6 +64,38 @@ class TestPredictReturnTypes:
         assert all(isinstance(result, sv.KeyPoints) for result in batch)
 
 
+class TestPredictScoreThresholdEquivalence:
+    """The mask pre-filter perf path must not change ``predict()``'s final output."""
+
+    def test_mask_prefilter_output_equivalent_at_predict_boundary(self) -> None:
+        """``predict()`` masks/boxes/scores must be bit-identical whether the mask pre-filter runs or not.
+
+        The optimization forwards ``predict(threshold=...)`` into ``PostProcess`` so below-threshold masks skip
+        upsampling. Disabling the pre-filter (``score_threshold=None``) makes ``PostProcess`` upsample every mask and
+        lets ``predict()``'s own downstream filter drop them instead. The two paths must produce the same
+        ``Detections``, proving the pre-filter drops only rows ``predict()`` itself discards — the equivalence that the
+        unit test at ``_postprocess_masks`` level asserts, now verified end-to-end through the real ``predict()`` path.
+        """
+        img = PIL.Image.new("RGB", (640, 640), color=(128, 128, 128))
+        model = RFDETRSegNano(pretrain_weights=None)
+        threshold = 0.3
+
+        optimized = model.predict(img, threshold=threshold)
+
+        real_postprocess = model.model.postprocess
+
+        def postprocess_without_prefilter(predictions, target_sizes, score_threshold=None):
+            return real_postprocess(predictions, target_sizes, score_threshold=None)
+
+        model.model.postprocess = postprocess_without_prefilter
+        baseline = model.predict(img, threshold=threshold)
+
+        np.testing.assert_array_equal(optimized.xyxy, baseline.xyxy)
+        np.testing.assert_array_equal(optimized.confidence, baseline.confidence)
+        np.testing.assert_array_equal(optimized.class_id, baseline.class_id)
+        np.testing.assert_array_equal(optimized.mask, baseline.mask)
+
+
 class _TupleOutputModelContext:
     """Model context whose forward returns a 3-tuple, mirroring ``forward_export()`` after ``inference()``.
 
