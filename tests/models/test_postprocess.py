@@ -246,8 +246,11 @@ class TestPostProcessMasks:
         style image keeps a handful), so resizing the discarded rows is work whose result is dropped a few lines later.
         Counting the interpolated rows rather than timing them keeps the test deterministic. A threshold of 1.0 keeps
         nothing and must skip the interpolation altogether rather than resize an empty tensor.
+
+        ``num_select=100`` (> ``_MASK_CHUNK`` = 32) keeps enough rows above 0.5 to span several interpolation chunks,
+        so the count also proves the chunked upsample loop stays correct under early filtering.
         """
-        args = self._mask_case()
+        args = self._mask_case(num_select=100, num_queries=100)
         scores = args[1]
         expected_kept = int((scores[0] > threshold).sum())
 
