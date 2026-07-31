@@ -359,6 +359,7 @@ def export_executorch(
         )
 
     _check_executorch_available()
+    from executorch.backends.transforms.addmm_mm_to_linear import AddmmToLinearTransform
     from executorch.exir import to_edge_transform_and_lower
 
     output_dir = Path(output_dir)
@@ -396,8 +397,15 @@ def export_executorch(
                 # lowering fails. Non-strict keeps those inline and lowers cleanly with verified parity. Revisit
                 # strict=True when that upstream torch.export <-> ExecuTorch interaction is fixed.
                 exported_program = torch.export.export(model, (input_tensors,), strict=False)
+                # AddmmToLinearTransform recombines the addmm/mm ops torch.export decomposes nn.Linear
+                # into back into aten.linear. The handful the partitioner leaves un-delegated (the
+                # two-stage encoder-output projections over the full token sequence) otherwise run on the
+                # portable addmm.out kernel, which is ~2 orders of magnitude slower than linear.out:
+                # 111 ms -> 44 ms end-to-end on RFDETRNano/XNNPACK, outputs identical to ~1e-5.
                 edge_program = to_edge_transform_and_lower(
-                    exported_program, partitioner=_build_partitioner(backend_name)
+                    exported_program,
+                    transform_passes=[AddmmToLinearTransform()],
+                    partitioner=_build_partitioner(backend_name),
                 )
                 executorch_program = edge_program.to_executorch()
     except (ImportError, ValueError):
