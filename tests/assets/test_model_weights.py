@@ -61,10 +61,10 @@ class TestGetModelCacheDir:
         monkeypatch.setenv("ROBOFLOW_HOME", str(tmp_path))
         assert get_model_cache_dir() == str(tmp_path)
 
-    def test_default_when_neither_var_set(self, monkeypatch):
-        """Returns ~/.roboflow/models when neither RF_HOME nor ROBOFLOW_HOME is set."""
+    def test_empty_roboflow_home_falls_through_to_default(self, monkeypatch):
+        """An empty ROBOFLOW_HOME is treated as unset and falls back to the default."""
         monkeypatch.delenv("RF_HOME", raising=False)
-        monkeypatch.delenv("ROBOFLOW_HOME", raising=False)
+        monkeypatch.setenv("ROBOFLOW_HOME", "")
         expected = os.path.normpath(os.path.expanduser("~/.roboflow/models"))
         assert get_model_cache_dir() == expected
 

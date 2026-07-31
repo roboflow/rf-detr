@@ -59,7 +59,8 @@ Published checkpoints are cached in `~/.roboflow/models` by default. Override th
 
 ```bash
 export RF_HOME=/mnt/shared/models
-# ROBOFLOW_HOME=/mnt/shared/models works too
+# or, equivalently, use the alias instead:
+export ROBOFLOW_HOME=/mnt/shared/models
 ```
 
 If both are set, `RF_HOME` wins. This only affects where **bare-filename** weights are cached; an explicit path in `pretrain_weights=` is always honored as given.
