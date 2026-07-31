@@ -71,6 +71,53 @@ class TestBuildKorniaPipeline:
         with pytest.raises(ValueError, match="BogusTransform"):
             build_kornia_pipeline(mixed, 560)
 
+    @pytest.mark.parametrize(
+        "config",
+        [
+            pytest.param({"GaussianBlur": {"blur_limit": (3, 7), "p": 0.5}}, id="blur_limit-pair"),
+            pytest.param({"GaussianBlur": {"sigma": 1.5, "p": 0.5}}, id="sigma-scalar"),
+            pytest.param({"GaussianBlur": {"sigma": (1.5,), "p": 0.5}}, id="sigma-1elem-seq"),
+            pytest.param({"GaussNoise": {"std_range": 0.05, "p": 0.5}}, id="std_range-scalar"),
+        ],
+    )
+    def test_scalar_or_pair_range_params_build(self, config):
+        """Range params accept a scalar or a pair, as Albumentations does.
+
+        ``_make_rotate`` already accepts either form for ``limit``; these builders used to raise a bare ``TypeError``
+        from inside Kornia on a config that is valid for the CPU path.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        assert build_kornia_pipeline(config, 560) is not None
+
+    @pytest.mark.parametrize(
+        ("blur_limit", "expected"),
+        [
+            pytest.param((3, 7), (7, 7), id="odd-upper-bound"),
+            pytest.param((3, 6), (7, 7), id="even-upper-bound-rounds-up"),
+        ],
+    )
+    def test_blur_limit_pair_uses_upper_bound(self, blur_limit, expected):
+        """A ``(min, max)`` ``blur_limit`` resolves to its upper bound, rounded up to an odd kernel size."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"GaussianBlur": {"blur_limit": blur_limit, "p": 1.0}}, 560)
+        transform = next(iter(pipeline.children()))
+        assert transform.flags["kernel_size"] == expected
+
+    def test_scalar_std_range_is_used_verbatim(self):
+        """A scalar ``std_range`` is used as-is, with no per-sample-drift warning emitted."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            pipeline = kornia_transforms.build_kornia_pipeline({"GaussNoise": {"std_range": 0.05, "p": 1.0}}, 560)
+
+        transform = next(iter(pipeline.children()))
+        assert transform.flags["std"] == pytest.approx(0.05)
+        mock_warning.assert_not_called()
+
     def test_hflip_disabled_for_keypoint_pipeline(self):
         """Keypoint-mode Kornia augmentation drops hflip transforms with a warning."""
         from unittest import mock
