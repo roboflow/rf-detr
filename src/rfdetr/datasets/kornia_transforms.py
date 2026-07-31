@@ -276,7 +276,12 @@ def _as_range(value: Any) -> tuple[float, float]:
     if isinstance(value, (list, tuple)):
         if len(value) == 1:
             return (float(value[0]), float(value[0]))
-        return (float(value[0]), float(value[1]))
+        if len(value) == 2:
+            return (float(value[0]), float(value[1]))
+        raise ValueError(
+            "Range parameter must be a scalar, a 1-element sequence, or a 2-element (min, max) pair; "
+            f"got a {len(value)}-element sequence: {value!r}"
+        )
     return (float(value), float(value))
 
 
@@ -402,7 +407,18 @@ def _make_gaussian_blur(params: dict[str, Any]) -> Any:
     # bound, the same direction the GaussNoise builder below resolves its range.
     blur_limit = params.get("blur_limit", 3)
     if isinstance(blur_limit, (list, tuple)):
+        if len(blur_limit) == 2 and blur_limit[0] != blur_limit[1]:
+            logger.warning(
+                "GPU augmentation (Kornia) uses a fixed kernel_size=%d for GaussianBlur "
+                "(Kornia does not sample the kernel size per call). "
+                "CPU augmentation (albumentations) samples an odd kernel from [%s, %s].",
+                max(blur_limit),
+                blur_limit[0],
+                blur_limit[1],
+            )
         blur_limit = max(blur_limit)
+    # Kornia requires an integer kernel size; a float (e.g. 5.0) builds but crashes at forward time.
+    blur_limit = int(blur_limit)
     # Ensure blur_limit is odd and at least 3 (Kornia requires kernel_size >= 3)
     if blur_limit % 2 == 0:
         blur_limit = blur_limit + 1
