@@ -321,6 +321,7 @@ GitHub Actions workflows in `.github/workflows/`:
 - **ci-tests-cpu.yml:** CPU tests across OS/Python versions
 - **ci-tests-gpu.yml:** GPU-dependent tests
 - **ci-legacy-checkpoints.yml:** Backward-compatibility checkpoint-loading tests across historical rfdetr releases (advisory only — not a required check; a compat break does not block merge)
+- **ci-deps-resolution.yml:** Dependency resolution (`uv lock`) plus an install-plan check (`uv sync --dry-run`) for every extra on every supported Python (3.10-3.14). Resolution alone does not prove a pinned version ships a wheel for the interpreter in use — add new extras to the `install-plan` job's loop
 - **build-package.yml:** Build and validate distributions
 - **ci-build-docs.yml:** Documentation builds
 - **publish-docs.yml:** Deploy docs to GitHub Pages
