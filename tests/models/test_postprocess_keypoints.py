@@ -41,6 +41,23 @@ def test_postprocess_keypoints_shape_and_scores() -> None:
     torch.testing.assert_close(keypoint_precision[:, :, 2], torch.full((2, 17), -0.25))
 
 
+def test_gather_keypoints_for_queries_repeats_duplicated_indices() -> None:
+    """Duplicated and out-of-order query indices must each reproduce that query's exact keypoint rows.
+
+    Top-k selection can pick the same query under two classes, so the gather has to copy the full per-query keypoint
+    block verbatim for every occurrence.
+    """
+    out_keypoints_i = torch.randn(4, 17, 8)
+    query_indices = torch.tensor([3, 1, 3])  # query 3 selected twice, out of order
+
+    gathered = PostProcess._gather_keypoints_for_queries(out_keypoints_i, query_indices)
+
+    assert gathered.shape == (3, 17, 8)
+    assert torch.equal(gathered[0], out_keypoints_i[3])
+    assert torch.equal(gathered[1], out_keypoints_i[1])
+    assert torch.equal(gathered[2], out_keypoints_i[3])
+
+
 def test_postprocess_keypoints_class_filtering() -> None:
     """Class-specific keypoint slots should be selected from padded per-class keypoint tensors."""
     postprocess = PostProcess(num_select=1, num_keypoints_per_class=[2, 1])

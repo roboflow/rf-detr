@@ -207,6 +207,29 @@ class TestPostProcessMasks:
         expected = torch.tensor([[True, False], [False, True]])
         assert torch.equal(results[0]["masks"].squeeze(1)[0], expected)
 
+    def test_duplicate_query_selection_repeats_the_same_mask_rows(self):
+        """Top-k can pick the same query under two classes; each pick must yield that query's exact mask.
+
+        The mask gather selects whole planes by query index, so duplicated and out-of-order indices must reproduce the
+        source plane verbatim for every occurrence.
+        """
+        out_masks = torch.randn(1, 4, 8, 8)
+        scores = torch.rand(1, 3)
+        labels = torch.tensor([[0, 1, 0]])
+        boxes = torch.zeros(1, 3, 4)
+        topk_boxes = torch.tensor([[2, 2, 1]])  # query 2 selected twice (two classes), then query 1
+        target_sizes = torch.tensor([[256, 256]])
+
+        results = PostProcess._postprocess_masks(
+            out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=False
+        )
+
+        masks = results[0]["masks"].squeeze(1)
+        expected = out_masks[0] > 0.0
+        assert torch.equal(masks[0], expected[2])
+        assert torch.equal(masks[1], expected[2])
+        assert torch.equal(masks[2], expected[1])
+
     def test_forward_threads_upsample_flag_from_constructor(self):
         """PostProcess.forward() must respect the constructor's upsample_masks_to_image_size setting."""
         batch, num_queries, mask_h, mask_w = 1, 4, 8, 8
