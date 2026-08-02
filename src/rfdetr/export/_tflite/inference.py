@@ -22,12 +22,10 @@ from numpy.typing import NDArray
 from PIL import Image as PILImage
 from supervision import Detections
 
+from rfdetr.export._resize import _bilinear_resize_half_pixel
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
-
-# PILImage.Resampling was introduced in Pillow 9.1; fall back to the legacy constant.
-_PIL_BILINEAR = getattr(PILImage, "Resampling", PILImage).BILINEAR
 
 _IMAGENET_MEAN: list[float] = [0.485, 0.456, 0.406]
 _IMAGENET_STD: list[float] = [0.229, 0.224, 0.225]
@@ -72,42 +70,6 @@ def _create_interpreter(model_path: str | Path) -> Any:
     for od in out_det:
         logger.debug("Output : %s  name=%s", od["shape"], od.get("name", "<unnamed>"))
     return interp
-
-
-def _bilinear_resize_half_pixel(src: NDArray[np.float32], out_h: int, out_w: int) -> NDArray[np.float32]:
-    """Numpy bilinear resize matching ``F.interpolate(mode="bilinear", align_corners=False)``.
-
-    Half-pixel center convention. Used by ``_decode_masks`` only when ``torch`` is not importable.
-
-    Args:
-        src: Source array of shape ``(K, src_h, src_w)``.
-        out_h: Target height in pixels.
-        out_w: Target width in pixels.
-
-    Returns:
-        Float32 array of shape ``(K, out_h, out_w)``.
-
-    Note:
-        Replaces ``PIL.Image.resize(BILINEAR)``, which uses a corner-aligned half-pixel convention and
-        produced border-pixel discrepancies vs ``F.interpolate``.
-    """
-    src_h, src_w = src.shape[-2], src.shape[-1]
-    src_y = (np.arange(out_h, dtype=np.float32) + 0.5) * (src_h / out_h) - 0.5
-    src_x = (np.arange(out_w, dtype=np.float32) + 0.5) * (src_w / out_w) - 0.5
-    src_y = np.clip(src_y, 0.0, src_h - 1)
-    src_x = np.clip(src_x, 0.0, src_w - 1)
-    y0 = np.floor(src_y).astype(np.int64)
-    x0 = np.floor(src_x).astype(np.int64)
-    y1 = np.minimum(y0 + 1, src_h - 1)
-    x1 = np.minimum(x0 + 1, src_w - 1)
-    dy = (src_y - y0)[:, None]
-    dx = (src_x - x0)[None, :]
-    a = src[..., y0[:, None], x0[None, :]]
-    b = src[..., y0[:, None], x1[None, :]]
-    c = src[..., y1[:, None], x0[None, :]]
-    d = src[..., y1[:, None], x1[None, :]]
-    out = (1 - dy) * ((1 - dx) * a + dx * b) + dy * ((1 - dx) * c + dx * d)
-    return np.asarray(out, dtype=np.float32)
 
 
 def _decode_masks(mask_logits: NDArray[np.floating[Any]], out_size: tuple[int, int]) -> NDArray[np.bool_]:
@@ -160,7 +122,8 @@ def _preprocess_image(
     """Resize and ImageNet-normalise an image to match ``RFDETR.predict()``.
 
     Uses ``torchvision.transforms.functional`` when importable for bit-exact parity, and falls back
-    to ``PIL.Image.resize`` with BILINEAR for torch-free deployments.
+    to the pure-NumPy ``_bilinear_resize_half_pixel`` for torch-free deployments. Both paths resize
+    with predict()'s convention: bilinear, half-pixel centers, ``antialias=False``.
 
     Args:
         pil_img: Source PIL image at native resolution.
@@ -171,9 +134,9 @@ def _preprocess_image(
         Float32 array of shape ``(1, height, width, channels)`` in NHWC.
 
     Note:
-        The PIL fallback uses BILINEAR resize, which does not perfectly match PyTorch's ``F.resize``
-        (different coordinate conventions). For bit-exact parity with ``RFDETR.predict()``, ensure
-        ``torch`` and ``torchvision`` are importable.
+        The NumPy fallback matches the torchvision path up to float32 op-order noise (~5e-5 in
+        normalised space). For bit-exact parity with ``RFDETR.predict()``, ensure ``torch`` and
+        ``torchvision`` are importable.
     """
     height, width = hw
     pil_mode = "L" if channels == 1 else "RGB"
@@ -181,13 +144,14 @@ def _preprocess_image(
 
     nchw_float: NDArray[np.float32] | None = None
     try:
-        # Match PyTorch.predict() exactly: torchvision to_tensor -> resize -> normalize.
+        # Match PyTorch.predict() exactly: torchvision to_tensor -> resize(antialias=False) -> normalize.
+        # antialias=False mirrors detr.py's predict(); torchvision's float-tensor default is True.
         import torch
         import torchvision.transforms.functional as _F  # noqa: N812
 
         with torch.no_grad():
             t = _F.to_tensor(pil_rgb)
-            t = _F.resize(t, list(hw))
+            t = _F.resize(t, list(hw), antialias=False)
             mean_list = [_IMAGENET_MEAN[i % 3] for i in range(channels)]
             std_list = [_IMAGENET_STD[i % 3] for i in range(channels)]
             t = _F.normalize(t, mean_list, std_list)
@@ -199,15 +163,18 @@ def _preprocess_image(
         # NCHW -> NHWC for the TFLite interpreter.
         return np.asarray(nchw_float.transpose(0, 2, 3, 1), dtype=np.float32)
 
-    # Torch-free fallback: PIL BILINEAR. PIL's default is BICUBIC, which diverges from PyTorch.
-    arr = np.array(pil_rgb.resize((width, height), _PIL_BILINEAR), dtype=np.float32) / 255.0
+    # Torch-free fallback: same antialias-free half-pixel bilinear as predict(), in NumPy.
+    # PIL resize is not an option here: both BILINEAR and BICUBIC apply an adaptive antialias
+    # filter when downscaling and diverge from predict() by up to ~1.7 in normalised space.
+    arr = np.asarray(pil_rgb, dtype=np.float32) / 255.0
     if arr.ndim == 2:  # "L" -> (height, width); TFLite needs (height, width, 1).
         arr = arr[:, :, np.newaxis]
+    arr = _bilinear_resize_half_pixel(arr.transpose(2, 0, 1), height, width).transpose(1, 2, 0)
 
     mean = np.array([_IMAGENET_MEAN[i % 3] for i in range(channels)], dtype=np.float32)
     std = np.array([_IMAGENET_STD[i % 3] for i in range(channels)], dtype=np.float32)
 
-    return ((arr - mean) / std)[np.newaxis]
+    return np.asarray(((arr - mean) / std)[np.newaxis], dtype=np.float32)
 
 
 def _run_inference(

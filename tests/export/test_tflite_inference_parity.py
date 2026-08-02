@@ -10,8 +10,11 @@ drift.
 History: an earlier version of ``_run_inference`` called ``PIL.Image.resize`` without a filter argument, picking up
 PIL's default (BICUBIC since Pillow 9.1.0). PyTorch's predict() path uses torchvision ``F.resize`` (BILINEAR). The
 mismatch caused IoU drift up to 0.36 on detail-rich images and a 2-class-mismatch FP16 disaster on the ``dog`` test
-image. This test exists to keep ``_preprocess_image`` locked to BILINEAR -- any regression that re-introduces BICUBIC or
-otherwise shifts the resize filter will surface here.
+image. Later, predict() switched to ``antialias=False`` (#1206) to match the antialias-free resize the released
+checkpoints were trained with, and the export paths silently kept torchvision's ``antialias=True`` default -- 83-97% of
+float bits differed and RFDETRNano detection counts shifted at threshold 0.3. This test locks ``_preprocess_image`` to
+predict()'s exact resize convention: the torchvision path must match bit-for-bit, and any regression in the filter
+(BICUBIC) or the antialias flag will surface here.
 """
 
 from __future__ import annotations
@@ -23,29 +26,38 @@ import pytest
 import torchvision.transforms.functional as F  # noqa: N812
 from PIL import Image as PILImage
 
-from rfdetr.export._tflite.inference import _bilinear_resize_half_pixel, _preprocess_image
+from rfdetr.export._resize import _bilinear_resize_half_pixel
+from rfdetr.export._tflite.inference import _preprocess_image
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
-# Bound for max abs diff in normalised space between the PyTorch and TFLite preprocessing pipelines.
-# With torchvision available (which is always the case in this repo's CI -- it's a hard rfdetr
-# dependency) _preprocess_image runs the same torchvision call PyTorch's predict() uses, so the
-# tensors are bit-exact. The 0.05 bound is generous so the torch-free fallback path (which uses
-# PIL.BILINEAR and shows ~0.016 max diff) also passes; the BICUBIC regression would push max diff
-# to ~0.5, well above the bound.
-MAX_ABS_DIFF_BOUND = 0.05
-# When torchvision is available the inference path matches torchvision-resize byte-for-byte, so
-# the diff is effectively zero modulo floating-point noise.
-BIT_EXACT_BOUND = 1e-5
+# Bound for max abs diff in normalised space for the torch-free fallback path, which reimplements
+# predict()'s antialias-free bilinear resize in pure NumPy (`_bilinear_resize_half_pixel`). The
+# residual is float32 op-order noise only, measured ~5e-5; the old PIL.BILINEAR fallback (adaptive
+# antialias filter) diverged by ~1.6 and would blow far past this bound.
+FALLBACK_MAX_ABS_DIFF_BOUND = 1e-3
 
 
 def _pytorch_preprocess(pil_img: PILImage.Image, hw: tuple[int, int]) -> np.ndarray:
-    """Mirror of the PyTorch predict() preprocessing: to_tensor -> resize -> normalize."""
+    """Mirror of the PyTorch predict() preprocessing: to_tensor -> resize(antialias=False) -> normalize."""
     img = F.to_tensor(pil_img)
-    img = F.resize(img, list(hw))
+    img = F.resize(img, list(hw), antialias=False)
     img = F.normalize(img, IMAGENET_MEAN, IMAGENET_STD)
     return img.unsqueeze(0).numpy()
+
+
+def _assert_bit_identical(pt: np.ndarray, tf: np.ndarray, context: str) -> None:
+    """Assert two float32 arrays are identical at the bit level (uint32 view, no tolerance)."""
+    pt32 = np.ascontiguousarray(pt, dtype=np.float32).view(np.uint32)
+    tf32 = np.ascontiguousarray(tf, dtype=np.float32).view(np.uint32)
+    n_diff = int((pt32 != tf32).sum())
+    assert n_diff == 0, (
+        f"{context}: {n_diff}/{pt32.size} float bits differ from predict()'s preprocessing "
+        f"(max|diff|={float(np.abs(pt - tf).max()):.6f}). With torchvision importable, "
+        f"_preprocess_image must run the exact predict() call chain "
+        f"(to_tensor -> resize(antialias=False) -> normalize) and match bit-for-bit."
+    )
 
 
 def _tflite_preprocess_to_nchw(pil_img: PILImage.Image, hw: tuple[int, int]) -> np.ndarray:
@@ -88,17 +100,10 @@ class TestPreprocessingParity:
         tf = _tflite_preprocess_to_nchw(pil, tgt_size)
 
         assert pt.shape == tf.shape, f"shape mismatch: PT {pt.shape} vs TF {tf.shape}"
-        max_diff = float(np.abs(pt - tf).max())
         # torchvision is a hard rfdetr dependency, so in this test environment _preprocess_image
-        # uses the torchvision path and matches PyTorch byte-for-byte. The torch-free fallback is
+        # uses the torchvision path and matches PyTorch bit-for-bit. The torch-free fallback is
         # exercised separately by test_torch_free_fallback_still_close.
-        assert max_diff < BIT_EXACT_BOUND, (
-            f"PyTorch vs TFLite preprocessing diverged: max|diff|={max_diff:.6f} exceeds "
-            f"{BIT_EXACT_BOUND}. With torchvision available, _preprocess_image should be using "
-            f"torchvision.transforms.functional.resize and the diff should be effectively zero. "
-            f"If this fires, check that the torch/torchvision import path inside _preprocess_image "
-            f"hasn't been broken."
-        )
+        _assert_bit_identical(pt, tf, f"{src_size} -> {tgt_size}")
 
     def test_grayscale_channel_handling(self) -> None:
         """Grayscale (channels=1) path must produce shape (1, H, W, 1)."""
@@ -130,11 +135,11 @@ class TestPreprocessingParity:
         np.testing.assert_allclose(per_channel_mean, expected, atol=1e-3)
 
     def test_torch_free_fallback_still_close(self) -> None:
-        """Simulate the torch-free environment by masking torch imports; assert the PIL fallback still stays within the
-        looser MAX_ABS_DIFF_BOUND.
+        """Simulate the torch-free environment by masking torch imports; assert the NumPy fallback stays within
+        FALLBACK_MAX_ABS_DIFF_BOUND.
 
-        This documents the gap users on edge deployments without torch installed will see (versus the bit-exact
-        torchvision path).
+        The fallback runs ``_bilinear_resize_half_pixel`` -- the same antialias-free half-pixel convention predict()
+        uses -- so the residual versus the torchvision path is float32 op-order noise only.
         """
         from unittest import mock
 
@@ -142,15 +147,15 @@ class TestPreprocessingParity:
         tgt = (384, 384)
         pt = _pytorch_preprocess(pil, tgt)
 
-        # Hide torch from _preprocess_image's lazy import, forcing the PIL fallback.
+        # Hide torch from _preprocess_image's lazy import, forcing the NumPy fallback.
         with mock.patch.dict(sys.modules, {"torch": None}):
             tf = _tflite_preprocess_to_nchw(pil, tgt)
 
         max_diff = float(np.abs(pt - tf).max())
-        assert max_diff < MAX_ABS_DIFF_BOUND, (
-            f"Torch-free PIL fallback diverged: max|diff|={max_diff:.4f} > {MAX_ABS_DIFF_BOUND}. "
-            "The fallback uses PIL.BILINEAR which should keep diff ~0.016; a regression to "
-            "BICUBIC would push it ~30x larger."
+        assert max_diff < FALLBACK_MAX_ABS_DIFF_BOUND, (
+            f"Torch-free NumPy fallback diverged: max|diff|={max_diff:.4f} > {FALLBACK_MAX_ABS_DIFF_BOUND}. "
+            "The fallback must use _bilinear_resize_half_pixel (antialias-free, half-pixel centers); "
+            "a regression to PIL resize (BILINEAR or BICUBIC, both antialiased) pushes the diff above 0.4."
         )
 
 
@@ -183,7 +188,33 @@ class TestPreprocessingFilterRegression:
         assert max_diff_current * 5 < max_diff_bicubic, (
             f"_preprocess_image is too close to BICUBIC behaviour: "
             f"current max|diff|={max_diff_current:.4f}, BICUBIC max|diff|={max_diff_bicubic:.4f}. "
-            f"Check that _PIL_BILINEAR is being passed to .resize()."
+            f"Check that the resize path is not falling back to PIL's default filter."
+        )
+
+    def test_antialias_true_would_be_much_worse(self) -> None:
+        """The regression this file guards against: resizing with torchvision's ``antialias=True`` default.
+
+        This is what the export paths silently did after predict() switched to ``antialias=False`` (#1206): calling
+        ``F.resize`` without the flag flips 83-97% of float bits versus predict()'s tensors. The current code must stay
+        bit-identical while the antialiased variant stays far away -- proving the parity assertion actually
+        discriminates on the antialias flag.
+        """
+        pil = _make_synthetic_rgb(seed=13, size=(720, 1280))
+        tgt = (384, 384)
+
+        pt = _pytorch_preprocess(pil, tgt)
+        tf_current = _tflite_preprocess_to_nchw(pil, tgt)
+
+        img = F.to_tensor(pil.convert("RGB"))
+        img = F.resize(img, list(tgt), antialias=True)
+        img = F.normalize(img, IMAGENET_MEAN, IMAGENET_STD)
+        tf_antialias = img.unsqueeze(0).numpy()
+
+        _assert_bit_identical(pt, tf_current, "current code vs predict()")
+        max_diff_antialias = float(np.abs(pt - tf_antialias).max())
+        assert max_diff_antialias > 0.1, (
+            f"antialias=True variant unexpectedly close to predict() (max|diff|={max_diff_antialias:.4f}); "
+            "this test can no longer discriminate the antialias regression."
         )
 
 

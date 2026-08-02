@@ -145,11 +145,13 @@ def make_infer_image(
             )
         image = Image.open(infer_dir).convert("RGB")
 
+    # Tensorize-then-resize with antialias=False mirrors RFDETR.predict()'s preprocessing, so the
+    # traced example input (and any export sanity check run on it) sees production-domain tensors.
     transforms = Compose(
         [
-            Resize((shape[0], shape[1])),
             ToImage(),
             ToDtype(torch.float32, scale=True),
+            Resize((shape[0], shape[1]), antialias=False),
             Normalize(),
         ]
     )
