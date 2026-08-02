@@ -112,8 +112,8 @@ class TestBenchmarkShapeParameterization:
     def test_post_process_repeats_boxes_for_duplicated_topk_queries(self) -> None:
         """Top-k over the flattened [Q, C] scores can pick the same query under two classes.
 
-        Each pick must reproduce that query's exact box, so duplicated and out-of-order query indices have to copy
-        the source row verbatim for every occurrence.
+        Each pick must reproduce that query's exact box, so duplicated and out-of-order query indices have to copy the
+        source row verbatim for every occurrence.
         """
         from rfdetr.export.benchmark import box_cxcywh_to_xyxy, post_process
 
