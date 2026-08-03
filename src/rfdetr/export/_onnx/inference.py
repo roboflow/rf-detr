@@ -11,6 +11,7 @@ RF-DETR training stack — only ``onnxruntime``, ``numpy``, ``supervision``, and
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from numpy.typing import NDArray
 from PIL import Image as PILImage
 from supervision import Detections
 
+from rfdetr.export._resize import _bilinear_resize_half_pixel
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -85,8 +87,11 @@ def _preprocess_pil_to_nchw(
 ) -> NDArray[np.float32]:
     """Resize and normalise a PIL image to an ``(1, C, H, W)`` float32 NCHW tensor.
 
-    Resizes using ``BILINEAR`` to match ``torchvision.transforms.functional.resize()`` (PIL's default is ``BICUBIC``
-    which produces slightly different values and can lower confidence scores).  Normalises with ImageNet statistics:
+    Resizes with ``RFDETR.predict()``'s exact convention — bilinear, half-pixel centers,
+    ``antialias=False`` — via ``torchvision`` when importable (bit-exact parity) or the pure-NumPy
+    ``_bilinear_resize_half_pixel`` otherwise (float32 op-order noise only). PIL resize is not used:
+    both its BILINEAR and BICUBIC filters apply adaptive antialiasing when downscaling and diverge
+    from predict(), shifting confidence scores. Normalises with ImageNet statistics:
     ``mean=[0.485, 0.456, 0.406]``, ``std=[0.229, 0.224, 0.225]``.
 
     Args:
@@ -105,22 +110,32 @@ def _preprocess_pil_to_nchw(
     """
     _imagenet_mean = [0.485, 0.456, 0.406]
     _imagenet_std = [0.229, 0.224, 0.225]
-    mean = np.array([_imagenet_mean[i % 3] for i in range(channels)], dtype=np.float32)
-    std = np.array([_imagenet_std[i % 3] for i in range(channels)], dtype=np.float32)
     pil_mode = "L" if channels == 1 else "RGB"
-    # BILINEAR matches torchvision default; PIL default (BICUBIC) causes confidence drop
-    arr = (
-        np.array(
-            image.convert(pil_mode).resize((width, height), PILImage.Resampling.BILINEAR),
-            dtype=np.float32,
-        )
-        / 255.0
-    )
+    pil_img = image.convert(pil_mode)
+    mean_list = [_imagenet_mean[i % 3] for i in range(channels)]
+    std_list = [_imagenet_std[i % 3] for i in range(channels)]
+
+    with contextlib.suppress(ImportError):
+        # Match predict() exactly: torchvision to_tensor -> resize(antialias=False) -> normalize.
+        # antialias=False mirrors detr.py's predict(); torchvision's float-tensor default is True.
+        import torch
+        import torchvision.transforms.functional as _F  # noqa: N812
+
+        with torch.no_grad():
+            t = _F.to_tensor(pil_img)
+            t = _F.resize(t, [height, width], antialias=False)
+            t = _F.normalize(t, mean_list, std_list)
+        return np.asarray(t.unsqueeze(0).cpu().numpy(), dtype=np.float32)
+
+    # Torch-free fallback: same antialias-free half-pixel bilinear as predict(), in NumPy.
+    arr = np.asarray(pil_img, dtype=np.float32) / 255.0
     if arr.ndim == 2:  # "L" → (H, W); needs (H, W, 1)
         arr = arr[:, :, np.newaxis]
-    arr = (arr - mean) / std
-    arr = arr.transpose(2, 0, 1)  # HWC → CHW
-    return np.expand_dims(arr, axis=0).astype(np.float32)  # (1, C, H, W)
+    chw = _bilinear_resize_half_pixel(arr.transpose(2, 0, 1), height, width)
+    mean = np.array(mean_list, dtype=np.float32)[:, np.newaxis, np.newaxis]
+    std = np.array(std_list, dtype=np.float32)[:, np.newaxis, np.newaxis]
+    chw = (chw - mean) / std
+    return np.expand_dims(chw, axis=0).astype(np.float32)  # (1, C, H, W)
 
 
 def _run_inference(
@@ -136,11 +151,14 @@ def _run_inference(
 
     **Input contract** (must match ``RFDETR.predict()`` preprocessing exactly):
 
-    - Image is opened as-is and converted to ``"RGB"`` (3-channel) or ``"L"``
-      (1-channel greyscale) depending on the model's channel count.
-    - Resize uses ``PIL.Image.Resampling.BILINEAR`` — matching
-      ``torchvision.transforms.functional.resize()`` which defaults to ``InterpolationMode.BILINEAR``.  Using PIL's
-      default (``BICUBIC``) would produce slightly different pixel values and can degrade confidence.
+    - Image is opened with Pillow and converted to ``"RGB"`` (3-channel) or ``"L"``
+      (1-channel greyscale) depending on the model's channel count. PIL is used only to decode and
+      convert — never to resize.
+    - Resize follows ``RFDETR.predict()``'s exact convention — bilinear, half-pixel centers,
+      ``antialias=False`` — applied by :func:`_preprocess_pil_to_nchw` via ``torchvision`` when importable
+      (bit-exact) or the pure-NumPy ``_bilinear_resize_half_pixel`` fallback. PIL's own BILINEAR/BICUBIC
+      filters apply adaptive antialiasing when downscaling and would shift pixel values away from predict(),
+      degrading confidence.
     - Pixel values are scaled to ``[0, 1]`` then normalised with ImageNet
       statistics: ``mean=[0.485, 0.456, 0.406]``, ``std=[0.229, 0.224, 0.225]``.
     - The tensor is kept as ``[1, C, H, W]`` (NCHW) — unlike the TFLite helper
