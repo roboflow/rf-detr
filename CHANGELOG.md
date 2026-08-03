@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `keypoint_flip_pairs` no longer silently disables horizontal-flip augmentations (`HorizontalFlip`, `Flip`, `D4`) on detection-only datasets when a custom `aug_config` is supplied. `AlbumentationsWrapper.from_config` treats an empty `keypoint_flip_pairs` as "keypoint pipeline with no flip pairs defined" and drops flip transforms for annotation safety; detection pipelines must pass `None` instead of `[]` to keep flips enabled. ([#1243](https://github.com/roboflow/rf-detr/pull/1243))
+- Export inference and INT8 calibration now resize with `RFDETR.predict()`'s exact convention (bilinear, half-pixel centers, `antialias=False`) across the ONNX inference, TFLite inference, INT8 TFLite calibration, and benchmark/traced-example paths. These paths previously resized through PIL's antialiased BILINEAR/BICUBIC filters, which diverge from `predict()` on downscale and shift exported-model confidence scores and INT8 calibration ranges. A shared torch-free `_bilinear_resize_half_pixel` NumPy kernel (`rfdetr/export/_resize.py`) mirrors the convention wherever torchvision is unavailable. Re-export any INT8 TFLite model to recalibrate against the corrected pixel distribution. ([#1269](https://github.com/roboflow/rf-detr/pull/1269))
 
 ## [1.9.0] — 2026-07-27
 
