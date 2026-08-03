@@ -152,11 +152,14 @@ def _run_inference(
 
     **Input contract** (must match ``RFDETR.predict()`` preprocessing exactly):
 
-    - Image is opened as-is and converted to ``"RGB"`` (3-channel) or ``"L"``
-      (1-channel greyscale) depending on the model's channel count.
-    - Resize uses ``PIL.Image.Resampling.BILINEAR`` — matching
-      ``torchvision.transforms.functional.resize()`` which defaults to ``InterpolationMode.BILINEAR``.  Using PIL's
-      default (``BICUBIC``) would produce slightly different pixel values and can degrade confidence.
+    - Image is opened with Pillow and converted to ``"RGB"`` (3-channel) or ``"L"``
+      (1-channel greyscale) depending on the model's channel count. PIL is used only to decode and
+      convert — never to resize.
+    - Resize follows ``RFDETR.predict()``'s exact convention — bilinear, half-pixel centers,
+      ``antialias=False`` — applied by :func:`_preprocess_pil_to_nchw` via ``torchvision`` when importable
+      (bit-exact) or the pure-NumPy ``_bilinear_resize_half_pixel`` fallback. PIL's own BILINEAR/BICUBIC
+      filters apply adaptive antialiasing when downscaling and would shift pixel values away from predict(),
+      degrading confidence.
     - Pixel values are scaled to ``[0, 1]`` then normalised with ImageNet
       statistics: ``mean=[0.485, 0.456, 0.406]``, ``std=[0.229, 0.224, 0.225]``.
     - The tensor is kept as ``[1, C, H, W]`` (NCHW) — unlike the TFLite helper
