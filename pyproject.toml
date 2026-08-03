@@ -416,6 +416,5 @@ overrides = [
     "rfdetr.datasets.transforms",
     "rfdetr.datasets.yolo",
     "rfdetr.detr",
-    "rfdetr.variants",
   ], ignore_errors = true },
 ]
