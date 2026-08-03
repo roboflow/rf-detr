@@ -22,8 +22,8 @@ import pytest
 import supervision as sv
 from PIL import Image as PILImage
 
+from rfdetr.export._resize import _bilinear_resize_half_pixel
 from rfdetr.export._tflite.inference import (
-    _bilinear_resize_half_pixel,
     _create_interpreter,
     _decode_masks,
     _preprocess_image,
@@ -767,8 +767,8 @@ class TestPreprocessImage:
         # pixel 0 → 0.0 → (0.0 - 0.485) / 0.229 ≈ -2.12
         assert out.min() < -1.0
 
-    def test_pil_fallback_when_torch_unavailable(self) -> None:
-        """PIL path is used when torch is masked from sys.modules."""
+    def test_numpy_fallback_when_torch_unavailable(self) -> None:
+        """The NumPy resize path is used when torch is masked from sys.modules."""
         pil_img = PILImage.new("RGB", (100, 80))
         with mock.patch.dict(
             sys.modules,
