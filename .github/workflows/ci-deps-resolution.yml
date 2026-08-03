@@ -115,3 +115,27 @@ jobs:
       - name: Minimize uv cache
         continue-on-error: true
         run: uv cache prune --ci
+
+  deps-resolution-complete:
+    name: Dependency resolution complete
+    # Single aggregate gate for branch protection: require THIS one check instead of the ~70
+    # install-plan matrix contexts (5 interpreters × every extra) plus the two resolution jobs.
+    # `needs.<job>.result` collapses a whole matrix to one value — `success` only if every cell
+    # passed. `if: always()` so the gate still runs (and fails) when an upstream job fails;
+    # without it a failed dependency would skip this job and branch protection would see no signal.
+    if: always()
+    needs: [universal-resolution, list-extras, install-plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: ✅ Assert every resolution job succeeded
+        run: |
+          results="universal-resolution=${{ needs.universal-resolution.result }} list-extras=${{ needs.list-extras.result }} install-plan=${{ needs.install-plan.result }}"
+          echo "$results"
+          for pair in $results; do
+            if [ "${pair#*=}" != "success" ]; then
+              echo "::error::Dependency resolution incomplete — $results"
+              exit 1
+            fi
+          done
+          echo "All dependency-resolution jobs passed."
