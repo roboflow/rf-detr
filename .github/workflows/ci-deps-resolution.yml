@@ -81,18 +81,38 @@ jobs:
         continue-on-error: true
         run: uv cache prune --ci
 
-  install-plan:
-    name: Install plan for every extra — Python ${{ matrix.python-version }}
+  list-extras:
+    name: List extras for install-plan
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
+    outputs:
+      extras: ${{ steps.collect.outputs.extras }}
+    steps:
+      - name: 📋 Collect the extras that get install-plan coverage
+        id: collect
+        # Single source of truth for the install-plan matrix below — `fromJSON` fans this list out
+        # into one job per extra, so there is no in-step loop to keep in sync. tensorrt /
+        # tensorrt-bench / xla / plus are excluded: they need NVIDIA/TPU indexes or the separately
+        # licensed rfdetr_plus package, none of which resolve on a plain runner. Add a new extra
+        # to this list to give it install-plan coverage.
+        run: |
+          echo 'extras=["onnx","executorch","tflite","coreml","augment","train","cli","loggers","visual","lora"]' >> "$GITHUB_OUTPUT"
+
+  install-plan:
+    name: Install plan [${{ matrix.extra }}] — Python ${{ matrix.python-version }}
+    needs: list-extras
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        # Every interpreter allowed by requires-python (>=3.10). ci-tests-cpu.yml installs only
-        # train/augment/cli/visual (+coreml on macOS), so onnx, executorch, tflite, loggers and
-        # lora have no install coverage there at any version — and it installs via `uv pip
+        # Every interpreter allowed by requires-python (>=3.10) crossed with every extra from the
+        # list-extras job, so each extra/interpreter pair is its own job. ci-tests-cpu.yml installs
+        # only train/augment/cli/visual (+coreml on macOS), so onnx, executorch, tflite, loggers
+        # and lora have no install coverage there at any version — and it installs via `uv pip
         # install`, which backtracks past a missing wheel instead of failing (see below).
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        extra: ${{ fromJSON(needs.list-extras.outputs.extras) }}
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -103,7 +123,7 @@ jobs:
           version: "0.9.26"
           python-version: ${{ matrix.python-version }}
 
-      - name: 📦 Verify every extra has an installable distribution
+      - name: 📦 Verify [${{ matrix.extra }}] has an installable distribution
         # `uv lock` proves a version solution exists; it does NOT prove every pinned version
         # ships a wheel (or sdist) for the interpreter actually in use. A dependency that drops
         # an interpreter, or has not added one yet, still locks cleanly and then fails at install
@@ -114,25 +134,7 @@ jobs:
         # happens) without downloading anything, so this stays cheap. `uv pip install --dry-run`
         # is NOT equivalent: it re-resolves per interpreter and silently backtracks to an older
         # version with a compatible wheel, hiding exactly this bug.
-        #
-        # tensorrt/tensorrt-bench/xla/plus are excluded: they need NVIDIA/TPU indexes or the
-        # separately licensed rfdetr_plus package, none of which resolve on a plain runner.
-        run: |
-          failed=()
-          for extra in onnx executorch tflite coreml augment train cli loggers visual lora; do
-            echo "::group::[$extra] on Python ${{ matrix.python-version }}"
-            if uv sync --extra "$extra" --python ${{ matrix.python-version }} --dry-run; then
-              echo "[$extra] ok"
-            else
-              echo "[$extra] NO INSTALLABLE DISTRIBUTION"
-              failed+=("$extra")
-            fi
-            echo "::endgroup::"
-          done
-          if ((${#failed[@]})); then
-            echo "::error::No installable distribution on Python ${{ matrix.python-version }} for: ${failed[*]}"
-            exit 1
-          fi
+        run: uv sync --extra ${{ matrix.extra }} --python ${{ matrix.python-version }} --dry-run
 
       - name: Minimize uv cache
         continue-on-error: true
