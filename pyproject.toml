@@ -107,7 +107,7 @@ executorch = [
     # executorch publishes cp310-cp313 wheels only (1.3.1 is current) and has no sdist, so a
     # 3.14 install fails on wheel availability rather than resolution. The marker keeps the
     # extra installable-but-empty on 3.14, matching how [tflite] is gated to 3.12. Drop the
-    # upper bound once executorch ships cp314 wheels.
+    # `python_version < '3.14'` marker once executorch ships cp314 wheels.
     "executorch>=1.3,<2.0; python_version < '3.14'",
 ]
 coreml = [
