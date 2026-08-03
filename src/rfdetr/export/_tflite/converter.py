@@ -637,7 +637,8 @@ def _load_calibration_images(
     arrays: list[NDArray[np.float32]] = []
     for img_path in image_paths:
         try:
-            img = Image.open(img_path).convert("RGB")
+            with Image.open(img_path) as _img:
+                img = _img.convert("RGB")
             # Resize with predict()'s convention (bilinear, half-pixel, no antialias) so the INT8
             # calibration ranges come from the same pixel distribution the model sees at inference.
             # PIL's default resize (BICUBIC + adaptive antialias) diverges from that distribution.
