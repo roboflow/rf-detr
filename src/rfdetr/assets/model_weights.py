@@ -89,6 +89,8 @@ class ModelWeightsBase(Enum):
         'https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth'
     """
 
+    _value_: ModelWeightAsset
+
     def __new__(cls, asset: ModelWeightAsset) -> ModelWeightsBase:
         obj = object.__new__(cls)
         obj._value_ = asset
@@ -98,17 +100,17 @@ class ModelWeightsBase(Enum):
     @property
     def filename(self) -> str:
         """Get the filename from the underlying ModelWeightAsset."""
-        return self.value.filename
+        return self._value_.filename
 
     @property
     def url(self) -> str:
         """Get the URL from the underlying ModelWeightAsset."""
-        return self.value.url
+        return self._value_.url
 
     @property
     def md5_hash(self) -> str | None:
         """Get the MD5 hash from the underlying ModelWeightAsset."""
-        return self.value.md5_hash
+        return self._value_.md5_hash
 
     @classmethod
     def from_filename(cls, filename: str) -> ModelWeightAsset | None:
@@ -126,8 +128,8 @@ class ModelWeightsBase(Enum):
             'https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth'
         """
         for member in cls:
-            if member.value.filename == filename:
-                return member.value  # Return the ModelWeightAsset directly
+            if member._value_.filename == filename:
+                return member._value_  # Return the ModelWeightAsset directly
         return None
 
     @classmethod
@@ -163,7 +165,7 @@ class ModelWeightsBase(Enum):
         Returns:
             List of model filenames
         """
-        return [member.value.filename for member in cls]
+        return [member._value_.filename for member in cls]
 
 
 class ModelWeights(ModelWeightsBase):
