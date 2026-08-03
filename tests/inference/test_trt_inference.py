@@ -108,3 +108,27 @@ class TestBenchmarkShapeParameterization:
         results = post_process(outputs, target_sizes, num_queries=num_queries)
 
         assert results[0]["scores"].shape == (num_queries,)
+
+    def test_post_process_repeats_boxes_for_duplicated_topk_queries(self) -> None:
+        """Top-k over the flattened [Q, C] scores can pick the same query under two classes.
+
+        Each pick must reproduce that query's exact box, so duplicated and out-of-order query indices have to copy the
+        source row verbatim for every occurrence.
+        """
+        from rfdetr.export.benchmark import box_cxcywh_to_xyxy, post_process
+
+        logits = torch.full((1, 4, 3), -10.0)
+        logits[0, 2, 0] = 3.0  # query 2, class 0 -> rank 1
+        logits[0, 2, 1] = 2.0  # query 2, class 1 -> rank 2 (same query twice)
+        logits[0, 1, 2] = 1.0  # query 1, class 2 -> rank 3
+        dets = torch.rand(1, 4, 4)
+        target_sizes = torch.tensor([[480, 640]])
+
+        results = post_process({"labels": logits, "dets": dets}, target_sizes, num_queries=3)
+
+        scale = torch.tensor([640.0, 480.0, 640.0, 480.0])
+        expected = box_cxcywh_to_xyxy(dets[0]) * scale
+        assert torch.equal(results[0]["labels"], torch.tensor([0, 1, 2]))
+        assert torch.equal(results[0]["boxes"][0], expected[2])
+        assert torch.equal(results[0]["boxes"][1], expected[2])
+        assert torch.equal(results[0]["boxes"][2], expected[1])

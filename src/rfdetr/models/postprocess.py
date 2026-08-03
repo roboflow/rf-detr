@@ -155,7 +155,7 @@ class PostProcess(nn.Module):
             clamped to ``[0, width]`` for x-coordinates and ``[0, height]`` for y-coordinates.
         """
         boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
-        boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1, 1, 4))
+        boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).expand(-1, -1, 4))
         img_h, img_w = target_sizes.unbind(1)
         scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1).to(boxes.dtype)
         boxes = boxes * scale_fct[:, None, :]
@@ -215,11 +215,9 @@ class PostProcess(nn.Module):
                 scores_i, labels_i = scores_i[sel], labels_i[sel]
                 boxes_i, k_idx = boxes_i[sel], k_idx[sel]
             res_i = {"scores": scores_i, "labels": labels_i, "boxes": boxes_i}
-            masks_i = torch.gather(
-                out_masks[i],
-                0,
-                k_idx.unsqueeze(-1).unsqueeze(-1).repeat(1, out_masks.shape[-2], out_masks.shape[-1]),
-            )  # [K, Hm, Wm]
+            # `index_select` picks whole mask planes without materialising the [K, Hm, Wm] int64
+            # index tensor a `gather` needs (84 MiB at K=300, 192x192 masks).
+            masks_i = out_masks[i].index_select(0, k_idx)  # [K, Hm, Wm]
             if not upsample_masks_to_image_size:
                 res_i["masks"] = (masks_i > 0.0).unsqueeze(1)  # [K,1,Hm,Wm] bool, native resolution
                 results.append(res_i)
@@ -321,11 +319,9 @@ class PostProcess(nn.Module):
         Returns:
             Keypoint predictions aligned with the selected detections.
         """
-        return torch.gather(
-            out_keypoints_i,
-            0,
-            query_indices.unsqueeze(-1).unsqueeze(-1).repeat(1, out_keypoints_i.shape[-2], out_keypoints_i.shape[-1]),
-        )
+        # `index_select` picks whole query rows without materialising the [K, C*max(K_c), D]
+        # int64 index tensor a `gather` needs.
+        return out_keypoints_i.index_select(0, query_indices)
 
     @staticmethod
     def _empty_keypoint_outputs(
