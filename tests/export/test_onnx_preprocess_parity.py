@@ -55,6 +55,7 @@ class TestOnnxPreprocessingParity:
         [
             pytest.param((720, 1280), (384, 384), 5, id="1280x720_to_384x384"),
             pytest.param((600, 800), (384, 384), 8, id="800x600_to_384x384"),
+            pytest.param((500, 500), (256, 256), 11, id="500x500_to_256x256"),
             pytest.param((384, 384), (384, 384), 9, id="identity_384x384"),
         ],
     )
@@ -74,6 +75,35 @@ class TestOnnxPreprocessingParity:
             f"ONNX preprocessing diverged from predict(): {n_diff}/{pt32.size} float bits differ "
             f"(max|diff|={float(np.abs(pt - onnx).max()):.6f}). With torchvision importable it must "
             f"run predict()'s exact call chain (to_tensor -> resize(antialias=False) -> normalize)."
+        )
+
+    def test_antialias_true_would_be_much_worse(self) -> None:
+        """Discriminator: torchvision's ``antialias=True`` default must diverge far from predict().
+
+        The regression this file guards against — the ONNX path silently resized with antialiasing after predict()
+        switched to ``antialias=False`` (#1206), flipping 91%+ of float bits. The current code must stay bit-identical
+        to predict() while the antialiased variant stays far away, proving the bitwise parity assertion discriminates on
+        the antialias flag rather than passing vacuously.
+        """
+        pil = _make_synthetic_rgb(seed=13, size=(720, 1280))
+        tgt = (384, 384)
+
+        pt = _pytorch_preprocess(pil, tgt)
+        onnx = _preprocess_pil_to_nchw(pil, tgt[0], tgt[1], channels=3)
+
+        img = F.to_tensor(pil.convert("RGB"))
+        img = F.resize(img, list(tgt), antialias=True)
+        img = F.normalize(img, IMAGENET_MEAN, IMAGENET_STD)
+        antialias = img.unsqueeze(0).numpy()
+
+        pt32 = np.ascontiguousarray(pt, dtype=np.float32).view(np.uint32)
+        on32 = np.ascontiguousarray(onnx, dtype=np.float32).view(np.uint32)
+        assert int((pt32 != on32).sum()) == 0, "current ONNX code must stay bit-identical to predict()"
+
+        max_diff_antialias = float(np.abs(pt - antialias).max())
+        assert max_diff_antialias > 0.1, (
+            f"antialias=True variant unexpectedly close to predict() (max|diff|={max_diff_antialias:.4f}); "
+            "this test can no longer discriminate the antialias regression."
         )
 
     def test_torch_free_fallback_still_close(self) -> None:
