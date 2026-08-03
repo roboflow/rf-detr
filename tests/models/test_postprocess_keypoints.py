@@ -41,6 +41,50 @@ def test_postprocess_keypoints_shape_and_scores() -> None:
     torch.testing.assert_close(keypoint_precision[:, :, 2], torch.full((2, 17), -0.25))
 
 
+def test_gather_keypoints_for_queries_repeats_duplicated_indices() -> None:
+    """Duplicated and out-of-order query indices must each reproduce that query's exact keypoint rows.
+
+    Top-k selection can pick the same query under two classes, so the gather has to copy the full per-query keypoint
+    block verbatim for every occurrence.
+    """
+    out_keypoints_i = torch.randn(4, 17, 8)
+    query_indices = torch.tensor([3, 1, 3])  # query 3 selected twice, out of order
+
+    gathered = PostProcess._gather_keypoints_for_queries(out_keypoints_i, query_indices)
+
+    assert gathered.shape == (3, 17, 8)
+    assert torch.equal(gathered[0], out_keypoints_i[3])
+    assert torch.equal(gathered[1], out_keypoints_i[1])
+    assert torch.equal(gathered[2], out_keypoints_i[3])
+
+
+def test_postprocess_keypoints_decodes_duplicated_and_out_of_order_queries() -> None:
+    """Duplicated and out-of-order query selection must decode each occurrence from the correct source query.
+
+    Drives dupe/out-of-order ``topk_boxes`` through the full class-filtering path (``_decode_keypoints_for_image``)
+    rather than the raw gather helper: two detections that select the same query under the same class must produce
+    identical decoded keypoints, while an interleaved detection must decode a different query's block.
+    """
+    postprocess = PostProcess(num_keypoints_per_class=[2, 2])
+    out_keypoints = torch.randn(1, 4, 4, 8)  # (B, Q, num_classes * max_kpts, D); D >= 7 for precision cols
+    topk_boxes = torch.tensor([[2, 1, 2]])  # query 2 selected twice, query 1 interleaved (out of order)
+    labels = torch.zeros(1, 3, dtype=torch.long)  # all class 0 so the two query-2 picks decode identically
+    scores = torch.rand(1, 3)
+    boxes = torch.zeros(1, 3, 4)
+    target_sizes = torch.tensor([[100, 200]])  # (h, w)
+
+    results = postprocess._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)
+    keypoints = results[0]["keypoints"]  # (3, max_num_keypoints=2, 3)
+
+    assert keypoints.shape == (3, 2, 3)
+    assert torch.equal(keypoints[0], keypoints[2])  # same query + class → identical decoded keypoints
+    # Independent decode of query 1's class-0 block (flat slots 0,1) confirms out-of-order gather picks the right query.
+    img_h, img_w = 100, 200
+    q1_class0 = out_keypoints[0, 1, 0:2]
+    expected1 = torch.stack([q1_class0[:, 0] * img_w, q1_class0[:, 1] * img_h, q1_class0[:, 2].sigmoid()], dim=-1)
+    torch.testing.assert_close(keypoints[1], expected1)
+
+
 def test_postprocess_keypoints_class_filtering() -> None:
     """Class-specific keypoint slots should be selected from padded per-class keypoint tensors."""
     postprocess = PostProcess(num_select=1, num_keypoints_per_class=[2, 1])
