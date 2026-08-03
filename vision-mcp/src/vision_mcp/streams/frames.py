@@ -1,8 +1,14 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """The bounded hand-off between a capture thread and its inference worker.
 
-The queue is deliberately tiny (config `queue_size`, default 2). A live camera produces
-frames whether or not anyone is ready for them, so the only two honest options are to
-drop frames or to grow latency without limit. This drops, and counts every drop.
+The queue is deliberately tiny (config `queue_size`, default 2). A live camera produces frames whether or not anyone is
+ready for them, so the only two honest options are to drop frames or to grow latency without limit. This drops, and
+counts every drop.
 """
 
 from __future__ import annotations
@@ -32,9 +38,9 @@ class Frame:
 class LatestFrameQueue:
     """A drop-oldest queue sized in frames, safe to push to from a plain thread.
 
-    `push` is called from the capture thread and never blocks or raises. `get` is awaited
-    by the stream worker on the event loop. The two are bridged with a mutex plus an
-    `asyncio.Event` scheduled onto the loop, because `asyncio.Queue` is not thread-safe.
+    `push` is called from the capture thread and never blocks or raises. `get` is awaited by the stream worker on the
+    event loop. The two are bridged with a mutex plus an `asyncio.Event` scheduled onto the loop, because
+    `asyncio.Queue` is not thread-safe.
     """
 
     def __init__(self, capacity: int, loop: asyncio.AbstractEventLoop) -> None:
@@ -73,7 +79,10 @@ class LatestFrameQueue:
             return self._high_water
 
     def push(self, frame: Frame) -> bool:
-        """Offer a frame from the capture thread. Returns False if a frame was dropped."""
+        """Offer a frame from the capture thread.
+
+        Returns False if a frame was dropped.
+        """
         with self._mutex:
             if self._closed:
                 return False
@@ -88,7 +97,10 @@ class LatestFrameQueue:
         return not dropped
 
     async def get(self) -> Frame | None:
-        """Await the next frame. Returns None once the queue is closed and drained."""
+        """Await the next frame.
+
+        Returns None once the queue is closed and drained.
+        """
         while True:
             with self._mutex:
                 if self._items:

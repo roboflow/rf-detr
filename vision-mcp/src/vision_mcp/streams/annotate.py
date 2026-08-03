@@ -1,8 +1,13 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Drawing for the debug preview.
 
-Annotation is not part of the inference path. It runs only while a preview client is
-connected, on a copy of the last frame, at the preview's own frame rate. Nothing here is
-allowed to mutate pipeline state or write anything to disk.
+Annotation is not part of the inference path. It runs only while a preview client is connected, on a copy of the last
+frame, at the preview's own frame rate. Nothing here is allowed to mutate pipeline state or write anything to disk.
 """
 
 from __future__ import annotations

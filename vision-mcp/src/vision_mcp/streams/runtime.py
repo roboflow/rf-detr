@@ -1,9 +1,14 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """The per-stream inference worker.
 
-One async task per stream pulls frames off the bounded queue, runs the model on the
-model's own thread, and publishes live state. Because the queue drops the oldest frame
-under pressure, the worker always sees recent frames rather than a growing backlog. It
-holds the latest frame in memory for the debug preview and writes nothing to disk.
+One async task per stream pulls frames off the bounded queue, runs the model on the model's own thread, and publishes
+live state. Because the queue drops the oldest frame under pressure, the worker always sees recent frames rather than a
+growing backlog. It holds the latest frame in memory for the debug preview and writes nothing to disk.
 """
 
 from __future__ import annotations
@@ -52,7 +57,10 @@ _DEGRADED_DROP_RATIO = 0.5
 
 
 class StreamObserver(Protocol):
-    """Analytics attached to a stream. Called once per processed frame, in order."""
+    """Analytics attached to a stream.
+
+    Called once per processed frame, in order.
+    """
 
     async def observe(self, stream_id: str, frame: Frame, output: InferenceOutput) -> ObservedState:
         """Consume one inference result and return what should be reported live."""
@@ -129,7 +137,10 @@ class StreamRuntime:
         return self.entry.queue_size
 
     async def start(self) -> None:
-        """Open the source and begin processing. Idempotent."""
+        """Open the source and begin processing.
+
+        Idempotent.
+        """
         if self.running:
             return
         loop = asyncio.get_running_loop()

@@ -1,8 +1,14 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """The MJPEG debug preview.
 
-This is a debugging aid, not a product surface. It is off unless `debug.preview` is set,
-it serves on loopback only, and it runs on a copy of the last processed frame at its own
-frame rate — a browser that cannot keep up slows nothing but itself.
+This is a debugging aid, not a product surface. It is off unless `debug.preview` is set, it serves on loopback only, and
+it runs on a copy of the last processed frame at its own frame rate — a browser that cannot keep up slows nothing but
+itself.
 """
 
 from __future__ import annotations

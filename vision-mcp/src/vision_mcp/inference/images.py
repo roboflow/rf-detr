@@ -1,7 +1,13 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Loading images from the three supported sources, with every security check applied.
 
-A source is a local path under a configured filesystem root, an allowlisted HTTP(S) URL, or an
-inline `data:image/...;base64,` URI. Nothing else is accepted.
+A source is a local path under a configured filesystem root, an allowlisted HTTP(S) URL, or an inline
+`data:image/...;base64,` URI. Nothing else is accepted.
 """
 
 from __future__ import annotations

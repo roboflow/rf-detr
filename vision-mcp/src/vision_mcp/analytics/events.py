@@ -1,11 +1,17 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Business-level events: persistence, optional snapshots and change notifications.
 
-Events are the fifth metric family in the README's list, and the only one that is not a
-count of something. They are rare by construction — an entry, an exit, a crossing, a limit
-breach, a stream failing or recovering — so each one is worth a durable row.
+Events are the fifth metric family in the README's list, and the only one that is not a count of something. They are
+rare by construction — an entry, an exit, a crossing, a limit breach, a stream failing or recovering — so each one is
+worth a durable row.
 
-Snapshots are deliberately stingy. Only violations and failures are worth an image, and
-even then the frame is stored once, as an artifact reference, never as bytes in a payload.
+Snapshots are deliberately stingy. Only violations and failures are worth an image, and even then the frame is stored
+once, as an artifact reference, never as bytes in a payload.
 """
 
 from __future__ import annotations
@@ -31,7 +37,10 @@ Severity = Literal["info", "warning", "error"]
 Notifier = Callable[[EventRecord], Awaitable[None]]
 
 _SNAPSHOT_EVENTS = frozenset({"occupancy_violation"})
-"""Event types worth an artifact. Everything else references the stream's live frames."""
+"""Event types worth an artifact.
+
+Everything else references the stream's live frames.
+"""
 
 _RECENT_LIMIT = 256
 """In-memory ring size, used for cheap resource reads; SQLite remains the source of truth."""
@@ -96,7 +105,10 @@ class EventSink:
         return record
 
     async def record_error(self, source: str, code: str, message: str, at: float) -> None:
-        """Log a failure for `get_recent_errors`. Credentials are redacted first."""
+        """Log a failure for `get_recent_errors`.
+
+        Credentials are redacted first.
+        """
         await self._database.write(
             [
                 (

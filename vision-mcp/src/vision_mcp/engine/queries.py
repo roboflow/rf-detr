@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Historical reads over the aggregated SQLite schema."""
 
 from __future__ import annotations
@@ -315,9 +321,7 @@ def _bucket_sums(query: TimeQuery, rows: list[Any], column: str) -> list[tuple[f
     return list(zip(query.bucket_starts, totals, strict=True))
 
 
-def _bucket_rates(
-    query: TimeQuery, rows: list[Any], column: str
-) -> list[tuple[float, float, float]]:
+def _bucket_rates(query: TimeQuery, rows: list[Any], column: str) -> list[tuple[float, float, float]]:
     """Fold values and their observed durations into requested response buckets."""
     totals = [0.0] * query.bucket_count
     seconds = [0.0] * query.bucket_count

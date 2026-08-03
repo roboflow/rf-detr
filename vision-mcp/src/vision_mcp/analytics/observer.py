@@ -1,13 +1,17 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """The analytics observer: everything one stream computes per processed frame.
 
-`StreamRuntime` knows how to capture frames and run a model. It knows nothing about
-tracks, zones or events. This observer is the piece that plugs into it, and it is the only
-place where per-frame work becomes durable state.
+`StreamRuntime` knows how to capture frames and run a model. It knows nothing about tracks, zones or events. This
+observer is the piece that plugs into it, and it is the only place where per-frame work becomes durable state.
 
-Ordering matters and is fixed here: associate tracks, resolve spatial membership against
-the tracked subset, retire tracks that have aged out (closing their open zone visits),
-then persist. Live counts returned to the runtime come from the same pass, so the preview,
-`get_stream_status` and `get_zone_occupancy` can never disagree about a frame.
+Ordering matters and is fixed here: associate tracks, resolve spatial membership against the tracked subset, retire
+tracks that have aged out (closing their open zone visits), then persist. Live counts returned to the runtime come from
+the same pass, so the preview, `get_stream_status` and `get_zone_occupancy` can never disagree about a frame.
 """
 
 from __future__ import annotations
@@ -133,7 +137,10 @@ class StreamAnalytics:
         exits: list[ZoneVisit],
         crossings: list[Crossing],
     ) -> None:
-        """Queue this frame's durable rows. Never blocks the inference loop."""
+        """Queue this frame's durable rows.
+
+        Never blocks the inference loop.
+        """
         statements: list[Statement] = []
         statements.extend(_track_rows(self.stream_id, expired))
         statements.extend(_entry_rows(self.stream_id, entries))

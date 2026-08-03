@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Tracking, zone, line, event and error payloads."""
 
 from __future__ import annotations
@@ -8,7 +14,10 @@ from vision_mcp.contract.base import BoundingBox, Envelope, Payload, TimeWindow
 
 
 class TrackInfo(Payload):
-    """A live tracked object. IDs are motion-consistency handles, not identities."""
+    """A live tracked object.
+
+    IDs are motion-consistency handles, not identities.
+    """
 
     track_id: int
     class_name: str

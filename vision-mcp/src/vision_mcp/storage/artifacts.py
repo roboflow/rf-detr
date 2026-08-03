@@ -1,7 +1,13 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Artifact store: generated IDs, metadata in SQLite, bytes on disk.
 
-Callers never supply a filename and never receive a filesystem path — only an opaque ID and
-a `vision://artifacts/<id>` URI.
+Callers never supply a filename and never receive a filesystem path — only an opaque ID and a `vision://artifacts/<id>`
+URI.
 """
 
 from __future__ import annotations

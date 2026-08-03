@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Per-stream metric accumulation, flushed to SQLite in fixed buckets.
 
 The inference loop only ever increments counters here — no I/O, no locks beyond the GIL.

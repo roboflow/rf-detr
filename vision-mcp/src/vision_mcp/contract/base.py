@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Shared primitives every contract module builds on."""
 
 from __future__ import annotations
@@ -77,7 +83,10 @@ class HistoricalQuery(Payload):
 
 
 class ArtifactRef(Payload):
-    """A stored file, referenced by generated ID. Never a filesystem path."""
+    """A stored file, referenced by generated ID.
+
+    Never a filesystem path.
+    """
 
     artifact_id: str
     uri: str

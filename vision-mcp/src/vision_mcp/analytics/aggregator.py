@@ -1,13 +1,18 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """The background task that turns live counters into SQLite rows.
 
-One task serves every stream. It wakes on a fixed interval, closes the current bucket for
-each stream and hands the statements to the database writer thread. Nothing here awaits a
-disk write: a slow disk must never slow down capture or inference.
+One task serves every stream. It wakes on a fixed interval, closes the current bucket for each stream and hands the
+statements to the database writer thread. Nothing here awaits a disk write: a slow disk must never slow down capture or
+inference.
 
-Frame counters on the capture side are cumulative for the life of a stream, so the
-aggregator keeps the previous reading and stores the delta. Counters reset when a stream
-restarts, which shows up as a smaller reading and is treated as a fresh baseline rather
-than a negative delta.
+Frame counters on the capture side are cumulative for the life of a stream, so the aggregator keeps the previous reading
+and stores the delta. Counters reset when a stream restarts, which shows up as a smaller reading and is treated as a
+fresh baseline rather than a negative delta.
 """
 
 from __future__ import annotations
@@ -54,7 +59,10 @@ class MetricsAggregator:
         return self._task is not None and not self._task.done()
 
     async def start(self) -> None:
-        """Begin flushing. Idempotent."""
+        """Begin flushing.
+
+        Idempotent.
+        """
         if self.running:
             return
         self._bucket_start = _now()
@@ -81,8 +89,10 @@ class MetricsAggregator:
             self._database.submit(statements)
 
     def _statements(self, runtime: StreamRuntime, at: float, elapsed: float) -> list[Statement]:
-        """Metric and health rows for one stream. Health is sampled at ``at``; metrics
-        cover the bucket that ends there."""
+        """Metric and health rows for one stream.
+
+        Health is sampled at ``at``; metrics cover the bucket that ends there.
+        """
         analytics = self._analytics.get(runtime.stream_id)
         status = runtime.status()
         sample = HealthSample(

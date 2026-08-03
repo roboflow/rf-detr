@@ -1,7 +1,13 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Detection-count and performance metric payloads.
 
-The five metric definitions are kept in separate models on purpose: frame detections and
-unique objects must never be interchangeable.
+The five metric definitions are kept in separate models on purpose: frame detections and unique objects must never be
+interchangeable.
 """
 
 from __future__ import annotations
@@ -19,7 +25,10 @@ class CurrentCounts(Envelope):
 
 
 class ClassCounts(Envelope):
-    """Frame detections summed over a window, per class. Not unique objects."""
+    """Frame detections summed over a window, per class.
+
+    Not unique objects.
+    """
 
     stream_id: str
     window: TimeWindow
@@ -28,7 +37,10 @@ class ClassCounts(Envelope):
 
 
 class UniqueObjectCount(Envelope):
-    """Distinct confirmed tracking IDs seen in a window. Always <= frame_detections."""
+    """Distinct confirmed tracking IDs seen in a window.
+
+    Always <= frame_detections.
+    """
 
     stream_id: str
     window: TimeWindow

@@ -1,7 +1,13 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Model lifecycle: lazy load once, keep warm, run every inference on the model's own thread.
 
-RF-DETR modules are not thread-safe and MPS dislikes concurrent submission from many threads, so
-each model owns a single-thread executor and all of its work is serialised through that thread.
+RF-DETR modules are not thread-safe and MPS dislikes concurrent submission from many threads, so each model owns a
+single-thread executor and all of its work is serialised through that thread.
 """
 
 from __future__ import annotations
@@ -297,7 +303,10 @@ class ModelManager:
         )
 
     def _build(self, entry: ModelEntry, device: str) -> Any:
-        """Construct the RF-DETR wrapper. Runs on the model thread; imports torch lazily."""
+        """Construct the RF-DETR wrapper.
+
+        Runs on the model thread; imports torch lazily.
+        """
         import rfdetr
 
         if entry.architecture not in ARCHITECTURES:  # pragma: no cover - config validation covers this

@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Fast checks for Phase 1 failures that are not reliable to spot in a live demo."""
 
 from __future__ import annotations
@@ -12,8 +18,7 @@ import pytest
 from vision_mcp.analytics.metrics import percentile, safe_rate
 from vision_mcp.api_contract import ImageSize, TimeWindow
 from vision_mcp.config import EngineConfig, ModelEntry, SecurityConfig, StreamEntry
-from vision_mcp.engine.queries import _dwell
-from vision_mcp.engine.queries import HistoricalQueries
+from vision_mcp.engine.queries import HistoricalQueries, _dwell
 from vision_mcp.errors import ErrorCode, VisionError
 from vision_mcp.mcp_server.server import _artifact_id
 from vision_mcp.query import TimeQuery, build_time_query

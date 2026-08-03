@@ -1,7 +1,13 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Engine configuration: YAML in, validated Pydantic models out.
 
-Config is the only place the engine accepts operator input, so every field is checked here
-rather than at the point of use. Nothing in this module imports torch.
+Config is the only place the engine accepts operator input, so every field is checked here rather than at the point of
+use. Nothing in this module imports torch.
 """
 
 from __future__ import annotations
@@ -78,7 +84,10 @@ class LineConfig(StrictModel):
 
 
 class ModelEntry(StrictModel):
-    """One loadable model. `checkpoint` selects custom weights; otherwise pretrained COCO weights."""
+    """One loadable model.
+
+    `checkpoint` selects custom weights; otherwise pretrained COCO weights.
+    """
 
     architecture: str
     checkpoint: str | None = None
@@ -189,7 +198,10 @@ class MetricsConfig(StrictModel):
 
 
 class EngineHttpConfig(StrictModel):
-    """Local HTTP bind. Loopback only; there is no authentication layer."""
+    """Local HTTP bind.
+
+    Loopback only; there is no authentication layer.
+    """
 
     host: Literal["127.0.0.1", "localhost"] = "127.0.0.1"
     port: int = Field(default=8765, ge=1024, le=65535)
@@ -197,7 +209,10 @@ class EngineHttpConfig(StrictModel):
 
 
 class DebugConfig(StrictModel):
-    """Browser preview. Off unless explicitly enabled."""
+    """Browser preview.
+
+    Off unless explicitly enabled.
+    """
 
     preview: bool = False
     preview_fps: float = Field(default=5.0, gt=0, le=30)

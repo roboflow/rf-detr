@@ -1,9 +1,14 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """One blocking capture thread per stream.
 
-`cv2.VideoCapture.read()` blocks, so it cannot live on the event loop. Each stream owns
-exactly one thread which opens its source, paces itself to `processing_fps`, downscales
-once, and pushes into the bounded queue. Everything the rest of the engine needs to know
-about connection state is published through `CaptureState`, read under a lock.
+`cv2.VideoCapture.read()` blocks, so it cannot live on the event loop. Each stream owns exactly one thread which opens
+its source, paces itself to `processing_fps`, downscales once, and pushes into the bounded queue. Everything the rest of
+the engine needs to know about connection state is published through `CaptureState`, read under a lock.
 """
 
 from __future__ import annotations
@@ -37,7 +42,6 @@ _LIVE_GRAB_INTERVAL = 0.01
 
 _MACOS_CAMERA_FPS = 30.0
 """Stable AVFoundation webcam mode requested before the first read."""
-
 
 @dataclass
 class CaptureState:
@@ -217,7 +221,10 @@ class CaptureThread:
         return capture
 
     def _pump(self, capture: cv2.VideoCapture, index: int) -> int:
-        """Read until the source dies or we are stopped. Returns the next frame index."""
+        """Read until the source dies or we are stopped.
+
+        Returns the next frame index.
+        """
         failures = 0
         black_frames = 0
         black_warning_logged = False
@@ -297,7 +304,10 @@ class CaptureThread:
 
 
 def _downscale(array: np.ndarray[Any, Any], long_edge: int | None) -> np.ndarray[Any, Any]:
-    """Shrink to the model's input size before queueing. Never upscales."""
+    """Shrink to the model's input size before queueing.
+
+    Never upscales.
+    """
     if long_edge is None:
         return array
     height, width = array.shape[:2]

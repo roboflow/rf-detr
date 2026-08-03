@@ -1,8 +1,14 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Ownership of every configured stream.
 
-The manager is the only thing that starts and stops `StreamRuntime` objects. Sources are
-never accepted from a caller: a stream can only be started by the id it was given in the
-config file, so no tool call can point the engine at a new URL or path.
+The manager is the only thing that starts and stops `StreamRuntime` objects. Sources are never accepted from a caller: a
+stream can only be started by the id it was given in the config file, so no tool call can point the engine at a new URL
+or path.
 """
 
 from __future__ import annotations
@@ -20,7 +26,10 @@ from vision_mcp.streams.runtime import StreamObserver, StreamRuntime
 logger = get_logger("vision-mcp.streams")
 
 ObserverFactory = Callable[[str], StreamObserver]
-"""Builds the analytics chain for a stream id. Supplied by the engine."""
+"""Builds the analytics chain for a stream id.
+
+Supplied by the engine.
+"""
 
 
 class StreamManager:
@@ -68,6 +77,7 @@ class StreamManager:
 
     async def start_all(self) -> None:
         """Start every configured stream, tolerating individual failures."""
+
         async with self._lock:
             for runtime in self._runtimes.values():
                 try:
@@ -77,6 +87,7 @@ class StreamManager:
 
     async def stop_all(self) -> None:
         """Stop every stream and release every capture source."""
+
         async with self._lock:
             await asyncio.gather(
                 *(runtime.stop() for runtime in self._runtimes.values()),
@@ -84,7 +95,10 @@ class StreamManager:
             )
 
     async def start(self, stream_id: str) -> StreamStatus:
-        """Start one configured stream. Starting a running stream is a no-op."""
+        """Start one configured stream.
+
+        Starting a running stream is a no-op.
+        """
         runtime = self.get(stream_id)
         async with self._lock:
             await runtime.start()

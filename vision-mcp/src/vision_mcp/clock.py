@@ -1,7 +1,13 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Time helpers.
 
-Wall clock (`time.time`) is only ever used for timestamps that leave the process; every
-duration and latency measurement uses the monotonic clock.
+Wall clock (`time.time`) is only ever used for timestamps that leave the process; every duration and latency measurement
+uses the monotonic clock.
 """
 
 from __future__ import annotations

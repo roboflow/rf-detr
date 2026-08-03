@@ -1,8 +1,13 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """SQLite access: one writer task, one reader connection, WAL mode.
 
-Every write in the process goes through `Database.write`, which hands the statement to a
-single writer task consuming a bounded queue. Reads use a separate connection and run in a
-worker thread so no coroutine ever blocks on disk.
+Every write in the process goes through `Database.write`, which hands the statement to a single writer task consuming a
+bounded queue. Reads use a separate connection and run in a worker thread so no coroutine ever blocks on disk.
 """
 
 from __future__ import annotations
@@ -157,7 +162,10 @@ class Database:
             raise VisionError(ErrorCode.DATABASE_UNAVAILABLE, f"Database read failed: {exc}") from exc
 
     async def _writer_loop(self) -> None:
-        """Single writer. Applies one batch per transaction until it receives the stop sentinel."""
+        """Single writer.
+
+        Applies one batch per transaction until it receives the stop sentinel.
+        """
         while True:
             op = await self._queue.get()
             if op is None:

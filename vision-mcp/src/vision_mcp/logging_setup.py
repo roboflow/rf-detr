@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Structured JSON logging on stderr, with redaction applied to every record.
 
 stdout belongs to the MCP stdio transport, so nothing here may ever write to it.

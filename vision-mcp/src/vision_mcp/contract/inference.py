@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Single-image inference and model description payloads."""
 
 from __future__ import annotations
@@ -6,7 +12,10 @@ from vision_mcp.contract.base import ArtifactRef, BoundingBox, Envelope, ImageSi
 
 
 class Detection(Payload):
-    """One detected object. `track_id` is present only for tracked stream detections."""
+    """One detected object.
+
+    `track_id` is present only for tracked stream detections.
+    """
 
     class_id: int
     class_name: str
@@ -84,7 +93,10 @@ class ModelInfo(Envelope):
 
 
 class ModelStatus(Envelope):
-    """Runtime state of one model. `loaded_at` proves weights were not reloaded."""
+    """Runtime state of one model.
+
+    `loaded_at` proves weights were not reloaded.
+    """
 
     name: str
     loaded: bool

@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Stream, worker and system status payloads."""
 
 from __future__ import annotations
@@ -27,7 +33,10 @@ class StreamList(Envelope):
 
 
 class StreamStatus(Envelope):
-    """Full state of one stream. `source` is redacted; RTSP credentials never appear."""
+    """Full state of one stream.
+
+    `source` is redacted; RTSP credentials never appear.
+    """
 
     stream_id: str
     state: StreamState

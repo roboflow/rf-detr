@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """Model loading, image loading and inference normalisation."""
 
 from vision_mcp.inference.detector import Detector, InferenceOutput, convert, count_by_class
