@@ -30,6 +30,8 @@ __all__ = [
     "RFDETRSeg2XLarge",
 ]
 
+from typing import Any
+
 from deprecate import deprecated_class
 
 from rfdetr.config import (
@@ -140,7 +142,7 @@ class RFDETRLarge(RFDETR):
 
     size = "rfdetr-large"
 
-    def get_model_config(self, **kwargs) -> ModelConfig:
+    def get_model_config(self, **kwargs: Any) -> ModelConfig:
         return RFDETRLargeConfig(**kwargs)
 
 
