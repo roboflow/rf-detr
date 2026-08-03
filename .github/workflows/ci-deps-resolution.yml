@@ -91,20 +91,20 @@ jobs:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: 📋 Collect installable extras from pyproject.toml
+      - name: 📋 Collect every extra from pyproject.toml
         id: collect
-        # Derive the install-plan matrix straight from [project.optional-dependencies] so any new
-        # extra gets wheel-availability coverage automatically — nothing to keep in sync by hand.
-        # `fromJSON` fans the result out into one job per extra, so there is no in-step loop.
-        # tensorrt/tensorrt-bench/xla/plus are excluded: they need NVIDIA/TPU indexes or the
-        # separately licensed rfdetr_plus package, none of which resolve on a plain runner.
+        # Cover every [project.optional-dependencies] extra — a new one is picked up automatically,
+        # nothing to keep in sync by hand. `fromJSON` fans the result out into one job per extra,
+        # so there is no in-step loop. The install-plan step only runs `uv sync --dry-run`
+        # (resolution + wheel check, no build/download/GPU), so extras that need GPU/TPU hardware at
+        # runtime — tensorrt, xla, plus — still resolve here. If one genuinely cannot resolve on a
+        # plain runner, its job goes red and names itself; exclude it then, with evidence.
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json, tomllib
           with open("pyproject.toml", "rb") as fh:
               extras = tomllib.load(fh)["project"]["optional-dependencies"]
-          exclude = {"tensorrt", "tensorrt-bench", "xla", "plus"}
-          print("extras=" + json.dumps(sorted(e for e in extras if e not in exclude)))
+          print("extras=" + json.dumps(sorted(extras)))
           PY
 
   install-plan:
