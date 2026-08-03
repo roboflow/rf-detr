@@ -11,6 +11,7 @@ RF-DETR training stack — only ``onnxruntime``, ``numpy``, ``supervision``, and
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import Any
 
@@ -114,7 +115,7 @@ def _preprocess_pil_to_nchw(
     mean_list = [_imagenet_mean[i % 3] for i in range(channels)]
     std_list = [_imagenet_std[i % 3] for i in range(channels)]
 
-    try:
+    with contextlib.suppress(ImportError):
         # Match predict() exactly: torchvision to_tensor -> resize(antialias=False) -> normalize.
         # antialias=False mirrors detr.py's predict(); torchvision's float-tensor default is True.
         import torch
@@ -125,8 +126,6 @@ def _preprocess_pil_to_nchw(
             t = _F.resize(t, [height, width], antialias=False)
             t = _F.normalize(t, mean_list, std_list)
         return np.asarray(t.unsqueeze(0).cpu().numpy(), dtype=np.float32)
-    except ImportError:
-        pass
 
     # Torch-free fallback: same antialias-free half-pixel bilinear as predict(), in NumPy.
     arr = np.asarray(pil_img, dtype=np.float32) / 255.0

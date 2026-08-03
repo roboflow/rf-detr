@@ -142,8 +142,7 @@ def _preprocess_image(
     pil_mode = "L" if channels == 1 else "RGB"
     pil_rgb = pil_img.convert(pil_mode)
 
-    nchw_float: NDArray[np.float32] | None = None
-    try:
+    with contextlib.suppress(ImportError):
         # Match PyTorch.predict() exactly: torchvision to_tensor -> resize(antialias=False) -> normalize.
         # antialias=False mirrors detr.py's predict(); torchvision's float-tensor default is True.
         import torch
@@ -156,10 +155,6 @@ def _preprocess_image(
             std_list = [_IMAGENET_STD[i % 3] for i in range(channels)]
             t = _F.normalize(t, mean_list, std_list)
         nchw_float = np.asarray(t.unsqueeze(0).cpu().numpy(), dtype=np.float32)
-    except ImportError:
-        pass
-
-    if nchw_float is not None:
         # NCHW -> NHWC for the TFLite interpreter.
         return np.asarray(nchw_float.transpose(0, 2, 3, 1), dtype=np.float32)
 
