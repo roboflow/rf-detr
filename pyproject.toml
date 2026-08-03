@@ -385,7 +385,6 @@ overrides = [
   { module = [
     "rfdetr",
     "rfdetr._namespace",
-    "rfdetr.assets.model_weights",
     "rfdetr.config",
     "rfdetr.datasets._develop",
     "rfdetr.datasets.coco",
