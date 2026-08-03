@@ -88,15 +88,24 @@ jobs:
     outputs:
       extras: ${{ steps.collect.outputs.extras }}
     steps:
-      - name: 📋 Collect the extras that get install-plan coverage
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 📋 Collect installable extras from pyproject.toml
         id: collect
-        # Single source of truth for the install-plan matrix below — `fromJSON` fans this list out
-        # into one job per extra, so there is no in-step loop to keep in sync. tensorrt /
-        # tensorrt-bench / xla / plus are excluded: they need NVIDIA/TPU indexes or the separately
-        # licensed rfdetr_plus package, none of which resolve on a plain runner. Add a new extra
-        # to this list to give it install-plan coverage.
+        # Derive the install-plan matrix straight from [project.optional-dependencies] so any new
+        # extra gets wheel-availability coverage automatically — nothing to keep in sync by hand.
+        # `fromJSON` fans the result out into one job per extra, so there is no in-step loop.
+        # tensorrt/tensorrt-bench/xla/plus are excluded: they need NVIDIA/TPU indexes or the
+        # separately licensed rfdetr_plus package, none of which resolve on a plain runner.
         run: |
-          echo 'extras=["onnx","executorch","tflite","coreml","augment","train","cli","loggers","visual","lora"]' >> "$GITHUB_OUTPUT"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, tomllib
+          with open("pyproject.toml", "rb") as fh:
+              extras = tomllib.load(fh)["project"]["optional-dependencies"]
+          exclude = {"tensorrt", "tensorrt-bench", "xla", "plus"}
+          print("extras=" + json.dumps(sorted(e for e in extras if e not in exclude)))
+          PY
 
   install-plan:
     name: Install plan [${{ matrix.extra }}] — Python ${{ matrix.python-version }}
