@@ -1,0 +1,27 @@
+models:
+  demo:
+    architecture: RFDETRNano
+    checkpoint: null
+    task: detection
+    device: mps
+    confidence: 0.4
+
+streams:
+  webcam:
+    source: 0
+    model: demo
+    processing_fps: 3
+    queue_size: 2
+    classes: [person, cell phone, bottle]
+    zones:
+      left_half:
+        polygon: [[0, 0], [0.5, 0], [0.5, 1.0], [0, 1.0]]
+    lines:
+      center:
+        start: [0.5, 0.0]
+        end: [0.5, 1.0]
+
+storage:
+  database: ./data/vision.db
+  artifacts: ./data/artifacts
+  retention_days: 7

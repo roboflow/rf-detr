@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vision-mcp"
+version = "0.1.0"
+description = "Local-first RF-DETR vision engine with an MCP server front end"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "rfdetr>=1.9.0,<2",       # detection/segmentation/keypoint models
+    "supervision>=0.29.0,<0.30",  # ByteTrack, PolygonZone, annotators (ByteTrack goes in 0.30)
+    "opencv-python>=4.9",     # VideoCapture (webcam, file, RTSP) + JPEG encode
+    "numpy>=1.26",            # frame buffers
+    "pillow>=10.0",           # header-first image decode with a pixel budget
+    "pydantic>=2.7,<3",       # every external input/output shape
+    "fastapi>=0.110",         # engine HTTP API
+    "uvicorn>=0.29",          # ASGI server for the engine
+    "httpx>=0.27",            # MCP server -> engine client
+    "PyYAML>=6.0",            # config files
+    "mcp>=1.2",               # MCP stdio server
+]
+
+[project.optional-dependencies]
+gpu = ["nvidia-ml-py>=12.535"]  # provides `pynvml`; NVIDIA-only, unused on Apple Silicon
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML",
+]
+
+[project.scripts]
+vision-engine = "vision_mcp.engine.main:main"
+vision-mcp = "vision_mcp.mcp_server.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+vision_mcp = ["py.typed"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ANN", "RUF", "T20"]
+ignore = [
+    "ANN401",  # typed **kwargs pass-throughs to third-party APIs
+    "B008",    # FastAPI dependency defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ANN201", "ANN001"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+disallow_untyped_defs = true
+plugins = []
+
+[[tool.mypy.overrides]]
+module = ["cv2.*", "supervision.*", "rfdetr.*", "pynvml.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q"
