@@ -58,16 +58,22 @@ jobs:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
+      - name: 🐍 Install uv and set Python version 3.11
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: "3.11"
+
       - name: 📋 Collect every extra from pyproject.toml
         id: collect
         # Cover every [project.optional-dependencies] extra — a new one is picked up automatically,
         # nothing to keep in sync by hand. `fromJSON` fans the result out into one job per extra,
         # so there is no in-step loop. The install-plan step only runs `uv sync --dry-run`
         # (resolution + wheel check, no build/download/GPU), so extras that need GPU/TPU hardware at
-        # runtime — tensorrt, xla, plus — still resolve here. If one genuinely cannot resolve on a
+        # runtime — tensorrt, plus — still resolve here. If one genuinely cannot resolve on a
         # plain runner, its job goes red and names itself; exclude it then, with evidence.
         run: |
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          uv run --no-project --python 3.11 python - <<'PY' >> "$GITHUB_OUTPUT"
           import json, tomllib
           with open("pyproject.toml", "rb") as fh:
               extras = tomllib.load(fh)["project"]["optional-dependencies"]
@@ -90,11 +96,10 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         extra: ${{ fromJSON(needs.list-extras.outputs.extras) }}
         # Skip interpreter/extra pairs where no wheel is expected, so the gate is not held red by
-        # an unfixable gap: tensorrt on 3.10, and xla (torch_xla 2.9.*) on 3.14. Drop an entry
+        # an unfixable gap: TensorRT on 3.10. Drop an entry
         # once that wheel ships. (exclude matches values from the dynamic extra axis by name.)
         exclude:
           - { extra: tensorrt, python-version: "3.10" }
-          - { extra: xla, python-version: "3.14" }
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -116,7 +121,7 @@ jobs:
         # happens) without downloading anything, so this stays cheap. `uv pip install --dry-run`
         # is NOT equivalent: it re-resolves per interpreter and silently backtracks to an older
         # version with a compatible wheel, hiding exactly this bug.
-        run: uv sync --extra ${{ matrix.extra }} --python ${{ matrix.python-version }} --dry-run
+        run: uv sync --no-default-groups --extra ${{ matrix.extra }} --python ${{ matrix.python-version }} --dry-run
 
       - name: Minimize uv cache
         continue-on-error: true
