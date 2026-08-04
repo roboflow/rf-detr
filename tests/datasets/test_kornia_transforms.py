@@ -298,7 +298,7 @@ class TestBuildKorniaPipeline:
         assert (float(sampler.low), float(sampler.high)) == pytest.approx((0.1, 0.4))
 
     def test_sharpen_warns_about_ignored_lightness(self):
-        """lightness has no Kornia equivalent, so dropping it must be announced."""
+        """Lightness has no Kornia equivalent, so dropping it must be announced."""
         from unittest import mock
 
         from rfdetr.datasets import kornia_transforms
