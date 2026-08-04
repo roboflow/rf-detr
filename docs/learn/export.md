@@ -373,6 +373,7 @@ Prepare calibration data as a NumPy array and save it to a `.npy` file:
 ```python
 import numpy as np
 from PIL import Image
+import torchvision.transforms.functional as F
 from rfdetr import RFDETRSmall
 
 model = RFDETRSmall()
@@ -381,8 +382,10 @@ target_resolution = model.model_config.resolution
 # Load representative images from your dataset
 images = []
 for path in image_paths[:50]:  # 50 representative samples
-    img = Image.open(path).convert("RGB").resize((target_resolution, target_resolution))
-    images.append(np.array(img, dtype=np.float32) / 255.0)
+    img = Image.open(path).convert("RGB")
+    image_tensor = F.to_tensor(img)
+    image_tensor = F.resize(image_tensor, [target_resolution, target_resolution], antialias=False)
+    images.append(image_tensor.permute(1, 2, 0).contiguous().numpy())
 
 calibration_data = np.stack(images)  # shape: (50, H, W, 3)
 
@@ -438,6 +441,7 @@ The `onnx2tf` converter **always** produces both FP32 and FP16 TFLite files, reg
 ```python
 import numpy as np
 from PIL import Image
+import torchvision.transforms.functional as F
 
 # pip install tflite-runtime  (or use tensorflow.lite)
 import tflite_runtime.interpreter as tflite
@@ -451,23 +455,29 @@ output_details = interpreter.get_output_details()
 
 # Prepare input — TFLite model expects NHWC, ImageNet-normalized
 input_height, input_width = input_details[0]["shape"][1:3]
-image = Image.open("image.jpg").convert("RGB").resize((input_width, input_height))
-image_array = np.array(image, dtype=np.float32) / 255.0
+image = Image.open("image.jpg").convert("RGB")
+image_tensor = F.to_tensor(image)
+image_tensor = F.resize(image_tensor, [input_height, input_width], antialias=False)
 
 # Apply ImageNet normalization
-mean = np.array([0.485, 0.456, 0.406])
-std = np.array([0.229, 0.224, 0.225])
-image_array = (image_array - mean) / std
+mean = [0.485, 0.456, 0.406]
+std = [0.229, 0.224, 0.225]
+image_tensor = F.normalize(image_tensor, mean, std)
 
 # Add batch dimension: (1, H, W, 3)
-image_array = np.expand_dims(image_array, axis=0).astype(np.float32)
+image_array = image_tensor.permute(1, 2, 0).unsqueeze(0).contiguous().numpy().astype(np.float32)
 
 # Run inference
 interpreter.set_tensor(input_details[0]["index"], image_array)
 interpreter.invoke()
 
-boxes = interpreter.get_tensor(output_details[0]["index"])
-labels = interpreter.get_tensor(output_details[1]["index"])
+boxes_detail = next((detail for detail in output_details if "dets" in str(detail.get("name", ""))), None)
+labels_detail = next((detail for detail in output_details if "labels" in str(detail.get("name", ""))), None)
+if boxes_detail is None or labels_detail is None:
+    raise ValueError(f"Expected TFLite outputs named dets and labels; got {output_details}")
+
+boxes = interpreter.get_tensor(boxes_detail["index"])
+labels = interpreter.get_tensor(labels_detail["index"])
 ```
 
 ## ExecuTorch Export
@@ -612,29 +622,26 @@ another.
     `np.ascontiguousarray(...)` (or `Tensor.contiguous()`) before calling `execute`.
 
 ```python
-import numpy as np
 import torch
 from executorch.runtime import Runtime
 from PIL import Image
+import torchvision.transforms.functional as F
 
 # Load the exported .pte program
 runtime = Runtime.get()
 method = runtime.load_program("output/rfdetr-medium_xnnpack.pte").load_method("forward")
 
 # Prepare input — the .pte expects the same NCHW, ImageNet-normalized input as the ONNX export
-image = Image.open("image.jpg").convert("RGB").resize((576, 576))
-image_array = np.array(image, dtype=np.float32) / 255.0
+input_height, input_width = 576, 576
+image = Image.open("image.jpg").convert("RGB")
+image_tensor = F.to_tensor(image)
+image_tensor = F.resize(image_tensor, [input_height, input_width], antialias=False)
 
-mean = np.array([0.485, 0.456, 0.406])
-std = np.array([0.229, 0.224, 0.225])
-image_array = (image_array - mean) / std
+mean = [0.485, 0.456, 0.406]
+std = [0.229, 0.224, 0.225]
+image_tensor = F.normalize(image_tensor, mean, std)
 
-image_array = np.transpose(image_array, (2, 0, 1))  # HWC -> CHW
-image_array = np.expand_dims(image_array, axis=0)  # add batch dimension: (1, 3, H, W)
-# np.transpose returns a strided view, not a copy. The ExecuTorch runtime reads the input
-# buffer as contiguous NCHW and ignores strides, so a non-contiguous tensor is silently
-# misread as a scrambled image and every detection collapses below threshold.
-image_array = np.ascontiguousarray(image_array)
+image_array = image_tensor.unsqueeze(0).contiguous().numpy()  # add batch dimension: (1, 3, H, W)
 input_tensor = torch.from_numpy(image_array).float()
 
 # Run inference
@@ -717,19 +724,21 @@ model.export(format="coreml", coreml_precision="float16")
 ```python
 import coremltools as ct
 import numpy as np
+import torchvision.transforms.functional as F
 from PIL import Image
 
 mlmodel = ct.models.MLModel("output/rfdetr-medium_fp32.mlpackage")
 
-image = Image.open("image.jpg").convert("RGB").resize((576, 576))
-image_array = np.array(image, dtype=np.float32) / 255.0
+input_height, input_width = 576, 576
+image = Image.open("image.jpg").convert("RGB")
+image_tensor = F.to_tensor(image)
+image_tensor = F.resize(image_tensor, [input_height, input_width], antialias=False)
 
-mean = np.array([0.485, 0.456, 0.406])
-std = np.array([0.229, 0.224, 0.225])
-image_array = (image_array - mean) / std
+mean = [0.485, 0.456, 0.406]
+std = [0.229, 0.224, 0.225]
+image_tensor = F.normalize(image_tensor, mean, std)
 
-image_array = np.transpose(image_array, (2, 0, 1))  # HWC -> CHW
-image_array = np.expand_dims(image_array, axis=0)  # add batch dimension: (1, 3, H, W)
+image_array = image_tensor.unsqueeze(0).numpy()  # add batch dimension: (1, 3, H, W)
 
 # Outputs are positional (see the precision note above) — dets, labels, in that order.
 outputs = list(mlmodel.predict({"input": image_array.astype(np.float32)}).values())
@@ -759,6 +768,7 @@ yourself.
 ```python
 import onnxruntime as ort
 import numpy as np
+import torchvision.transforms.functional as F
 from PIL import Image
 
 # Load the ONNX model
@@ -767,17 +777,16 @@ session = ort.InferenceSession("output/inference_model.onnx")
 # Prepare input image
 input_height, input_width = session.get_inputs()[0].shape[2:4]
 image = Image.open("image.jpg").convert("RGB")
-image = image.resize((input_width, input_height))  # Resize to the exported model shape
-image_array = np.array(image).astype(np.float32) / 255.0
+image_tensor = F.to_tensor(image)
+image_tensor = F.resize(image_tensor, [input_height, input_width], antialias=False)
 
 # Normalize
-mean = np.array([0.485, 0.456, 0.406])
-std = np.array([0.229, 0.224, 0.225])
-image_array = (image_array - mean) / std
+mean = [0.485, 0.456, 0.406]
+std = [0.229, 0.224, 0.225]
+image_tensor = F.normalize(image_tensor, mean, std)
 
 # Convert to NCHW format
-image_array = np.transpose(image_array, (2, 0, 1))
-image_array = np.expand_dims(image_array, axis=0)
+image_array = image_tensor.unsqueeze(0).numpy()
 
 # Run inference
 outputs = session.run(None, {"input": image_array})

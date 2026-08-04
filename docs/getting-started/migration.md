@@ -55,9 +55,7 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     The default resize backend changed from Albumentations (cv2 `INTER_LINEAR`, no antialias) to
     torchvision (`BILINEAR` + `antialias=True`). Resized pixel values differ slightly from previous
     versions, and mAP may drift on existing benchmarks. **This affects training as well as
-    validation and test preprocessing** — not just the training split. `predict()` and the
-    exported-model inference paths (ONNX, TFLite, benchmark, INT8 calibration) are the exception:
-    they resize with `antialias=False` to match the released checkpoints.
+    validation and test preprocessing** — not just the training split.
 
     To restore the previous pixel-exact behaviour:
 

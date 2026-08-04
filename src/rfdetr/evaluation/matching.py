@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any, cast
 
 import numpy as np
@@ -181,6 +182,12 @@ def build_matching_data(
             - ``"matches"``: int ndarray (1 = TP, 0 = FP).
             - ``"ignore"``: bool ndarray (True if matched to a crowd GT).
             - ``"total_gt"``: int, count of non-crowd GT instances.
+
+    Raises:
+        ValueError: If a target's ``iscrowd`` is not a 1-D tensor with one entry per GT label, or if
+            ``iou_type="segm"`` and ``masks`` is missing on either side for a class that has both
+            predictions and ground truth. Classes present on only one side skip the mask lookup, so
+            a missing ``masks`` key is not reported for an image whose classes are all one-sided.
     """
     acc: dict[int, dict[str, list[Any] | int]] = {}
 
@@ -198,19 +205,29 @@ def build_matching_data(
             torch.zeros(len(gt_labels), dtype=torch.long, device=gt_labels.device),
         )
         gt_crowd = raw_crowd.bool()
+        # Checked on the shape, not on len(): a [M, 1] iscrowd has the right len() but its
+        # tolist() rows are all truthy, which would silently drop every GT from total_gt.
+        if gt_crowd.ndim != 1 or gt_crowd.shape[0] != gt_labels.numel():
+            raise ValueError(
+                f"'iscrowd' must be a 1-D tensor with one entry per GT label, got shape "
+                f"{tuple(gt_crowd.shape)} for {gt_labels.numel()} labels"
+            )
 
         gt_label_ids = cast(list[int], gt_labels.tolist())
         pred_label_ids = cast(list[int], pred_labels.tolist())
-        all_class_ids: set[int] = set(gt_label_ids) | set(pred_label_ids)
+        gt_crowd_ids = cast(list[bool], gt_crowd.tolist())
+
+        # Host-side counts, built once per image from the tolist()'d labels above, replace what
+        # used to be a per-class `.sum().item()` device-to-host sync (two or three per class).
+        # The crowd count feeds the `n_pred == 0` branch, which must skip crowd GTs.
+        pred_count = Counter(pred_label_ids)
+        gt_count = Counter(gt_label_ids)
+        gt_noncrowd_count = Counter(label for label, crowd in zip(gt_label_ids, gt_crowd_ids) if not crowd)
+        all_class_ids: set[int] = set(gt_count) | set(pred_count)
 
         for class_id in all_class_ids:
-            pred_mask_c = pred_labels == class_id
-            gt_mask_c = gt_labels == class_id
-
-            p_scores = pred_scores[pred_mask_c]
-            gt_crowd_c = gt_crowd[gt_mask_c]
-            n_pred = int(pred_mask_c.sum().item())
-            n_gt = int(gt_mask_c.sum().item())
+            n_pred = pred_count.get(class_id, 0)
+            n_gt = gt_count.get(class_id, 0)
 
             entry = acc.setdefault(
                 class_id,
@@ -218,8 +235,13 @@ def build_matching_data(
             )
 
             if n_pred == 0:
-                entry["total_gt"] = cast(int, entry["total_gt"]) + int((~gt_crowd_c).sum().item())
+                entry["total_gt"] = cast(int, entry["total_gt"]) + gt_noncrowd_count.get(class_id, 0)
                 continue
+
+            # Only materialize the boolean mask / gather predictions for classes that actually
+            # have detections — gt_mask_c below is deferred further, to classes that also matter.
+            pred_mask_c = pred_labels == class_id
+            p_scores = pred_scores[pred_mask_c]
 
             if n_gt == 0:
                 # TODO: support bfloat16 natively once numpy adds bf16 dtype
@@ -229,6 +251,9 @@ def build_matching_data(
                 cast(list[int], entry["matches"]).extend([0] * n_pred)
                 cast(list[bool], entry["ignore"]).extend([False] * n_pred)
                 continue
+
+            gt_mask_c = gt_labels == class_id
+            gt_crowd_c = gt_crowd[gt_mask_c]
 
             if iou_type == "bbox":
                 p_items: Tensor = pred_boxes[pred_mask_c]  # [n_pred, 4]
