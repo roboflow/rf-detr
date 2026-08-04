@@ -19,6 +19,33 @@ from rfdetr.datasets.aug_configs import (
     AUG_INDUSTRIAL,
 )
 
+
+def _sharpness_sampler_range(transform: torch.nn.Module) -> tuple[float, float]:
+    """Read the sampled ``sharpness`` range off a Kornia ``RandomSharpness`` transform.
+
+    This intentionally reads a private Kornia implementation detail (``_param_generator.sampler_dict``) because no
+    public equivalent exists: ``RandomSharpness(...).flags`` is empty (verified against the installed Kornia
+    version), so the sampled range isn't reachable through any public attribute. If a future Kornia release
+    renames or removes ``_param_generator``/``sampler_dict``, this raises a clear, actionable failure instead of a
+    raw ``AttributeError``/``KeyError`` deep inside the test body.
+
+    Args:
+        transform: A ``kornia.augmentation.RandomSharpness`` instance (or equivalent) built with a sampled range.
+
+    Returns:
+        The sampled ``(low, high)`` bounds as floats.
+    """
+    try:
+        sampler = transform._param_generator.sampler_dict["sharpness"]
+        return float(sampler.low), float(sampler.high)
+    except (AttributeError, KeyError) as exc:
+        pytest.fail(
+            "Kornia's RandomSharpness no longer exposes the sampled `sharpness` range via the private "
+            f"`_param_generator.sampler_dict['sharpness']` path (no public alternative exists): {exc!r}. Update "
+            "this helper to match Kornia's new internal parameter-generator shape."
+        )
+
+
 # ---------------------------------------------------------------------------
 # TestBuildKorniaPipeline — validates the factory that translates aug_config
 # dicts into a Kornia AugmentationSequential pipeline.
@@ -293,9 +320,9 @@ class TestBuildKorniaPipeline:
 
         pipeline = build_kornia_pipeline({"Sharpen": {"alpha": (0.1, 0.4)}}, 560)
         transform = next(iter(pipeline.children()))
-        # Kornia keeps sampled ranges on the parameter generator rather than in `flags`.
-        sampler = transform._param_generator.sampler_dict["sharpness"]
-        assert (float(sampler.low), float(sampler.high)) == pytest.approx((1.1, 1.4))
+        # Kornia keeps sampled ranges on the parameter generator rather than in `flags`; see
+        # `_sharpness_sampler_range` for why this reads a private attribute.
+        assert _sharpness_sampler_range(transform) == pytest.approx((1.1, 1.4))
 
     def test_sharpen_default_alpha_actually_sharpens_not_blurs(self):
         """Regression guard: at the default alpha=(0.2, 0.5), Sharpen must raise edge energy, not lower it.
@@ -355,9 +382,9 @@ class TestBuildKorniaPipeline:
         pipeline = build_kornia_pipeline({"CLAHE": {"clip_limit": (2.0, 6.0), "tile_grid_size": (4, 4)}}, 560)
         transform = next(iter(pipeline.children()))
         assert tuple(transform.flags["grid_size"]) == (4, 4)
-        # clip_limit is sampled, so it lives on the parameter generator.
-        sampler = transform._param_generator.sampler_dict["clip_limit_factor"]
-        assert (float(sampler.low), float(sampler.high)) == pytest.approx((2.0, 6.0))
+        # Unlike Sharpen's sharpness range, RandomClahe exposes its range on a plain public
+        # `clip_limit` attribute (set directly from the constructor arg), so no private access needed.
+        assert tuple(transform.clip_limit) == pytest.approx((2.0, 6.0))
 
     def test_hue_saturation_value_still_unsupported(self):
         """Deliberately out of scope: albumentations shifts additively, Kornia scales multiplicatively."""
