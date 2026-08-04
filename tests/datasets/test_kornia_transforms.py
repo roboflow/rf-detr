@@ -267,13 +267,13 @@ class TestBuildKorniaPipeline:
         assert transform.flags["kernel_size"] == (expected, expected)
 
     def test_blur_pair_warns_about_the_fixed_kernel(self):
-        """A non-degenerate pair collapses to one kernel, so it must say so."""
+        """A non-degenerate pair the user chose explicitly collapses to one kernel, so it must say so."""
         from unittest import mock
 
         from rfdetr.datasets import kornia_transforms
 
         with mock.patch.object(kornia_transforms.logger, "warning") as warning:
-            kornia_transforms.build_kornia_pipeline({"Blur": {"blur_limit": (3, 7)}}, 560)
+            kornia_transforms.build_kornia_pipeline({"Blur": {"blur_limit": (3, 5)}}, 560)
         assert warning.called
         assert "Blur" in str(warning.call_args)
 
