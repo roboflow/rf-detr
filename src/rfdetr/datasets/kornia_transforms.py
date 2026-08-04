@@ -41,7 +41,7 @@ Usage::
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import torch
 from torch import Tensor
@@ -587,12 +587,11 @@ def _make_clahe(params: dict[str, Any]) -> Any:
     Both parameters map directly: Albumentations' ``clip_limit`` (a scalar or a pair) becomes Kornia's ``clip_limit``
     range, and ``tile_grid_size`` becomes ``grid_size``.
     """
-    from kornia.augmentation import (  # type: ignore[attr-defined]  # Kornia's stubs don't export RandomClahe yet
-        RandomClahe,
-    )
+    import kornia.augmentation as kornia_augmentation
 
+    random_clahe = cast(Any, kornia_augmentation).RandomClahe
     grid = params.get("tile_grid_size", (8, 8))
-    return RandomClahe(
+    return random_clahe(
         clip_limit=_as_range(params.get("clip_limit", 4.0)),
         grid_size=(int(grid[0]), int(grid[1])),
         p=params.get("p", 0.5),
