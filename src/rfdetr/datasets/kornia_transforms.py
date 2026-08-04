@@ -587,7 +587,9 @@ def _make_clahe(params: dict[str, Any]) -> Any:
     Both parameters map directly: Albumentations' ``clip_limit`` (a scalar or a pair) becomes Kornia's ``clip_limit``
     range, and ``tile_grid_size`` becomes ``grid_size``.
     """
-    from kornia.augmentation import RandomClahe
+    from kornia.augmentation import (  # type: ignore[attr-defined]  # Kornia's stubs don't export RandomClahe yet
+        RandomClahe,
+    )
 
     grid = params.get("tile_grid_size", (8, 8))
     return RandomClahe(

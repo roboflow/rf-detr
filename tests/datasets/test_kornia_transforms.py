@@ -314,6 +314,35 @@ class TestBuildKorniaPipeline:
             kornia_transforms.build_kornia_pipeline({"Blur": {"blur_limit": (5, 5)}}, 560)
         warning.assert_not_called()
 
+    def test_blur_library_default_pair_logs_at_debug_not_warning(self):
+        """(3, 7) is Albumentations' own Blur default, an expected divergence, so it must stay off WARNING."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with (
+            mock.patch.object(kornia_transforms.logger, "warning") as warning,
+            mock.patch.object(kornia_transforms.logger, "debug") as debug,
+        ):
+            kornia_transforms.build_kornia_pipeline({"Blur": {"blur_limit": (3, 7)}}, 560)
+        warning.assert_not_called()
+        assert debug.called
+        assert "Blur" in str(debug.call_args)
+
+    @pytest.mark.parametrize(
+        "blur_limit",
+        [
+            pytest.param([], id="empty-sequence"),
+            pytest.param((1, 2, 3), id="three-element-sequence"),
+        ],
+    )
+    def test_blur_kernel_rejects_invalid_sequence_length(self, blur_limit):
+        """A sequence that is neither a scalar nor a (min, max) pair must raise, not silently misresolve."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        with pytest.raises(ValueError, match="Kernel size parameter must be"):
+            build_kornia_pipeline({"Blur": {"blur_limit": blur_limit}}, 560)
+
     def test_sharpen_shifts_alpha_to_kornias_one_pivoted_sharpness_range(self):
         """Albumentations' alpha (0=no-op) is shifted to Kornia's sharpness (1.0=no-op): sharpness = 1.0 + alpha."""
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
