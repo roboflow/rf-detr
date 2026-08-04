@@ -502,8 +502,14 @@ def _make_blur(params: dict[str, Any]) -> Any:
 def _make_sharpen(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomSharpness`` from aug_config ``Sharpen`` params.
 
-    Albumentations' ``alpha`` is the blend weight between the original and the sharpened image, which is what Kornia's
-    ``sharpness`` factor controls, and Kornia accepts it as a ``(min, max)`` range so it passes through unchanged.
+    The two libraries use different origins for the same effect, so ``alpha`` is shifted rather than passed through.
+    Albumentations' ``alpha`` is the visibility of the sharpened image: ``0`` leaves the image unchanged and ``1``
+    shows the fully sharpened version, so it never blurs. Kornia's ``sharpness`` factor is pivoted at ``1.0`` (the
+    PIL ``ImageEnhance.Sharpness`` convention): it blends from a smoothed copy at ``0`` through the untouched image
+    at ``1.0`` and sharpens only above ``1.0``. Passing ``alpha`` through unchanged would therefore blur the image
+    for every value below ``1``, so the resolved range is shifted with ``sharpness = 1.0 + alpha``, which keeps the
+    Albumentations no-op at ``alpha = 0`` mapped to Kornia's no-op at ``sharpness = 1.0``.
+
     ``lightness`` and ``method`` have no Kornia equivalent and are ignored here; the CPU (albumentations) path honors
     both.
     """
@@ -515,8 +521,9 @@ def _make_sharpen(params: dict[str, Any]) -> Any:
             "(Kornia's RandomSharpness exposes only a sharpness factor). "
             "CPU augmentation (albumentations) honors both."
         )
+    alpha_min, alpha_max = _as_range(params.get("alpha", (0.2, 0.5)))
     return RandomSharpness(
-        sharpness=_as_range(params.get("alpha", (0.2, 0.5))),
+        sharpness=(1.0 + alpha_min, 1.0 + alpha_max),
         p=params.get("p", 0.5),
     )
 

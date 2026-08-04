@@ -287,15 +287,44 @@ class TestBuildKorniaPipeline:
             kornia_transforms.build_kornia_pipeline({"Blur": {"blur_limit": (5, 5)}}, 560)
         warning.assert_not_called()
 
-    def test_sharpen_passes_alpha_through_as_a_range(self):
-        """Albumentations' alpha is the blend weight, which is Kornia's sharpness factor."""
+    def test_sharpen_shifts_alpha_to_kornias_one_pivoted_sharpness_range(self):
+        """Albumentations' alpha (0=no-op) is shifted to Kornia's sharpness (1.0=no-op): sharpness = 1.0 + alpha."""
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
 
         pipeline = build_kornia_pipeline({"Sharpen": {"alpha": (0.1, 0.4)}}, 560)
         transform = next(iter(pipeline.children()))
         # Kornia keeps sampled ranges on the parameter generator rather than in `flags`.
         sampler = transform._param_generator.sampler_dict["sharpness"]
-        assert (float(sampler.low), float(sampler.high)) == pytest.approx((0.1, 0.4))
+        assert (float(sampler.low), float(sampler.high)) == pytest.approx((1.1, 1.4))
+
+    def test_sharpen_default_alpha_actually_sharpens_not_blurs(self):
+        """Regression guard: at the default alpha=(0.2, 0.5), Sharpen must raise edge energy, not lower it.
+
+        Kornia's ``sharpness`` factor is pivoted at 1.0 (0=blur, 1=no-op, >1=sharpen), unlike Albumentations' ``alpha``
+        (pivoted at 0). Passing ``alpha`` straight through as ``sharpness`` (the pre-fix bug) resolves to the range
+        (0.2, 0.5) — below Kornia's no-op point — which blurs a step edge instead of sharpening it, so this test would
+        fail against that code. The fixed mapping resolves to ``sharpness=(1.2, 1.5)``, which sharpens.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        size = 16
+        img = torch.full((1, 3, size, size), 0.3)
+        img[:, :, :, size // 2 :] = 0.7  # a single sharp step edge down the middle column
+        boxes = torch.tensor([[[0.0, 0.0, float(size), float(size)]]], dtype=torch.float32)
+
+        pipeline = build_kornia_pipeline({"Sharpen": {"p": 1.0}}, 560)
+        img_out, _ = pipeline(img, boxes)
+
+        def edge_energy(x: torch.Tensor) -> float:
+            # Exclude the outer 2-pixel ring: Kornia's sharpness leaves border pixels unchanged (see
+            # kornia.enhance.adjust.sharpness), so including them would dilute the interior sharpening signal.
+            interior = x[:, :, 2:-2, 2:-2]
+            return (torch.diff(interior, dim=-1).abs().mean() + torch.diff(interior, dim=-2).abs().mean()).item()
+
+        assert edge_energy(img_out) > edge_energy(img), (
+            "Sharpen at the default alpha=(0.2, 0.5) must increase edge energy (sharpen); an unchanged or lower "
+            "value means the pivot-point bug regressed (sharpness range fell back to (0.2, 0.5), which blurs)."
+        )
 
     def test_sharpen_warns_about_ignored_lightness(self):
         """Lightness has no Kornia equivalent, so dropping it must be announced."""
