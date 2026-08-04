@@ -114,6 +114,69 @@ def shift_key_points(key_points: sv.KeyPoints, dx: float, dy: float) -> sv.KeyPo
     )
 
 
+def transform_key_points(
+    key_points: sv.KeyPoints,
+    *,
+    dx: float,
+    dy: float,
+    scale_x: float,
+    scale_y: float,
+    center_x: float,
+    center_y: float,
+) -> sv.KeyPoints:
+    """Return a copy scaled about ``(center_x, center_y)`` then translated.
+
+    Each visible joint ``p`` maps to ``(p - c) * s + c + d`` where ``c`` is the
+    given center, ``s = (scale_x, scale_y)``, and ``d = (dx, dy)``. This applies
+    a constant-velocity translation plus a size change about the box center,
+    keeping the skeleton consistent with a motion-predicted box. Any
+    ``data['xyxy']`` box is transformed with the same mapping.
+
+    Args:
+        key_points: Source detections to transform.
+        dx: Horizontal translation in pixels.
+        dy: Vertical translation in pixels.
+        scale_x: Horizontal scale factor about ``center_x``.
+        scale_y: Vertical scale factor about ``center_y``.
+        center_x: Horizontal anchor the scaling pivots around.
+        center_y: Vertical anchor the scaling pivots around.
+
+    Returns:
+        A new ``KeyPoints`` with transformed coordinates.
+    """
+    is_identity = dx == 0.0 and dy == 0.0 and scale_x == 1.0 and scale_y == 1.0
+    if len(key_points) == 0 or is_identity:
+        return key_points
+
+    center = np.asarray([center_x, center_y], dtype=np.float64)
+    scale = np.asarray([scale_x, scale_y], dtype=np.float64)
+    offset = np.asarray([dx, dy], dtype=np.float64)
+
+    xy = key_points.xy.astype(np.float64, copy=True)
+    if key_points.visible is not None:
+        mask = key_points.visible
+    else:
+        mask = ~np.all(np.isclose(xy, 0), axis=2)
+    xy[mask] = (xy[mask] - center) * scale + center + offset
+
+    data = dict(key_points.data) if key_points.data else {}
+    xyxy = data.get("xyxy")
+    if isinstance(xyxy, np.ndarray) and xyxy.shape[-1] == 4:
+        box = xyxy.astype(np.float64, copy=True)
+        box[..., [0, 2]] = (box[..., [0, 2]] - center_x) * scale_x + center_x + dx
+        box[..., [1, 3]] = (box[..., [1, 3]] - center_y) * scale_y + center_y + dy
+        data["xyxy"] = box.astype(xyxy.dtype, copy=False)
+
+    return sv.KeyPoints(
+        xy=xy.astype(key_points.xy.dtype, copy=False),
+        visible=key_points.visible,
+        keypoint_confidence=key_points.keypoint_confidence,
+        detection_confidence=key_points.detection_confidence,
+        class_id=key_points.class_id,
+        data=data,
+    )
+
+
 def is_track_ghost(key_points: sv.KeyPoints, detection_index: int) -> bool:
     """Return True when a detection row is a stabilizer ghost hold."""
     flags = key_points.data.get(TRACK_IS_GHOST_KEY) if key_points.data else None

@@ -36,6 +36,7 @@ class PersonTrackSettings:
     motion_enabled: bool = True
     motion_smoothing: float = 0.5
     motion_max_speed: float = 120.0
+    motion_gate_factor: float = 1.5
 
 
 @dataclass
@@ -114,6 +115,7 @@ def person_track_settings_from_env(
     motion_raw = os.environ.get("RFDETR_TRACK_MOTION", "").strip().lower()
     motion_smoothing_raw = os.environ.get("RFDETR_MOTION_SMOOTHING")
     motion_max_speed_raw = os.environ.get("RFDETR_MOTION_MAX_SPEED")
+    motion_gate_factor_raw = os.environ.get("RFDETR_MOTION_GATE_FACTOR")
     kwargs: dict[str, object] = {}
     if max_missed_raw is not None:
         kwargs["max_missed"] = max(0, int(max_missed_raw))
@@ -145,6 +147,8 @@ def person_track_settings_from_env(
         kwargs["motion_smoothing"] = max(0.0, min(1.0, float(motion_smoothing_raw)))
     if motion_max_speed_raw is not None:
         kwargs["motion_max_speed"] = max(0.0, float(motion_max_speed_raw))
+    if motion_gate_factor_raw is not None:
+        kwargs["motion_gate_factor"] = max(0.0, float(motion_gate_factor_raw))
     if not kwargs:
         return settings
     from dataclasses import replace

@@ -12,6 +12,7 @@ import supervision as sv
 
 from rfdetr_demo.tracking.keypoints_ops import track_ids_from_key_points
 from rfdetr_demo.tracking.pipeline import PersonTrackPipeline
+from rfdetr_demo.tracking.track_store import _match_tracks_to_detections
 from rfdetr_demo.tracking.types import TRACK_IS_GHOST_KEY, PersonTrackSettings
 
 
@@ -136,6 +137,51 @@ def test_motion_advances_ghost_keypoints() -> None:
     assert ghost.stats.ghost_count == 1
     # The held ghost should predict forward, not freeze at the last position.
     assert _center_x(ghost.key_points, 0) > _center_x(last.key_points, 0)
+
+
+def _box_width(key_points: sv.KeyPoints, detection_index: int) -> float:
+    xyxy = key_points.data["xyxy"]
+    box = xyxy[detection_index]
+    return float(box[2] - box[0])
+
+
+def test_motion_grows_ghost_box_for_approaching_person() -> None:
+    pipeline = PersonTrackPipeline(
+        settings=PersonTrackSettings(motion_enabled=True, motion_smoothing=0.5, max_missed=3),
+        frame_width=1280,
+    )
+    # A centered person whose box grows each frame (walking toward the camera).
+    pipeline.apply(_box_key_points(boxes=[(100.0, 100.0, 200.0, 300.0)], confidences=[0.9]), 0)
+    pipeline.apply(_box_key_points(boxes=[(90.0, 90.0, 210.0, 310.0)], confidences=[0.9]), 1)
+    last = pipeline.apply(_box_key_points(boxes=[(80.0, 80.0, 220.0, 320.0)], confidences=[0.9]), 2)
+    ghost = pipeline.apply(_box_key_points(boxes=[], confidences=[]), 3)
+
+    assert ghost.stats.ghost_count == 1
+    # Scale prediction should keep growing the held box, not freeze its size.
+    assert _box_width(ghost.key_points, 0) > _box_width(last.key_points, 0)
+
+
+def test_motion_gate_rejects_implausible_long_range_match() -> None:
+    track_boxes = [np.array([0.0, 0.0, 100.0, 100.0], dtype=np.float64)]
+    detection_boxes = [np.array([60.0, 0.0, 160.0, 100.0], dtype=np.float64)]
+
+    ungated_matched, _, _ = _match_tracks_to_detections(
+        track_boxes,
+        detection_boxes,
+        match_iou_threshold=0.15,
+        gate_distances=None,
+    )
+    gated_matched, unmatched_tracks, _ = _match_tracks_to_detections(
+        track_boxes,
+        detection_boxes,
+        match_iou_threshold=0.15,
+        gate_distances=[50.0],
+    )
+    # Centers are 60px apart: the overlapping boxes match without a gate but the
+    # 50px gate disqualifies the pair.
+    assert ungated_matched == [(0, 0)]
+    assert gated_matched == []
+    assert unmatched_tracks == {0}
 
 
 def test_hysteresis_blocks_low_confidence_new_track() -> None:

@@ -21,9 +21,9 @@ from rfdetr_demo.tracking.bbox import (
 )
 from rfdetr_demo.tracking.keypoints_ops import (
     merge_key_points,
-    shift_key_points,
     single_detection_key_points,
     subset_key_points,
+    transform_key_points,
 )
 from rfdetr_demo.tracking.types import PersonTrackSettings, TrackDiagnostic, TrackPipelineResult, TrackPipelineStats
 
@@ -38,6 +38,7 @@ class TrackSnapshot:
     missed: int = 0
     sticky: bool = False
     velocity: np.ndarray = field(default_factory=lambda: np.zeros(2, dtype=np.float64))
+    size_velocity: np.ndarray = field(default_factory=lambda: np.zeros(2, dtype=np.float64))
 
 
 def _center_x_range(frame_width: int, fraction: tuple[float, float]) -> tuple[float, float]:
@@ -46,6 +47,16 @@ def _center_x_range(frame_width: int, fraction: tuple[float, float]) -> tuple[fl
 
 def _box_center(box: np.ndarray) -> tuple[float, float]:
     return float((box[0] + box[2]) / 2.0), float((box[1] + box[3]) / 2.0)
+
+
+def _box_size(box: np.ndarray) -> tuple[float, float]:
+    return float(box[2] - box[0]), float(box[3] - box[1])
+
+
+def _center_distance(box_a: np.ndarray, box_b: np.ndarray) -> float:
+    ax, ay = _box_center(box_a)
+    bx, by = _box_center(box_b)
+    return float(np.hypot(ax - bx, ay - by))
 
 
 def _in_center_lane(cx: float, frame_width: int, fraction: tuple[float, float]) -> bool:
@@ -76,18 +87,25 @@ def _match_tracks_to_detections(
     detection_boxes: list[np.ndarray],
     *,
     match_iou_threshold: float,
+    gate_distances: list[float] | None = None,
 ) -> tuple[list[tuple[int, int]], set[int], set[int]]:
     """Return (track_idx, det_idx) pairs plus unmatched track/det indices.
 
     ``track_boxes`` are the per-track boxes to match against, which may be
-    motion-predicted rather than the last observed position.
+    motion-predicted rather than the last observed position. When
+    ``gate_distances`` is given, a track/detection pair whose center distance
+    exceeds ``gate_distances[track_idx]`` is disqualified, which suppresses
+    implausible long-range matches (ID swaps) between crossing people.
     """
     if not track_boxes or not detection_boxes:
         return [], set(range(len(track_boxes))), set(range(len(detection_boxes)))
 
     cost = np.zeros((len(track_boxes), len(detection_boxes)), dtype=np.float64)
     for track_index, track_box in enumerate(track_boxes):
+        gate = gate_distances[track_index] if gate_distances is not None else None
         for detection_index, det_box in enumerate(detection_boxes):
+            if gate is not None and _center_distance(track_box, det_box) > gate:
+                continue
             cost[track_index, detection_index] = iou(track_box, det_box)
 
     pairs = hungarian_maximize(cost)
@@ -205,36 +223,71 @@ class TrackStore:
         )
 
     def _predicted_box(self, track: TrackSnapshot) -> np.ndarray:
-        """Return the track box advanced by one step of its velocity."""
+        """Return the track box advanced by one step of center and size velocity."""
         if not self.settings.motion_enabled:
             return track.box
-        shift = np.array(
-            [track.velocity[0], track.velocity[1], track.velocity[0], track.velocity[1]],
+        cx, cy = _box_center(track.box)
+        width, height = _box_size(track.box)
+        new_cx = cx + float(track.velocity[0])
+        new_cy = cy + float(track.velocity[1])
+        new_width = max(1.0, width + float(track.size_velocity[0]))
+        new_height = max(1.0, height + float(track.size_velocity[1]))
+        return np.array(
+            [
+                new_cx - new_width / 2.0,
+                new_cy - new_height / 2.0,
+                new_cx + new_width / 2.0,
+                new_cy + new_height / 2.0,
+            ],
             dtype=np.float64,
         )
-        return track.box + shift
+
+    def _gate_distance(self, predicted_box: np.ndarray) -> float | None:
+        """Return the max plausible center jump for a track, or None if disabled."""
+        factor = self.settings.motion_gate_factor
+        if not self.settings.motion_enabled or factor <= 0:
+            return None
+        width, height = _box_size(predicted_box)
+        return factor * 0.5 * (width + height) + self.settings.motion_max_speed
 
     def _update_velocity(self, track: TrackSnapshot, new_box: np.ndarray) -> None:
-        """Blend the observed center displacement into the track velocity (EMA)."""
+        """Blend observed center and size change into the track velocities (EMA)."""
         if not self.settings.motion_enabled:
             return
         old_cx, old_cy = _box_center(track.box)
         new_cx, new_cy = _box_center(new_box)
-        measured = np.array([new_cx - old_cx, new_cy - old_cy], dtype=np.float64)
+        old_width, old_height = _box_size(track.box)
+        new_width, new_height = _box_size(new_box)
+        measured_center = np.array([new_cx - old_cx, new_cy - old_cy], dtype=np.float64)
+        measured_size = np.array([new_width - old_width, new_height - old_height], dtype=np.float64)
         beta = self.settings.motion_smoothing
-        track.velocity = beta * track.velocity + (1.0 - beta) * measured
+        track.velocity = beta * track.velocity + (1.0 - beta) * measured_center
+        track.size_velocity = beta * track.size_velocity + (1.0 - beta) * measured_size
         max_speed = self.settings.motion_max_speed
         if max_speed > 0:
             np.clip(track.velocity, -max_speed, max_speed, out=track.velocity)
+            np.clip(track.size_velocity, -max_speed, max_speed, out=track.size_velocity)
 
     def _advance_ghost(self, track: TrackSnapshot) -> sv.KeyPoints:
-        """Move a held track forward by its velocity and return shifted keypoints."""
-        if not self.settings.motion_enabled or not np.any(track.velocity):
+        """Move a held track forward by its motion model and return shifted keypoints."""
+        if not self.settings.motion_enabled or not (np.any(track.velocity) or np.any(track.size_velocity)):
             return track.key_points
-        dx = float(track.velocity[0])
-        dy = float(track.velocity[1])
-        track.box = self._predicted_box(track)
-        track.key_points = shift_key_points(track.key_points, dx, dy)
+        old_cx, old_cy = _box_center(track.box)
+        old_width, old_height = _box_size(track.box)
+        predicted = self._predicted_box(track)
+        new_width, new_height = _box_size(predicted)
+        scale_x = new_width / old_width if old_width > 0 else 1.0
+        scale_y = new_height / old_height if old_height > 0 else 1.0
+        track.box = predicted
+        track.key_points = transform_key_points(
+            track.key_points,
+            dx=float(track.velocity[0]),
+            dy=float(track.velocity[1]),
+            scale_x=scale_x,
+            scale_y=scale_y,
+            center_x=old_cx,
+            center_y=old_cy,
+        )
         return track.key_points
 
     def _maybe_mark_sticky(self, track: TrackSnapshot) -> None:
@@ -277,10 +330,12 @@ class TrackStore:
             )
 
         track_boxes = [self._predicted_box(track) for track in self._tracks]
+        gate_distances = [self._gate_distance(box) for box in track_boxes]
         matched, unmatched_tracks, unmatched_detections = _match_tracks_to_detections(
             track_boxes,
             detection_boxes,
             match_iou_threshold=self.settings.match_iou_threshold,
+            gate_distances=(gate_distances if self.settings.motion_gate_factor > 0 else None),
         )
 
         if self.settings.sticky_center_track and self._sticky_track_id is not None:
