@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import numpy as np
 import supervision as sv
 
 from rfdetr_demo.tracking.track_store import TrackStore
@@ -61,9 +62,20 @@ class PersonTrackPipeline:
         if self._temporal_filter is not None:
             self._temporal_filter.reset()
 
-    def apply(self, key_points: sv.KeyPoints, frame_index: int) -> TrackPipelineResult:
-        """Run NMS, association, hold, then optional keypoint motion filtering."""
-        result = self._store.apply(key_points, frame_index)
+    def apply(
+        self,
+        key_points: sv.KeyPoints,
+        frame_index: int,
+        frame: np.ndarray | None = None,
+    ) -> TrackPipelineResult:
+        """Run NMS, association, hold, then optional keypoint motion filtering.
+
+        Args:
+            key_points: Raw per-frame keypoint detections.
+            frame_index: Frame counter forwarded to the track store.
+            frame: Optional BGR frame used for appearance ReID re-association.
+        """
+        result = self._store.apply(key_points, frame_index, frame)
         if self._temporal_filter is not None:
             filtered = self._temporal_filter.apply(result.key_points, frame_index)
             return TrackPipelineResult(

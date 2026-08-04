@@ -37,6 +37,11 @@ class PersonTrackSettings:
     motion_smoothing: float = 0.5
     motion_max_speed: float = 120.0
     motion_gate_factor: float = 1.5
+    reid_enabled: bool = False
+    reid_weight: float = 0.3
+    reid_similarity_threshold: float = 0.5
+    reid_max_gallery_frames: int = 60
+    reid_ema: float = 0.9
 
 
 @dataclass
@@ -116,6 +121,11 @@ def person_track_settings_from_env(
     motion_smoothing_raw = os.environ.get("RFDETR_MOTION_SMOOTHING")
     motion_max_speed_raw = os.environ.get("RFDETR_MOTION_MAX_SPEED")
     motion_gate_factor_raw = os.environ.get("RFDETR_MOTION_GATE_FACTOR")
+    reid_raw = os.environ.get("RFDETR_TRACK_REID", "").strip().lower()
+    reid_weight_raw = os.environ.get("RFDETR_REID_WEIGHT")
+    reid_similarity_raw = os.environ.get("RFDETR_REID_SIMILARITY")
+    reid_gallery_frames_raw = os.environ.get("RFDETR_REID_GALLERY_FRAMES")
+    reid_ema_raw = os.environ.get("RFDETR_REID_EMA")
     kwargs: dict[str, object] = {}
     if max_missed_raw is not None:
         kwargs["max_missed"] = max(0, int(max_missed_raw))
@@ -149,6 +159,18 @@ def person_track_settings_from_env(
         kwargs["motion_max_speed"] = max(0.0, float(motion_max_speed_raw))
     if motion_gate_factor_raw is not None:
         kwargs["motion_gate_factor"] = max(0.0, float(motion_gate_factor_raw))
+    if reid_raw in {"1", "true", "yes", "on"}:
+        kwargs["reid_enabled"] = True
+    elif reid_raw in {"0", "false", "no", "off"}:
+        kwargs["reid_enabled"] = False
+    if reid_weight_raw is not None:
+        kwargs["reid_weight"] = max(0.0, min(1.0, float(reid_weight_raw)))
+    if reid_similarity_raw is not None:
+        kwargs["reid_similarity_threshold"] = max(0.0, min(1.0, float(reid_similarity_raw)))
+    if reid_gallery_frames_raw is not None:
+        kwargs["reid_max_gallery_frames"] = max(0, int(reid_gallery_frames_raw))
+    if reid_ema_raw is not None:
+        kwargs["reid_ema"] = max(0.0, min(1.0, float(reid_ema_raw)))
     if not kwargs:
         return settings
     from dataclasses import replace

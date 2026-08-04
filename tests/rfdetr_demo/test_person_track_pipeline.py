@@ -10,6 +10,11 @@ from __future__ import annotations
 import numpy as np
 import supervision as sv
 
+from rfdetr_demo.tracking.appearance import (
+    appearance_histogram,
+    appearance_roi,
+    histogram_similarity,
+)
 from rfdetr_demo.tracking.keypoints_ops import track_ids_from_key_points
 from rfdetr_demo.tracking.pipeline import PersonTrackPipeline
 from rfdetr_demo.tracking.track_store import _match_tracks_to_detections
@@ -182,6 +187,141 @@ def test_motion_gate_rejects_implausible_long_range_match() -> None:
     assert ungated_matched == [(0, 0)]
     assert gated_matched == []
     assert unmatched_tracks == {0}
+
+
+def _person_key_points(
+    *,
+    boxes: list[tuple[float, float, float, float]],
+    confidences: list[float],
+) -> sv.KeyPoints:
+    """Build keypoints with visible torso joints (5, 6, 11, 12) inside each box."""
+    num = len(boxes)
+    xy = np.zeros((num, 17, 2), dtype=np.float32)
+    visible = np.zeros((num, 17), dtype=bool)
+    for index, (x1, y1, x2, y2) in enumerate(boxes):
+        width = x2 - x1
+        height = y2 - y1
+        xy[index, 0] = ((x1 + x2) / 2, (y1 + y2) / 2)
+        xy[index, 5] = (x1 + 0.3 * width, y1 + 0.3 * height)
+        xy[index, 6] = (x1 + 0.7 * width, y1 + 0.3 * height)
+        xy[index, 11] = (x1 + 0.3 * width, y1 + 0.6 * height)
+        xy[index, 12] = (x1 + 0.7 * width, y1 + 0.6 * height)
+        for joint in (0, 5, 6, 11, 12):
+            visible[index, joint] = True
+    return sv.KeyPoints(
+        xy=xy,
+        visible=visible,
+        keypoint_confidence=np.full((num, 17), 0.9, dtype=np.float32),
+        detection_confidence=np.asarray(confidences, dtype=np.float32),
+        data={"xyxy": np.asarray(boxes, dtype=np.float32)},
+    )
+
+
+def _frame_with_person(
+    box: tuple[float, float, float, float],
+    color_bgr: tuple[int, int, int],
+    *,
+    width: int = 640,
+    height: int = 480,
+) -> np.ndarray:
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    x1, y1, x2, y2 = (int(value) for value in box)
+    frame[y1:y2, x1:x2] = color_bgr
+    return frame
+
+
+def test_appearance_similarity_separates_colors() -> None:
+    box = (100.0, 100.0, 200.0, 300.0)
+    key_points = _person_key_points(boxes=[box], confidences=[0.9])
+    roi = appearance_roi(key_points, 0, np.asarray(box, dtype=np.float64))
+    assert roi is not None
+
+    red = appearance_histogram(_frame_with_person(box, (0, 0, 255)), roi)
+    red_again = appearance_histogram(_frame_with_person(box, (0, 0, 255)), roi)
+    green = appearance_histogram(_frame_with_person(box, (0, 255, 0)), roi)
+
+    assert histogram_similarity(red, red_again) > 0.95
+    assert histogram_similarity(red, green) < 0.05
+
+
+def test_reid_cost_blend_prefers_matching_appearance() -> None:
+    track_boxes = [np.array([0.0, 0.0, 100.0, 100.0], dtype=np.float64)]
+    # D0 overlaps more (higher IoU) but has a different appearance; D1 overlaps
+    # less but matches the track appearance exactly.
+    detection_boxes = [
+        np.array([10.0, 0.0, 110.0, 100.0], dtype=np.float64),
+        np.array([40.0, 0.0, 140.0, 100.0], dtype=np.float64),
+    ]
+    track_descriptors = [np.array([1.0, 0.0, 0.0, 0.0])]
+    det_descriptors = [np.array([0.0, 0.0, 0.0, 1.0]), np.array([1.0, 0.0, 0.0, 0.0])]
+
+    geometry_only, _, _ = _match_tracks_to_detections(
+        track_boxes,
+        detection_boxes,
+        match_iou_threshold=0.15,
+        reid_weight=0.0,
+    )
+    with_appearance, _, _ = _match_tracks_to_detections(
+        track_boxes,
+        detection_boxes,
+        match_iou_threshold=0.15,
+        track_descriptors=track_descriptors,
+        det_descriptors=det_descriptors,
+        reid_weight=0.7,
+    )
+
+    assert geometry_only == [(0, 0)]
+    assert with_appearance == [(0, 1)]
+
+
+def test_reid_revives_track_id_after_long_occlusion() -> None:
+    pipeline = PersonTrackPipeline(
+        settings=PersonTrackSettings(
+            max_missed=1,
+            reid_enabled=True,
+            reid_similarity_threshold=0.5,
+            reid_max_gallery_frames=30,
+        ),
+        frame_width=640,
+    )
+    box = (100.0, 100.0, 200.0, 300.0)
+    red = (0, 0, 255)
+    kp = _person_key_points(boxes=[box], confidences=[0.9])
+
+    first = pipeline.apply(kp, 0, _frame_with_person(box, red))
+    original_id = track_ids_from_key_points(first.key_points)[0]
+
+    # Occlude for several frames so the track is dropped into the gallery.
+    empty = _person_key_points(boxes=[], confidences=[])
+    for index in range(1, 4):
+        pipeline.apply(empty, index, np.zeros((480, 640, 3), dtype=np.uint8))
+
+    reappear = pipeline.apply(kp, 4, _frame_with_person(box, red))
+    revived_id = track_ids_from_key_points(reappear.key_points)[0]
+
+    assert revived_id == original_id
+
+
+def test_reid_disabled_assigns_new_id_after_long_occlusion() -> None:
+    pipeline = PersonTrackPipeline(
+        settings=PersonTrackSettings(max_missed=1, reid_enabled=False),
+        frame_width=640,
+    )
+    box = (100.0, 100.0, 200.0, 300.0)
+    red = (0, 0, 255)
+    kp = _person_key_points(boxes=[box], confidences=[0.9])
+
+    first = pipeline.apply(kp, 0, _frame_with_person(box, red))
+    original_id = track_ids_from_key_points(first.key_points)[0]
+
+    empty = _person_key_points(boxes=[], confidences=[])
+    for index in range(1, 4):
+        pipeline.apply(empty, index)
+
+    reappear = pipeline.apply(kp, 4, _frame_with_person(box, red))
+    new_id = track_ids_from_key_points(reappear.key_points)[0]
+
+    assert new_id != original_id
 
 
 def test_hysteresis_blocks_low_confidence_new_track() -> None:

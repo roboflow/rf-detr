@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
 import supervision as sv
 
 from rfdetr_demo.tracking.bbox import (
@@ -61,9 +62,14 @@ class DetectionStabilizer:
         """Clear track history."""
         self._store.reset()
 
-    def apply(self, key_points: sv.KeyPoints, frame_index: int) -> StabilizationResult:
-        """Return stabilized detections for one frame."""
-        result = self._store.apply(key_points, frame_index)
+    def apply(
+        self,
+        key_points: sv.KeyPoints,
+        frame_index: int,
+        frame: np.ndarray | None = None,
+    ) -> StabilizationResult:
+        """Return stabilized detections for one frame (``frame`` enables ReID)."""
+        result = self._store.apply(key_points, frame_index, frame)
         return StabilizationResult(
             key_points=result.key_points,
             stats=StabilizationStats(

@@ -134,7 +134,7 @@ def make_keypoint_callback(
                 processed_count=stats["processed_frames"],
             )
         if track_pipeline is not None:
-            stabilized = track_pipeline.apply(key_points, index)
+            stabilized = track_pipeline.apply(key_points, index, frame=frame_bgr)
             key_points = stabilized.key_points
             frame_stats = stabilized.stats
             stats["frame_raw_detections"] = frame_stats.raw_count

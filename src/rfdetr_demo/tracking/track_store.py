@@ -12,6 +12,11 @@ from dataclasses import dataclass, field
 import numpy as np
 import supervision as sv
 
+from rfdetr_demo.tracking.appearance import (
+    appearance_histogram,
+    appearance_roi,
+    histogram_similarity,
+)
 from rfdetr_demo.tracking.bbox import (
     detection_bbox,
     detection_confidence,
@@ -39,6 +44,18 @@ class TrackSnapshot:
     sticky: bool = False
     velocity: np.ndarray = field(default_factory=lambda: np.zeros(2, dtype=np.float64))
     size_velocity: np.ndarray = field(default_factory=lambda: np.zeros(2, dtype=np.float64))
+    descriptor: np.ndarray | None = None
+
+
+@dataclass
+class GalleryEntry:
+    """A recently retired track kept for appearance-based revival."""
+
+    track_id: int
+    descriptor: np.ndarray
+    velocity: np.ndarray
+    size_velocity: np.ndarray
+    age: int = 0
 
 
 def _center_x_range(frame_width: int, fraction: tuple[float, float]) -> tuple[float, float]:
@@ -88,6 +105,9 @@ def _match_tracks_to_detections(
     *,
     match_iou_threshold: float,
     gate_distances: list[float] | None = None,
+    track_descriptors: list[np.ndarray | None] | None = None,
+    det_descriptors: list[np.ndarray | None] | None = None,
+    reid_weight: float = 0.0,
 ) -> tuple[list[tuple[int, int]], set[int], set[int]]:
     """Return (track_idx, det_idx) pairs plus unmatched track/det indices.
 
@@ -95,18 +115,28 @@ def _match_tracks_to_detections(
     motion-predicted rather than the last observed position. When
     ``gate_distances`` is given, a track/detection pair whose center distance
     exceeds ``gate_distances[track_idx]`` is disqualified, which suppresses
-    implausible long-range matches (ID swaps) between crossing people.
+    implausible long-range matches (ID swaps) between crossing people. When
+    ``reid_weight > 0`` and both descriptor lists are supplied, the cost blends
+    IoU with appearance similarity ``(1 - w) * iou + w * sim``.
     """
     if not track_boxes or not detection_boxes:
         return [], set(range(len(track_boxes))), set(range(len(detection_boxes)))
 
+    blend_appearance = reid_weight > 0.0 and track_descriptors is not None and det_descriptors is not None
     cost = np.zeros((len(track_boxes), len(detection_boxes)), dtype=np.float64)
     for track_index, track_box in enumerate(track_boxes):
         gate = gate_distances[track_index] if gate_distances is not None else None
         for detection_index, det_box in enumerate(detection_boxes):
             if gate is not None and _center_distance(track_box, det_box) > gate:
                 continue
-            cost[track_index, detection_index] = iou(track_box, det_box)
+            score = iou(track_box, det_box)
+            if blend_appearance:
+                similarity = histogram_similarity(
+                    track_descriptors[track_index],
+                    det_descriptors[detection_index],
+                )
+                score = (1.0 - reid_weight) * score + reid_weight * similarity
+            cost[track_index, detection_index] = score
 
     pairs = hungarian_maximize(cost)
     matched: list[tuple[int, int]] = []
@@ -132,10 +162,12 @@ class TrackStore:
     _tracks: list[TrackSnapshot] = field(default_factory=list, init=False, repr=False)
     _next_track_id: int = field(default=0, init=False, repr=False)
     _sticky_track_id: int | None = field(default=None, init=False, repr=False)
+    _gallery: list[GalleryEntry] = field(default_factory=list, init=False, repr=False)
 
     def reset(self) -> None:
         """Clear track history."""
         self._tracks.clear()
+        self._gallery.clear()
         self._next_track_id = 0
         self._sticky_track_id = None
 
@@ -290,6 +322,77 @@ class TrackStore:
         )
         return track.key_points
 
+    def _reid_active(self, frame: np.ndarray | None) -> bool:
+        return self.settings.reid_enabled and frame is not None
+
+    def _detection_descriptor(
+        self,
+        frame: np.ndarray,
+        nms_key_points: sv.KeyPoints,
+        detection_index: int,
+        box: np.ndarray,
+    ) -> np.ndarray | None:
+        """Compute the appearance descriptor for one detection, if possible."""
+        roi = appearance_roi(nms_key_points, detection_index, box)
+        if roi is None:
+            return None
+        return appearance_histogram(frame, roi)
+
+    def _update_descriptor(self, track: TrackSnapshot, descriptor: np.ndarray | None) -> None:
+        """Blend a fresh descriptor into the track descriptor with EMA."""
+        if descriptor is None:
+            return
+        if track.descriptor is None:
+            track.descriptor = descriptor
+            return
+        ema = self.settings.reid_ema
+        blended = ema * track.descriptor + (1.0 - ema) * descriptor
+        total = float(blended.sum())
+        track.descriptor = blended / total if total > 0 else descriptor
+
+    def _age_gallery(self) -> None:
+        """Advance gallery ages and drop entries older than the retention window."""
+        if not self._gallery:
+            return
+        limit = self.settings.reid_max_gallery_frames
+        survivors: list[GalleryEntry] = []
+        for entry in self._gallery:
+            entry.age += 1
+            if entry.age <= limit:
+                survivors.append(entry)
+        self._gallery = survivors
+
+    def _retire_to_gallery(self, track: TrackSnapshot) -> None:
+        """Store a dropped track's appearance for later revival."""
+        if not self.settings.reid_enabled or self.settings.reid_max_gallery_frames <= 0:
+            return
+        if track.descriptor is None:
+            return
+        self._gallery.append(
+            GalleryEntry(
+                track_id=track.track_id,
+                descriptor=track.descriptor,
+                velocity=track.velocity.copy(),
+                size_velocity=track.size_velocity.copy(),
+                age=0,
+            ),
+        )
+
+    def _pop_gallery_match(self, descriptor: np.ndarray | None) -> GalleryEntry | None:
+        """Return and remove the best gallery entry above the similarity threshold."""
+        if descriptor is None or not self._gallery:
+            return None
+        best_entry: GalleryEntry | None = None
+        best_similarity = self.settings.reid_similarity_threshold
+        for entry in self._gallery:
+            similarity = histogram_similarity(entry.descriptor, descriptor)
+            if similarity >= best_similarity:
+                best_similarity = similarity
+                best_entry = entry
+        if best_entry is not None:
+            self._gallery.remove(best_entry)
+        return best_entry
+
     def _maybe_mark_sticky(self, track: TrackSnapshot) -> None:
         if not self.settings.sticky_center_track:
             return
@@ -298,8 +401,20 @@ class TrackStore:
             track.sticky = True
             self._sticky_track_id = track.track_id
 
-    def apply(self, key_points: sv.KeyPoints, frame_index: int) -> TrackPipelineResult:
-        """Return stabilized detections for one frame."""
+    def apply(
+        self,
+        key_points: sv.KeyPoints,
+        frame_index: int,
+        frame: np.ndarray | None = None,
+    ) -> TrackPipelineResult:
+        """Return stabilized detections for one frame.
+
+        Args:
+            key_points: Raw per-frame keypoint detections.
+            frame_index: Frame counter (unused directly; reserved for callers).
+            frame: Optional BGR frame used for appearance ReID; required only
+                when ``reid_enabled`` is set.
+        """
         del frame_index
         raw_count = len(key_points)
 
@@ -315,6 +430,7 @@ class TrackStore:
                 diagnostics=[],
             )
 
+        self._age_gallery()
         if raw_count == 0:
             return self._apply_empty_frame(raw_count)
 
@@ -329,6 +445,17 @@ class TrackStore:
                 box.copy() if box is not None else np.zeros(4, dtype=np.float64),
             )
 
+        reid_active = self._reid_active(frame)
+        det_descriptors: list[np.ndarray | None] = [None] * nms_count
+        if reid_active:
+            for detection_index in range(nms_count):
+                det_descriptors[detection_index] = self._detection_descriptor(
+                    frame,
+                    nms_key_points,
+                    detection_index,
+                    detection_boxes[detection_index],
+                )
+
         track_boxes = [self._predicted_box(track) for track in self._tracks]
         gate_distances = [self._gate_distance(box) for box in track_boxes]
         matched, unmatched_tracks, unmatched_detections = _match_tracks_to_detections(
@@ -336,6 +463,9 @@ class TrackStore:
             detection_boxes,
             match_iou_threshold=self.settings.match_iou_threshold,
             gate_distances=(gate_distances if self.settings.motion_gate_factor > 0 else None),
+            track_descriptors=([track.descriptor for track in self._tracks] if reid_active else None),
+            det_descriptors=(det_descriptors if reid_active else None),
+            reid_weight=(self.settings.reid_weight if reid_active else 0.0),
         )
 
         if self.settings.sticky_center_track and self._sticky_track_id is not None:
@@ -372,11 +502,38 @@ class TrackStore:
             track.key_points = snapshot
             track.box = det_box
             track.missed = 0
+            self._update_descriptor(track, det_descriptors[detection_index])
             self._maybe_mark_sticky(track)
             output_parts.append(snapshot)
             ghost_flags.append(False)
             track_ids.append(track.track_id)
             diagnostics.append(_track_diagnostic(track, is_ghost=False, matched_this_frame=True))
+
+        # Appearance revival: reclaim a retired track id before minting a new one.
+        if reid_active:
+            for detection_index in sorted(unmatched_detections):
+                entry = self._pop_gallery_match(det_descriptors[detection_index])
+                if entry is None:
+                    continue
+                snapshot = single_detection_key_points(nms_key_points, detection_index)
+                track = TrackSnapshot(
+                    track_id=entry.track_id,
+                    key_points=snapshot,
+                    box=detection_boxes[detection_index].copy(),
+                    missed=0,
+                    velocity=entry.velocity,
+                    size_velocity=entry.size_velocity,
+                    descriptor=entry.descriptor,
+                )
+                self._update_descriptor(track, det_descriptors[detection_index])
+                self._maybe_mark_sticky(track)
+                self._tracks.append(track)
+                matched_track_indices.add(len(self._tracks) - 1)
+                unmatched_detections.discard(detection_index)
+                output_parts.append(snapshot)
+                ghost_flags.append(False)
+                track_ids.append(track.track_id)
+                diagnostics.append(_track_diagnostic(track, is_ghost=False, matched_this_frame=True))
 
         for detection_index in sorted(unmatched_detections):
             if len(self._tracks) >= self.settings.max_tracks:
@@ -393,6 +550,7 @@ class TrackStore:
                 missed=0,
             )
             self._next_track_id += 1
+            self._update_descriptor(track, det_descriptors[detection_index])
             self._maybe_mark_sticky(track)
             self._tracks.append(track)
             matched_track_indices.add(len(self._tracks) - 1)
@@ -411,11 +569,13 @@ class TrackStore:
                 track_ids.append(track.track_id)
                 diagnostics.append(_track_diagnostic(track, is_ghost=True, matched_this_frame=False))
 
-        self._tracks = [
-            track
-            for track_index, track in enumerate(self._tracks)
-            if track_index in matched_track_indices or track.missed <= self._hold_limit_for(track, len(output_parts))
-        ]
+        kept_tracks: list[TrackSnapshot] = []
+        for track_index, track in enumerate(self._tracks):
+            if track_index in matched_track_indices or track.missed <= self._hold_limit_for(track, len(output_parts)):
+                kept_tracks.append(track)
+            else:
+                self._retire_to_gallery(track)
+        self._tracks = kept_tracks
 
         return self._finalize_output(
             output_parts,
@@ -440,6 +600,8 @@ class TrackStore:
                 track_ids.append(track.track_id)
                 surviving_tracks.append(track)
                 diagnostics.append(_track_diagnostic(track, is_ghost=True, matched_this_frame=False))
+            else:
+                self._retire_to_gallery(track)
         self._tracks = surviving_tracks
         return self._finalize_output(
             ghost_parts,
