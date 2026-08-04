@@ -111,6 +111,7 @@ class _TupleOutputModelContext:
         self.model = torch.nn.Identity()
         self.inference_model = self._forward
         self.captured_predictions: dict[str, torch.Tensor] | None = None
+        self.captured_score_threshold: float | None = None
 
     def _forward(self, batch_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch = batch_tensor.shape[0]
@@ -126,6 +127,7 @@ class _TupleOutputModelContext:
         score_threshold: float | None = None,
     ) -> list[dict[str, torch.Tensor]]:
         self.captured_predictions = predictions
+        self.captured_score_threshold = score_threshold
         batch = target_sizes.shape[0]
         results = []
         for _ in range(batch):
@@ -176,6 +178,15 @@ class TestPredictOptimizedInferenceKeypoints:
         assert isinstance(result, sv.KeyPoints), (
             f"expected sv.KeyPoints for optimized keypoint model, got {type(result)}"
         )
+
+    def test_predict_forwards_threshold_to_postprocess(self) -> None:
+        """Predict must pass its public threshold to post-processing before mask work begins."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model, stub = _make_optimized_keypoint_model()
+
+        model.predict(img, threshold=0.31)
+
+        assert stub.captured_score_threshold == 0.31
 
 
 def test_predict_accepts_image_url() -> None:
