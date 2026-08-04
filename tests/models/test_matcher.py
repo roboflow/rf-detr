@@ -503,12 +503,12 @@ def _reference_indices_pre_diagonal_extraction(
     targets: list[dict[str, torch.Tensor]],
     group_detr: int = 1,
 ) -> list[tuple[torch.Tensor, torch.Tensor]]:
-    """Reference matching using the pre-PR extraction: materialize the full
-    ``[bs, num_queries, total_targets]`` cost matrix, then slice per image with
-    ``cost_matrix.split(sizes, -1)`` and ``c[i]`` (the code in ``matcher.py`` before the
-    diagonal-block candidate). Reuses the matcher's current gather-first class cost so this
-    isolates only the extraction-step change under test, not the unrelated class-cost refactor
-    already covered by ``_reference_indices_full_class_materialization``.
+    """Reference matching using the pre-PR extraction: materialize the full ``[bs, num_queries, total_targets]`` cost
+    matrix, then slice per image with ``cost_matrix.split(sizes, -1)`` and ``c[i]`` (the code in ``matcher.py`` before
+    the diagonal-block candidate).
+
+    Reuses the matcher's current gather-first class cost so this isolates only the extraction-step change under test,
+    not the unrelated class-cost refactor already covered by ``_reference_indices_full_class_materialization``.
     """
     from scipy.optimize import linear_sum_assignment
 
@@ -554,16 +554,14 @@ def _reference_indices_pre_diagonal_extraction(
 
 
 class TestDiagonalBlockExtraction:
-    """The ``target_offsets`` diagonal-block extraction in ``matcher.py`` must reproduce the
-    pre-PR ``cost_matrix.split(sizes, -1)`` + ``c[i]`` extraction for every batch element,
-    across heterogeneous target counts and zero-target elements in any position.
-    """
+    """The ``target_offsets`` diagonal-block extraction in ``matcher.py`` must reproduce the pre-PR
+    ``cost_matrix.split(sizes, -1)`` + ``c[i]`` extraction for every batch element, across heterogeneous target counts
+    and zero-target elements in any position."""
 
     def test_heterogeneous_sizes_with_zero_in_the_middle(self, matcher: HungarianMatcher) -> None:
-        """Batch of 4 images with sizes [2, 0, 3, 1]: the zero-target element sits between two
-        non-zero elements, so an off-by-one in the cumulative ``target_offsets`` would leak
-        columns from a neighboring image into the wrong diagonal block.
-        """
+        """Batch of 4 images with sizes [2, 0, 3, 1]: the zero-target element sits between two non-zero elements, so an
+        off-by-one in the cumulative ``target_offsets`` would leak columns from a neighboring image into the wrong
+        diagonal block."""
         torch.manual_seed(23)
         bs, num_queries, num_classes = 4, 6, 5
         outputs = {
@@ -602,11 +600,9 @@ class TestDiagonalBlockExtraction:
         assert actual[1][1].shape == (0,)
 
     def test_heterogeneous_sizes_with_group_detr(self, matcher: HungarianMatcher) -> None:
-        """With ``group_detr > 1`` the diagonal block is additionally sliced by
-        ``group_start:group_start + g_num_queries`` before being sliced by target offsets; a bug
-        in either slice would corrupt the group-combination step that concatenates indices across
-        groups.
-        """
+        """With ``group_detr > 1`` the diagonal block is additionally sliced by ``group_start:group_start +
+        g_num_queries`` before being sliced by target offsets; a bug in either slice would corrupt the group-combination
+        step that concatenates indices across groups."""
         torch.manual_seed(29)
         bs, num_queries, num_classes, group_detr = 3, 8, 6, 2
         outputs = {
@@ -644,12 +640,13 @@ class TestDiagonalBlockExtraction:
         assert actual[1][0].shape == (0,)
 
     def test_all_batch_elements_have_zero_targets(self, matcher: HungarianMatcher) -> None:
-        """Degenerate case: every image in the batch has zero targets, so ``target_offsets``
-        collapses to all-zero and every diagonal block is empty. Must not raise and must return an
-        empty assignment for every image, and must agree with the pre-PR extraction on that (both
-        return the same trivially-empty indices here, but the comparison is kept so this test
-        actually exercises ``_reference_indices_pre_diagonal_extraction`` like its two siblings,
-        instead of only asserting the shape of the new code's own output).
+        """Degenerate case: every image in the batch has zero targets, so ``target_offsets`` collapses to all-zero and
+        every diagonal block is empty.
+
+        Must not raise and must return an empty assignment for every image, and must agree with the pre-PR extraction on
+        that (both return the same trivially-empty indices here, but the comparison is kept so this test actually
+        exercises ``_reference_indices_pre_diagonal_extraction`` like its two siblings, instead of only asserting the
+        shape of the new code's own output).
         """
         torch.manual_seed(31)
         bs, num_queries, num_classes = 3, 4, 5
@@ -677,11 +674,10 @@ class TestDiagonalBlockExtraction:
 def _new_extraction_indices(
     cost_matrix: torch.Tensor, sizes: list[int], group_detr: int = 1
 ) -> list[tuple[torch.Tensor, torch.Tensor]]:
-    """Mirrors the post-PR extraction in ``matcher.py`` (``target_offsets`` + ``torch.cat``),
-    decoupled from cost computation so it can be property-tested against arbitrary cost-matrix
-    content — including whatever values the mask/keypoint cost terms (``matcher.py:266-277``,
-    untouched by this PR) would fold in, without duplicating those formulas here.
-    """
+    """Mirrors the post-PR extraction in ``matcher.py`` (``target_offsets`` + ``torch.cat``), decoupled from cost
+    computation so it can be property-tested against arbitrary cost-matrix content — including whatever values the
+    mask/keypoint cost terms (``matcher.py:266-277``, untouched by this PR) would fold in, without duplicating those
+    formulas here."""
     from scipy.optimize import linear_sum_assignment
 
     bs, num_queries = cost_matrix.shape[:2]
@@ -733,8 +729,10 @@ def _old_extraction_indices(
 
 
 class TestDiagonalExtractionContentAgnostic:
-    """``TestDiagonalBlockExtraction`` above only feeds detection-shaped costs (bbox+class+giou)
-    through the real ``matcher.forward``. But the extraction step it exercises has no notion of
+    """``TestDiagonalBlockExtraction`` above only feeds detection-shaped costs (bbox+class+giou) through the real
+    ``matcher.forward``.
+
+    But the extraction step it exercises has no notion of
     where the cost values came from: it slices ``cost_matrix`` by ``sizes``/``target_offsets``
     after the mask (``cost_mask_ce``/``cost_mask_dice``) and keypoint
     (``cost_l1``/``cost_findable``/``cost_visible``/``cost_nll``) terms are already summed into it
