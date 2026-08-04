@@ -83,6 +83,16 @@ or torchvision defaults. Install it with ``pip install 'rfdetr[augment]'``.
 | ``RandomBrightnessContrast`` | ``K.ColorJiggle`` | ``brightness_limit`` / ``contrast_limit`` direct |
 | ``GaussianBlur`` | ``K.RandomGaussianBlur`` | ``blur_limit`` rounded up to odd; ``sigma=(0.1, 2.0)`` |
 | ``GaussNoise`` | ``K.RandomGaussianNoise`` | Upper bound of ``std_range`` used as fixed std |
+| ``Blur`` | ``K.RandomBoxBlur`` | Box blur; ``blur_limit`` rounded up to odd, pair collapses to its upper bound |
+| ``Sharpen`` | ``K.RandomSharpness`` | ``alpha`` maps to ``sharpness``; ``lightness``/``method`` ignored |
+| ``Equalize`` | ``K.RandomEqualize`` | Only ``p`` honored; ``mode``/``by_channels``/``mask`` ignored |
+| ``CLAHE`` | ``K.RandomClahe`` | ``clip_limit`` and ``tile_grid_size`` map directly |
+
+Not yet supported on Kornia: ``HueSaturationValue`` (Albumentations shifts hue/saturation/value additively,
+Kornia's ``ColorJiggle`` scales them multiplicatively, so there is no faithful mapping), and the geometric
+group ``ShiftScaleRotate``, ``RandomCrop``, ``CenterCrop``, ``RandomResizedCrop``, ``Perspective``,
+``ElasticTransform`` and ``GridDistortion``, which move boxes and masks and need the auxiliary-target
+handling settled first. These still work on the Albumentations backend.
 
 Segmentation models are supported by the GPU augmentation path; masks are augmented in sync with images and boxes.
 """

@@ -297,6 +297,38 @@ def _as_range(value: Any) -> tuple[float, float]:
     return (float(value), float(value))
 
 
+def _as_odd_kernel(value: Any, transform: str) -> int:
+    """Resolve an Albumentations ``blur_limit`` to a single odd Kornia kernel size.
+
+    Albumentations samples an odd kernel from a ``(min, max)`` range per call; Kornia takes one fixed kernel size, so a
+    non-degenerate pair collapses to its upper bound and logs a warning. The result is forced odd and at least 3, which
+    Kornia requires, and to an ``int``: a float such as ``5.0`` builds but crashes at forward time.
+
+    Args:
+        value: A scalar kernel size or a ``(min, max)`` pair.
+        transform: Name used in the warning, so the log says which augmentation collapsed.
+
+    Returns:
+        An odd ``int`` kernel size of at least 3.
+    """
+    if isinstance(value, (list, tuple)):
+        if len(value) == 2 and value[0] != value[1]:
+            logger.warning(
+                "GPU augmentation (Kornia) uses a fixed kernel_size=%d for %s "
+                "(Kornia does not sample the kernel size per call). "
+                "CPU augmentation (albumentations) samples an odd kernel from [%s, %s].",
+                max(value),
+                transform,
+                value[0],
+                value[1],
+            )
+        value = max(value)
+    kernel = int(value)
+    if kernel % 2 == 0:
+        kernel += 1
+    return max(3, kernel)
+
+
 def _make_horizontal_flip(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomHorizontalFlip`` from aug_config params."""
     from kornia.augmentation import RandomHorizontalFlip
@@ -417,26 +449,8 @@ def _make_gaussian_blur(params: dict[str, Any]) -> Any:
     """
     from kornia.augmentation import RandomGaussianBlur
 
-    # Albumentations allows `blur_limit` as a (min, max) pair; Kornia takes a single kernel size, so use the upper
-    # bound, the same direction the GaussNoise builder below resolves its range.
-    blur_limit = params.get("blur_limit", 3)
-    if isinstance(blur_limit, (list, tuple)):
-        if len(blur_limit) == 2 and blur_limit[0] != blur_limit[1]:
-            logger.warning(
-                "GPU augmentation (Kornia) uses a fixed kernel_size=%d for GaussianBlur "
-                "(Kornia does not sample the kernel size per call). "
-                "CPU augmentation (albumentations) samples an odd kernel from [%s, %s].",
-                max(blur_limit),
-                blur_limit[0],
-                blur_limit[1],
-            )
-        blur_limit = max(blur_limit)
-    # Kornia requires an integer kernel size; a float (e.g. 5.0) builds but crashes at forward time.
-    blur_limit = int(blur_limit)
-    # Ensure blur_limit is odd and at least 3 (Kornia requires kernel_size >= 3)
-    if blur_limit % 2 == 0:
-        blur_limit = blur_limit + 1
-    blur_limit = max(3, blur_limit)
+    # Shared with Blur: a (min, max) pair collapses to its upper bound, forced odd and >= 3.
+    blur_limit = _as_odd_kernel(params.get("blur_limit", 3), "GaussianBlur")
     # Match the CPU albumentations default sigma range while allowing an explicit override via config.
     sigma_range = params.get("sigma", (0.1, 2.0))
     blur_sigma = _as_range(sigma_range)
@@ -472,6 +486,74 @@ def _make_gauss_noise(params: dict[str, Any]) -> Any:
     )
 
 
+def _make_blur(params: dict[str, Any]) -> Any:
+    """Build a ``K.RandomBoxBlur`` from aug_config ``Blur`` params.
+
+    Albumentations' ``Blur`` is a box (average) blur, which is what ``RandomBoxBlur`` applies, so this is a direct
+    mapping. ``blur_limit`` resolves the same way as for ``GaussianBlur``: a non-degenerate pair collapses to its upper
+    bound because Kornia takes a single kernel size.
+    """
+    from kornia.augmentation import RandomBoxBlur
+
+    kernel = _as_odd_kernel(params.get("blur_limit", (3, 7)), "Blur")
+    return RandomBoxBlur(kernel_size=(kernel, kernel), p=params.get("p", 0.5))
+
+
+def _make_sharpen(params: dict[str, Any]) -> Any:
+    """Build a ``K.RandomSharpness`` from aug_config ``Sharpen`` params.
+
+    Albumentations' ``alpha`` is the blend weight between the original and the sharpened image, which is what Kornia's
+    ``sharpness`` factor controls, and Kornia accepts it as a ``(min, max)`` range so it passes through unchanged.
+    ``lightness`` and ``method`` have no Kornia equivalent and are ignored here; the CPU (albumentations) path honors
+    both.
+    """
+    from kornia.augmentation import RandomSharpness
+
+    if "lightness" in params or "method" in params:
+        logger.warning(
+            "GPU augmentation (Kornia) Sharpen ignores 'lightness' and 'method' "
+            "(Kornia's RandomSharpness exposes only a sharpness factor). "
+            "CPU augmentation (albumentations) honors both."
+        )
+    return RandomSharpness(
+        sharpness=_as_range(params.get("alpha", (0.2, 0.5))),
+        p=params.get("p", 0.5),
+    )
+
+
+def _make_equalize(params: dict[str, Any]) -> Any:
+    """Build a ``K.RandomEqualize`` from aug_config ``Equalize`` params.
+
+    Only ``p`` is honored. ``mode``, ``by_channels`` and ``mask`` are accepted by the CPU (albumentations) path but
+    have no Kornia equivalent: ``RandomEqualize`` always equalizes every channel and takes no mask.
+    """
+    from kornia.augmentation import RandomEqualize
+
+    if any(key in params for key in ("mode", "by_channels", "mask")):
+        logger.warning(
+            "GPU augmentation (Kornia) Equalize ignores 'mode', 'by_channels' and 'mask' "
+            "(Kornia's RandomEqualize always equalizes all channels and takes no mask). "
+            "CPU augmentation (albumentations) honors them."
+        )
+    return RandomEqualize(p=params.get("p", 0.5))
+
+
+def _make_clahe(params: dict[str, Any]) -> Any:
+    """Build a ``K.RandomClahe`` from aug_config ``CLAHE`` params.
+
+    Both parameters map directly: Albumentations' ``clip_limit`` (a scalar or a pair) becomes Kornia's ``clip_limit``
+    range, and ``tile_grid_size`` becomes ``grid_size``.
+    """
+    from kornia.augmentation import RandomClahe
+
+    grid = params.get("tile_grid_size", (8, 8))
+    return RandomClahe(
+        clip_limit=_as_range(params.get("clip_limit", 4.0)),
+        grid_size=(int(grid[0]), int(grid[1])),
+        p=params.get("p", 0.5),
+    )
+
+
 _REGISTRY: dict[str, Callable[[dict[str, Any]], Any]] = {
     "HorizontalFlip": _make_horizontal_flip,
     "VerticalFlip": _make_vertical_flip,
@@ -482,6 +564,10 @@ _REGISTRY: dict[str, Callable[[dict[str, Any]], Any]] = {
     "RandomBrightnessContrast": _make_random_brightness_contrast,
     "GaussianBlur": _make_gaussian_blur,
     "GaussNoise": _make_gauss_noise,
+    "Blur": _make_blur,
+    "Sharpen": _make_sharpen,
+    "Equalize": _make_equalize,
+    "CLAHE": _make_clahe,
 }
 
 

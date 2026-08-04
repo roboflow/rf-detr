@@ -214,6 +214,129 @@ class TestBuildKorniaPipeline:
         assert warning.called
         assert "HorizontalFlip" in str(warning.call_args)
 
+    # --- pixel-level transforms added for issue #1252 -------------------
+
+    @pytest.mark.parametrize(
+        ("name", "params", "expected"),
+        [
+            ("Blur", {"blur_limit": 5}, "RandomBoxBlur"),
+            ("Sharpen", {"alpha": (0.2, 0.5)}, "RandomSharpness"),
+            ("Equalize", {}, "RandomEqualize"),
+            ("CLAHE", {"clip_limit": 4.0}, "RandomClahe"),
+        ],
+    )
+    def test_pixel_transforms_map_to_kornia(self, name, params, expected):
+        """Each documented pixel-level name builds its Kornia counterpart (issue #1252)."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({name: params}, 560)
+        assert expected in [child.__class__.__name__ for child in pipeline.children()]
+
+    @pytest.mark.parametrize(
+        ("name", "params"),
+        [
+            ("Blur", {"blur_limit": (3, 7)}),
+            ("Sharpen", {"alpha": (0.2, 0.5)}),
+            ("Equalize", {"p": 0.5}),
+            ("CLAHE", {"clip_limit": 4.0, "tile_grid_size": (8, 8)}),
+        ],
+    )
+    def test_pixel_transforms_accepted_by_both_backends(self, name, params):
+        """The same config builds on either backend, which is the gap issue #1252 reports."""
+        pytest.importorskip("albumentations")
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+        from rfdetr.datasets.transforms import AlbumentationsWrapper
+
+        config = {name: params}
+        assert build_kornia_pipeline(config, 560) is not None
+
+        wrappers = AlbumentationsWrapper.from_config(config)
+        assert len(wrappers) == 1, (
+            "from_config(strict=False) silently drops unresolved transforms, so length must be checked"
+        )
+        built = [t.__class__.__name__ for t in wrappers[0].transform.transforms]
+        assert name in built, f"expected {name}, got {built}"
+
+    @pytest.mark.parametrize(("blur_limit", "expected"), [(5, 5), (4, 5), ((3, 7), 7), ((3, 6), 7), (2, 3)])
+    def test_blur_kernel_is_odd_and_at_least_three(self, blur_limit, expected):
+        """Blur resolves its kernel the same way GaussianBlur does: odd, >= 3, upper bound of a pair."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"Blur": {"blur_limit": blur_limit}}, 560)
+        transform = next(iter(pipeline.children()))
+        assert transform.flags["kernel_size"] == (expected, expected)
+
+    def test_blur_pair_warns_about_the_fixed_kernel(self):
+        """A non-degenerate pair collapses to one kernel, so it must say so."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warning:
+            kornia_transforms.build_kornia_pipeline({"Blur": {"blur_limit": (3, 7)}}, 560)
+        assert warning.called
+        assert "Blur" in str(warning.call_args)
+
+    def test_blur_degenerate_pair_does_not_warn(self):
+        """(5, 5) loses nothing, so it should stay quiet."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warning:
+            kornia_transforms.build_kornia_pipeline({"Blur": {"blur_limit": (5, 5)}}, 560)
+        warning.assert_not_called()
+
+    def test_sharpen_passes_alpha_through_as_a_range(self):
+        """Albumentations' alpha is the blend weight, which is Kornia's sharpness factor."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"Sharpen": {"alpha": (0.1, 0.4)}}, 560)
+        transform = next(iter(pipeline.children()))
+        # Kornia keeps sampled ranges on the parameter generator rather than in `flags`.
+        sampler = transform._param_generator.sampler_dict["sharpness"]
+        assert (float(sampler.low), float(sampler.high)) == pytest.approx((0.1, 0.4))
+
+    def test_sharpen_warns_about_ignored_lightness(self):
+        """lightness has no Kornia equivalent, so dropping it must be announced."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warning:
+            kornia_transforms.build_kornia_pipeline({"Sharpen": {"lightness": (0.5, 1.0)}}, 560)
+        assert warning.called
+        assert "lightness" in str(warning.call_args)
+
+    def test_equalize_warns_about_ignored_options(self):
+        """mode/by_channels/mask are albumentations-only."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warning:
+            kornia_transforms.build_kornia_pipeline({"Equalize": {"by_channels": False}}, 560)
+        assert warning.called
+        assert "by_channels" in str(warning.call_args)
+
+    def test_clahe_maps_both_parameters(self):
+        """clip_limit and tile_grid_size map straight onto Kornia's clip_limit and grid_size."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"CLAHE": {"clip_limit": (2.0, 6.0), "tile_grid_size": (4, 4)}}, 560)
+        transform = next(iter(pipeline.children()))
+        assert tuple(transform.flags["grid_size"]) == (4, 4)
+        # clip_limit is sampled, so it lives on the parameter generator.
+        sampler = transform._param_generator.sampler_dict["clip_limit_factor"]
+        assert (float(sampler.low), float(sampler.high)) == pytest.approx((2.0, 6.0))
+
+    def test_hue_saturation_value_still_unsupported(self):
+        """Deliberately out of scope: albumentations shifts additively, Kornia scales multiplicatively."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        with pytest.raises(ValueError, match="HueSaturationValue"):
+            build_kornia_pipeline({"HueSaturationValue": {"hue_shift_limit": 20}}, 560)
+
 
 # ---------------------------------------------------------------------------
 # TestCollateBoxes — validates packing of variable-length per-image boxes
