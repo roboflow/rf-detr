@@ -26,10 +26,9 @@ def test_static_keypoint_schema_avoids_redundant_device_presence_checks(
 ) -> None:
     """Zero-keypoint slots and a lone valid class must not trigger scalar tensor reads.
 
-    The remaining reads are one global valid-class guard plus one presence guard in
-    each of the decode and trace-fusion loops for every active class in a multi-class
-    schema. Calling ``Tensor.__bool__`` on the scalar returned by ``class_mask.any()``
-    synchronizes CUDA, so the count must depend on active rather than padded classes.
+    The remaining reads are one global valid-class guard plus one presence guard in each of the decode and trace-fusion
+    loops for every active class in a multi-class schema. Calling ``Tensor.__bool__`` on the scalar returned by
+    ``class_mask.any()`` synchronizes CUDA, so the count must depend on active rather than padded classes.
     """
     num_classes = len(schema)
     max_keypoints = max(schema)
@@ -58,11 +57,11 @@ def test_static_keypoint_schema_avoids_redundant_device_presence_checks(
 def test_static_keypoint_schema_skips_absent_active_class_without_stale_output() -> None:
     """An active keypoint class fully absent from an image's detections must still decode to zeros.
 
-    The parametrized test above always builds ``pred_logits`` with ``arange``, which picks the single
-    active class every time, so it never exercises the ``class_mask.any()`` branch actually returning
-    ``False`` for a present-in-schema class. This drives the real checkpoint schema ``[0, 17]`` with
-    every detection classified as the zero-keypoint background class, so the active class (1) has zero
-    matches and the presence check must still run once per loop and correctly skip.
+    The parametrized test above always builds ``pred_logits`` with ``arange``, which picks the single active class every
+    time, so it never exercises the ``class_mask.any()`` branch actually returning ``False`` for a present-in-schema
+    class. This drives the real checkpoint schema ``[0, 17]`` with every detection classified as the zero-keypoint
+    background class, so the active class (1) has zero matches and the presence check must still run once per loop and
+    correctly skip.
     """
     postprocess = PostProcess(num_select=2, num_keypoints_per_class=[0, 17])
     outputs = {
