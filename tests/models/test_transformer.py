@@ -10,10 +10,11 @@ import io
 import numpy as np
 import pytest
 import torch
+from torch import nn
 
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
-from rfdetr.models.transformer import gen_encoder_output_proposals, gen_sineembed_for_position
+from rfdetr.models.transformer import Transformer, gen_encoder_output_proposals, gen_sineembed_for_position
 
 
 @pytest.fixture(autouse=True)
@@ -787,3 +788,96 @@ def test_ms_deform_attn_module_export_compatible_with_singleton_level_dim() -> N
         args=(query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index),
     )
     assert exported is not None
+
+
+class _FixedTopkScores(nn.Module):
+    """Returns pre-set per-position scores regardless of its input.
+
+    Stubs ``enc_out_class_embed`` so the two-stage top-k selection in ``Transformer.forward`` picks known positions in a
+    known, deliberately out-of-position-order rank.
+    """
+
+    def __init__(self, scores: torch.Tensor) -> None:
+        super().__init__()
+        self.register_buffer("scores", scores)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Ignore ``x`` and return the fixed scores."""
+        return self.scores
+
+
+def test_two_stage_topk_gather_selects_correct_rows_out_of_position_order(monkeypatch) -> None:
+    """The two-stage top-k gather must copy each selected proposal's exact memory row and box.
+
+    ``torch.topk`` ranks proposals by score, not by position, so the selected indices are rarely in ascending position
+    order. This pins that ``memory_ts``/``boxes_ts`` reproduce the source rows picked by an out-of-order, per-batch-row-
+    distinct selection, and additionally asserts that ``Tensor.repeat`` is never called during the forward pass:
+    ``gen_encoder_output_proposals`` and the decoder layers used here don't call it either, so the only way it could
+    fire is the two-stage gather's index broadcast regressing from ``expand`` back to ``repeat``.
+    """
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries = 2, 16, 3
+    spatial_shapes_hw = [(4, 4), (2, 2)]
+    total_hw = sum(ht * wd for ht, wd in spatial_shapes_hw)
+
+    srcs = [torch.randn(batch_size, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    masks = [torch.zeros(batch_size, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]
+    pos_embeds = [torch.randn(batch_size, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries, 4)
+    query_feat = torch.randn(num_queries, hidden_dim)
+
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=len(spatial_shapes_hw),
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+    )
+
+    # Deliberately out-of-position-order and batch-row-distinct top-3 picks.
+    scores = torch.full((batch_size, total_hw, 1), -100.0)
+    scores[0, 17, 0], scores[0, 2, 0], scores[0, 9, 0] = 30.0, 20.0, 10.0
+    scores[1, 5, 0], scores[1, 19, 0], scores[1, 0, 0] = 25.0, 15.0, 5.0
+    transformer.enc_out_class_embed = nn.ModuleList([_FixedTopkScores(scores)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    repeat_calls: list[tuple[object, ...]] = []
+    original_repeat = torch.Tensor.repeat
+
+    def _tracking_repeat(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+        repeat_calls.append(args)
+        return original_repeat(self, *args, **kwargs)
+
+    monkeypatch.setattr(torch.Tensor, "repeat", _tracking_repeat)
+
+    _, _, memory_ts, boxes_ts = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+
+    assert not repeat_calls, (
+        "the two-stage top-k gather must broadcast its index via Tensor.expand, not Tensor.repeat "
+        f"(transformer.py:381-390); got {len(repeat_calls)} call(s) to Tensor.repeat during forward: {repeat_calls}"
+    )
+
+    # Ground truth computed independently of the gather under test: the same flatten/proposal
+    # machinery Transformer.forward uses internally, then plain (non-gather) row indexing.
+    memory = torch.cat([src.flatten(2).transpose(1, 2) for src in srcs], 1)
+    mask_flatten = torch.cat([m.flatten(1) for m in masks], 1)
+    output_memory, output_proposals = gen_encoder_output_proposals(
+        memory, mask_flatten, spatial_shapes_hw, unsigmoid=True
+    )
+    output_memory_gidx = transformer.enc_output_norm[0](transformer.enc_output[0](output_memory))
+    coord_unselected = transformer.enc_out_bbox_embed[0](output_memory_gidx) + output_proposals
+    chosen_idx = scores.squeeze(-1).topk(num_queries, dim=1).indices  # mirrors forward()'s torch.topk call
+
+    assert torch.equal(chosen_idx, torch.tensor([[17, 2, 9], [5, 19, 0]]))  # sanity: out of position order
+    expected_memory = torch.stack([output_memory_gidx[b, chosen_idx[b]] for b in range(batch_size)])
+    # forward() returns boxes_ts.sigmoid() when bbox_reparam=False (transformer.py:531).
+    expected_coord = torch.stack([coord_unselected[b, chosen_idx[b]] for b in range(batch_size)]).sigmoid()
+    assert torch.equal(memory_ts, expected_memory)
+    assert torch.equal(boxes_ts, expected_coord)
