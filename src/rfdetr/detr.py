@@ -1065,7 +1065,10 @@ class RFDETR:
         finally:
             if _moved_to_cpu:
                 _move_model_context_to_device(self.model)
-        datamodule = RFDETRDataModule(self.model_config, config)
+        # `self.model_config` was already restored to its pre-call values by the `finally` block above; a
+        # `resolution` override only survives on `eval_model_config`, which is what actually built `module`.
+        # The datamodule must use the same config so the dataloader resizes to the resolution being evaluated.
+        datamodule = RFDETRDataModule(eval_model_config, config)
 
         # Warn (do not adapt) when the dataset class count differs from the model's head.
         stage = "test" if split == "test" else "validate"
