@@ -26,6 +26,13 @@ from rfdetr.models.weights import _warn_on_partial_load
 def _make_checkpoint(num_classes: int = 91, num_queries: int = 300, group_detr: int = 13) -> dict:
     """Build a minimal checkpoint dict with the given class count.
 
+    Examples:
+        >>> ckpt = _make_checkpoint(num_classes=3, num_queries=2, group_detr=2)
+        >>> ckpt["model"]["query_feat.weight"].shape
+        torch.Size([4, 256])
+
+
+
     Args:
         num_classes: Total classes including background (bias shape).
         num_queries: Number of object queries per group.
@@ -49,6 +56,13 @@ def _make_checkpoint(num_classes: int = 91, num_queries: int = 300, group_detr: 
 
 def _make_train_config(tmp_path=None) -> TrainConfig:
     """Return a minimal TrainConfig for use in load_pretrain_weights.
+
+    Examples:
+        >>> cfg = _make_train_config()
+        >>> cfg.dataset_dir
+        '/nonexistent/dataset'
+
+
 
     Args:
         tmp_path: Optional pytest tmp_path fixture value.
@@ -74,6 +88,13 @@ def _make_train_config(tmp_path=None) -> TrainConfig:
 
 def _fake_nn_model() -> MagicMock:
     """Return a MagicMock that behaves enough like an LWDETR nn.Module.
+
+    Examples:
+        >>> model = _fake_nn_model()
+        >>> hasattr(model, "load_state_dict")
+        True
+
+
 
     Returns:
         MagicMock with reinitialize_detection_head and load_state_dict stubs.
@@ -643,6 +664,10 @@ def _labelled_query_tensor(num_queries: int, group_detr: int, dim: int = 2) -> t
 
     This lets tests check the per-group ordering of the result without floating-point
     fuzz: the first column carries the (group, query) identity directly.
+
+    Examples:
+        >>> _labelled_query_tensor(2, 2, dim=1).squeeze(-1).tolist()
+        [0.0, 1.0, 100.0, 101.0]
     """
     rows = []
     for g in range(group_detr):
