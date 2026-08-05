@@ -25,6 +25,8 @@ from torch.utils.data import Dataset, Subset
 from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema as infer_coco_keypoint_schema
 from rfdetr.datasets._keypoint_schema import infer_yolo_keypoint_schema as infer_yolo_keypoint_schema
 from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
+from rfdetr.datasets.multi_source import WeightedMultiSourceBatchSampler as WeightedMultiSourceBatchSampler
+from rfdetr.datasets.multi_source import compute_source_batch_sizes as compute_source_batch_sizes
 from rfdetr.datasets.o365 import build_o365
 from rfdetr.datasets.yolo import YoloDetection, build_roboflow_from_yolo
 

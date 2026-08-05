@@ -161,6 +161,46 @@ print(datamodule.class_names)  # e.g. ["cat", "dog", "person"]
 
 Returns sorted category names from the COCO annotation file of the first available split, or `None` if the dataset has not been set up yet.
 
+### Mixing datasets with a fixed per-batch ratio
+
+Concatenating datasets samples each one in proportion to its size, so a large public dataset dominates every batch and a small hand-labelled set contributes almost nothing. `WeightedMultiSourceBatchSampler` fixes the composition of every batch instead: with `batch_size=16` and weights `[0.6, 0.3, 0.1]`, each batch holds 10 samples from the first source, 5 from the second, and 1 from the third — regardless of how the source sizes compare.
+
+```python
+from torch.utils.data import ConcatDataset, DataLoader
+
+from rfdetr.datasets import WeightedMultiSourceBatchSampler
+from rfdetr.training import RFDETRDataModule
+
+
+class MultiSourceDataModule(RFDETRDataModule):
+    def setup(self, stage: str) -> None:
+        super().setup(stage)
+        if stage == "fit":
+            self._dataset_train = ConcatDataset([labeled_dataset, synthetic_dataset, public_dataset])
+
+    def train_dataloader(self) -> DataLoader:
+        sampler = WeightedMultiSourceBatchSampler.from_concat_dataset(
+            self._dataset_train,
+            weights=[0.6, 0.3, 0.1],
+            batch_size=self.train_config.batch_size,
+            num_replicas=self.trainer.world_size if self.trainer else 1,
+            rank=self.trainer.global_rank if self.trainer else 0,
+        )
+        return DataLoader(self._dataset_train, batch_sampler=sampler, collate_fn=self._collate_fn)
+```
+
+A source that runs out of samples part-way through an epoch is reshuffled and reused, which is what keeps the ratio exact. Epoch length is set by the largest source by default; pass `epoch_length="smallest"` to instead end the epoch when the smallest source has been seen once, so the larger sources are sub-sampled and the small one is not repeated.
+
+!!! warning "Set `use_distributed_sampler=False` under DDP"
+
+    The sampler shards batches across ranks itself via `num_replicas` and `rank`. Let Lightning inject its own `DistributedSampler` on top and the data will be split twice:
+
+    ```python
+    trainer = build_trainer(train_config, model_config, use_distributed_sampler=False)
+    ```
+
+Call `sampler.set_epoch(epoch)` at the start of every epoch — Lightning does this automatically for samplers it owns, but a sampler you construct yourself needs it wired up (for example from `on_train_epoch_start`) or every epoch will reuse the same shuffle.
+
 ---
 
 ## build_trainer
