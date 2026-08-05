@@ -2120,3 +2120,25 @@ class TestComputeAndLogEmaResetPath:
             cb._compute_and_log(trainer, module, "val")
 
         mock_ema.reset.assert_called_once()
+
+    def test_clears_ema_has_updates_after_gate_true_compute(self) -> None:
+        """Regression for #1289 review: after a gate-True EMA compute, `_ema_has_updates` must be cleared to False.
+
+        Before this fix, `_compute_and_log_ema_metrics` reset `map_metric_ema` in both branches but never cleared
+        `_ema_has_updates`, so a stale `True` left over from a validation epoch could reach a later
+        `_compute_and_log(..., "train", ...)` call (when `compute_train_metrics=True`) and drive a spurious `compute()`
+        on the freshly emptied EMA metric.
+        """
+        cb = COCOEvalCallback(max_dets=500)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        cb.map_metric_ema.compute.return_value = _minimal_metrics()
+        cb._ema_has_updates = True
+
+        with patch.object(cb, "_merge_metric_state_across_ranks"):
+            should_compute_ema, _ema_metrics = cb._compute_and_log_ema_metrics(
+                _make_trainer(), _make_pl_module(), "val", "", "mar_500"
+            )
+
+        assert should_compute_ema is True
+        assert cb._ema_has_updates is False
