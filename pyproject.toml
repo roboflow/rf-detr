@@ -410,7 +410,6 @@ overrides = [
     "rfdetr.config",
     "rfdetr.datasets._develop",
     "rfdetr.datasets.coco",
-    "rfdetr.datasets.save_grids",
     "rfdetr.datasets.synthetic",
     "rfdetr.datasets.transforms",
     "rfdetr.datasets.yolo",
