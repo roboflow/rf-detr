@@ -28,14 +28,28 @@ from rfdetr.training.trainer import _ForceLastEpochValidationCallback
 
 
 def _mc(**kwargs):
-    """Minimal RFDETRBaseConfig for tests."""
+    """Minimal RFDETRBaseConfig for tests.
+
+    Examples:
+        >>> config = _mc(num_classes=7)
+        >>> config.device, config.num_classes
+        ('cpu', 7)
+    """
     defaults = dict(pretrain_weights=None, device="cpu", num_classes=3)
     defaults.update(kwargs)
     return RFDETRBaseConfig(**defaults)
 
 
 def _find_resume_checkpoints(trainer):
-    """Return ModelCheckpoint callbacks that are NOT BestModelCallback."""
+    """Return ModelCheckpoint callbacks that are NOT BestModelCallback.
+
+    Examples:
+        >>> resume_cb = ModelCheckpoint(dirpath='.')
+        >>> best_cb = BestModelCallback(save_top_k=1, monitor='val/mAP_50')
+        >>> trainer = MagicMock(callbacks=[resume_cb, best_cb])
+        >>> _find_resume_checkpoints(trainer) == [resume_cb]
+        True
+    """
     return [cb for cb in trainer.callbacks if isinstance(cb, ModelCheckpoint) and not isinstance(cb, BestModelCallback)]
 
 
@@ -44,6 +58,12 @@ def _tc(tmp_path, **kwargs):
 
     Loggers are disabled by default to avoid requiring optional deps (tensorboard, wandb, mlflow) in the CPU test
     environment.  Logger-specific tests override these explicitly via kwargs or mocking.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> config = _tc(Path('/tmp/example'), epochs=3)
+        >>> config.epochs, config.dataset_dir.endswith('/ds'), config.output_dir.endswith('/out')
+        (3, True, True)
     """
     defaults = dict(
         dataset_dir=str(tmp_path / "ds"),
@@ -61,7 +81,14 @@ def _tc(tmp_path, **kwargs):
 
 
 def _kp_tc(tmp_path, **kwargs):
-    """Minimal KeypointTrainConfig for tests that exercise keypoint model paths."""
+    """Minimal KeypointTrainConfig for tests that exercise keypoint model paths.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> config = _kp_tc(Path('/tmp/example'), batch_size=4)
+        >>> config.batch_size, config.dataset_dir.endswith('/ds')
+        (4, True)
+    """
     defaults = dict(
         dataset_dir=str(tmp_path / "ds"),
         output_dir=str(tmp_path / "out"),

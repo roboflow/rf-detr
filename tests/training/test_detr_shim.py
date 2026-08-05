@@ -41,12 +41,27 @@ from rfdetr.training.module_model import RFDETRModelModule
 
 
 def _make_model_config(**overrides):
+    """Build a minimal RFDETRBaseConfig for shim tests.
+
+    Examples:
+        >>> config = _make_model_config(num_classes=7)
+        >>> config.device, config.num_classes, config.pretrain_weights
+        ('cpu', 7, None)
+    """
     defaults = dict(pretrain_weights=None, num_classes=3, device="cpu")
     defaults.update(overrides)
     return RFDETRBaseConfig(**defaults)
 
 
 def _make_train_config(tmp_path, **overrides):
+    """Build a minimal TrainConfig for shim tests.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> config = _make_train_config(Path('/tmp/example'), epochs=3)
+        >>> config.epochs, config.dataset_dir.endswith('/ds'), config.output_dir.endswith('/out')
+        (3, True, True)
+    """
     defaults = dict(
         dataset_dir=str(tmp_path / "ds"),
         output_dir=str(tmp_path / "out"),
@@ -61,6 +76,12 @@ def _make_rfdetr_self(tmp_path, **train_overrides):
     """Return a MagicMock shaped like RFDETR with real config objects.
 
     No spec is used because RFDETR.model is set in __init__ (instance attr) and spec=RFDETR would block access to it.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> mock_self = _make_rfdetr_self(Path('/tmp/example'))
+        >>> mock_self.model_config.device, mock_self.get_train_config().output_dir.endswith('/out')
+        ('cpu', True)
     """
     mock = MagicMock()
     mock.model_config = _make_model_config()

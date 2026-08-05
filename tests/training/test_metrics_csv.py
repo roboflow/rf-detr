@@ -34,7 +34,25 @@ from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_para
 
 
 def _fit_and_read_csv(mc: RFDETRBaseConfig, tc: TrainConfig, criterion=None) -> pd.DataFrame:
-    """Run 1 epoch (2 train + 2 val batches) and return the resulting metrics.csv."""
+    """Run 1 epoch (2 train + 2 val batches) and return the resulting metrics.csv.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as d:
+        ...     output_dir = Path(d) / 'out'
+        ...     metrics = _fit_and_read_csv(
+        ...         RFDETRBaseConfig(pretrain_weights=None, device='cpu', num_classes=3),
+        ...         TrainConfig(
+        ...             dataset_dir=str(Path(d) / 'ds'),
+        ...             output_dir=str(output_dir),
+        ...             epochs=1,
+        ...             batch_size=2,
+        ...             tensorboard=False,
+        ...         ),
+        ...     )
+        ...     {'train/loss', 'val/loss'}.issubset(metrics.columns)
+        True
+    """
     fake_criterion = criterion or _FakeCriterion()
     with (
         patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),

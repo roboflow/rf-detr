@@ -27,14 +27,26 @@ from rfdetr.utilities.tensors import NestedTensor
 
 
 def _base_model_config(**overrides):
-    """Return a minimal RFDETRBaseConfig with pretrain_weights disabled."""
+    """Return a minimal RFDETRBaseConfig with pretrain_weights disabled.
+
+    Examples:
+        >>> config = _base_model_config(num_classes=7)
+        >>> config.device, config.num_classes, config.pretrain_weights
+        ('cpu', 7, None)
+    """
     defaults = dict(pretrain_weights=None, device="cpu", num_classes=5)
     defaults.update(overrides)
     return RFDETRBaseConfig(**defaults)
 
 
 def _base_train_config(tmp_path=None, **overrides):
-    """Return a minimal TrainConfig suitable for unit tests."""
+    """Return a minimal TrainConfig suitable for unit tests.
+
+    Examples:
+        >>> config = _base_train_config(batch_size=4)
+        >>> config.batch_size, config.dataset_dir, config.output_dir
+        (4, '/nonexistent/dataset', '/nonexistent/output')
+    """
     dataset_dir = str(tmp_path / "dataset") if tmp_path else "/nonexistent/dataset"
     output_dir = str(tmp_path / "output") if tmp_path else "/nonexistent/output"
     defaults = dict(
@@ -84,7 +96,13 @@ class _FakeDataset(torch.utils.data.Dataset):
 
 
 def _fake_dataset(length: int = 100, with_coco: bool = False) -> _FakeDataset:
-    """Return a minimal ``_FakeDataset`` with a controllable length."""
+    """Return a minimal ``_FakeDataset`` with a controllable length.
+
+    Examples:
+        >>> dataset = _fake_dataset(length=3, with_coco=True)
+        >>> len(dataset), dataset.coco.cats[1]["name"]
+        (3, 'cat')
+    """
     return _FakeDataset(length, with_coco)
 
 
@@ -109,7 +127,13 @@ class _VisualDataset(torch.utils.data.Dataset):
 
 
 def _make_batch(batch_size: int = 2, channels: int = 3, h: int = 16, w: int = 16):
-    """Build a ``(NestedTensor, targets)`` tuple for transfer_batch_to_device tests."""
+    """Build a ``(NestedTensor, targets)`` tuple for transfer_batch_to_device tests.
+
+    Examples:
+        >>> samples, targets = _make_batch(batch_size=2, h=8, w=8)
+        >>> samples.tensors.shape, len(targets)
+        (torch.Size([2, 3, 8, 8]), 2)
+    """
     tensors = torch.randn(batch_size, channels, h, w)
     mask = torch.zeros(batch_size, h, w, dtype=torch.bool)
     samples = NestedTensor(tensors, mask)
@@ -126,7 +150,13 @@ def _make_batch(batch_size: int = 2, channels: int = 3, h: int = 16, w: int = 16
 
 
 def _build_datamodule(model_config=None, train_config=None, tmp_path=None):
-    """Construct RFDETRDataModule (build_dataset is not called at init time)."""
+    """Construct RFDETRDataModule (build_dataset is not called at init time).
+
+    Examples:
+        >>> datamodule = _build_datamodule()
+        >>> datamodule.model_config.device, datamodule.train_config.batch_size
+        ('cpu', 2)
+    """
     mc = model_config or _base_model_config()
     tc = train_config or _base_train_config(tmp_path)
     from rfdetr.training.module_data import RFDETRDataModule

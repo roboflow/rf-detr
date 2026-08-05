@@ -27,14 +27,26 @@ from rfdetr.utilities.tensors import NestedTensor
 
 
 def _base_model_config(**overrides):
-    """Return a minimal RFDETRBaseConfig with pretrain_weights disabled."""
+    """Return a minimal RFDETRBaseConfig with pretrain_weights disabled.
+
+    Examples:
+        >>> config = _base_model_config(num_classes=7)
+        >>> config.device, config.num_classes, config.pretrain_weights
+        ('cpu', 7, None)
+    """
     defaults = dict(pretrain_weights=None, device="cpu", num_classes=5)
     defaults.update(overrides)
     return RFDETRBaseConfig(**defaults)
 
 
 def _base_train_config(tmp_path=None, **overrides):
-    """Return a minimal TrainConfig suitable for unit tests."""
+    """Return a minimal TrainConfig suitable for unit tests.
+
+    Examples:
+        >>> config = _base_train_config(batch_size=4)
+        >>> config.batch_size, config.dataset_dir, config.output_dir
+        (4, '/nonexistent/dataset', '/nonexistent/output')
+    """
     dataset_dir = str(tmp_path / "dataset") if tmp_path else "/nonexistent/dataset"
     output_dir = str(tmp_path / "output") if tmp_path else "/nonexistent/output"
     defaults = dict(
@@ -58,7 +70,13 @@ def _base_train_config(tmp_path=None, **overrides):
 
 
 def _fake_model():
-    """Return a MagicMock that behaves enough like an LWDETR model."""
+    """Return a MagicMock that behaves enough like an LWDETR model.
+
+    Examples:
+        >>> model = _fake_model()
+        >>> isinstance(next(model.parameters()), nn.Parameter)
+        True
+    """
     model = MagicMock(spec=nn.Module)
     real_param = nn.Parameter(torch.randn(4, 4))
     model.parameters.return_value = iter([real_param])
@@ -70,7 +88,13 @@ def _fake_model():
 
 
 def _fake_criterion():
-    """Return a MagicMock criterion with a realistic weight_dict."""
+    """Return a MagicMock criterion with a realistic weight_dict.
+
+    Examples:
+        >>> criterion = _fake_criterion()
+        >>> sorted(criterion.weight_dict)
+        ['loss_bbox', 'loss_ce', 'loss_giou']
+    """
     criterion = MagicMock()
     criterion.weight_dict = {"loss_ce": 1.0, "loss_bbox": 5.0, "loss_giou": 2.0}
     criterion.num_boxes_for_targets.return_value = torch.tensor(1.0)
@@ -78,7 +102,13 @@ def _fake_criterion():
 
 
 def _fake_postprocess():
-    """Return a callable MagicMock for postprocess."""
+    """Return a callable MagicMock for postprocess.
+
+    Examples:
+        >>> postprocess = _fake_postprocess()
+        >>> sorted(postprocess({}, torch.zeros(1, 2))[0])
+        ['boxes', 'labels', 'scores']
+    """
     return MagicMock(return_value=[{"boxes": torch.zeros(1, 4), "scores": torch.ones(1), "labels": torch.zeros(1)}])
 
 
@@ -117,7 +147,13 @@ class _RaisingOptimizer:
 
 
 def _build_module(model_config=None, train_config=None, tmp_path=None):
-    """Construct RFDETRModelModule with build_model_from_config and build_criterion_from_config mocked."""
+    """Construct RFDETRModelModule with build_model_from_config and build_criterion_from_config mocked.
+
+    Examples:
+        >>> module, model, criterion, postprocess = _build_module()
+        >>> module.model is model and module.criterion is criterion and module.postprocessors is postprocess
+        True
+    """
     mc = model_config or _base_model_config()
     tc = train_config or _base_train_config(tmp_path)
     fake_model = _fake_model()
@@ -169,7 +205,13 @@ def test_keypoint_training_resets_gaussian_parameters_after_pretrained_load(tmp_
 
 
 def _make_batch(batch_size=2, channels=3, h=16, w=16):
-    """Build a (NestedTensor, targets) tuple for testing."""
+    """Build a (NestedTensor, targets) tuple for testing.
+
+    Examples:
+        >>> samples, targets = _make_batch(batch_size=2, h=8, w=8)
+        >>> samples.tensors.shape, len(targets)
+        (torch.Size([2, 3, 8, 8]), 2)
+    """
     tensors = torch.randn(batch_size, channels, h, w)
     mask = torch.zeros(batch_size, h, w, dtype=torch.bool)
     samples = NestedTensor(tensors, mask)
