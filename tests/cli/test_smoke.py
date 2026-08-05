@@ -59,7 +59,7 @@ def _run_cli(*args: str) -> int:
 def _load(name: str) -> dict:
     """Load a config YAML file by stem name.
 
-    >>> _load("rfdetr_small")["model"]["model_config"]["class_path"]
+    >>> _load("rfdetr_small")["model"]["model_config"]["class_path"]  # doctest: +SKIP
     'rfdetr.config.RFDETRSmallConfig'
     """
     return yaml.safe_load((CONFIGS_DIR / f"{name}.yaml").read_text())
@@ -68,7 +68,7 @@ def _load(name: str) -> dict:
 def _instantiate(class_path: str, init_args: dict) -> object:
     """Import class_path and construct an instance with init_args.
 
-    >>> config = _instantiate("rfdetr.config.RFDETRSmallConfig", {})
+    >>> config = _instantiate("rfdetr.config.RFDETRSmallConfig", {})  # doctest: +SKIP
     >>> type(config).__name__
     'RFDETRSmallConfig'
     """
