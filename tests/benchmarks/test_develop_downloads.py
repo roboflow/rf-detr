@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for private developer download helpers."""
+    """Tests for private developer download helpers."""
 
 import io
 import zipfile
@@ -98,7 +98,13 @@ class TestDownloadAndExtract:
     """Coverage for the ZIP download-and-extract helper."""
 
     def _make_zip(self, members: dict) -> bytes:
-        """Build an in-memory ZIP archive from a mapping of filename→content."""
+        """Build an in-memory ZIP archive from a mapping of filename→content.
+
+        Example:
+            >>> archive = self._make_zip({"hello.txt": "world"})
+            >>> isinstance(archive, bytes)
+            True
+    """
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             for name, content in members.items():

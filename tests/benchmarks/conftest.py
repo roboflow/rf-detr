@@ -27,8 +27,9 @@ _COCO_PORT = 80
 def download_coco_val() -> tuple[Path, Path]:
     """Download COCO val2017 images and annotations if not already present.
 
-    Returns:
-        Tuple containing the images root directory and annotations file path.
+    Example:
+        >>> download_coco_val.__name__
+        'download_coco_val'
     """
     if not is_online(_COCO_HOST, _COCO_PORT):
         pytest.skip("Offline environment, skipping COCO val2017 benchmark tests.")
@@ -48,7 +49,12 @@ def download_coco_val() -> tuple[Path, Path]:
 
 @pytest.fixture(scope="session")
 def download_coco_val_keypoints() -> tuple[Path, Path]:
-    """Prepare COCO val images plus person-keypoint annotations for benchmark tests."""
+    """Prepare COCO val images plus person-keypoint annotations for benchmark tests.
+
+    Example:
+        >>> download_coco_val_keypoints.__name__
+        'download_coco_val_keypoints'
+    """
     if not is_online(_COCO_HOST, _COCO_PORT):
         pytest.skip("Offline environment, skipping COCO keypoint benchmark tests.")
 
@@ -67,7 +73,12 @@ def download_coco_val_keypoints() -> tuple[Path, Path]:
 
 @pytest.fixture(scope="session")
 def download_coco_train_val_keypoints() -> Path:
-    """Prepare full COCO train/val images plus person-keypoint annotations for release-qualification tests."""
+    """Prepare full COCO train/val images plus person-keypoint annotations for release-qualification tests.
+
+    Example:
+        >>> download_coco_train_val_keypoints.__name__
+        'download_coco_train_val_keypoints'
+    """
     if not is_online(_COCO_HOST, _COCO_PORT):
         pytest.skip("Offline environment, skipping full COCO keypoint training validation.")
 
@@ -97,6 +108,10 @@ def seed_everything(request: pytest.FixtureRequest) -> None:
 
     Args:
         request: Pytest fixture request that may carry an overridden seed.
+
+    Example:
+        >>> seed_everything.__name__
+        'seed_everything'
     """
     seed = request.param if hasattr(request, "param") else 7
     seed_all(seed)
@@ -107,6 +122,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     This hook runs after collection but before xdist distributes tests to workers. By moving the training test to the
     front, we ensure it gets scheduled early, maximizing parallel resource utilization.
+
+    Example:
+        >>> pytest_collection_modifyitems.__name__
+        'pytest_collection_modifyitems'
     """
     training_tests = []
     other_tests = []

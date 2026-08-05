@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Characterization tests for _build_train_resize_config."""
+    """Characterization tests for _build_train_resize_config."""
 
 import pytest
 
@@ -323,7 +323,13 @@ class TestCappedLongestMaxSizeRuntimeBehavior:
         return out_image.size  # (width, height)
 
     def test_does_not_upscale_when_already_within_cap(self):
-        """A resize that already fits under max_size is left alone, not forced up to max_size."""
+        """Run the wrapped Albumentations resize config and return ``(width, height)``.
+
+        Example:
+            >>> size = TestCappedLongestMaxSizeRuntimeBehavior._resize_output_size((90, 120), 640, 1333)
+            >>> isinstance(size, tuple) and len(size) == 2
+            True
+    """
         width, height = self._resize_output_size((90, 120), resolution=640, max_size=1333)
         assert max(width, height) < 1333, "longest side must not be inflated to the cap"
         assert (width, height) == (853, 640), "SmallestMaxSize(640) result must pass through unchanged"

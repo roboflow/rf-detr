@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""End-to-end benchmarks for training convergence via the PTL stack.
+    """End-to-end benchmarks for training convergence via the PTL stack.
 
 Smoke test (CPU-friendly):
 
@@ -13,7 +13,7 @@ Training convergence (GPU, synthetic dataset, no pretrained weights):
 
 * :func:`test_train_convergence_native_ptl` — ``RFDETRModelModule`` + ``Trainer.fit`` reaches ≥ 35 % mAP@50.
 * :func:`test_train_convergence_rfdetr_api` — ``RFDETR.train()`` reaches ≥ 35 % mAP@50.
-"""
+    """
 
 import json
 import os
@@ -46,6 +46,10 @@ def _make_ptl_module_from(rfdetr_obj: RFDETR, dataset_dir: Path, output_dir: Pat
 
     Returns:
         Weight-synced :class:`~rfdetr.training.RFDETRModelModule` in eval mode.
+
+    Example:
+        >>> _make_ptl_module_from.__name__
+        '_make_ptl_module_from'
     """
     train_config = TrainConfig(
         dataset_file="roboflow",

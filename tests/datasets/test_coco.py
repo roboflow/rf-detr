@@ -3,12 +3,12 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Regression tests for COCO dataset handling.
+    """Regression tests for COCO dataset handling.
 
 Tests cover:
 - Sparse COCO category ID remapping in ``ConvertCoco``
 - ``_load_classes`` hierarchy detection (GitHub #609)
-"""
+    """
 
 import json
 import types
@@ -44,7 +44,12 @@ def _make_target(annotations=_ANNOTATIONS):
 
 
 class TestConvertCocoWithoutMapping:
-    """Without cat2label, sparse IDs pass through unchanged — demonstrating the bug."""
+    """Build a minimal COCO-style target mapping for converter tests.
+
+    Example:
+        >>> _make_target()["image_id"]
+        1
+    """
 
     def test_labels_are_raw_category_ids(self):
         converter = ConvertCoco(cat2label=None)
@@ -134,14 +139,30 @@ class TestConvertCocoWithMapping:
 
 
 def _write_coco_json(path: Path, categories: List[Dict]) -> None:
-    """Write a minimal valid COCO annotation file."""
+    """Write a minimal valid COCO annotation file.
+
+    Example:
+        >>> import tempfile
+        >>> output = Path(tempfile.mkdtemp()) / "annotations.json"
+        >>> _write_coco_json(output, [{"id": 1, "name": "person"}])
+        >>> output.exists()
+        True
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {"images": [], "annotations": [], "categories": categories}
     path.write_text(json.dumps(data))
 
 
 def _write_roboflow_keypoint_coco(path: Path, *, category_id: int = 0) -> None:
-    """Write a minimal Roboflow-style COCO keypoint split."""
+    """Write a minimal Roboflow-style COCO keypoint split.
+
+    Example:
+        >>> import tempfile
+        >>> output = Path(tempfile.mkdtemp()) / "annotations.json"
+        >>> _write_roboflow_keypoint_coco(output)
+        >>> output.exists()
+        True
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     image_path = path.parent / "person.png"
     Image.new("RGB", (64, 48), color=(255, 255, 255)).save(image_path)

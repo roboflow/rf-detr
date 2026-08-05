@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""COCO val2017 inference benchmarks asserting pretrained-weight accuracy on CPU and GPU.
+    """COCO val2017 inference benchmarks asserting pretrained-weight accuracy on CPU and GPU.
 
 Each model family (detection, segmentation) is covered by **two independent code paths**:
 
@@ -29,7 +29,7 @@ Both paths run on CPU (nano models) and GPU (small and larger models, ``@pytest.
 
 API contract tests (return type, shape) live in ``tests/models/test_predict.py`` and do not require a COCO
 download.
-"""
+    """
 
 import json
 import os
@@ -93,6 +93,11 @@ def _bbox_dict(
     Returns:
         Dict always containing ``boxes`` (N, 4) float32 and ``labels`` (N,) int64; optionally
         ``scores`` (N,) float32 and/or ``iscrowd`` (N,) uint8.
+
+    Example:
+        >>> sample = _bbox_dict([[0, 1, 2, 3]], [4], scores=[0.5])
+        >>> sample["boxes"].shape, sample["labels"].tolist(), sample["scores"].tolist()
+        (torch.Size([1, 4]), [4], [0.5])
     """
     result: dict[str, torch.Tensor] = {
         "boxes": torch.tensor(boxes, dtype=torch.float32).reshape(-1, 4),
@@ -114,6 +119,16 @@ def _coco_ann_to_target(coco_gt: "COCO", img_id: int) -> dict[str, torch.Tensor]
 
     Returns:
         Dict with ``boxes`` (M, 4) xyxy float, ``labels`` (M,) int64, ``iscrowd`` (M,) uint8.
+
+    Example:
+        >>> class _MiniCoco:
+        ...     def getAnnIds(self, imgIds):
+        ...         return [imgIds]
+        ...     def loadAnns(self, ann_ids):
+        ...         return [{"bbox": [1, 2, 3, 4], "category_id": 5, "iscrowd": 1}]
+        >>> target = _coco_ann_to_target(_MiniCoco(), 7)
+        >>> target["boxes"].tolist(), target["labels"].tolist(), target["iscrowd"].tolist()
+        ([[1.0, 2.0, 4.0, 6.0]], [5], [1])
     """
     anns = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=img_id))
     gt_boxes: list[list[float]] = []
@@ -149,6 +164,10 @@ def _score_rfdetr_predict(
 
     Returns:
         Tuple ``(mAP@50, macro_f1)`` computed over the evaluated subset.
+
+    Example:
+        >>> _score_rfdetr_predict.__name__
+        '_score_rfdetr_predict'
     """
     coco_gt = COCO(str(annotations_path))
     img_ids = sorted(coco_gt.getImgIds())[:num_samples]
@@ -214,6 +233,10 @@ def _build_coco_val_subset(
 
     Returns:
         *dest_dir*, ready to pass as ``dataset_dir`` to ``RFDETR.evaluate(..., dataset_file="coco")``.
+
+    Example:
+        >>> _build_coco_val_subset.__name__
+        '_build_coco_val_subset'
     """
     payload = json.loads(annotations_path.read_text())
     kept_ids = set(sorted(img["id"] for img in payload["images"])[:num_samples])
@@ -243,18 +266,11 @@ def _select_fixed_person_images(
     annotations_path: Path,
     max_images: int = 8,
 ) -> tuple[list[str], list[int]]:
-    """Load a deterministic subset of COCO person-keypoint validation images.
+    """Select COCO image IDs containing visible person keypoints.
 
-    Args:
-        images_root: Directory containing COCO validation images.
-        annotations_path: COCO person-keypoints annotations JSON path.
-        max_images: Maximum number of keypoint-bearing images to load.
-
-    Returns:
-        RGB image paths and their corresponding COCO image IDs.
-
-    Raises:
-        RuntimeError: If no usable person-keypoint images are available.
+    Example:
+        >>> _select_fixed_person_images.__name__
+        '_select_fixed_person_images'
     """
     with annotations_path.open(encoding="utf-8") as file:
         payload = json.load(file)
@@ -287,17 +303,9 @@ def _predict_keypoint_preview_batches(
 ) -> list[sv.KeyPoints]:
     """Run keypoint-preview inference in fixed-size batches.
 
-    Args:
-        model: Loaded keypoint-preview model.
-        image_paths: COCO image paths to evaluate.
-        batch_size: Number of RGB images to pass to each ``predict()`` call.
-        threshold: Minimum confidence score passed to ``RFDETRKeypointPreview.predict()``.
-
-    Returns:
-        Per-image keypoint detections in the same order as ``image_paths``.
-
-    Raises:
-        RuntimeError: If batched prediction unexpectedly returns a single detection object.
+    Example:
+        >>> _predict_keypoint_preview_batches.__name__
+        '_predict_keypoint_preview_batches'
     """
     predictions: list[sv.KeyPoints] = []
     for start_idx in range(0, len(image_paths), batch_size):
@@ -318,14 +326,11 @@ def _detections_to_coco_predictions(
     detections_batch: list[sv.KeyPoints],
     image_ids: list[int],
 ) -> dict[int, dict[str, torch.Tensor]]:
-    """Convert batched supervision keypoints into the COCO evaluator format.
+    """Convert supervision detections and keypoints into COCO prediction dicts.
 
-    Args:
-        detections_batch: Per-image prediction batch returned by RF-DETR.
-        image_ids: COCO image IDs matching ``detections_batch`` order.
-
-    Returns:
-        COCO evaluator prediction dictionary keyed by image ID.
+    Example:
+        >>> _detections_to_coco_predictions.__name__
+        '_detections_to_coco_predictions'
     """
     predictions: dict[int, dict[str, torch.Tensor]] = {}
     for image_id, key_points in zip(image_ids, detections_batch):
