@@ -42,7 +42,11 @@ ALL_CONFIGS = [
 
 
 def _run_cli(*args: str) -> int:
-    """Run RFDETRCli in-process with the given args; return the SystemExit code."""
+    """Run RFDETRCli in-process with the given args; return the SystemExit code.
+
+    >>> _run_cli("--help")  # doctest: +SKIP
+    0
+    """
     from rfdetr.training.cli import RFDETRCli
     from rfdetr.training.module_data import RFDETRDataModule
     from rfdetr.training.module_model import RFDETRModelModule
@@ -53,11 +57,21 @@ def _run_cli(*args: str) -> int:
 
 
 def _load(name: str) -> dict:
+    """Load a config YAML file by stem name.
+
+    >>> _load("rfdetr_small")["model"]["model_config"]["class_path"]
+    'rfdetr.config.RFDETRSmallConfig'
+    """
     return yaml.safe_load((CONFIGS_DIR / f"{name}.yaml").read_text())
 
 
 def _instantiate(class_path: str, init_args: dict) -> object:
-    """Import class_path and construct an instance with init_args."""
+    """Import class_path and construct an instance with init_args.
+
+    >>> config = _instantiate("rfdetr.config.RFDETRSmallConfig", {})
+    >>> type(config).__name__
+    'RFDETRSmallConfig'
+    """
     module_path, class_name = class_path.rsplit(".", 1)
     cls = getattr(importlib.import_module(module_path), class_name)
     return cls(**init_args)
