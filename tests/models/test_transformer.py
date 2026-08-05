@@ -868,7 +868,7 @@ def test_two_stage_topk_gather_selects_correct_rows_out_of_position_order(monkey
     for index in gather_index_calls:
         assert index.stride(-1) == 0, (
             "the two-stage top-k gather index must broadcast its last dim via Tensor.expand "
-            "(transformer.py:381-390); got a materialised index with nonzero "
+            "(Transformer.forward two-stage top-k gather); got a materialised index with nonzero "
             f"last-dim stride {index.stride()} for shape {tuple(index.shape)}"
         )
 
@@ -885,7 +885,7 @@ def test_two_stage_topk_gather_selects_correct_rows_out_of_position_order(monkey
 
     assert torch.equal(chosen_idx, torch.tensor([[17, 2, 9], [5, 19, 0]]))  # sanity: out of position order
     expected_memory = torch.stack([output_memory_gidx[b, chosen_idx[b]] for b in range(batch_size)])
-    # forward() returns boxes_ts.sigmoid() when bbox_reparam=False (transformer.py:531).
+    # forward() returns boxes_ts.sigmoid() when bbox_reparam=False (Transformer.forward two-stage return).
     expected_coord = torch.stack([coord_unselected[b, chosen_idx[b]] for b in range(batch_size)]).sigmoid()
     assert torch.equal(memory_ts, expected_memory)
     assert torch.equal(boxes_ts, expected_coord)
