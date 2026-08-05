@@ -4,6 +4,8 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from collections.abc import Callable
+
 import numpy as np
 import pytest
 import torch
@@ -804,3 +806,382 @@ class TestDiagonalExtractionContentAgnostic:
         for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
             assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
             assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+
+
+def _spy_on_compact_path(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Wrap ``_compute_compact_detection_cost_matrix`` to record how many times it runs, without changing its behavior —
+    lets a test assert which branch ``forward`` actually took.
+
+    Examples:
+        >>> _spy_on_compact_path(...)  # doctest: +SKIP
+        # Needs a real pytest.MonkeyPatch fixture instance, not constructible standalone.
+    """
+    calls: list[int] = []
+    original = HungarianMatcher._compute_compact_detection_cost_matrix
+
+    def spy(
+        self: HungarianMatcher, outputs: dict[str, torch.Tensor], targets: list[dict[str, torch.Tensor]]
+    ) -> torch.Tensor:
+        calls.append(1)
+        return original(self, outputs, targets)
+
+    monkeypatch.setattr(HungarianMatcher, "_compute_compact_detection_cost_matrix", spy)
+    return calls
+
+
+def _random_detection_batch(
+    seed: int, sizes: list[int], num_queries: int = 6, num_classes: int = 5
+) -> tuple[dict[str, torch.Tensor], list[dict[str, torch.Tensor]]]:
+    """Random detection-only outputs/targets with the given per-image target counts.
+
+    Examples:
+        >>> outputs, targets = _random_detection_batch(seed=1, sizes=[2, 0])
+        >>> outputs["pred_logits"].shape, outputs["pred_boxes"].shape
+        (torch.Size([2, 6, 5]), torch.Size([2, 6, 4]))
+        >>> [len(target["labels"]) for target in targets]
+        [2, 0]
+    """
+    torch.manual_seed(seed)
+    bs = len(sizes)
+    outputs = {
+        "pred_logits": torch.randn(bs, num_queries, num_classes),
+        "pred_boxes": torch.rand(bs, num_queries, 4) * 0.4 + 0.3,
+    }
+    targets = [
+        {
+            "labels": torch.randint(0, num_classes, (size,), dtype=torch.int64),
+            "boxes": torch.rand(size, 4) * 0.4 + 0.3,
+        }
+        for size in sizes
+    ]
+    return outputs, targets
+
+
+class TestCompactPathRouting:
+    """The padded-compact cost path (``_compute_compact_detection_cost_matrix``) must run only for detection-only
+    batches with ``batch_size > 1`` and finite, bounded inputs — every other case must fall back to the diagonal-block
+    path from the first PR unchanged."""
+
+    def test_batch_size_one_uses_fallback_path(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """``bs == 1`` must never take the compact path, even for safe detection-only inputs — the first variant without
+        this gate regressed A100 batch-1 latency by 18.1%."""
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _random_detection_batch(seed=101, sizes=[3])
+
+        matcher(outputs, targets)
+
+        assert calls == []
+
+    def test_batch_size_greater_than_one_detection_uses_compact_path(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """A safe, detection-only, ``bs > 1`` batch must take the compact path."""
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _random_detection_batch(seed=102, sizes=[2, 3])
+
+        matcher(outputs, targets)
+
+        assert calls == [1]
+
+    def test_masks_present_uses_fallback_path(self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher) -> None:
+        """A segmentation batch (``masks`` in targets) must skip the compact path entirely, even with ``bs > 1`` and
+        otherwise-safe inputs — mask costs are not supported by it."""
+        calls = _spy_on_compact_path(monkeypatch)
+        torch.manual_seed(103)
+        bs, num_queries, num_classes, mask_size = 2, 4, 3, 8
+        outputs = {
+            "pred_logits": torch.randn(bs, num_queries, num_classes),
+            "pred_boxes": torch.rand(bs, num_queries, 4) * 0.4 + 0.3,
+            "pred_masks": torch.randn(bs, num_queries, mask_size, mask_size),
+        }
+        targets = [
+            {
+                "labels": torch.tensor([0], dtype=torch.int64),
+                "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.2]], dtype=torch.float32),
+                "masks": torch.rand(1, mask_size, mask_size),
+            },
+            {
+                "labels": torch.tensor([1, 2], dtype=torch.int64),
+                "boxes": torch.rand(2, 4) * 0.4 + 0.3,
+                "masks": torch.rand(2, mask_size, mask_size),
+            },
+        ]
+
+        results = matcher(outputs, targets)
+
+        assert calls == []
+        assert len(results) == bs
+
+    def test_keypoints_present_uses_fallback_path(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """A keypoint batch (``pred_keypoints`` in outputs and ``keypoints`` in targets) must skip the compact path
+        entirely, even with ``bs > 1`` and otherwise-safe inputs."""
+        calls = _spy_on_compact_path(monkeypatch)
+        torch.manual_seed(104)
+        bs, num_queries, num_classes, num_keypoints, pred_dim = 2, 4, 1, 3, 7
+        outputs = {
+            "pred_logits": torch.randn(bs, num_queries, num_classes),
+            "pred_boxes": torch.rand(bs, num_queries, 4) * 0.4 + 0.3,
+            "pred_keypoints": torch.randn(bs, num_queries, num_keypoints, pred_dim),
+        }
+        keypoint_matcher = HungarianMatcher(num_keypoints_per_class=[num_keypoints])
+        targets = [
+            {
+                "labels": torch.tensor([0], dtype=torch.int64),
+                "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.2]], dtype=torch.float32),
+                "keypoints": torch.rand(1, num_keypoints, 3),
+            },
+            {
+                "labels": torch.tensor([0, 0], dtype=torch.int64),
+                "boxes": torch.rand(2, 4) * 0.4 + 0.3,
+                "keypoints": torch.rand(2, num_keypoints, 3),
+            },
+        ]
+
+        results = keypoint_matcher(outputs, targets)
+
+        assert calls == []
+        assert len(results) == bs
+
+    @pytest.mark.parametrize(
+        "corrupt",
+        [
+            pytest.param(lambda o, t: o["pred_logits"].__setitem__((0, 0, 0), float("nan")), id="logit_nan"),
+            pytest.param(lambda o, t: o["pred_logits"].__setitem__((0, 0, 0), float("inf")), id="logit_inf"),
+            pytest.param(lambda o, t: o["pred_boxes"].__setitem__((1, 0, 2), float("nan")), id="pred_box_nan"),
+            pytest.param(lambda o, t: o["pred_boxes"].__setitem__((1, 0, 2), float("inf")), id="pred_box_inf"),
+            pytest.param(lambda o, t: t[0]["boxes"].__setitem__((0, 1), float("nan")), id="target_box_nan"),
+            pytest.param(lambda o, t: t[0]["boxes"].__setitem__((0, 1), float("inf")), id="target_box_inf"),
+            pytest.param(lambda o, t: o["pred_boxes"].__setitem__((1, 0, 2), 1e30), id="pred_box_extreme"),
+        ],
+    )
+    def test_unsafe_inputs_use_fallback_path(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        matcher: HungarianMatcher,
+        corrupt: Callable[[dict[str, torch.Tensor], list[dict[str, torch.Tensor]]], None],
+    ) -> None:
+        """Each of the 7 unsafe-input cases verified in the exploration script (NaN/Inf on predicted logits, predicted
+        boxes, or target boxes, plus one coordinate large enough to risk overflow in ``cdist``/GIoU area terms) must
+        route to the fallback path instead of the compact one, for an otherwise compact-eligible (``bs > 1``, detection-
+        only) batch."""
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _random_detection_batch(seed=105, sizes=[2, 3])
+        corrupt(outputs, targets)
+
+        results = matcher(outputs, targets)
+
+        assert calls == []
+        assert len(results) == len(targets)
+
+    @pytest.mark.parametrize("seed", [201, 202, 203, 204, 205])
+    def test_compact_path_matches_pre_pr1_reference_across_seeds(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher, seed: int
+    ) -> None:
+        """The compact path's assignment must agree with the pre-PR1 reference (full materialization + ``split(sizes,
+        -1)`` + ``c[i]``) across several random seeds — same contract as ``TestDiagonalBlockExtraction``, now exercised
+        through the compact route."""
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _random_detection_batch(seed=seed, sizes=[2, 4, 1])
+
+        actual = matcher(outputs, targets)
+        expected = _reference_indices_pre_diagonal_extraction(matcher, outputs, targets)
+
+        assert calls == [1]
+        for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
+            assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
+            assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+
+    def test_heterogeneous_and_empty_targets_use_compact_path(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """A zero-target image mixed with unequal non-zero counts must still route to the compact path and match the
+        pre-PR1 reference — the padded matrix's ``max(T_i)`` column count still has to resolve to the right per-image
+        slice after the padding is dropped."""
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _random_detection_batch(seed=206, sizes=[0, 3, 1])
+
+        actual = matcher(outputs, targets)
+        expected = _reference_indices_pre_diagonal_extraction(matcher, outputs, targets)
+
+        assert calls == [1]
+        for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
+            assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
+            assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+        assert actual[0][0].shape == (0,)
+
+    def test_all_batch_elements_empty_uses_compact_path(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """Every image with zero targets (``max(T_i) == 0``) is the degenerate case for ``pad_sequence``: the padded
+        target dimension collapses to size 0.
+
+        Must still route to the compact path, not raise, and return an empty assignment for every image.
+        """
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _random_detection_batch(seed=207, sizes=[0, 0, 0])
+
+        actual = matcher(outputs, targets)
+
+        assert calls == [1]
+        assert len(actual) == 3
+        for matched_queries, matched_targets in actual:
+            assert matched_queries.shape == (0,)
+            assert matched_targets.shape == (0,)
+
+    def test_overflowing_cost_weight_falls_through_to_fallback_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``_detection_inputs_are_safe`` only bounds ``pred_logits``/box magnitudes, not the matcher's own cost
+        coefficients — an extreme coefficient (never a data input, only ever a fixed constructor argument) can still
+        push the compact path's weighted cost to overflow.
+
+        Sanitizing that overflow inside the compact matrix used to disagree with the full-cartesian fallback, because
+        ``_sanitize_cost_matrix``'s replacement sentinel is computed from each matrix's own finite values, and the
+        compact matrix's finite-value statistics differ from the full one's (confirmed independently with
+        ``cost_class=3e38``, ``seed=58``, ``sizes=[6, 6]``: same non-finite verdict on both matrices, different
+        sentinel, different assignment). ``forward`` must instead fall through to the untouched fallback path whenever
+        the compact-weighted cost is not finite, so the two never diverge on this branch — verified here by forcing the
+        fallback path directly (via ``_detection_inputs_are_safe``) and comparing.
+        """
+        calls = _spy_on_compact_path(monkeypatch)
+        extreme_matcher = HungarianMatcher(cost_class=3e38, cost_bbox=1, cost_giou=1)
+        outputs, targets = _random_detection_batch(seed=58, sizes=[6, 6])
+
+        actual = extreme_matcher(outputs, targets)
+        assert calls == [1], "compact path must still be attempted once before falling through"
+        assert extreme_matcher._warned_non_finite_costs, "overflow must be detected and warned about once"
+
+        monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t: False))
+        expected = extreme_matcher(outputs, targets)
+
+        for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
+            assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
+            assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+class TestCompactPathOnCUDA:
+    """The compact path's tensor ops (``pad_sequence``, gather, ``cdist``, ``torch.vmap(generalized_box_iou)``) must
+    actually run under real CUDA kernels and agree with the fallback path there — CPU-only tests cannot exercise CUDA-
+    specific numerics or catch a CUDA-only failure in these ops, and the CI GPU workflow only selects tests marked
+    ``gpu`` (``ci-tests-gpu.yml`` runs ``-m gpu``), so without this class the compact path had zero coverage under the
+    device it optimizes for.
+
+    bf16 (the dtype the A100 benchmarks in this PR's body use) is not exercised here: this machine's PyTorch/CUDA build
+    does not implement ``cdist`` for bf16 (``cdist_cuda not implemented for BFloat16``, verified directly against
+    ``torch.cdist`` before writing this test) — a pre-existing PyTorch/CUDA-build limitation unrelated to this PR, not
+    something a test on this machine can respect or route around. The A100 bf16 numbers remain inherited from the
+    exploration behind this PR, not re-run here; this class verifies float32 CUDA execution and CPU/CUDA/fallback
+    agreement, which is what this machine can actually run and check.
+    """
+
+    def test_compact_path_matches_fallback_on_cuda_float32(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        outputs, targets = _random_detection_batch(seed=301, sizes=[2, 4, 1])
+        outputs = {key: value.cuda() for key, value in outputs.items()}
+        targets = [{key: value.cuda() for key, value in target.items()} for target in targets]
+
+        calls = _spy_on_compact_path(monkeypatch)
+        actual = matcher(outputs, targets)
+        assert calls == [1]
+        assert all(query.device.type == "cpu" for query, _ in actual), "assignment indices must return on CPU"
+
+        monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t: False))
+        expected = matcher(outputs, targets)
+
+        for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
+            assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
+            assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+
+    def test_compact_path_matches_cpu_reference_on_cuda(self, matcher: HungarianMatcher) -> None:
+        """Same inputs, CPU vs CUDA: the compact path must reach the identical assignment regardless of the device the
+        model happens to run on."""
+        outputs, targets = _random_detection_batch(seed=302, sizes=[2, 3, 1])
+
+        cpu_result = matcher(outputs, targets)
+
+        cuda_outputs = {key: value.cuda() for key, value in outputs.items()}
+        cuda_targets = [{key: value.cuda() for key, value in target.items()} for target in targets]
+        cuda_result = matcher(cuda_outputs, cuda_targets)
+
+        for image_idx, ((cpu_q, cpu_t), (cuda_q, cuda_t)) in enumerate(zip(cpu_result, cuda_result)):
+            assert torch.equal(cpu_q, cuda_q), f"query indices diverged for image {image_idx}"
+            assert torch.equal(cpu_t, cuda_t), f"target indices diverged for image {image_idx}"
+
+
+class TestCompactPathCriterionEquivalence:
+    """The exploration behind this PR claims the 17 criterion losses (main + 2 aux decoder layers + encoder, each with
+    ``labels``/``boxes``/``cardinality``) and their gradients are byte-identical between the compact and fallback paths,
+    but that claim lived only in an ad hoc script under ``state/``, not as a persistent test in this repo — a real gap
+    found on further review of this diff.
+
+    This backs it with an actual ``SetCriterion`` + ``HungarianMatcher`` pair (not a reimplementation of either), a
+    heterogeneous batch with one empty image, real ``aux_outputs``/``enc_outputs`` so all 4 matcher invocations
+    ``forward`` makes per training step are exercised (not just the last-layer call), and both losses and gradients
+    checked, not just losses.
+    """
+
+    def test_losses_and_gradients_match_between_compact_and_fallback_paths(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from rfdetr.models.criterion import SetCriterion
+
+        torch.manual_seed(401)
+        bs, num_queries, num_classes = 3, 8, 5
+        sizes = [2, 0, 3]
+
+        def make_layer_outputs() -> dict[str, torch.Tensor]:
+            return {
+                "pred_logits": torch.randn(bs, num_queries, num_classes, requires_grad=True),
+                "pred_boxes": (torch.rand(bs, num_queries, 4) * 0.4 + 0.3).clone().requires_grad_(True),
+            }
+
+        main_outputs = make_layer_outputs()
+        aux_outputs = [make_layer_outputs(), make_layer_outputs()]
+        enc_outputs = make_layer_outputs()
+        outputs = {**main_outputs, "aux_outputs": aux_outputs, "enc_outputs": enc_outputs}
+        all_layer_outputs = [main_outputs, *aux_outputs, enc_outputs]
+
+        targets = [
+            {
+                "labels": torch.randint(0, num_classes, (size,), dtype=torch.int64),
+                "boxes": torch.rand(size, 4) * 0.4 + 0.3,
+            }
+            for size in sizes
+        ]
+
+        matcher = HungarianMatcher()
+        criterion = SetCriterion(
+            num_classes=num_classes,
+            matcher=matcher,
+            weight_dict={"loss_ce": 1.0, "loss_bbox": 1.0, "loss_giou": 1.0},
+            focal_alpha=0.25,
+            losses=["labels", "boxes", "cardinality"],
+        )
+
+        calls = _spy_on_compact_path(monkeypatch)
+        compact_losses = criterion(outputs, targets, num_boxes=1.0)
+        assert calls == [1, 1, 1, 1], "main + 2 aux layers + enc must each take the compact path once"
+        assert len(compact_losses) == 17, "main + 2 aux + enc, each with cardinality/class_error/bbox/giou"
+        sum(compact_losses.values()).backward()
+        compact_grads = [
+            (layer["pred_logits"].grad.clone(), layer["pred_boxes"].grad.clone()) for layer in all_layer_outputs
+        ]
+
+        for layer in all_layer_outputs:
+            layer["pred_logits"].grad = None
+            layer["pred_boxes"].grad = None
+        monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t: False))
+        fallback_losses = criterion(outputs, targets, num_boxes=1.0)
+        sum(fallback_losses.values()).backward()
+
+        assert compact_losses.keys() == fallback_losses.keys()
+        for key in compact_losses:
+            assert torch.equal(compact_losses[key], fallback_losses[key]), f"{key} diverged"
+        for layer, (compact_grad_logits, compact_grad_boxes) in zip(all_layer_outputs, compact_grads):
+            assert torch.equal(compact_grad_logits, layer["pred_logits"].grad)
+            assert torch.equal(compact_grad_boxes, layer["pred_boxes"].grad)

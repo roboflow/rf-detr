@@ -28,6 +28,7 @@ import torch.nn.functional as F  # noqa: N812
 from numpy.typing import NDArray
 from scipy.optimize import linear_sum_assignment as _linear_sum_assignment  # type: ignore[import-untyped,unused-ignore]
 from torch import Tensor, nn
+from torch.nn.utils.rnn import pad_sequence
 
 from rfdetr.models.heads.keypoints import compute_keypoint_matching_cost
 from rfdetr.models.heads.segmentation import point_sample
@@ -139,6 +140,83 @@ class HungarianMatcher(nn.Module):
         sanitized_cost_matrix[~finite_mask] = replacement_cost
         return sanitized_cost_matrix
 
+    @staticmethod
+    def _detection_inputs_are_safe(outputs: dict[str, Any], targets: list[dict[str, Any]]) -> bool:
+        """Return whether the compact path can preserve the full path's finite-cost behavior."""
+        checks = [torch.isfinite(outputs["pred_logits"]).all()]
+        for boxes in [outputs["pred_boxes"], *(target["boxes"] for target in targets)]:
+            # Keep enough headroom for cxcywh conversion, pairwise differences, areas, and unions.
+            coordinate_limit = torch.finfo(boxes.dtype).max ** 0.5 / 16
+            checks.append(torch.isfinite(boxes).all() & (boxes.abs() <= coordinate_limit).all())
+        return bool(torch.stack(checks).all())
+
+    def _compute_compact_detection_cost_matrix(
+        self,
+        outputs: dict[str, Any],
+        targets: list[dict[str, Any]],
+    ) -> Tensor:
+        """Compute same-image detection costs with targets padded only to the batch maximum."""
+        batch_size, num_queries = outputs["pred_logits"].shape[:2]
+        sizes = [len(target["boxes"]) for target in targets]
+        padded_target_ids = pad_sequence([target["labels"] for target in targets], batch_first=True)
+        padded_target_boxes = pad_sequence([target["boxes"] for target in targets], batch_first=True)
+        max_targets = padded_target_ids.shape[1]
+
+        gather_index = padded_target_ids[:, None, :].expand(batch_size, num_queries, max_targets)
+        target_logits = torch.gather(outputs["pred_logits"], 2, gather_index)
+        target_prob = target_logits.sigmoid()
+        alpha = self.focal_alpha
+        gamma = _FOCAL_LOSS_GAMMA
+        negative_class_cost = (1 - alpha) * (target_prob**gamma) * (-F.logsigmoid(-target_logits))
+        positive_class_cost = alpha * ((1 - target_prob) ** gamma) * (-F.logsigmoid(target_logits))
+        class_cost = positive_class_cost - negative_class_cost
+
+        bbox_cost = torch.cdist(outputs["pred_boxes"], padded_target_boxes, p=1)
+        giou_cost = -torch.vmap(generalized_box_iou)(
+            box_cxcywh_to_xyxy(outputs["pred_boxes"]),
+            box_cxcywh_to_xyxy(padded_target_boxes),
+        )
+        padded_cost_matrix = self.cost_bbox * bbox_cost + self.cost_class * class_cost + self.cost_giou * giou_cost
+        return torch.cat(
+            [padded_cost_matrix[index, :, :size] for index, size in enumerate(sizes)],
+            dim=-1,
+        )
+
+    @staticmethod
+    def _assign_compact_cost_matrix(
+        cost_matrix: Tensor,
+        sizes: list[int],
+        group_detr: int,
+    ) -> list[tuple[Tensor, Tensor]]:
+        """Solve a compact ``[queries, total_targets]`` matrix by group and image."""
+        target_offsets = [0]
+        for size in sizes:
+            target_offsets.append(target_offsets[-1] + size)
+
+        num_queries = cost_matrix.shape[0]
+        if num_queries % group_detr != 0:
+            raise ValueError(f"num_queries ({num_queries}) must be divisible by group_detr ({group_detr})")
+        group_num_queries = num_queries // group_detr
+        indices = []
+        for group_index in range(group_detr):
+            group_start = group_index * group_num_queries
+            grouped_cost_matrix = cost_matrix[group_start : group_start + group_num_queries]
+            group_indices = [
+                linear_sum_assignment(grouped_cost_matrix[:, target_offsets[index] : target_offsets[index + 1]])
+                for index in range(len(sizes))
+            ]
+            if group_index == 0:
+                indices = group_indices
+            else:
+                indices = [
+                    (
+                        np.concatenate([previous[0], current[0] + group_num_queries * group_index]),
+                        np.concatenate([previous[1], current[1]]),
+                    )
+                    for previous, current in zip(indices, group_indices)
+                ]
+        return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+
     @torch.no_grad()
     def forward(
         self,
@@ -169,6 +247,24 @@ class HungarianMatcher(nn.Module):
         """
         bs, num_queries = outputs["pred_logits"].shape[:2]
 
+        masks_present = "masks" in targets[0]
+        keypoints_present = "pred_keypoints" in outputs and "keypoints" in targets[0]
+        compact_eligible = (
+            bs > 1 and not masks_present and not keypoints_present and self._detection_inputs_are_safe(outputs, targets)
+        )
+        if compact_eligible:
+            compact_cost_matrix = self._compute_compact_detection_cost_matrix(outputs, targets).float().cpu()
+            if torch.isfinite(compact_cost_matrix).all():
+                sizes = [len(target["boxes"]) for target in targets]
+                return self._assign_compact_cost_matrix(compact_cost_matrix, sizes, group_detr)
+            # Weighted costs overflowed despite finite, bounded inputs (e.g. an extreme cost
+            # coefficient) — fall through to the full path below instead of sanitizing the padded
+            # compact matrix in isolation, whose finite-value statistics (and therefore the
+            # sentinel `_sanitize_cost_matrix` computes) can differ from the full cartesian
+            # matrix's. Falling through keeps this exceptional branch byte-for-byte identical to
+            # the pre-existing behaviour; it costs the redundant cross-image compute only on this
+            # already-rare path, never on the finite one the perf numbers below measure.
+
         # We flatten to compute the cost matrices in a batch
         flat_pred_logits = outputs["pred_logits"].flatten(0, 1)
         out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4]
@@ -178,8 +274,6 @@ class HungarianMatcher(nn.Module):
         tgt_bbox = torch.cat([v["boxes"] for v in targets])
         tgt_keypoints = None
 
-        masks_present = "masks" in targets[0]
-        keypoints_present = "pred_keypoints" in outputs and "keypoints" in targets[0]
         if keypoints_present:
             tgt_keypoints = torch.cat([v["keypoints"] for v in targets], dim=0)
 
@@ -298,29 +392,7 @@ class HungarianMatcher(nn.Module):
         diagonal_cost_matrix: Tensor = torch.cat(
             [cost_matrix[i, :, target_offsets[i] : target_offsets[i + 1]] for i in range(bs)], dim=-1
         ).cpu()
-
-        indices = []
-        if num_queries % group_detr != 0:
-            raise ValueError(f"num_queries ({num_queries}) must be divisible by group_detr ({group_detr})")
-        g_num_queries = num_queries // group_detr
-        for g_i in range(group_detr):
-            group_start = g_i * g_num_queries
-            grouped_cost_matrix = diagonal_cost_matrix[group_start : group_start + g_num_queries]
-            indices_g = [
-                linear_sum_assignment(grouped_cost_matrix[:, target_offsets[i] : target_offsets[i + 1]])
-                for i in range(bs)
-            ]
-            if g_i == 0:
-                indices = indices_g
-            else:
-                indices = [
-                    (
-                        np.concatenate([indice1[0], indice2[0] + g_num_queries * g_i]),
-                        np.concatenate([indice1[1], indice2[1]]),
-                    )
-                    for indice1, indice2 in zip(indices, indices_g)
-                ]
-        return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+        return self._assign_compact_cost_matrix(diagonal_cost_matrix, sizes, group_detr)
 
 
 def build_matcher(args: Any) -> HungarianMatcher:
