@@ -14,7 +14,14 @@ from rfdetr.utilities.distributed import all_gather
 
 
 def _fake_all_gather(output_tensors, input_tensor) -> None:
-    """Stand-in for dist.all_gather: broadcast the local tensor to every output slot."""
+    """Stand-in for dist.all_gather: broadcast the local tensor to every output slot.
+
+    Examples:
+        >>> outs = [torch.zeros(2), torch.zeros(2)]
+        >>> _fake_all_gather(outs, torch.tensor([1.0, 2.0]))
+        >>> outs
+        [tensor([1., 2.]), tensor([1., 2.])]
+    """
     for out in output_tensors:
         out.copy_(input_tensor)
 
@@ -70,6 +77,14 @@ def _xla_all_gather_worker(_local_index: int) -> None:
 
     PJRT's multi-process spawn dispatches through ``concurrent.futures.ProcessPoolExecutor``, which pickles the target
     with stdlib ``pickle``; a nested function fails with ``AttributeError: Can't pickle local object``.
+
+    Examples:
+        Not directly callable in a doctest -- it dispatches ``dist.init_process_group("xla", ...)`` and requires
+        a real TPU/NEURON multi-process runtime supplied by ``torch_xla.launch``. See
+        ``test_all_gather_multiprocess_xla_collective_routing`` for the real invocation.
+
+        >>> callable(_xla_all_gather_worker)  # doctest: +SKIP
+        True
     """
     import torch.distributed as dist
     import torch_xla
