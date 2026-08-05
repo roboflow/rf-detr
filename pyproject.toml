@@ -412,7 +412,6 @@ overrides = [
     "rfdetr.datasets.save_grids",
     "rfdetr.datasets.synthetic",
     "rfdetr.datasets.transforms",
-    "rfdetr.datasets.yolo",
     "rfdetr.detr",
   ], ignore_errors = true },
 ]
