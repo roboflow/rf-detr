@@ -20,39 +20,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  tflite-resolution:
-    name: Resolve [tflite] extra — Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        # tflite deps carry python_version>='3.12' and <'3.13' markers; onnx2tf pins numpy==1.26.4
-        # exactly, which conflicts with ml-dtypes>=0.5.1 requiring numpy>=2.1.0 on 3.13.
-        # Add 3.13 and relax the <'3.13' upper bound when onnx2tf drops the exact numpy pin.
-        python-version: ["3.12"]
-    steps:
-      - name: 📥 Checkout the repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-
-      - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
-        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
-        with:
-          version: "0.9.26"
-          python-version: ${{ matrix.python-version }}
-
-      - name: 🔍 Resolve [tflite] optional dependencies
-        run: |
-          uv pip compile pyproject.toml \
-            --extra tflite \
-            --python-version ${{ matrix.python-version }} \
-            --no-header \
-            --quiet
-
-      - name: Minimize uv cache
-        continue-on-error: true
-        run: uv cache prune --ci
-
   universal-resolution:
     name: Resolve every extra and group together (uv lock)
     runs-on: ubuntu-latest
@@ -72,10 +39,115 @@ jobs:
         # of extras/groups whose pins are unsatisfiable together. `uv lock` runs the universal
         # resolution that `uv sync --all-groups` (the setup step in AGENTS.md and CONTRIBUTING.md)
         # needs, so a new extra with a pin that conflicts with an existing one fails here instead of
-        # on a contributor's machine. No CI job runs `uv sync`, so nothing else covers this path.
-        # A genuine conflict is declared in [tool.uv.conflicts] to let the resolver fork.
+        # on a contributor's machine. Wheel availability is a separate axis, covered by
+        # `install-plan` below. A genuine conflict is declared in [tool.uv.conflicts] to let the
+        # resolver fork.
         run: uv lock --quiet
 
       - name: Minimize uv cache
         continue-on-error: true
         run: uv cache prune --ci
+
+  list-extras:
+    name: List extras for install-plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      extras: ${{ steps.collect.outputs.extras }}
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version 3.11
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: "3.11"
+
+      - name: 📋 Collect every extra from pyproject.toml
+        id: collect
+        # Cover every [project.optional-dependencies] extra — a new one is picked up automatically,
+        # nothing to keep in sync by hand. `fromJSON` fans the result out into one job per extra,
+        # so there is no in-step loop. The install-plan step only runs `uv sync --dry-run`
+        # (resolution + wheel check, no build/download/GPU), so extras that need GPU/TPU hardware at
+        # runtime — tensorrt, plus — still resolve here. If one genuinely cannot resolve on a
+        # plain runner, its job goes red and names itself; exclude it then, with evidence.
+        run: |
+          uv run --no-project --python 3.11 python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, tomllib
+          with open("pyproject.toml", "rb") as fh:
+              extras = tomllib.load(fh)["project"]["optional-dependencies"]
+          print("extras=" + json.dumps(sorted(extras)))
+          PY
+
+  install-plan:
+    name: Install plan [${{ matrix.extra }}] — Python ${{ matrix.python-version }}
+    needs: list-extras
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every interpreter allowed by requires-python (>=3.10) crossed with every extra from the
+        # list-extras job, so each extra/interpreter pair is its own job. ci-tests-cpu.yml installs
+        # only train/augment/cli/visual (+coreml on macOS), so onnx, executorch, tflite, loggers
+        # and lora have no install coverage there at any version — and it installs via `uv pip
+        # install`, which backtracks past a missing wheel instead of failing (see below).
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        extra: ${{ fromJSON(needs.list-extras.outputs.extras) }}
+        # Skip interpreter/extra pairs where no wheel is expected, so the gate is not held red by
+        # an unfixable gap: TensorRT on 3.10. Drop an entry
+        # once that wheel ships. (exclude matches values from the dynamic extra axis by name.)
+        exclude:
+          - { extra: tensorrt, python-version: "3.10" }
+          - { extra: xla, python-version: "3.14" }
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: ${{ matrix.python-version }}
+
+      - name: 📦 Verify [${{ matrix.extra }}] has an installable distribution
+        # `uv lock` proves a version solution exists; it does NOT prove every pinned version
+        # ships a wheel (or sdist) for the interpreter actually in use. A dependency that drops
+        # an interpreter, or has not added one yet, still locks cleanly and then fails at install
+        # with "doesn't have a source distribution or wheel for the current platform" — the
+        # failure mode that broke [onnx] on 3.10 and [executorch] on 3.14.
+        #
+        # `uv sync --dry-run` runs resolution AND install planning (where the wheel check
+        # happens) without downloading anything, so this stays cheap. `uv pip install --dry-run`
+        # is NOT equivalent: it re-resolves per interpreter and silently backtracks to an older
+        # version with a compatible wheel, hiding exactly this bug.
+        run: uv sync --no-default-groups --extra ${{ matrix.extra }} --python ${{ matrix.python-version }} --dry-run
+
+      - name: Minimize uv cache
+        continue-on-error: true
+        run: uv cache prune --ci
+
+  deps-resolution-complete:
+    name: Dependency resolution complete
+    # Single aggregate gate for branch protection: require THIS one check instead of the ~70
+    # install-plan matrix contexts (5 interpreters × every extra) plus the two resolution jobs.
+    # `needs.<job>.result` collapses a whole matrix to one value — `success` only if every cell
+    # passed. `if: always()` so the gate still runs (and fails) when an upstream job fails;
+    # without it a failed dependency would skip this job and branch protection would see no signal.
+    if: always()
+    needs: [universal-resolution, list-extras, install-plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: ✅ Assert every resolution job succeeded
+        run: |
+          results="universal-resolution=${{ needs.universal-resolution.result }} list-extras=${{ needs.list-extras.result }} install-plan=${{ needs.install-plan.result }}"
+          echo "$results"
+          for pair in $results; do
+            if [ "${pair#*=}" != "success" ]; then
+              echo "::error::Dependency resolution incomplete — $results"
+              exit 1
+            fi
+          done
+          echo "All dependency-resolution jobs passed."

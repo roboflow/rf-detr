@@ -71,6 +71,7 @@ from typing import Any, Generator, cast
 import numpy as np
 from numpy.typing import NDArray
 
+from rfdetr.export._resize import _bilinear_resize_half_pixel
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -636,9 +637,13 @@ def _load_calibration_images(
     arrays: list[NDArray[np.float32]] = []
     for img_path in image_paths:
         try:
-            img = Image.open(img_path).convert("RGB").resize((width, height))
-            image_array = np.asarray(img, dtype=np.float32)
-            image_array /= np.float32(255.0)
+            with Image.open(img_path) as _img:
+                img = _img.convert("RGB")
+            # Resize with predict()'s convention (bilinear, half-pixel, no antialias) so the INT8
+            # calibration ranges come from the same pixel distribution the model sees at inference.
+            # PIL's default resize (BICUBIC + adaptive antialias) diverges from that distribution.
+            chw = np.asarray(img, dtype=np.float32).transpose(2, 0, 1) / np.float32(255.0)
+            image_array = _bilinear_resize_half_pixel(chw, height, width).transpose(1, 2, 0)
             arrays.append(image_array)
         except Exception:
             logger.debug(f"Skipping unreadable image: {img_path}")

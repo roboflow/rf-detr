@@ -204,6 +204,7 @@ notebooks/
 # tracking work in progress
 .codex/logs
 .developments/
+.notes/
 .plans/
 .reports/
 .temp/

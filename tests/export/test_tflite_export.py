@@ -947,6 +947,38 @@ class TestLoadCalibrationImages:
         assert result.min() >= 0.0
         assert result.max() <= 1.0
 
+    def test_resize_matches_predict_convention(self, tmp_path: Path) -> None:
+        """The calibration resize must follow predict()'s convention: bilinear, half-pixel, antialias-free.
+
+        Guards the #1206 alignment: PIL's default resize (BICUBIC + adaptive antialias when downscaling) produces a
+        pixel distribution the model never sees at inference and would skew the INT8 ranges.
+        """
+        import torchvision.transforms.functional as F  # noqa: N812
+        from PIL import Image
+
+        rng = np.random.default_rng(11)
+        base = rng.integers(0, 256, size=(40, 50, 3), dtype=np.uint8)
+        nearest = getattr(Image, "Resampling", Image).NEAREST
+        pil = Image.fromarray(base, mode="RGB").resize((400, 320), nearest)
+        pil.save(tmp_path / "img.png")
+
+        result = _load_calibration_images(tmp_path, height=128, width=160)
+
+        ref = F.resize(F.to_tensor(pil), [128, 160], antialias=False).numpy().transpose(1, 2, 0)
+        max_diff = float(np.abs(result[0] - ref).max())
+        assert max_diff < 1e-3, (
+            f"Calibration resize diverged from predict()'s antialias-free convention: "
+            f"max|diff|={max_diff:.4f}. _load_calibration_images must resize with "
+            f"_bilinear_resize_half_pixel, not PIL."
+        )
+
+        # PIL's default resample (the old behaviour) must stay far from the reference,
+        # proving this assertion actually discriminates on the resize convention.
+        pil_default = np.asarray(pil.resize((160, 128)), dtype=np.float32) / np.float32(255.0)
+        assert float(np.abs(pil_default - ref).max()) > 0.05, (
+            "PIL's default resize unexpectedly matches the reference; this test no longer discriminates."
+        )
+
     def test_respects_max_images(self, tmp_path: Path) -> None:
         self._make_images(tmp_path, count=10)
         result = _load_calibration_images(tmp_path, height=64, width=64, max_images=4)

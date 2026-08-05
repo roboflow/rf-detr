@@ -143,13 +143,16 @@ def make_infer_image(
                 "Providing `infer_dir` is only supported for RGB models (num_channels=3). "
                 "For non-RGB models, omit `infer_dir` to use a synthetic dummy input."
             )
-        image = Image.open(infer_dir).convert("RGB")
+        with Image.open(infer_dir) as _img:
+            image = _img.convert("RGB")
 
+    # Tensorize-then-resize with antialias=False mirrors RFDETR.predict()'s preprocessing, so the
+    # traced example input (and any export sanity check run on it) sees production-domain tensors.
     transforms = Compose(
         [
-            Resize((shape[0], shape[1])),
             ToImage(),
             ToDtype(torch.float32, scale=True),
+            Resize((shape[0], shape[1]), antialias=False),
             Normalize(),
         ]
     )
