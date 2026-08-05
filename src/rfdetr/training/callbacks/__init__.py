@@ -10,16 +10,16 @@ from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.callbacks.drop_schedule import DropPathCallback
 from rfdetr.training.callbacks.ema import RFDETREMACallback
 from rfdetr.training.callbacks.gpu_memory_progress_bar import (
-    GpuMemoryRichProgressBar,
-    GpuMemoryTQDMProgressBar,
+    GPUMemoryRichProgressBar,
+    GPUMemoryTQDMProgressBar,
 )
 
 __all__ = [
     "BestModelCallback",
     "COCOEvalCallback",
     "DropPathCallback",
-    "GpuMemoryRichProgressBar",
-    "GpuMemoryTQDMProgressBar",
+    "GPUMemoryRichProgressBar",
+    "GPUMemoryTQDMProgressBar",
     "RFDETREMACallback",
     "RFDETREarlyStopping",
 ]

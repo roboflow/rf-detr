@@ -29,8 +29,8 @@ from rfdetr.config import KeypointTrainConfig, ModelConfig, TrainConfig
 from rfdetr.training.callbacks import (
     BestModelCallback,
     DropPathCallback,
-    GpuMemoryRichProgressBar,
-    GpuMemoryTQDMProgressBar,
+    GPUMemoryRichProgressBar,
+    GPUMemoryTQDMProgressBar,
     RFDETREarlyStopping,
     RFDETREMACallback,
 )
@@ -629,13 +629,13 @@ def build_trainer(
 
     if tc.progress_bar == "rich":
         callbacks.append(
-            GpuMemoryRichProgressBar(
+            GPUMemoryRichProgressBar(
                 refresh_rate=5,
                 theme=RichProgressBarTheme(metrics_format=".3e"),
             )
         )
     elif tc.progress_bar == "tqdm":
-        callbacks.append(GpuMemoryTQDMProgressBar(refresh_rate=5))
+        callbacks.append(GPUMemoryTQDMProgressBar(refresh_rate=5))
 
     # Training-only callbacks and loggers.  Evaluation-only trainers
     # (``include_training_callbacks=False``, used by :meth:`rfdetr.detr.RFDETR.evaluate`) keep just the

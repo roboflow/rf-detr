@@ -15,8 +15,8 @@ from pytorch_lightning.callbacks.progress.tqdm_progress import Tqdm, TQDMProgres
 
 from rfdetr.training import build_trainer
 from rfdetr.training.callbacks.gpu_memory_progress_bar import (
-    GpuMemoryRichProgressBar,
-    GpuMemoryTQDMProgressBar,
+    GPUMemoryRichProgressBar,
+    GPUMemoryTQDMProgressBar,
     _is_cuda,
 )
 from rfdetr.training.module_data import RFDETRDataModule
@@ -79,16 +79,16 @@ class TestIsCuda:
 
 
 # ---------------------------------------------------------------------------
-# TestGpuMemoryTQDMProgressBar
+# TestGPUMemoryTQDMProgressBar
 # ---------------------------------------------------------------------------
 
 
-class TestGpuMemoryTQDMProgressBar:
+class TestGPUMemoryTQDMProgressBar:
     """get_metrics() on the TQDM variant."""
 
     def test_no_max_mem_on_cpu(self) -> None:
         """CPU device: no max_mem key, matching pre-#794 behaviour."""
-        bar = GpuMemoryTQDMProgressBar()
+        bar = GPUMemoryTQDMProgressBar()
         trainer = _make_mock_trainer(torch.device("cpu"))
         pl_module = MagicMock()
 
@@ -100,7 +100,7 @@ class TestGpuMemoryTQDMProgressBar:
         """A cuda: device with no active CUDA context reports no max_mem."""
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(torch.cuda, "is_initialized", lambda: False)
-        bar = GpuMemoryTQDMProgressBar()
+        bar = GPUMemoryTQDMProgressBar()
         trainer = _make_mock_trainer(torch.device("cuda"))
         pl_module = MagicMock()
 
@@ -128,7 +128,7 @@ class TestGpuMemoryTQDMProgressBar:
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(torch.cuda, "is_initialized", lambda: True)
         monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda dev=None: peak_bytes)
-        bar = GpuMemoryTQDMProgressBar()
+        bar = GPUMemoryTQDMProgressBar()
         trainer = _make_mock_trainer(device)
         pl_module = MagicMock()
 
@@ -141,7 +141,7 @@ class TestGpuMemoryTQDMProgressBar:
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(torch.cuda, "is_initialized", lambda: True)
         monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda dev=None: 0)
-        bar = GpuMemoryTQDMProgressBar()
+        bar = GPUMemoryTQDMProgressBar()
         trainer = _make_mock_trainer(torch.device("cuda"))
         trainer.progress_bar_metrics = {"loss": 0.5}
         pl_module = MagicMock()
@@ -153,16 +153,16 @@ class TestGpuMemoryTQDMProgressBar:
 
 
 # ---------------------------------------------------------------------------
-# TestGpuMemoryRichProgressBar
+# TestGPUMemoryRichProgressBar
 # ---------------------------------------------------------------------------
 
 
-class TestGpuMemoryRichProgressBar:
+class TestGPUMemoryRichProgressBar:
     """get_metrics() on the Rich variant chains through RichProgressBar.get_metrics."""
 
     def test_no_max_mem_on_cpu(self) -> None:
         """CPU device: no max_mem key."""
-        bar = GpuMemoryRichProgressBar()
+        bar = GPUMemoryRichProgressBar()
         trainer = _make_mock_trainer(torch.device("cpu"))
         pl_module = MagicMock()
 
@@ -174,7 +174,7 @@ class TestGpuMemoryRichProgressBar:
         """A cuda: device with no active CUDA context reports no max_mem (mirrors the TQDM variant)."""
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(torch.cuda, "is_initialized", lambda: False)
-        bar = GpuMemoryRichProgressBar()
+        bar = GPUMemoryRichProgressBar()
         trainer = _make_mock_trainer(torch.device("cuda"))
         pl_module = MagicMock()
 
@@ -187,7 +187,7 @@ class TestGpuMemoryRichProgressBar:
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(torch.cuda, "is_initialized", lambda: True)
         monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda dev=None: 456 * 1024 * 1024)
-        bar = GpuMemoryRichProgressBar()
+        bar = GPUMemoryRichProgressBar()
         trainer = _make_mock_trainer(torch.device("cuda", 0))
         trainer.progress_bar_metrics = {"loss": torch.tensor(0.5)}
         pl_module = MagicMock()
@@ -212,7 +212,7 @@ class TestUserLoggedMaxMem:
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(torch.cuda, "is_initialized", lambda: True)
         monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda dev=None: 123 * 1024 * 1024)
-        bar = GpuMemoryTQDMProgressBar()
+        bar = GPUMemoryTQDMProgressBar()
         trainer = _make_mock_trainer(torch.device("cuda", 0))
         trainer.progress_bar_metrics = {"max_mem": "budgeted 7 GB"}
         pl_module = MagicMock()
@@ -270,7 +270,7 @@ class TestPeakMemoryReset:
         """The counter cleared is the one the metric is later read from."""
         spy = _install_peak_spy(monkeypatch)
         device = torch.device("cuda", 1)
-        bar = GpuMemoryTQDMProgressBar()
+        bar = GPUMemoryTQDMProgressBar()
         trainer = _make_mock_trainer(device)
 
         bar.on_train_start(trainer, MagicMock())
@@ -280,7 +280,7 @@ class TestPeakMemoryReset:
     def test_no_reset_without_an_active_cuda_device(self, monkeypatch) -> None:
         """On CPU the reset is skipped: ``reset_peak_memory_stats`` has no availability guard of its own."""
         spy = _install_peak_spy(monkeypatch, cuda_active=False)
-        bar = GpuMemoryTQDMProgressBar()
+        bar = GPUMemoryTQDMProgressBar()
         trainer = _make_mock_trainer(torch.device("cpu"))
 
         bar.on_train_start(trainer, MagicMock())
@@ -292,7 +292,7 @@ class TestPeakMemoryReset:
         _install_peak_spy(monkeypatch)
         base_calls: list[tuple] = []
         monkeypatch.setattr(TQDMProgressBar, "on_train_start", lambda self, *args: base_calls.append(args))
-        bar = GpuMemoryTQDMProgressBar()
+        bar = GPUMemoryTQDMProgressBar()
         trainer = _make_mock_trainer(torch.device("cuda", 0))
         pl_module = MagicMock()
 
@@ -303,7 +303,7 @@ class TestPeakMemoryReset:
     def test_peak_does_not_accumulate_across_sequential_fits(self, monkeypatch) -> None:
         """Two fit() runs in one process each report their own peak, not a shared high-water mark."""
         spy = _install_peak_spy(monkeypatch)
-        bar = GpuMemoryTQDMProgressBar()
+        bar = GPUMemoryTQDMProgressBar()
         trainer = _make_mock_trainer(torch.device("cuda", 0))
         pl_module = MagicMock()
 
@@ -369,7 +369,7 @@ def _build_and_fit(mc, tc, monkeypatch, postprocess_fn=_fake_postprocess, **buil
 class TestProgressBarEndToEnd:
     """``get_metrics()`` must fire through the real PTL hook chain, not a hand-built mock ``Trainer``.
 
-    ``TestIsCuda`` / ``TestGpuMemoryTQDMProgressBar`` / ``TestGpuMemoryRichProgressBar`` above call ``get_metrics()``
+    ``TestIsCuda`` / ``TestGPUMemoryTQDMProgressBar`` / ``TestGPUMemoryRichProgressBar`` above call ``get_metrics()``
     directly against a ``MagicMock`` trainer — they verify the mixin's own logic but never exercise the
     ``on_train_batch_end`` -> ``set_postfix`` hook chain that decides what a user actually sees. These run a real
     ``build_trainer() + trainer.fit(fast_dev_run=2)`` (same fixture pattern as ``TestBuildTrainerSmoke`` in

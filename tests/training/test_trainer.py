@@ -9,7 +9,7 @@ import pytest
 from pytorch_lightning.callbacks import RichProgressBar, TQDMProgressBar
 
 from rfdetr.training import build_trainer
-from rfdetr.training.callbacks import GpuMemoryRichProgressBar, GpuMemoryTQDMProgressBar
+from rfdetr.training.callbacks import GPUMemoryRichProgressBar, GPUMemoryTQDMProgressBar
 
 # ---------------------------------------------------------------------------
 # TestProgressBarCallbacks — verifies the correct callback is installed
@@ -19,7 +19,7 @@ from rfdetr.training.callbacks import GpuMemoryRichProgressBar, GpuMemoryTQDMPro
 class TestProgressBarCallbacks:
     """build_trainer() must install the right progress bar callback for each mode.
 
-    The installed callbacks are the ``GpuMemory*`` subclasses (see ``gpu_memory_progress_bar.py``), so membership is
+    The installed callbacks are the ``GPUMemory*`` subclasses (see ``gpu_memory_progress_bar.py``), so membership is
     checked with ``isinstance`` against the base PTL classes rather than exact ``type(cb) in [...]`` matches.
     """
 
@@ -30,7 +30,7 @@ class TestProgressBarCallbacks:
         trainer = build_trainer(tc, mc, accelerator="cpu")
         assert any(isinstance(cb, RichProgressBar) for cb in trainer.callbacks)
         assert not any(isinstance(cb, TQDMProgressBar) for cb in trainer.callbacks)
-        assert any(isinstance(cb, GpuMemoryRichProgressBar) for cb in trainer.callbacks)
+        assert any(isinstance(cb, GPUMemoryRichProgressBar) for cb in trainer.callbacks)
 
     def test_tqdm_progress_bar_installed_for_tqdm(self, base_model_config, base_train_config):
         """progress_bar='tqdm' must add a TQDMProgressBar and no RichProgressBar."""
@@ -39,7 +39,7 @@ class TestProgressBarCallbacks:
         trainer = build_trainer(tc, mc, accelerator="cpu")
         assert any(isinstance(cb, TQDMProgressBar) for cb in trainer.callbacks)
         assert not any(isinstance(cb, RichProgressBar) for cb in trainer.callbacks)
-        assert any(isinstance(cb, GpuMemoryTQDMProgressBar) for cb in trainer.callbacks)
+        assert any(isinstance(cb, GPUMemoryTQDMProgressBar) for cb in trainer.callbacks)
 
     def test_progress_bar_refresh_rate_is_five(self, base_model_config, base_train_config):
         """The installed progress bar callback should refresh every five batches."""

@@ -65,7 +65,7 @@ def _is_cuda(device: torch.device) -> bool:
 class _GpuMemoryMetricsMixin(ProgressBar):
     """Adds a ``max_mem`` entry (peak allocated CUDA memory, in MB) when training on CUDA.
 
-    Always mix in *before* a concrete PTL progress bar (see ``GpuMemoryTQDMProgressBar``). The ``ProgressBar`` base is
+    Always mix in *before* a concrete PTL progress bar (see ``GPUMemoryTQDMProgressBar``). The ``ProgressBar`` base is
     declared only to pin the MRO: it makes ``super()`` statically resolvable, while at runtime every ``super()`` call
     below still lands on the concrete bar to the right of this mixin, never on ``ProgressBar`` itself.
     """
@@ -116,9 +116,9 @@ class _GpuMemoryMetricsMixin(ProgressBar):
         return items
 
 
-class GpuMemoryTQDMProgressBar(_GpuMemoryMetricsMixin, TQDMProgressBar):
+class GPUMemoryTQDMProgressBar(_GpuMemoryMetricsMixin, TQDMProgressBar):
     """``TQDMProgressBar`` with peak CUDA memory usage in the postfix."""
 
 
-class GpuMemoryRichProgressBar(_GpuMemoryMetricsMixin, RichProgressBar):
+class GPUMemoryRichProgressBar(_GpuMemoryMetricsMixin, RichProgressBar):
     """``RichProgressBar`` with peak CUDA memory usage in the metrics column."""
