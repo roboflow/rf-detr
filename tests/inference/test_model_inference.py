@@ -567,7 +567,7 @@ class TestModelContextClearedWeights:
 
     def test_reinitialize_detection_head_raises_runtime_error(self) -> None:
         """Reinitializing the head after the weights were cleared raises RuntimeError, not AttributeError."""
-        with pytest.raises(RuntimeError, match="cleared the model weights"):
+        with pytest.raises(RuntimeError, match="Cannot reinitialize the detection head"):
             self._context().reinitialize_detection_head(5)
 
     def test_reinitialize_detection_head_leaves_num_classes_untouched(self) -> None:

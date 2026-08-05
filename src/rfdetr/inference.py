@@ -65,11 +65,12 @@ class ModelContext:
             num_classes: New number of output classes (including background).
 
         Raises:
-            RuntimeError: If the model weights were already cleared by ``inference(inplace=True)``.
+            RuntimeError: If the model weights were already cleared by ``RFDETR.inference(inplace=True)``.
         """
         if self.model is None:
             raise RuntimeError(
-                "Cannot reinitialize the detection head after inference(inplace=True) cleared the model weights."
+                "Cannot reinitialize the detection head after inplace optimization. "
+                "The original model has been cleared. Create a new RFDETR instance."
             )
         reinitialize_head = cast("Callable[[int], None]", self.model.reinitialize_detection_head)
         reinitialize_head(num_classes)
