@@ -7,7 +7,7 @@
 
 import sys
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import numpy as np
 import pytest
@@ -1048,6 +1048,57 @@ class TestOnValidationEpochEnd:
         assert "val/ema_AP/dog" in logged_keys
         assert "val/AP/cat" not in logged_keys
         assert "val/AP/dog" not in logged_keys
+
+    def test_eval_ema_only_resets_val_ema_keypoints_when_ema_not_yet_warmed_up(self) -> None:
+        """Regression for #1289 review: under eval_ema_only, when the base metric is empty AND the EMA metric has not
+        accumulated any updates this epoch (e.g. EMA not yet warmed up), _should_compute_ema returns False and the
+        early-return branch must fall back to resetting the val_ema keypoint split instead of computing it."""
+        cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric._update_count = 0  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        cb._ema_has_updates = False  # EMA metric also has no updates this epoch
+        module = _make_pl_module()
+
+        with (
+            patch.object(cb, "_compute_and_log_keypoint_map") as compute_keypoint_map,
+            patch.object(cb, "_reset_keypoint_split") as reset_keypoint_split,
+        ):
+            cb.on_validation_epoch_end(_make_trainer(), module)
+
+        compute_keypoint_map.assert_not_called()
+        assert call("val_ema") in reset_keypoint_split.call_args_list
+        cb.map_metric_ema.compute.assert_not_called()
+
+    def test_eval_ema_only_summary_table_includes_segm_metrics(self) -> None:
+        """Regression for #1289 review: _print_ema_only_summary must include segm mAP entries in the overall table when
+        segmentation metrics are enabled, mirroring the base-metric path's segm handling."""
+        cb = COCOEvalCallback(max_dets=500, segmentation=True, eval_ema_only=True)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb._class_names = ["cat"]
+        cb._cat_id_to_name = {0: "cat"}
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric._update_count = 0  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        ema_metrics = _minimal_metrics(pfx="bbox_")
+        ema_metrics["map_per_class"] = torch.tensor([0.5])
+        ema_metrics["mar_500_per_class"] = torch.tensor([0.6])
+        ema_metrics["classes"] = torch.tensor([0])
+        ema_metrics["segm_map"] = torch.tensor(0.2)
+        ema_metrics["segm_map_50"] = torch.tensor(0.35)
+        cb.map_metric_ema.compute.return_value = ema_metrics
+        cb._ema_has_updates = True
+        module = _make_pl_module()
+
+        with patch.object(cb, "_print_metrics_tables") as print_metrics_tables:
+            cb.on_validation_epoch_end(_make_trainer(), module)
+
+        print_metrics_tables.assert_called_once()
+        _trainer_arg, title_arg, overall_arg, _per_class_arg = print_metrics_tables.call_args.args
+        assert title_arg == "val (ema)"
+        assert overall_arg["segm mAP 50:95"] == pytest.approx(0.2)
+        assert overall_arg["segm mAP 50"] == pytest.approx(0.35)
 
     def test_eval_interval_skips_non_matching_epochs(self) -> None:
         """Validation metric computation is skipped on non-interval epochs."""
