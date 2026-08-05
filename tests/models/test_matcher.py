@@ -509,6 +509,23 @@ def _reference_indices_pre_diagonal_extraction(
 
     Reuses the matcher's current gather-first class cost so this isolates only the extraction-step change under test,
     not the unrelated class-cost refactor already covered by ``_reference_indices_full_class_materialization``.
+
+    One image, two queries, one target: query 0's box exactly equals the target box (cost_bbox=0,
+    cost_giou=-1, the minimum possible), query 1's box is far away. Both queries share identical
+    logits, so cost_class is equal for both — bbox/giou alone decide the winner.
+
+    >>> import torch
+    >>> from rfdetr.models.matcher import HungarianMatcher
+    >>> matcher = HungarianMatcher()
+    >>> target_box = [0.5, 0.5, 0.2, 0.2]
+    >>> outputs = {
+    ...     "pred_logits": torch.zeros(1, 2, 3),
+    ...     "pred_boxes": torch.tensor([[target_box, [0.05, 0.05, 0.05, 0.05]]]),
+    ... }
+    >>> targets = [{"labels": torch.tensor([0]), "boxes": torch.tensor([target_box])}]
+    >>> indices = _reference_indices_pre_diagonal_extraction(matcher, outputs, targets)
+    >>> [(q.tolist(), t.tolist()) for q, t in indices]
+    [([0], [0])]
     """
     from scipy.optimize import linear_sum_assignment
 
@@ -677,7 +694,21 @@ def _new_extraction_indices(
     """Mirrors the post-PR extraction in ``matcher.py`` (``target_offsets`` + ``torch.cat``), decoupled from cost
     computation so it can be property-tested against arbitrary cost-matrix content — including whatever values the
     mask/keypoint cost terms (``matcher.py:266-277``, untouched by this PR) would fold in, without duplicating those
-    formulas here."""
+    formulas here.
+
+    Two images, two queries each, one target each: image 0's own column (0) is cheapest at query 1
+    (cost 1.0); image 1's own column (1) is cheapest at query 0 (cost 2.0). The other column in each
+    row belongs to the other image and must be ignored.
+
+    >>> import torch
+    >>> cost_matrix = torch.tensor([
+    ...     [[5.0, 100.0], [1.0, 100.0]],
+    ...     [[50.0, 2.0], [60.0, 9.0]],
+    ... ])
+    >>> indices = _new_extraction_indices(cost_matrix, sizes=[1, 1])
+    >>> [(q.tolist(), t.tolist()) for q, t in indices]
+    [([1], [0]), ([0], [0])]
+    """
     from scipy.optimize import linear_sum_assignment
 
     bs, num_queries = cost_matrix.shape[:2]
@@ -708,7 +739,19 @@ def _new_extraction_indices(
 def _old_extraction_indices(
     cost_matrix: torch.Tensor, sizes: list[int], group_detr: int = 1
 ) -> list[tuple[torch.Tensor, torch.Tensor]]:
-    """Mirrors the pre-PR extraction (``cost_matrix.split(sizes, -1)`` + ``c[i]``)."""
+    """Mirrors the pre-PR extraction (``cost_matrix.split(sizes, -1)`` + ``c[i]``).
+
+    Same hand-computed case as ``_new_extraction_indices`` — output must match it exactly.
+
+    >>> import torch
+    >>> cost_matrix = torch.tensor([
+    ...     [[5.0, 100.0], [1.0, 100.0]],
+    ...     [[50.0, 2.0], [60.0, 9.0]],
+    ... ])
+    >>> indices = _old_extraction_indices(cost_matrix, sizes=[1, 1])
+    >>> [(q.tolist(), t.tolist()) for q, t in indices]
+    [([1], [0]), ([0], [0])]
+    """
     from scipy.optimize import linear_sum_assignment
 
     bs, num_queries = cost_matrix.shape[:2]
