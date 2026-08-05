@@ -18,8 +18,7 @@ MIGRATIONS: list[tuple[str, ...]] = [
         NULL, dropped_frames INTEGER NOT NULL,
 
         last_error TEXT )
-        """
-                                                                                                             ,
+        """,
         """CREATE TABLE IF NOT EXISTS detection_summaries ( id INTEGER PRIMARY KEY AUTOINCREMENT, stream_id TEXT NOT
         NULL, bucket_start REAL NOT NULL, class_name TEXT NOT NULL, detections INTEGER NOT NULL,
 
@@ -42,7 +41,6 @@ MIGRATIONS: list[tuple[str, ...]] = [
 
         UNIQUE (stream_id, track_id, first_seen) )
         """
-                                                                                     
         """
         CREATE TABLE IF NOT EXISTS zone_transitions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,8 +59,7 @@ MIGRATIONS: list[tuple[str, ...]] = [
         line TEXT NOT NULL, track_id INTEGER NOT NULL, class_name TEXT NOT NULL, at REAL NOT NULL,
 
         direction TEXT NOT NULL )
-        """
-                                                                                           ,
+        """,
         """
         CREATE TABLE IF NOT EXISTS events (
             event_id TEXT PRIMARY KEY,
@@ -79,8 +76,7 @@ MIGRATIONS: list[tuple[str, ...]] = [
         NULL, code TEXT NOT NULL,
 
         message TEXT NOT NULL )
-        """
-           ,
+        """,
         "CREATE INDEX IF NOT EXISTS ix_errors_at ON errors (at)",
         """
         CREATE TABLE IF NOT EXISTS artifacts (
@@ -100,9 +96,7 @@ MIGRATIONS: list[tuple[str, ...]] = [
         bucket_start REAL NOT NULL, latency_ms REAL NOT NULL,
 
         count INTEGER NOT NULL )
-        """
-
-           ,
+        """,
         "CREATE INDEX IF NOT EXISTS ix_latency_histogram_at ON latency_histogram (stream_id, bucket_start)",
     ),
 ]
