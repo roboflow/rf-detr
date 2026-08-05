@@ -31,7 +31,9 @@ class ModelContext:
     ``populate_args()`` or the legacy stack.
 
     Args:
-        model: The underlying ``nn.Module`` (LWDETR instance).
+        model: The underlying ``LWDETR`` module. The attribute is cleared to ``None`` by
+            :meth:`RFDETR.inference` when called with ``inplace=True``, which frees the
+            weights from memory.
         postprocess: PostProcess instance for converting raw outputs to boxes.
         device: Device the model lives on.
         resolution: Input resolution (square side length in pixels).
@@ -41,14 +43,14 @@ class ModelContext:
 
     def __init__(
         self,
-        model: torch.nn.Module,
+        model: LWDETR,
         postprocess: PostProcess,
         device: torch.device,
         resolution: int,
         args: Any,
         class_names: list[str] | None = None,
     ) -> None:
-        self.model = model
+        self.model: LWDETR | None = model
         self.postprocess = postprocess
         self.device = device
         self.resolution = resolution
@@ -61,7 +63,15 @@ class ModelContext:
 
         Args:
             num_classes: New number of output classes (including background).
+
+        Raises:
+            RuntimeError: If the model weights were already cleared by ``RFDETR.inference(inplace=True)``.
         """
+        if self.model is None:
+            raise RuntimeError(
+                "Cannot reinitialize the detection head after inplace optimization. "
+                "The original model has been cleared. Create a new RFDETR instance."
+            )
         reinitialize_head = cast("Callable[[int], None]", self.model.reinitialize_detection_head)
         reinitialize_head(num_classes)
         self.args.num_classes = num_classes
