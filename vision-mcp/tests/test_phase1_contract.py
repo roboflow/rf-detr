@@ -9,21 +9,26 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from pathlib import Path
 
 import cv2
 import numpy as np
 import pytest
 
-from vision_mcp.analytics.metrics import percentile, safe_rate
+from vision_mcp.analytics.events import EventSink
+from vision_mcp.analytics.metrics import BucketCounts, MetricsCollector, percentile, safe_rate
+from vision_mcp.analytics.observer import StreamAnalytics
+from vision_mcp.analytics.spatial import Crossing
 from vision_mcp.api_contract import ImageSize, TimeWindow
 from vision_mcp.config import EngineConfig, ModelEntry, SecurityConfig, StreamEntry
 from vision_mcp.engine.queries import HistoricalQueries, _dwell
 from vision_mcp.errors import ErrorCode, VisionError
+from vision_mcp.inference.images import ImageLoader
 from vision_mcp.mcp_server.server import _artifact_id
 from vision_mcp.query import TimeQuery, build_time_query
 from vision_mcp.security import redact_data, resolve_within, validate_stream_url, validate_url
-from vision_mcp.storage.database import Database
+from vision_mcp.storage.database import Database, Statement
 from vision_mcp.streams.capture import CaptureThread
 from vision_mcp.streams.frames import Frame, LatestFrameQueue
 
@@ -236,7 +241,7 @@ async def test_throughput_uses_observed_bucket_seconds(monkeypatch: pytest.Monke
     )
     monkeypatch.setattr(HistoricalQueries, "resolve", lambda self, window, interval: (query, view))
     config = EngineConfig(
-        models={"demo": ModelEntry(architecture="RFDETRNano")},
+        models={"demo": ModelEntry(architecture="RFDETRSmall")},
         streams={"webcam": StreamEntry(source=0, model="demo", processing_fps=3.0)},
     )
     historical = HistoricalQueries(FakeDatabase(), config)  # type: ignore[arg-type]
@@ -246,6 +251,137 @@ async def test_throughput_uses_observed_bucket_seconds(monkeypatch: pytest.Monke
     assert result.processed_frames == 150
     assert result.processed_fps == 3.0
     assert result.buckets[10].value == 3.0
+
+
+@pytest.mark.asyncio
+async def test_detection_rate_distributes_stored_aggregate_across_response_buckets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeDatabase:
+        async def fetch_all(self, sql: str, params: object = ()) -> list[dict[str, float]]:
+            assert "bucket_seconds" in sql
+            return [
+                {
+                    "bucket_start": 100.0,
+                    "bucket_seconds": 30.0,
+                    "frame_detections": 60.0,
+                }
+            ]
+
+    query = TimeQuery(
+        start=100.0,
+        end=140.0,
+        window_seconds=40,
+        interval_seconds=10,
+        bucket_count=4,
+    )
+    view = TimeWindow(
+        window="5m",
+        interval="10s",
+        start="1970-01-01T00:01:40.000Z",
+        end="1970-01-01T00:02:20.000Z",
+        bucket_count=4,
+    )
+    monkeypatch.setattr(HistoricalQueries, "resolve", lambda self, window, interval: (query, view))
+    config = EngineConfig(
+        models={"demo": ModelEntry(architecture="RFDETRSmall")},
+        streams={"webcam": StreamEntry(source=0, model="demo")},
+    )
+
+    result = await HistoricalQueries(FakeDatabase(), config).detection_rate(  # type: ignore[arg-type]
+        "webcam", "5m", "10s"
+    )
+
+    assert [bucket.value for bucket in result.buckets] == [2.0, 2.0, 2.0, 0.0]
+    assert result.mean_per_second == 1.5
+
+
+@pytest.mark.asyncio
+async def test_latency_percentiles_merge_persisted_distribution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    query = TimeQuery(
+        start=800.0,
+        end=1_000.0,
+        window_seconds=200,
+        interval_seconds=60,
+        bucket_count=4,
+    )
+    view = TimeWindow(
+        window="15m",
+        interval="1m",
+        start="1970-01-01T00:01:40.000Z",
+        end="1970-01-01T00:16:40.000Z",
+        bucket_count=4,
+    )
+    monkeypatch.setattr(HistoricalQueries, "resolve", lambda self, window, interval: (query, view))
+    config = EngineConfig(
+        models={"demo": ModelEntry(architecture="RFDETRSmall")},
+        streams={"webcam": StreamEntry(source=0, model="demo")},
+    )
+
+    database = Database(tmp_path / "vision.db")
+    await database.start()
+    try:
+        collector = MetricsCollector("webcam", latency_samples=512)
+        for _ in range(100):
+            collector.observe([], 10.0)
+        collector.observe([], 1_000.0)
+        await database.write(collector.flush(900.0, 30.0, BucketCounts(processed=101)))
+
+        result = await HistoricalQueries(database, config).latency("webcam", "15m", "1m")
+
+        assert result.samples == 101
+        assert result.mean_ms == 19.8
+        assert result.p50_ms == 10.0
+        assert result.p95_ms == 10.0
+        assert result.p99_ms == 10.0
+        assert result.max_ms == 1_000.0
+    finally:
+        await database.stop()
+
+
+@pytest.mark.asyncio
+async def test_inline_image_rejects_payload_over_download_limit() -> None:
+    one_pixel_png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    oversized = base64.b64encode(one_pixel_png + b"\0" * 2_048).decode()
+    loader = ImageLoader(SecurityConfig(max_download_bytes=1_024))
+
+    with pytest.raises(VisionError) as caught:
+        await loader.load(f"data:image/png;base64,{oversized}")
+
+    assert caught.value.code == ErrorCode.INVALID_IMAGE
+    assert caught.value.details["max_download_bytes"] == 1_024
+
+
+@pytest.mark.asyncio
+async def test_transition_and_event_persistence_use_nonblocking_submission() -> None:
+    class FakeDatabase:
+        def __init__(self) -> None:
+            self.submitted: list[list[Statement]] = []
+
+        def submit(self, statements: list[Statement]) -> None:
+            self.submitted.append(statements)
+
+        async def write(self, statements: list[Statement]) -> None:
+            raise AssertionError("inference-path persistence must not await a database commit")
+
+    database = FakeDatabase()
+    analytics = object.__new__(StreamAnalytics)
+    analytics.stream_id = "webcam"
+    analytics._database = database  # type: ignore[assignment]
+    await analytics._persist(
+        [],
+        [],
+        [],
+        [Crossing(line="center", track_id=1, class_name="person", at=100.0, direction="in")],
+    )
+    events = EventSink(database, object())  # type: ignore[arg-type]
+    await events.emit("webcam", "line_crossing", 100.0, {"line": "center"})
+
+    assert len(database.submitted) == 2
 
 
 def test_artifact_resource_uri_is_routed_and_validated() -> None:
@@ -295,7 +431,7 @@ async def test_unique_objects_exclude_single_frame_track(
         )
         monkeypatch.setattr(HistoricalQueries, "resolve", lambda self, window, interval: (query, view))
         config = EngineConfig(
-            models={"demo": ModelEntry(architecture="RFDETRNano")},
+            models={"demo": ModelEntry(architecture="RFDETRSmall")},
             streams={"webcam": StreamEntry(source=0, model="demo")},
         )
 

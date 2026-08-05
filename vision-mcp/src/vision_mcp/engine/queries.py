@@ -12,7 +12,7 @@ import json
 from collections import defaultdict
 from typing import Any
 
-from vision_mcp.analytics.metrics import percentile, safe_rate
+from vision_mcp.analytics.metrics import percentile, percentile_index, safe_rate
 from vision_mcp.api_contract import (
     Bucket,
     ClassCounts,
@@ -95,9 +95,9 @@ class HistoricalQueries:
         """Return frame detections per second in requested buckets."""
         query, view = self.resolve(window, interval)
         rows = await self._db.fetch_all(
-            "SELECT bucket_start, frame_detections FROM processing_metrics "
-            "WHERE stream_id = ? AND bucket_start >= ? AND bucket_start < ?",
-            (stream_id, query.start, query.end),
+            "SELECT bucket_start, bucket_seconds, frame_detections FROM processing_metrics "
+            "WHERE stream_id = ? AND bucket_start < ? AND bucket_start + bucket_seconds > ?",
+            (stream_id, query.end, query.start),
         )
         values = _bucket_sums(query, rows, "frame_detections")
         buckets = [
@@ -195,24 +195,30 @@ class HistoricalQueries:
         return LineCrossingResult(stream_id=stream_id, window=view, crossings=crossings, totals=dict(totals))
 
     async def latency(self, stream_id: str, window: str, interval: str) -> LatencyStats:
-        """Combine aggregate latency samples without pretending frame rows exist."""
+        """Combine aggregate latency samples using their mergeable persisted histogram."""
         query, view = self.resolve(window, interval)
         rows = await self._db.fetch_all(
-            "SELECT latency_samples, latency_mean_ms, latency_p50_ms, latency_p95_ms, "
-            "latency_p99_ms, latency_max_ms FROM processing_metrics WHERE stream_id = ? "
+            "SELECT latency_samples, latency_mean_ms, latency_max_ms FROM processing_metrics "
+            "WHERE stream_id = ? "
             "AND bucket_start >= ? AND bucket_start < ?",
+            (stream_id, query.start, query.end),
+        )
+        histogram = await self._db.fetch_all(
+            "SELECT latency_ms, SUM(count) AS n FROM latency_histogram WHERE stream_id = ? "
+            "AND bucket_start >= ? AND bucket_start < ? GROUP BY latency_ms ORDER BY latency_ms",
             (stream_id, query.start, query.end),
         )
         samples = sum(int(row["latency_samples"]) for row in rows)
         weighted = sum(int(row["latency_samples"]) * float(row["latency_mean_ms"] or 0.0) for row in rows)
+        distribution = histogram if sum(int(row["n"]) for row in histogram) == samples else []
         return LatencyStats(
             scope=stream_id,
             window=view,
             samples=samples,
             mean_ms=None if samples == 0 else round(weighted / samples, 2),
-            p50_ms=_weighted_stat(rows, "latency_p50_ms"),
-            p95_ms=_weighted_stat(rows, "latency_p95_ms"),
-            p99_ms=_weighted_stat(rows, "latency_p99_ms"),
+            p50_ms=_histogram_percentile(distribution, 50),
+            p95_ms=_histogram_percentile(distribution, 95),
+            p99_ms=_histogram_percentile(distribution, 99),
             max_ms=max(
                 (float(row["latency_max_ms"]) for row in rows if row["latency_max_ms"] is not None),
                 default=None,
@@ -223,9 +229,10 @@ class HistoricalQueries:
         """Return processed-frame throughput and bucket series."""
         query, view = self.resolve(window, interval)
         rows = await self._db.fetch_all(
-            "SELECT bucket_start, bucket_seconds, processed_frames FROM processing_metrics WHERE stream_id = ? "
-            "AND bucket_start >= ? AND bucket_start < ?",
-            (stream_id, query.start, query.end),
+            "SELECT bucket_start, bucket_seconds, processed_frames FROM processing_metrics "
+            "WHERE stream_id = ? "
+            "AND bucket_start < ? AND bucket_start + bucket_seconds > ?",
+            (stream_id, query.end, query.start),
         )
         values = _bucket_rates(query, rows, "processed_frames")
         total = int(sum(value for _, value, _ in values))
@@ -312,36 +319,64 @@ class HistoricalQueries:
 
 
 def _bucket_sums(query: TimeQuery, rows: list[Any], column: str) -> list[tuple[float, float]]:
-    """Fold stored aggregation buckets into requested response buckets."""
+    """Distribute stored aggregates across overlapping response buckets."""
     totals = [0.0] * query.bucket_count
     for row in rows:
-        index = int((float(row["bucket_start"]) - query.start) // query.interval_seconds)
-        if 0 <= index < len(totals):
-            totals[index] += float(row[column])
+        for index, overlap, stored_seconds in _bucket_overlaps(query, row):
+            totals[index] += float(row[column]) * overlap / stored_seconds
     return list(zip(query.bucket_starts, totals, strict=True))
 
 
 def _bucket_rates(query: TimeQuery, rows: list[Any], column: str) -> list[tuple[float, float, float]]:
-    """Fold values and their observed durations into requested response buckets."""
+    """Distribute values and observed durations across overlapping response buckets."""
     totals = [0.0] * query.bucket_count
     seconds = [0.0] * query.bucket_count
     for row in rows:
-        index = int((float(row["bucket_start"]) - query.start) // query.interval_seconds)
-        if 0 <= index < len(totals):
-            totals[index] += float(row[column])
-            seconds[index] += float(row["bucket_seconds"])
+        for index, overlap, stored_seconds in _bucket_overlaps(query, row):
+            totals[index] += float(row[column]) * overlap / stored_seconds
+            seconds[index] += overlap
     return list(zip(query.bucket_starts, totals, seconds, strict=True))
 
 
-def _weighted_stat(rows: list[Any], column: str) -> float | None:
-    """Weight a stored per-bucket percentile by its sample count."""
-    values = [
-        (float(row[column]), int(row["latency_samples"]))
-        for row in rows
-        if row[column] is not None and int(row["latency_samples"]) > 0
-    ]
-    count = sum(weight for _, weight in values)
-    return None if count == 0 else round(sum(value * weight for value, weight in values) / count, 2)
+def _bucket_overlaps(query: TimeQuery, row: Any) -> list[tuple[int, float, float]]:
+    """Return response-bucket overlaps for one stored aggregate row."""
+    stored_start = float(row["bucket_start"])
+    stored_seconds = float(row["bucket_seconds"])
+    if stored_seconds <= 0:
+        return []
+    overlap_start = max(stored_start, query.start)
+    overlap_end = min(stored_start + stored_seconds, query.end)
+    if overlap_start >= overlap_end:
+        return []
+    index = min(
+        query.bucket_count - 1,
+        max(0, int((overlap_start - query.start) // query.interval_seconds)),
+    )
+    overlaps: list[tuple[int, float, float]] = []
+    while index < query.bucket_count:
+        response_start = query.start + index * query.interval_seconds
+        response_end = min(response_start + query.interval_seconds, query.end)
+        overlap = min(overlap_end, response_end) - max(overlap_start, response_start)
+        if overlap > 0:
+            overlaps.append((index, overlap, stored_seconds))
+        if response_end >= overlap_end:
+            break
+        index += 1
+    return overlaps
+
+
+def _histogram_percentile(rows: list[Any], rank: float) -> float | None:
+    """Nearest-rank percentile over a sorted mergeable latency histogram."""
+    total = sum(int(row["n"]) for row in rows)
+    if total == 0:
+        return None
+    target = max(0, min(total - 1, round(percentile_index(total, rank))))
+    seen = 0
+    for row in rows:
+        seen += int(row["n"])
+        if seen > target:
+            return round(float(row["latency_ms"]), 2)
+    return round(float(rows[-1]["latency_ms"]), 2)
 
 
 def _dwell(zone: str, samples: list[float]) -> DwellStats:

@@ -62,7 +62,7 @@ class EventSink:
         self._notifiers: list[Notifier] = []
 
     def subscribe(self, notifier: Notifier) -> None:
-        """Register a callback invoked once per event, after it is persisted."""
+        """Register a callback invoked once per event, after persistence is queued."""
         self._notifiers.append(notifier)
 
     def recent(self, stream_id: str | None = None, limit: int = 50) -> list[EventRecord]:
@@ -99,7 +99,7 @@ class EventSink:
             details=details,
             artifact_id=artifact_id,
         )
-        await self._database.write([_insert(record, at)])
+        self._database.submit([_insert(record, at)])
         self._recent.append(record)
         await self._notify(record)
         return record

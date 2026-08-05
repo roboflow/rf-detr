@@ -39,6 +39,7 @@ from vision_mcp.security import (
 logger = get_logger("vision-mcp.images")
 
 _DATA_PREFIX = "data:image/"
+_MAX_DATA_URI_HEADER_CHARS = 256
 
 
 @dataclass(slots=True)
@@ -63,7 +64,8 @@ class ImageLoader:
             VisionError: UNSUPPORTED_SOURCE, URL_NOT_ALLOWED, INVALID_IMAGE or INVALID_ARGUMENT.
         """
         if source.startswith(_DATA_PREFIX):
-            return self._decode(_decode_data_uri(source), label="data:image")
+            data = _decode_data_uri(source, self._security.max_download_bytes)
+            return self._decode(data, label="data:image")
         if source.startswith(("http://", "https://")):
             data = await self._download(source)
             return self._decode(data, label=redact(source))
@@ -134,15 +136,37 @@ class ImageLoader:
         )
 
 
-def _decode_data_uri(source: str) -> bytes:
-    """Extract bytes from a base64 data URI."""
-    _, _, payload = source.partition(",")
-    if ";base64" not in source.split(",", 1)[0] or not payload:
+def _decode_data_uri(source: str, max_bytes: int) -> bytes:
+    """Extract bytes from a base64 data URI without allocating beyond *max_bytes*."""
+    separator = source.find(",")
+    if (
+        separator < 0
+        or separator > _MAX_DATA_URI_HEADER_CHARS
+        or ";base64" not in source[:separator]
+        or separator == len(source) - 1
+    ):
         raise VisionError(ErrorCode.INVALID_IMAGE, "Data URIs must be base64-encoded image data.")
+    encoded_bytes = len(source) - separator - 1
+    padding = 2 if source.endswith("==") else int(source.endswith("="))
+    decoded_bytes = (encoded_bytes // 4) * 3 - padding
+    if decoded_bytes > max_bytes:
+        raise VisionError(
+            ErrorCode.INVALID_IMAGE,
+            "Inline image exceeds the configured payload limit.",
+            {"max_download_bytes": max_bytes},
+        )
+    payload = source[separator + 1 :]
     try:
-        return base64.b64decode(payload, validate=True)
+        decoded = base64.b64decode(payload, validate=True)
     except (binascii.Error, ValueError) as exc:
         raise VisionError(ErrorCode.INVALID_IMAGE, "Data URI payload is not valid base64.") from exc
+    if len(decoded) > max_bytes:
+        raise VisionError(
+            ErrorCode.INVALID_IMAGE,
+            "Inline image exceeds the configured payload limit.",
+            {"max_download_bytes": max_bytes},
+        )
+    return decoded
 
 
 def encode_jpeg(array: np.ndarray[Any, Any], quality: int = 85) -> bytes:

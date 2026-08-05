@@ -147,7 +147,7 @@ class StreamAnalytics:
         statements.extend(_exit_rows(self.stream_id, exits))
         statements.extend(_crossing_rows(self.stream_id, crossings))
         if statements:
-            await self._database.write(statements)
+            self._database.submit(statements)
 
     def _close_visits(self, records: list[TrackRecord]) -> list[ZoneVisit]:
         """Close each track's open zone visits at that track's own last sighting."""

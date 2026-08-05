@@ -20,7 +20,7 @@ Counting rules, kept deliberately explicit because they are easy to conflate:
 
 from __future__ import annotations
 
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass
 
 from vision_mcp.api_contract import Detection
@@ -95,6 +95,7 @@ class MetricsCollector:
         statements = [self._metrics_row(bucket_start, bucket_seconds, counts)]
         statements.extend(_summary_rows(self._stream_id, bucket_start, self._classes))
         statements.extend(_histogram_rows(self._stream_id, bucket_start, self._histogram))
+        statements.extend(_latency_rows(self._stream_id, bucket_start, self._latency))
         self._reset()
         return statements
 
@@ -174,6 +175,18 @@ def _histogram_rows(stream_id: str, bucket_start: float, histogram: list[int]) -
         )
         for index, count in enumerate(histogram)
         if count
+    ]
+
+
+def _latency_rows(stream_id: str, bucket_start: float, samples: deque[float]) -> list[Statement]:
+    """Mergeable latency histogram preserving the public two-decimal precision."""
+    counts = Counter(round(sample, 2) for sample in samples)
+    return [
+        (
+            "INSERT INTO latency_histogram (stream_id, bucket_start, latency_ms, count) VALUES (?, ?, ?, ?)",
+            (stream_id, bucket_start, latency_ms, count),
+        )
+        for latency_ms, count in sorted(counts.items())
     ]
 
 

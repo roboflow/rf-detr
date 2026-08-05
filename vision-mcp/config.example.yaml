@@ -1,6 +1,6 @@
 models:
   demo:
-    architecture: RFDETRNano
+    architecture: RFDETRSmall
     checkpoint: null
     task: detection
     device: mps
