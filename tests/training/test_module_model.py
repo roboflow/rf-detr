@@ -105,6 +105,7 @@ def _fake_postprocess():
     """Return a callable MagicMock for postprocess.
 
     Examples:
+        >>> import torch
         >>> postprocess = _fake_postprocess()
         >>> sorted(postprocess({}, torch.zeros(1, 2))[0])
         ['boxes', 'labels', 'scores']

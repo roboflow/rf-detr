@@ -112,6 +112,7 @@ def _fake_postprocess(outputs, orig_sizes):
     """Return one non-empty prediction per image so COCOEvalCallback has something to score.
 
     Examples:
+        >>> import torch
         >>> batch = _fake_postprocess({}, torch.zeros(2, 2))
         >>> len(batch)
         2
