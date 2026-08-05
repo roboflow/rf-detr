@@ -605,10 +605,12 @@ class COCOEvalCallback(Callback):
                 trainer.callback_metrics[f"{split}/ema_segm_mAP_50_95"] = ema_metrics["segm_map"].detach().cpu()
                 trainer.callback_metrics[f"{split}/ema_segm_mAP_50"] = ema_metrics["segm_map_50"].detach().cpu()
             self.map_metric_ema.reset()
+            self._ema_has_updates = False
         elif self.map_metric_ema is not None:
             # Not all ranks have EMA data this epoch (e.g. EMA not yet warmed up) → skip the
             # sync uniformly on every rank, but clear local state so the next epoch is clean.
             self.map_metric_ema.reset()
+            self._ema_has_updates = False
         return should_compute_ema, ema_metrics
 
     def _compute_and_log_f1_metrics(
