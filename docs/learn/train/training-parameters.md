@@ -109,9 +109,9 @@ For example, `RFDETRSegXLarge` uses `624x624`, which is valid because `624` is d
 
 ## EMA (Exponential Moving Average)
 
-| Parameter       | Type   | Default | Description                                                                                                                                                                                                                              |
-| --------------- | ------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `use_ema`       | `bool` | `True`  | Enables Exponential Moving Average of weights. Produces a smoothed checkpoint that often improves final performance.                                                                                                                     |
+| Parameter       | Type   | Default | Description                                                                                                                                                                                                                                                                                                            |
+| --------------- | ------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `use_ema`       | `bool` | `True`  | Enables Exponential Moving Average of weights. Produces a smoothed checkpoint that often improves final performance.                                                                                                                                                                                                   |
 | `eval_ema_only` | `bool` | `False` | Validation-only: forward through the EMA model instead of the base model, halving per-batch validation compute. Requires `use_ema=True`. The base model is never evaluated that epoch, so `val/mAP_*` stays unpopulated; the real per-epoch score is logged under `val/ema_mAP_*` instead — see Evaluation Parameters. |
 
 !!! info "What is EMA?"

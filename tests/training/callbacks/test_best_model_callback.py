@@ -314,9 +314,9 @@ class TestBestModelCallback:
     def test_ema_checkpoint_saved_when_regular_monitor_absent(self, tmp_path: Path) -> None:
         """Under `eval_ema_only`, val/mAP_50_95 is never logged — only val/ema_mAP_50_95 is.
 
-        Regression test for #1285: the regular-monitor guard in on_validation_end used to
-        `return` before reaching the EMA block, so checkpoint_best_ema.pth was never written
-        in this mode even though the EMA metric had real data every epoch.
+        Regression test for #1285: the regular-monitor guard in on_validation_end used to `return` before reaching the
+        EMA block, so checkpoint_best_ema.pth was never written in this mode even though the EMA metric had real data
+        every epoch.
         """
         cb = BestModelCallback(
             output_dir=str(tmp_path),

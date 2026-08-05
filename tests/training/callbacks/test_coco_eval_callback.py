@@ -951,10 +951,11 @@ class TestOnValidationEpochEnd:
         cb.map_metric_ema.reset.assert_called_once()
 
     def test_eval_ema_only_still_logs_ema_metrics_when_base_metric_is_empty(self) -> None:
-        """Regression for #1285: under eval_ema_only, on_validation_batch_end routes every prediction to
-        map_metric_ema and map_metric never accumulates a single update this epoch. The empty-state guard in
-        _compute_and_log must not also suppress the EMA metrics — before the fix it returned before ever reaching
-        the EMA compute block, so eval_ema_only runs logged no validation output at all.
+        """Regression for #1285: under eval_ema_only, on_validation_batch_end routes every prediction to map_metric_ema
+        and map_metric never accumulates a single update this epoch.
+
+        The empty-state guard in _compute_and_log must not also suppress the EMA metrics — before the fix it returned
+        before ever reaching the EMA compute block, so eval_ema_only runs logged no validation output at all.
         """
         cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
@@ -977,12 +978,12 @@ class TestOnValidationEpochEnd:
         cb.map_metric.reset.assert_called_once()
 
     def test_eval_ema_only_computes_f1_from_accumulated_matches_when_base_metric_is_empty(self) -> None:
-        """Regression for #1285: on_validation_batch_end merges matching data into f1_local
-        unconditionally (outside the used_ema_forward branch), independent of which mAP track a
-        batch's predictions were routed to. Under eval_ema_only, map_metric never accumulates, so
-        the empty-state guard in _compute_and_log used to discard f1_local via _reset_f1_local
-        before ever computing val/F1 — silently dropping it even though real matching data (from
-        the EMA-quality predictions) had been collected.
+        """Regression for #1285: on_validation_batch_end merges matching data into f1_local unconditionally (outside the
+        used_ema_forward branch), independent of which mAP track a batch's predictions were routed to.
+
+        Under eval_ema_only, map_metric never accumulates, so the empty-state guard in _compute_and_log used to discard
+        f1_local via _reset_f1_local before ever computing val/F1 — silently dropping it even though real matching data
+        (from the EMA-quality predictions) had been collected.
         """
         cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
@@ -1012,11 +1013,11 @@ class TestOnValidationEpochEnd:
     def test_eval_ema_only_prints_summary_table_when_base_metric_is_empty(self) -> None:
         """Regression for #1285: the console summary table is also part of "validation output".
 
-        Before this fix, ``_print_metrics_tables`` was only ever called from the branch that reads
-        the base ``metric`` — which never has data under ``eval_ema_only`` — so no table was ever
-        printed for the entire run, even after the scalar/F1 logging gaps were closed. Per-class AP
-        must be logged under ``ema_``-prefixed keys, mirroring ``val/ema_mAP_50_95`` staying separate
-        from ``val/mAP_50_95`` elsewhere, so it never collides with a base-track key.
+        Before this fix, ``_print_metrics_tables`` was only ever called from the branch that reads the base ``metric`` —
+        which never has data under ``eval_ema_only`` — so no table was ever printed for the entire run, even after the
+        scalar/F1 logging gaps were closed. Per-class AP must be logged under ``ema_``-prefixed keys, mirroring
+        ``val/ema_mAP_50_95`` staying separate from ``val/mAP_50_95`` elsewhere, so it never collides with a base-track
+        key.
         """
         cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
@@ -1495,13 +1496,12 @@ class TestValidationBatchEndEvalEmaOnly:
 class TestEvalEmaOnlyBatchToEpochEndToEnd:
     """Full batch -> epoch pipeline for eval_ema_only, with real (non-mocked) accumulators (#1285).
 
-    TestValidationBatchEndEvalEmaOnly and TestOnValidationEpochEnd each replace map_metric /
-    map_metric_ema with MagicMock and drive a single hook in isolation. Neither would catch a
-    wiring bug between the two (e.g. `_ema_has_updates` set by batch-time routing never reaching
-    epoch-end, or `_prepare_ema_metric` creating a `map_metric_ema` that batch-time routing never
-    populates). This test keeps the real MeanAveragePrecision instances created by setup() /
-    on_validation_epoch_start() and drives on_validation_batch_end then on_validation_epoch_end
-    in sequence on the same callback instance.
+    TestValidationBatchEndEvalEmaOnly and TestOnValidationEpochEnd each replace map_metric / map_metric_ema with
+    MagicMock and drive a single hook in isolation. Neither would catch a wiring bug between the two (e.g.
+    `_ema_has_updates` set by batch-time routing never reaching epoch-end, or `_prepare_ema_metric` creating a
+    `map_metric_ema` that batch-time routing never populates). This test keeps the real MeanAveragePrecision instances
+    created by setup() / on_validation_epoch_start() and drives on_validation_batch_end then on_validation_epoch_end in
+    sequence on the same callback instance.
     """
 
     def test_eval_ema_only_real_batch_then_epoch_end_logs_ema_metrics(self) -> None:
