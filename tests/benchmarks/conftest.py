@@ -27,6 +27,9 @@ _COCO_PORT = 80
 def download_coco_val() -> tuple[Path, Path]:
     """Download COCO val2017 images and annotations if not already present.
 
+    Returns:
+        Tuple containing the images root directory and annotations file path.
+
     Example:
         >>> download_coco_val.__name__
         'download_coco_val'
