@@ -19,33 +19,12 @@ MIGRATIONS: list[tuple[str, ...]] = [
 
         last_error TEXT )
         """
-                                                                                          
-        """
-        CREATE TABLE IF NOT EXISTS processing_metrics (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            stream_id TEXT NOT NULL,
-            bucket_start REAL NOT NULL,
-            bucket_seconds REAL NOT NULL,
-            captured_frames INTEGER NOT NULL,
-            processed_frames INTEGER NOT NULL,
-            dropped_frames INTEGER NOT NULL,
-            frame_detections INTEGER NOT NULL,
-            latency_samples INTEGER NOT NULL,
-            latency_mean_ms REAL,
-            latency_p50_ms REAL,
-            latency_p95_ms REAL,
-            latency_p99_ms REAL,
-            latency_max_ms REAL
-        )
-        """,
-        "CREATE INDEX IF NOT EXISTS ix_processing_metrics_at ON processing_metrics (stream_id, bucket_start)",
+                                                                                                             ,
         """CREATE TABLE IF NOT EXISTS detection_summaries ( id INTEGER PRIMARY KEY AUTOINCREMENT, stream_id TEXT NOT
         NULL, bucket_start REAL NOT NULL, class_name TEXT NOT NULL, detections INTEGER NOT NULL,
 
         mean_confidence REAL NOT NULL )
         """
-                                                               
-        "ON detection_summaries (stream_id, bucket_start)",
         """
         CREATE TABLE IF NOT EXISTS confidence_histogram (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,7 +42,7 @@ MIGRATIONS: list[tuple[str, ...]] = [
 
         UNIQUE (stream_id, track_id, first_seen) )
         """
-        "CREATE INDEX IF NOT EXISTS ix_tracks_seen ON tracks (stream_id, last_seen)",
+                                                                                     
         """
         CREATE TABLE IF NOT EXISTS zone_transitions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,8 +62,7 @@ MIGRATIONS: list[tuple[str, ...]] = [
 
         direction TEXT NOT NULL )
         """
-            
-        "CREATE INDEX IF NOT EXISTS ix_line_crossings_at ON line_crossings (stream_id, at)",
+                                                                                           ,
         """
         CREATE TABLE IF NOT EXISTS events (
             event_id TEXT PRIMARY KEY,
