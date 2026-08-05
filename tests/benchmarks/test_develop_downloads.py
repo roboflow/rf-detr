@@ -104,7 +104,7 @@ class TestDownloadAndExtract:
             >>> archive = self._make_zip({"hello.txt": "world"})
             >>> isinstance(archive, bytes)
             True
-    """
+        """
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             for name, content in members.items():

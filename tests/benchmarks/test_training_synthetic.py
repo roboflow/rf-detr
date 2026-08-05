@@ -13,7 +13,7 @@ Training convergence (GPU, synthetic dataset, no pretrained weights):
 
 * :func:`test_train_convergence_native_ptl` — ``RFDETRModelModule`` + ``Trainer.fit`` reaches ≥ 35 % mAP@50.
 * :func:`test_train_convergence_rfdetr_api` — ``RFDETR.train()`` reaches ≥ 35 % mAP@50.
-    """
+"""
 
 import json
 import os

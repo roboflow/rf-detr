@@ -8,7 +8,7 @@
 Tests cover:
 - Sparse COCO category ID remapping in ``ConvertCoco``
 - ``_load_classes`` hierarchy detection (GitHub #609)
-    """
+"""
 
 import json
 import types

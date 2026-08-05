@@ -29,7 +29,7 @@ Both paths run on CPU (nano models) and GPU (small and larger models, ``@pytest.
 
 API contract tests (return type, shape) live in ``tests/models/test_predict.py`` and do not require a COCO
 download.
-    """
+"""
 
 import json
 import os

@@ -7,7 +7,7 @@
 
 Verifies that :func:`convert_coco_poly_to_mask` and :class:`ConvertCoco` correctly handle compressed RLE, uncompressed
 RLE, and polygon segmentation formats — including mixed annotations within the same image.
-    """
+"""
 
 import numpy as np
 import pycocotools.mask as mask_util
