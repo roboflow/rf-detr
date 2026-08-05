@@ -562,7 +562,15 @@ def _make_matching_entry(
     ignore: list,
     total_gt: int,
 ) -> dict:
-    """Return a compact matching dict as produced by ``build_matching_data()``."""
+    """Return a compact matching dict as produced by ``build_matching_data()``.
+
+    Examples:
+        >>> entry = _make_matching_entry([0.9, 0.5], [1, -1], [False, False], 2)
+        >>> entry["total_gt"]
+        2
+        >>> list(entry["scores"])
+        [0.9, 0.5]
+    """
     return {
         "scores": np.array(scores, dtype=np.float32),
         "matches": np.array(matches, dtype=np.int64),

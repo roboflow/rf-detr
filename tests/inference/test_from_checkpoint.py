@@ -36,12 +36,28 @@ class _CustomObj:
 
 
 def _ns(pretrain_weights: str, num_classes: int = 80) -> dict:
-    """Fake legacy checkpoint with argparse.Namespace args."""
+    """Fake legacy checkpoint with argparse.Namespace args.
+
+    Examples:
+        >>> ckpt = _ns("rf-detr-small.pth", num_classes=3)
+        >>> ckpt["args"].num_classes
+        3
+        >>> ckpt["args"].pretrain_weights
+        'rf-detr-small.pth'
+    """
     return {"args": argparse.Namespace(pretrain_weights=pretrain_weights, num_classes=num_classes)}
 
 
 def _dict(pretrain_weights: str, num_classes: int = 80) -> dict:
-    """Fake PTL-style checkpoint with dict args."""
+    """Fake PTL-style checkpoint with dict args.
+
+    Examples:
+        >>> ckpt = _dict("rf-detr-small.pth", num_classes=5)
+        >>> ckpt["args"]["num_classes"]
+        5
+        >>> ckpt["args"]["pretrain_weights"]
+        'rf-detr-small.pth'
+    """
     return {"args": {"pretrain_weights": pretrain_weights, "num_classes": num_classes}}
 
 
@@ -56,6 +72,13 @@ def _call_from_checkpoint(ckpt: dict, path: Path, cls_patch_target: str, **kwarg
 
     Returns:
         Tuple of (result, mock_class).
+
+    Examples:
+        This helper patches ``torch.load`` and a model class — it cannot be run without a real
+        ``Path`` argument or live imports, so the doctest is illustrative only.
+
+        >>> callable(_call_from_checkpoint)  # doctest: +SKIP
+        True
     """
     mock_instance = MagicMock()
     with (
@@ -387,7 +410,15 @@ class TestDeprecatedClassInstantiation:
 
 
 def _ckpt_with_model_name(model_name: str, num_classes: int = 80) -> dict:
-    """Fake checkpoint with model_name key (new format)."""
+    """Fake checkpoint with model_name key (new format).
+
+    Examples:
+        >>> ckpt = _ckpt_with_model_name("RFDETRSmall", num_classes=2)
+        >>> ckpt["model_name"]
+        'RFDETRSmall'
+        >>> ckpt["args"]["num_classes"]
+        2
+    """
     return {
         "args": {"pretrain_weights": "rf-detr-small.pth", "num_classes": num_classes},
         "model_name": model_name,
@@ -755,6 +786,15 @@ def _make_kp_active_mask(schema: list[int]) -> torch.Tensor:
 
     Returns:
         Bool tensor of shape ``[len(schema), max(schema)]`` with True in active keypoint slots.
+
+    Examples:
+        >>> mask = _make_kp_active_mask([0, 3])
+        >>> mask.shape
+        torch.Size([2, 3])
+        >>> mask[0].tolist()
+        [False, False, False]
+        >>> mask[1].tolist()
+        [True, True, True]
     """
     if not schema or max(schema) == 0:
         return torch.zeros(0, 0, dtype=torch.bool)
