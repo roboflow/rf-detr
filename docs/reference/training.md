@@ -99,6 +99,8 @@ This page documents the training primitives that power RF-DETR. For a narrative 
       show_source: false
       members:
         - get_metrics
+      inherited_members:
+        - get_metrics
 
 ### GpuMemoryRichProgressBar
 
@@ -106,6 +108,8 @@ This page documents the training primitives that power RF-DETR. For a narrative 
     options:
       show_source: false
       members:
+        - get_metrics
+      inherited_members:
         - get_metrics
 
 ---
