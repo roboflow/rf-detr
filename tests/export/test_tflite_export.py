@@ -1098,13 +1098,9 @@ def _build_gridsample_onnx(
     """Write a minimal ONNX model with one GridSample node to *path*.
 
     Examples:
-        Requires ``onnx`` and ``onnx_graphsurgeon`` which are optional; skipped in the doctest runner.
+        Requires ``onnx`` and ``onnx_graphsurgeon`` which are optional — skipped in the doctest runner.
 
-        >>> import tempfile, pathlib  # doctest: +SKIP
-        >>> with tempfile.TemporaryDirectory() as d:  # doctest: +SKIP
-        ...     p = pathlib.Path(d) / "gs.onnx"
-        ...     _build_gridsample_onnx(p)
-        ...     p.stat().st_size > 0
+        >>> callable(_build_gridsample_onnx)  # doctest: +SKIP
         True
     """
     import onnx
