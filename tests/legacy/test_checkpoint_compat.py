@@ -47,6 +47,14 @@ def _skip_or_fail_missing_reference(version: str) -> None:
 
     Args:
         version: rfdetr version string, used in the skip/fail message.
+
+    Examples:
+        Under CI (``GITHUB_ACTIONS=true``) the call hard-fails; locally it skips instead — both
+        outcomes raise a pytest exception so neither can be demonstrated purely by value. The
+        ``TestSkipOrFailMissingReference`` class tests each branch directly.
+
+        >>> callable(_skip_or_fail_missing_reference)
+        True
     """
     message = f"v{version} checkpoint has no reference_prediction (generated without --use-pretrained)"
     if os.environ.get("GITHUB_ACTIONS") == "true":
@@ -96,6 +104,17 @@ def _read_versions(versions_file: Path | None = None) -> list[str]:
 
     Returns:
         Ordered list of version strings (comment lines and blank lines skipped).
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        ...     _ = f.write("# comment\\n1.5.0\\n\\n1.6.0\\n")
+        ...     fname = f.name
+        >>> _read_versions(Path(fname))
+        ['1.5.0', '1.6.0']
+        >>> _read_versions(Path("/nonexistent/versions.txt"))
+        []
     """
     path = versions_file if versions_file is not None else _VERSIONS_FILE
     if not path.is_file():
@@ -116,6 +135,11 @@ def _checkpoint_path(version: str) -> Path:
 
     Returns:
         Path object (may not yet exist — caller must check).
+
+    Examples:
+        >>> p = _checkpoint_path("1.5.0")
+        >>> p.name
+        'checkpoint_v1.5.0.pth'
     """
     return _CHECKPOINTS_DIR / f"checkpoint_v{version}.pth"
 
@@ -131,6 +155,11 @@ def _prediction_visualization_path(version: str) -> Path:
 
     Returns:
         Ignored test-artifact path whose filename includes the legacy version.
+
+    Examples:
+        >>> p = _prediction_visualization_path("1.5.0")
+        >>> p.name
+        'prediction_legacy_v1.5.0.png'
     """
     return _LEGACY_VISUALIZATIONS_DIR / f"prediction_legacy_v{version}.png"
 
@@ -142,6 +171,13 @@ def _save_prediction_visualization(detections: sv.Detections, image_path: Path, 
         detections: Predictions returned while loading a legacy checkpoint.
         image_path: Fixed reference image used for compatibility inference.
         output_path: Destination for the annotated PNG artifact.
+
+    Examples:
+        Requires a real image file and ``supervision`` annotators — not runnable standalone without
+        a full detections object. The ``TestCheckpointBackwardCompat`` class tests the full pipeline.
+
+        >>> callable(_save_prediction_visualization)
+        True
     """
     with Image.open(image_path) as image:
         scene = np.asarray(image.convert("RGB")).copy()

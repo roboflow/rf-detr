@@ -36,7 +36,15 @@ _TENSORRT_MAX_ABS_DIFF = 1e-2
 
 
 def _patch_polygraphy_chain(monkeypatch: pytest.MonkeyPatch) -> dict:
-    """Stub the polygraphy build chain and return the dict that captures CreateConfig kwargs."""
+    """Stub the polygraphy build chain and return the dict that captures CreateConfig kwargs.
+
+    Examples:
+        Cannot be called directly — it requires a live ``pytest.MonkeyPatch`` instance supplied by
+        pytest's fixture machinery. See ``TestBuildEngineDryRun`` for real invocations.
+
+        >>> callable(_patch_polygraphy_chain)  # doctest: +SKIP
+        True
+    """
     config_kwargs: dict = {}
     monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", lambda path: ("network", path))
     monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: config_kwargs.update(kwargs) or "config")

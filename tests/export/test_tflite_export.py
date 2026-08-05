@@ -67,6 +67,13 @@ def _install_fake_onnx2tf() -> tuple[_FakeOnnx2tfModule, mock.MagicMock, dict[st
 
     Returns:
         Tuple of (fake_module, convert_mock, saved_originals).
+
+    Examples:
+        >>> fake, convert_mock, saved = _install_fake_onnx2tf()
+        >>> import sys
+        >>> "onnx2tf" in sys.modules
+        True
+        >>> _remove_fake_onnx2tf(saved)
     """
     # Snapshot originals before overwriting (None means the key was absent).
     saved: dict[str, object] = {k: sys.modules.get(k) for k in _ONNX2TF_KEYS}
@@ -108,6 +115,15 @@ def _remove_fake_onnx2tf(saved: dict[str, object] | None = None) -> None:
         saved: Snapshot returned by ``_install_fake_onnx2tf``.  If a key was
             present before installation its original value is restored; if it was absent it is deleted.  When *saved* is
             ``None`` all ``onnx2tf*`` keys are simply deleted (legacy behaviour).
+
+    Examples:
+        >>> _, _, saved = _install_fake_onnx2tf()
+        >>> import sys
+        >>> "onnx2tf" in sys.modules
+        True
+        >>> _remove_fake_onnx2tf(saved)
+        >>> "onnx2tf" in sys.modules
+        False
     """
     if saved is not None:
         for key in _ONNX2TF_KEYS:
@@ -1079,7 +1095,18 @@ def _build_gridsample_onnx(
     h_out: int = 4,
     w_out: int = 4,
 ) -> None:
-    """Write a minimal ONNX model with one GridSample node to *path*."""
+    """Write a minimal ONNX model with one GridSample node to *path*.
+
+    Examples:
+        Requires ``onnx`` and ``onnx_graphsurgeon`` which are optional; skipped in the doctest runner.
+
+        >>> import tempfile, pathlib  # doctest: +SKIP
+        >>> with tempfile.TemporaryDirectory() as d:  # doctest: +SKIP
+        ...     p = pathlib.Path(d) / "gs.onnx"
+        ...     _build_gridsample_onnx(p)
+        ...     p.stat().st_size > 0
+        True
+    """
     import onnx
     from onnx import TensorProto, helper
 

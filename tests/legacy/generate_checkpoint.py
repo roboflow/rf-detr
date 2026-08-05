@@ -88,6 +88,12 @@ def _get_reference_image_path() -> Path:
     Raises:
         ValueError: If the downloaded content's MD5 does not match the
             expected hash.
+
+    Examples:
+        Requires network access to ``media.roboflow.com`` — skipped in the doctest runner.
+
+        >>> callable(_get_reference_image_path)
+        True
     """
     import requests
 
@@ -126,6 +132,22 @@ def _top_detection(detections: Any) -> dict[str, Any]:
 
     Raises:
         ValueError: If *detections* is empty (no detection above threshold).
+
+    Examples:
+        >>> import numpy as np
+        >>> import supervision as sv
+        >>> dets = sv.Detections(
+        ...     xyxy=np.array([[10.0, 20.0, 30.0, 40.0], [5.0, 5.0, 15.0, 15.0]]),
+        ...     confidence=np.array([0.9, 0.4]),
+        ...     class_id=np.array([2, 0]),
+        ... )
+        >>> top = _top_detection(dets)
+        >>> top["class_id"]
+        2
+        >>> top["confidence"]
+        0.9
+        >>> len(top["xyxy"])
+        4
     """
     if len(detections) == 0:
         raise ValueError("No detections above threshold on the reference image.")
@@ -157,6 +179,15 @@ def _get_state_dict(model: Any) -> dict[str, torch.Tensor]:
 
     Raises:
         RuntimeError: If neither layout yields a non-empty state dict.
+
+    Examples:
+        >>> import torch.nn as nn
+        >>> from types import SimpleNamespace
+        >>> inner = nn.Linear(2, 2)
+        >>> facade = SimpleNamespace(model=SimpleNamespace(model=inner))
+        >>> sd = _get_state_dict(facade)
+        >>> "weight" in sd
+        True
     """
     # Current layout: RFDETR → .model (Model) → .model (nn.Module)
     sd: dict[str, torch.Tensor] | None = None
@@ -185,6 +216,14 @@ def _get_patch_size(model: Any) -> int:
 
     Returns:
         Patch size (default 16 when not resolvable).
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> facade = SimpleNamespace(model_config=SimpleNamespace(patch_size=14))
+        >>> _get_patch_size(facade)
+        14
+        >>> _get_patch_size(SimpleNamespace())
+        16
     """
     for attr_path in ("model_config.patch_size", "config.patch_size"):
         obj: Any = model
@@ -218,6 +257,11 @@ def _build_model(preferred_class: str, device: str, *, num_classes: int | None =
         TransientFetchError: If every candidate fails to instantiate and every
             failure looks like a network/infra error (e.g. the pretrained-
             weights download timing out) rather than a real code regression.
+
+    Examples:
+        >>> model = _build_model("RFDETRSmall", "cpu", num_classes=2)
+        >>> hasattr(model, "model")
+        True
     """
     candidates = [preferred_class, "RFDETRBase", "RFDETR"]
     # Deduplicate while preserving order
@@ -283,6 +327,14 @@ def _is_transient_network_error(exc: BaseException) -> bool:
     Returns:
         True if *exc* (or something in its cause/context chain) is a recognized
         network-related exception type.
+
+    Examples:
+        >>> _is_transient_network_error(ValueError("not a network error"))
+        False
+        >>> _is_transient_network_error(TimeoutError("connection timed out"))
+        True
+        >>> _is_transient_network_error(ConnectionError("no route to host"))
+        True
     """
     import requests
 

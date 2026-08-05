@@ -33,7 +33,18 @@ MAX_ABS_DIFF_BOUND = 1e-4
 
 
 def _pytorch_preprocess(pil_img: PILImage.Image, hw: tuple[int, int]) -> np.ndarray:
-    """Mirror of the PyTorch predict() preprocessing: to_tensor -> resize(antialias=False) -> normalize."""
+    """Mirror of the PyTorch predict() preprocessing: to_tensor -> resize(antialias=False) -> normalize.
+
+    Examples:
+        >>> import numpy as np
+        >>> from PIL import Image as PILImage
+        >>> img = PILImage.new("RGB", (64, 64), color=(128, 64, 32))
+        >>> arr = _pytorch_preprocess(img, (32, 32))
+        >>> arr.shape
+        (1, 3, 32, 32)
+        >>> arr.dtype
+        dtype('float32')
+    """
     img = F.to_tensor(pil_img)
     img = F.resize(img, list(hw), antialias=False)
     img = F.normalize(img, IMAGENET_MEAN, IMAGENET_STD)
@@ -41,7 +52,15 @@ def _pytorch_preprocess(pil_img: PILImage.Image, hw: tuple[int, int]) -> np.ndar
 
 
 def _make_synthetic_rgb(seed: int, size: tuple[int, int]) -> PILImage.Image:
-    """Deterministic synthetic RGB image with structure (not pure noise) so resize filtering matters."""
+    """Deterministic synthetic RGB image with structure (not pure noise) so resize filtering matters.
+
+    Examples:
+        >>> img = _make_synthetic_rgb(0, (64, 64))
+        >>> img.size
+        (64, 64)
+        >>> img.mode
+        'RGB'
+    """
     rng = np.random.default_rng(seed)
     height, width = size
     base = rng.integers(0, 256, size=(height // 8, width // 8, 3), dtype=np.uint8)
