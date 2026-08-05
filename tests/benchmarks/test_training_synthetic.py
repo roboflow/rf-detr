@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-    """End-to-end benchmarks for training convergence via the PTL stack.
+"""End-to-end benchmarks for training convergence via the PTL stack.
 
 Smoke test (CPU-friendly):
 

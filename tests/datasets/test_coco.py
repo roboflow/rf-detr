@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-    """Regression tests for COCO dataset handling.
+"""Regression tests for COCO dataset handling.
 
 Tests cover:
 - Sparse COCO category ID remapping in ``ConvertCoco``
@@ -40,16 +40,17 @@ _CAT2LABEL = {cat_id: i for i, cat_id in enumerate(sorted(_SPARSE_CAT_IDS))}
 
 
 def _make_target(annotations=_ANNOTATIONS):
-    return {"image_id": 1, "annotations": annotations}
-
-
-class TestConvertCocoWithoutMapping:
     """Build a minimal COCO-style target mapping for converter tests.
 
     Example:
         >>> _make_target()["image_id"]
         1
     """
+    return {"image_id": 1, "annotations": annotations}
+
+
+class TestConvertCocoWithoutMapping:
+    """Without cat2label, sparse IDs pass through unchanged — demonstrating the bug."""
 
     def test_labels_are_raw_category_ids(self):
         converter = ConvertCoco(cat2label=None)

@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-    """Tests for DatasetGridSaver — verifies that annotated grid images are written without OpenCV layout errors across all
+"""Tests for DatasetGridSaver — verifies that annotated grid images are written without OpenCV layout errors across all
 supported OpenCV versions."""
 
 from pathlib import Path
@@ -44,6 +44,14 @@ class _FakeDataset:
 
 
 def _collate(batch):
+    """Collate ``(image, target)`` pairs into the NestedTensor batch format.
+
+    Example:
+        >>> batch = [(torch.zeros(3, 4, 4), {"boxes": torch.zeros((0, 4)), "labels": torch.zeros(0, dtype=torch.long), "size": torch.tensor([4, 4])})]
+        >>> nested, targets = _collate(batch)
+        >>> len(targets), tuple(nested.tensors.shape)
+        (1, (1, 3, 4, 4))
+    """
     from rfdetr.utilities import nested_tensor_from_tensor_list
 
     images, targets = zip(*batch)
@@ -53,14 +61,7 @@ def _collate(batch):
 
 
 def test_save_grid_writes_files(tmp_path: Path) -> None:
-    """Collate ``(image, target)`` pairs into the NestedTensor batch format.
-
-    Example:
-        >>> batch = [(torch.zeros(3, 4, 4), {"boxes": torch.zeros((0, 4)), "labels": torch.zeros(0, dtype=torch.long), "size": torch.tensor([4, 4])})]
-        >>> nested, targets = _collate(batch)
-        >>> len(targets), tuple(nested.tensors.shape)
-        (1, (1, 3, 4, 4))
-    """
+    """DatasetGridSaver must write JPEG grid files without raising OpenCV errors."""
     dataset = _FakeDataset(num_samples=4)
     loader = DataLoader(dataset, batch_size=2, collate_fn=_collate)
 

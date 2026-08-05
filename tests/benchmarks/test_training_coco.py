@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-    """COCO benchmark coverage for short keypoint-preview training on a deterministic subset."""
+"""COCO benchmark coverage for short keypoint-preview training on a deterministic subset."""
 
 from __future__ import annotations
 
@@ -105,6 +105,12 @@ def _build_subset_datamodule(
     train_subset_size: int = 8,
     val_subset_size: int = 4,
 ) -> RFDETRDataModule:
+    """Limit an initialized keypoint datamodule to deterministic train/val subsets.
+
+    Example:
+        >>> _build_subset_datamodule.__name__
+        '_build_subset_datamodule'
+    """
     datamodule = RFDETRDataModule(model.model_config, train_config)
     datamodule.setup("fit")
     if datamodule._dataset_train is None or datamodule._dataset_val is None:
@@ -124,12 +130,7 @@ def test_keypoint_training_subset_reports_loss_and_metric(
     tmp_path: Path,
     download_coco_val_keypoints: tuple[Path, Path],
 ) -> None:
-    """Limit an initialized keypoint datamodule to deterministic train/val subsets.
-
-    Example:
-        >>> _build_subset_datamodule.__name__
-        '_build_subset_datamodule'
-    """
+    """Short deterministic fine-tuning should report finite loss and keypoint AP on the fixed subset."""
     seed_all(7)
     images_root, annotations_path = download_coco_val_keypoints
     subset_root = _build_coco_keypoint_subset_from_val(

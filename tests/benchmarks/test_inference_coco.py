@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-    """COCO val2017 inference benchmarks asserting pretrained-weight accuracy on CPU and GPU.
+"""COCO val2017 inference benchmarks asserting pretrained-weight accuracy on CPU and GPU.
 
 Each model family (detection, segmentation) is covered by **two independent code paths**:
 
@@ -266,7 +266,18 @@ def _select_fixed_person_images(
     annotations_path: Path,
     max_images: int = 8,
 ) -> tuple[list[str], list[int]]:
-    """Select COCO image IDs containing visible person keypoints.
+    """Load a deterministic subset of COCO person-keypoint validation images.
+
+    Args:
+        images_root: Directory containing COCO validation images.
+        annotations_path: COCO person-keypoints annotations JSON path.
+        max_images: Maximum number of keypoint-bearing images to load.
+
+    Returns:
+        RGB image paths and their corresponding COCO image IDs.
+
+    Raises:
+        RuntimeError: If no usable person-keypoint images are available.
 
     Example:
         >>> _select_fixed_person_images.__name__
@@ -303,6 +314,18 @@ def _predict_keypoint_preview_batches(
 ) -> list[sv.KeyPoints]:
     """Run keypoint-preview inference in fixed-size batches.
 
+    Args:
+        model: Loaded keypoint-preview model.
+        image_paths: COCO image paths to evaluate.
+        batch_size: Number of RGB images to pass to each ``predict()`` call.
+        threshold: Minimum confidence score passed to ``RFDETRKeypointPreview.predict()``.
+
+    Returns:
+        Per-image keypoint detections in the same order as ``image_paths``.
+
+    Raises:
+        RuntimeError: If batched prediction unexpectedly returns a single detection object.
+
     Example:
         >>> _predict_keypoint_preview_batches.__name__
         '_predict_keypoint_preview_batches'
@@ -326,7 +349,14 @@ def _detections_to_coco_predictions(
     detections_batch: list[sv.KeyPoints],
     image_ids: list[int],
 ) -> dict[int, dict[str, torch.Tensor]]:
-    """Convert supervision detections and keypoints into COCO prediction dicts.
+    """Convert batched supervision keypoints into the COCO evaluator format.
+
+    Args:
+        detections_batch: Per-image prediction batch returned by RF-DETR.
+        image_ids: COCO image IDs matching ``detections_batch`` order.
+
+    Returns:
+        COCO evaluator prediction dictionary keyed by image ID.
 
     Example:
         >>> _detections_to_coco_predictions.__name__

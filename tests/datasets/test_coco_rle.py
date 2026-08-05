@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-    """Tests for native RLE annotation support in the COCO dataset pipeline.
+"""Tests for native RLE annotation support in the COCO dataset pipeline.
 
 Verifies that :func:`convert_coco_poly_to_mask` and :class:`ConvertCoco` correctly handle compressed RLE, uncompressed
 RLE, and polygon segmentation formats — including mixed annotations within the same image.
@@ -218,6 +218,13 @@ class TestConvertCocoClassWithRle:
     """Tests that ``ConvertCoco`` correctly passes RLE annotations through."""
 
     def _make_annotation(self, segmentation: object, category_id: int = 0) -> dict:
+        """Build a minimal COCO annotation entry for converter tests.
+
+        Example:
+            >>> annotation = TestConvertCocoClassWithRle()._make_annotation([])
+            >>> annotation["category_id"], annotation["segmentation"]
+            (0, [])
+        """
         return {
             "bbox": [30, 20, 40, 30],
             "category_id": category_id,
@@ -227,16 +234,17 @@ class TestConvertCocoClassWithRle:
         }
 
     def _make_target(self, annotations: list) -> dict:
-        return {"image_id": 1, "annotations": annotations}
-
-    def test_rle_masks_included_in_target(self) -> None:
         """Build a minimal target payload for ``ConvertCoco`` tests.
 
         Example:
             >>> target = TestConvertCocoClassWithRle()._make_target([])
             >>> target["image_id"], target["annotations"]
             (1, [])
-    """
+        """
+        return {"image_id": 1, "annotations": annotations}
+
+    def test_rle_masks_included_in_target(self) -> None:
+        """ConvertCoco with include_masks=True should handle RLE segmentations."""
         ref_mask = _make_reference_mask()
         rle = _encode_compressed_rle(ref_mask)
         anno = self._make_annotation(rle)

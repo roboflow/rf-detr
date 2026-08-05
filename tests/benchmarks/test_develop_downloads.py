@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-    """Tests for private developer download helpers."""
+"""Tests for private developer download helpers."""
 
 import io
 import zipfile
