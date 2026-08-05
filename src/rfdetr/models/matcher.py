@@ -279,9 +279,9 @@ class HungarianMatcher(nn.Module):
 
         # We assume any good match will not cause NaN or Inf, so replace invalid
         # entries with a finite value that is larger than every valid cost.
-all_finite = torch.isfinite(cost_matrix).all().item()
-if not all_finite:
-    cost_matrix = cost_matrix.cpu()
+        all_finite = torch.isfinite(cost_matrix).all().item()
+        if not all_finite:
+            cost_matrix = cost_matrix.cpu()
             if not self._warned_non_finite_costs:
                 logger.warning(
                     "Non-finite values detected in matcher cost matrix; "
