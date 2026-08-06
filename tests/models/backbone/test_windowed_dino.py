@@ -319,7 +319,13 @@ class TestFindPruneableHeadsAndIndices:
 
 
 def _minimal_backbone_config(**kwargs) -> WindowedDinov2WithRegistersConfig:
-    """Return the smallest valid config for backbone instantiation tests."""
+    """Return the smallest valid config for backbone instantiation tests.
+
+    Examples:
+        >>> cfg = _minimal_backbone_config(hidden_size=32)
+        >>> cfg.hidden_size
+        32
+    """
     defaults = dict(
         hidden_size=32,
         num_hidden_layers=1,
@@ -447,7 +453,13 @@ def test_forward_validates_spatial_dims(h: int, w: int, num_windows: int, should
 
 
 def _make_small_model() -> WindowedDinov2WithRegistersModel:
-    """Return the smallest valid WindowedDinov2WithRegistersModel for unit tests."""
+    """Return the smallest valid WindowedDinov2WithRegistersModel for unit tests.
+
+    Examples:
+        >>> model = _make_small_model()
+        >>> model.config.hidden_size
+        32
+    """
     config = WindowedDinov2WithRegistersConfig(
         hidden_size=32,
         num_hidden_layers=2,

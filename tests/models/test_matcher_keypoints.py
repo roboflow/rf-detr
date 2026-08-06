@@ -11,7 +11,13 @@ from rfdetr.models.matcher import HungarianMatcher
 
 
 def _base_outputs(num_queries: int = 2) -> dict[str, torch.Tensor]:
-    """Build minimal detection outputs used across matcher keypoint tests."""
+    """Build minimal detection outputs used across matcher keypoint tests.
+
+    Examples:
+        >>> outputs = _base_outputs(num_queries=3)
+        >>> outputs["pred_logits"].shape
+        torch.Size([1, 3, 1])
+    """
     pred_logits = torch.full((1, num_queries, 1), 5.0, dtype=torch.float32)
     pred_boxes = torch.tensor([0.5, 0.5, 0.2, 0.2], dtype=torch.float32).view(1, 1, 4).repeat(1, num_queries, 1)
     return {

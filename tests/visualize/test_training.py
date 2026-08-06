@@ -27,7 +27,12 @@ class _FakeSeries:
     """Minimal series object for metric grouping tests."""
 
     def __init__(self, values: list[float | None]) -> None:
-        """Store values for ``notna().any()`` checks."""
+        """Store values for ``notna().any()`` checks.
+
+        Examples:
+            >>> _FakeSeries([1.0, None])._values
+            [1.0, None]
+        """
         self._values = values
 
     def notna(self) -> "_FakeSeries":
@@ -43,7 +48,13 @@ class _FakeDataFrame:
     """Minimal DataFrame object for metric grouping tests."""
 
     def __init__(self, data: dict[str, list[float | None]]) -> None:
-        """Store column data for ``_build_metric_groups``."""
+        """Store column data for ``_build_metric_groups``.
+
+        Examples:
+            >>> frame = _FakeDataFrame({'metric': [1.0, None]})
+            >>> frame.columns
+            ['metric']
+        """
         self._data = data
         self.columns = list(data)
 

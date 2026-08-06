@@ -407,7 +407,19 @@ def _reference_indices_full_class_materialization(
     outputs: dict[str, torch.Tensor],
     targets: list[dict[str, torch.Tensor]],
 ) -> list[tuple[torch.Tensor, torch.Tensor]]:
-    """Reference matching that materializes the focal class cost over ALL classes before slicing."""
+    """Reference matching that materializes the focal class cost over ALL classes before slicing.
+
+    Examples:
+        >>> matcher = HungarianMatcher()
+        >>> outputs = {
+        ...     "pred_logits": torch.zeros(1, 2, 2),
+        ...     "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.2], [0.1, 0.1, 0.1, 0.1]]]),
+        ... }
+        >>> targets = [{"labels": torch.tensor([0]), "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.2]])}]
+        >>> indices = _reference_indices_full_class_materialization(matcher, outputs, targets)
+        >>> [(q.tolist(), t.tolist()) for q, t in indices]
+        [([0], [0])]
+    """
     from scipy.optimize import linear_sum_assignment
 
     from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
