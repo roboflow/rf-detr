@@ -98,7 +98,13 @@ class TestDownloadAndExtract:
     """Coverage for the ZIP download-and-extract helper."""
 
     def _make_zip(self, members: dict) -> bytes:
-        """Build an in-memory ZIP archive from a mapping of filename→content."""
+        """Build an in-memory ZIP archive from a mapping of filename→content.
+
+        Example:
+            >>> archive = TestDownloadAndExtract()._make_zip({"hello.txt": "world"})
+            >>> isinstance(archive, bytes)
+            True
+        """
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             for name, content in members.items():
