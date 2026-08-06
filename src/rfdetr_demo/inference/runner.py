@@ -86,10 +86,10 @@ def _build_task_callback(
     vertex_radius: int,
     motion_settings: Any | None,
     tune_cache: Any | None,
-    keypoint_resolution: int | None = None,
+    model_resolution: int | None = None,
 ) -> Callable[[Any, int], Any]:
     if task == "keypoint":
-        model = build_keypoint_model(resolution=keypoint_resolution)
+        model = build_keypoint_model(resolution=model_resolution)
         if motion_settings is None:
             motion_settings = _default_motion_settings()
         overlay_style: KeypointUncertaintyStyle = (
@@ -156,7 +156,7 @@ def _build_task_callback(
             tune_cache=tune_cache,
         )
 
-    model = build_detection_model(model_size)
+    model = build_detection_model(model_size, resolution=model_resolution)
     return make_detection_callback(
         model,
         threshold,
@@ -196,11 +196,11 @@ def run_demo(
     keypoint_uncertainty_enabled: bool = True,
     motion_settings: Any | None = None,
     frame_audit_log_callback: Callable[[str], None] | None = None,
-    keypoint_resolution: int | None = None,
+    model_resolution: int | None = None,
 ) -> dict[str, Any]:
     """Process ``source_path`` and write annotated video to ``target_path``.
 
-    ``keypoint_resolution`` overrides the keypoint model input resolution
+    ``model_resolution`` overrides the detection/keypoint model input resolution
     (higher improves recall on small/distant people); ``None`` uses the default.
     """
     if not source_path.is_file():
@@ -260,7 +260,7 @@ def run_demo(
         vertex_radius=vertex_radius,
         motion_settings=motion_settings,
         tune_cache=tune_cache,
-        keypoint_resolution=keypoint_resolution,
+        model_resolution=model_resolution,
     )
 
     frame_audit: ConfidentialFrameAuditLogger | None = None

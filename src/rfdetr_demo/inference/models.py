@@ -48,14 +48,26 @@ def _register_segmentation_models() -> None:
     )
 
 
-def build_detection_model(model_size: ModelSize) -> RFDETR:
-    """Instantiate a detection model."""
+def build_detection_model(model_size: ModelSize, resolution: int | None = None) -> RFDETR:
+    """Instantiate a detection model.
+
+    Args:
+        model_size: One of nano/small/medium/large.
+        resolution: Optional square input resolution (higher improves recall on
+            small/distant people). ``None`` uses the model default.
+
+    Returns:
+        The detection model.
+    """
     _register_detection_models()
     factory = _MODEL_FACTORIES.get(model_size)
     if factory is None:
         supported = ", ".join(sorted(_MODEL_FACTORIES))
         msg = f"Unsupported model size {model_size!r}. Choose from: {supported}"
         raise ValueError(msg)
+    if resolution is not None:
+        logger.info("Loading RF-DETR detection model: %s at resolution=%d", model_size, resolution)
+        return factory(resolution=resolution)
     logger.info("Loading RF-DETR detection model: %s", model_size)
     return factory()
 

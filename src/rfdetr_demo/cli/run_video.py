@@ -37,7 +37,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--resolution",
         type=int,
         default=None,
-        help="Keypoint model input resolution (higher = better small-person recall; multiple of 48, default 576)",
+        help="Model input resolution (higher = better small-person recall; detect and keypoint tasks)",
     )
     parser.add_argument("--person-only", action="store_true")
     parser.add_argument("--frame-stride", type=int, default=1)
@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
             heatmap_decay=args.heatmap_decay,
             vertex_radius=args.vertex_radius,
             keypoint_uncertainty_enabled=args.keypoint_uncertainty,
-            keypoint_resolution=args.resolution,
+            model_resolution=args.resolution,
         )
     except (FileNotFoundError, RuntimeError, ValueError) as error:
         logger.error("%s", error)

@@ -7,9 +7,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from rfdetr_demo.inference.models import build_keypoint_model
+from rfdetr_demo.inference import models
+from rfdetr_demo.inference.models import build_detection_model, build_keypoint_model
 
 
 def test_build_keypoint_model_forwards_resolution() -> None:
@@ -21,4 +22,24 @@ def test_build_keypoint_model_forwards_resolution() -> None:
 def test_build_keypoint_model_default_has_no_resolution() -> None:
     with patch("rfdetr.RFDETRKeypointPreview") as ctor:
         build_keypoint_model()
+        ctor.assert_called_once_with()
+
+
+def test_build_detection_model_forwards_resolution() -> None:
+    ctor = MagicMock()
+    with (
+        patch.object(models, "_register_detection_models", lambda: None),
+        patch.dict(models._MODEL_FACTORIES, {"large": ctor}, clear=False),
+    ):
+        build_detection_model("large", resolution=960)
+        ctor.assert_called_once_with(resolution=960)
+
+
+def test_build_detection_model_default_has_no_resolution() -> None:
+    ctor = MagicMock()
+    with (
+        patch.object(models, "_register_detection_models", lambda: None),
+        patch.dict(models._MODEL_FACTORIES, {"large": ctor}, clear=False),
+    ):
+        build_detection_model("large")
         ctor.assert_called_once_with()
