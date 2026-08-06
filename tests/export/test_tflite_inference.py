@@ -66,7 +66,7 @@ def _make_logits(high_conf_idx: int | None = 0) -> np.ndarray:
         10.0
         >>> float(logits[0, 1, 0])
         -10.0
-        >>> _make_logits(high_conf_idx=None)[0, 0, 0]
+        >>> float(_make_logits(high_conf_idx=None)[0, 0, 0])
         -10.0
     """
     logits = np.full((1, 10, 82), -10.0, dtype=np.float32)
