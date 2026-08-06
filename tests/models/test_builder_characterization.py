@@ -33,7 +33,13 @@ from rfdetr.models.postprocess import PostProcess
 
 
 def _make_ns(mc=None, tc=None):
-    """Build a namespace suitable for builder functions."""
+    """Build a namespace suitable for builder functions.
+
+    Examples:
+        >>> ns = _make_ns()
+        >>> ns.num_classes
+        80
+    """
     mc = mc or RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
     tc = tc or TrainConfig(dataset_dir="/tmp")
     return _namespace_from_configs(mc, tc)

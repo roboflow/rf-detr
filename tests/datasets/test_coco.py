@@ -40,6 +40,12 @@ _CAT2LABEL = {cat_id: i for i, cat_id in enumerate(sorted(_SPARSE_CAT_IDS))}
 
 
 def _make_target(annotations=_ANNOTATIONS):
+    """Build a minimal COCO-style target mapping for converter tests.
+
+    Example:
+        >>> _make_target()["image_id"]
+        1
+    """
     return {"image_id": 1, "annotations": annotations}
 
 
@@ -134,14 +140,30 @@ class TestConvertCocoWithMapping:
 
 
 def _write_coco_json(path: Path, categories: List[Dict]) -> None:
-    """Write a minimal valid COCO annotation file."""
+    """Write a minimal valid COCO annotation file.
+
+    Example:
+        >>> import tempfile
+        >>> output = Path(tempfile.mkdtemp()) / "annotations.json"
+        >>> _write_coco_json(output, [{"id": 1, "name": "person"}])
+        >>> output.exists()
+        True
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {"images": [], "annotations": [], "categories": categories}
     path.write_text(json.dumps(data))
 
 
 def _write_roboflow_keypoint_coco(path: Path, *, category_id: int = 0) -> None:
-    """Write a minimal Roboflow-style COCO keypoint split."""
+    """Write a minimal Roboflow-style COCO keypoint split.
+
+    Example:
+        >>> import tempfile
+        >>> output = Path(tempfile.mkdtemp()) / "annotations.json"
+        >>> _write_roboflow_keypoint_coco(output)
+        >>> output.exists()
+        True
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     image_path = path.parent / "person.png"
     Image.new("RGB", (64, 48), color=(255, 255, 255)).save(image_path)

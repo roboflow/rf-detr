@@ -24,7 +24,15 @@ from rfdetr.datasets.yolo import (
 
 
 def _write_minimal_roboflow_yolo_dataset(tmp_path: Path) -> None:
-    """Create a minimal Roboflow YOLO dataset root."""
+    """Create a minimal Roboflow YOLO dataset root.
+
+    Example:
+        >>> import tempfile
+        >>> root = Path(tempfile.mkdtemp())
+        >>> _write_minimal_roboflow_yolo_dataset(root)
+        >>> (root / "data.yaml").exists()
+        True
+    """
     (tmp_path / "data.yaml").write_text("names:\n  - person\n", encoding="utf-8")
     for split in ("train", "valid"):
         (tmp_path / split / "images").mkdir(parents=True)
@@ -34,7 +42,15 @@ def _write_minimal_roboflow_yolo_dataset(tmp_path: Path) -> None:
 
 
 def _write_yolo_segmentation_dataset(tmp_path: Path) -> tuple[Path, Path, Path]:
-    """Create a minimal YOLO segmentation dataset on disk."""
+    """Create a minimal YOLO segmentation dataset on disk.
+
+    Example:
+        >>> import tempfile
+        >>> root = Path(tempfile.mkdtemp())
+        >>> image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(root)
+        >>> image_dir.name, label_dir.name, data_file.name
+        ('images', 'labels', 'data.yaml')
+    """
     image_dir = tmp_path / "images"
     label_dir = tmp_path / "labels"
     image_dir.mkdir()
@@ -49,7 +65,15 @@ def _write_yolo_segmentation_dataset(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 def _write_yolo_pose_dataset(tmp_path: Path, *, keypoint_dim: int = 3) -> tuple[Path, Path, Path]:
-    """Create a minimal YOLO pose dataset on disk."""
+    """Create a minimal YOLO pose dataset on disk.
+
+    Example:
+        >>> import tempfile
+        >>> root = Path(tempfile.mkdtemp())
+        >>> _, _, data_file = _write_yolo_pose_dataset(root)
+        >>> data_file.exists()
+        True
+    """
     image_dir = tmp_path / "images"
     label_dir = tmp_path / "labels"
     image_dir.mkdir()
@@ -65,7 +89,7 @@ kpt_shape: [2, 3]
 kpt_names:
   0: [left_eye, right_eye]
 flip_idx: [1, 0]
-"""
+    """
     else:
         label = "0 0.5 0.5 0.5 0.5 0.25 0.25 0 0\n"
         yaml_text = """
@@ -74,7 +98,7 @@ names:
 kpt_shape: [2, 2]
 kpt_names:
   0: [left_eye, right_eye]
-"""
+    """
     (label_dir / "sample.txt").write_text(label, encoding="utf-8")
     data_file = tmp_path / "data.yaml"
     data_file.write_text(yaml_text, encoding="utf-8")

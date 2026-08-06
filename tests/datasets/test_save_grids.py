@@ -44,6 +44,19 @@ class _FakeDataset:
 
 
 def _collate(batch):
+    """Collate ``(image, target)`` pairs into the NestedTensor batch format.
+
+    Example:
+        >>> batch = [(
+        ...     torch.zeros(3, 4, 4),
+        ...     {"boxes": torch.zeros((0, 4)),
+        ...      "labels": torch.zeros(0, dtype=torch.long),
+        ...      "size": torch.tensor([4, 4])}
+        ... )]
+        >>> nested, targets = _collate(batch)
+        >>> len(targets), tuple(nested.tensors.shape)
+        (1, (1, 3, 4, 4))
+    """
     from rfdetr.utilities import nested_tensor_from_tensor_list
 
     images, targets = zip(*batch)

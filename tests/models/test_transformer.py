@@ -37,6 +37,12 @@ def _build_ms_deform_inputs(
 ) -> _MSDeformInputs:
     """Build minimal valid inputs for ms_deform_attn_core_pytorch.
 
+    Examples:
+        >>> value, spatial_shapes, sampling_locations, attention_weights, levels = _build_ms_deform_inputs()
+        >>> value.shape, spatial_shapes.shape, len(levels)
+        (torch.Size([1, 2, 4, 20]), torch.Size([2, 2]), 2)
+
+
     Args:
         bsz: Batch size.
         n_heads: Number of attention heads.
@@ -900,6 +906,10 @@ def _make_out_of_order_scores(total_hw: int, picks: list[int]) -> torch.Tensor:
 
     Returns:
         Score tensor of shape (1, total_hw, 1); every position not in `picks` scores -100.0.
+
+    Examples:
+        >>> _make_out_of_order_scores(5, [3, 1]).squeeze(-1).tolist()
+        [[-100.0, 20.0, -100.0, 30.0, -100.0]]
     """
     scores = torch.full((1, total_hw, 1), -100.0)
     picks_tensor = torch.tensor(picks)

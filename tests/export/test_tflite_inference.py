@@ -40,7 +40,15 @@ _LABEL_OUTPUT = {"shape": [1, 10, 82], "name": "serving_default_labels:0", "inde
 
 
 def _make_boxes() -> np.ndarray:
-    """Return (1, 10, 4) array of normalised cxcywh boxes all centred at 0.5."""
+    """Return (1, 10, 4) array of normalised cxcywh boxes all centred at 0.5.
+
+    Examples:
+        >>> boxes = _make_boxes()
+        >>> boxes.shape
+        (1, 10, 4)
+        >>> float(boxes[0, 0, 0])
+        0.5
+    """
     return np.array([[[0.5, 0.5, 0.1, 0.1]] * 10], dtype=np.float32)
 
 
@@ -49,6 +57,17 @@ def _make_logits(high_conf_idx: int | None = 0) -> np.ndarray:
 
     Background fill is -10.0 so sigmoid scores are near zero (~0.0001) for all entries except the explicitly boosted one
     (logit=+10.0, sigmoid≈0.9999). This ensures the helper works correctly under per-class sigmoid scoring.
+
+    Examples:
+        >>> logits = _make_logits()
+        >>> logits.shape
+        (1, 10, 82)
+        >>> float(logits[0, 0, 0])
+        10.0
+        >>> float(logits[0, 1, 0])
+        -10.0
+        >>> float(_make_logits(high_conf_idx=None)[0, 0, 0])
+        -10.0
     """
     logits = np.full((1, 10, 82), -10.0, dtype=np.float32)
     if high_conf_idx is not None:
@@ -62,7 +81,15 @@ def _make_interp(
     boxes: np.ndarray | None = None,
     logits: np.ndarray | None = None,
 ) -> mock.MagicMock:
-    """Build a mock TFLite interpreter with configurable I/O details."""
+    """Build a mock TFLite interpreter with configurable I/O details.
+
+    Examples:
+        >>> interp = _make_interp()
+        >>> len(interp.get_input_details())
+        1
+        >>> len(interp.get_output_details())
+        2
+    """
     if input_shape is None:
         input_shape = _INPUT_SHAPE
     out_dets = out_dets if out_dets is not None else [_DET_OUTPUT, _LABEL_OUTPUT]
@@ -86,12 +113,32 @@ def _make_interp(
 
 
 def _save_rgb_image(path: Path, size: tuple[int, int] = (64, 64)) -> None:
-    """Write a small solid-colour RGB JPEG to *path*."""
+    """Write a small solid-colour RGB JPEG to *path*.
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     p = Path(d) / "img.jpg"
+        ...     _save_rgb_image(p)
+        ...     p.exists()
+        True
+    """
     PILImage.new("RGB", size, color=(100, 150, 200)).save(path)
 
 
 def _save_grayscale_image(path: Path, size: tuple[int, int] = (64, 64)) -> None:
-    """Write a small solid-colour grayscale PNG to *path*."""
+    """Write a small solid-colour grayscale PNG to *path*.
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     p = Path(d) / "img.png"
+        ...     _save_grayscale_image(p)
+        ...     p.exists()
+        True
+    """
     PILImage.new("L", size, color=128).save(path)
 
 
