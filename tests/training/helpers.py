@@ -109,7 +109,16 @@ class _FakePostProcess:
 
 
 def _fake_postprocess(outputs, orig_sizes):
-    """Return one non-empty prediction per image so COCOEvalCallback has something to score."""
+    """Return one non-empty prediction per image so COCOEvalCallback has something to score.
+
+    Examples:
+        >>> import torch
+        >>> batch = _fake_postprocess({}, torch.zeros(2, 2))
+        >>> len(batch)
+        2
+        >>> sorted(batch[0])
+        ['boxes', 'labels', 'scores']
+    """
     n = orig_sizes.shape[0]
     return [
         {
@@ -122,5 +131,14 @@ def _fake_postprocess(outputs, orig_sizes):
 
 
 def _make_param_dicts(model: nn.Module) -> list[dict]:
-    """Build a minimal param-dict list for AdamW from all trainable parameters."""
+    """Build a minimal param-dict list for AdamW from all trainable parameters.
+
+    Examples:
+        >>> model = _TinyModel()
+        >>> groups = _make_param_dicts(model)
+        >>> len(groups)
+        1
+        >>> groups[0]["lr"]
+        0.0001
+    """
     return [{"params": p, "lr": 1e-4} for p in model.parameters() if p.requires_grad]
