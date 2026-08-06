@@ -33,6 +33,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--model", choices=["nano", "small", "medium", "large"], default="nano")
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--resolution",
+        type=int,
+        default=None,
+        help="Keypoint model input resolution (higher = better small-person recall; multiple of 48, default 576)",
+    )
     parser.add_argument("--person-only", action="store_true")
     parser.add_argument("--frame-stride", type=int, default=1)
     parser.add_argument("--max-frames", type=int, default=None)
@@ -67,11 +73,15 @@ def main(argv: list[str] | None = None) -> int:
     keypoint_uncertainty_style: KeypointUncertaintyStyle = (
         args.keypoint_uncertainty_style if args.keypoint_uncertainty else "none"
     )
-    output_path = args.output if args.output is not None else default_output_path(
-        source_path,
-        task,
-        keypoint_uncertainty=keypoint_uncertainty_style != "none",
-        keypoint_uncertainty_style=keypoint_uncertainty_style,
+    output_path = (
+        args.output
+        if args.output is not None
+        else default_output_path(
+            source_path,
+            task,
+            keypoint_uncertainty=keypoint_uncertainty_style != "none",
+            keypoint_uncertainty_style=keypoint_uncertainty_style,
+        )
     )
 
     person_only = args.person_only
@@ -99,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
             heatmap_decay=args.heatmap_decay,
             vertex_radius=args.vertex_radius,
             keypoint_uncertainty_enabled=args.keypoint_uncertainty,
+            keypoint_resolution=args.resolution,
         )
     except (FileNotFoundError, RuntimeError, ValueError) as error:
         logger.error("%s", error)
