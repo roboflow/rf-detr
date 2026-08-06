@@ -40,7 +40,13 @@ from .helpers import (
 
 
 def _make_trainer() -> Trainer:
-    """Create a Trainer configured for minimal smoke-test runs."""
+    """Create a Trainer configured for minimal smoke-test runs.
+
+    Examples:
+        >>> trainer = _make_trainer()
+        >>> trainer.fast_dev_run, trainer.accelerator.__class__.__name__
+        (2, 'CPUAccelerator')
+    """
     return Trainer(
         fast_dev_run=2,
         accelerator="cpu",
