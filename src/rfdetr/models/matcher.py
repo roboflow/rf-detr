@@ -140,9 +140,47 @@ class HungarianMatcher(nn.Module):
         sanitized_cost_matrix[~finite_mask] = replacement_cost
         return sanitized_cost_matrix
 
+    def _focal_classification_cost(self, logits: Tensor) -> Tensor:
+        """Focal-loss classification cost for logits already gathered at the target classes they are scored against.
+
+        Every operation is elementwise, so the leading dimensions are free: the compact path passes
+        ``[bs, num_queries, max_targets]`` and the full path ``[bs * num_queries, total_targets]``.
+
+        >>> HungarianMatcher(focal_alpha=0.25)._focal_classification_cost(torch.zeros(1, 2)).tolist()
+        [[-0.08664339780807495, -0.08664339780807495]]
+
+        Args:
+            logits: Classification logits already selected at their target classes.
+
+        Returns:
+            Focal classification cost, same shape as ``logits``.
+        """
+        # neg_cost_class = (1 - alpha) * (tgt_prob ** gamma) * (-(1 - tgt_prob + 1e-8).log())
+        # pos_cost_class = alpha * ((1 - tgt_prob) ** gamma) * (-(tgt_prob + 1e-8).log())
+        # we refactor these with logsigmoid for numerical stability
+        alpha = self.focal_alpha
+        gamma = _FOCAL_LOSS_GAMMA
+        probabilities = logits.sigmoid()
+        negative_cost = (1 - alpha) * (probabilities**gamma) * (-F.logsigmoid(-logits))
+        positive_cost = alpha * ((1 - probabilities) ** gamma) * (-F.logsigmoid(logits))
+        return positive_cost - negative_cost
+
     @staticmethod
     def _detection_inputs_are_safe(outputs: dict[str, Any], targets: list[dict[str, Any]]) -> bool:
         """Return whether the compact path can preserve the full path's finite-cost behavior."""
+        pred_boxes = outputs["pred_boxes"]
+        # Metadata-only prechecks: attribute comparisons that launch no kernel and force no device
+        # sync, and that short-circuit before any reduction below runs. `pad_sequence` allocates
+        # from the first sequence, so a target whose boxes disagree in dtype with the rest is
+        # silently cast into the padded tensor and matched at whatever precision the batch ordering
+        # happens to produce, where the full path's `torch.cat` promotes and then fails loudly.
+        # Route those batches to the full path so that loud failure is preserved.
+        for target in targets:
+            if target["boxes"].dtype != pred_boxes.dtype or target["boxes"].device != pred_boxes.device:
+                return False
+            if target["labels"].device != pred_boxes.device:
+                return False
+
         # `pred_logits` is deliberately not swept here. A non-finite logit either lands in a class
         # column the compact matrix consumes — where it survives every coefficient (including
         # `cost_class == 0`, since `0 * inf` is NaN) into the weighted sum, so the post-hoc
@@ -151,10 +189,20 @@ class HungarianMatcher(nn.Module):
         # change the assignment. Sweeping all of `[bs, num_queries, num_classes]` up front costs
         # more than building the compact matrix it was guarding.
         checks: list[Tensor] = []
-        for boxes in [outputs["pred_boxes"], *(target["boxes"] for target in targets)]:
+        for boxes in [pred_boxes, *(target["boxes"] for target in targets)]:
             # Keep enough headroom for cxcywh conversion, pairwise differences, areas, and unions.
             coordinate_limit = torch.finfo(boxes.dtype).max ** 0.5 / 16
             checks.append(torch.isfinite(boxes).all() & (boxes.abs() <= coordinate_limit).all())
+        # `torch.gather` rejects an out-of-range class index outright, where the full path's
+        # `flat_pred_logits[:, tgt_ids]` wraps a negative label Python-style onto the last class and
+        # raises `IndexError` for a too-large one. Deliberately keep that pre-existing behavior —
+        # silent wrap included — by routing such batches to the full path rather than introducing a
+        # new hard error here. Appended to the same `checks` list so it rides the single
+        # `torch.stack` sync below instead of adding a second one.
+        num_classes = outputs["pred_logits"].shape[-1]
+        for target in targets:
+            labels = target["labels"]
+            checks.append((labels >= 0).all() & (labels < num_classes).all())
         return bool(torch.stack(checks).all())
 
     def _compute_compact_detection_cost_matrix(
@@ -171,12 +219,7 @@ class HungarianMatcher(nn.Module):
 
         gather_index = padded_target_ids[:, None, :].expand(batch_size, num_queries, max_targets)
         target_logits = torch.gather(outputs["pred_logits"], 2, gather_index)
-        target_prob = target_logits.sigmoid()
-        alpha = self.focal_alpha
-        gamma = _FOCAL_LOSS_GAMMA
-        negative_class_cost = (1 - alpha) * (target_prob**gamma) * (-F.logsigmoid(-target_logits))
-        positive_class_cost = alpha * ((1 - target_prob) ** gamma) * (-F.logsigmoid(target_logits))
-        class_cost = positive_class_cost - negative_class_cost
+        class_cost = self._focal_classification_cost(target_logits)
 
         bbox_cost = torch.cdist(outputs["pred_boxes"], padded_target_boxes, p=1)
         giou_cost = -torch.vmap(generalized_box_iou)(
@@ -289,12 +332,6 @@ class HungarianMatcher(nn.Module):
         cost_giou = -giou
 
         # Compute the classification cost.
-        alpha = self.focal_alpha
-        gamma = _FOCAL_LOSS_GAMMA
-
-        # neg_cost_class = (1 - alpha) * (tgt_prob ** gamma) * (-(1 - tgt_prob + 1e-8).log())
-        # pos_cost_class = alpha * ((1 - tgt_prob) ** gamma) * (-(tgt_prob + 1e-8).log())
-        # we refactor these with logsigmoid for numerical stability
         # Gather the target-class columns first: only the tgt_ids columns of the focal terms are
         # consumed, so computing them over all num_classes columns would be wasted work/memory —
         # a real win when num_targets <= num_classes (e.g. large-vocabulary datasets). When
@@ -302,10 +339,7 @@ class HungarianMatcher(nn.Module):
         # gathers marginally more values than the full materialization would; net impact is
         # negligible either way since the Hungarian solve dominates matcher wall-time.
         tgt_logits = flat_pred_logits[:, tgt_ids]  # [batch_size * num_queries, num_targets]
-        tgt_prob = tgt_logits.sigmoid()
-        neg_cost_class = (1 - alpha) * (tgt_prob**gamma) * (-F.logsigmoid(-tgt_logits))
-        pos_cost_class = alpha * ((1 - tgt_prob) ** gamma) * (-F.logsigmoid(tgt_logits))
-        cost_class = pos_cost_class - neg_cost_class
+        cost_class = self._focal_classification_cost(tgt_logits)
 
         # Compute the L1 cost between boxes
         cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)

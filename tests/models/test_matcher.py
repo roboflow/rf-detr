@@ -1252,6 +1252,82 @@ class TestNonFiniteLogitsWithoutGateSweep:
         _assert_same_indices(actual, _full_path_indices(zero_class_matcher, outputs, targets))
 
 
+class TestGateRoutesInputsThatDivergeBetweenPaths:
+    """Inputs the two paths would treat differently must be routed to the full path, so the compact path never becomes
+    the reason a batch behaves differently.
+
+    ``pad_sequence`` allocates from the first sequence and silently casts the rest, and ``torch.gather`` rejects class
+    indices the full path's ``flat_pred_logits[:, tgt_ids]`` accepts. None of these inputs is reachable from a shipped
+    data path; the gate keeps them on the path whose behavior is already established.
+    """
+
+    def test_mixed_dtype_target_boxes_use_full_path(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """A float64 ``boxes`` tensor anywhere but index 0 would be silently downcast into the padded tensor, making the
+        achieved precision depend on batch ordering — the gate must route it to the full path, whose ``torch.cat``
+        promotes to float64 and then fails loudly against float32 predictions."""
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _detection_batch_with_labels(seed=305, labels_per_image=[[0, 1], [2, 3]])
+        targets[1]["boxes"] = targets[1]["boxes"].double()
+
+        with pytest.raises(RuntimeError, match="expected scalar type Float but found Double"):
+            matcher(outputs, targets)
+
+        assert calls == []
+
+    def test_negative_label_uses_full_path_and_keeps_wrap_semantics(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """``torch.gather`` rejects a negative class index, while the full path's ``flat_pred_logits[:, tgt_ids]`` wraps
+        it Python-style onto the last class.
+
+        The gate routes such a batch to the full path, so a label of ``-1`` keeps scoring against the last class rather
+        than becoming a new hard error. Preserving that wrap is a deliberate back-compat choice, not an endorsement of
+        it: the compact path's rejection is arguably the more correct behavior.
+        """
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _detection_batch_with_labels(seed=306, labels_per_image=[[0, 1], [2, 3]])
+        wrapped_outputs, wrapped_targets = _detection_batch_with_labels(seed=306, labels_per_image=[[0, 1], [2, 3]])
+        targets[0]["labels"][0] = -1
+        wrapped_targets[0]["labels"][0] = 4  # num_classes - 1, the class -1 wraps onto
+
+        actual = matcher(outputs, targets)
+
+        assert calls == []
+        _assert_same_indices(actual, _full_path_indices(matcher, wrapped_outputs, wrapped_targets))
+
+    def test_out_of_range_label_uses_full_path_and_keeps_index_error(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """A label at or above ``num_classes`` raised ``IndexError`` before the compact path existed; ``torch.gather``
+        would raise ``RuntimeError`` instead, breaking any caller narrowing on ``IndexError``.
+
+        The gate routes the batch to the full path so the original exception type survives.
+        """
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _detection_batch_with_labels(seed=307, labels_per_image=[[0, 1], [2, 3]])
+        targets[0]["labels"][0] = 99
+
+        with pytest.raises(IndexError):
+            matcher(outputs, targets)
+
+        assert calls == []
+
+    def test_in_range_labels_at_both_bounds_still_use_compact_path(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """The label-range check must not over-reject: class ``0`` and class ``num_classes - 1`` are both valid, and a
+        batch using only those two must still take the compact path and match the full path's assignment."""
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _detection_batch_with_labels(seed=308, labels_per_image=[[0, 4], [4, 0]])
+
+        actual = matcher(outputs, targets)
+
+        assert calls == [1]
+        _assert_same_indices(actual, _full_path_indices(matcher, outputs, targets))
+
+
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 class TestCompactPathOnCUDA:
