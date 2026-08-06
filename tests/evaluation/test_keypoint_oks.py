@@ -25,12 +25,28 @@ from rfdetr.evaluation.keypoint_oks import MetricKeypointOKS
 
 
 def _make_coco_gt() -> MagicMock:
-    """Return a minimal COCO ground-truth mock (for unit tests that patch evaluator)."""
+    """Return a minimal COCO ground-truth mock (for unit tests that patch evaluator).
+
+    Examples:
+        >>> gt = _make_coco_gt()
+        >>> gt._mock_name
+        'coco_gt'
+    """
     return MagicMock(name="coco_gt")
 
 
 def _make_predictions(image_id: int = 1, num_dets: int = 1, num_keypoints: int = 3) -> dict:
-    """Return a single-image prediction dict with zero-valued tensors."""
+    """Return a single-image prediction dict with zero-valued tensors.
+
+    Examples:
+        >>> preds = _make_predictions(image_id=5, num_dets=2, num_keypoints=3)
+        >>> list(preds.keys())
+        [5]
+        >>> preds[5]["boxes"].shape
+        torch.Size([2, 4])
+        >>> preds[5]["keypoints"].shape
+        torch.Size([2, 3, 3])
+    """
     return {
         image_id: {
             "boxes": torch.zeros(num_dets, 4),
@@ -45,6 +61,11 @@ def _make_evaluator_mock(stats: list[float]) -> MagicMock:
     """Return a CocoEvaluator mock that returns the given stats array.
 
     Stats list must have exactly 10 elements matching _summarizeKps() output shape.
+
+    Examples:
+        >>> mock = _make_evaluator_mock([float(i) for i in range(10)])
+        >>> mock.coco_eval["keypoints"].stats.tolist()
+        [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
     """
     assert len(stats) == 10, f"_make_evaluator_mock: expected 10 stats, got {len(stats)}"
     evaluator = MagicMock(name="evaluator")
@@ -69,6 +90,13 @@ def _build_coco_gt(
 
     Returns:
         A fully-indexed ``faster_coco_eval.COCO`` object.
+
+    Examples:
+        >>> gt = _build_coco_gt(2, [10.0, 20.0, 2.0, 30.0, 40.0, 2.0])
+        >>> list(gt.imgs.keys())
+        [1]
+        >>> len(gt.anns)
+        1
     """
     if bbox is None:
         bbox = [0.0, 0.0, 100.0, 100.0]
@@ -116,6 +144,15 @@ def _make_keypoint_prediction(
     Returns:
         Dict mapping ``image_id`` to a prediction dict accepted by
         :meth:`~rfdetr.evaluation.keypoint_oks.MetricKeypointOKS.update`.
+
+    Examples:
+        >>> pred = _make_keypoint_prediction(3, [(10.0, 20.0), (30.0, 40.0)])
+        >>> list(pred.keys())
+        [3]
+        >>> pred[3]["keypoints"].shape
+        torch.Size([1, 2, 3])
+        >>> round(float(pred[3]["scores"][0]), 2)
+        0.99
     """
     if box is None:
         box = [0.0, 0.0, 100.0, 100.0]

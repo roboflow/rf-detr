@@ -20,7 +20,18 @@ from rfdetr.evaluation.coco_eval import CocoEvaluator
 
 
 def _write_person_keypoint_coco(path: Path, *, include_num_keypoints: bool = True, keypoint_count: int = 17) -> None:
-    """Write a minimal COCO keypoint annotation file."""
+    """Write a minimal COCO keypoint annotation file.
+
+    Examples:
+        >>> import json, tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     p = Path(d) / "ann.json"
+        ...     _write_person_keypoint_coco(p, keypoint_count=3)
+        ...     data = json.loads(p.read_text())
+        ...     len(data["categories"][0]["keypoints"])
+        3
+    """
     if keypoint_count == 17:
         keypoints = [
             "nose",
@@ -74,7 +85,18 @@ def _write_person_keypoint_coco(path: Path, *, include_num_keypoints: bool = Tru
 
 
 def _write_mixed_keypoint_coco(path: Path) -> None:
-    """Write a COCO keypoint file with two categories using different keypoint counts."""
+    """Write a COCO keypoint file with two categories using different keypoint counts.
+
+    Examples:
+        >>> import json, tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     p = Path(d) / "ann.json"
+        ...     _write_mixed_keypoint_coco(p)
+        ...     data = json.loads(p.read_text())
+        ...     [len(cat["keypoints"]) for cat in data["categories"]]
+        [4, 21]
+    """
     categories = [
         {
             "id": 1,
