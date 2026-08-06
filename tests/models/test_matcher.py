@@ -869,6 +869,92 @@ def _random_detection_batch(
     return outputs, targets
 
 
+def _spy_on_full_path(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record one entry per full-path cost build, by tagging the 2-D ``torch.cdist`` call only that path makes (the
+    compact path's ``cdist`` operands are 3-D) — lets a test tell "stayed on the compact path" apart from "built the
+    compact matrix, found it non-finite, and fell through to the full path".
+
+    Examples:
+        with pytest.MonkeyPatch.context() as patched:
+            full_calls = _spy_on_full_path(patched)
+            matcher(outputs, targets)
+            assert full_calls == []
+    """
+    calls: list[int] = []
+    original = torch.cdist
+
+    def spy(x1: torch.Tensor, x2: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+        if x1.dim() == 2:
+            calls.append(1)
+        return original(x1, x2, *args, **kwargs)
+
+    monkeypatch.setattr(torch, "cdist", spy)
+    return calls
+
+
+def _detection_batch_with_labels(
+    seed: int, labels_per_image: list[list[int]], num_queries: int = 4, num_classes: int = 5
+) -> tuple[dict[str, torch.Tensor], list[dict[str, torch.Tensor]]]:
+    """Detection-only outputs/targets with exactly the given per-image class ids, so a test can place a non-finite logit
+    in a class column that is consumed by its own image, consumed only by another image, or consumed by nobody.
+
+    Examples:
+        >>> outputs, targets = _detection_batch_with_labels(seed=1, labels_per_image=[[0, 1], [2, 3]])
+        >>> outputs["pred_logits"].shape
+        torch.Size([2, 4, 5])
+        >>> [target["labels"].tolist() for target in targets]
+        [[0, 1], [2, 3]]
+    """
+    torch.manual_seed(seed)
+    batch_size = len(labels_per_image)
+    outputs = {
+        "pred_logits": torch.randn(batch_size, num_queries, num_classes),
+        "pred_boxes": torch.rand(batch_size, num_queries, 4) * 0.4 + 0.3,
+    }
+    targets = [
+        {
+            "labels": torch.tensor(labels, dtype=torch.int64),
+            "boxes": torch.rand(len(labels), 4) * 0.4 + 0.3,
+        }
+        for labels in labels_per_image
+    ]
+    return outputs, targets
+
+
+def _full_path_indices(
+    matcher: HungarianMatcher,
+    outputs: dict[str, torch.Tensor],
+    targets: list[dict[str, torch.Tensor]],
+) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    """Assignment the full path produces for these exact inputs, obtained by forcing the eligibility gate to ``False``
+    inside a self-undoing monkeypatch context — the reference for every compact-vs-full equivalence assertion.
+
+    Examples:
+        >>> matcher = HungarianMatcher()
+        >>> outputs, targets = _detection_batch_with_labels(seed=2, labels_per_image=[[0], [1]])
+        >>> [(q.tolist(), t.tolist()) for q, t in _full_path_indices(matcher, outputs, targets)]
+        [([1], [0]), ([3], [0])]
+    """
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t: False))
+        return matcher(outputs, targets)
+
+
+def _assert_same_indices(
+    actual: list[tuple[torch.Tensor, torch.Tensor]], expected: list[tuple[torch.Tensor, torch.Tensor]]
+) -> None:
+    """Assert two per-image ``(query_indices, target_indices)`` assignments are element-for-element equal.
+
+    Examples:
+        >>> pair = [(torch.tensor([0]), torch.tensor([0]))]
+        >>> _assert_same_indices(pair, [(torch.tensor([0]), torch.tensor([0]))])
+    """
+    assert len(actual) == len(expected)
+    for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
+        assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
+        assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+
+
 class TestCompactPathRouting:
     """The padded-compact cost path (``_compute_compact_detection_cost_matrix``) must run only for detection-only
     batches with ``batch_size > 1`` and finite, bounded inputs — every other case must fall back to the diagonal-block
@@ -961,8 +1047,6 @@ class TestCompactPathRouting:
     @pytest.mark.parametrize(
         "corrupt",
         [
-            pytest.param(lambda o, t: o["pred_logits"].__setitem__((0, 0, 0), float("nan")), id="logit_nan"),
-            pytest.param(lambda o, t: o["pred_logits"].__setitem__((0, 0, 0), float("inf")), id="logit_inf"),
             pytest.param(lambda o, t: o["pred_boxes"].__setitem__((1, 0, 2), float("nan")), id="pred_box_nan"),
             pytest.param(lambda o, t: o["pred_boxes"].__setitem__((1, 0, 2), float("inf")), id="pred_box_inf"),
             pytest.param(lambda o, t: t[0]["boxes"].__setitem__((0, 1), float("nan")), id="target_box_nan"),
@@ -1071,6 +1155,101 @@ class TestCompactPathRouting:
         for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
             assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
             assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+
+
+class TestNonFiniteLogitsWithoutGateSweep:
+    """``_detection_inputs_are_safe`` no longer sweeps ``pred_logits``, so the post-hoc finiteness check on the built
+    compact matrix carries the whole burden of matching the full path's assignment.
+
+    Every non-finite logit is either consumed by its own image's diagonal block — where it must reach
+    ``compact_cost_matrix`` and force fall-through — or lands somewhere neither path's extracted diagonal blocks read,
+    where the compact path must keep running and still return the full path's indices. The batch below pins that
+    partition explicitly: classes ``0``/``1`` belong to image 0, classes ``2``/``3`` to image 1, and class ``4`` to
+    nobody.
+    """
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [
+            pytest.param(float("inf"), id="inf"),
+            pytest.param(float("-inf"), id="neg_inf"),
+            pytest.param(float("nan"), id="nan"),
+        ],
+    )
+    def test_consumed_non_finite_logit_falls_through_to_full_path(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher, bad_value: float
+    ) -> None:
+        """A non-finite logit in a class column image 0 itself labels must survive the focal formula and the weighted
+        sum into the compact matrix, so ``forward`` falls through to the full path and returns its exact indices."""
+        compact_calls = _spy_on_compact_path(monkeypatch)
+        full_calls = _spy_on_full_path(monkeypatch)
+        outputs, targets = _detection_batch_with_labels(seed=301, labels_per_image=[[0, 1], [2, 3]])
+        outputs["pred_logits"][0, 0, 0] = bad_value
+
+        actual = matcher(outputs, targets)
+
+        assert compact_calls == [1], "the compact matrix must still be attempted before falling through"
+        assert full_calls == [1], "a consumed non-finite logit must force the full path to run"
+        _assert_same_indices(actual, _full_path_indices(matcher, outputs, targets))
+
+    def test_cross_image_only_non_finite_logit_stays_on_compact_path(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """A non-finite logit in a class only *another* image labels lands in a cross-image block that both paths
+        discard, so the compact path must keep running and still agree with the full path.
+
+        The full path materializes that block and would warn; the compact path never builds it. Losing that
+        ``logger.warning`` is the disclosed cost of dropping the gate's ``pred_logits`` sweep, asserted here so the
+        trade-off is pinned rather than assumed.
+        """
+        compact_calls = _spy_on_compact_path(monkeypatch)
+        full_calls = _spy_on_full_path(monkeypatch)
+        outputs, targets = _detection_batch_with_labels(seed=302, labels_per_image=[[0, 1], [2, 3]])
+        outputs["pred_logits"][0, 0, 2] = float("inf")
+
+        actual = matcher(outputs, targets)
+
+        assert compact_calls == [1]
+        assert full_calls == [], "a cross-image-only non-finite logit must not force the full path"
+        assert not matcher._warned_non_finite_costs, "the compact path never sees the cross-image block, so never warns"
+        _assert_same_indices(actual, _full_path_indices(matcher, outputs, targets))
+
+    def test_never_consumed_non_finite_logit_stays_on_compact_path(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """A non-finite logit in a class column no image labels is read by neither path, so the compact path must keep
+        running and still agree with the full path — the old gate rejected this batch for nothing."""
+        compact_calls = _spy_on_compact_path(monkeypatch)
+        full_calls = _spy_on_full_path(monkeypatch)
+        outputs, targets = _detection_batch_with_labels(seed=303, labels_per_image=[[0, 1], [2, 3]])
+        outputs["pred_logits"][0, 0, 4] = float("nan")
+
+        actual = matcher(outputs, targets)
+
+        assert compact_calls == [1]
+        assert full_calls == [], "a never-labelled class column must not force the full path"
+        _assert_same_indices(actual, _full_path_indices(matcher, outputs, targets))
+
+    def test_zero_cost_class_still_falls_through_on_consumed_non_finite_logit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``cost_class=0`` is the one arithmetic path that could plausibly annihilate a non-finite class cost, and the
+        constructor permits it as long as another coefficient is non-zero.
+
+        It does not annihilate: ``0 * inf`` and ``0 * nan`` are both NaN, so the weighted sum stays non-finite and the
+        consumed-logit batch still falls through to the full path.
+        """
+        compact_calls = _spy_on_compact_path(monkeypatch)
+        full_calls = _spy_on_full_path(monkeypatch)
+        zero_class_matcher = HungarianMatcher(cost_class=0.0, cost_bbox=1.0, cost_giou=1.0)
+        outputs, targets = _detection_batch_with_labels(seed=304, labels_per_image=[[0, 1], [2, 3]])
+        outputs["pred_logits"][0, 0, 0] = float("inf")
+
+        actual = zero_class_matcher(outputs, targets)
+
+        assert compact_calls == [1]
+        assert full_calls == [1], "0 * inf is NaN, so the compact matrix must still be rejected"
+        _assert_same_indices(actual, _full_path_indices(zero_class_matcher, outputs, targets))
 
 
 @pytest.mark.gpu

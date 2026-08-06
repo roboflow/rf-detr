@@ -143,7 +143,14 @@ class HungarianMatcher(nn.Module):
     @staticmethod
     def _detection_inputs_are_safe(outputs: dict[str, Any], targets: list[dict[str, Any]]) -> bool:
         """Return whether the compact path can preserve the full path's finite-cost behavior."""
-        checks = [torch.isfinite(outputs["pred_logits"]).all()]
+        # `pred_logits` is deliberately not swept here. A non-finite logit either lands in a class
+        # column the compact matrix consumes — where it survives every coefficient (including
+        # `cost_class == 0`, since `0 * inf` is NaN) into the weighted sum, so the post-hoc
+        # `torch.isfinite(compact_cost_matrix)` check in `forward` sees it and falls through — or in
+        # a column neither path materializes into its extracted diagonal blocks, where it cannot
+        # change the assignment. Sweeping all of `[bs, num_queries, num_classes]` up front costs
+        # more than building the compact matrix it was guarding.
+        checks: list[Tensor] = []
         for boxes in [outputs["pred_boxes"], *(target["boxes"] for target in targets)]:
             # Keep enough headroom for cxcywh conversion, pairwise differences, areas, and unions.
             coordinate_limit = torch.finfo(boxes.dtype).max ** 0.5 / 16
