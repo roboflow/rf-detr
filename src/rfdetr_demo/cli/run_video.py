@@ -40,6 +40,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Model input resolution (higher = better small-person recall; detect and keypoint tasks)",
     )
     parser.add_argument("--person-only", action="store_true")
+    parser.add_argument(
+        "--track",
+        action="store_true",
+        help="Track person detections (detect task): stable ids + live count via the box-IoU tracker",
+    )
     parser.add_argument("--frame-stride", type=int, default=1)
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--max-source-seconds", type=float, default=None)
@@ -110,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
             vertex_radius=args.vertex_radius,
             keypoint_uncertainty_enabled=args.keypoint_uncertainty,
             model_resolution=args.resolution,
+            detect_track=args.track,
         )
     except (FileNotFoundError, RuntimeError, ValueError) as error:
         logger.error("%s", error)

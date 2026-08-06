@@ -71,6 +71,38 @@ def single_detection_key_points(key_points: sv.KeyPoints, detection_index: int) 
     return subset_key_points(key_points, [detection_index])
 
 
+def detections_to_key_points(detections: sv.Detections, *, num_joints: int = 17) -> sv.KeyPoints:
+    """Adapt ``sv.Detections`` boxes into ``KeyPoints`` for the box-IoU tracker.
+
+    The tracker associates on ``data['xyxy']`` boxes, not joints, so the joints
+    are zero-filled and marked invisible. This lets plain person detections flow
+    through the same motion / ReID / gallery pipeline as keypoint detections.
+    Appearance ReID falls back to the box central band when no joints are visible.
+
+    Args:
+        detections: Person detections with ``xyxy`` boxes.
+        num_joints: Joint count to allocate (COCO-17 by default).
+
+    Returns:
+        A ``KeyPoints`` carrying the boxes and detection confidences.
+    """
+    num = len(detections)
+    xy = np.zeros((num, num_joints, 2), dtype=np.float32)
+    visible = np.zeros((num, num_joints), dtype=bool)
+    if detections.confidence is not None:
+        confidence = np.asarray(detections.confidence, dtype=np.float32)
+    else:
+        confidence = np.ones((num,), dtype=np.float32)
+    return sv.KeyPoints(
+        xy=xy,
+        visible=visible,
+        keypoint_confidence=np.zeros((num, num_joints), dtype=np.float32),
+        detection_confidence=confidence,
+        class_id=(np.asarray(detections.class_id, dtype=np.int64) if detections.class_id is not None else None),
+        data={"xyxy": np.asarray(detections.xyxy, dtype=np.float32).reshape(num, 4)},
+    )
+
+
 def shift_key_points(key_points: sv.KeyPoints, dx: float, dy: float) -> sv.KeyPoints:
     """Return a copy with every visible joint translated by ``(dx, dy)``.
 

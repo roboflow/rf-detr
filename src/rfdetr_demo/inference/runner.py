@@ -18,6 +18,7 @@ import supervision as sv
 
 from rfdetr_demo.inference.callbacks import (
     make_detection_callback,
+    make_detection_track_callback,
     make_keypoint_callback,
     make_segmentation_callback,
 )
@@ -87,6 +88,7 @@ def _build_task_callback(
     motion_settings: Any | None,
     tune_cache: Any | None,
     model_resolution: int | None = None,
+    detect_track: bool = False,
 ) -> Callable[[Any, int], Any]:
     if task == "keypoint":
         model = build_keypoint_model(resolution=model_resolution)
@@ -157,6 +159,23 @@ def _build_task_callback(
         )
 
     model = build_detection_model(model_size, resolution=model_resolution)
+    if detect_track:
+        from rfdetr_demo.tracking.pipeline import PersonTrackPipeline
+        from rfdetr_demo.tracking.types import PersonTrackSettings
+
+        track_pipeline = PersonTrackPipeline.from_env(
+            frame_width=frame_width,
+            frame_height=frame_height,
+            base_settings=PersonTrackSettings(enabled=True),
+        )
+        return make_detection_track_callback(
+            model,
+            threshold,
+            person_only,
+            stats,
+            track_pipeline,
+            tune_cache=tune_cache,
+        )
     return make_detection_callback(
         model,
         threshold,
@@ -197,11 +216,14 @@ def run_demo(
     motion_settings: Any | None = None,
     frame_audit_log_callback: Callable[[str], None] | None = None,
     model_resolution: int | None = None,
+    detect_track: bool = False,
 ) -> dict[str, Any]:
     """Process ``source_path`` and write annotated video to ``target_path``.
 
     ``model_resolution`` overrides the detection/keypoint model input resolution
     (higher improves recall on small/distant people); ``None`` uses the default.
+    ``detect_track`` (detect task only) tracks person detections through the
+    box-IoU tracker, drawing stable ids and a live count.
     """
     if not source_path.is_file():
         raise FileNotFoundError(
@@ -261,6 +283,7 @@ def run_demo(
         motion_settings=motion_settings,
         tune_cache=tune_cache,
         model_resolution=model_resolution,
+        detect_track=detect_track,
     )
 
     frame_audit: ConfidentialFrameAuditLogger | None = None
