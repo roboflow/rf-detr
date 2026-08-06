@@ -134,6 +134,13 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     parser.add_argument("--reid-weight", type=float, default=0.3, help="Appearance vs IoU cost blend")
     parser.add_argument("--reid-similarity", type=float, default=0.5, help="Gallery revival threshold")
     parser.add_argument("--reid-gallery-frames", type=int, default=60, help="Gallery retention window")
+    parser.add_argument(
+        "--reid-backend",
+        choices=["histogram", "embedding"],
+        default="histogram",
+        help="Appearance descriptor: histogram (color, no deps) or embedding (ONNX ReID, grayscale-robust)",
+    )
+    parser.add_argument("--reid-model", type=Path, default=None, help="ONNX ReID model path (embedding backend)")
     parser.add_argument("--json", type=Path, default=None, help="Optional path to write metrics JSON")
     parser.add_argument(
         "--write-video",
@@ -261,6 +268,8 @@ def run(args: argparse.Namespace) -> int:
         reid_weight=args.reid_weight,
         reid_similarity_threshold=args.reid_similarity,
         reid_max_gallery_frames=args.reid_gallery_frames,
+        reid_backend=args.reid_backend,
+        reid_model_path=str(args.reid_model) if args.reid_model is not None else None,
     )
 
     logger.info("Comparing ReID off vs on over %s", source)
@@ -288,6 +297,7 @@ def run(args: argparse.Namespace) -> int:
             "reid_off": baseline_summary.as_dict(),
             "reid_on": reid_summary.as_dict(),
             "reid_settings": {
+                "reid_backend": args.reid_backend,
                 "reid_weight": args.reid_weight,
                 "reid_similarity_threshold": args.reid_similarity,
                 "reid_max_gallery_frames": args.reid_gallery_frames,

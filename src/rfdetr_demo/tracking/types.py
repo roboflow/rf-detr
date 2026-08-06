@@ -42,6 +42,8 @@ class PersonTrackSettings:
     reid_similarity_threshold: float = 0.5
     reid_max_gallery_frames: int = 60
     reid_ema: float = 0.9
+    reid_backend: str = "histogram"
+    reid_model_path: str | None = None
 
 
 @dataclass
@@ -126,6 +128,8 @@ def person_track_settings_from_env(
     reid_similarity_raw = os.environ.get("RFDETR_REID_SIMILARITY")
     reid_gallery_frames_raw = os.environ.get("RFDETR_REID_GALLERY_FRAMES")
     reid_ema_raw = os.environ.get("RFDETR_REID_EMA")
+    reid_backend_raw = os.environ.get("RFDETR_REID_BACKEND", "").strip().lower()
+    reid_model_raw = os.environ.get("RFDETR_REID_MODEL")
     kwargs: dict[str, object] = {}
     if max_missed_raw is not None:
         kwargs["max_missed"] = max(0, int(max_missed_raw))
@@ -171,6 +175,10 @@ def person_track_settings_from_env(
         kwargs["reid_max_gallery_frames"] = max(0, int(reid_gallery_frames_raw))
     if reid_ema_raw is not None:
         kwargs["reid_ema"] = max(0.0, min(1.0, float(reid_ema_raw)))
+    if reid_backend_raw in {"histogram", "embedding"}:
+        kwargs["reid_backend"] = reid_backend_raw
+    if reid_model_raw is not None:
+        kwargs["reid_model_path"] = reid_model_raw
     if not kwargs:
         return settings
     from dataclasses import replace

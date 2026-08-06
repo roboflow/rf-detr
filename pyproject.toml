@@ -68,6 +68,9 @@ onnx = [
     "onnxruntime",
     "polygraphy",
 ]
+reid = [
+    "onnxruntime>=1.16,<2.0",  # CPU inference for the appearance ReID embedding backend
+]
 trt = [
     "pycuda",
     "onnxruntime-gpu",

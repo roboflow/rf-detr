@@ -244,6 +244,45 @@ def test_appearance_similarity_separates_colors() -> None:
     assert histogram_similarity(red, green) < 0.05
 
 
+def test_build_encoder_selects_backend() -> None:
+    from rfdetr_demo.tracking.appearance import EmbeddingEncoder, HistogramEncoder, build_appearance_encoder
+
+    assert isinstance(build_appearance_encoder(backend="histogram", model_path=None), HistogramEncoder)
+    assert isinstance(build_appearance_encoder(backend="embedding", model_path="m.onnx"), EmbeddingEncoder)
+
+
+def test_cosine_similarity_of_l2_vectors() -> None:
+    from rfdetr_demo.tracking.appearance import cosine_similarity
+
+    a = np.array([1.0, 0.0])
+    orthogonal = np.array([0.0, 1.0])
+    assert cosine_similarity(a, a) == 1.0
+    assert cosine_similarity(a, orthogonal) == 0.0
+
+
+def test_embedding_encoder_normalizes_and_scores(monkeypatch: object) -> None:
+    from rfdetr_demo.tracking import appearance
+
+    class _FakeSession:
+        def __init__(self, vector: np.ndarray) -> None:
+            self._vector = vector
+
+        def run(self, _outputs: object, _inputs: dict[str, object]) -> list[np.ndarray]:
+            return [self._vector[np.newaxis, :]]
+
+    encoder = appearance.EmbeddingEncoder("unused.onnx")
+    # Bypass the ONNX session with a deterministic fake returning an unnormalized vector.
+    encoder._session = _FakeSession(np.array([3.0, 4.0, 0.0], dtype=np.float32))
+    encoder._input_name = "input"
+
+    frame = np.zeros((40, 40, 3), dtype=np.uint8)
+    roi = np.array([5.0, 5.0, 35.0, 35.0], dtype=np.float64)
+    descriptor = encoder.encode(frame, roi)
+    assert descriptor is not None
+    assert abs(float(np.linalg.norm(descriptor)) - 1.0) < 1e-9
+    assert encoder.similarity(descriptor, descriptor) == 1.0
+
+
 def test_reid_cost_blend_prefers_matching_appearance() -> None:
     track_boxes = [np.array([0.0, 0.0, 100.0, 100.0], dtype=np.float64)]
     # D0 overlaps more (higher IoU) but has a different appearance; D1 overlaps

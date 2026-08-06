@@ -13,6 +13,9 @@ only the ReID code path requires ``cv2``.
 
 from __future__ import annotations
 
+import os
+from abc import ABC, abstractmethod
+
 import numpy as np
 import supervision as sv
 
@@ -77,6 +80,19 @@ def appearance_roi(
     )
 
 
+def crop_roi(frame_bgr: np.ndarray, roi: np.ndarray) -> np.ndarray | None:
+    """Return the ROI sub-image clipped to frame bounds, or None if degenerate."""
+    height, width = frame_bgr.shape[:2]
+    x1 = max(0, min(width, int(round(float(roi[0])))))
+    y1 = max(0, min(height, int(round(float(roi[1])))))
+    x2 = max(0, min(width, int(round(float(roi[2])))))
+    y2 = max(0, min(height, int(round(float(roi[3])))))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    crop = frame_bgr[y1:y2, x1:x2]
+    return crop if crop.size > 0 else None
+
+
 def appearance_histogram(
     frame_bgr: np.ndarray,
     roi: np.ndarray,
@@ -104,16 +120,8 @@ def appearance_histogram(
             "(e.g. `uv sync --all-groups`) or set RFDETR_TRACK_REID=0."
         ) from error
 
-    height, width = frame_bgr.shape[:2]
-    x1 = max(0, min(width, int(round(float(roi[0])))))
-    y1 = max(0, min(height, int(round(float(roi[1])))))
-    x2 = max(0, min(width, int(round(float(roi[2])))))
-    y2 = max(0, min(height, int(round(float(roi[3])))))
-    if x2 <= x1 or y2 <= y1:
-        return None
-
-    crop = frame_bgr[y1:y2, x1:x2]
-    if crop.size == 0:
+    crop = crop_roi(frame_bgr, roi)
+    if crop is None:
         return None
 
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
@@ -138,3 +146,125 @@ def histogram_similarity(left: np.ndarray | None, right: np.ndarray | None) -> f
     if left is None or right is None or left.shape != right.shape:
         return 0.0
     return float(np.minimum(left, right).sum())
+
+
+def cosine_similarity(left: np.ndarray | None, right: np.ndarray | None) -> float:
+    """Return cosine similarity clamped to ``[0, 1]`` for L2-normalized vectors."""
+    if left is None or right is None or left.shape != right.shape:
+        return 0.0
+    return float(max(0.0, min(1.0, float(np.dot(left, right)))))
+
+
+class AppearanceEncoder(ABC):
+    """Turn an ROI crop into a comparable descriptor.
+
+    Implementations own their own descriptor space (histogram vs embedding),
+    the similarity metric, and how to blend descriptors over time, so the
+    tracker stays agnostic to the ReID backend.
+    """
+
+    @abstractmethod
+    def encode(self, frame_bgr: np.ndarray, roi: np.ndarray) -> np.ndarray | None:
+        """Return a descriptor for the ROI, or None when it cannot be computed."""
+
+    @abstractmethod
+    def similarity(self, left: np.ndarray | None, right: np.ndarray | None) -> float:
+        """Return a similarity in ``[0, 1]`` between two descriptors."""
+
+    @abstractmethod
+    def combine(self, previous: np.ndarray, fresh: np.ndarray, ema: float) -> np.ndarray:
+        """Blend a fresh descriptor into a running one and renormalize."""
+
+
+class HistogramEncoder(AppearanceEncoder):
+    """HSV color-histogram descriptor (no extra dependencies, CPU only)."""
+
+    def encode(self, frame_bgr: np.ndarray, roi: np.ndarray) -> np.ndarray | None:
+        return appearance_histogram(frame_bgr, roi)
+
+    def similarity(self, left: np.ndarray | None, right: np.ndarray | None) -> float:
+        return histogram_similarity(left, right)
+
+    def combine(self, previous: np.ndarray, fresh: np.ndarray, ema: float) -> np.ndarray:
+        blended = ema * previous + (1.0 - ema) * fresh
+        total = float(blended.sum())
+        return blended / total if total > 0 else fresh
+
+
+# ImageNet normalization used by common person-ReID backbones (e.g. OSNet).
+_REID_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+_REID_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+
+class EmbeddingEncoder(AppearanceEncoder):
+    """ONNX person-ReID embedding descriptor (grayscale- and color-robust).
+
+    Requires the ``[reid]`` extra (``onnxruntime``) and an ONNX model path. The
+    session is created lazily on first use so importing this module stays cheap
+    and the model is only loaded when ReID embedding is actually enabled.
+    """
+
+    def __init__(self, model_path: str, *, input_width: int = 128, input_height: int = 256) -> None:
+        self.model_path = model_path
+        self.input_width = input_width
+        self.input_height = input_height
+        self._session: object | None = None
+        self._input_name: str | None = None
+
+    def _ensure_session(self) -> object:
+        if self._session is not None:
+            return self._session
+        if not self.model_path or not os.path.exists(self.model_path):
+            raise FileNotFoundError(
+                f"ReID embedding model not found: {self.model_path!r}. Set RFDETR_REID_MODEL "
+                "to an ONNX person-ReID model, or use RFDETR_REID_BACKEND=histogram.",
+            )
+        try:
+            import onnxruntime as ort
+        except ImportError as error:  # pragma: no cover - exercised only without onnxruntime
+            raise ImportError(
+                "ReID embedding requires onnxruntime. Install the extra: pip install -e '.[reid]'.",
+            ) from error
+        session = ort.InferenceSession(self.model_path, providers=["CPUExecutionProvider"])
+        self._session = session
+        self._input_name = session.get_inputs()[0].name
+        return session
+
+    def encode(self, frame_bgr: np.ndarray, roi: np.ndarray) -> np.ndarray | None:
+        crop = crop_roi(frame_bgr, roi)
+        if crop is None:
+            return None
+        import cv2
+
+        rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+        rgb = cv2.resize(rgb, (self.input_width, self.input_height))
+        normalized = (rgb.astype(np.float32) / 255.0 - _REID_MEAN) / _REID_STD
+        tensor = np.transpose(normalized, (2, 0, 1))[np.newaxis, ...].astype(np.float32)
+        session = self._ensure_session()
+        outputs = session.run(None, {self._input_name: tensor})
+        feature = np.asarray(outputs[0], dtype=np.float64).reshape(-1)
+        norm = float(np.linalg.norm(feature))
+        return feature / norm if norm > 0 else None
+
+    def similarity(self, left: np.ndarray | None, right: np.ndarray | None) -> float:
+        return cosine_similarity(left, right)
+
+    def combine(self, previous: np.ndarray, fresh: np.ndarray, ema: float) -> np.ndarray:
+        blended = ema * previous + (1.0 - ema) * fresh
+        norm = float(np.linalg.norm(blended))
+        return blended / norm if norm > 0 else fresh
+
+
+def build_appearance_encoder(*, backend: str, model_path: str | None) -> AppearanceEncoder:
+    """Return the appearance encoder for a backend name.
+
+    Args:
+        backend: ``"histogram"`` (default, dependency-free) or ``"embedding"``.
+        model_path: ONNX model path, required when ``backend == "embedding"``.
+
+    Returns:
+        A concrete :class:`AppearanceEncoder`.
+    """
+    if backend == "embedding":
+        return EmbeddingEncoder(model_path or "")
+    return HistogramEncoder()

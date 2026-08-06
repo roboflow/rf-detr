@@ -7,14 +7,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
 import supervision as sv
 
 from rfdetr_demo.tracking.appearance import (
-    appearance_histogram,
+    AppearanceEncoder,
     appearance_roi,
+    build_appearance_encoder,
     histogram_similarity,
 )
 from rfdetr_demo.tracking.bbox import (
@@ -108,6 +110,7 @@ def _match_tracks_to_detections(
     track_descriptors: list[np.ndarray | None] | None = None,
     det_descriptors: list[np.ndarray | None] | None = None,
     reid_weight: float = 0.0,
+    similarity_fn: Callable[[np.ndarray | None, np.ndarray | None], float] = histogram_similarity,
 ) -> tuple[list[tuple[int, int]], set[int], set[int]]:
     """Return (track_idx, det_idx) pairs plus unmatched track/det indices.
 
@@ -131,7 +134,7 @@ def _match_tracks_to_detections(
                 continue
             score = iou(track_box, det_box)
             if blend_appearance:
-                similarity = histogram_similarity(
+                similarity = similarity_fn(
                     track_descriptors[track_index],
                     det_descriptors[detection_index],
                 )
@@ -163,6 +166,13 @@ class TrackStore:
     _next_track_id: int = field(default=0, init=False, repr=False)
     _sticky_track_id: int | None = field(default=None, init=False, repr=False)
     _gallery: list[GalleryEntry] = field(default_factory=list, init=False, repr=False)
+    _encoder: AppearanceEncoder | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._encoder = build_appearance_encoder(
+            backend=self.settings.reid_backend,
+            model_path=self.settings.reid_model_path,
+        )
 
     def reset(self) -> None:
         """Clear track history."""
@@ -334,21 +344,24 @@ class TrackStore:
     ) -> np.ndarray | None:
         """Compute the appearance descriptor for one detection, if possible."""
         roi = appearance_roi(nms_key_points, detection_index, box)
-        if roi is None:
+        if roi is None or self._encoder is None:
             return None
-        return appearance_histogram(frame, roi)
+        return self._encoder.encode(frame, roi)
+
+    def _appearance_similarity(self, left: np.ndarray | None, right: np.ndarray | None) -> float:
+        """Similarity between two descriptors under the active encoder."""
+        if self._encoder is None:
+            return 0.0
+        return self._encoder.similarity(left, right)
 
     def _update_descriptor(self, track: TrackSnapshot, descriptor: np.ndarray | None) -> None:
         """Blend a fresh descriptor into the track descriptor with EMA."""
-        if descriptor is None:
+        if descriptor is None or self._encoder is None:
             return
         if track.descriptor is None:
             track.descriptor = descriptor
             return
-        ema = self.settings.reid_ema
-        blended = ema * track.descriptor + (1.0 - ema) * descriptor
-        total = float(blended.sum())
-        track.descriptor = blended / total if total > 0 else descriptor
+        track.descriptor = self._encoder.combine(track.descriptor, descriptor, self.settings.reid_ema)
 
     def _age_gallery(self) -> None:
         """Advance gallery ages and drop entries older than the retention window."""
@@ -385,7 +398,7 @@ class TrackStore:
         best_entry: GalleryEntry | None = None
         best_similarity = self.settings.reid_similarity_threshold
         for entry in self._gallery:
-            similarity = histogram_similarity(entry.descriptor, descriptor)
+            similarity = self._appearance_similarity(entry.descriptor, descriptor)
             if similarity >= best_similarity:
                 best_similarity = similarity
                 best_entry = entry
@@ -466,6 +479,7 @@ class TrackStore:
             track_descriptors=([track.descriptor for track in self._tracks] if reid_active else None),
             det_descriptors=(det_descriptors if reid_active else None),
             reid_weight=(self.settings.reid_weight if reid_active else 0.0),
+            similarity_fn=self._appearance_similarity,
         )
 
         if self.settings.sticky_center_track and self._sticky_track_id is not None:
