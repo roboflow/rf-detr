@@ -64,7 +64,7 @@ def _make_evaluator_mock(stats: list[float]) -> MagicMock:
 
     Examples:
         >>> mock = _make_evaluator_mock([float(i) for i in range(10)])
-        >>> list(mock.coco_eval["keypoints"].stats)
+        >>> mock.coco_eval["keypoints"].stats.tolist()
         [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
     """
     assert len(stats) == 10, f"_make_evaluator_mock: expected 10 stats, got {len(stats)}"
