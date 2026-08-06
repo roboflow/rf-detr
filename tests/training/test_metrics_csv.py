@@ -37,19 +37,22 @@ def _fit_and_read_csv(mc: RFDETRBaseConfig, tc: TrainConfig, criterion=None) -> 
     """Run 1 epoch (2 train + 2 val batches) and return the resulting metrics.csv.
 
     Examples:
+        >>> import contextlib
+        >>> import io
         >>> from tempfile import TemporaryDirectory
         >>> with TemporaryDirectory() as d:
         ...     output_dir = Path(d) / 'out'
-        ...     metrics = _fit_and_read_csv(
-        ...         RFDETRBaseConfig(pretrain_weights=None, device='cpu', num_classes=3),
-        ...         TrainConfig(
-        ...             dataset_dir=str(Path(d) / 'ds'),
-        ...             output_dir=str(output_dir),
-        ...             epochs=1,
-        ...             batch_size=2,
-        ...             tensorboard=False,
-        ...         ),
-        ...     )
+        ...     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        ...         metrics = _fit_and_read_csv(
+        ...             RFDETRBaseConfig(pretrain_weights=None, device='cpu', num_classes=3),
+        ...             TrainConfig(
+        ...                 dataset_dir=str(Path(d) / 'ds'),
+        ...                 output_dir=str(output_dir),
+        ...                 epochs=1,
+        ...                 batch_size=2,
+        ...                 tensorboard=False,
+        ...             ),
+        ...         )
         ...     {'train/loss', 'val/loss'}.issubset(metrics.columns)
         True
     """

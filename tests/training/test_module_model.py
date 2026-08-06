@@ -152,7 +152,7 @@ def _build_module(model_config=None, train_config=None, tmp_path=None):
 
     Examples:
         >>> module, model, criterion, postprocess = _build_module()
-        >>> module.model is model and module.criterion is criterion and module.postprocessors is postprocess
+        >>> module.model is model and module.criterion is criterion and module.postprocess is postprocess
         True
     """
     mc = model_config or _base_model_config()

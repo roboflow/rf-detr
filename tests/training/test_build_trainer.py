@@ -45,7 +45,7 @@ def _find_resume_checkpoints(trainer):
 
     Examples:
         >>> resume_cb = ModelCheckpoint(dirpath='.')
-        >>> best_cb = BestModelCallback(save_top_k=1, monitor='val/mAP_50')
+        >>> best_cb = BestModelCallback(output_dir='.')
         >>> trainer = MagicMock(callbacks=[resume_cb, best_cb])
         >>> _find_resume_checkpoints(trainer) == [resume_cb]
         True
