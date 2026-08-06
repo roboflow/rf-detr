@@ -117,8 +117,9 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         weights: Relative sampling weight per source, in the same order. Normalised internally; must be positive.
         batch_size: Number of samples per batch on a single rank. This is the mini-batch the model sees per forward
             pass, so it is neither multiplied by gradient-accumulation steps nor by the world size.
-        drop_last: Whether to drop the final partial batch of the driving source.
-        shuffle: Whether to shuffle indices within each source.
+        drop_last: Whether to drop the final partial batch of the driving source. Note that at least one batch is always
+            produced (even when the driving source is smaller than its per-batch slot count), so `drop_last=True` will
+            not reduce an epoch to zero batches for tiny datasets.
         num_replicas: Number of DDP processes participating.
         rank: Rank of the current process, in ``[0, num_replicas)``.
         seed: Base seed shared by all ranks; combined with the epoch to shuffle identically across ranks.
