@@ -167,7 +167,18 @@ class HungarianMatcher(nn.Module):
 
     @staticmethod
     def _detection_inputs_are_safe(outputs: dict[str, Any], targets: list[dict[str, Any]]) -> bool:
-        """Return whether the compact path can preserve the full path's finite-cost behavior."""
+        """Return whether the compact path can preserve the full path's finite-cost behavior.
+
+        Args:
+            outputs: Model outputs containing ``pred_boxes`` and ``pred_logits``.
+            targets: Per-image target dicts containing ``boxes`` and ``labels``.
+
+        Returns:
+            ``False`` if any target's box dtype or device disagrees with the predictions', if any
+            target's label device disagrees with the predictions', if any box coordinate (predicted or
+            target) is non-finite or exceeds ``coordinate_limit``, or if any label falls outside
+            ``[0, num_classes)``; ``True`` otherwise. Any ``False`` routes the batch to the full path.
+        """
         pred_boxes = outputs["pred_boxes"]
         # Metadata-only prechecks: attribute comparisons that launch no kernel and force no device
         # sync, and that short-circuit before any reduction below runs. `pad_sequence` allocates
@@ -210,7 +221,19 @@ class HungarianMatcher(nn.Module):
         outputs: dict[str, Any],
         targets: list[dict[str, Any]],
     ) -> Tensor:
-        """Compute same-image detection costs with targets padded only to the batch maximum."""
+        """Compute same-image detection costs with targets padded only to the batch maximum.
+
+        Args:
+            outputs: Model outputs containing ``pred_boxes`` and ``pred_logits``.
+            targets: Per-image target dicts containing ``boxes`` and ``labels``.
+
+        Returns:
+            Cost matrix of shape ``[num_queries, sum(sizes)]``, where ``sizes`` is each image's real
+            (unpadded) target count. The class, bbox, and GIoU terms are computed on tensors padded to
+            ``max(sizes)`` for the gather/cdist/GIoU ops, but the padding columns are dropped per-image
+            (``[:, :size]``) before the per-image slices are concatenated along ``dim=-1`` — the
+            returned tensor never carries the padded ``max(sizes)`` width or a leading batch dimension.
+        """
         batch_size, num_queries = outputs["pred_logits"].shape[:2]
         sizes = [len(target["boxes"]) for target in targets]
         padded_target_ids = pad_sequence([target["labels"] for target in targets], batch_first=True)
@@ -238,7 +261,18 @@ class HungarianMatcher(nn.Module):
         sizes: list[int],
         group_detr: int,
     ) -> list[tuple[Tensor, Tensor]]:
-        """Solve a compact ``[queries, total_targets]`` matrix by group and image."""
+        """Solve a compact ``[queries, total_targets]`` matrix by group and image.
+
+        Args:
+            cost_matrix: Compact cost matrix of shape ``[num_queries, sum(sizes)]``, as returned by
+                ``_compute_compact_detection_cost_matrix``.
+            sizes: Each image's real (unpadded) target count, in batch order.
+            group_detr: Number of query groups; ``num_queries`` must be evenly divisible by it.
+
+        Returns:
+            One ``(row_indices, col_indices)`` index pair per image, in batch order, with each group's
+            assignment concatenated onto the same image's pair from every other group.
+        """
         target_offsets = [0]
         for size in sizes:
             target_offsets.append(target_offsets[-1] + size)
