@@ -568,7 +568,7 @@ def _make_matching_entry(
         >>> entry = _make_matching_entry([0.9, 0.5], [1, -1], [False, False], 2)
         >>> entry["total_gt"]
         2
-        >>> list(entry["scores"])
+        >>> [round(float(x), 3) for x in entry["scores"]]
         [0.9, 0.5]
     """
     return {
