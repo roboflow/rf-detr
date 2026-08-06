@@ -20,7 +20,14 @@ import torch
 from PIL import Image
 
 from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema
-from rfdetr.datasets.coco import CocoDetection, ConvertCoco, build_coco, build_roboflow_from_coco
+from rfdetr.datasets.coco import (
+    CocoDetection,
+    ConvertCoco,
+    annotated_category_ids,
+    build_coco,
+    build_roboflow_from_coco,
+    filter_parent_categories,
+)
 from rfdetr.detr import RFDETR
 
 # Minimal image shared across all tests
@@ -1326,3 +1333,143 @@ class TestCocoDetectionZeroAnnotations:
         assert target["labels"].shape == torch.Size([0])
         assert target["boxes"].dtype == torch.float32
         assert target["labels"].dtype == torch.int64
+
+
+_PHANTOM_ROOT_CATEGORIES = [
+    {"id": 0, "name": "eggmasses", "supercategory": "none"},
+    {"id": 1, "name": "empty_pot", "supercategory": "eggmasses"},
+    {"id": 2, "name": "stake", "supercategory": "eggmasses"},
+    {"id": 3, "name": "tree", "supercategory": "eggmasses"},
+    {"id": 4, "name": "trunk", "supercategory": "eggmasses"},
+]
+
+
+def _write_roboflow_hierarchy_split(directory: Path, annotated_ids: List[int]) -> Path:
+    """Write a Roboflow-style COCO split whose category list starts with a synthetic root node.
+
+    Args:
+        directory: Split directory, created if missing, receiving the image and the annotation file.
+        annotated_ids: Category ids that each receive one annotation on the single image.
+
+    Returns:
+        Path of the written ``_annotations.coco.json``.
+
+    Examples:
+        >>> import tempfile
+        >>> split = Path(tempfile.mkdtemp()) / "train"
+        >>> _write_roboflow_hierarchy_split(split, [1]).name
+        '_annotations.coco.json'
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (100, 100)).save(directory / "img1.jpg")
+    annotations = [
+        {"id": index, "image_id": 1, "category_id": category_id, "bbox": [10, 10, 30, 30], "area": 900, "iscrowd": 0}
+        for index, category_id in enumerate(annotated_ids)
+    ]
+    ann_file = directory / "_annotations.coco.json"
+    ann_file.write_text(
+        json.dumps(
+            {
+                "images": [{"id": 1, "file_name": "img1.jpg", "width": 100, "height": 100}],
+                "annotations": annotations,
+                "categories": _PHANTOM_ROOT_CATEGORIES,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return ann_file
+
+
+class TestFilterParentCategories:
+    """Unit tests for the grouping-category filter shared by class names, class count and label remapping."""
+
+    def test_unannotated_root_is_dropped(self) -> None:
+        """A category named as another category's supercategory and carrying no annotation is removed."""
+        result = filter_parent_categories(_PHANTOM_ROOT_CATEGORIES, {1, 2, 3, 4})
+        assert [category["name"] for category in result] == ["empty_pot", "stake", "tree", "trunk"]
+
+    def test_annotated_parent_is_kept(self) -> None:
+        """A parent category that owns annotations stays, so its annotations keep a label slot."""
+        result = filter_parent_categories(_PHANTOM_ROOT_CATEGORIES, {0, 1})
+        assert [category["id"] for category in result] == [0, 1, 2, 3, 4]
+
+    def test_flat_dataset_is_unchanged(self) -> None:
+        """Datasets whose supercategories are all placeholders are returned untouched."""
+        categories = [
+            {"id": 1, "name": "dog", "supercategory": "none"},
+            {"id": 2, "name": "cat", "supercategory": "none"},
+        ]
+        assert filter_parent_categories(categories, set()) == categories
+
+    def test_result_is_sorted_by_id(self) -> None:
+        """Output order follows category id, matching the contiguous label indices derived from it."""
+        categories = [
+            {"id": 2, "name": "cat", "supercategory": "none"},
+            {"id": 1, "name": "dog", "supercategory": "none"},
+        ]
+        assert [category["id"] for category in filter_parent_categories(categories, set())] == [1, 2]
+
+    def test_all_categories_parents_falls_back_to_full_list(self) -> None:
+        """Pathological input where every category is a parent keeps the full list instead of returning nothing."""
+        categories = [
+            {"id": 1, "name": "a", "supercategory": "b"},
+            {"id": 2, "name": "b", "supercategory": "a"},
+        ]
+        assert filter_parent_categories(categories, set()) == categories
+
+
+class TestAnnotatedCategoryIds:
+    """Unit tests for collecting the annotated category ids of a parsed COCO file."""
+
+    def test_ids_collected_from_annotations(self) -> None:
+        """Every distinct ``category_id`` referenced by an annotation is reported once."""
+        coco_data = {"annotations": [{"category_id": 3}, {"category_id": 3}, {"category_id": 5}]}
+        assert annotated_category_ids(coco_data) == {3, 5}
+
+    def test_missing_annotations_key_yields_empty_set(self) -> None:
+        """A category-only annotation file reports no annotated categories."""
+        assert annotated_category_ids({"categories": _PHANTOM_ROOT_CATEGORIES}) == set()
+
+
+class TestPhantomRootConsistency:
+    """Roboflow COCO exports prepend an unannotated root category; count, remap and names must agree without it."""
+
+    def test_cat2label_skips_unannotated_root(self, tmp_path: Path) -> None:
+        """The synthetic root consumes no label slot, so real classes start at index 0."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
+        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
+        assert dataset.cat2label == {1: 0, 2: 1, 3: 2, 4: 3}
+
+    def test_label2cat_is_exposed_for_the_evaluator(self, tmp_path: Path) -> None:
+        """The reverse mapping reaches the COCO API object so predictions convert back to original ids."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
+        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
+        assert dataset.coco.label2cat == {0: 1, 1: 2, 2: 3, 3: 4}
+
+    def test_labels_use_filtered_indices(self, tmp_path: Path) -> None:
+        """Targets carry the filtered label indices rather than the root-shifted ones."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
+        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
+        _, target = dataset[0]
+        assert target["labels"].tolist() == [0, 3]
+
+    def test_detected_num_classes_matches_cat2label(self, tmp_path: Path) -> None:
+        """The auto-detected head size equals the number of label slots the remapping actually uses."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
+        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
+        detected = RFDETR._detect_num_classes_for_training(str(tmp_path))
+        assert detected == len(set(dataset.cat2label.values()))
+
+    def test_load_classes_matches_cat2label_order(self, tmp_path: Path) -> None:
+        """Class names line up positionally with the label indices assigned by the remapping."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
+        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
+        names = RFDETR._load_classes(str(tmp_path))
+        assert names == [dataset.coco.cats[dataset.label2cat[label]]["name"] for label in range(len(names))]
+
+    def test_annotated_parent_keeps_its_label_slot(self, tmp_path: Path) -> None:
+        """A parent category carrying annotations is not dropped, so converting its annotations does not raise."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [0, 1])
+        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
+        _, target = dataset[0]
+        assert target["labels"].tolist() == [0, 1]

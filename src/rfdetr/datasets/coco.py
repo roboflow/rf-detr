@@ -54,6 +54,78 @@ def is_valid_coco_dataset(dataset_dir: str) -> bool:
     return (Path(dataset_dir) / "train" / "_annotations.coco.json").exists()
 
 
+# Values a COCO export uses to say "this category has no parent".
+_SUPERCATEGORY_PLACEHOLDERS: set[str | None] = {"", "none", "null", None}
+
+
+def annotated_category_ids(coco_data: dict[str, Any]) -> set[int]:
+    """Collect the category ids referenced by at least one annotation of a parsed COCO file.
+
+    Args:
+        coco_data: Parsed COCO JSON. A missing ``annotations`` key yields an empty set.
+
+    Returns:
+        Category ids carrying at least one annotation.
+
+    Examples:
+        >>> annotated_category_ids({"annotations": [{"category_id": 3}, {"category_id": 3}]})
+        {3}
+        >>> annotated_category_ids({"categories": []})
+        set()
+    """
+    return {int(annotation["category_id"]) for annotation in coco_data.get("annotations", [])}
+
+
+def filter_parent_categories(
+    categories: list[dict[str, Any]],
+    annotated_ids: set[int] | None = None,
+) -> list[dict[str, Any]]:
+    """Drop unannotated grouping nodes from a COCO ``categories`` list.
+
+    Roboflow COCO exports prepend a synthetic root category (``supercategory: "none"``) whose name is reused as the
+    ``supercategory`` of every real class. It carries no annotations, yet it consumes a model output slot once the
+    category list is turned into contiguous label indices. Removing it keeps class names, class count and label
+    remapping in agreement (GitHub #609).
+
+    A category is dropped when it is named as another category's ``supercategory`` **and** no annotation references its
+    id. The annotation guard keeps genuinely labelled parents of hierarchical datasets. Flat datasets — every
+    ``supercategory`` a placeholder — are returned untouched, as is any input where filtering would remove everything.
+
+    Args:
+        categories: Raw COCO ``categories`` entries; each needs an ``id`` and a ``name``.
+        annotated_ids: Category ids carrying at least one annotation, typically from
+            :func:`annotated_category_ids`. ``None`` treats every category as unannotated, which is the right default
+            when only the category list is available.
+
+    Returns:
+        The kept categories, sorted by ``id``.
+
+    Examples:
+        >>> categories = [
+        ...     {"id": 0, "name": "eggmasses", "supercategory": "none"},
+        ...     {"id": 1, "name": "stake", "supercategory": "eggmasses"},
+        ...     {"id": 2, "name": "tree", "supercategory": "eggmasses"},
+        ... ]
+        >>> [category["name"] for category in filter_parent_categories(categories, {1, 2})]
+        ['stake', 'tree']
+        >>> [category["name"] for category in filter_parent_categories(categories, {0, 1, 2})]
+        ['eggmasses', 'stake', 'tree']
+    """
+    ordered = sorted(categories, key=lambda category: category.get("id", float("inf")))
+    supercategories = [category.get("supercategory", "none") for category in ordered]
+    parents = {name for name in supercategories if name not in _SUPERCATEGORY_PLACEHOLDERS}
+    if not parents:
+        return ordered
+
+    annotated = annotated_ids or set()
+    dropped = {
+        category["name"] for category in ordered if category["name"] in parents and category.get("id") not in annotated
+    }
+    kept = [category for category in ordered if category["name"] not in dropped]
+    # Safety fallback for pathological inputs where every category is a parent of another.
+    return kept or ordered
+
+
 def _category_ids_with_keypoints(coco: Any) -> list[int]:
     """Return sorted COCO category ids that carry keypoint metadata or annotations."""
     category_ids = {
@@ -227,7 +299,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):
     ``remap_category_ids=True`` builds a ``cat2label`` mapping from the annotation file so that IDs are remapped to the
     range ``[0, N)``.  The reverse ``label2cat`` mapping is attached to the underlying COCO API object so that
     :class:`~rfdetr.datasets.coco_eval.CocoEvaluator` can convert predicted label indices back to the original category
-    IDs required by pycocotools.
+    IDs required by pycocotools.  Unannotated grouping categories — the synthetic root that Roboflow COCO exports
+    prepend, for example — are excluded by :func:`filter_parent_categories` so they do not consume an output slot.
 
     ``remap_category_ids`` should be ``True`` for Roboflow / custom datasets (via :func:`build_roboflow_from_coco`) and
     ``False`` (the default) when evaluating pretrained models that were trained with the convention that model output
@@ -268,7 +341,15 @@ class CocoDetection(torchvision.datasets.CocoDetection):
             if include_keypoints:
                 self.cat2label = _build_keypoint_cat2label(self.coco, num_keypoints_per_class)
             else:
-                self.cat2label = {cat_id: i for i, cat_id in enumerate(sorted(self.coco.cats.keys()))}
+                annotated = {int(annotation["category_id"]) for annotation in self.coco.anns.values()}
+                kept = filter_parent_categories(list(self.coco.cats.values()), annotated)
+                self.cat2label = {int(category["id"]): label for label, category in enumerate(kept)}
+                dropped = sorted(set(self.coco.cats) - set(self.cat2label))
+                if dropped:
+                    logger.info(
+                        "Skipping unannotated COCO grouping categories when assigning label indices: %s",
+                        ", ".join(f"{cat_id} ({self.coco.cats[cat_id]['name']})" for cat_id in dropped),
+                    )
             # Reverse mapping from contiguous label indices back to COCO category_id
             self.label2cat = {label: cat_id for cat_id, label in self.cat2label.items()}
             # Expose label-to-category mapping on the underlying COCO API object for evaluators

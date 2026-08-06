@@ -38,7 +38,7 @@ from rfdetr.datasets._keypoint_schema import (
     infer_coco_keypoint_schema,
     infer_yolo_keypoint_schema,
 )
-from rfdetr.datasets.coco import is_valid_coco_dataset
+from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categories, is_valid_coco_dataset
 from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -1732,25 +1732,8 @@ class RFDETR:
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
             with open(coco_path, encoding="utf-8") as f:
                 anns = json.load(f)
-            categories = sorted(anns["categories"], key=lambda category: category.get("id", float("inf")))
-
-            # Catch possible placeholders for no supercategory
-            placeholders = {"", "none", "null", None}
-
-            # If no meaningful supercategory exists anywhere, treat as flat dataset
-            has_any_sc = any(c.get("supercategory", "none") not in placeholders for c in categories)
-            if not has_any_sc:
-                return [c["name"] for c in categories]
-
-            # Mixed/Hierarchical: keep only categories that are not parents of other categories.
-            # Both leaves (with a real supercategory) and standalone top-level nodes (supercategory is a
-            # placeholder) satisfy this condition — neither appears as another category's supercategory.
-            parents = {c.get("supercategory") for c in categories if c.get("supercategory", "none") not in placeholders}
-            has_children = {c["name"] for c in categories if c["name"] in parents}
-
-            class_names = [c["name"] for c in categories if c["name"] not in has_children]
-            # Safety fallback for pathological inputs
-            return class_names or [c["name"] for c in categories]
+            categories = filter_parent_categories(anns["categories"], annotated_category_ids(anns))
+            return [category["name"] for category in categories]
 
         yaml_path = RFDETR._yolo_data_file_path(dataset_dir) if is_valid_yolo_dataset(dataset_dir) else None
         if yaml_path is not None:
@@ -1770,8 +1753,10 @@ class RFDETR:
     def _detect_num_classes_for_training(dataset_dir: str, *, use_grouppose_keypoints: bool = False) -> int:
         """Detect the class count using the same category basis as training labels.
 
-        For COCO-style datasets this counts all categories by ``id`` from ``train/_annotations.coco.json`` (matching the
-        remapping based on ``coco.cats`` used by the training datamodule). In keypoint mode it instead counts the
+        For COCO-style datasets this counts the categories of ``train/_annotations.coco.json`` that
+        :func:`~rfdetr.datasets.coco.filter_parent_categories` keeps, which is the same basis
+        :class:`~rfdetr.datasets.coco.CocoDetection` uses to build ``cat2label`` — unannotated grouping categories
+        consume neither a label index nor an output slot. In keypoint mode it instead counts the
         inferred RF-DETR keypoint label slots. In legacy background-first schemas (e.g. ``[0, 17]``) slot ``0`` is
         reserved for classes without keypoints; active-first schemas (e.g. ``[17]``) use normal 0-based indices. For
         YOLO-style datasets it falls back to ``_load_classes``.
@@ -1782,9 +1767,8 @@ class RFDETR:
                 return len(infer_coco_keypoint_schema(coco_path).class_names)
             with open(coco_path, encoding="utf-8") as f:
                 anns = json.load(f)
-            categories = anns["categories"]
-            cat_by_id = {category["id"]: category for category in categories}
-            return len(cat_by_id)
+            categories = filter_parent_categories(anns["categories"], annotated_category_ids(anns))
+            return len({category["id"] for category in categories})
 
         return len(RFDETR._load_classes(dataset_dir))
 
