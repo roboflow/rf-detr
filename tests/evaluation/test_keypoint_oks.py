@@ -29,7 +29,7 @@ def _make_coco_gt() -> MagicMock:
 
     Examples:
         >>> gt = _make_coco_gt()
-        >>> gt.name
+        >>> gt._mock_name
         'coco_gt'
     """
     return MagicMock(name="coco_gt")
@@ -151,7 +151,7 @@ def _make_keypoint_prediction(
         [3]
         >>> pred[3]["keypoints"].shape
         torch.Size([1, 2, 3])
-        >>> float(pred[3]["scores"][0])
+        >>> round(float(pred[3]["scores"][0]), 2)
         0.99
     """
     if box is None:
