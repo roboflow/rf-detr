@@ -18,9 +18,10 @@ import logging
 from pathlib import Path
 
 import numpy as np
+import supervision as sv
 
 from rfdetr_demo.paths import resolve_default_source
-from rfdetr_demo.tracking.keypoints_ops import track_ids_from_key_points
+from rfdetr_demo.tracking.keypoints_ops import is_track_ghost, track_ids_from_key_points
 from rfdetr_demo.tracking.pipeline import PersonTrackPipeline
 from rfdetr_demo.tracking.types import PersonTrackSettings
 
@@ -80,6 +81,46 @@ def summarize_track_ids(per_frame_ids: list[list[int]]) -> RunSummary:
     )
 
 
+def color_for_id(track_id: int) -> tuple[int, int, int]:
+    """Return a deterministic, well-spread BGR color for a track id."""
+    hue = (track_id * 47) % 180
+    import cv2
+
+    pixel = np.uint8([[[hue, 200, 255]]])
+    bgr = cv2.cvtColor(pixel, cv2.COLOR_HSV2BGR)[0, 0]
+    return int(bgr[0]), int(bgr[1]), int(bgr[2])
+
+
+def _draw_tracks(frame_bgr: np.ndarray, key_points: sv.KeyPoints) -> np.ndarray:
+    """Draw per-track boxes, joints, and id labels colored consistently by id."""
+    import cv2
+
+    annotated = frame_bgr.copy()
+    track_ids = track_ids_from_key_points(key_points)
+    boxes = key_points.data.get("xyxy") if key_points.data else None
+    for index, track_id in enumerate(track_ids):
+        if track_id is None:
+            continue
+        color = color_for_id(track_id)
+        ghost = is_track_ghost(key_points, index)
+        thickness = 1 if ghost else 2
+        if boxes is not None and index < len(boxes):
+            x1, y1, x2, y2 = (int(round(float(value))) for value in boxes[index])
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, thickness)
+            label = f"{track_id}*" if ghost else str(track_id)
+            cv2.putText(annotated, label, (x1, max(0, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        xy = key_points.xy[index]
+        visible = key_points.visible[index] if key_points.visible is not None else None
+        for joint_index in range(len(xy)):
+            if visible is not None and not visible[joint_index]:
+                continue
+            px, py = int(round(float(xy[joint_index, 0]))), int(round(float(xy[joint_index, 1])))
+            if px <= 0 and py <= 0:
+                continue
+            cv2.circle(annotated, (px, py), 2, color, -1)
+    return annotated
+
+
 def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Register the ``compare-reid`` subcommand."""
     parser = subparsers.add_parser(
@@ -94,6 +135,12 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     parser.add_argument("--reid-similarity", type=float, default=0.5, help="Gallery revival threshold")
     parser.add_argument("--reid-gallery-frames", type=int, default=60, help="Gallery retention window")
     parser.add_argument("--json", type=Path, default=None, help="Optional path to write metrics JSON")
+    parser.add_argument(
+        "--write-video",
+        action="store_true",
+        help="Write id-labeled reid_off.mp4 / reid_on.mp4 for visual comparison",
+    )
+    parser.add_argument("--out-dir", type=Path, default=Path("."), help="Directory for --write-video output")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     parser.set_defaults(_handler=run)
 
@@ -130,8 +177,13 @@ def _collect_ids(
     max_frames: int | None,
     reid_settings: PersonTrackSettings,
     baseline_settings: PersonTrackSettings,
+    video_dir: Path | None = None,
 ) -> tuple[list[list[int]], list[list[int]]]:
-    """Run one model, feed each frame through both pipelines, and collect ids."""
+    """Run one model, feed each frame through both pipelines, and collect ids.
+
+    When ``video_dir`` is given, also writes id-labeled ``reid_off.mp4`` and
+    ``reid_on.mp4`` there for visual comparison.
+    """
     import cv2
 
     from rfdetr_demo.inference.models import build_keypoint_model
@@ -140,20 +192,41 @@ def _collect_ids(
     probe = cv2.VideoCapture(str(source))
     width = int(probe.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
     height = int(probe.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
+    fps = probe.get(cv2.CAP_PROP_FPS) or 25.0
     probe.release()
 
     baseline_pipeline = PersonTrackPipeline(settings=baseline_settings, frame_width=width, frame_height=height)
     reid_pipeline = PersonTrackPipeline(settings=reid_settings, frame_width=width, frame_height=height)
 
+    baseline_writer = None
+    reid_writer = None
+    if video_dir is not None:
+        video_dir.mkdir(parents=True, exist_ok=True)
+        out_fps = max(1.0, fps / max(1, frame_stride))
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        baseline_writer = cv2.VideoWriter(str(video_dir / "reid_off.mp4"), fourcc, out_fps, (width, height))
+        reid_writer = cv2.VideoWriter(str(video_dir / "reid_on.mp4"), fourcc, out_fps, (width, height))
+
     baseline_ids: list[list[int]] = []
     reid_ids: list[list[int]] = []
-    for index, frame_bgr in _iter_frames(source, frame_stride=frame_stride, max_frames=max_frames):
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        key_points = model.predict(frame_rgb, threshold=threshold, include_source_image=False)
-        baseline_result = baseline_pipeline.apply(key_points, index, frame_bgr)
-        reid_result = reid_pipeline.apply(key_points, index, frame_bgr)
-        baseline_ids.append([tid for tid in track_ids_from_key_points(baseline_result.key_points) if tid is not None])
-        reid_ids.append([tid for tid in track_ids_from_key_points(reid_result.key_points) if tid is not None])
+    try:
+        for index, frame_bgr in _iter_frames(source, frame_stride=frame_stride, max_frames=max_frames):
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            key_points = model.predict(frame_rgb, threshold=threshold, include_source_image=False)
+            baseline_result = baseline_pipeline.apply(key_points, index, frame_bgr)
+            reid_result = reid_pipeline.apply(key_points, index, frame_bgr)
+            baseline_ids.append(
+                [tid for tid in track_ids_from_key_points(baseline_result.key_points) if tid is not None],
+            )
+            reid_ids.append([tid for tid in track_ids_from_key_points(reid_result.key_points) if tid is not None])
+            if baseline_writer is not None and reid_writer is not None:
+                baseline_writer.write(_draw_tracks(frame_bgr, baseline_result.key_points))
+                reid_writer.write(_draw_tracks(frame_bgr, reid_result.key_points))
+    finally:
+        if baseline_writer is not None:
+            baseline_writer.release()
+        if reid_writer is not None:
+            reid_writer.release()
     return baseline_ids, reid_ids
 
 
@@ -191,6 +264,7 @@ def run(args: argparse.Namespace) -> int:
     )
 
     logger.info("Comparing ReID off vs on over %s", source)
+    video_dir = args.out_dir if args.write_video else None
     baseline_ids, reid_ids = _collect_ids(
         source,
         threshold=args.threshold,
@@ -198,11 +272,15 @@ def run(args: argparse.Namespace) -> int:
         max_frames=args.max_frames,
         reid_settings=reid_settings,
         baseline_settings=baseline_settings,
+        video_dir=video_dir,
     )
 
     baseline_summary = summarize_track_ids(baseline_ids)
     reid_summary = summarize_track_ids(reid_ids)
     _print_comparison(baseline_summary, reid_summary)
+
+    if video_dir is not None:
+        print(f"\nWrote videos: {video_dir / 'reid_off.mp4'} and {video_dir / 'reid_on.mp4'} (id* = ghost hold)")
 
     if args.json is not None:
         payload = {

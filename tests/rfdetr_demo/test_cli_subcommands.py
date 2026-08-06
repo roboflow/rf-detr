@@ -53,3 +53,11 @@ def test_summarize_track_ids_counts_revival_as_fewer_ids() -> None:
     assert without_reid.unique_ids == 2
     assert with_reid.unique_ids == 1
     assert with_reid.unique_ids < without_reid.unique_ids
+
+
+def test_color_for_id_is_deterministic_and_distinct() -> None:
+    from rfdetr_demo.cli.subcommands.compare_reid import color_for_id
+
+    assert color_for_id(3) == color_for_id(3)
+    assert color_for_id(3) != color_for_id(4)
+    assert all(0 <= channel <= 255 for channel in color_for_id(7))
