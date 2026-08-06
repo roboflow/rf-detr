@@ -175,7 +175,15 @@ def _warn_on_partial_load(incompatible: Any, pretrain_weights_path: str) -> None
     except TypeError:
         # Result wasn't iterable (e.g. a MagicMock in unit tests) — quietly skip.
         return
-    missing = _filter_intentional_keys(missing_keys)
+    # `_kp_active_mask` is a deterministic schema buffer, not a learned
+    # parameter. Detection checkpoints published before keypoint support do not
+    # contain it; the current model correctly reconstructs it from the configured
+    # keypoint schema (an empty mask for detection-only variants).
+    missing = [
+        key
+        for key in _filter_intentional_keys(missing_keys)
+        if key != "_kp_active_mask" and not key.endswith("._kp_active_mask")
+    ]
     unexpected = _filter_intentional_keys(unexpected_keys)
     if not missing and not unexpected:
         return

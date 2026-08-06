@@ -1085,6 +1085,10 @@ class TestPartialLoadDetector:
                 id="intentional_head_keys",
             ),
             pytest.param(
+                SimpleNamespace(missing_keys=["_kp_active_mask"], unexpected_keys=[]),
+                id="legacy_checkpoint_missing_deterministic_keypoint_mask",
+            ),
+            pytest.param(
                 SimpleNamespace(missing_keys=42, unexpected_keys=[]),
                 id="non_iterable_missing_keys",
             ),
@@ -1093,7 +1097,7 @@ class TestPartialLoadDetector:
     def test_no_warning_cases(self, captured, result: SimpleNamespace) -> None:
         """Cases that must not emit any partial-load warning.
 
-        Covers: clean load, intentional head keys, and non-iterable missing_keys.
+        Covers: clean load, intentional head keys, deterministic buffers, and non-iterable missing_keys.
         """
         _warn_on_partial_load(result, "/fake/weights.pth")
         assert captured == []
@@ -1111,6 +1115,34 @@ class TestPartialLoadDetector:
         assert len(captured) == 1
         assert "/fake/weights.pth" in captured[0]
         assert "register_tokens" in captured[0]
+
+    def test_missing_keypoint_mask_does_not_hide_real_missing_key(self, captured):
+        """The deterministic mask is ignored without suppressing a real backbone gap."""
+        result = SimpleNamespace(
+            missing_keys=[
+                "_kp_active_mask",
+                "backbone.0.encoder.encoder.embeddings.register_tokens",
+            ],
+            unexpected_keys=[],
+        )
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "register_tokens" in captured[0]
+        assert "_kp_active_mask" not in captured[0]
+
+    def test_similarly_named_missing_key_still_warns(self, captured):
+        """Filtering the exact schema buffer must not hide a prefix collision."""
+        result = SimpleNamespace(missing_keys=["_kp_active_mask_projection.weight"], unexpected_keys=[])
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "_kp_active_mask_projection.weight" in captured[0]
+
+    def test_unexpected_keypoint_mask_still_warns(self, captured):
+        """Only a missing deterministic mask is intentional; an unconsumed mask is still surfaced."""
+        result = SimpleNamespace(missing_keys=[], unexpected_keys=["_kp_active_mask"])
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "_kp_active_mask" in captured[0]
 
     def test_unexpected_keys_warn(self, captured):
         """Unexpected checkpoint keys (model has no slot for them) must trigger the warning."""
