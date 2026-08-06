@@ -548,71 +548,37 @@ class COCOEvalCallback(Callback):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _compute_and_log(self, trainer: Any, pl_module: Any, split: str, *, metric: Any | None = None) -> None:
-        """Shared epoch-end logic for validation and test evaluation loops.
+    def _compute_and_log_ema_metrics(
+        self, trainer: Any, pl_module: Any, split: str, pfx: str, mar_key: str
+    ) -> tuple[bool, dict[str, Any] | None]:
+        """Compute, log, and reset ``map_metric_ema`` if every rank agrees it has data this epoch.
 
-        Computes mAP (via ``self.map_metric``), runs the F1 confidence-threshold sweep, logs all scalar metrics via
-        ``pl_module.log``, prints two summary tables to the terminal, and resets internal accumulators.  When
-        ``self.map_metric_ema`` is set, EMA variants of all metrics (including ``ema_segm_mAP_50_95`` and
-        ``ema_segm_mAP_50`` for segmentation models) are logged under the same ``split/`` namespace.
+        Extracted out of :meth:`_compute_and_log` so its early-return branch (base ``metric`` empty)
+        can call it too — under ``eval_ema_only`` the base metric never accumulates updates (see
+        ``on_validation_batch_end``), so gating EMA logging on the base metric's own guard silently
+        drops the EMA metrics as well, leaving the epoch with no validation output at all (#1285).
+
+        The EMA ``compute()`` triggers a cross-rank metric sync, so it must be issued by EVERY rank
+        or none: a rank whose EMA metric is empty/absent would otherwise skip this collective and
+        desync the DDP collective sequence, deadlocking validation (#931 / #449).
+        ``_should_compute_ema`` makes the decision unanimous across ranks.
 
         Args:
             trainer: The PTL Trainer.
             pl_module: The LightningModule.
             split: Metric namespace — ``"val"`` or ``"test"``.
-            metric: Optional split-specific mAP accumulator. Defaults to the validation/test accumulator.
+            pfx: torchmetrics key prefix (``"bbox_"`` when ``iou_type`` is a list, else ``""``).
+            mar_key: Prefixed AR metric key for ``self._max_dets``.
+
+        Returns:
+            ``(should_compute_ema, ema_metrics)`` — whether the EMA metrics were actually computed
+            and logged this call (callers use this to decide whether the parallel EMA keypoint split
+            should also be logged or reset), and the raw ``compute()`` output when they were, else
+            ``None``. Callers that also need per-class EMA data (see ``_print_ema_only_summary``)
+            reuse this instead of calling ``compute()`` a second time.
         """
-        metric = self.map_metric if metric is None else metric
-        f1_local = self._f1_train_local if split == "train" else self._f1_local
-        if not self._metric_has_updates(metric):
-            metric.reset()
-            self._reset_f1_local(split)
-            self._reset_keypoint_split(split)
-            logger.debug("Skipping %s COCO metric compute because no predictions were accumulated.", split)
-            return
-
-        # Merge per-rank state across ranks ourselves (DDP-safe, fixed-shape gather) before the
-        # metric computes locally — replaces torchmetrics' deadlock-prone internal sync. No-op when
-        # not distributed. Called unconditionally on every rank, so the collectives stay symmetric.
-        self._merge_metric_state_across_ranks(metric)
-        metrics = self._compute_map_metric(trainer, metric)
-
-        # torchmetrics prefixes all keys when iou_type is a list (e.g. "bbox_map")
-        pfx = "bbox_" if self._use_segm_metrics else ""
-        mar_key = f"{pfx}mar_{self._max_dets}"
-
-        overall: dict[str, float] = {
-            "mAP 50:95": float(metrics[f"{pfx}map"]),
-            "mAP 50": float(metrics[f"{pfx}map_50"]),
-            "mAP 75": float(metrics[f"{pfx}map_75"]),
-            f"mAR @{self._max_dets}": float(metrics[mar_key]),
-        }
-
-        pl_module.log(
-            f"{split}/mAP_50_95", metrics[f"{pfx}map"], prog_bar=True, logger=True, on_step=False, on_epoch=True
-        )
-        pl_module.log(
-            f"{split}/mAP_50", metrics[f"{pfx}map_50"], prog_bar=True, logger=True, on_step=False, on_epoch=True
-        )
-        pl_module.log(f"{split}/mAP_75", metrics[f"{pfx}map_75"], logger=True, on_step=False, on_epoch=True)
-        pl_module.log(f"{split}/mAR", metrics[mar_key], logger=True, on_step=False, on_epoch=True)
-
-        # Write directly into callback_metrics so ModelCheckpoint / EarlyStopping
-        # read fresh values each epoch.  pl_module.log() from a callback's
-        # on_*_epoch_end goes only to logged_metrics (external loggers), not to
-        # callback_metrics, so checkpointing would see stale values otherwise.
-        trainer.callback_metrics[f"{split}/mAP_50_95"] = metrics[f"{pfx}map"].detach().cpu()
-        trainer.callback_metrics[f"{split}/mAP_50"] = metrics[f"{pfx}map_50"].detach().cpu()
-        trainer.callback_metrics[f"{split}/mAP_75"] = metrics[f"{pfx}map_75"].detach().cpu()
-        trainer.callback_metrics[f"{split}/mAR"] = metrics[mar_key].detach().cpu()
-
-        # EMA metrics — computed from a separate EMA forward pass accumulated in
-        # on_validation_batch_end, so base and EMA values are independent.  The EMA
-        # compute() triggers a cross-rank metric sync, so it must be issued by EVERY rank
-        # or none: a rank whose EMA metric is empty/absent would otherwise skip this
-        # collective and desync the DDP collective sequence, deadlocking validation
-        # (#931 / #449).  _should_compute_ema makes the decision unanimous across ranks.
         should_compute_ema = self._should_compute_ema(pl_module)
+        ema_metrics: dict[str, Any] | None = None
         if should_compute_ema:
             self._merge_metric_state_across_ranks(self.map_metric_ema)
             ema_metrics = self._compute_map_metric(trainer, self.map_metric_ema)
@@ -639,10 +605,157 @@ class COCOEvalCallback(Callback):
                 trainer.callback_metrics[f"{split}/ema_segm_mAP_50_95"] = ema_metrics["segm_map"].detach().cpu()
                 trainer.callback_metrics[f"{split}/ema_segm_mAP_50"] = ema_metrics["segm_map_50"].detach().cpu()
             self.map_metric_ema.reset()
+            self._ema_has_updates = False
         elif self.map_metric_ema is not None:
             # Not all ranks have EMA data this epoch (e.g. EMA not yet warmed up) → skip the
             # sync uniformly on every rank, but clear local state so the next epoch is clean.
             self.map_metric_ema.reset()
+            self._ema_has_updates = False
+        return should_compute_ema, ema_metrics
+
+    def _compute_and_log_f1_metrics(
+        self, trainer: Any, pl_module: Any, split: str, f1_local: dict[int, dict[str, Any]]
+    ) -> tuple[dict[str, float], dict[int, dict[str, float]]]:
+        """Sweep confidence thresholds over ``f1_local``, log ``{split}/F1`` (+precision/recall), return per-class F1.
+
+        Independent of ``self.map_metric``/``self.map_metric_ema``: ``f1_local`` accumulates every batch's matching
+        data via ``merge_matching_data`` in ``on_validation_batch_end`` unconditionally, regardless of which mAP
+        track (base vs EMA) that batch's predictions were routed to. Extracted so the empty-``metric`` early-return
+        branch of :meth:`_compute_and_log` can also call it — under ``eval_ema_only`` ``f1_local`` is the only
+        accumulator with real data this epoch, so discarding it via ``_reset_f1_local`` without computing would
+        silently drop ``val/F1`` too, even though real matching data was collected (#1285).
+
+        Args:
+            trainer: The PTL Trainer.
+            pl_module: The LightningModule.
+            split: Metric namespace — ``"val"``, ``"test"``, or ``"train"``.
+            f1_local: Per-category matching accumulator for this split.
+
+        Returns:
+            ``(overall, f1_by_cid)`` — ``overall`` has keys ``"F1"``, ``"Precision"``, ``"Recall"``; ``f1_by_cid``
+            maps category_id to its per-class ``f1``/``precision``/``recall`` at the best macro-F1 threshold
+            (empty when no matching data was accumulated).
+        """
+        merged = distributed_merge_matching_data(f1_local)
+        f1_by_cid: dict[int, dict[str, float]] = {}
+        if merged:
+            sorted_ids = sorted(merged.keys())
+            per_class_list = [merged[cid] for cid in sorted_ids]
+            classes_with_gt = [i for i, cid in enumerate(sorted_ids) if merged[cid]["total_gt"] > 0]
+            f1_results = sweep_confidence_thresholds(per_class_list, np.linspace(0, 1, 101), classes_with_gt)
+            best = max(f1_results, key=lambda x: x["macro_f1"])
+            overall = {
+                "F1": float(best["macro_f1"]),
+                "Precision": float(best["macro_precision"]),
+                "Recall": float(best["macro_recall"]),
+            }
+            for k, cid in enumerate(sorted_ids):
+                f1_by_cid[cid] = {
+                    "f1": float(best["per_class_f1"][k]),
+                    "precision": float(best["per_class_prec"][k]),
+                    "recall": float(best["per_class_rec"][k]),
+                }
+        else:
+            overall = {"F1": 0.0, "Precision": 0.0, "Recall": 0.0}
+        pl_module.log(f"{split}/F1", overall["F1"], prog_bar=True, logger=True, on_step=False, on_epoch=True)
+        pl_module.log(f"{split}/precision", overall["Precision"], logger=True, on_step=False, on_epoch=True)
+        pl_module.log(f"{split}/recall", overall["Recall"], logger=True, on_step=False, on_epoch=True)
+        trainer.callback_metrics[f"{split}/F1"] = torch.tensor(overall["F1"])
+        trainer.callback_metrics[f"{split}/precision"] = torch.tensor(overall["Precision"])
+        trainer.callback_metrics[f"{split}/recall"] = torch.tensor(overall["Recall"])
+        return overall, f1_by_cid
+
+    def _compute_and_log(self, trainer: Any, pl_module: Any, split: str, *, metric: Any | None = None) -> None:
+        """Shared epoch-end logic for validation and test evaluation loops.
+
+        Computes mAP (via ``self.map_metric``), runs the F1 confidence-threshold sweep, logs all scalar metrics via
+        ``pl_module.log``, prints two summary tables to the terminal, and resets internal accumulators.  When
+        ``self.map_metric_ema`` is set, EMA variants of all metrics (including ``ema_segm_mAP_50_95`` and
+        ``ema_segm_mAP_50`` for segmentation models) are logged under the same ``split/`` namespace.
+
+        Args:
+            trainer: The PTL Trainer.
+            pl_module: The LightningModule.
+            split: Metric namespace — ``"val"`` or ``"test"``.
+            metric: Optional split-specific mAP accumulator. Defaults to the validation/test accumulator.
+        """
+        metric = self.map_metric if metric is None else metric
+        f1_local = self._f1_train_local if split == "train" else self._f1_local
+        # torchmetrics prefixes all keys when iou_type is a list (e.g. "bbox_map"). Computed
+        # up front (pure, independent of `metric`) so the early-return branch below can also
+        # use it to log the EMA-only track under `eval_ema_only` (#1285).
+        pfx = "bbox_" if self._use_segm_metrics else ""
+        mar_key = f"{pfx}mar_{self._max_dets}"
+        if not self._metric_has_updates(metric):
+            metric.reset()
+            self._reset_keypoint_split(split)
+            # Under `eval_ema_only`, on_validation_batch_end routes every prediction to
+            # map_metric_ema instead of `metric` (see its docstring), so `metric` never
+            # accumulates any update this epoch — that must not also suppress the EMA metrics,
+            # or an eval_ema_only run logs no validation output at all (#1285). train/test never
+            # populate map_metric_ema this way (on_test_epoch_start resets _ema_has_updates for
+            # test, and on_train_epoch_end never reaches this branch with stale EMA state from a
+            # prior validation epoch under normal use), so this is scoped to "val" only.
+            if split == "val":
+                should_compute_ema, ema_metrics = self._compute_and_log_ema_metrics(
+                    trainer, pl_module, split, pfx, mar_key
+                )
+                if should_compute_ema:
+                    self._compute_and_log_keypoint_map(
+                        "val_ema", pl_module, trainer, log_split="val", metric_prefix="ema_"
+                    )
+                else:
+                    self._reset_keypoint_split("val_ema")
+                # f1_local accumulates every batch's matching data unconditionally in
+                # on_validation_batch_end (merge_matching_data runs outside the used_ema_forward
+                # branch), independent of which mAP track a batch's predictions were routed to.
+                # Under eval_ema_only `metric` never updates but f1_local does — computing it here
+                # instead of via the unconditional _reset_f1_local below prevents val/F1 from
+                # silently going unlogged even though real matching data was collected (#1285).
+                f1_overall, f1_by_cid = self._compute_and_log_f1_metrics(trainer, pl_module, split, f1_local)
+                # The normal per-class/table path below only ever reads from the base `metric`,
+                # which never has data here — without this, eval_ema_only prints no console table
+                # for the whole run even though ema_metrics has real per-class data (#1285).
+                if should_compute_ema and ema_metrics is not None:
+                    self._print_ema_only_summary(
+                        trainer, pl_module, split, pfx, mar_key, ema_metrics, f1_overall, f1_by_cid
+                    )
+            self._reset_f1_local(split)
+            logger.debug("Skipping %s COCO metric compute because no predictions were accumulated.", split)
+            return
+
+        # Merge per-rank state across ranks ourselves (DDP-safe, fixed-shape gather) before the
+        # metric computes locally — replaces torchmetrics' deadlock-prone internal sync. No-op when
+        # not distributed. Called unconditionally on every rank, so the collectives stay symmetric.
+        self._merge_metric_state_across_ranks(metric)
+        metrics = self._compute_map_metric(trainer, metric)
+
+        overall: dict[str, float] = {
+            "mAP 50:95": float(metrics[f"{pfx}map"]),
+            "mAP 50": float(metrics[f"{pfx}map_50"]),
+            "mAP 75": float(metrics[f"{pfx}map_75"]),
+            f"mAR @{self._max_dets}": float(metrics[mar_key]),
+        }
+
+        pl_module.log(
+            f"{split}/mAP_50_95", metrics[f"{pfx}map"], prog_bar=True, logger=True, on_step=False, on_epoch=True
+        )
+        pl_module.log(
+            f"{split}/mAP_50", metrics[f"{pfx}map_50"], prog_bar=True, logger=True, on_step=False, on_epoch=True
+        )
+        pl_module.log(f"{split}/mAP_75", metrics[f"{pfx}map_75"], logger=True, on_step=False, on_epoch=True)
+        pl_module.log(f"{split}/mAR", metrics[mar_key], logger=True, on_step=False, on_epoch=True)
+
+        # Write directly into callback_metrics so ModelCheckpoint / EarlyStopping
+        # read fresh values each epoch.  pl_module.log() from a callback's
+        # on_*_epoch_end goes only to logged_metrics (external loggers), not to
+        # callback_metrics, so checkpointing would see stale values otherwise.
+        trainer.callback_metrics[f"{split}/mAP_50_95"] = metrics[f"{pfx}map"].detach().cpu()
+        trainer.callback_metrics[f"{split}/mAP_50"] = metrics[f"{pfx}map_50"].detach().cpu()
+        trainer.callback_metrics[f"{split}/mAP_75"] = metrics[f"{pfx}map_75"].detach().cpu()
+        trainer.callback_metrics[f"{split}/mAR"] = metrics[mar_key].detach().cpu()
+
+        should_compute_ema, _ema_metrics = self._compute_and_log_ema_metrics(trainer, pl_module, split, pfx, mar_key)
 
         if self._use_segm_metrics:
             overall["segm mAP 50:95"] = float(metrics["segm_map"])
@@ -654,49 +767,8 @@ class COCOEvalCallback(Callback):
 
         # F1 sweep — run first so per-class F1/prec/rec are available when
         # building the unified per-class table rows below.
-        merged = distributed_merge_matching_data(f1_local)
-        # category_id → {f1, precision, recall} at the best macro-F1 threshold
-        f1_by_cid: dict[int, dict[str, float]] = {}
-        if merged:
-            sorted_ids = sorted(merged.keys())
-            per_class_list = [merged[cid] for cid in sorted_ids]
-            classes_with_gt = [i for i, cid in enumerate(sorted_ids) if merged[cid]["total_gt"] > 0]
-            f1_results = sweep_confidence_thresholds(per_class_list, np.linspace(0, 1, 101), classes_with_gt)
-            best = max(f1_results, key=lambda x: x["macro_f1"])
-            overall["F1"] = float(best["macro_f1"])
-            overall["Precision"] = float(best["macro_precision"])
-            overall["Recall"] = float(best["macro_recall"])
-            pl_module.log(
-                f"{split}/F1",
-                float(best["macro_f1"]),
-                prog_bar=True,
-                logger=True,
-                on_step=False,
-                on_epoch=True,
-            )
-            pl_module.log(
-                f"{split}/precision", float(best["macro_precision"]), logger=True, on_step=False, on_epoch=True
-            )
-            pl_module.log(f"{split}/recall", float(best["macro_recall"]), logger=True, on_step=False, on_epoch=True)
-            trainer.callback_metrics[f"{split}/F1"] = torch.tensor(float(best["macro_f1"]))
-            trainer.callback_metrics[f"{split}/precision"] = torch.tensor(float(best["macro_precision"]))
-            trainer.callback_metrics[f"{split}/recall"] = torch.tensor(float(best["macro_recall"]))
-            for k, cid in enumerate(sorted_ids):
-                f1_by_cid[cid] = {
-                    "f1": float(best["per_class_f1"][k]),
-                    "precision": float(best["per_class_prec"][k]),
-                    "recall": float(best["per_class_rec"][k]),
-                }
-        else:
-            overall["F1"] = 0.0
-            overall["Precision"] = 0.0
-            overall["Recall"] = 0.0
-            pl_module.log(f"{split}/F1", 0.0, prog_bar=True, logger=True, on_step=False, on_epoch=True)
-            pl_module.log(f"{split}/precision", 0.0, logger=True, on_step=False, on_epoch=True)
-            pl_module.log(f"{split}/recall", 0.0, logger=True, on_step=False, on_epoch=True)
-            trainer.callback_metrics[f"{split}/F1"] = torch.tensor(0.0)
-            trainer.callback_metrics[f"{split}/precision"] = torch.tensor(0.0)
-            trainer.callback_metrics[f"{split}/recall"] = torch.tensor(0.0)
+        f1_overall, f1_by_cid = self._compute_and_log_f1_metrics(trainer, pl_module, split, f1_local)
+        overall.update(f1_overall)
 
         # torchmetrics returns `classes` as a 0-d scalar when only one class is
         # present in the batch.  Ensure it is always 1-d before iterating.
@@ -1033,6 +1105,77 @@ class COCOEvalCallback(Callback):
         finally:
             metric.reset()
 
+    def _print_ema_only_summary(
+        self,
+        trainer: Any,
+        pl_module: Any,
+        split: str,
+        pfx: str,
+        mar_key: str,
+        ema_metrics: dict[str, Any],
+        f1_overall: dict[str, float],
+        f1_by_cid: dict[int, dict[str, float]],
+    ) -> None:
+        """Print the Rich summary table from ``ema_metrics`` when it is the epoch's only track with data.
+
+        The normal table/per-class path in :meth:`_compute_and_log` only ever reads from the base
+        ``metric`` — under ``eval_ema_only`` that metric never accumulates a single update (see the
+        early-return branch), so that path never runs and no table is ever printed for the entire run,
+        even though ``map_metric_ema`` has real per-class data (built with the same ``class_metrics``
+        setting as the base metric). Without this, fixing the logged scalars alone leaves the console
+        table half of the original "no validation output at all" complaint (#1285) unfixed. Per-class
+        AP is logged under ``ema_`` keys (via ``_build_per_class_rows``'s ``metric_prefix``) so it never
+        collides with a base-track ``{split}/AP/{name}`` key — consistent with ``val/ema_mAP_50_95``
+        staying separate from ``val/mAP_50_95`` elsewhere in this callback.
+
+        Args:
+            trainer: The PTL Trainer.
+            pl_module: The LightningModule.
+            split: Metric namespace — ``"val"`` (the only split that reaches this method).
+            pfx: torchmetrics key prefix (``"bbox_"`` when ``iou_type`` is a list, else ``""``).
+            mar_key: Prefixed AR metric key for ``self._max_dets``.
+            ema_metrics: Raw ``map_metric_ema.compute()`` output, from ``_compute_and_log_ema_metrics``.
+            f1_overall: ``{"F1", "Precision", "Recall"}`` from ``_compute_and_log_f1_metrics``; not
+                EMA-prefixed by existing design (see ``TrainConfig.eval_ema_only`` docstring) since
+                ``f1_local`` has no parallel EMA-tracked accumulator.
+            f1_by_cid: Per-class F1/precision/recall keyed by ``category_id``, from the same call.
+        """
+        if "classes" in ema_metrics and ema_metrics["classes"].ndim == 0:
+            ema_metrics = dict(ema_metrics)
+            ema_metrics["classes"] = ema_metrics["classes"].unsqueeze(0)
+            for metric_key in list(ema_metrics):
+                value = ema_metrics[metric_key]
+                if isinstance(value, Tensor) and value.ndim == 0 and "per_class" in metric_key:
+                    ema_metrics[metric_key] = value.unsqueeze(0)
+
+        overall_ema: dict[str, float] = {
+            "mAP 50:95": float(ema_metrics[f"{pfx}map"]),
+            "mAP 50": float(ema_metrics[f"{pfx}map_50"]),
+            "mAP 75": float(ema_metrics[f"{pfx}map_75"]),
+            f"mAR @{self._max_dets}": float(ema_metrics[mar_key]),
+        }
+        if self._use_segm_metrics and "segm_map" in ema_metrics:
+            overall_ema["segm mAP 50:95"] = float(ema_metrics["segm_map"])
+            overall_ema["segm mAP 50"] = float(ema_metrics["segm_map_50"])
+        overall_ema.update(f1_overall)
+
+        ar_pc_key = f"{pfx}mar_{self._max_dets}_per_class"
+        ar_by_cid: dict[int, float] = {}
+        if self._log_per_class_metrics and ar_pc_key in ema_metrics and "classes" in ema_metrics:
+            for class_id, ar in zip(ema_metrics["classes"], ema_metrics[ar_pc_key]):
+                ar_by_cid[int(class_id)] = float(ar)
+
+        per_class_ema = self._build_per_class_rows(
+            metrics=ema_metrics,
+            pfx=pfx,
+            split=split,
+            pl_module=pl_module,
+            ar_by_cid=ar_by_cid,
+            f1_by_cid=f1_by_cid,
+            metric_prefix="ema_",
+        )
+        self._print_metrics_tables(trainer, "val (ema)", overall_ema, per_class_ema)
+
     def _build_per_class_rows(
         self,
         metrics: dict[str, Any],
@@ -1041,6 +1184,7 @@ class COCOEvalCallback(Callback):
         pl_module: Any,
         ar_by_cid: dict[int, float],
         f1_by_cid: dict[int, dict[str, float]],
+        metric_prefix: str = "",
     ) -> list[dict[str, Any]]:
         """Build per-class rows and emit per-class AP metrics.
 
@@ -1051,6 +1195,9 @@ class COCOEvalCallback(Callback):
             pl_module: LightningModule used for metric logging.
             ar_by_cid: Per-class AR keyed by ``category_id``.
             f1_by_cid: Per-class F1/precision/recall keyed by ``category_id``.
+            metric_prefix: Prepended to the logged key (``f"{split}/{metric_prefix}AP/{name}"``), e.g.
+                ``"ema_"`` so per-class EMA AP (see ``_print_ema_only_summary``) never collides with
+                the regular track's ``{split}/AP/{name}`` keys.
 
         Returns:
             Per-class rows for table rendering.
@@ -1070,7 +1217,7 @@ class COCOEvalCallback(Callback):
                 continue
             idx = int(class_id)
             name = self._cat_id_to_name.get(idx, str(idx))
-            pl_module.log(f"{split}/AP/{name}", ap)
+            pl_module.log(f"{split}/{metric_prefix}AP/{name}", ap)
             row: dict[str, Any] = {"name": name, "ap": ap_f, "ar": ar_f}
             row.update(f1_by_cid.get(idx, {"f1": float("nan"), "precision": float("nan"), "recall": float("nan")}))
             per_class.append(row)

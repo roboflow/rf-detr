@@ -32,7 +32,14 @@ def _grid_sample_reference(
     padding_mode: str = "zeros",
     align_corners: bool = False,
 ) -> torch.Tensor:
-    """Ground-truth output from F.grid_sample for comparison."""
+    """Ground-truth output from F.grid_sample for comparison.
+
+    Examples:
+        >>> input = torch.arange(4, dtype=torch.float32).reshape(1, 1, 2, 2)
+        >>> grid = torch.zeros(1, 1, 1, 2)
+        >>> _grid_sample_reference(input, grid, align_corners=True)
+        tensor([[[[1.5000]]]])
+    """
     return F.grid_sample(
         input,
         grid,
@@ -54,6 +61,12 @@ def _call_manual_path(
     The function checks ``input.device.type not in ("mps", "xla")`` to decide which branch to take.  We patch
     ``torch.Tensor.device`` to return an object whose ``.type`` is *device_type* so the manual path runs on a normal CPU
     tensor without needing real MPS/XLA hardware.
+
+    Examples:
+        >>> input = torch.arange(4, dtype=torch.float32).reshape(1, 1, 2, 2)
+        >>> grid = torch.zeros(1, 1, 1, 2)
+        >>> _call_manual_path(input, grid, align_corners=True)
+        tensor([[[[1.5000]]]])
     """
 
     class _FakeDevice:
@@ -76,7 +89,15 @@ def _call_manual_path(
 
 @pytest.fixture
 def seed():
-    """Fix random seed for reproducible grid/input generation."""
+    """Fix random seed for reproducible grid/input generation.
+
+    Examples:
+        Injected by pytest as a fixture argument -- calling it directly (bypassing pytest's fixture machinery)
+        raises ``Failed: Fixture "seed" called directly``, so this is illustrative only, not run here. The
+        underlying effect is a plain ``torch.manual_seed(42)`` call:
+
+        >>> torch.manual_seed(42)  # doctest: +SKIP
+    """
     torch.manual_seed(42)
 
 
@@ -102,7 +123,19 @@ _LOW_PRECISION_GRAD_TOLERANCES = {
 
 
 def _require_grid_sample_dtype_support(dtype: torch.dtype) -> None:
-    """Skip test when current backend does not support grid_sample for dtype."""
+    """Skip test when current backend does not support grid_sample for dtype.
+
+    Examples:
+        Returns silently for a dtype the current backend supports:
+
+        >>> _require_grid_sample_dtype_support(torch.float32)
+
+        For a low-precision dtype the current backend may lack support for (e.g. float16/bfloat16 on some CPU
+        builds), this calls ``pytest.skip`` instead of raising -- not run here since the outcome is
+        backend-dependent.
+
+        >>> _require_grid_sample_dtype_support(torch.float16)  # doctest: +SKIP
+    """
     input = torch.randn(1, 1, 2, 2, dtype=dtype, requires_grad=True)
     grid = (torch.rand(1, 1, 1, 2, dtype=dtype) * 1.6 - 0.8).requires_grad_(True)
     try:

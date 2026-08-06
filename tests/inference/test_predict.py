@@ -143,7 +143,15 @@ class _TupleOutputModelContext:
 
 
 def _make_optimized_keypoint_model() -> tuple[RFDETR, _TupleOutputModelContext]:
-    """Build a ``_DummyRFDETR`` wired to look like it already ran ``inference()``."""
+    """Build a ``_DummyRFDETR`` wired to look like it already ran ``inference()``.
+
+    Examples:
+        >>> model, stub = _make_optimized_keypoint_model()
+        >>> model._is_optimized_for_inference
+        True
+        >>> isinstance(stub, _TupleOutputModelContext)
+        True
+    """
     model = _DummyRFDETR()
     stub = _TupleOutputModelContext()
     model.model = stub
@@ -1163,7 +1171,13 @@ class TestPredictNonRGBAutoConvert:
 
 
 def _png_bytes(size: tuple[int, int] = (28, 28)) -> bytes:
-    """Return the PNG-encoded bytes of a solid grey image."""
+    """Return the PNG-encoded bytes of a solid grey image.
+
+    Examples:
+        >>> data = _png_bytes((8, 8))
+        >>> data[:4]
+        b'\\x89PNG'
+    """
     buf = io.BytesIO()
     PIL.Image.new("RGB", size, (128, 128, 128)).save(buf, format="PNG")
     return buf.getvalue()

@@ -264,7 +264,7 @@ class HungarianMatcher(nn.Module):
             cost_nll = cost_nll.flatten(0, 1)
 
         # Final cost matrix
-        cost_matrix = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou
+        cost_matrix: Tensor = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou
         if masks_present:
             cost_matrix = cost_matrix + self.cost_mask_ce * cost_mask_ce + self.cost_mask_dice * cost_mask_dice
         if keypoints_present:
@@ -275,14 +275,13 @@ class HungarianMatcher(nn.Module):
                 + self.keypoint_visible_loss_coef * cost_visible
                 + self.keypoint_nll_loss_coef * cost_nll
             )
-        cost_matrix = (
-            cost_matrix.view(bs, num_queries, -1).float().cpu()
-        )  # convert to float because bfloat16 doesn't play nicely with CPU
+        cost_matrix = cost_matrix.view(bs, num_queries, -1).float()
 
         # We assume any good match will not cause NaN or Inf, so replace invalid
         # entries with a finite value that is larger than every valid cost.
-        finite_mask = torch.isfinite(cost_matrix)
-        if not finite_mask.all():
+        all_finite = torch.isfinite(cost_matrix).all().item()
+        if not all_finite:
+            cost_matrix = cost_matrix.cpu()
             if not self._warned_non_finite_costs:
                 logger.warning(
                     "Non-finite values detected in matcher cost matrix; "
@@ -293,14 +292,24 @@ class HungarianMatcher(nn.Module):
             cost_matrix = self._sanitize_cost_matrix(cost_matrix)
 
         sizes = [len(v["boxes"]) for v in targets]
+        target_offsets = [0]
+        for size in sizes:
+            target_offsets.append(target_offsets[-1] + size)
+        diagonal_cost_matrix: Tensor = torch.cat(
+            [cost_matrix[i, :, target_offsets[i] : target_offsets[i + 1]] for i in range(bs)], dim=-1
+        ).cpu()
+
         indices = []
         if num_queries % group_detr != 0:
             raise ValueError(f"num_queries ({num_queries}) must be divisible by group_detr ({group_detr})")
         g_num_queries = num_queries // group_detr
-        cost_matrix_list = cost_matrix.split(g_num_queries, dim=1)
         for g_i in range(group_detr):
-            grouped_cost_matrix = cost_matrix_list[g_i]
-            indices_g = [linear_sum_assignment(c[i]) for i, c in enumerate(grouped_cost_matrix.split(sizes, -1))]
+            group_start = g_i * g_num_queries
+            grouped_cost_matrix = diagonal_cost_matrix[group_start : group_start + g_num_queries]
+            indices_g = [
+                linear_sum_assignment(grouped_cost_matrix[:, target_offsets[i] : target_offsets[i + 1]])
+                for i in range(bs)
+            ]
             if g_i == 0:
                 indices = indices_g
             else:

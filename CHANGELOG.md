@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Restored peak GPU memory (`max_mem` in MB) in the training progress bar, dropped during the PyTorch Lightning migration (PR #794) along with `rfdetr.engine`. Only covers `trainer.fit()` (training and its periodic in-training validation) — PTL's own progress-bar classes never call `get_metrics()` outside `trainer.state.fn == "fit"`, so a standalone `RFDETR.evaluate()` progress bar shows no metrics at all, not just `max_mem`, same as before this change. ([#974](https://github.com/roboflow/rf-detr/issues/974))
+
 ### Breaking Changes
 
 - Exported artifact filenames now encode precision or backend for variant-derived/default names: TFLite `{stem}_float32.tflite` / `{stem}_float16.tflite` → `{stem}_fp32.tflite` / `{stem}_fp16.tflite`; ExecuTorch `{variant}.pte` → `{variant}_{backend}.pte` (or `{variant}_qnn_{soc}.pte`); CoreML `{variant}.mlpackage` → `{variant}_fp32.mlpackage` / `{variant}_fp16.mlpackage`; TensorRT `{stem}.trt` → `{stem}_fp16.trt` / `{stem}_fp32.trt`. ONNX filenames are unchanged. Update scripts that hardcode or glob these artifact filenames; explicit `output_name` overrides remain unchanged.
