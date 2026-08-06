@@ -26,7 +26,7 @@ def _get_patch_embed_projection(model) -> torch.nn.Conv2d:
         AssertionError: If the patch-embedding projection cannot be located.
 
     Examples:
-        >>> model = RFDETRBase(pretrain_weights=None, num_classes=1, device="cpu")
+        >>> model = RFDETRLarge(pretrain_weights=None, num_classes=1, device="cpu")
         >>> isinstance(_get_patch_embed_projection(model), torch.nn.Conv2d)
         True
     """
