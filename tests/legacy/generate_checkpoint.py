@@ -90,7 +90,8 @@ def _get_reference_image_path() -> Path:
             expected hash.
 
     Examples:
-        Requires network access to ``media.roboflow.com``; the doctest runner can't fetch it, so this example only checks the helper is callable.
+        Requires network access to ``media.roboflow.com``;
+        the doctest runner can't fetch it, so this example only checks the helper is callable.
 
         >>> callable(_get_reference_image_path)
         True
