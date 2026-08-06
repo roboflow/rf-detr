@@ -80,8 +80,8 @@ def _make_rfdetr_self(tmp_path, **train_overrides):
     Examples:
         >>> from pathlib import Path
         >>> mock_self = _make_rfdetr_self(Path('/tmp/example'))
-        >>> mock_self.model_config.device, mock_self.get_train_config().output_dir.endswith('/out')
-        ('cpu', True)
+        >>> mock_self.model_config.device, Path(mock_self.get_train_config().output_dir).name
+        ('cpu', 'out')
     """
     mock = MagicMock()
     mock.model_config = _make_model_config()

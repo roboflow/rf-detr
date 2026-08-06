@@ -44,8 +44,8 @@ def _base_train_config(tmp_path=None, **overrides):
 
     Examples:
         >>> config = _base_train_config(batch_size=4)
-        >>> config.batch_size, config.dataset_dir, config.output_dir
-        (4, '/nonexistent/dataset', '/nonexistent/output')
+        >>> config.batch_size, config.dataset_dir.endswith("dataset"), config.output_dir.endswith("output")
+        (4, True, True)
     """
     dataset_dir = str(tmp_path / "dataset") if tmp_path else "/nonexistent/dataset"
     output_dir = str(tmp_path / "output") if tmp_path else "/nonexistent/output"

@@ -86,8 +86,8 @@ def _kp_tc(tmp_path, **kwargs):
     Examples:
         >>> from pathlib import Path
         >>> config = _kp_tc(Path('/tmp/example'), batch_size=4)
-        >>> config.batch_size, config.dataset_dir.endswith('/ds')
-        (4, True)
+        >>> config.batch_size, Path(config.dataset_dir).name
+        (4, 'ds')
     """
     defaults = dict(
         dataset_dir=str(tmp_path / "ds"),
