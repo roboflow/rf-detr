@@ -105,6 +105,12 @@ def _build_subset_datamodule(
     train_subset_size: int = 8,
     val_subset_size: int = 4,
 ) -> RFDETRDataModule:
+    """Limit an initialized keypoint datamodule to deterministic train/val subsets.
+
+    Example:
+        >>> _build_subset_datamodule.__name__
+        '_build_subset_datamodule'
+    """
     datamodule = RFDETRDataModule(model.model_config, train_config)
     datamodule.setup("fit")
     if datamodule._dataset_train is None or datamodule._dataset_val is None:

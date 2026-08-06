@@ -46,6 +46,10 @@ def _make_ptl_module_from(rfdetr_obj: RFDETR, dataset_dir: Path, output_dir: Pat
 
     Returns:
         Weight-synced :class:`~rfdetr.training.RFDETRModelModule` in eval mode.
+
+    Example:
+        >>> _make_ptl_module_from.__name__
+        '_make_ptl_module_from'
     """
     train_config = TrainConfig(
         dataset_file="roboflow",
