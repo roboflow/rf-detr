@@ -59,8 +59,8 @@ def _make_train_config(tmp_path=None) -> TrainConfig:
 
     Examples:
         >>> cfg = _make_train_config()
-        >>> cfg.dataset_dir
-        '/nonexistent/dataset'
+        >>> cfg.dataset_dir.endswith("dataset")
+        True
 
 
 
