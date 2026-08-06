@@ -19,13 +19,7 @@ from rfdetr.models.transformer import Transformer, gen_encoder_output_proposals,
 
 @pytest.fixture(autouse=True)
 def _reset_random_seeds() -> None:
-    """Ensure reproducible random state for every test.
-
-    Examples:
-        >>> _reset_random_seeds()
-        >>> torch.rand(1).tolist()
-        [0.8822692632675171]
-    """
+    """Ensure reproducible random state for every test."""
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)
 

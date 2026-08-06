@@ -15,13 +15,7 @@ from rfdetr.models.heads.segmentation import DepthwiseConvBlock
 
 @pytest.fixture(autouse=True)
 def _reset_random_seeds() -> None:
-    """Reset random seeds before each test for reproducibility.
-
-    Examples:
-        >>> _reset_random_seeds()
-        >>> torch.rand(1).tolist()
-        [0.8822692632675171]
-    """
+    """Reset random seeds before each test for reproducibility."""
     torch.manual_seed(42)
 
 

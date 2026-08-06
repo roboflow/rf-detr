@@ -416,7 +416,8 @@ def _reference_indices_full_class_materialization(
         ...     "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.2], [0.1, 0.1, 0.1, 0.1]]]),
         ... }
         >>> targets = [{"labels": torch.tensor([0]), "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.2]])}]
-        >>> [(q.tolist(), t.tolist()) for q, t in _reference_indices_full_class_materialization(matcher, outputs, targets)]
+        >>> indices = _reference_indices_full_class_materialization(matcher, outputs, targets)
+        >>> [(q.tolist(), t.tolist()) for q, t in indices]
         [([0], [0])]
     """
     from scipy.optimize import linear_sum_assignment
