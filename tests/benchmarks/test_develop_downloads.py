@@ -101,7 +101,7 @@ class TestDownloadAndExtract:
         """Build an in-memory ZIP archive from a mapping of filename→content.
 
         Example:
-            >>> archive = self._make_zip({"hello.txt": "world"})
+            >>> archive = TestDownloadAndExtract()._make_zip({"hello.txt": "world"})
             >>> isinstance(archive, bytes)
             True
         """
