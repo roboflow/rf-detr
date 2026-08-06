@@ -128,7 +128,13 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
         help="Compare tracking with appearance ReID off vs on over one clip",
     )
     parser.add_argument("--source", type=Path, default=None, help="Input video path")
-    parser.add_argument("--threshold", type=float, default=0.5, help="Detection threshold")
+    parser.add_argument("--threshold", type=float, default=0.5, help="Detection threshold (lower = more recall)")
+    parser.add_argument(
+        "--resolution",
+        type=int,
+        default=None,
+        help="Keypoint model input resolution (higher = better small-person recall; must divide the patch size)",
+    )
     parser.add_argument("--frame-stride", type=int, default=1, help="Process every Nth frame")
     parser.add_argument("--max-frames", type=int, default=None, help="Limit processed frames")
     parser.add_argument("--reid-weight", type=float, default=0.3, help="Appearance vs IoU cost blend")
@@ -185,6 +191,7 @@ def _collect_ids(
     reid_settings: PersonTrackSettings,
     baseline_settings: PersonTrackSettings,
     video_dir: Path | None = None,
+    resolution: int | None = None,
 ) -> tuple[list[list[int]], list[list[int]]]:
     """Run one model, feed each frame through both pipelines, and collect ids.
 
@@ -195,7 +202,7 @@ def _collect_ids(
 
     from rfdetr_demo.inference.models import build_keypoint_model
 
-    model = build_keypoint_model()
+    model = build_keypoint_model(resolution=resolution)
     probe = cv2.VideoCapture(str(source))
     width = int(probe.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
     height = int(probe.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
@@ -282,6 +289,7 @@ def run(args: argparse.Namespace) -> int:
         reid_settings=reid_settings,
         baseline_settings=baseline_settings,
         video_dir=video_dir,
+        resolution=args.resolution,
     )
 
     baseline_summary = summarize_track_ids(baseline_ids)
@@ -294,6 +302,7 @@ def run(args: argparse.Namespace) -> int:
     if args.json is not None:
         payload = {
             "source": str(source),
+            "detection": {"threshold": args.threshold, "resolution": args.resolution},
             "reid_off": baseline_summary.as_dict(),
             "reid_on": reid_summary.as_dict(),
             "reid_settings": {

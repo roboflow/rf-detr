@@ -72,9 +72,21 @@ def build_segmentation_model(model_size: ModelSize) -> RFDETR:
     return factory()
 
 
-def build_keypoint_model() -> RFDETR:
-    """Instantiate the keypoint preview model."""
+def build_keypoint_model(resolution: int | None = None) -> RFDETR:
+    """Instantiate the keypoint preview model.
+
+    Args:
+        resolution: Optional square input resolution (must be divisible by the
+            model patch size). A higher value improves recall on small/distant
+            people at the cost of speed. ``None`` uses the model default.
+
+    Returns:
+        The keypoint preview model.
+    """
     from rfdetr import RFDETRKeypointPreview
 
+    if resolution is not None:
+        logger.info("Loading RF-DETR keypoint preview model at resolution=%d", resolution)
+        return RFDETRKeypointPreview(resolution=resolution)
     logger.info("Loading RF-DETR keypoint preview model")
     return RFDETRKeypointPreview()
