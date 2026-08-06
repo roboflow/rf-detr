@@ -58,9 +58,9 @@ def _make_train_config(tmp_path, **overrides):
 
     Examples:
         >>> from pathlib import Path
-        >>> config = _make_train_config(Path('/tmp/example'), epochs=3)
-        >>> config.epochs, config.dataset_dir.endswith('/ds'), config.output_dir.endswith('/out')
-        (3, True, True)
+        >>> config = _make_train_config(Path("/tmp/example"), epochs=3)
+        >>> config.epochs, Path(config.dataset_dir).name, Path(config.output_dir).name
+        (3, 'ds', 'out')
     """
     defaults = dict(
         dataset_dir=str(tmp_path / "ds"),
