@@ -5,13 +5,35 @@
 # ------------------------------------------------------------------------
 """Tests for weighted multi-source batch sampling."""
 
+import logging
 from collections import Counter
+from contextlib import contextmanager
+from typing import Iterator
 
 import pytest
 import torch
 from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
 
 from rfdetr.datasets.multi_source import WeightedMultiSourceBatchSampler, compute_source_batch_sizes
+from rfdetr.utilities.logger import get_logger
+
+
+@contextmanager
+def _capture_warnings(caplog: pytest.LogCaptureFixture) -> Iterator[None]:
+    """Capture ``rf-detr`` warnings, which the shared logger does not propagate by default."""
+    rf_logger = get_logger()
+    previous = rf_logger.propagate
+    rf_logger.propagate = True
+    try:
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            yield
+    finally:
+        rf_logger.propagate = previous
+
+
+def _recycling_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the emitted over-recycling warnings."""
+    return [record.getMessage() for record in caplog.records if "is repeated" in record.getMessage()]
 
 
 def _source_of(index: int, source_sizes: list[int]) -> int:
@@ -140,6 +162,51 @@ class TestEpochLength:
     def test_tiny_dataset_still_yields_one_batch(self) -> None:
         sampler = WeightedMultiSourceBatchSampler([3, 2], [0.5, 0.5], batch_size=16)
         assert len(list(sampler)) == 1
+
+
+class TestRecyclingWarning:
+    """Over-recycling warnings.
+
+    The scenario below has ``batch_size=3`` over four sources, so the two lowest-weighted sources are starved (zero
+    slots per batch). Source 3 is the smallest overall but never sampled, while source 1 is recycled 25x per epoch.
+    """
+
+    STARVED_SIZES = [1000, 20, 50, 5]
+    STARVED_WEIGHTS = [0.5, 0.3, 0.15, 0.05]
+    STARVED_BATCH_SIZE = 3
+
+    def _build_starved_sampler(self) -> WeightedMultiSourceBatchSampler:
+        return WeightedMultiSourceBatchSampler(
+            self.STARVED_SIZES, self.STARVED_WEIGHTS, batch_size=self.STARVED_BATCH_SIZE
+        )
+
+    def test_warns_about_the_most_recycled_contributing_source(self, caplog: pytest.LogCaptureFixture) -> None:
+        with _capture_warnings(caplog):
+            self._build_starved_sampler()
+        assert "Source 1" in "".join(_recycling_warnings(caplog))
+
+    def test_starved_source_does_not_suppress_the_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        # Source 3 is the smallest but contributes no samples, so it must not be reported as over-recycled.
+        with _capture_warnings(caplog):
+            self._build_starved_sampler()
+        assert "Source 3" not in "".join(_recycling_warnings(caplog))
+
+    def test_reports_the_actual_recycling_factor(self, caplog: pytest.LogCaptureFixture) -> None:
+        with _capture_warnings(caplog):
+            self._build_starved_sampler()
+        assert "~25.0 times" in "".join(_recycling_warnings(caplog))
+
+    def test_no_warning_when_sources_are_balanced(self, caplog: pytest.LogCaptureFixture) -> None:
+        with _capture_warnings(caplog):
+            WeightedMultiSourceBatchSampler([1000, 900], [0.5, 0.5], batch_size=10)
+        assert _recycling_warnings(caplog) == []
+
+    def test_starved_driving_source_falls_back_to_a_contributing_source(self) -> None:
+        # epoch_length=3 points at a starved source, which cannot define the epoch length.
+        sampler = WeightedMultiSourceBatchSampler(
+            self.STARVED_SIZES, self.STARVED_WEIGHTS, batch_size=self.STARVED_BATCH_SIZE, epoch_length=3
+        )
+        assert sampler.source_batch_sizes[sampler.driving_source] > 0
 
 
 class TestShufflingDeterminism:

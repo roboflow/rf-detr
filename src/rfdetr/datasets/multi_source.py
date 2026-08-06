@@ -120,6 +120,7 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         drop_last: Whether to drop the final partial batch of the driving source. Note that at least one batch is always
             produced (even when the driving source is smaller than its per-batch slot count), so `drop_last=True` will
             not reduce an epoch to zero batches for tiny datasets.
+        shuffle: Whether to shuffle indices within each source.
         num_replicas: Number of DDP processes participating.
         rank: Rank of the current process, in ``[0, num_replicas)``.
         seed: Base seed shared by all ranks; combined with the epoch to shuffle identically across ranks.
@@ -291,23 +292,29 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         return driving
 
     def _warn_on_source_imbalance(self) -> None:
-        """Warn when the driving source is large enough that a small source is recycled many times per epoch."""
+        """Warn when a source is recycled many times per epoch, which risks overfitting it.
+
+        Only sources that actually contribute samples are considered. A starved source (zero slots per batch, possible
+        when ``batch_size`` is below the number of sources) is never recycled, so including it would hide a genuinely
+        over-recycled contributor behind a pass count of zero.
+        """
         recycle_threshold = 10
-        driving_size = self.source_sizes[self.driving_source]
-        smallest = min(range(len(self.source_sizes)), key=lambda index: self.source_sizes[index])
-        if smallest == self.driving_source:
+        passes = {
+            index: (self._global_batches * count) / self.source_sizes[index]
+            for index, count in enumerate(self.source_batch_sizes)
+            if count > 0
+        }
+        most_recycled = max(passes, key=lambda index: passes[index])
+        if passes[most_recycled] < recycle_threshold:
             return
-        passes = (self._global_batches * self.source_batch_sizes[smallest]) / self.source_sizes[smallest]
-        if passes >= recycle_threshold:
-            logger.warning(
-                "Source %d (%d samples) is repeated ~%.1f times per epoch to keep its ratio against driving source %d "
-                "(%d samples), which risks overfitting it. Consider epoch_length='smallest' or early stopping.",
-                smallest,
-                self.source_sizes[smallest],
-                passes,
-                self.driving_source,
-                driving_size,
-            )
+        logger.warning(
+            "Source %d (%d samples) is repeated ~%.1f times per epoch to fill its %d slot(s) in every batch, "
+            "which risks overfitting it. Consider epoch_length='smallest' or early stopping.",
+            most_recycled,
+            self.source_sizes[most_recycled],
+            passes[most_recycled],
+            self.source_batch_sizes[most_recycled],
+        )
 
     def set_epoch(self, epoch: int) -> None:
         """Set the epoch used to seed shuffling.
