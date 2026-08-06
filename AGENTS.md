@@ -281,6 +281,7 @@ result = subprocess.run(
 - MANDATORY Google-style docstrings for all functions and classes
 - **Do not duplicate types in docstrings** - types are in the function signature
 - Target Python version: 3.10+
+- **Helper functions in `tests/` need a doctest too**: any non-`test_*` function used by tests (fixture builders, assertion helpers, reference implementations) needs a docstring with an `Examples` doctest that exercises it directly — `pyproject.toml` runs `--doctest-plus` across `tests/` on purpose. Skip the live doctest (`# doctest: +SKIP` + one-line reason) only when the helper can't run standalone (e.g. a `@pytest.fixture`, or needs real GPU/XLA/network hardware).
 
 ## Common Workflows
 

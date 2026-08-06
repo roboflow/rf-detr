@@ -311,6 +311,26 @@ class TestBestModelCallback:
 
         assert (tmp_path / "checkpoint_best_ema.pth").exists()
 
+    def test_ema_checkpoint_saved_when_regular_monitor_absent(self, tmp_path: Path) -> None:
+        """Under `eval_ema_only`, val/mAP_50_95 is never logged — only val/ema_mAP_50_95 is.
+
+        Regression test for #1285: the regular-monitor guard in on_validation_end used to `return` before reaching the
+        EMA block, so checkpoint_best_ema.pth was never written in this mode even though the EMA metric had real data
+        every epoch.
+        """
+        cb = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+        )
+        # No "val/mAP_50_95" key at all — matches eval_ema_only routing (config.py:1068-1074).
+        trainer = _make_trainer({"val/ema_mAP_50_95": 0.6})
+        pl_module = _make_pl_module()
+
+        cb.on_validation_end(trainer, pl_module)
+
+        assert (tmp_path / "checkpoint_best_ema.pth").exists()
+        assert not (tmp_path / "checkpoint_best_regular.pth").exists()
+
     def test_ema_checkpoint_saves_ema_callback_weights(self, tmp_path: Path) -> None:
         """EMA checkpoint must store EMA callback weights, not live model weights."""
         cb = BestModelCallback(
@@ -1206,6 +1226,24 @@ class TestRFDETREarlyStopping:
         cb.on_validation_end(trainer, pl_module)
 
         assert cb.best_score.item() == pytest.approx(0.45)
+        assert cb.wait_count == 0
+
+    def test_only_ema_available(self) -> None:
+        """When the regular monitor key is absent, falls back to EMA without error.
+
+        Mirrors `test_only_regular_available`; this is the exact shape `eval_ema_only` produces
+        (`val/mAP_50_95` never populated, see #1285) and was previously untested here, unlike
+        `BestModelCallback.on_validation_end`'s sibling guard where the same input shape was an
+        outright bug (see `test_ema_checkpoint_saved_when_regular_monitor_absent`). This callback's
+        `regular_val is None` branching already handled it correctly; this test locks that in.
+        """
+        cb = RFDETREarlyStopping(patience=5, min_delta=0.001)
+        pl_module = _make_pl_module()
+
+        trainer = _make_trainer({"val/ema_mAP_50_95": 0.55})
+        cb.on_validation_end(trainer, pl_module)
+
+        assert cb.best_score.item() == pytest.approx(0.55)
         assert cb.wait_count == 0
 
     def test_neither_available_is_noop(self) -> None:
