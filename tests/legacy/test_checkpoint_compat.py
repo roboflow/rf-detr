@@ -108,10 +108,10 @@ def _read_versions(versions_file: Path | None = None) -> list[str]:
     Examples:
         >>> import tempfile
         >>> from pathlib import Path
-        >>> with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        ...     _ = f.write("# comment\\n1.5.0\\n\\n1.6.0\\n")
-        ...     fname = f.name
-        >>> _read_versions(Path(fname))
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     p = Path(d) / "versions.txt"
+        ...     _ = p.write_text("# comment\\n1.5.0\\n\\n1.6.0\\n")
+        ...     _read_versions(p)
         ['1.5.0', '1.6.0']
         >>> _read_versions(Path("/nonexistent/versions.txt"))
         []
