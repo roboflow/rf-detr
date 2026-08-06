@@ -42,6 +42,14 @@ def _export_tiny_model(tmp_path: Path, notes: object = None) -> str:
 
     Returns:
         Path to the exported ONNX file.
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     out = _export_tiny_model(Path(d))
+        ...     Path(out).suffix
+        '.onnx'
     """
     model = _TinyModel().eval()
     input_tensor = torch.randn(1, 3, 32, 32)
