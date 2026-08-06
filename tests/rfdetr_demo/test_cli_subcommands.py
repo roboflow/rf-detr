@@ -37,5 +37,19 @@ def test_video_subcommand_passes_remaining_args() -> None:
 
 def test_subcommand_names_are_stable() -> None:
     assert SUBCOMMANDS == frozenset(
-        {"probe-count", "audit-tracking", "analyze-clip", "video"},
+        {"probe-count", "audit-tracking", "analyze-clip", "compare-reid", "video"},
     )
+
+
+def test_summarize_track_ids_counts_revival_as_fewer_ids() -> None:
+    from rfdetr_demo.cli.subcommands.compare_reid import summarize_track_ids
+
+    # Same person leaves and returns. Without revival a new id (2) appears;
+    # with revival the original id (1) is reused.
+    without_reid = summarize_track_ids([[1], [], [], [2], [2]])
+    with_reid = summarize_track_ids([[1], [], [], [1], [1]])
+
+    # Revival reuses the original id, so the clip ends with fewer distinct ids.
+    assert without_reid.unique_ids == 2
+    assert with_reid.unique_ids == 1
+    assert with_reid.unique_ids < without_reid.unique_ids

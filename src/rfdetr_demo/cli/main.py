@@ -11,9 +11,9 @@ import argparse
 import sys
 
 from rfdetr_demo.cli.run_video import main as video_demo_main
-from rfdetr_demo.cli.subcommands import analyze_clip, audit_tracking, probe_count
+from rfdetr_demo.cli.subcommands import analyze_clip, audit_tracking, compare_reid, probe_count
 
-SUBCOMMANDS = frozenset({"probe-count", "audit-tracking", "analyze-clip", "video"})
+SUBCOMMANDS = frozenset({"probe-count", "audit-tracking", "analyze-clip", "compare-reid", "video"})
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -25,6 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
     probe_count.add_parser(subparsers)
     audit_tracking.add_parser(subparsers)
     analyze_clip.add_parser(subparsers)
+    compare_reid.add_parser(subparsers)
     subparsers.add_parser(
         "video",
         help="Run RF-DETR on a video and export an annotated MP4 (same as default)",
