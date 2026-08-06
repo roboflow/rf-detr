@@ -17,7 +17,15 @@ from rfdetr.utilities.box_ops import (
 
 
 def _random_xyxy_boxes(n: int, seed: int = 0) -> torch.Tensor:
-    """Generate ``n`` non-degenerate random boxes in xyxy format."""
+    """Generate ``n`` non-degenerate random boxes in xyxy format.
+
+    Examples:
+        >>> boxes = _random_xyxy_boxes(2, seed=0)
+        >>> boxes.shape
+        torch.Size([2, 4])
+        >>> bool((boxes[:, 2:] > boxes[:, :2]).all())
+        True
+    """
     gen = torch.Generator().manual_seed(seed)
     xy1 = torch.rand(n, 2, generator=gen)
     xy2 = xy1 + torch.rand(n, 2, generator=gen) * 0.5 + 0.01
