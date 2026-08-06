@@ -47,8 +47,10 @@ class BestModelCallback(ModelCheckpoint):
     ``checkpoint_best_ema.pth`` (backfilled with the final EMA weights if the EMA metric never improved) and
     ``last_ema.pth`` (final EMA weights, mirroring ``last.pth`` for the live model).
 
-    Checkpoints are only updated on validation epochs where the monitor metric is actually logged.  On non-eval epochs
-    (when ``eval_interval > 1`` causes COCO evaluation to be skipped) the callback is a no-op.
+    Each track only updates when its own monitor key is actually logged that epoch, and the two tracks are
+    checked independently.  On non-eval epochs (``eval_interval > 1`` skips COCO eval entirely) both keys are
+    absent and the callback is a full no-op.  Under ``eval_ema_only`` (see ``TrainConfig.eval_ema_only``),
+    ``monitor_regular`` is never populated, so only the EMA track ever updates.
 
     ``state_dict()`` and ``load_state_dict()`` are overridden to persist ``_best_ema`` in the Lightning callback state,
     ensuring that ``trainer.fit(ckpt_path=...)`` resumes EMA high-water-mark tracking from the correct value.
@@ -473,38 +475,41 @@ class BestModelCallback(ModelCheckpoint):
             self._smoothed_regular = self._smooth_alpha * self._smoothed_regular + (1.0 - self._smooth_alpha) * raw
         if trainer.current_epoch < self._skip_best_epochs:
             return
-        # Guard: only run checkpoint logic when the monitored metric was actually
-        # logged this epoch (non-eval epochs with eval_interval > 1 skip COCO eval
-        # so the key is absent from callback_metrics).
-        if self.monitor not in trainer.callback_metrics:
-            return
-        # Optional EMA smoothing of the monitored metric before the parent's improvement
-        # check.  The smoothed value is substituted into ``trainer.callback_metrics`` for
-        # the duration of the super() call only; the original raw tensor is always
-        # restored in the ``finally`` block so what gets logged to ``metrics.csv`` and
-        # seen by other callbacks (including EMA tracking below) is unaffected.
-        if self._smooth_alpha > 0.0:
-            # raw was captured in the accumulator update above; smooth_alpha > 0 and monitor
-            # in callback_metrics are both guaranteed here (passed the guard above).
-            current_raw: float = raw if raw is not None else trainer.callback_metrics[self.monitor].item()
-            prev_best_score = self.best_model_score.item() if self.best_model_score is not None else -float("inf")
-            original = trainer.callback_metrics[self.monitor]
-            trainer.callback_metrics[self.monitor] = torch.tensor(
-                self._smoothed_regular, dtype=original.dtype, device=original.device
-            )
-            try:
+        # Guard: only run the REGULAR checkpoint logic when the monitored metric was
+        # actually logged this epoch (non-eval epochs with eval_interval > 1 skip COCO
+        # eval so the key is absent; so does every epoch under `eval_ema_only`, which
+        # routes the epoch's only score to `monitor_ema` instead — see config.py's
+        # `eval_ema_only` docstring). This must NOT also skip the EMA block below: under
+        # `eval_ema_only` that block is the only checkpoint tracking that ever runs (#1285).
+        if self.monitor in trainer.callback_metrics:
+            # Optional EMA smoothing of the monitored metric before the parent's improvement
+            # check.  The smoothed value is substituted into ``trainer.callback_metrics`` for
+            # the duration of the super() call only; the original raw tensor is always
+            # restored in the ``finally`` block so what gets logged to ``metrics.csv`` and
+            # seen by other callbacks (including EMA tracking below) is unaffected.
+            if self._smooth_alpha > 0.0:
+                # raw was captured in the accumulator update above; smooth_alpha > 0 and
+                # monitor in callback_metrics are both guaranteed here (passed the `if` above).
+                current_raw: float = raw if raw is not None else trainer.callback_metrics[self.monitor].item()
+                prev_best_score = self.best_model_score.item() if self.best_model_score is not None else -float("inf")
+                original = trainer.callback_metrics[self.monitor]
+                trainer.callback_metrics[self.monitor] = torch.tensor(
+                    self._smoothed_regular, dtype=original.dtype, device=original.device
+                )
+                try:
+                    super().on_validation_end(trainer, pl_module)
+                finally:
+                    trainer.callback_metrics[self.monitor] = original
+                # Record the raw metric value when parent selected a new best so on_fit_end
+                # compares raw EMA vs raw regular (not raw EMA vs smoothed regular).
+                new_best_score = self.best_model_score.item() if self.best_model_score is not None else -float("inf")
+                if new_best_score > prev_best_score:
+                    self._best_raw_regular = current_raw
+            else:
                 super().on_validation_end(trainer, pl_module)
-            finally:
-                trainer.callback_metrics[self.monitor] = original
-            # Record the raw metric value when parent selected a new best so on_fit_end
-            # compares raw EMA vs raw regular (not raw EMA vs smoothed regular).
-            new_best_score = self.best_model_score.item() if self.best_model_score is not None else -float("inf")
-            if new_best_score > prev_best_score:
-                self._best_raw_regular = current_raw
-        else:
-            super().on_validation_end(trainer, pl_module)
 
-        # EMA model — custom tracking on top of parent.
+        # EMA model — custom tracking on top of parent. Independent of the regular-monitor
+        # guard above: under `eval_ema_only` this is the only track with data this epoch.
         if self._monitor_ema is None or not trainer.is_global_zero:
             return
         ema_val = trainer.callback_metrics.get(self._monitor_ema, torch.tensor(0.0)).item()
