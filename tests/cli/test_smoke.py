@@ -68,7 +68,7 @@ def _load(name: str) -> dict:
 def _instantiate(class_path: str, init_args: dict) -> object:
     """Import class_path and construct an instance with init_args.
 
-    >>> config = _instantiate("rfdetr.config.RFDETRSmallConfig", {})  # doctest: +SKIP
+    >>> config = _instantiate("rfdetr.config.RFDETRSmallConfig", {})
     >>> type(config).__name__
     'RFDETRSmallConfig'
     """
