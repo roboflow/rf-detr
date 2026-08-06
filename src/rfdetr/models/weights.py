@@ -449,8 +449,17 @@ def load_pretrain_weights(
                     _known,
                     _known_val,
                 )
-    # Warn once (not once per suffix key) when falling back to the legacy flat slice.
-    if mc.group_detr > 1 and (ckpt_num_queries is None or ckpt_group_detr is None):
+    target_query_rows = mc.num_queries * mc.group_detr
+    # Warn once (not once per suffix key) only when the fallback truncates a
+    # query tensor. Several published legacy checkpoints omit both args but
+    # already have exactly the configured number of rows, so their flat slice is
+    # an identity and cannot scramble any group.
+    legacy_fallback_truncates = any(
+        tensor.shape[0] > target_query_rows
+        for name, tensor in checkpoint["model"].items()
+        if any(name.endswith(suffix) for suffix in _QUERY_PARAM_SUFFIXES)
+    )
+    if mc.group_detr > 1 and (ckpt_num_queries is None or ckpt_group_detr is None) and legacy_fallback_truncates:
         logger.warning(
             "load_pretrain_weights: checkpoint lacks args.num_queries / "
             "args.group_detr; falling back to flat slice. With "
@@ -472,10 +481,9 @@ def load_pretrain_weights(
             else:
                 # Legacy checkpoint with no num_queries/group_detr in args:
                 # preserve the original flat slice for backward compatibility.
-                # NOTE: the flat slice is incorrect for group_detr > 1 — it scrambles
-                # groups 1+ when num_queries decreases. Legacy checkpoints predate
-                # multi-group training, so in practice they are all group_detr == 1.
-                checkpoint["model"][name] = tensor[: mc.num_queries * mc.group_detr]
+                # When this changes the row count and group_detr > 1, it may
+                # scramble groups 1+; the warning above covers that case.
+                checkpoint["model"][name] = tensor[:target_query_rows]
 
     checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)
 

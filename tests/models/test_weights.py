@@ -1003,6 +1003,45 @@ class TestLoadPretrainWeightsPerGroupQuerySlice:
             f"Expected scramble-risk warning for group_detr > 1; got: {captured}"
         )
 
+    def test_legacy_fallback_matching_rows_is_silent_identity(self, monkeypatch) -> None:
+        """Missing metadata needs no warning when the configured flat slice changes nothing."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=4,
+            num_select=4,
+            group_detr=3,
+        )
+        labelled_refpoint = _labelled_query_tensor(num_queries=4, group_detr=3, dim=4)
+        labelled_query_feat = _labelled_query_tensor(num_queries=4, group_detr=3, dim=256)
+        checkpoint = {
+            "model": {
+                "class_embed.weight": torch.randn(91, 256),
+                "class_embed.bias": torch.randn(91),
+                "refpoint_embed.weight": labelled_refpoint,
+                "query_feat.weight": labelled_query_feat,
+            },
+            "args": {},
+        }
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        captured: list[str] = []
+
+        def _capture(msg: str, *args: object, **kwargs: object) -> None:
+            captured.append(msg % args if args else msg)
+
+        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        assert torch.equal(passed_state["refpoint_embed.weight"], labelled_refpoint)
+        assert torch.equal(passed_state["query_feat.weight"], labelled_query_feat)
+        assert not any("scramble" in msg or "flat slice" in msg for msg in captured), captured
+
     def test_legacy_fallback_when_args_missing_num_queries_key(self, monkeypatch, tmp_path):
         """When checkpoint args dict lacks num_queries/group_detr keys, falls back to flat legacy slice."""
         from rfdetr.models.weights import load_pretrain_weights
