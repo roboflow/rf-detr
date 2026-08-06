@@ -263,6 +263,10 @@ class HungarianMatcher(nn.Module):
     ) -> list[tuple[Tensor, Tensor]]:
         """Solve a compact ``[queries, total_targets]`` matrix by group and image.
 
+        Shared by both the compact and the full-cartesian ``forward`` paths — "compact" in the name
+        refers to the padded-to-``max(sizes)`` matrix layout this helper solves, not to which path
+        calls it.
+
         Args:
             cost_matrix: Compact cost matrix of shape ``[num_queries, sum(sizes)]``, as returned by
                 ``_compute_compact_detection_cost_matrix``.
@@ -347,7 +351,7 @@ class HungarianMatcher(nn.Module):
             # sentinel `_sanitize_cost_matrix` computes) can differ from the full cartesian
             # matrix's. Falling through keeps this exceptional branch byte-for-byte identical to
             # the pre-existing behaviour; it costs the redundant cross-image compute only on this
-            # already-rare path, never on the finite one the perf numbers below measure.
+            # already-rare path.
 
         # We flatten to compute the cost matrices in a batch
         flat_pred_logits = outputs["pred_logits"].flatten(0, 1)

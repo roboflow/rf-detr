@@ -825,8 +825,9 @@ def _spy_on_compact_path(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     lets a test assert which branch ``forward`` actually took.
 
     Examples:
-        >>> _spy_on_compact_path(...)  # doctest: +SKIP
-        # Needs a real pytest.MonkeyPatch fixture instance, not constructible standalone.
+        >>> _spy_on_compact_path(pytest.MonkeyPatch())  # doctest: +SKIP
+
+        # Needs a live pytest.MonkeyPatch fixture torn down by a running test, not standalone.
     """
     calls: list[int] = []
     original = HungarianMatcher._compute_compact_detection_cost_matrix
@@ -875,10 +876,9 @@ def _spy_on_full_path(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     compact matrix, found it non-finite, and fell through to the full path".
 
     Examples:
-        with pytest.MonkeyPatch.context() as patched:
-            full_calls = _spy_on_full_path(patched)
-            matcher(outputs, targets)
-            assert full_calls == []
+        >>> _spy_on_full_path(pytest.MonkeyPatch())  # doctest: +SKIP
+
+        # Needs a live pytest.MonkeyPatch fixture torn down by a running test, not standalone.
     """
     calls: list[int] = []
     original = torch.cdist
