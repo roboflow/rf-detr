@@ -955,6 +955,58 @@ def _assert_same_indices(
         assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
 
 
+def _total_assignment_cost(
+    matcher: HungarianMatcher,
+    outputs: dict[str, torch.Tensor],
+    targets: list[dict[str, torch.Tensor]],
+    indices: list[tuple[torch.Tensor, torch.Tensor]],
+) -> float:
+    """Total cost an assignment achieves, scored on a single CPU cost matrix built from ``outputs``/``targets``.
+
+    Lets a test compare two assignments produced on different devices without demanding identical index tensors: the
+    Hungarian solve is optimal on each per-image block, so any assignment that is not itself optimal scores strictly
+    worse, while a genuine tie scores the same. Both sides must be scored through this helper against the *same*
+    ``outputs``/``targets`` — scoring each against its own device's matrix would re-import the 1-ULP cross-device
+    divergence the comparison exists to tolerate.
+
+    Calls ``_compute_compact_detection_cost_matrix``, so it bumps ``_spy_on_compact_path``; call it only after any
+    routing assertion.
+
+    Examples:
+        >>> matcher = HungarianMatcher()
+        >>> outputs, targets = _random_detection_batch(seed=1, sizes=[2, 1])
+        >>> round(_total_assignment_cost(matcher, outputs, targets, matcher(outputs, targets)), 6)
+        -1.739075
+    """
+    cpu_outputs = {key: value.cpu() for key, value in outputs.items()}
+    cpu_targets = [{key: value.cpu() for key, value in target.items()} for target in targets]
+    cost_matrix = matcher._compute_compact_detection_cost_matrix(cpu_outputs, cpu_targets).float()
+    target_offset = 0
+    total = 0.0
+    for (query_indices, target_indices), target in zip(indices, cpu_targets):
+        total += float(cost_matrix[query_indices, target_indices + target_offset].sum())
+        target_offset += len(target["boxes"])
+    return total
+
+
+def _assert_assignment_lengths(
+    indices: list[tuple[torch.Tensor, torch.Tensor]], num_queries: int, sizes: list[int]
+) -> None:
+    """Assert every image matched exactly ``min(num_queries, size)`` query/target pairs.
+
+    Guards a cost-only comparison against a degenerate empty assignment, which scores a total of ``0.0`` and would
+    otherwise pass whatever it is compared against.
+
+    Examples:
+        >>> _assert_assignment_lengths([(torch.tensor([0, 3]), torch.tensor([1, 0]))], num_queries=6, sizes=[2])
+    """
+    assert len(indices) == len(sizes)
+    for image_idx, ((query_indices, target_indices), size) in enumerate(zip(indices, sizes)):
+        expected_length = min(num_queries, size)
+        assert query_indices.shape == (expected_length,), f"query index count wrong for image {image_idx}"
+        assert target_indices.shape == (expected_length,), f"target index count wrong for image {image_idx}"
+
+
 class TestCompactPathRouting:
     """The padded-compact cost path (``_compute_compact_detection_cost_matrix``) must run only for detection-only
     batches with ``batch_size > 1`` and finite, bounded inputs — every other case must fall back to the diagonal-block
@@ -1074,17 +1126,35 @@ class TestCompactPathRouting:
         assert len(results) == len(targets)
 
     @pytest.mark.parametrize("seed", [201, 202, 203, 204, 205])
+    @pytest.mark.parametrize(
+        "costs",
+        [
+            pytest.param((1, 1, 1), id="unit"),
+            pytest.param((2.0, 5.0, 2.0), id="shipped"),
+        ],
+    )
     def test_compact_path_matches_pre_pr1_reference_across_seeds(
-        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher, seed: int
+        self, monkeypatch: pytest.MonkeyPatch, seed: int, costs: tuple[float, float, float]
     ) -> None:
         """The compact path's assignment must agree with the pre-PR1 reference (full materialization + ``split(sizes,
         -1)`` + ``c[i]``) across several random seeds — same contract as ``TestDiagonalBlockExtraction``, now exercised
-        through the compact route."""
+        through the compact route.
+
+        The coefficient triple is parametrized because the weighted sum
+        ``cost_bbox * bbox + cost_class * class + cost_giou * giou`` is invariant to any permutation of its
+        coefficients when all three are ``1``, which is what the ``matcher`` fixture supplies: at ``1, 1, 1`` a mutant
+        that swaps two of them is a literal no-op and no assertion here can see it. ``2.0, 5.0, 2.0`` is what
+        ``_defaults.py`` actually ships, and it detects the ``bbox``/``giou`` and ``bbox``/``class`` swaps. It does not
+        detect the ``class``/``giou`` swap: those two coefficients are both ``2.0``, so that permutation is still a
+        no-op — this closes two of the three permutation mutants, not all three.
+        """
+        cost_class, cost_bbox, cost_giou = costs
+        weighted_matcher = HungarianMatcher(cost_class=cost_class, cost_bbox=cost_bbox, cost_giou=cost_giou)
         calls = _spy_on_compact_path(monkeypatch)
         outputs, targets = _random_detection_batch(seed=seed, sizes=[2, 4, 1])
 
-        actual = matcher(outputs, targets)
-        expected = _reference_indices_pre_diagonal_extraction(matcher, outputs, targets)
+        actual = weighted_matcher(outputs, targets)
+        expected = _reference_indices_pre_diagonal_extraction(weighted_matcher, outputs, targets)
 
         assert calls == [1]
         for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
@@ -1127,6 +1197,129 @@ class TestCompactPathRouting:
         for matched_queries, matched_targets in actual:
             assert matched_queries.shape == (0,)
             assert matched_targets.shape == (0,)
+
+    @pytest.mark.parametrize(
+        "group_detr",
+        [
+            pytest.param(2, id="two_groups"),
+            pytest.param(3, id="three_groups"),
+        ],
+    )
+    def test_group_detr_greater_than_one_uses_compact_path(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher, group_detr: int
+    ) -> None:
+        """No other ``TestCompactPathRouting`` case passes ``group_detr > 1``, so nothing pinned that a grouped batch
+        actually takes the compact route: ``TestDiagonalBlockExtraction.test_heterogeneous_sizes_with_group_detr``
+        already asserts correctness at ``group_detr=2`` but carries no spy, so a regression re-routing grouped batches
+        to the full path would leave it green. This closes that routing-assertion gap, not a correctness gap.
+
+        ``group_detr=3`` against the fixture's ``num_queries=6`` leaves 2 queries per group, so image 1's 4 targets
+        exceed the group's query count and exercise the ``min(group_num_queries, size)`` truncation inside the group
+        loop, which ``group_detr=2`` at ``num_queries=8`` never reaches.
+        """
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _random_detection_batch(seed=208, sizes=[2, 4, 1])
+
+        actual = matcher(outputs, targets, group_detr=group_detr)
+        expected = _reference_indices_pre_diagonal_extraction(matcher, outputs, targets, group_detr=group_detr)
+
+        assert calls == [1]
+        _assert_same_indices(actual, expected)
+
+    def test_num_queries_indivisible_by_group_detr_raises(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """``_assign_compact_cost_matrix`` rejects a ``group_detr`` that does not divide ``num_queries``, since the
+        group slice width ``num_queries // group_detr`` would silently drop the remainder queries.
+
+        Every other ``group_detr`` in this file divides evenly, so the guard itself was the one added line with no test
+        exercising it. The compact matrix is still built first, so the error is raised from the compact route.
+        """
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _random_detection_batch(seed=209, sizes=[2, 3])
+
+        with pytest.raises(ValueError, match="divisible"):
+            matcher(outputs, targets, group_detr=4)
+
+        assert calls == [1]
+
+    @pytest.mark.parametrize("seed", [201, 202, 203])
+    def test_float64_inputs_match_pre_pr1_reference(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher, seed: int
+    ) -> None:
+        """Every other tensor in this file is float32, so ``pad_sequence``/``gather``/``cdist``/``vmap`` had no non-
+        float32 coverage at all, and ``torch.finfo(boxes.dtype)`` in the gate was only ever evaluated for one dtype (the
+        float64 ``coordinate_limit`` is ``8.4e152``, not ``1.2e18``).
+
+        Predictions *and* target boxes are cast together: the gate's metadata precheck routes any batch whose target
+        boxes disagree in dtype with ``pred_boxes`` to the full path, so casting only the targets would silently test
+        the full path and assert nothing about the compact one.
+
+        Note this does not test float64 assignment precision — ``forward`` calls ``.float()`` on the compact matrix and
+        the reference does the same, so both sides are compared after an fp32 downcast. What it covers is that the
+        compact path's tensor ops accept and agree under float64 inputs.
+        """
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _random_detection_batch(seed=seed, sizes=[2, 4, 1])
+        outputs = {key: value.double() for key, value in outputs.items()}
+        targets = [{**target, "boxes": target["boxes"].double()} for target in targets]
+
+        actual = matcher(outputs, targets)
+        expected = _reference_indices_pre_diagonal_extraction(matcher, outputs, targets)
+
+        assert calls == [1]
+        _assert_same_indices(actual, expected)
+
+    @pytest.mark.parametrize(
+        ("coordinate", "expected_calls"),
+        [
+            pytest.param(1.0e18, [1], id="just_below_limit"),
+            pytest.param(1.2e18, [], id="just_above_limit"),
+        ],
+    )
+    def test_coordinate_limit_boundary_routes_by_magnitude(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        matcher: HungarianMatcher,
+        coordinate: float,
+        expected_calls: list[int],
+    ) -> None:
+        """The gate's ``coordinate_limit`` is ``torch.finfo(dtype).max ** 0.5 / 16``, which is ``1.1529e18`` for
+        float32. The committed unsafe case uses ``1e30``, twelve orders of magnitude above it, so neither the ``<=``
+        comparison nor the ``/16`` headroom divisor was pinned by anything: widening the divisor or flipping the
+        comparison to ``<`` changed no observable behavior.
+
+        Bracketing the limit from both sides is what constrains where it sits — a single case above it would still leave
+        the divisor free to move.
+        """
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _random_detection_batch(seed=210, sizes=[2, 3])
+        outputs["pred_boxes"][1, 0, 2] = coordinate
+
+        results = matcher(outputs, targets)
+
+        assert calls == expected_calls
+        assert len(results) == len(targets)
+
+    def test_more_targets_than_queries_uses_compact_path(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """Every committed size tuple keeps ``max(T_i)`` at or below ``num_queries``, so a padded target dimension wider
+        than the query dimension never flowed through ``cdist``/``gather``/assignment — the rectangular direction the
+        compact matrix is least like the fallback's.
+
+        With ``sizes=[9, 7]`` against ``num_queries=6`` each image can only match 6 of its targets, so the assignment is
+        target-truncated rather than query-truncated.
+        """
+        calls = _spy_on_compact_path(monkeypatch)
+        outputs, targets = _random_detection_batch(seed=211, sizes=[9, 7])
+
+        actual = matcher(outputs, targets)
+        expected = _reference_indices_pre_diagonal_extraction(matcher, outputs, targets)
+
+        assert calls == [1]
+        _assert_same_indices(actual, expected)
+        _assert_assignment_lengths(actual, num_queries=6, sizes=[9, 7])
 
     def test_overflowing_cost_weight_falls_through_to_fallback_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``_detection_inputs_are_safe`` only bounds ``pred_logits``/box magnitudes, not the matcher's own cost
@@ -1348,6 +1541,17 @@ class TestCompactPathOnCUDA:
     def test_compact_path_matches_fallback_on_cuda_float32(
         self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
     ) -> None:
+        """Under real CUDA kernels the compact path must reach an assignment as good as the fallback's on the same
+        device.
+
+        Compared by achieved total cost rather than by index identity: the two paths build matrices of different numel
+        (``B*Q*max(T_i)`` vs ``B*Q*sum(T_i)``), which lands them on different kernel tail dispatches and makes their
+        costs differ at 1 ULP, so identical indices are not something either path guarantees. Cost equality is the
+        property that actually matters and it still catches a real break, because the Hungarian solve is optimal on each
+        per-image block: any incorrect assignment scores strictly worse except on an exact tie, which is precisely the
+        case worth accepting. Both sides are scored on one common matrix built from the same inputs, since scoring each
+        against its own matrix would reintroduce the 1-ULP divergence being tolerated.
+        """
         outputs, targets = _random_detection_batch(seed=301, sizes=[2, 4, 1])
         outputs = {key: value.cuda() for key, value in outputs.items()}
         targets = [{key: value.cuda() for key, value in target.items()} for target in targets]
@@ -1356,28 +1560,41 @@ class TestCompactPathOnCUDA:
         actual = matcher(outputs, targets)
         assert calls == [1]
         assert all(query.device.type == "cpu" for query, _ in actual), "assignment indices must return on CPU"
+        _assert_assignment_lengths(actual, num_queries=6, sizes=[2, 4, 1])
 
         monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t: False))
         expected = matcher(outputs, targets)
 
-        for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
-            assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+        assert _total_assignment_cost(matcher, outputs, targets, actual) == pytest.approx(
+            _total_assignment_cost(matcher, outputs, targets, expected)
+        )
 
-    def test_compact_path_matches_cpu_reference_on_cuda(self, matcher: HungarianMatcher) -> None:
-        """Same inputs, CPU vs CUDA: the compact path must reach the identical assignment regardless of the device the
-        model happens to run on."""
+    def test_compact_path_matches_cpu_reference_on_cuda(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """Same inputs, CPU vs CUDA: the compact path must reach an assignment of the same cost regardless of the device
+        the model happens to run on.
+
+        Cross-device exact index equality is the more fragile of the two comparisons in this class — a different GPU,
+        driver, or PyTorch build changes fused-kernel rounding — so this compares achieved total cost on one common CPU
+        matrix instead. Index equality was also the only thing here that would have noticed the compact path silently
+        not running, and the fallback reaches an optimal cost too, so the spy assertion below replaces that signal
+        rather than dropping it; the length assertion rules out a degenerate empty assignment, which would score ``0.0``
+        and pass a cost-only check.
+        """
         outputs, targets = _random_detection_batch(seed=302, sizes=[2, 3, 1])
-
         cpu_result = matcher(outputs, targets)
-
         cuda_outputs = {key: value.cuda() for key, value in outputs.items()}
         cuda_targets = [{key: value.cuda() for key, value in target.items()} for target in targets]
+        calls = _spy_on_compact_path(monkeypatch)
+
         cuda_result = matcher(cuda_outputs, cuda_targets)
 
-        for image_idx, ((cpu_q, cpu_t), (cuda_q, cuda_t)) in enumerate(zip(cpu_result, cuda_result)):
-            assert torch.equal(cpu_q, cuda_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(cpu_t, cuda_t), f"target indices diverged for image {image_idx}"
+        assert calls == [1], "the CUDA batch must take the compact path"
+        _assert_assignment_lengths(cuda_result, num_queries=6, sizes=[2, 3, 1])
+        assert _total_assignment_cost(matcher, outputs, targets, cuda_result) == pytest.approx(
+            _total_assignment_cost(matcher, outputs, targets, cpu_result)
+        )
 
 
 class TestCompactPathCriterionEquivalence:
