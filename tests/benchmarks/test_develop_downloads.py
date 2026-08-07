@@ -6,6 +6,8 @@
 """Tests for private developer download helpers."""
 
 import io
+import threading
+import time
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
@@ -123,3 +125,110 @@ class TestDownloadAndExtract:
         with patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve):
             with pytest.raises(RuntimeError, match="Unsafe path detected"):
                 _download_and_extract(url, tmp_path)
+
+
+class TestConcurrentDownloadSafety:
+    """Regression coverage for concurrent downloads of the same COCO asset.
+
+    Benchmark fixtures used to guard the shared ``data/`` directory with one lock *per fixture* while all of them
+    downloaded the same archive. Under ``pytest-xdist`` two workers could therefore write the same zip path at once; the
+    second ``open("wb")`` truncated the archive the first was still streaming members out of, surfacing as ``EOFError``
+    from ``zipfile._read2``. Serialization now lives in ``_download_and_extract`` itself, keyed on the asset, so every
+    caller of a URL contends on one lock regardless of which fixture invoked it.
+    """
+
+    def _zip_bytes(self) -> bytes:
+        """Build a small in-memory ZIP archive used as a stand-in for a COCO asset.
+
+        Example:
+            >>> isinstance(TestConcurrentDownloadSafety()._zip_bytes(), bytes)
+            True
+        """
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("annotations/instances_val2017.json", "{}")
+        return buf.getvalue()
+
+    def test_same_asset_downloads_never_overlap(self, tmp_path: Path) -> None:
+        """Two concurrent callers of one URL must not be inside the download window together."""
+        url = "http://example.com/annotations_trainval2017.zip"
+        zip_bytes = self._zip_bytes()
+        counter_lock = threading.Lock()
+        active = 0
+        max_concurrent = 0
+
+        def fake_urlretrieve(url: str, dest: str) -> tuple[str, dict[str, str]]:
+            nonlocal active, max_concurrent
+            with counter_lock:
+                active += 1
+                max_concurrent = max(max_concurrent, active)
+            time.sleep(0.2)
+            Path(dest).write_bytes(zip_bytes)
+            with counter_lock:
+                active -= 1
+            return dest, {}
+
+        with patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve):
+            threads = [threading.Thread(target=_download_and_extract, args=(url, tmp_path)) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=30)
+
+        assert max_concurrent == 1, f"{max_concurrent} callers wrote the same archive concurrently"
+
+    def test_distinct_assets_use_distinct_locks(self, tmp_path: Path) -> None:
+        """Serialization is per asset, so unrelated URLs are not forced to queue behind each other."""
+        zip_bytes = self._zip_bytes()
+
+        def fake_urlretrieve(url: str, dest: str) -> tuple[str, dict[str, str]]:
+            Path(dest).write_bytes(zip_bytes)
+            return dest, {}
+
+        with patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve):
+            _download_and_extract("http://example.com/val2017.zip", tmp_path)
+            _download_and_extract("http://example.com/train2017.zip", tmp_path)
+
+        lock_names = sorted(path.name for path in tmp_path.glob(".*.lock"))
+        assert lock_names == [], f"lock files leaked after completion: {lock_names}"
+
+    def test_completed_asset_is_not_redownloaded(self, tmp_path: Path) -> None:
+        """A caller that waited on the lock re-checks completeness and skips a redundant fetch."""
+        url = "http://example.com/annotations_trainval2017.zip"
+        calls: list[str] = []
+
+        def fake_urlretrieve(url: str, dest: str) -> tuple[str, dict[str, str]]:
+            calls.append(url)
+            Path(dest).write_bytes(self._zip_bytes())
+            return dest, {}
+
+        with patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve):
+            _download_and_extract(url, tmp_path, is_complete=lambda: True)
+
+        assert calls == [], "asset already present on disk was downloaded again"
+
+    def test_eof_error_during_extraction_is_retried(self, tmp_path: Path) -> None:
+        """A mid-stream truncation surfaces as EOFError and must be retried, not propagated."""
+        url = "http://example.com/annotations_trainval2017.zip"
+        zip_bytes = self._zip_bytes()
+        attempts: list[str] = []
+
+        def fake_urlretrieve(url: str, dest: str) -> tuple[str, dict[str, str]]:
+            attempts.append(url)
+            Path(dest).write_bytes(zip_bytes)
+            return dest, {}
+
+        def flaky_extract(zip_path: Path, dest_dir_resolved: Path) -> None:
+            if len(attempts) == 1:
+                raise EOFError
+            (dest_dir_resolved / "extracted.json").write_text("{}")
+
+        with (
+            patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve),
+            patch("rfdetr.datasets._develop._extract_zip", side_effect=flaky_extract),
+            patch("rfdetr.datasets._develop.time.sleep"),
+        ):
+            _download_and_extract(url, tmp_path)
+
+        assert len(attempts) == 2, f"expected one retry after EOFError, saw {len(attempts)} attempt(s)"
+        assert (tmp_path / "extracted.json").exists()
