@@ -16,7 +16,7 @@ import shutil
 import time
 import zipfile
 import zlib
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -235,20 +235,51 @@ def _extract_zip(zip_path: Path, dest_dir_resolved: Path) -> None:
                     shutil.copyfileobj(src, dst)
 
 
-def _download_and_extract(url: str, dest_dir: Path) -> None:
+def _asset_lock_path(dest_dir: Path, url: str) -> Path:
+    """Return the lock file that serializes downloads of *url* into *dest_dir*.
+
+    The lock is keyed on the asset, not on the caller, so every consumer of a given URL
+    contends on the same lock no matter which fixture or helper invoked the download.
+
+    Args:
+        dest_dir: Directory the archive is downloaded into.
+        url: URL to a zip archive.
+
+    Returns:
+        Path to the lock file guarding this asset.
+
+    Example:
+        >>> _asset_lock_path(Path("/data"), "http://example.com/val2017.zip").name
+        '.val2017.zip.lock'
+    """
+    return dest_dir / f".{url.rsplit('/', 1)[-1]}.lock"
+
+
+def _download_and_extract(url: str, dest_dir: Path, is_complete: Callable[[], bool] | None = None) -> None:
     """Download a zip archive and safely extract it, retrying on a corrupt transfer.
 
-    Truncated downloads and corrupt deflate streams (``zlib.error``/``BadZipFile``) are
-    retried up to ``_DOWNLOAD_MAX_ATTEMPTS`` times. The partial archive is always removed,
-    both on failure (so a corrupt file never persists for the next run) and on success.
+    Downloads of the same asset are serialized on a per-asset lock, so concurrent callers
+    (for example ``pytest-xdist`` workers sharing one data directory) can never write or
+    extract the same archive at the same time. Overlapping writes are what produce a
+    mid-stream ``EOFError``: a second ``open("wb")`` truncates an archive whose central
+    directory another reader has already parsed.
+
+    Truncated downloads and corrupt deflate streams (``zlib.error``/``BadZipFile``/``EOFError``)
+    are retried up to ``_DOWNLOAD_MAX_ATTEMPTS`` times. The archive is staged under a
+    process-unique name and always removed, both on failure (so a corrupt file never persists
+    for the next run) and on success.
 
     Args:
         url: URL to a zip archive.
         dest_dir: Directory where the archive will be saved and extracted.
+        is_complete: Optional predicate re-checked *after* the lock is acquired. When it returns
+            ``True`` the download is skipped, so a caller that queued behind another process does
+            not redundantly re-fetch an asset that process just finished extracting.
 
     Raises:
         zipfile.BadZipFile: If every attempt yields a truncated or corrupt archive.
         zlib.error: If the deflate stream is corrupt on the final attempt.
+        EOFError: If the archive is truncated mid-stream on the final attempt.
         RuntimeError: If a member would escape *dest_dir* (path traversal — not retried).
 
     Example:
@@ -256,27 +287,35 @@ def _download_and_extract(url: str, dest_dir: Path) -> None:
         '_download_and_extract'
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = dest_dir / url.rsplit("/", 1)[-1]
     dest_dir_resolved = dest_dir.resolve()
-    for attempt in range(1, _DOWNLOAD_MAX_ATTEMPTS + 1):
+    with _download_lock(_asset_lock_path(dest_dir, url)):
+        # Double-checked: another process may have finished this asset while we waited.
+        if is_complete is not None and is_complete():
+            logger.info("Skipping %s; already present in %s.", url, dest_dir)
+            return
+        # Process-unique staging name so two processes never share one archive path.
+        zip_path = dest_dir / f"{url.rsplit('/', 1)[-1]}.{os.getpid()}.part"
         try:
-            logger.info("Downloading %s (attempt %d/%d) ...", url, attempt, _DOWNLOAD_MAX_ATTEMPTS)
-            _fetch_zip(url, zip_path)
-            logger.info("Extracting %s ...", zip_path)
-            _extract_zip(zip_path, dest_dir_resolved)
-            break
-        except (zipfile.BadZipFile, zlib.error, OSError) as exc:
+            for attempt in range(1, _DOWNLOAD_MAX_ATTEMPTS + 1):
+                try:
+                    logger.info("Downloading %s (attempt %d/%d) ...", url, attempt, _DOWNLOAD_MAX_ATTEMPTS)
+                    _fetch_zip(url, zip_path)
+                    logger.info("Extracting %s ...", zip_path)
+                    _extract_zip(zip_path, dest_dir_resolved)
+                    break
+                except (zipfile.BadZipFile, zlib.error, EOFError, OSError) as exc:
+                    with suppress(FileNotFoundError):
+                        zip_path.unlink()
+                    # Fail fast on common non-retryable local filesystem errors.
+                    if isinstance(exc, OSError) and getattr(exc, "errno", None) in {13, 28}:
+                        raise
+                    if attempt == _DOWNLOAD_MAX_ATTEMPTS:
+                        raise
+                    logger.warning("Download/extract of %s failed (%s); retrying ...", url, exc)
+                    time.sleep(2.0 * attempt)
+        finally:
             with suppress(FileNotFoundError):
                 zip_path.unlink()
-            # Fail fast on common non-retryable local filesystem errors.
-            if isinstance(exc, OSError) and getattr(exc, "errno", None) in {13, 28}:
-                raise
-            if attempt == _DOWNLOAD_MAX_ATTEMPTS:
-                raise
-            logger.warning("Download/extract of %s failed (%s); retrying ...", url, exc)
-            time.sleep(2.0 * attempt)
-    with suppress(FileNotFoundError):
-        zip_path.unlink()
 
 
 @contextmanager
