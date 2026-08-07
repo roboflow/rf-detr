@@ -78,3 +78,23 @@ def test_detection_track_callback_assigns_stable_ids() -> None:
     # The two people barely moved, so ids persist across frames.
     assert ids_frame1 == [0, 1]
     assert stats["frame_active_tracks"] == 2
+
+
+def test_detection_track_keeps_low_confidence_when_hysteresis_off() -> None:
+    # Detection thresholding already gates; the tracker must not re-gate on
+    # confidence or it collapses the count (regression: 28 -> 15 people).
+    low_conf = sv.Detections(
+        xyxy=np.asarray([[100.0, 100.0, 160.0, 300.0]], dtype=np.float32),
+        confidence=np.asarray([0.35], dtype=np.float32),
+        class_id=np.ones((1,), dtype=np.int64),
+    )
+    model = _FakeDetectionModel([low_conf])
+    pipeline = PersonTrackPipeline(
+        settings=PersonTrackSettings(enabled=True, hysteresis_enabled=False),
+        frame_width=640,
+    )
+    stats: dict[str, int] = {"processed_frames": 0, "total_detections": 0}
+    callback = make_detection_track_callback(model, 0.25, True, stats, pipeline)
+    callback(np.zeros((480, 640, 3), dtype=np.uint8), 0)
+
+    assert stats["frame_active_tracks"] == 1

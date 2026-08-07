@@ -163,10 +163,18 @@ def _build_task_callback(
         from rfdetr_demo.tracking.pipeline import PersonTrackPipeline
         from rfdetr_demo.tracking.types import PersonTrackSettings
 
+        # The detection model already thresholds and NMS-dedupes, so the tracker
+        # must not re-gate: keypoint-tuned hysteresis (0.65) and IoU-NMS (0.5)
+        # otherwise discard most detections in a dense crowd, collapsing the count.
         track_pipeline = PersonTrackPipeline.from_env(
             frame_width=frame_width,
             frame_height=frame_height,
-            base_settings=PersonTrackSettings(enabled=True),
+            base_settings=PersonTrackSettings(
+                enabled=True,
+                hysteresis_enabled=False,
+                nms_iou_threshold=0.9,
+                max_tracks=256,
+            ),
         )
         return make_detection_track_callback(
             model,
