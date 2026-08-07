@@ -16,6 +16,12 @@ from rfdetr.utilities.tensors import NestedTensor
 
 
 def _build_feature_batch(batch_size: int, hidden_dim: int) -> list[NestedTensor]:
+    """Build feature maps consumed by keypoint LWDETR tests.
+
+    Examples:
+        >>> len(_build_feature_batch(batch_size=1, hidden_dim=8))
+        1
+    """
     return [
         NestedTensor(
             torch.zeros(batch_size, hidden_dim, 4, 4),

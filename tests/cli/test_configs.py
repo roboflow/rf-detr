@@ -56,7 +56,11 @@ EXPECTED_MODEL_CLASS = {
 
 
 def _load(name: str) -> dict:
-    """Parse a config file by stem name and return its dict."""
+    """Parse a config file by stem name and return its dict.
+
+    >>> _load("rfdetr_small")["model"]["train_config"]["class_path"]  # doctest: +SKIP
+    'rfdetr.config.TrainConfig'
+    """
     return yaml.safe_load((CONFIGS_DIR / f"{name}.yaml").read_text())
 
 

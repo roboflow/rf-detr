@@ -67,6 +67,13 @@ def _coreml_parity_diffs(
     Raises:
         AssertionError: If output counts or shapes disagree.
         ImportError: If ``coremltools`` is not installed.
+
+    Examples:
+        Requires a real exported ``.mlpackage`` and ``coremltools`` — not runnable standalone.
+        See ``TestCoreMLEndToEnd`` for real invocations.
+
+        >>> callable(_coreml_parity_diffs)
+        True
     """
     import coremltools as ct
 
@@ -97,6 +104,13 @@ def validate_detection_coreml_vs_pytorch(
 
     Raises:
         AssertionError: When output count/shape disagrees or max-abs-diff exceeds tolerance.
+
+    Examples:
+        Requires a real exported ``.mlpackage`` and ``coremltools`` — not runnable standalone.
+        See ``TestCoreMLEndToEnd`` for real invocations.
+
+        >>> callable(validate_detection_coreml_vs_pytorch)
+        True
     """
     diffs = _coreml_parity_diffs(mlpackage_path, pytorch_model, example_input)
     assert len(diffs) == 2, f"detection export must yield (boxes, logits), got {len(diffs)} outputs"
@@ -120,6 +134,13 @@ def validate_segmentation_coreml_vs_pytorch(
 
     Raises:
         AssertionError: When output count/shape disagrees or max-abs-diff exceeds tolerance.
+
+    Examples:
+        Requires a real exported ``.mlpackage`` and ``coremltools`` — not runnable standalone.
+        See ``TestCoreMLEndToEnd`` for real invocations.
+
+        >>> callable(validate_segmentation_coreml_vs_pytorch)
+        True
     """
     diffs = _coreml_parity_diffs(mlpackage_path, pytorch_model, example_input)
     assert len(diffs) == 3, f"segmentation export must yield (boxes, logits, masks), got {len(diffs)} outputs"

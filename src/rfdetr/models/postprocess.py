@@ -401,14 +401,18 @@ class PostProcess(nn.Module):
         # Iterate over the (small) set of keypoint classes rather than per detection.
         # Avoids `num_select` GPU->CPU stream syncs from `.item()`; loop bound is
         # `num_keypoint_classes` (typically 1-20) instead of `num_select` (up to 300).
+        # Read the static schema before checking a device mask: zero-keypoint classes
+        # need no work, and evaluating `class_mask.any()` would synchronize CUDA. A
+        # one-class schema also needs no per-class check: the global valid-class guard
+        # above guarantees the selected group is non-empty.
         for class_idx in range(num_keypoint_classes):
-            class_mask = selected_labels == class_idx
-            if not class_mask.any():
-                continue
             num_active_keypoints = self.num_keypoints_per_class[class_idx]
             if num_active_keypoints <= 0:
                 continue
 
+            class_mask = selected_labels == class_idx
+            if num_keypoint_classes > 1 and not class_mask.any():
+                continue
             out_idx = valid_indices[class_mask]
             active_keypoints = selected_keypoints[class_mask, :num_active_keypoints]
             output_keypoints[out_idx, :num_active_keypoints, 0] = active_keypoints[..., 0] * img_w
@@ -451,16 +455,18 @@ class PostProcess(nn.Module):
         # stream sync) and a final `torch.stack` over a Python list. Grouping by
         # class lets us call `_keypoint_log_mean_trace` once on a batched tensor
         # whose `num_active_keypoints` is constant within the class.
+        # As above, skip zero-keypoint classes from static schema metadata and avoid
+        # checking the only class of a one-class schema through a Python condition.
         for class_idx in range(num_keypoint_classes):
-            class_mask = selected_labels == class_idx
-            if not class_mask.any():
-                continue
             num_active_keypoints = self.num_keypoints_per_class[class_idx]
             if num_active_keypoints <= 0:
                 # Defaults to 0.0 from `new_zeros` above — matches the legacy
                 # per-detection branch that appended a 0 tensor.
                 continue
 
+            class_mask = selected_labels == class_idx
+            if num_keypoint_classes > 1 and not class_mask.any():
+                continue
             active_keypoints = selected_keypoints[class_mask, :num_active_keypoints]
             log_mean_traces[class_mask] = self._keypoint_log_mean_trace(active_keypoints)
 

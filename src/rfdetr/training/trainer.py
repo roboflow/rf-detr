@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar, TQDMProgressBar
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBarTheme
 from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
 from pytorch_lightning.strategies import DDPStrategy as _DDPStrategy
@@ -29,6 +29,8 @@ from rfdetr.config import KeypointTrainConfig, ModelConfig, TrainConfig
 from rfdetr.training.callbacks import (
     BestModelCallback,
     DropPathCallback,
+    GPUMemoryRichProgressBar,
+    GPUMemoryTQDMProgressBar,
     RFDETREarlyStopping,
     RFDETREMACallback,
 )
@@ -627,13 +629,13 @@ def build_trainer(
 
     if tc.progress_bar == "rich":
         callbacks.append(
-            RichProgressBar(
+            GPUMemoryRichProgressBar(
                 refresh_rate=5,
                 theme=RichProgressBarTheme(metrics_format=".3e"),
             )
         )
     elif tc.progress_bar == "tqdm":
-        callbacks.append(TQDMProgressBar(refresh_rate=5))
+        callbacks.append(GPUMemoryTQDMProgressBar(refresh_rate=5))
 
     # Training-only callbacks and loggers.  Evaluation-only trainers
     # (``include_training_callbacks=False``, used by :meth:`rfdetr.detr.RFDETR.evaluate`) keep just the

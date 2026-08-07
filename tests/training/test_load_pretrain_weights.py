@@ -55,6 +55,13 @@ def _make_checkpoint(num_classes=91, num_queries=300, group_detr=13):
         num_classes: Total classes including background (bias shape).
         num_queries: Number of object queries per group.
         group_detr: Number of groups.
+
+    Examples:
+        >>> checkpoint = _make_checkpoint(num_classes=3, num_queries=2, group_detr=4)
+        >>> checkpoint["model"]["class_embed.bias"].shape
+        torch.Size([3])
+        >>> checkpoint["model"]["query_feat.weight"].shape
+        torch.Size([8, 256])
     """
     total_queries = num_queries * group_detr
     state = {
@@ -73,7 +80,14 @@ def _make_checkpoint(num_classes=91, num_queries=300, group_detr=13):
 
 
 def _suppress_pretrain_io(monkeypatch) -> None:
-    """Suppress download/validate/file-existence side effects on the canonical load path."""
+    """Suppress download/validate/file-existence side effects on the canonical load path.
+
+    Examples:
+        Needs pytest's ``monkeypatch`` fixture, so the live call is covered by tests rather than doctest.
+
+        >>> callable(_suppress_pretrain_io)  # doctest: +SKIP
+        True
+    """
     monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
     monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
     monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)

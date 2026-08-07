@@ -17,7 +17,8 @@ import yaml
 
 if TYPE_CHECKING:
     from supervision import Detections
-from PIL import Image, ImageDraw
+from numpy.typing import NDArray
+from PIL import Image, ImageDraw, UnidentifiedImageError
 from torchvision.datasets import VisionDataset
 
 from rfdetr.datasets._aug_utils import resolve_keypoint_flip_pairs
@@ -27,6 +28,7 @@ from rfdetr.datasets._keypoint_schema import (
     _load_yaml_mapping,
     infer_yolo_keypoint_schema,
 )
+from rfdetr.datasets._torchvision import Compose
 from rfdetr.datasets.coco import (
     make_coco_transforms,
     make_coco_transforms_square_div_64,
@@ -42,7 +44,7 @@ REQUIRED_DATA_SUBDIRS = ["images", "labels"]
 YOLO_IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpg", ".jpeg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
 
 
-def _parse_yolo_box(values: list[str]) -> np.ndarray:
+def _parse_yolo_box(values: list[str]) -> NDArray[np.float32]:
     """Parse a YOLO center-width-height box into relative XYXY coordinates."""
     x_center, y_center, width, height = values
     return np.array(
@@ -56,7 +58,7 @@ def _parse_yolo_box(values: list[str]) -> np.ndarray:
     )
 
 
-def _box_to_polygon(box: np.ndarray) -> np.ndarray:
+def _box_to_polygon(box: NDArray[np.float32]) -> NDArray[np.float32]:
     """Convert a relative XYXY box into a 4-corner polygon."""
     return np.array(
         [[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]],
@@ -64,12 +66,12 @@ def _box_to_polygon(box: np.ndarray) -> np.ndarray:
     )
 
 
-def _parse_yolo_polygon(values: list[str]) -> np.ndarray:
+def _parse_yolo_polygon(values: list[str]) -> NDArray[np.float32]:
     """Parse a flattened YOLO polygon into relative XY points."""
     return np.array(values, dtype=np.float32).reshape(-1, 2)
 
 
-def _polygon_to_mask(polygon: np.ndarray, resolution_wh: tuple[int, int]) -> np.ndarray:
+def _polygon_to_mask(polygon: NDArray[np.float32], resolution_wh: tuple[int, int]) -> NDArray[np.bool_]:
     """Rasterize a polygon into a dense boolean mask.
 
     TODO: remove once supervision ships a direct CompactMask.from_polygon factory;
@@ -82,7 +84,7 @@ def _polygon_to_mask(polygon: np.ndarray, resolution_wh: tuple[int, int]) -> np.
     return np.array(mask, dtype=bool)
 
 
-def _polygons_to_masks(polygons: tuple[np.ndarray, ...], resolution_wh: tuple[int, int]) -> np.ndarray:
+def _polygons_to_masks(polygons: tuple[NDArray[np.float32], ...], resolution_wh: tuple[int, int]) -> NDArray[np.bool_]:
     """Rasterize per-instance polygons into an ``(N, H, W)`` boolean array.
 
     TODO: remove once supervision ships a direct CompactMask.from_polygon factory;
@@ -122,10 +124,10 @@ class _LazyYoloSample:
     image_path: str
     width: int
     height: int
-    xyxy: np.ndarray
-    class_id: np.ndarray
-    polygons: tuple[np.ndarray, ...]
-    keypoints: np.ndarray
+    xyxy: NDArray[np.float32]
+    class_id: NDArray[np.int64]
+    polygons: tuple[NDArray[np.float32], ...]
+    keypoints: NDArray[np.float32]
 
     def to_detections(self) -> Detections:
         """Materialize the current sample as a supervision ``Detections`` object."""
@@ -157,12 +159,12 @@ class _LazyYoloDetectionDataset:
     def __len__(self) -> int:
         return len(self._samples)
 
-    def __getitem__(self, idx: int) -> tuple[str, np.ndarray, Detections]:
+    def __getitem__(self, idx: int) -> tuple[str, NDArray[np.uint8], Detections]:
         sample = self._samples[idx]
         try:
             with Image.open(sample.image_path) as image:
                 rgb_image = np.array(image.convert("RGB"))
-        except (FileNotFoundError, OSError, Image.UnidentifiedImageError) as exc:
+        except (FileNotFoundError, OSError, UnidentifiedImageError) as exc:
             raise ValueError(f"Could not read image from path: {sample.image_path}") from exc
         return sample.image_path, rgb_image, sample.to_detections()
 
@@ -180,7 +182,7 @@ def _parse_yolo_label_line(
     height: int,
     *,
     parse_polygons: bool = True,
-) -> tuple[int, np.ndarray, np.ndarray | None]:
+) -> tuple[int, NDArray[np.float32], NDArray[np.float32] | None]:
     """Parse one YOLO label line and return ``(class_id, xyxy_px, polygon_px)``.
 
     Args:
@@ -232,7 +234,7 @@ def _parse_yolo_label_line(
     if len(values) == 5:
         box = _parse_yolo_box(values[1:])
         # Skip polygon creation on the detection path — only the bbox is needed.
-        polygon: np.ndarray | None = _box_to_polygon(box) if parse_polygons else None
+        polygon: NDArray[np.float32] | None = _box_to_polygon(box) if parse_polygons else None
     else:
         try:
             _raw_polygon = _parse_yolo_polygon(values[1:])
@@ -272,7 +274,7 @@ def _parse_yolo_pose_label_line(
     *,
     num_keypoints: int,
     keypoint_dim: int,
-) -> tuple[int, np.ndarray, np.ndarray]:
+) -> tuple[int, NDArray[np.float32], NDArray[np.float32]]:
     """Parse one Ultralytics YOLO pose row into pixel boxes and COCO-style keypoints."""
     expected_fields = 5 + num_keypoints * keypoint_dim
     if len(values) != expected_fields:
@@ -397,10 +399,10 @@ def _build_yolo_samples(
         with Image.open(image_path) as image:
             width, height = image.size
 
-        xyxy: list[np.ndarray] = []
+        xyxy: list[NDArray[np.float32]] = []
         class_id: list[int] = []
-        polygons: list[np.ndarray] = []
-        keypoints: list[np.ndarray] = []
+        polygons: list[NDArray[np.float32]] = []
+        keypoints: list[NDArray[np.float32]] = []
         if label_path.exists():
             with label_path.open(encoding="utf-8") as handle:
                 lines = [line.strip() for line in handle if line.strip()]
@@ -809,7 +811,7 @@ class ConvertYolo:
         self.include_keypoints = include_keypoints
         self.num_keypoints = num_keypoints
 
-    def __call__(self, image: Image.Image, target: dict) -> tuple:
+    def __call__(self, image: Image.Image, target: dict[str, Any]) -> tuple[Image.Image, dict[str, torch.Tensor]]:
         """Convert image and YOLO detections to RF-DETR format.
 
         Args:
@@ -841,7 +843,7 @@ class ConvertYolo:
         boxes = boxes[keep]
         classes = classes[keep]
 
-        target_out = {}
+        target_out: dict[str, torch.Tensor] = {}
         target_out["boxes"] = boxes
         target_out["labels"] = classes
         target_out["image_id"] = image_id
@@ -877,7 +879,7 @@ class ConvertYolo:
         return image, target_out
 
 
-class YoloDetection(VisionDataset):
+class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships no py.typed, so the base is Any
     """YOLO format dataset with lazy image loading and optional mask support.
 
     Both detection (``include_masks=False``) and segmentation (``include_masks=True``) paths use a lazy backend: image
@@ -906,7 +908,7 @@ class YoloDetection(VisionDataset):
         img_folder: str,
         lb_folder: str,
         data_file: str,
-        transforms=None,
+        transforms: Compose | None = None,
         include_masks: bool = False,
         include_keypoints: bool = False,
         num_keypoints_per_class: list[int] | None = None,
@@ -917,6 +919,7 @@ class YoloDetection(VisionDataset):
         self._transforms = transforms
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
+        self.keypoint_schema: YoloKeypointSchema | None
         if include_keypoints:
             try:
                 self.keypoint_schema = infer_yolo_keypoint_schema(data_file)
@@ -932,7 +935,9 @@ class YoloDetection(VisionDataset):
             include_keypoints=include_keypoints,
             num_keypoints=self.num_keypoints,
         )
-        if include_keypoints:
+        # Equivalent to `include_keypoints` (the schema is set exactly on that path, and a failed
+        # inference re-raises), stated this way so the non-None schema below is provable.
+        if self.keypoint_schema is not None:
             self.sv_dataset = _build_lazy_yolo_keypoint_dataset(
                 img_folder,
                 lb_folder,
@@ -953,21 +958,21 @@ class YoloDetection(VisionDataset):
     def __len__(self) -> int:
         return len(self.sv_dataset)
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> tuple[Image.Image | torch.Tensor, dict[str, Any] | None]:
         image_id = self.ids[idx]
         image_path, rgb_image, detections = self.sv_dataset[idx]
 
         img = Image.fromarray(rgb_image)
 
-        target = {"image_id": image_id, "detections": detections}
+        target: dict[str, Any] = {"image_id": image_id, "detections": detections}
         if self.include_keypoints:
             target["keypoints"] = self.sv_dataset.get_image_info(idx).keypoints
-        img, target = self.prepare(img, target)
+        prepared_image, prepared_target = self.prepare(img, target)
 
         if self._transforms is not None:
-            img, target = self._transforms(img, target)
+            return self._transforms(prepared_image, prepared_target)
 
-        return img, target
+        return prepared_image, prepared_target
 
 
 def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> YoloDetection:
