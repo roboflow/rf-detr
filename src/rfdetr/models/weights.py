@@ -188,11 +188,18 @@ def _warn_on_partial_load(incompatible: Any, pretrain_weights_path: str) -> None
     # parameter. Detection checkpoints published before keypoint support do not
     # contain it; the current model correctly reconstructs it from the configured
     # keypoint schema (an empty mask for detection-only variants).
-    missing = [
-        key
-        for key in _filter_intentional_keys(missing_keys)
-        if key != "_kp_active_mask" and not key.endswith("._kp_active_mask")
-    ]
+    missing: list[str] = []
+    for key in _filter_intentional_keys(missing_keys):
+        if key == "_kp_active_mask" or key.endswith("._kp_active_mask"):
+            # Keep the breadcrumb at debug level: harmless for detection-only variants, but a keypoint model
+            # loading a mask-less checkpoint keeps its config-derived schema, and this is the only remaining trace.
+            logger.debug(
+                "Checkpoint %r has no %r — rebuilding it from the configured keypoint schema.",
+                pretrain_weights_path,
+                key,
+            )
+            continue
+        missing.append(key)
     unexpected = _filter_intentional_keys(unexpected_keys)
     if not missing and not unexpected:
         return
