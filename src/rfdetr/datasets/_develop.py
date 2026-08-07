@@ -238,9 +238,19 @@ def _extract_zip(zip_path: Path, dest_dir_resolved: Path) -> None:
 def _download_and_extract(url: str, dest_dir: Path) -> None:
     """Download a zip archive and safely extract it, retrying on a corrupt transfer.
 
-    Truncated downloads and corrupt deflate streams (``zlib.error``/``BadZipFile``) are
-    retried up to ``_DOWNLOAD_MAX_ATTEMPTS`` times. The partial archive is always removed,
-    both on failure (so a corrupt file never persists for the next run) and on success.
+    Truncated downloads and corrupt deflate streams (``zlib.error``/``BadZipFile``/
+    ``EOFError``) are retried up to ``_DOWNLOAD_MAX_ATTEMPTS`` times. The partial archive
+    is always removed, both on failure (so a corrupt file never persists for the next run)
+    and on success.
+
+    Concurrent calls for the same *url* are serialized on a lock keyed by the destination
+    zip filename, derived the same way as ``zip_path`` below. This matters because several
+    independent callers (for example the ``download_coco_val`` and
+    ``download_coco_val_keypoints`` pytest fixtures, each running in its own
+    pytest-xdist worker) can end up requesting the same archive at the same time. Without
+    a shared lock, one caller's ``urlretrieve`` can start overwriting the archive on disk
+    while another caller is mid-extraction, which is what surfaces as the ``EOFError``
+    below rather than anything ``_fetch_zip``'s size check catches.
 
     Args:
         url: URL to a zip archive.
@@ -249,6 +259,9 @@ def _download_and_extract(url: str, dest_dir: Path) -> None:
     Raises:
         zipfile.BadZipFile: If every attempt yields a truncated or corrupt archive.
         zlib.error: If the deflate stream is corrupt on the final attempt.
+        EOFError: If the compressed stream ends early on the final attempt (a torn read
+            of a zip that another caller is concurrently overwriting, or a genuinely
+            truncated transfer).
         RuntimeError: If a member would escape *dest_dir* (path traversal — not retried).
 
     Example:
@@ -258,25 +271,27 @@ def _download_and_extract(url: str, dest_dir: Path) -> None:
     dest_dir.mkdir(parents=True, exist_ok=True)
     zip_path = dest_dir / url.rsplit("/", 1)[-1]
     dest_dir_resolved = dest_dir.resolve()
-    for attempt in range(1, _DOWNLOAD_MAX_ATTEMPTS + 1):
-        try:
-            logger.info("Downloading %s (attempt %d/%d) ...", url, attempt, _DOWNLOAD_MAX_ATTEMPTS)
-            _fetch_zip(url, zip_path)
-            logger.info("Extracting %s ...", zip_path)
-            _extract_zip(zip_path, dest_dir_resolved)
-            break
-        except (zipfile.BadZipFile, zlib.error, OSError) as exc:
-            with suppress(FileNotFoundError):
-                zip_path.unlink()
-            # Fail fast on common non-retryable local filesystem errors.
-            if isinstance(exc, OSError) and getattr(exc, "errno", None) in {13, 28}:
-                raise
-            if attempt == _DOWNLOAD_MAX_ATTEMPTS:
-                raise
-            logger.warning("Download/extract of %s failed (%s); retrying ...", url, exc)
-            time.sleep(2.0 * attempt)
-    with suppress(FileNotFoundError):
-        zip_path.unlink()
+    lock_path = dest_dir / f".{zip_path.name}.lock"
+    with _download_lock(lock_path):
+        for attempt in range(1, _DOWNLOAD_MAX_ATTEMPTS + 1):
+            try:
+                logger.info("Downloading %s (attempt %d/%d) ...", url, attempt, _DOWNLOAD_MAX_ATTEMPTS)
+                _fetch_zip(url, zip_path)
+                logger.info("Extracting %s ...", zip_path)
+                _extract_zip(zip_path, dest_dir_resolved)
+                break
+            except (zipfile.BadZipFile, zlib.error, EOFError, OSError) as exc:
+                with suppress(FileNotFoundError):
+                    zip_path.unlink()
+                # Fail fast on common non-retryable local filesystem errors.
+                if isinstance(exc, OSError) and getattr(exc, "errno", None) in {13, 28}:
+                    raise
+                if attempt == _DOWNLOAD_MAX_ATTEMPTS:
+                    raise
+                logger.warning("Download/extract of %s failed (%s); retrying ...", url, exc)
+                time.sleep(2.0 * attempt)
+        with suppress(FileNotFoundError):
+            zip_path.unlink()
 
 
 @contextmanager

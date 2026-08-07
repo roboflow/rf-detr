@@ -6,12 +6,14 @@
 """Tests for private developer download helpers."""
 
 import io
+import threading
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+import rfdetr.datasets._develop as _develop_mod
 from rfdetr.datasets._develop import (
     _coco_val_images_complete,
     _download_and_extract,
@@ -123,3 +125,70 @@ class TestDownloadAndExtract:
         with patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve):
             with pytest.raises(RuntimeError, match="Unsafe path detected"):
                 _download_and_extract(url, tmp_path)
+
+    def test_concurrent_callers_for_the_same_url_do_not_race(self, tmp_path: Path) -> None:
+        """Two independent callers requesting the same URL/dest_dir must not corrupt each other.
+
+        Regression test for a case where two pytest fixtures (``download_coco_val`` and
+        ``download_coco_val_keypoints``) each guarded their own call to
+        ``_download_and_extract`` with a *different* lock file, even though both called it
+        with the identical URL and ``dest_dir``. Under pytest-xdist, one worker's
+        ``urlretrieve`` could start overwriting the shared zip on disk while another worker
+        was mid-extraction, surfacing as a bare ``EOFError`` from inside ``zipfile``.
+
+        This reproduces that interleaving directly: the first caller is paused inside
+        ``_extract_zip`` (simulating the window where the file is being read) while a
+        second caller is launched concurrently for the same URL. If the two calls are not
+        serialized on a lock keyed by the shared resource, the second caller's
+        ``urlretrieve`` starts writing to ``zip_path`` while the first is still reading it.
+        """
+        zip_bytes = self._make_zip({"hello.txt": "world"})
+        url = "http://example.com/shared.zip"
+        events: list[str] = []
+        events_lock = threading.Lock()
+        first_extract_started = threading.Event()
+        second_caller_launched = threading.Event()
+
+        def fake_urlretrieve(url: str, dest: str) -> tuple[str, dict[str, str]]:
+            with events_lock:
+                events.append("fetch-start")
+            Path(dest).write_bytes(zip_bytes)
+            return dest, {"Content-Length": str(len(zip_bytes))}
+
+        real_extract_zip = _develop_mod._extract_zip
+
+        def paused_extract_zip(zip_path: Path, dest_dir_resolved: Path) -> None:
+            with events_lock:
+                events.append("extract-start")
+            first_extract_started.set()
+            # Give the second caller a chance to run; if the lock is shared it can only
+            # block, never actually reach "fetch-start" before this returns.
+            second_caller_launched.wait(timeout=5)
+            real_extract_zip(zip_path, dest_dir_resolved)
+            with events_lock:
+                events.append("extract-end")
+
+        def run_second_caller() -> None:
+            first_extract_started.wait(timeout=5)
+            second_caller_launched.set()
+            _download_and_extract(url, tmp_path)
+            with events_lock:
+                events.append("second-caller-done")
+
+        with (
+            patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve),
+            patch("rfdetr.datasets._develop._extract_zip", side_effect=paused_extract_zip),
+        ):
+            second_thread = threading.Thread(target=run_second_caller)
+            second_thread.start()
+            _download_and_extract(url, tmp_path)
+            second_thread.join(timeout=5)
+
+        assert not second_thread.is_alive()
+        # The second caller's fetch must not start until the first caller's extraction
+        # (and therefore the whole first call) has finished — that ordering is what a
+        # shared, resource-keyed lock guarantees and what a per-fixture lock does not.
+        assert events.index("extract-end") < events.index("second-caller-done")
+        assert events.count("fetch-start") == 2
+        assert events.count("extract-start") == 2
+        assert (tmp_path / "hello.txt").read_bytes() == b"world"
