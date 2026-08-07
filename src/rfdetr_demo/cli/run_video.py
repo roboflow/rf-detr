@@ -144,6 +144,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if "avg_fps" in summary:
         print(f"Average inference FPS: {summary['avg_fps']}")
+    if "unique_track_ids" in summary:
+        print(f"Unique track ids over clip: {summary['unique_track_ids']}")
     return 0
 
 

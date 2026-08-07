@@ -78,6 +78,8 @@ def test_detection_track_callback_assigns_stable_ids() -> None:
     # The two people barely moved, so ids persist across frames.
     assert ids_frame1 == [0, 1]
     assert stats["frame_active_tracks"] == 2
+    # Two stable people over two frames => two distinct ids total.
+    assert stats["unique_track_ids"] == 2
 
 
 def test_detection_track_keeps_low_confidence_when_hysteresis_off() -> None:

@@ -110,8 +110,10 @@ def make_detection_track_callback(
 
     Person detections flow through the box-IoU tracker (``track_pipeline``), so
     motion prediction, the motion gate, and appearance ReID all apply. Boxes are
-    drawn colored by track id with a live-count banner.
+    drawn colored by track id with a live-count banner. ``stats['unique_track_ids']``
+    accumulates the distinct ids seen so far (a proxy for id fragmentation).
     """
+    seen_ids: set[int] = set()
 
     def callback(frame_bgr: np.ndarray, index: int) -> np.ndarray:
         stats["processed_frames"] += 1
@@ -136,6 +138,8 @@ def make_detection_track_callback(
         stats["frame_ghost_tracks"] = frame_stats.ghost_count
         stats["frame_live_tracks"] = frame_stats.active_track_count - frame_stats.ghost_count
         stats["total_detections"] += frame_stats.active_track_count
+        seen_ids.update(tid for tid in track_ids_from_key_points(result.key_points) if tid is not None)
+        stats["unique_track_ids"] = len(seen_ids)
         return _draw_tracked_boxes(frame_bgr, result.key_points)
 
     return callback

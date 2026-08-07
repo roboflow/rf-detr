@@ -393,6 +393,8 @@ def run_demo(
             2,
         )
         summary["avg_fps"] = round(stats["processed_frames"] / elapsed_sec, 2)
+    if "unique_track_ids" in stats:
+        summary["unique_track_ids"] = stats["unique_track_ids"]
     if frame_audit is not None:
         audit_summary = frame_audit.finalize()
         if audit_summary is not None:
