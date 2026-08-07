@@ -161,6 +161,15 @@ def _warn_on_partial_load(incompatible: Any, pretrain_weights_path: str) -> None
     not reach this function — they raise :class:`RuntimeError` directly from ``load_state_dict`` and are therefore
     impossible to miss.
 
+    Two separate exclusions are applied before deciding whether to warn, for two different reasons:
+
+    * :func:`_filter_intentional_keys` drops head / query-embedding keys in *both* directions, because the loader
+      itself reinitialises or trims them.  Matching there is module-prefix based.
+    * ``_kp_active_mask`` is dropped from ``missing_keys`` only, because it is a deterministic schema buffer rather
+      than a learned parameter — the model always rebuilds it from the configured keypoint schema, so a checkpoint
+      predating keypoint support is not actually missing anything.  Matching is on the exact terminal key so a
+      similarly-named real parameter still warns, and the ``unexpected_keys`` direction is deliberately left alone.
+
     Args:
         incompatible: The ``_IncompatibleKeys`` namedtuple returned by
             :meth:`torch.nn.Module.load_state_dict`.
