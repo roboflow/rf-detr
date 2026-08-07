@@ -82,6 +82,32 @@ def test_detection_track_callback_assigns_stable_ids() -> None:
     assert stats["unique_track_ids"] == 2
 
 
+def test_tiled_detector_runs_model_per_tile_and_merges() -> None:
+    from rfdetr_demo.inference.callbacks import _build_person_detector
+
+    class _OneBoxPerTileModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def predict(self, image: np.ndarray, **_kwargs: object) -> sv.Detections:
+            self.calls += 1
+            height, width = image.shape[:2]
+            return sv.Detections(
+                xyxy=np.asarray([[2.0, 2.0, width - 2.0, height - 2.0]], dtype=np.float32),
+                confidence=np.asarray([0.9], dtype=np.float32),
+                class_id=np.ones((1,), dtype=np.int64),
+            )
+
+    model = _OneBoxPerTileModel()
+    detect = _build_person_detector(model, 0.25, tile_size=256, tile_overlap=64)
+    frame_rgb = np.zeros((512, 512, 3), dtype=np.uint8)
+    detections = detect(frame_rgb)
+
+    # A 512x512 frame with 256px tiles is split into multiple tiles (model called > once).
+    assert model.calls > 1
+    assert len(detections) >= 1
+
+
 class _FakePoseModel:
     def __init__(self) -> None:
         self.crop_sizes: list[tuple[int, int]] = []
@@ -118,10 +144,11 @@ def test_pose_subset_runs_on_top_k_largest_boxes() -> None:
     )
     callback(np.zeros((480, 640, 3), dtype=np.uint8), 0)
 
-    # Pose ran on exactly the two largest boxes (100x300 and 20x30 areas ranked).
+    # Pose ran on exactly the two largest boxes.
     assert len(pose_model.crop_sizes) == 2
-    # The largest box (300 tall) is cropped first.
-    assert pose_model.crop_sizes[0][0] == 300
+    # The largest box is cropped first (crops carry a ~15% pad for full limbs).
+    assert pose_model.crop_sizes[0][0] > pose_model.crop_sizes[1][0]
+    assert pose_model.crop_sizes[0][0] >= 300
 
 
 def test_detection_track_keeps_low_confidence_when_hysteresis_off() -> None:

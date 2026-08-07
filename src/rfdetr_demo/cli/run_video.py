@@ -69,6 +69,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=0,
         help="Two-stage: also pose-estimate the N largest tracked boxes (detect+track everyone, pose a subset)",
     )
+    parser.add_argument(
+        "--tile",
+        dest="tile_size",
+        type=int,
+        default=0,
+        help="Tiled inference: detect on overlapping NxN tiles and merge (0=off) to catch small/distant people",
+    )
+    parser.add_argument("--tile-overlap", type=int, default=128, help="Tile overlap in pixels (with --tile)")
     parser.add_argument("--frame-stride", type=int, default=1)
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--max-source-seconds", type=float, default=None)
@@ -145,6 +153,8 @@ def main(argv: list[str] | None = None) -> int:
             reid_similarity=args.reid_similarity,
             reid_stride=args.reid_stride,
             pose_topk=args.pose_topk,
+            tile_size=args.tile_size,
+            tile_overlap=args.tile_overlap,
         )
     except (FileNotFoundError, RuntimeError, ValueError) as error:
         logger.error("%s", error)

@@ -94,6 +94,8 @@ def _build_task_callback(
     reid_similarity: float = 0.6,
     reid_stride: int = 1,
     pose_topk: int = 0,
+    tile_size: int = 0,
+    tile_overlap: int = 128,
 ) -> Callable[[Any, int], Any]:
     if task == "keypoint":
         model = build_keypoint_model(resolution=model_resolution)
@@ -196,6 +198,8 @@ def _build_task_callback(
             tune_cache=tune_cache,
             keypoint_model=pose_model,
             pose_topk=pose_topk,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
         )
     return make_detection_callback(
         model,
@@ -205,6 +209,8 @@ def _build_task_callback(
         sv.LabelAnnotator(),
         stats,
         tune_cache=tune_cache,
+        tile_size=tile_size,
+        tile_overlap=tile_overlap,
     )
 
 
@@ -243,6 +249,8 @@ def run_demo(
     reid_similarity: float = 0.6,
     reid_stride: int = 1,
     pose_topk: int = 0,
+    tile_size: int = 0,
+    tile_overlap: int = 128,
 ) -> dict[str, Any]:
     """Process ``source_path`` and write annotated video to ``target_path``.
 
@@ -315,6 +323,8 @@ def run_demo(
         reid_similarity=reid_similarity,
         reid_stride=reid_stride,
         pose_topk=pose_topk,
+        tile_size=tile_size,
+        tile_overlap=tile_overlap,
     )
 
     frame_audit: ConfidentialFrameAuditLogger | None = None

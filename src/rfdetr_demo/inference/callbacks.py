@@ -26,6 +26,29 @@ from rfdetr_demo.tracking.keypoints_ops import (
 )
 
 
+def _build_person_detector(
+    model: RFDETR,
+    threshold: float,
+    tile_size: int,
+    tile_overlap: int,
+) -> Callable[[np.ndarray], sv.Detections]:
+    """Return a function that predicts detections, optionally via tiled inference.
+
+    When ``tile_size > 0`` the frame is split into overlapping tiles (SAHI-style)
+    and each is run through the model, then merged with NMS — small/distant people
+    that are tiny in the full frame become large within a tile and get detected.
+    """
+    if tile_size and tile_size > 0:
+        slicer = sv.InferenceSlicer(
+            callback=lambda image: model.predict(image, threshold=threshold, include_source_image=False),
+            slice_wh=(tile_size, tile_size),
+            overlap_wh=(tile_overlap, tile_overlap),
+            iou_threshold=0.5,
+        )
+        return lambda frame_rgb: slicer(frame_rgb)
+    return lambda frame_rgb: model.predict(frame_rgb, threshold=threshold, include_source_image=False)
+
+
 def _color_for_track_id(track_id: int) -> tuple[int, int, int]:
     """Return a deterministic BGR color for a track id."""
     hue = (int(track_id) * 47) % 180
@@ -87,10 +110,14 @@ def _draw_pose_subset(
         reverse=True,
     )
     for index in order[:pose_topk]:
-        x1 = max(0, min(width, int(round(float(boxes[index][0])))))
-        y1 = max(0, min(height, int(round(float(boxes[index][1])))))
-        x2 = max(0, min(width, int(round(float(boxes[index][2])))))
-        y2 = max(0, min(height, int(round(float(boxes[index][3])))))
+        box = boxes[index]
+        # Pad the box so arms/legs are not clipped out of the pose crop.
+        pad_x = 0.15 * float(box[2] - box[0])
+        pad_y = 0.15 * float(box[3] - box[1])
+        x1 = max(0, min(width, int(round(float(box[0]) - pad_x))))
+        y1 = max(0, min(height, int(round(float(box[1]) - pad_y))))
+        x2 = max(0, min(width, int(round(float(box[2]) + pad_x))))
+        y2 = max(0, min(height, int(round(float(box[3]) + pad_y))))
         if x2 - x1 < 8 or y2 - y1 < 8:
             continue
         crop = frame_rgb[y1:y2, x1:x2]
@@ -141,17 +168,16 @@ def make_detection_callback(
     label_annotator: sv.LabelAnnotator,
     stats: dict[str, int],
     tune_cache: Any | None = None,
+    tile_size: int = 0,
+    tile_overlap: int = 128,
 ) -> Callable[[np.ndarray, int], np.ndarray]:
     """Build a callback that runs COCO object detection per frame."""
+    detect = _build_person_detector(model, threshold, tile_size, tile_overlap)
 
     def callback(frame_bgr: np.ndarray, index: int) -> np.ndarray:
         stats["processed_frames"] += 1
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        detections = model.predict(
-            frame_rgb,
-            threshold=threshold,
-            include_source_image=False,
-        )
+        detections = detect(frame_rgb)
         if tune_cache is not None:
             tune_cache.append_detection(
                 frame_bgr=frame_bgr,
@@ -185,6 +211,8 @@ def make_detection_track_callback(
     keypoint_model: RFDETR | None = None,
     pose_topk: int = 0,
     keypoint_threshold: float = 0.3,
+    tile_size: int = 0,
+    tile_overlap: int = 128,
 ) -> Callable[[np.ndarray, int], np.ndarray]:
     """Build a callback that detects persons and tracks them (ids + stable count).
 
@@ -198,11 +226,12 @@ def make_detection_track_callback(
     detect+track for everyone, high-precision pose for a foreground subset).
     """
     seen_ids: set[int] = set()
+    detect = _build_person_detector(model, threshold, tile_size, tile_overlap)
 
     def callback(frame_bgr: np.ndarray, index: int) -> np.ndarray:
         stats["processed_frames"] += 1
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        detections = model.predict(frame_rgb, threshold=threshold, include_source_image=False)
+        detections = detect(frame_rgb)
         if person_only and len(detections) > 0:
             detections = detections[detections.class_id == COCO_PERSON_CLASS_ID]
         if tune_cache is not None:
