@@ -379,14 +379,14 @@ class Transformer(nn.Module):
                 topk_proposals_gidx = torch.topk(enc_outputs_class_unselected_gidx.max(-1)[0], topk, dim=1)[1]  # bs, nq
 
                 refpoint_embed_gidx_undetach = torch.gather(
-                    enc_outputs_coord_unselected_gidx, 1, topk_proposals_gidx.unsqueeze(-1).repeat(1, 1, 4)
+                    enc_outputs_coord_unselected_gidx, 1, topk_proposals_gidx.unsqueeze(-1).expand(-1, -1, 4)
                 )  # unsigmoid
                 # for decoder layer, detached as initial ones, (bs, nq, 4)
                 refpoint_embed_gidx = refpoint_embed_gidx_undetach.detach()
 
                 # get memory tgt
                 tgt_undetach_gidx = torch.gather(
-                    output_memory_gidx, 1, topk_proposals_gidx.unsqueeze(-1).repeat(1, 1, self.d_model)
+                    output_memory_gidx, 1, topk_proposals_gidx.unsqueeze(-1).expand(-1, -1, self.d_model)
                 )
 
                 refpoint_embed_ts_parts.append(refpoint_embed_gidx)

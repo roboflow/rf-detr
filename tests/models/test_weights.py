@@ -26,6 +26,13 @@ from rfdetr.models.weights import _warn_on_partial_load
 def _make_checkpoint(num_classes: int = 91, num_queries: int = 300, group_detr: int = 13) -> dict:
     """Build a minimal checkpoint dict with the given class count.
 
+    Examples:
+        >>> ckpt = _make_checkpoint(num_classes=3, num_queries=2, group_detr=2)
+        >>> ckpt["model"]["query_feat.weight"].shape
+        torch.Size([4, 256])
+
+
+
     Args:
         num_classes: Total classes including background (bias shape).
         num_queries: Number of object queries per group.
@@ -49,6 +56,13 @@ def _make_checkpoint(num_classes: int = 91, num_queries: int = 300, group_detr: 
 
 def _make_train_config(tmp_path=None) -> TrainConfig:
     """Return a minimal TrainConfig for use in load_pretrain_weights.
+
+    Examples:
+        >>> cfg = _make_train_config()
+        >>> cfg.dataset_dir.endswith("dataset")
+        True
+
+
 
     Args:
         tmp_path: Optional pytest tmp_path fixture value.
@@ -74,6 +88,13 @@ def _make_train_config(tmp_path=None) -> TrainConfig:
 
 def _fake_nn_model() -> MagicMock:
     """Return a MagicMock that behaves enough like an LWDETR nn.Module.
+
+    Examples:
+        >>> model = _fake_nn_model()
+        >>> hasattr(model, "load_state_dict")
+        True
+
+
 
     Returns:
         MagicMock with reinitialize_detection_head and load_state_dict stubs.
@@ -643,6 +664,10 @@ def _labelled_query_tensor(num_queries: int, group_detr: int, dim: int = 2) -> t
 
     This lets tests check the per-group ordering of the result without floating-point
     fuzz: the first column carries the (group, query) identity directly.
+
+    Examples:
+        >>> _labelled_query_tensor(2, 2, dim=1).squeeze(-1).tolist()
+        [0.0, 1.0, 100.0, 101.0]
     """
     rows = []
     for g in range(group_detr):
@@ -1060,6 +1085,10 @@ class TestPartialLoadDetector:
                 id="intentional_head_keys",
             ),
             pytest.param(
+                SimpleNamespace(missing_keys=["_kp_active_mask"], unexpected_keys=[]),
+                id="legacy_checkpoint_missing_deterministic_keypoint_mask",
+            ),
+            pytest.param(
                 SimpleNamespace(missing_keys=42, unexpected_keys=[]),
                 id="non_iterable_missing_keys",
             ),
@@ -1068,7 +1097,7 @@ class TestPartialLoadDetector:
     def test_no_warning_cases(self, captured, result: SimpleNamespace) -> None:
         """Cases that must not emit any partial-load warning.
 
-        Covers: clean load, intentional head keys, and non-iterable missing_keys.
+        Covers: clean load, intentional head keys, deterministic buffers, and non-iterable missing_keys.
         """
         _warn_on_partial_load(result, "/fake/weights.pth")
         assert captured == []
@@ -1086,6 +1115,47 @@ class TestPartialLoadDetector:
         assert len(captured) == 1
         assert "/fake/weights.pth" in captured[0]
         assert "register_tokens" in captured[0]
+
+    def test_missing_keypoint_mask_does_not_hide_real_missing_key(self, captured):
+        """The deterministic mask is ignored without suppressing a real backbone gap."""
+        result = SimpleNamespace(
+            missing_keys=[
+                "_kp_active_mask",
+                "backbone.0.encoder.encoder.embeddings.register_tokens",
+            ],
+            unexpected_keys=[],
+        )
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "register_tokens" in captured[0]
+        assert "_kp_active_mask" not in captured[0]
+
+    def test_submodule_prefixed_missing_mask_does_not_warn(self, captured):
+        """The mask is filtered under a submodule path too, not only as a bare top-level key."""
+        result = SimpleNamespace(missing_keys=["transformer.decoder._kp_active_mask"], unexpected_keys=[])
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert captured == []
+
+    def test_similarly_named_missing_key_still_warns(self, captured):
+        """Filtering the exact schema buffer must not hide a prefix collision."""
+        result = SimpleNamespace(missing_keys=["_kp_active_mask_projection.weight"], unexpected_keys=[])
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "_kp_active_mask_projection.weight" in captured[0]
+
+    def test_suffix_collision_without_separator_still_warns(self, captured):
+        """The submodule clause is anchored on the `.` separator, so a bare suffix match is not the buffer."""
+        result = SimpleNamespace(missing_keys=["backbone.custom_kp_active_mask"], unexpected_keys=[])
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "backbone.custom_kp_active_mask" in captured[0]
+
+    def test_unexpected_keypoint_mask_still_warns(self, captured):
+        """Only a missing deterministic mask is intentional; an unconsumed mask is still surfaced."""
+        result = SimpleNamespace(missing_keys=[], unexpected_keys=["_kp_active_mask"])
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "_kp_active_mask" in captured[0]
 
     def test_unexpected_keys_warn(self, captured):
         """Unexpected checkpoint keys (model has no slot for them) must trigger the warning."""

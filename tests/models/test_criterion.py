@@ -19,7 +19,12 @@ class _MatcherStub:
 
 
 def _bare_criterion() -> SetCriterion:
-    """Return a SetCriterion with no losses so forward() is a no-op."""
+    """Return a SetCriterion with no losses so forward() is a no-op.
+
+    Examples:
+        >>> isinstance(_bare_criterion(), SetCriterion)
+        True
+    """
     criterion = SetCriterion.__new__(SetCriterion)
     criterion.training = True
     criterion.group_detr = 1

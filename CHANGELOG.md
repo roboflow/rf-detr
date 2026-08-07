@@ -7,14 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Restored peak GPU memory (`max_mem` in MB) in the training progress bar, dropped during the PyTorch Lightning migration (PR #794) along with `rfdetr.engine`. Only covers `trainer.fit()` (training and its periodic in-training validation) — PTL's own progress-bar classes never call `get_metrics()` outside `trainer.state.fn == "fit"`, so a standalone `RFDETR.evaluate()` progress bar shows no metrics at all, not just `max_mem`, same as before this change. ([#974](https://github.com/roboflow/rf-detr/issues/974))
+
+### Changed
+
+- `HungarianMatcher`'s detection-only cost matrix is now built padded to each batch's `max(T_i)` target count and diagonal-extracted, instead of padding to the cross-image `sum(T_i)`, whenever the batch's targets and predictions pass a fast eligibility check; ineligible batches fall back to the previous full-cartesian computation with identical results. The matcher runs inside the training-step criterion under `torch.no_grad()`, so this is a training-time, not inference-time, saving: on real COCO batches matcher time drops ~51% and peak CUDA memory ~73-76%, and the measured end-to-end training step goes from 288.364 ms to 232.457 ms on an A100. The saving scales with target-count evenness `r = sum(T_i) / max(T_i)` (capped at the batch size) with a `1 - 1/r` ceiling, so a batch where one image holds nearly all the targets (`r` close to 1) sees little to no improvement. ([#1297](https://github.com/roboflow/rf-detr/pull/1297))
+
+### Fixed
+
+- Loading a detection checkpoint published before keypoint support no longer warns that `_kp_active_mask` is a "model parameter not in checkpoint (left at random init)". The key is a deterministic schema buffer the model always rebuilds from the configured keypoint schema — empty for detection-only variants — not a learned parameter, so its absence never affected the loaded weights. Affects `Nano`, `Small`, `Large` (2026) and `SegSmall`. The filter matches the exact terminal key, so a similarly-named real parameter still warns, and an *unexpected* `_kp_active_mask` in a checkpoint still warns; the filtered key is now recorded at debug level. ([#1302](https://github.com/roboflow/rf-detr/pull/1302))
+
 ### Breaking Changes
 
 - Exported artifact filenames now encode precision or backend for variant-derived/default names: TFLite `{stem}_float32.tflite` / `{stem}_float16.tflite` → `{stem}_fp32.tflite` / `{stem}_fp16.tflite`; ExecuTorch `{variant}.pte` → `{variant}_{backend}.pte` (or `{variant}_qnn_{soc}.pte`); CoreML `{variant}.mlpackage` → `{variant}_fp32.mlpackage` / `{variant}_fp16.mlpackage`; TensorRT `{stem}.trt` → `{stem}_fp16.trt` / `{stem}_fp32.trt`. ONNX filenames are unchanged. Update scripts that hardcode or glob these artifact filenames; explicit `output_name` overrides remain unchanged.
 
+## [1.9.1] — 2026-08-03
+
+### Changed
+
+- `PostProcess` now selects boxes, masks, and keypoints with `index_select`/`expand` instead of materialising a repeated `int64` gather index — an allocation that reached 21–84 MiB per image for the segmentation mask head. Mask post-processing at head resolution is 2.6–3.0× faster; the output is bit-for-bit identical. ([#1268](https://github.com/roboflow/rf-detr/pull/1268))
+- `RFDETR.predict()` no longer upsamples segmentation masks whose scores fall below the caller's threshold before discarding them — on typical COCO images only a few of the `num_select` masks survive `threshold=0.5`. End-to-end `predict()` is ~20% faster at 1080p (the saving scales with image area, and is neutral at 640 px); the output is unchanged. ([#1265](https://github.com/roboflow/rf-detr/pull/1265))
+- ExecuTorch export lowers the `addmm` operations the XNNPACK partitioner leaves undelegated back into `aten.linear` via `AddmmToLinearTransform`, which runs ~100× faster for those shapes. RFDETRNano on XNNPACK / Apple silicon is ~2.5× faster (119.9 → 48.3 ms median); outputs match the previous lowering to ~1e-4. ([#1262](https://github.com/roboflow/rf-detr/pull/1262))
+
 ### Fixed
 
-- `keypoint_flip_pairs` no longer silently disables horizontal-flip augmentations (`HorizontalFlip`, `Flip`, `D4`) on detection-only datasets when a custom `aug_config` is supplied. `AlbumentationsWrapper.from_config` treats an empty `keypoint_flip_pairs` as "keypoint pipeline with no flip pairs defined" and drops flip transforms for annotation safety; detection pipelines must pass `None` instead of `[]` to keep flips enabled. ([#1243](https://github.com/roboflow/rf-detr/pull/1243))
+- `keypoint_flip_pairs` no longer silently disables horizontal-flip augmentations (`HorizontalFlip`, `Flip`, `D4`) on detection-only datasets when a custom `aug_config` is supplied. `AlbumentationsWrapper.from_config` treats an empty `keypoint_flip_pairs` as "keypoint pipeline with no flip pairs defined" and drops flip transforms for annotation safety; detection pipelines must pass `None` instead of `[]` to keep flips enabled. ([#1248](https://github.com/roboflow/rf-detr/pull/1248))
 - Export inference and INT8 calibration now resize with `RFDETR.predict()`'s exact convention (bilinear, half-pixel centers, `antialias=False`) across the ONNX inference, TFLite inference, INT8 TFLite calibration, and benchmark/traced-example paths. These paths previously resized through PIL's antialiased BILINEAR/BICUBIC filters, which diverge from `predict()` on downscale and shift exported-model confidence scores and INT8 calibration ranges. A shared torch-free `_bilinear_resize_half_pixel` NumPy kernel (`rfdetr/export/_resize.py`) mirrors the convention wherever torchvision is unavailable. Re-export any INT8 TFLite model to recalibrate against the corrected pixel distribution. ([#1269](https://github.com/roboflow/rf-detr/pull/1269))
+- `pip install 'rfdetr[onnx]'` on Python 3.10 and `pip install 'rfdetr[executorch]'` on Python 3.14 no longer fail during install. Each extra previously resolved to a version (`onnxruntime`, `executorch`) that ships no wheel for that interpreter and has no source distribution to fall back on; the extras are now gated to interpreters that publish wheels. ([#1267](https://github.com/roboflow/rf-detr/pull/1267))
+- The Kornia augmentation builders (`GaussianBlur`, `GaussNoise`) accept either a scalar or a `(min, max)` pair for range parameters, matching the Albumentations path. A custom `aug_config` that is valid under Albumentations no longer raises a bare `TypeError` when `augmentation_backend="cpu"`/`"auto"` resolves to Kornia (Kornia installed and CUDA available). ([#1255](https://github.com/roboflow/rf-detr/pull/1255))
+- `uv sync` now resolves the development environment cleanly; an `executorch`/`tflite` extra conflict previously blocked `.venv` creation. ([#1253](https://github.com/roboflow/rf-detr/pull/1253))
+
+### Documentation
+
+- Corrected RF-DETR Keypoint Preview's parameter count (126.4 M → 40.7 M), added deployment parameter-count columns to the keypoint benchmark tables, and clarified that the new SAM 3 RF100-VL result is author-reported rather than measured in SAB. ([#1258](https://github.com/roboflow/rf-detr/pull/1258), [#1261](https://github.com/roboflow/rf-detr/pull/1261))
+- Documented ONNX Runtime raw-output decoding and expanded the LLM keypoint task/model/benchmark/API reference. ([#1251](https://github.com/roboflow/rf-detr/pull/1251), [#1260](https://github.com/roboflow/rf-detr/pull/1260))
 
 ## [1.9.0] — 2026-07-27
 

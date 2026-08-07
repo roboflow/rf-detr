@@ -40,7 +40,18 @@ FALLBACK_MAX_ABS_DIFF_BOUND = 1e-3
 
 
 def _pytorch_preprocess(pil_img: PILImage.Image, hw: tuple[int, int]) -> np.ndarray:
-    """Mirror of the PyTorch predict() preprocessing: to_tensor -> resize(antialias=False) -> normalize."""
+    """Mirror of the PyTorch predict() preprocessing: to_tensor -> resize(antialias=False) -> normalize.
+
+    Examples:
+        >>> import numpy as np
+        >>> from PIL import Image as PILImage
+        >>> img = PILImage.new("RGB", (64, 64), color=(128, 64, 32))
+        >>> arr = _pytorch_preprocess(img, (32, 32))
+        >>> arr.shape
+        (1, 3, 32, 32)
+        >>> arr.dtype
+        dtype('float32')
+    """
     img = F.to_tensor(pil_img)
     img = F.resize(img, list(hw), antialias=False)
     img = F.normalize(img, IMAGENET_MEAN, IMAGENET_STD)
@@ -48,7 +59,20 @@ def _pytorch_preprocess(pil_img: PILImage.Image, hw: tuple[int, int]) -> np.ndar
 
 
 def _assert_bit_identical(pt: np.ndarray, tf: np.ndarray, context: str) -> None:
-    """Assert two float32 arrays are identical at the bit level (uint32 view, no tolerance)."""
+    """Assert two float32 arrays are identical at the bit level (uint32 view, no tolerance).
+
+    Examples:
+        >>> import numpy as np
+        >>> a = np.array([1.0, 2.0], dtype=np.float32)
+        >>> _assert_bit_identical(a, a.copy(), "smoke")
+        >>> import pytest
+        >>> b = np.array([1.0, 2.5], dtype=np.float32)
+        >>> try:
+        ...     _assert_bit_identical(a, b, "mismatch")
+        ...     assert False
+        ... except AssertionError:
+        ...     pass
+    """
     pt32 = np.ascontiguousarray(pt, dtype=np.float32).view(np.uint32)
     tf32 = np.ascontiguousarray(tf, dtype=np.float32).view(np.uint32)
     n_diff = int((pt32 != tf32).sum())
@@ -61,13 +85,29 @@ def _assert_bit_identical(pt: np.ndarray, tf: np.ndarray, context: str) -> None:
 
 
 def _tflite_preprocess_to_nchw(pil_img: PILImage.Image, hw: tuple[int, int]) -> np.ndarray:
-    """Call ``_preprocess_image`` and convert NHWC -> NCHW for apples-to-apples comparison."""
+    """Call ``_preprocess_image`` and convert NHWC -> NCHW for apples-to-apples comparison.
+
+    Examples:
+        >>> from PIL import Image as PILImage
+        >>> img = PILImage.new("RGB", (64, 64), color=(128, 64, 32))
+        >>> arr = _tflite_preprocess_to_nchw(img, (32, 32))
+        >>> arr.shape
+        (1, 3, 32, 32)
+    """
     nhwc = _preprocess_image(pil_img, hw, channels=3)
     return nhwc.transpose(0, 3, 1, 2)
 
 
 def _make_synthetic_rgb(seed: int, size: tuple[int, int]) -> PILImage.Image:
-    """Deterministic synthetic RGB image with structure (not pure noise) so resize filtering matters."""
+    """Deterministic synthetic RGB image with structure (not pure noise) so resize filtering matters.
+
+    Examples:
+        >>> img = _make_synthetic_rgb(0, (64, 64))
+        >>> img.size
+        (64, 64)
+        >>> img.mode
+        'RGB'
+    """
     rng = np.random.default_rng(seed)
     height, width = size
     base = rng.integers(0, 256, size=(height // 8, width // 8, 3), dtype=np.uint8)

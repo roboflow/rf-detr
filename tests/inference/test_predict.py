@@ -111,6 +111,7 @@ class _TupleOutputModelContext:
         self.model = torch.nn.Identity()
         self.inference_model = self._forward
         self.captured_predictions: dict[str, torch.Tensor] | None = None
+        self.captured_score_threshold: float | None = None
 
     def _forward(self, batch_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch = batch_tensor.shape[0]
@@ -126,6 +127,7 @@ class _TupleOutputModelContext:
         score_threshold: float | None = None,
     ) -> list[dict[str, torch.Tensor]]:
         self.captured_predictions = predictions
+        self.captured_score_threshold = score_threshold
         batch = target_sizes.shape[0]
         results = []
         for _ in range(batch):
@@ -141,7 +143,15 @@ class _TupleOutputModelContext:
 
 
 def _make_optimized_keypoint_model() -> tuple[RFDETR, _TupleOutputModelContext]:
-    """Build a ``_DummyRFDETR`` wired to look like it already ran ``inference()``."""
+    """Build a ``_DummyRFDETR`` wired to look like it already ran ``inference()``.
+
+    Examples:
+        >>> model, stub = _make_optimized_keypoint_model()
+        >>> model._is_optimized_for_inference
+        True
+        >>> isinstance(stub, _TupleOutputModelContext)
+        True
+    """
     model = _DummyRFDETR()
     stub = _TupleOutputModelContext()
     model.model = stub
@@ -176,6 +186,15 @@ class TestPredictOptimizedInferenceKeypoints:
         assert isinstance(result, sv.KeyPoints), (
             f"expected sv.KeyPoints for optimized keypoint model, got {type(result)}"
         )
+
+    def test_predict_forwards_threshold_to_postprocess(self) -> None:
+        """Predict must pass its public threshold to post-processing before mask work begins."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model, stub = _make_optimized_keypoint_model()
+
+        model.predict(img, threshold=0.31)
+
+        assert stub.captured_score_threshold == 0.31
 
 
 def test_predict_accepts_image_url() -> None:
@@ -1152,7 +1171,13 @@ class TestPredictNonRGBAutoConvert:
 
 
 def _png_bytes(size: tuple[int, int] = (28, 28)) -> bytes:
-    """Return the PNG-encoded bytes of a solid grey image."""
+    """Return the PNG-encoded bytes of a solid grey image.
+
+    Examples:
+        >>> data = _png_bytes((8, 8))
+        >>> data[:4]
+        b'\\x89PNG'
+    """
     buf = io.BytesIO()
     PIL.Image.new("RGB", size, (128, 128, 128)).save(buf, format="PNG")
     return buf.getvalue()

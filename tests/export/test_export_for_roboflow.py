@@ -24,6 +24,13 @@ def _make_stub_model(class_names: list[str]) -> RFDETR:
     """Build an RFDETR instance whose model/state are stubbed for export_for_roboflow.
 
     ``RFDETR.__init__`` is bypassed; only the attributes ``export_for_roboflow`` reads are populated.
+
+    Examples:
+        >>> m = _make_stub_model(["cat", "dog"])
+        >>> m.model.args.resolution
+        560
+        >>> m.model.class_names
+        ['cat', 'dog']
     """
     instance = RFDETR.__new__(RFDETR)
     args = SimpleNamespace(resolution=560)

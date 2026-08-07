@@ -10,10 +10,11 @@ import io
 import numpy as np
 import pytest
 import torch
+from torch import nn
 
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
-from rfdetr.models.transformer import gen_encoder_output_proposals, gen_sineembed_for_position
+from rfdetr.models.transformer import Transformer, gen_encoder_output_proposals, gen_sineembed_for_position
 
 
 @pytest.fixture(autouse=True)
@@ -35,6 +36,12 @@ def _build_ms_deform_inputs(
     levels: list[tuple[int, int]] | None = None,
 ) -> _MSDeformInputs:
     """Build minimal valid inputs for ms_deform_attn_core_pytorch.
+
+    Examples:
+        >>> value, spatial_shapes, sampling_locations, attention_weights, levels = _build_ms_deform_inputs()
+        >>> value.shape, spatial_shapes.shape, len(levels)
+        (torch.Size([1, 2, 4, 20]), torch.Size([2, 2]), 2)
+
 
     Args:
         bsz: Batch size.
@@ -787,3 +794,386 @@ def test_ms_deform_attn_module_export_compatible_with_singleton_level_dim() -> N
         args=(query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index),
     )
     assert exported is not None
+
+
+class _FixedTopkScores(nn.Module):
+    """Returns pre-set per-position scores regardless of its input.
+
+    Stubs ``enc_out_class_embed`` so the two-stage top-k selection in ``Transformer.forward`` picks known positions in a
+    known, deliberately out-of-position-order rank.
+    """
+
+    def __init__(self, scores: torch.Tensor) -> None:
+        super().__init__()
+        self.register_buffer("scores", scores)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Ignore ``x`` and return the fixed scores."""
+        return self.scores
+
+
+def test_two_stage_topk_gather_selects_correct_rows_out_of_position_order(monkeypatch) -> None:
+    """The two-stage top-k gather must copy each selected proposal's exact memory row and box.
+
+    ``torch.topk`` ranks proposals by score, not by position, so the selected indices are rarely in ascending position
+    order. This pins that ``memory_ts``/``boxes_ts`` reproduce the source rows picked by an out-of-order, per-batch-row-
+    distinct selection, and additionally asserts that every ``torch.gather`` index used by the two-stage selection is a
+    broadcast view produced by ``Tensor.expand`` (its broadcast dim keeps stride 0), not a materialised copy.
+    """
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries = 2, 16, 3
+    spatial_shapes_hw = [(4, 4), (2, 2)]
+    total_hw = sum(ht * wd for ht, wd in spatial_shapes_hw)
+
+    srcs = [torch.randn(batch_size, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    masks = [torch.zeros(batch_size, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]
+    pos_embeds = [torch.randn(batch_size, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries, 4)
+    query_feat = torch.randn(num_queries, hidden_dim)
+
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=len(spatial_shapes_hw),
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+    )
+
+    # Deliberately out-of-position-order and batch-row-distinct top-3 picks.
+    scores = torch.full((batch_size, total_hw, 1), -100.0)
+    scores[0, 17, 0], scores[0, 2, 0], scores[0, 9, 0] = 30.0, 20.0, 10.0
+    scores[1, 5, 0], scores[1, 19, 0], scores[1, 0, 0] = 25.0, 15.0, 5.0
+    transformer.enc_out_class_embed = nn.ModuleList([_FixedTopkScores(scores)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    gather_index_calls: list[torch.Tensor] = []
+    original_gather = torch.gather
+
+    def _tracking_gather(input: torch.Tensor, dim: int, index: torch.Tensor, **kwargs: object) -> torch.Tensor:
+        gather_index_calls.append(index)
+        return original_gather(input, dim, index, **kwargs)
+
+    monkeypatch.setattr(torch, "gather", _tracking_gather)
+
+    _, _, memory_ts, boxes_ts = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+
+    # Every gather index used by the two-stage top-k selection (Transformer.forward two-stage top-k
+    # gather) must still be a broadcast view produced by Tensor.expand: its broadcast dim keeps
+    # stride 0. Tensor.repeat, Tensor.tile, Tensor.expand(...).contiguous(), and
+    # Tensor.repeat_interleave all re-materialise that same allocation into a nonzero-stride tensor,
+    # so checking the index's stride catches all four regression variants directly instead of only
+    # detecting the literal absence of a Tensor.repeat call.
+    assert gather_index_calls, "expected torch.gather to be called during the two-stage top-k selection"
+    for index in gather_index_calls:
+        assert index.stride(-1) == 0, (
+            "the two-stage top-k gather index must broadcast its last dim via Tensor.expand "
+            "(Transformer.forward two-stage top-k gather); got a materialised index with nonzero "
+            f"last-dim stride {index.stride()} for shape {tuple(index.shape)}"
+        )
+
+    # Ground truth computed independently of the gather under test: the same flatten/proposal
+    # machinery Transformer.forward uses internally, then plain (non-gather) row indexing.
+    memory = torch.cat([src.flatten(2).transpose(1, 2) for src in srcs], 1)
+    mask_flatten = torch.cat([m.flatten(1) for m in masks], 1)
+    output_memory, output_proposals = gen_encoder_output_proposals(
+        memory, mask_flatten, spatial_shapes_hw, unsigmoid=True
+    )
+    output_memory_gidx = transformer.enc_output_norm[0](transformer.enc_output[0](output_memory))
+    coord_unselected = transformer.enc_out_bbox_embed[0](output_memory_gidx) + output_proposals
+    chosen_idx = scores.squeeze(-1).topk(num_queries, dim=1).indices  # mirrors forward()'s torch.topk call
+
+    assert torch.equal(chosen_idx, torch.tensor([[17, 2, 9], [5, 19, 0]]))  # sanity: out of position order
+    expected_memory = torch.stack([output_memory_gidx[b, chosen_idx[b]] for b in range(batch_size)])
+    # forward() returns boxes_ts.sigmoid() when bbox_reparam=False (Transformer.forward two-stage return).
+    expected_coord = torch.stack([coord_unselected[b, chosen_idx[b]] for b in range(batch_size)]).sigmoid()
+    assert torch.equal(memory_ts, expected_memory)
+    assert torch.equal(boxes_ts, expected_coord)
+
+
+def _make_out_of_order_scores(total_hw: int, picks: list[int]) -> torch.Tensor:
+    """Build batch=1 per-position class scores with `picks` as the strictly descending top-k winners.
+
+    Args:
+        total_hw: Total number of flattened spatial positions across all feature levels.
+        picks: Position indices to rank first, second, third, ... in descending score order.
+
+    Returns:
+        Score tensor of shape (1, total_hw, 1); every position not in `picks` scores -100.0.
+
+    Examples:
+        >>> _make_out_of_order_scores(5, [3, 1]).squeeze(-1).tolist()
+        [[-100.0, 20.0, -100.0, 30.0, -100.0]]
+    """
+    scores = torch.full((1, total_hw, 1), -100.0)
+    picks_tensor = torch.tensor(picks)
+    scores[0, picks_tensor, 0] = 30.0 - 10.0 * torch.arange(len(picks), dtype=torch.float32)
+    return scores
+
+
+def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mode(monkeypatch) -> None:
+    """With group_detr>1 and the module left in its default training mode, every per-group gather index
+    must still broadcast via Tensor.expand, and the concatenated memory_ts/boxes_ts must reproduce each
+    group's exact top-k rows.
+
+    Regression: test_two_stage_topk_gather_selects_correct_rows_out_of_position_order only exercises
+    group_detr=1, where the ``group_detr = self.group_detr if self.training else 1`` guard in
+    Transformer.forward degenerates to a single gather per stage. This pins the group_detr>1 branch,
+    which loops the same two gathers twice more (once per extra group) and concatenates the results
+    along the query dimension. The module intentionally never calls .eval(): group_detr>1 only takes
+    effect while nn.Module.training is True (its default), and calling .eval() would silently fall back
+    to the already-covered group_detr=1 path.
+    """
+    torch.manual_seed(0)
+    hidden_dim, num_queries, group_detr = 16, 3, 3
+    spatial_shapes_hw = [(4, 4), (2, 2)]
+    total_hw = sum(ht * wd for ht, wd in spatial_shapes_hw)
+
+    srcs = [torch.randn(1, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    masks = [torch.zeros(1, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]
+    pos_embeds = [torch.randn(1, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries * group_detr, 4)
+    query_feat = torch.randn(num_queries * group_detr, hidden_dim)
+
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=len(spatial_shapes_hw),
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=group_detr,
+    )
+    assert transformer.training  # default nn.Module state; group_detr>1 only takes effect while training
+
+    # Deliberately out-of-position-order, distinct picks per group.
+    picks_per_group = [[17, 2, 9], [5, 19, 0], [11, 14, 3]]
+    scores_per_group = [_make_out_of_order_scores(total_hw, picks) for picks in picks_per_group]
+    transformer.enc_out_class_embed = nn.ModuleList([_FixedTopkScores(scores) for scores in scores_per_group])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4) for _ in range(group_detr)])
+
+    gather_index_calls: list[torch.Tensor] = []
+    original_gather = torch.gather
+
+    def _tracking_gather(input: torch.Tensor, dim: int, index: torch.Tensor, **kwargs: object) -> torch.Tensor:
+        gather_index_calls.append(index)
+        return original_gather(input, dim, index, **kwargs)
+
+    monkeypatch.setattr(torch, "gather", _tracking_gather)
+
+    _, _, memory_ts, boxes_ts = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+
+    # Two gather calls (refpoint, memory) per group -- the only torch.gather call sites in
+    # Transformer.forward's two-stage top-k selection.
+    assert len(gather_index_calls) == 2 * group_detr
+    for index in gather_index_calls:
+        assert index.stride(-1) == 0, (
+            "every per-group two-stage top-k gather index must broadcast its last dim via Tensor.expand "
+            f"(Transformer.forward two-stage top-k gather); got a materialised index with nonzero "
+            f"last-dim stride {index.stride()} for shape {tuple(index.shape)}"
+        )
+
+    # Ground truth computed independently of the gather under test, per group.
+    memory = torch.cat([src.flatten(2).transpose(1, 2) for src in srcs], 1)
+    mask_flatten = torch.cat([m.flatten(1) for m in masks], 1)
+    output_memory, output_proposals = gen_encoder_output_proposals(
+        memory, mask_flatten, spatial_shapes_hw, unsigmoid=True
+    )
+    picks_tensors = [torch.tensor(picks) for picks in picks_per_group]
+    output_memory_per_group = [
+        transformer.enc_output_norm[g](transformer.enc_output[g](output_memory)) for g in range(group_detr)
+    ]
+    coord_unselected_per_group = [
+        transformer.enc_out_bbox_embed[g](output_memory_per_group[g]) + output_proposals for g in range(group_detr)
+    ]
+
+    expected_memory = torch.cat(
+        [output_memory_per_group[g][0, picks_tensors[g]] for g in range(group_detr)], dim=0
+    ).unsqueeze(0)
+    # forward() returns boxes_ts.sigmoid() when bbox_reparam=False.
+    expected_coord = (
+        torch.cat([coord_unselected_per_group[g][0, picks_tensors[g]] for g in range(group_detr)], dim=0)
+        .unsqueeze(0)
+        .sigmoid()
+    )
+    assert torch.equal(memory_ts, expected_memory)
+    assert torch.equal(boxes_ts, expected_coord)
+
+
+def test_two_stage_topk_gather_selects_correct_rows_with_bbox_reparam(monkeypatch) -> None:
+    """With bbox_reparam=True, the coordinate-delta reparameterisation path must still gather the exact selected rows
+    via a stride-0 broadcast index, and boxes_ts must be returned un-sigmoided.
+
+    Regression: test_two_stage_topk_gather_selects_correct_rows_out_of_position_order only exercises
+    bbox_reparam=False (the ``enc_out_bbox_embed(...) + output_proposals`` branch of Transformer.forward).
+    bbox_reparam=True instead builds the unselected coordinates from a cx/cy delta scaled by proposal
+    size plus a log-space w/h delta, and Transformer.forward skips the final ``.sigmoid()`` on
+    ``boxes_ts`` in that mode -- neither computation shares code with the bbox_reparam=False branch, so
+    this covers the gather correctness independently for it.
+    """
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries = 2, 16, 3
+    spatial_shapes_hw = [(4, 4), (2, 2)]
+    total_hw = sum(ht * wd for ht, wd in spatial_shapes_hw)
+
+    srcs = [torch.randn(batch_size, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    masks = [torch.zeros(batch_size, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]
+    pos_embeds = [torch.randn(batch_size, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries, 4)
+    query_feat = torch.randn(num_queries, hidden_dim)
+
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=len(spatial_shapes_hw),
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=True,
+        group_detr=1,
+    )
+
+    scores = torch.full((batch_size, total_hw, 1), -100.0)
+    scores[0, 17, 0], scores[0, 2, 0], scores[0, 9, 0] = 30.0, 20.0, 10.0
+    scores[1, 5, 0], scores[1, 19, 0], scores[1, 0, 0] = 25.0, 15.0, 5.0
+    transformer.enc_out_class_embed = nn.ModuleList([_FixedTopkScores(scores)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    gather_index_calls: list[torch.Tensor] = []
+    original_gather = torch.gather
+
+    def _tracking_gather(input: torch.Tensor, dim: int, index: torch.Tensor, **kwargs: object) -> torch.Tensor:
+        gather_index_calls.append(index)
+        return original_gather(input, dim, index, **kwargs)
+
+    monkeypatch.setattr(torch, "gather", _tracking_gather)
+
+    _, _, memory_ts, boxes_ts = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+
+    assert gather_index_calls, "expected torch.gather to be called during the two-stage top-k selection"
+    for index in gather_index_calls:
+        assert index.stride(-1) == 0, (
+            "the two-stage top-k gather index must broadcast its last dim via Tensor.expand "
+            f"(Transformer.forward two-stage top-k gather); got a materialised index with nonzero "
+            f"last-dim stride {index.stride()} for shape {tuple(index.shape)}"
+        )
+
+    # Ground truth computed independently of the gather under test: the bbox_reparam=True coordinate
+    # formula (cx/cy delta scaled by proposal size, log-space w/h delta), then plain row indexing.
+    memory = torch.cat([src.flatten(2).transpose(1, 2) for src in srcs], 1)
+    mask_flatten = torch.cat([m.flatten(1) for m in masks], 1)
+    output_memory, output_proposals = gen_encoder_output_proposals(
+        memory, mask_flatten, spatial_shapes_hw, unsigmoid=False
+    )
+    output_memory_gidx = transformer.enc_output_norm[0](transformer.enc_output[0](output_memory))
+    coord_delta = transformer.enc_out_bbox_embed[0](output_memory_gidx)
+    coord_cxcy = coord_delta[..., :2] * output_proposals[..., 2:] + output_proposals[..., :2]
+    coord_wh = coord_delta[..., 2:].exp() * output_proposals[..., 2:]
+    coord_unselected = torch.concat([coord_cxcy, coord_wh], dim=-1)
+    chosen_idx = scores.squeeze(-1).topk(num_queries, dim=1).indices  # mirrors forward()'s torch.topk call
+
+    assert torch.equal(chosen_idx, torch.tensor([[17, 2, 9], [5, 19, 0]]))  # sanity: out of position order
+    expected_memory = torch.stack([output_memory_gidx[b, chosen_idx[b]] for b in range(batch_size)])
+    # forward() returns boxes_ts as-is (no sigmoid) when bbox_reparam=True.
+    expected_coord = torch.stack([coord_unselected[b, chosen_idx[b]] for b in range(batch_size)])
+    assert torch.equal(memory_ts, expected_memory)
+    assert torch.equal(boxes_ts, expected_coord)
+
+
+def test_two_stage_topk_gather_backward_routes_gradient_only_to_selected_rows() -> None:
+    """The two-stage top-k gather is a plain row copy, so backward() through it must route gradient only to the
+    flattened source positions that were selected -- every unselected position must see exactly zero gradient.
+
+    Regression: the forward-value assertions in the sibling tests confirm memory_ts/boxes_ts *equal* the
+    correct rows, but a broadcast-index bug that accidentally selected the wrong rows in a way that still
+    passed those value checks (e.g. by coincidence on this fixture) would still corrupt exactly which
+    upstream positions receive gradient during training. Every position in this fixture's 4x4+2x2
+    spatial grid is a "valid" proposal (see gen_encoder_output_proposals's 0.01-0.99 validity window), so
+    output_memory is an untouched pass-through of memory and gradient must localise per-row exactly.
+    """
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries = 1, 16, 3
+    spatial_shapes_hw = [(4, 4), (2, 2)]
+    total_hw = sum(ht * wd for ht, wd in spatial_shapes_hw)
+
+    srcs = [torch.randn(batch_size, hidden_dim, ht, wd, requires_grad=True) for ht, wd in spatial_shapes_hw]
+    masks = [torch.zeros(batch_size, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]
+    pos_embeds = [torch.randn(batch_size, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries, 4)
+    query_feat = torch.randn(num_queries, hidden_dim)
+
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=len(spatial_shapes_hw),
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+    )
+
+    picks = [17, 2, 9]
+    transformer.enc_out_class_embed = nn.ModuleList([_FixedTopkScores(_make_out_of_order_scores(total_hw, picks))])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    _, _, memory_ts, boxes_ts = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+    (memory_ts.sum() + boxes_ts.sum()).backward()
+
+    assert all(src.grad is not None for src in srcs)
+    # Reproduce Transformer.forward's memory flatten order: cat(src.flatten(2).transpose(1, 2)).
+    flattened_grads = torch.cat([src.grad.flatten(2).transpose(1, 2) for src in srcs], dim=1)  # (1, total_hw, dim)
+
+    selected_mask = torch.zeros(total_hw, dtype=torch.bool)
+    selected_mask[torch.tensor(picks)] = True
+
+    assert (flattened_grads[0, selected_mask] != 0).any(dim=-1).all(), (
+        "every selected row must receive nonzero gradient through the two-stage top-k gather"
+    )
+    assert torch.equal(flattened_grads[0, ~selected_mask], torch.zeros_like(flattened_grads[0, ~selected_mask])), (
+        "every unselected row must receive exactly zero gradient through the two-stage top-k gather"
+    )
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_two_stage_topk_gather_cuda_matches_cpu_for_out_of_position_order_indices() -> None:
+    """The two-stage top-k gather (Transformer.forward two-stage top-k gather) is an arithmetic-free row
+    copy -- torch.gather with an index broadcast via Tensor.expand -- so CUDA must reproduce the CPU
+    result bit-for-bit for the same out-of-order, per-batch-row-distinct indices used by
+    test_two_stage_topk_gather_selects_correct_rows_out_of_position_order.
+
+    Mirrors the CPU/CUDA parity twin added for the analogous arithmetic-free row-copy gather in
+    PostProcess._gather_and_scale_boxes (PR #1268,
+    test_gather_and_scale_boxes_cuda_matches_cpu_for_duplicated_indices): both isolate the bare
+    gather+expand pattern rather than running a full model forward, so the comparison is not exposed to
+    unrelated CPU/CUDA floating-point non-determinism in surrounding Linear/LayerNorm layers.
+    """
+    batch_size, hidden_dim, num_positions = 2, 16, 20
+    source = torch.randn(batch_size, num_positions, hidden_dim)
+    # Same out-of-position-order, per-batch-row-distinct picks as the CPU-only sibling test.
+    topk_proposals = torch.tensor([[17, 2, 9], [5, 19, 0]])
+
+    cpu_selected = torch.gather(source, 1, topk_proposals.unsqueeze(-1).expand(-1, -1, hidden_dim))
+    cuda_selected = torch.gather(source.cuda(), 1, topk_proposals.cuda().unsqueeze(-1).expand(-1, -1, hidden_dim))
+
+    assert torch.equal(cpu_selected, cuda_selected.cpu())

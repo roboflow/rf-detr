@@ -24,14 +24,31 @@ from rfdetr.utilities.console import (
 
 
 def _make_trainer(callbacks: list[object] | None = None) -> MagicMock:
-    """Return a minimal mock Trainer."""
+    """Return a minimal mock Trainer.
+
+    Examples:
+        >>> trainer = _make_trainer()
+        >>> trainer.callbacks
+        []
+        >>> trainer = _make_trainer(callbacks=["cb"])
+        >>> trainer.callbacks
+        ['cb']
+    """
     trainer = MagicMock(name="trainer")
     trainer.callbacks = callbacks or []
     return trainer
 
 
 def _minimal_overall(max_dets: int = 500) -> dict:
-    """Return an overall dict with the minimal keys _render_overall_merged expects."""
+    """Return an overall dict with the minimal keys _render_overall_merged expects.
+
+    Examples:
+        >>> overall = _minimal_overall()
+        >>> sorted(overall)
+        ['F1', 'Precision', 'Recall', 'mAP 50', 'mAP 50:95', 'mAP 75', 'mAR @500']
+        >>> overall["mAP 50"]
+        0.6
+    """
     return {
         "mAP 50:95": 0.4,
         "mAP 50": 0.6,
