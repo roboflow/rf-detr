@@ -39,8 +39,8 @@ def seed_all(seed: int = 7) -> None:
         torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-    # ``warn_only=True`` keeps seeding non-fatal on ops without a deterministic kernel; the call itself is guarded
-    # so a failure to enable determinism degrades to a warning rather than propagating out of ``seed_all``.
+    # ``warn_only=True`` keeps determinism best-effort for ops without a deterministic kernel; the call itself is guarded
+    # so a failure to enable deterministic algorithms degrades to a warning rather than propagating out of ``seed_all``.
     try:
         torch.use_deterministic_algorithms(True, warn_only=True)
     except RuntimeError as error:

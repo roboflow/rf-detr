@@ -276,7 +276,7 @@ def test_train_convergence_segmentation(
 
     Assertions:
         - ``val/mAP_50`` before training ≤ 5 %.
-        - ``val/mAP_50`` after 6 epochs ≥ 10 %.
+        - ``val/mAP_50`` after 6 epochs ≥ 15 %.
         - ``val/segm_mAP_50`` after 6 epochs ≥ 5 %.
     """
     output_dir = tmp_path / "train_output_seg"
