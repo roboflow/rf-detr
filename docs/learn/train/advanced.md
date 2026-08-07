@@ -112,11 +112,12 @@ Early stopping monitors the validation task metric and halts training if improve
 
 ### Configuration Options
 
-| Parameter                  | Default | Description                                          |
-| -------------------------- | ------- | ---------------------------------------------------- |
-| `early_stopping_patience`  | 10      | Number of epochs without improvement before stopping |
-| `early_stopping_min_delta` | 0.001   | Minimum metric change to count as improvement        |
-| `early_stopping_use_ema`   | False   | Use EMA model metrics for comparisons                |
+| Parameter                  | Default | Description                                                        |
+| -------------------------- | ------- | ------------------------------------------------------------------ |
+| `early_stopping_patience`  | 10      | Number of epochs without improvement before stopping               |
+| `early_stopping_min_delta` | 0.001   | Minimum metric change to count as improvement                      |
+| `early_stopping_use_ema`   | False   | Use EMA model metrics for comparisons                              |
+| `best_model_metric`        | "map"   | Metric family for best checkpoint / early stopping: "map" or "mar" |
 
 ### Advanced Example
 

@@ -57,8 +57,8 @@ class BestModelCallback(ModelCheckpoint):
 
     Args:
         output_dir: Directory where checkpoint files are written.
-        monitor_regular: Metric key for the regular model mAP.
-        monitor_ema: Metric key for the EMA model mAP.  ``None`` disables EMA tracking.
+        monitor_regular: Metric key for the regular model (mAP or mAR, per ``TrainConfig.best_model_metric``).
+        monitor_ema: Metric key for the EMA model (mAP or mAR).  ``None`` disables EMA tracking.
         run_test: If ``True``, run ``trainer.test()`` on the best model at the end of training.
         skip_best_epochs: Ignore the first N epochs (0..N-1) when tracking
             best regular and EMA checkpoints.  Useful when fine-tuning from ``pretrain_weights``: the pretrained model's
@@ -660,11 +660,13 @@ class BestModelCallback(ModelCheckpoint):
 
 
 class RFDETREarlyStopping(EarlyStopping):
-    """Early stopping callback monitoring validation mAP for RF-DETR.
+    """Early stopping callback monitoring a validation metric for RF-DETR.
 
     Extends :class:`pytorch_lightning.callbacks.EarlyStopping` with dual-metric
-    monitoring: by default it monitors ``max(regular_mAP, ema_mAP)`` (legacy
-    behaviour); set ``use_ema=True`` to monitor the EMA metric exclusively.
+    monitoring: by default it monitors ``max(regular, ema)`` (legacy
+    behaviour); set ``use_ema=True`` to monitor the EMA metric exclusively. The
+    metric itself (mAP or mAR) is chosen by the caller via ``monitor_regular``/
+    ``monitor_ema``, see ``TrainConfig.best_model_metric``.
 
     The effective metric is injected into ``trainer.callback_metrics`` under a synthetic key before delegating to the
     parent's stopping logic, so all parent features are available for free: ``state_dict``/``load_state_dict`` for
@@ -675,11 +677,11 @@ class RFDETREarlyStopping(EarlyStopping):
 
     Args:
         patience: Number of epochs with no improvement before stopping.
-        min_delta: Minimum mAP improvement to reset the patience counter.
+        min_delta: Minimum improvement (in the monitored metric) to reset the patience counter.
         use_ema: When ``True`` and both regular and EMA metrics are available,
             monitor only the EMA metric.  When ``False``, monitor ``max(regular, ema)``.
-        monitor_regular: Metric key for the regular model mAP.
-        monitor_ema: Metric key for the EMA model mAP.
+        monitor_regular: Metric key for the regular model (mAP or mAR, per ``TrainConfig.best_model_metric``).
+        monitor_ema: Metric key for the EMA model (mAP or mAR).
         verbose: If ``True``, log early stopping status each epoch.
         skip_best_epochs: Ignore the first N epochs (0..N-1) when evaluating
             patience and best-score baselines.  Set this when fine-tuning from ``pretrain_weights`` to avoid premature
