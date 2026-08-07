@@ -15,6 +15,7 @@ import os
 import shutil
 import time
 import zipfile
+import zlib
 from collections.abc import Generator
 from contextlib import contextmanager, suppress
 from pathlib import Path
@@ -22,7 +23,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from urllib.request import urlretrieve
 
 import numpy as np
-import torch
 from PIL import Image
 
 from rfdetr.utilities.logger import get_logger
@@ -135,6 +135,8 @@ class _SimpleDataset:
         return self.num_samples
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, dict[str, Any]]:
+        import torch  # lazy: keep torch off the module-load path (see class docstring)
+
         # Create synthetic image
         image = Image.new("RGB", (640, 480))
 
@@ -172,19 +174,52 @@ class _SimpleDataset:
         return image, target
 
 
-def _download_and_extract(url: str, dest_dir: Path) -> None:
-    """Download a zip file and safely extract it into the destination directory.
+_DOWNLOAD_MAX_ATTEMPTS: int = 3
+
+
+def _fetch_zip(url: str, zip_path: Path) -> None:
+    """Download *url* to *zip_path*, verifying the transfer is complete.
+
+    The downloaded size is checked against the server's ``Content-Length`` header when it
+    is provided. A truncated transfer is the usual cause of a corrupt deflate stream
+    (``zlib.error: invalid code lengths set``), so it is rejected here before extraction.
 
     Args:
         url: URL to a zip archive.
-        dest_dir: Directory where the archive will be saved and extracted.
+        zip_path: Local path the archive is written to.
+
+    Raises:
+        zipfile.BadZipFile: If the downloaded size does not match ``Content-Length``.
+
+    Example:
+        >>> _fetch_zip.__name__
+        '_fetch_zip'
     """
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = dest_dir / url.rsplit("/", 1)[-1]
-    logger.info("Downloading %s ...", url)
-    urlretrieve(url, str(zip_path))
-    logger.info("Extracting %s ...", zip_path)
-    dest_dir_resolved = dest_dir.resolve()
+    _, headers = urlretrieve(url, str(zip_path))
+    expected_raw = headers.get("Content-Length")
+    actual = zip_path.stat().st_size
+    try:
+        expected = int(expected_raw) if expected_raw is not None else None
+    except (TypeError, ValueError):
+        expected = None
+    if expected is not None and actual != expected:
+        raise zipfile.BadZipFile(f"Truncated download for {url!r}: got {actual} bytes, expected {expected}")
+
+
+def _extract_zip(zip_path: Path, dest_dir_resolved: Path) -> None:
+    """Extract *zip_path* into *dest_dir_resolved*, guarding against path traversal.
+
+    Args:
+        zip_path: Path to a zip archive on disk.
+        dest_dir_resolved: Resolved destination directory members are written under.
+
+    Raises:
+        RuntimeError: If a member would escape *dest_dir_resolved*.
+
+    Example:
+        >>> _extract_zip.__name__
+        '_extract_zip'
+    """
     with zipfile.ZipFile(str(zip_path), "r") as zf:
         for member in zf.infolist():
             if not member.filename:
@@ -198,6 +233,48 @@ def _download_and_extract(url: str, dest_dir: Path) -> None:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(member, "r") as src, open(target_path, "wb") as dst:
                     shutil.copyfileobj(src, dst)
+
+
+def _download_and_extract(url: str, dest_dir: Path) -> None:
+    """Download a zip archive and safely extract it, retrying on a corrupt transfer.
+
+    Truncated downloads and corrupt deflate streams (``zlib.error``/``BadZipFile``) are
+    retried up to ``_DOWNLOAD_MAX_ATTEMPTS`` times. The partial archive is always removed,
+    both on failure (so a corrupt file never persists for the next run) and on success.
+
+    Args:
+        url: URL to a zip archive.
+        dest_dir: Directory where the archive will be saved and extracted.
+
+    Raises:
+        zipfile.BadZipFile: If every attempt yields a truncated or corrupt archive.
+        zlib.error: If the deflate stream is corrupt on the final attempt.
+        RuntimeError: If a member would escape *dest_dir* (path traversal — not retried).
+
+    Example:
+        >>> _download_and_extract.__name__
+        '_download_and_extract'
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = dest_dir / url.rsplit("/", 1)[-1]
+    dest_dir_resolved = dest_dir.resolve()
+    for attempt in range(1, _DOWNLOAD_MAX_ATTEMPTS + 1):
+        try:
+            logger.info("Downloading %s (attempt %d/%d) ...", url, attempt, _DOWNLOAD_MAX_ATTEMPTS)
+            _fetch_zip(url, zip_path)
+            logger.info("Extracting %s ...", zip_path)
+            _extract_zip(zip_path, dest_dir_resolved)
+            break
+        except (zipfile.BadZipFile, zlib.error, OSError) as exc:
+            with suppress(FileNotFoundError):
+                zip_path.unlink()
+            # Fail fast on common non-retryable local filesystem errors.
+            if isinstance(exc, OSError) and getattr(exc, "errno", None) in {13, 28}:
+                raise
+            if attempt == _DOWNLOAD_MAX_ATTEMPTS:
+                raise
+            logger.warning("Download/extract of %s failed (%s); retrying ...", url, exc)
+            time.sleep(2.0 * attempt)
     with suppress(FileNotFoundError):
         zip_path.unlink()
 
