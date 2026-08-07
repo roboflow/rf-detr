@@ -45,6 +45,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Track person detections (detect task): stable ids + live count via the box-IoU tracker",
     )
+    parser.add_argument(
+        "--reid",
+        action="store_true",
+        help="Enable appearance ReID on the tracker (reduces id fragmentation across occlusions)",
+    )
+    parser.add_argument(
+        "--reid-model",
+        type=Path,
+        default=None,
+        help="ONNX ReID model path; enables the grayscale-robust embedding backend (else color histogram)",
+    )
+    parser.add_argument("--reid-similarity", type=float, default=0.6, help="ReID revival threshold (0..1)")
     parser.add_argument("--frame-stride", type=int, default=1)
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--max-source-seconds", type=float, default=None)
@@ -116,6 +128,9 @@ def main(argv: list[str] | None = None) -> int:
             keypoint_uncertainty_enabled=args.keypoint_uncertainty,
             model_resolution=args.resolution,
             detect_track=args.track,
+            reid_enabled=args.reid or args.reid_model is not None,
+            reid_model=str(args.reid_model) if args.reid_model is not None else None,
+            reid_similarity=args.reid_similarity,
         )
     except (FileNotFoundError, RuntimeError, ValueError) as error:
         logger.error("%s", error)

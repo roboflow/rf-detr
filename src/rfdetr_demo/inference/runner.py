@@ -89,6 +89,9 @@ def _build_task_callback(
     tune_cache: Any | None,
     model_resolution: int | None = None,
     detect_track: bool = False,
+    reid_enabled: bool = False,
+    reid_model: str | None = None,
+    reid_similarity: float = 0.6,
 ) -> Callable[[Any, int], Any]:
     if task == "keypoint":
         model = build_keypoint_model(resolution=model_resolution)
@@ -174,6 +177,10 @@ def _build_task_callback(
                 hysteresis_enabled=False,
                 nms_iou_threshold=0.9,
                 max_tracks=256,
+                reid_enabled=reid_enabled,
+                reid_backend=("embedding" if reid_model else "histogram"),
+                reid_model_path=reid_model,
+                reid_similarity_threshold=reid_similarity,
             ),
         )
         return make_detection_track_callback(
@@ -225,6 +232,9 @@ def run_demo(
     frame_audit_log_callback: Callable[[str], None] | None = None,
     model_resolution: int | None = None,
     detect_track: bool = False,
+    reid_enabled: bool = False,
+    reid_model: str | None = None,
+    reid_similarity: float = 0.6,
 ) -> dict[str, Any]:
     """Process ``source_path`` and write annotated video to ``target_path``.
 
@@ -292,6 +302,9 @@ def run_demo(
         tune_cache=tune_cache,
         model_resolution=model_resolution,
         detect_track=detect_track,
+        reid_enabled=reid_enabled,
+        reid_model=reid_model,
+        reid_similarity=reid_similarity,
     )
 
     frame_audit: ConfidentialFrameAuditLogger | None = None
