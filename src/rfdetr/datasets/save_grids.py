@@ -35,7 +35,7 @@ class DatasetGridSaver:
     """
 
     def __init__(
-        self, data_loader: DataLoader, output_dir: Path, max_batches: int = 3, dataset_type: str = "train"
+        self, data_loader: DataLoader[Any], output_dir: Path, max_batches: int = 3, dataset_type: str = "train"
     ) -> None:
         self.data_loader = data_loader
         self.output_dir = output_dir
@@ -173,7 +173,7 @@ class DatasetGridSaver:
         single_target: dict[str, Any],
         image_shape: tuple[int, int],
         num_instances: int,
-    ) -> np.ndarray | None:
+    ) -> np.ndarray[Any, Any] | None:
         """Return target masks as ``(N, H, W)`` booleans aligned to the rendered image shape.
 
         Args:
