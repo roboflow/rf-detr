@@ -43,6 +43,7 @@ _LIVE_GRAB_INTERVAL = 0.01
 _MACOS_CAMERA_FPS = 30.0
 """Stable AVFoundation webcam mode requested before the first read."""
 
+
 @dataclass
 class CaptureState:
     """Everything the status tools report about the capture side of a stream."""
