@@ -196,9 +196,13 @@ def _fetch_zip(url: str, zip_path: Path) -> None:
         '_fetch_zip'
     """
     _, headers = urlretrieve(url, str(zip_path))
-    expected = headers.get("Content-Length")
+    expected_raw = headers.get("Content-Length")
     actual = zip_path.stat().st_size
-    if expected is not None and actual != int(expected):
+    try:
+        expected = int(expected_raw) if expected_raw is not None else None
+    except (TypeError, ValueError):
+        expected = None
+    if expected is not None and actual != expected:
         raise zipfile.BadZipFile(f"Truncated download for {url!r}: got {actual} bytes, expected {expected}")
 
 
@@ -264,6 +268,9 @@ def _download_and_extract(url: str, dest_dir: Path) -> None:
         except (zipfile.BadZipFile, zlib.error, OSError) as exc:
             with suppress(FileNotFoundError):
                 zip_path.unlink()
+            # Fail fast on common non-retryable local filesystem errors.
+            if isinstance(exc, OSError) and getattr(exc, "errno", None) in {13, 28}:
+                raise
             if attempt == _DOWNLOAD_MAX_ATTEMPTS:
                 raise
             logger.warning("Download/extract of %s failed (%s); retrying ...", url, exc)
