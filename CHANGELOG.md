@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `HungarianMatcher`'s detection-only cost matrix is now built padded to each batch's `max(T_i)` target count and diagonal-extracted, instead of padding to the cross-image `sum(T_i)`, whenever the batch's targets and predictions pass a fast eligibility check; ineligible batches fall back to the previous full-cartesian computation with identical results. The matcher runs inside the training-step criterion under `torch.no_grad()`, so this is a training-time, not inference-time, saving: on real COCO batches matcher time drops ~51% and peak CUDA memory ~73-76%, and the measured end-to-end training step goes from 288.364 ms to 232.457 ms on an A100. The saving scales with target-count evenness `r = sum(T_i) / max(T_i)` (capped at the batch size) with a `1 - 1/r` ceiling, so a batch where one image holds nearly all the targets (`r` close to 1) sees little to no improvement. ([#1297](https://github.com/roboflow/rf-detr/pull/1297))
 
+### Fixed
+
+- Loading a detection checkpoint published before keypoint support no longer warns that `_kp_active_mask` is a "model parameter not in checkpoint (left at random init)". The key is a deterministic schema buffer the model always rebuilds from the configured keypoint schema — empty for detection-only variants — not a learned parameter, so its absence never affected the loaded weights. Affects `Nano`, `Small`, `Large` (2026) and `SegSmall`. The filter matches the exact terminal key, so a similarly-named real parameter still warns, and an *unexpected* `_kp_active_mask` in a checkpoint still warns; the filtered key is now recorded at debug level. ([#1302](https://github.com/roboflow/rf-detr/pull/1302))
+
 ### Breaking Changes
 
 
