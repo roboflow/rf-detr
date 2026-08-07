@@ -93,6 +93,7 @@ def _build_task_callback(
     reid_model: str | None = None,
     reid_similarity: float = 0.6,
     reid_stride: int = 1,
+    pose_topk: int = 0,
 ) -> Callable[[Any, int], Any]:
     if task == "keypoint":
         model = build_keypoint_model(resolution=model_resolution)
@@ -185,6 +186,7 @@ def _build_task_callback(
                 reid_stride=reid_stride,
             ),
         )
+        pose_model = build_keypoint_model() if pose_topk > 0 else None
         return make_detection_track_callback(
             model,
             threshold,
@@ -192,6 +194,8 @@ def _build_task_callback(
             stats,
             track_pipeline,
             tune_cache=tune_cache,
+            keypoint_model=pose_model,
+            pose_topk=pose_topk,
         )
     return make_detection_callback(
         model,
@@ -238,6 +242,7 @@ def run_demo(
     reid_model: str | None = None,
     reid_similarity: float = 0.6,
     reid_stride: int = 1,
+    pose_topk: int = 0,
 ) -> dict[str, Any]:
     """Process ``source_path`` and write annotated video to ``target_path``.
 
@@ -309,6 +314,7 @@ def run_demo(
         reid_model=reid_model,
         reid_similarity=reid_similarity,
         reid_stride=reid_stride,
+        pose_topk=pose_topk,
     )
 
     frame_audit: ConfidentialFrameAuditLogger | None = None

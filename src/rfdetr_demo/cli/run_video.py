@@ -63,6 +63,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=1,
         help="Run the ReID embedding every Nth frame (motion-only in between) to recover speed",
     )
+    parser.add_argument(
+        "--pose-topk",
+        type=int,
+        default=0,
+        help="Two-stage: also pose-estimate the N largest tracked boxes (detect+track everyone, pose a subset)",
+    )
     parser.add_argument("--frame-stride", type=int, default=1)
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--max-source-seconds", type=float, default=None)
@@ -138,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
             reid_model=str(args.reid_model) if args.reid_model is not None else None,
             reid_similarity=args.reid_similarity,
             reid_stride=args.reid_stride,
+            pose_topk=args.pose_topk,
         )
     except (FileNotFoundError, RuntimeError, ValueError) as error:
         logger.error("%s", error)

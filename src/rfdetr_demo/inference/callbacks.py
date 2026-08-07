@@ -34,6 +34,83 @@ def _color_for_track_id(track_id: int) -> tuple[int, int, int]:
     return int(bgr[0]), int(bgr[1]), int(bgr[2])
 
 
+# COCO-17 skeleton edges (0-indexed joints).
+_COCO_SKELETON: tuple[tuple[int, int], ...] = (
+    (5, 6),
+    (5, 7),
+    (7, 9),
+    (6, 8),
+    (8, 10),
+    (5, 11),
+    (6, 12),
+    (11, 12),
+    (11, 13),
+    (13, 15),
+    (12, 14),
+    (14, 16),
+    (0, 5),
+    (0, 6),
+)
+
+
+def _draw_skeleton(annotated: np.ndarray, points: list[tuple[int, int] | None]) -> None:
+    """Draw COCO-17 skeleton edges and joints from mapped frame-space points."""
+    for start, end in _COCO_SKELETON:
+        if start < len(points) and end < len(points) and points[start] is not None and points[end] is not None:
+            cv2.line(annotated, points[start], points[end], (0, 255, 255), 2)
+    for point in points:
+        if point is not None:
+            cv2.circle(annotated, point, 3, (0, 200, 255), -1)
+
+
+def _draw_pose_subset(
+    annotated: np.ndarray,
+    frame_rgb: np.ndarray,
+    tracked: sv.KeyPoints,
+    keypoint_model: RFDETR,
+    pose_topk: int,
+    keypoint_threshold: float,
+) -> np.ndarray:
+    """Run pose on the ``pose_topk`` largest tracked boxes and draw skeletons.
+
+    Each selected box is cropped and passed to the keypoint model (the person
+    fills the crop, so joints are accurate even for small/distant people), then
+    the joints are mapped back to frame coordinates.
+    """
+    boxes = tracked.data.get("xyxy") if tracked.data else None
+    if boxes is None or len(boxes) == 0:
+        return annotated
+    height, width = frame_rgb.shape[:2]
+    order = sorted(
+        range(len(boxes)),
+        key=lambda index: float((boxes[index][2] - boxes[index][0]) * (boxes[index][3] - boxes[index][1])),
+        reverse=True,
+    )
+    for index in order[:pose_topk]:
+        x1 = max(0, min(width, int(round(float(boxes[index][0])))))
+        y1 = max(0, min(height, int(round(float(boxes[index][1])))))
+        x2 = max(0, min(width, int(round(float(boxes[index][2])))))
+        y2 = max(0, min(height, int(round(float(boxes[index][3])))))
+        if x2 - x1 < 8 or y2 - y1 < 8:
+            continue
+        crop = frame_rgb[y1:y2, x1:x2]
+        pose = keypoint_model.predict(crop, threshold=keypoint_threshold, include_source_image=False)
+        if len(pose) == 0:
+            continue
+        best = int(np.argmax(pose.detection_confidence)) if pose.detection_confidence is not None else 0
+        xy = pose.xy[best]
+        visible = pose.visible[best] if pose.visible is not None else np.ones(len(xy), dtype=bool)
+        points: list[tuple[int, int] | None] = []
+        for joint_index in range(len(xy)):
+            jx, jy = float(xy[joint_index, 0]), float(xy[joint_index, 1])
+            if not visible[joint_index] or (jx == 0 and jy == 0):
+                points.append(None)
+            else:
+                points.append((int(round(jx)) + x1, int(round(jy)) + y1))
+        _draw_skeleton(annotated, points)
+    return annotated
+
+
 def _draw_tracked_boxes(frame_bgr: np.ndarray, key_points: sv.KeyPoints) -> np.ndarray:
     """Draw id-colored boxes (with a `*` ghost mark) and a live count banner."""
     annotated = frame_bgr.copy()
@@ -105,6 +182,9 @@ def make_detection_track_callback(
     stats: dict[str, int],
     track_pipeline: Any,
     tune_cache: Any | None = None,
+    keypoint_model: RFDETR | None = None,
+    pose_topk: int = 0,
+    keypoint_threshold: float = 0.3,
 ) -> Callable[[np.ndarray, int], np.ndarray]:
     """Build a callback that detects persons and tracks them (ids + stable count).
 
@@ -112,6 +192,10 @@ def make_detection_track_callback(
     motion prediction, the motion gate, and appearance ReID all apply. Boxes are
     drawn colored by track id with a live-count banner. ``stats['unique_track_ids']``
     accumulates the distinct ids seen so far (a proxy for id fragmentation).
+
+    When ``keypoint_model`` is given and ``pose_topk > 0``, the ``pose_topk``
+    largest tracked boxes are additionally cropped and pose-estimated (two-stage:
+    detect+track for everyone, high-precision pose for a foreground subset).
     """
     seen_ids: set[int] = set()
 
@@ -140,7 +224,17 @@ def make_detection_track_callback(
         stats["total_detections"] += frame_stats.active_track_count
         seen_ids.update(tid for tid in track_ids_from_key_points(result.key_points) if tid is not None)
         stats["unique_track_ids"] = len(seen_ids)
-        return _draw_tracked_boxes(frame_bgr, result.key_points)
+        annotated = _draw_tracked_boxes(frame_bgr, result.key_points)
+        if keypoint_model is not None and pose_topk > 0:
+            annotated = _draw_pose_subset(
+                annotated,
+                frame_rgb,
+                result.key_points,
+                keypoint_model,
+                pose_topk,
+                keypoint_threshold,
+            )
+        return annotated
 
     return callback
 

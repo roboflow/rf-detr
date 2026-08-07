@@ -82,6 +82,48 @@ def test_detection_track_callback_assigns_stable_ids() -> None:
     assert stats["unique_track_ids"] == 2
 
 
+class _FakePoseModel:
+    def __init__(self) -> None:
+        self.crop_sizes: list[tuple[int, int]] = []
+
+    def predict(self, frame_rgb: np.ndarray, **_kwargs: object) -> sv.KeyPoints:
+        self.crop_sizes.append((frame_rgb.shape[0], frame_rgb.shape[1]))
+        xy = np.zeros((1, 17, 2), dtype=np.float32)
+        xy[0, 5] = (5.0, 5.0)
+        xy[0, 6] = (10.0, 5.0)
+        return sv.KeyPoints(
+            xy=xy,
+            visible=np.ones((1, 17), dtype=bool),
+            detection_confidence=np.asarray([0.9], dtype=np.float32),
+        )
+
+
+def test_pose_subset_runs_on_top_k_largest_boxes() -> None:
+    # Three people of different box sizes; pose_topk=2 should crop the 2 largest.
+    frame0 = _person_detections(
+        [(10.0, 10.0, 30.0, 40.0), (100.0, 100.0, 200.0, 400.0), (300.0, 100.0, 340.0, 180.0)],
+    )
+    model = _FakeDetectionModel([frame0])
+    pose_model = _FakePoseModel()
+    pipeline = PersonTrackPipeline(settings=PersonTrackSettings(enabled=True), frame_width=640)
+    stats: dict[str, int] = {"processed_frames": 0, "total_detections": 0}
+    callback = make_detection_track_callback(
+        model,
+        0.5,
+        True,
+        stats,
+        pipeline,
+        keypoint_model=pose_model,
+        pose_topk=2,
+    )
+    callback(np.zeros((480, 640, 3), dtype=np.uint8), 0)
+
+    # Pose ran on exactly the two largest boxes (100x300 and 20x30 areas ranked).
+    assert len(pose_model.crop_sizes) == 2
+    # The largest box (300 tall) is cropped first.
+    assert pose_model.crop_sizes[0][0] == 300
+
+
 def test_detection_track_keeps_low_confidence_when_hysteresis_off() -> None:
     # Detection thresholding already gates; the tracker must not re-gate on
     # confidence or it collapses the count (regression: 28 -> 15 people).
