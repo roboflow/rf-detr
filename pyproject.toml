@@ -374,6 +374,7 @@ overrides = [
     "tensorflow", "tensorflow.*",
     "executorch", "executorch.*",
     "coremltools", "coremltools.*",
+    "roboflow", "roboflow.*",
     "rfdetr_plus", "rfdetr_plus.*",
   ], ignore_missing_imports = true },
   # Optional-import None assignments in console.py: type: ignore[assignment, misc] is needed when
@@ -390,6 +391,5 @@ overrides = [
     "rfdetr.datasets.save_grids",
     "rfdetr.datasets.synthetic",
     "rfdetr.datasets.transforms",
-    "rfdetr.detr",
   ], ignore_errors = true },
 ]
