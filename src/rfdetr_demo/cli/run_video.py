@@ -57,6 +57,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="ONNX ReID model path; enables the grayscale-robust embedding backend (else color histogram)",
     )
     parser.add_argument("--reid-similarity", type=float, default=0.6, help="ReID revival threshold (0..1)")
+    parser.add_argument(
+        "--reid-stride",
+        type=int,
+        default=1,
+        help="Run the ReID embedding every Nth frame (motion-only in between) to recover speed",
+    )
     parser.add_argument("--frame-stride", type=int, default=1)
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--max-source-seconds", type=float, default=None)
@@ -131,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
             reid_enabled=args.reid or args.reid_model is not None,
             reid_model=str(args.reid_model) if args.reid_model is not None else None,
             reid_similarity=args.reid_similarity,
+            reid_stride=args.reid_stride,
         )
     except (FileNotFoundError, RuntimeError, ValueError) as error:
         logger.error("%s", error)

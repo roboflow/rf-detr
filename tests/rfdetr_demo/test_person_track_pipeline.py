@@ -313,6 +313,18 @@ def test_reid_cost_blend_prefers_matching_appearance() -> None:
     assert with_appearance == [(0, 1)]
 
 
+def test_reid_stride_skips_embedding_on_non_stride_frames() -> None:
+    from rfdetr_demo.tracking.track_store import TrackStore
+
+    store = TrackStore(settings=PersonTrackSettings(enabled=True, reid_enabled=True, reid_stride=3))
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    # ReID is active only on frames whose index is a multiple of the stride.
+    assert store._reid_active(frame, 0) is True
+    assert store._reid_active(frame, 1) is False
+    assert store._reid_active(frame, 2) is False
+    assert store._reid_active(frame, 3) is True
+
+
 def test_reid_revives_track_id_after_long_occlusion() -> None:
     pipeline = PersonTrackPipeline(
         settings=PersonTrackSettings(

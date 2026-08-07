@@ -92,6 +92,7 @@ def _build_task_callback(
     reid_enabled: bool = False,
     reid_model: str | None = None,
     reid_similarity: float = 0.6,
+    reid_stride: int = 1,
 ) -> Callable[[Any, int], Any]:
     if task == "keypoint":
         model = build_keypoint_model(resolution=model_resolution)
@@ -181,6 +182,7 @@ def _build_task_callback(
                 reid_backend=("embedding" if reid_model else "histogram"),
                 reid_model_path=reid_model,
                 reid_similarity_threshold=reid_similarity,
+                reid_stride=reid_stride,
             ),
         )
         return make_detection_track_callback(
@@ -235,6 +237,7 @@ def run_demo(
     reid_enabled: bool = False,
     reid_model: str | None = None,
     reid_similarity: float = 0.6,
+    reid_stride: int = 1,
 ) -> dict[str, Any]:
     """Process ``source_path`` and write annotated video to ``target_path``.
 
@@ -305,6 +308,7 @@ def run_demo(
         reid_enabled=reid_enabled,
         reid_model=reid_model,
         reid_similarity=reid_similarity,
+        reid_stride=reid_stride,
     )
 
     frame_audit: ConfidentialFrameAuditLogger | None = None

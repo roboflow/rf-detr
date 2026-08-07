@@ -332,8 +332,12 @@ class TrackStore:
         )
         return track.key_points
 
-    def _reid_active(self, frame: np.ndarray | None) -> bool:
-        return self.settings.reid_enabled and frame is not None
+    def _reid_active(self, frame: np.ndarray | None, frame_index: int) -> bool:
+        """ReID runs when enabled, a frame is given, and this is a stride frame."""
+        if not (self.settings.reid_enabled and frame is not None):
+            return False
+        stride = max(1, self.settings.reid_stride)
+        return frame_index % stride == 0
 
     def _detection_descriptor(
         self,
@@ -428,7 +432,6 @@ class TrackStore:
             frame: Optional BGR frame used for appearance ReID; required only
                 when ``reid_enabled`` is set.
         """
-        del frame_index
         raw_count = len(key_points)
 
         if not self.settings.enabled:
@@ -458,7 +461,7 @@ class TrackStore:
                 box.copy() if box is not None else np.zeros(4, dtype=np.float64),
             )
 
-        reid_active = self._reid_active(frame)
+        reid_active = self._reid_active(frame, frame_index)
         det_descriptors: list[np.ndarray | None] = [None] * nms_count
         if reid_active:
             for detection_index in range(nms_count):

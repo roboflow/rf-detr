@@ -44,6 +44,7 @@ class PersonTrackSettings:
     reid_ema: float = 0.9
     reid_backend: str = "histogram"
     reid_model_path: str | None = None
+    reid_stride: int = 1
 
 
 @dataclass
@@ -130,6 +131,7 @@ def person_track_settings_from_env(
     reid_ema_raw = os.environ.get("RFDETR_REID_EMA")
     reid_backend_raw = os.environ.get("RFDETR_REID_BACKEND", "").strip().lower()
     reid_model_raw = os.environ.get("RFDETR_REID_MODEL")
+    reid_stride_raw = os.environ.get("RFDETR_REID_STRIDE")
     kwargs: dict[str, object] = {}
     if max_missed_raw is not None:
         kwargs["max_missed"] = max(0, int(max_missed_raw))
@@ -179,6 +181,8 @@ def person_track_settings_from_env(
         kwargs["reid_backend"] = reid_backend_raw
     if reid_model_raw is not None:
         kwargs["reid_model_path"] = reid_model_raw
+    if reid_stride_raw is not None:
+        kwargs["reid_stride"] = max(1, int(reid_stride_raw))
     if not kwargs:
         return settings
     from dataclasses import replace
