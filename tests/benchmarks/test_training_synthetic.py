@@ -276,8 +276,8 @@ def test_train_convergence_segmentation(
 
     Assertions:
         - ``val/mAP_50`` before training ≤ 5 %.
-        - ``val/mAP_50`` after 5 epochs ≥ 10 %.
-        - ``val/segm_mAP_50`` after 5 epochs ≥ 5 %.
+        - ``val/mAP_50`` after 6 epochs ≥ 15 %.
+        - ``val/segm_mAP_50`` after 6 epochs ≥ 5 %.
     """
     output_dir = tmp_path / "train_output_seg"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -293,7 +293,7 @@ def test_train_convergence_segmentation(
         dataset_file="roboflow",
         dataset_dir=str(dataset_dir),
         output_dir=str(output_dir),
-        epochs=5,
+        epochs=6,
         batch_size=4,
         grad_accum_steps=1,
         num_workers=max(1, (os.cpu_count() or 1) // 2),

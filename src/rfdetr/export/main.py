@@ -24,7 +24,7 @@ from torch import Tensor, nn
 from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
-from rfdetr.export._onnx.exporter import export_onnx
+from rfdetr.export._onnx.exporter import export_onnx as export_onnx  # re-exported for rfdetr.detr and the CLI
 from rfdetr.export._tensorrt import build_engine
 from rfdetr.models import BuilderArgs, build_model
 from rfdetr.models.backbone.backbone import Backbone
