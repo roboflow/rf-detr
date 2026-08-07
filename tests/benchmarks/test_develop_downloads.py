@@ -110,8 +110,9 @@ class TestDownloadAndExtract:
         zip_bytes = self._make_zip({"../evil.txt": "malicious"})
         url = "http://example.com/test.zip"
 
-        def fake_urlretrieve(url: str, dest: str) -> None:
+        def fake_urlretrieve(url: str, dest: str) -> tuple[str, dict[str, str]]:
             Path(dest).write_bytes(zip_bytes)
+            return dest, {}
 
         with patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve):
             with pytest.raises(RuntimeError, match="Unsafe path detected"):
