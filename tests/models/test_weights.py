@@ -1130,12 +1130,25 @@ class TestPartialLoadDetector:
         assert "register_tokens" in captured[0]
         assert "_kp_active_mask" not in captured[0]
 
+    def test_submodule_prefixed_missing_mask_does_not_warn(self, captured):
+        """The mask is filtered under a submodule path too, not only as a bare top-level key."""
+        result = SimpleNamespace(missing_keys=["transformer.decoder._kp_active_mask"], unexpected_keys=[])
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert captured == []
+
     def test_similarly_named_missing_key_still_warns(self, captured):
         """Filtering the exact schema buffer must not hide a prefix collision."""
         result = SimpleNamespace(missing_keys=["_kp_active_mask_projection.weight"], unexpected_keys=[])
         _warn_on_partial_load(result, "/fake/weights.pth")
         assert len(captured) == 1
         assert "_kp_active_mask_projection.weight" in captured[0]
+
+    def test_suffix_collision_without_separator_still_warns(self, captured):
+        """The submodule clause is anchored on the `.` separator, so a bare suffix match is not the buffer."""
+        result = SimpleNamespace(missing_keys=["backbone.custom_kp_active_mask"], unexpected_keys=[])
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "backbone.custom_kp_active_mask" in captured[0]
 
     def test_unexpected_keypoint_mask_still_warns(self, captured):
         """Only a missing deterministic mask is intentional; an unconsumed mask is still surfaced."""
