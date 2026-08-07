@@ -11,9 +11,17 @@ import argparse
 import sys
 
 from rfdetr_demo.cli.run_video import main as video_demo_main
-from rfdetr_demo.cli.subcommands import analyze_clip, audit_tracking, compare_reid, probe_count
+from rfdetr_demo.cli.subcommands import (
+    analyze_clip,
+    audit_tracking,
+    compare_reid,
+    probe_count,
+    probe_viewpoint,
+)
 
-SUBCOMMANDS = frozenset({"probe-count", "audit-tracking", "analyze-clip", "compare-reid", "video"})
+SUBCOMMANDS = frozenset(
+    {"probe-count", "probe-viewpoint", "audit-tracking", "analyze-clip", "compare-reid", "video"},
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -23,6 +31,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
     probe_count.add_parser(subparsers)
+    probe_viewpoint.add_parser(subparsers)
     audit_tracking.add_parser(subparsers)
     analyze_clip.add_parser(subparsers)
     compare_reid.add_parser(subparsers)

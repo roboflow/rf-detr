@@ -37,8 +37,26 @@ def test_video_subcommand_passes_remaining_args() -> None:
 
 def test_subcommand_names_are_stable() -> None:
     assert SUBCOMMANDS == frozenset(
-        {"probe-count", "audit-tracking", "analyze-clip", "compare-reid", "video"},
+        {
+            "probe-count",
+            "probe-viewpoint",
+            "audit-tracking",
+            "analyze-clip",
+            "compare-reid",
+            "video",
+        },
     )
+
+
+def test_probe_viewpoint_subcommand() -> None:
+    with patch("rfdetr_demo.cli.subcommands.probe_viewpoint.run", return_value=0) as probe_run:
+        with patch("rfdetr_demo.cli.main._build_parser") as build_parser:
+            namespace = type("NS", (), {"_handler": probe_run})()
+            build_parser.return_value.parse_args.return_value = namespace
+            assert main(["probe-viewpoint", "--frames", "5"]) == 0
+            build_parser.return_value.parse_args.assert_called_once_with(
+                ["probe-viewpoint", "--frames", "5"],
+            )
 
 
 def test_summarize_track_ids_counts_revival_as_fewer_ids() -> None:
