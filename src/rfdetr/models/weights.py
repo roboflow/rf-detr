@@ -41,6 +41,27 @@ _PE_KEY_SUFFIX = "embeddings.position_embeddings"
 _QUERY_PARAM_SUFFIXES: tuple[str, ...] = ("refpoint_embed.weight", "query_feat.weight")
 
 
+def _is_query_param(name: str) -> bool:
+    """Return whether *name* is a state-dict key for a packed query parameter.
+
+    Single source of truth for the ``_QUERY_PARAM_SUFFIXES`` suffix match, so every call site agrees on which keys are
+    reshaped per group.
+
+    Args:
+        name: A checkpoint / model ``state_dict`` key.
+
+    Returns:
+        ``True`` when the key ends with one of ``_QUERY_PARAM_SUFFIXES``.
+
+    Examples:
+        >>> _is_query_param("transformer.refpoint_embed.weight")
+        True
+        >>> _is_query_param("class_embed.weight")
+        False
+    """
+    return name.endswith(_QUERY_PARAM_SUFFIXES)
+
+
 def _slice_query_param_per_group(
     tensor: Tensor,
     ckpt_num_queries: int,
@@ -427,7 +448,7 @@ def load_pretrain_weights(
     # but TrainConfig does not include num_queries (it lives on ModelConfig).
     if (ckpt_num_queries is None) != (ckpt_group_detr is None):
         _first_query_key = next(
-            (k for k in checkpoint["model"] if any(k.endswith(s) for s in _QUERY_PARAM_SUFFIXES)),
+            (k for k in checkpoint["model"] if _is_query_param(k)),
             None,
         )
         if _first_query_key is not None:
@@ -451,15 +472,21 @@ def load_pretrain_weights(
                 )
     target_query_rows = mc.num_queries * mc.group_detr
     # Warn once (not once per suffix key) only when the fallback truncates a
-    # query tensor. Several published legacy checkpoints omit both args but
-    # already have exactly the configured number of rows, so their flat slice is
-    # an identity and cannot scramble any group.
-    legacy_fallback_truncates = any(
-        tensor.shape[0] > target_query_rows
-        for name, tensor in checkpoint["model"].items()
-        if any(name.endswith(suffix) for suffix in _QUERY_PARAM_SUFFIXES)
-    )
-    if mc.group_detr > 1 and (ckpt_num_queries is None or ckpt_group_detr is None) and legacy_fallback_truncates:
+    # query tensor. Checkpoints without args.num_queries/args.group_detr
+    # (published legacy files and BestModelCallback output, whose args value is a
+    # TrainConfig dump lacking both fields) already have exactly the configured
+    # number of rows, so their flat slice is a data identity: it cannot reorder
+    # or drop rows, but it does not guarantee that the checkpoint's (num_queries,
+    # group_detr) factorization matches the target.
+    # The truncation scan is the last conjunct so the cheap scalar guards short-circuit
+    # it away on every load that cannot warn.
+    if (
+        mc.group_detr > 1
+        and (ckpt_num_queries is None or ckpt_group_detr is None)
+        and any(
+            tensor.shape[0] > target_query_rows for name, tensor in checkpoint["model"].items() if _is_query_param(name)
+        )
+    ):
         logger.warning(
             "load_pretrain_weights: checkpoint lacks args.num_queries / "
             "args.group_detr; falling back to flat slice. With "
@@ -468,7 +495,7 @@ def load_pretrain_weights(
             mc.group_detr,
         )
     for name in list(checkpoint["model"].keys()):
-        if any(name.endswith(x) for x in _QUERY_PARAM_SUFFIXES):
+        if _is_query_param(name):
             tensor = checkpoint["model"][name]
             if ckpt_num_queries is not None and ckpt_group_detr is not None:
                 checkpoint["model"][name] = _slice_query_param_per_group(
@@ -479,10 +506,13 @@ def load_pretrain_weights(
                     target_group_detr=mc.group_detr,
                 )
             else:
-                # Legacy checkpoint with no num_queries/group_detr in args:
+                # Checkpoint without args.num_queries/args.group_detr (published legacy files
+                # and BestModelCallback output, whose args value is a TrainConfig dump lacking
+                # both fields):
                 # preserve the original flat slice for backward compatibility.
-                # When this changes the row count and group_detr > 1, it may
-                # scramble groups 1+; the warning above covers that case.
+                # This is only a data identity when the row total already matches;
+                # without metadata, a different (num_queries, group_detr) split
+                # is still reinterpreted under the target partition undetectably.
                 checkpoint["model"][name] = tensor[:target_query_rows]
 
     checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)
