@@ -2341,6 +2341,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li><code>HungarianMatcher</code>'s detection-only cost matrix is now built padded to each batch's <code>max(T_i)</code> target count and diagonal-extracted, instead of padding to the cross-image <code>sum(T_i)</code>, whenever the batch's targets and predictions pass a fast eligibility check; ineligible batches fall back to the previous full-cartesian computation with identical results. The matcher runs inside the training-step criterion under <code>torch.no_grad()</code>, so this is a training-time, not inference-time, saving: on real COCO batches matcher time drops ~51% and peak CUDA memory ~73-76%, and the measured end-to-end training step goes from 288.364 ms to 232.457 ms on an A100. The saving scales with target-count evenness <code>r = sum(T_i) / max(T_i)</code> (capped at the batch size) with a <code>1 - 1/r</code> ceiling, so a batch where one image holds nearly all the targets (<code>r</code> close to 1) sees little to no improvement. (<a href="https://github.com/roboflow/rf-detr/pull/1297">#1297</a>)</li>
 </ul>
+<h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Loading a detection checkpoint published before keypoint support no longer warns that <code>_kp_active_mask</code> is a "model parameter not in checkpoint (left at random init)". The key is a deterministic schema buffer the model always rebuilds from the configured keypoint schema — empty for detection-only variants — not a learned parameter, so its absence never affected the loaded weights. Affects <code>Nano</code>, <code>Small</code>, <code>Large</code> (2026) and <code>SegSmall</code>. The filter matches the exact terminal key, so a similarly-named real parameter still warns, and an <em>unexpected</em> <code>_kp_active_mask</code> in a checkpoint still warns; the filtered key is now recorded at debug level. (<a href="https://github.com/roboflow/rf-detr/pull/1302">#1302</a>)</li>
+</ul>
 <h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Exported artifact filenames now encode precision or backend for variant-derived/default names: TFLite <code>{stem}_float32.tflite</code> / <code>{stem}_float16.tflite</code> → <code>{stem}_fp32.tflite</code> / <code>{stem}_fp16.tflite</code>; ExecuTorch <code>{variant}.pte</code> → <code>{variant}_{backend}.pte</code> (or <code>{variant}_qnn_{soc}.pte</code>); CoreML <code>{variant}.mlpackage</code> → <code>{variant}_fp32.mlpackage</code> / <code>{variant}_fp16.mlpackage</code>; TensorRT <code>{stem}.trt</code> → <code>{stem}_fp16.trt</code> / <code>{stem}_fp32.trt</code>. ONNX filenames are unchanged. Update scripts that hardcode or glob these artifact filenames; explicit <code>output_name</code> overrides remain unchanged.</li>
@@ -2352,7 +2356,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><code>RFDETR.predict()</code> no longer upsamples segmentation masks whose scores fall below the caller's threshold before discarding them — on typical COCO images only a few of the <code>num_select</code> masks survive <code>threshold=0.5</code>. End-to-end <code>predict()</code> is ~20% faster at 1080p (the saving scales with image area, and is neutral at 640 px); the output is unchanged. (<a href="https://github.com/roboflow/rf-detr/pull/1265">#1265</a>)</li>
 <li>ExecuTorch export lowers the <code>addmm</code> operations the XNNPACK partitioner leaves undelegated back into <code>aten.linear</code> via <code>AddmmToLinearTransform</code>, which runs ~100× faster for those shapes. RFDETRNano on XNNPACK / Apple silicon is ~2.5× faster (119.9 → 48.3 ms median); outputs match the previous lowering to ~1e-4. (<a href="https://github.com/roboflow/rf-detr/pull/1262">#1262</a>)</li>
 </ul>
-<h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_1">Fixed<a class="headerlink" href="#fixed_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>keypoint_flip_pairs</code> no longer silently disables horizontal-flip augmentations (<code>HorizontalFlip</code>, <code>Flip</code>, <code>D4</code>) on detection-only datasets when a custom <code>aug_config</code> is supplied. <code>AlbumentationsWrapper.from_config</code> treats an empty <code>keypoint_flip_pairs</code> as "keypoint pipeline with no flip pairs defined" and drops flip transforms for annotation safety; detection pipelines must pass <code>None</code> instead of <code>[]</code> to keep flips enabled. (<a href="https://github.com/roboflow/rf-detr/pull/1248">#1248</a>)</li>
 <li>Export inference and INT8 calibration now resize with <code>RFDETR.predict()</code>'s exact convention (bilinear, half-pixel centers, <code>antialias=False</code>) across the ONNX inference, TFLite inference, INT8 TFLite calibration, and benchmark/traced-example paths. These paths previously resized through PIL's antialiased BILINEAR/BICUBIC filters, which diverge from <code>predict()</code> on downscale and shift exported-model confidence scores and INT8 calibration ranges. A shared torch-free <code>_bilinear_resize_half_pixel</code> NumPy kernel (<code>rfdetr/export/_resize.py</code>) mirrors the convention wherever torchvision is unavailable. Re-export any INT8 TFLite model to recalibrate against the corrected pixel distribution. (<a href="https://github.com/roboflow/rf-detr/pull/1269">#1269</a>)</li>
@@ -2382,7 +2386,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li><code>TrainConfig.lr_drop</code> and <code>lr_min_factor</code> — pass them through <code>lr_scheduler_kwargs</code> instead (<code>{"lr_drop": ...}</code> / <code>{"min_factor": ...}</code>). Deprecated since v1.9.0, will be removed in v1.11.0. The fields still work in the meantime and are folded into <code>lr_scheduler_kwargs</code> for the managed presets with a <code>FutureWarning</code>; default values (e.g. on config reload) do not warn. Set with an explicit (non-managed) scheduler they are inert and emit a <code>FutureWarning</code>.</li>
 </ul>
-<h3 id="fixed_1">Fixed<a class="headerlink" href="#fixed_1" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_2">Fixed<a class="headerlink" href="#fixed_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Keypoint L1-loss helper (<code>compute_l1_keypoint_loss</code>) now returns <strong>graph-connected</strong> zeros on its out-of-schema class-index guard instead of detached <code>new_zeros</code>. A detached zero left the keypoint-head parameters without a gradient path on that batch, which desyncs <code>DistributedDataParallel</code>'s gradient reducer across ranks (hang or "parameter did not receive grad") when the guard fires on some ranks but not others. This is a prerequisite for the multi-GPU keypoint training above.</li>
 <li>Non-square Albumentations training resize (<code>aug_config</code> set, <code>augmentation_backend</code> resolving to <code>"albumentations"</code>) no longer silently inflates every image's longest side to <code>max_size</code> (1333 by default). <code>SmallestMaxSize</code> → <code>LongestMaxSize</code> always forces an exact resize in Albumentations, not a conditional cap; a new <code>CappedLongestMaxSize</code> internal transform only shrinks, never upscales, matching torchvision's <code>RandomResize</code> semantics.</li>
@@ -2429,7 +2433,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Keypoint schema inference now supports native COCO format (<code>dataset_file="coco"</code>) in addition to <code>"roboflow"</code> and <code>"yolo"</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1164">#1164</a>)</li>
 <li><code>_keypoint_schema_cache</code> key changed from <code>dataset_dir</code> (string) to <code>(dataset_file, dataset_dir)</code> tuple to prevent cross-format cache collisions when the same directory is used with different dataset formats. (<a href="https://github.com/roboflow/rf-detr/pull/1164">#1164</a>)</li>
 </ul>
-<h3 id="fixed_2">Fixed<a class="headerlink" href="#fixed_2" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_3">Fixed<a class="headerlink" href="#fixed_3" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Predicted bounding boxes are now clamped to image bounds <code>[0, width] × [0, height]</code> in <code>PostProcess._postprocess_boxes()</code>; model regression is unbounded and could previously produce negative or out-of-frame coordinates. <code>scale_fct</code> is also cast to <code>boxes.dtype</code> before multiplication to prevent dtype mismatch when boxes are <code>float16</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1168">#1168</a>)</li>
 <li><code>SegmentationTrainConfig.cls_loss_coef</code> default corrected from <code>5.0</code> to <code>1.0</code> to restore the pre-v1.7 effective classification loss weight. The <code>5.0</code> value was present in <code>SegmentationTrainConfig</code> since v1.6 but was dead code until the v1.7 TrainConfig ownership migration activated it, silently over-penalising classification relative to mask losses during segmentation fine-tuning. To reproduce pre-fix behaviour, pass <code>cls_loss_coef=5.0</code> explicitly. (<a href="https://github.com/roboflow/rf-detr/pull/1165">#1165</a>)</li>
@@ -2449,7 +2453,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>Default <code>num_keypoints_per_class</code> in <code>RFDETRKeypointPreviewConfig</code> changed from <code>[0, 17]</code> (background-first) to <code>[17]</code> (active-first). Legacy bg-first checkpoints auto-align on load via <code>_kp_active_mask</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1160">#1160</a>)</li>
 </ul>
-<h3 id="fixed_3">Fixed<a class="headerlink" href="#fixed_3" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_4">Fixed<a class="headerlink" href="#fixed_4" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>RFDETR.from_checkpoint()</code> now correctly infers <code>num_classes</code> and <code>num_keypoints_per_class</code> from checkpoint weights (<code>class_embed.weight.shape[0] - 1</code> and <code>_kp_active_mask</code> respectively). Previously, <code>num_classes</code> was read as <code>shape[0]</code> (i.e. <code>num_classes + 1</code> including the background class), causing <code>load_state_dict</code> shape mismatches or a silent extra output class on every load. <code>BestModelCallback._serialize_model_config</code> is also fixed to persist the correct foreground-only <code>num_classes</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1158">#1158</a>)</li>
 <li><code>HungarianMatcher.forward()</code> now uses the configured <code>focal_alpha</code> in the focal classification matching cost. Previously the value was hardcoded to <code>0.25</code>, silently ignoring any non-default <code>focal_alpha</code> passed to the constructor or <code>build_matcher</code>. This misaligned the bipartite matching cost with the focal classification loss in <code>criterion.py</code>, which correctly used <code>self.focal_alpha</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1147">#1147</a>)</li>
@@ -2467,7 +2471,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Keypoint training now disables horizontal flip augmentation until keypoint flip-pair swapping is implemented. Previously, flipping was applied without reordering keypoint pairs, producing incorrect labels. (<a href="https://github.com/roboflow/rf-detr/pull/1122">#1122</a>)</li>
 <li>Training metric plots improved with optional seaborn error bands, AP@0.75 metric grouping, and custom AP metric group configuration. (<a href="https://github.com/roboflow/rf-detr/pull/1122">#1122</a>)</li>
 </ul>
-<h3 id="fixed_4">Fixed<a class="headerlink" href="#fixed_4" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_5">Fixed<a class="headerlink" href="#fixed_5" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Keypoint encoder in eval mode now routes all queries through head 0 instead of splitting across group heads. Previously, <code>group_detr = len(self.enc_out_keypoint_embed)</code> caused the encoder keypoint path to split <code>num_queries</code> queries across all group heads in eval; now uses <code>if self.training else 1</code> guard. (<a href="https://github.com/roboflow/rf-detr/pull/1135">#1135</a>)</li>
 <li><code>config.use_return_dict</code> (deprecated in <code>transformers</code>) replaced with <code>config.return_dict</code> in DINOv2 windowed attention backbone. (<a href="https://github.com/roboflow/rf-detr/pull/1135">#1135</a>)</li>
@@ -2495,7 +2499,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li><code>RFDETR.export(simplify=..., force=...)</code> — both kwargs removed from the signature. Deprecated since v1.6.0 with <code>remove_in="1.8.0"</code>; both were no-ops during the deprecation window. Callers passing these args must remove them before upgrading. (<a href="https://github.com/roboflow/rf-detr/pull/1102">#1102</a>)</li>
 </ul>
-<h3 id="fixed_5">Fixed<a class="headerlink" href="#fixed_5" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_6">Fixed<a class="headerlink" href="#fixed_6" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>RFDETR.from_checkpoint()</code> no longer treats <code>num_classes</code> loaded from the checkpoint as a user-supplied override. Previously, fine-tuning a checkpoint model on a dataset with a different class count was silently refused — the head refused to re-initialise and trained against the stale class count. An explicit <code>num_classes</code> kwarg from the caller still wins over both the checkpoint value and the dataset. (<a href="https://github.com/roboflow/rf-detr/pull/1106">#1106</a>)</li>
 <li>Scale jitter restored in non-square training crop. <code>RandomCrop</code> in the <code>option_b</code> branch replaced with <code>RandomSizedCrop</code>, restoring the scale-augmentation behaviour lost during the Albumentations migration. (<a href="https://github.com/roboflow/rf-detr/pull/1088">#1088</a>)</li>
@@ -2551,7 +2555,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><code>RFDETRSegPreview</code> — use <code>RFDETRSegNano</code>, <code>RFDETRSegSmall</code>, <code>RFDETRSegMedium</code>, or <code>RFDETRSegLarge</code> instead. Emits <code>FutureWarning</code> on instantiation; scheduled for removal in v2.0. (<a href="https://github.com/roboflow/rf-detr/pull/900">#900</a>)</li>
 <li><code>rfdetr.util</code> and <code>rfdetr.deploy</code> sub-modules are deprecated and will be removed in v1.9. A <code>__getattr__</code> hook on the <code>rfdetr</code> package now emits a clear <code>ImportError</code> with migration guidance when these legacy paths are accessed. (<a href="https://github.com/roboflow/rf-detr/pull/839">#839</a>)</li>
 </ul>
-<h3 id="fixed_6">Fixed<a class="headerlink" href="#fixed_6" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_7">Fixed<a class="headerlink" href="#fixed_7" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p>Fixed TFLite export (<code>format="tflite"</code>) producing detection scores that collapse to ~0.02 (vs ~0.62 from ONNX) on real inputs. Root cause is a long-standing onnx2tf bug (<a href="https://github.com/PINTO0309/onnx2tf/issues/274">PINTO0309/onnx2tf#274</a>) where the <code>GridSample</code> lowering diverges numerically from ONNX while onnx2tf's own validator silently passes. RF-DETR's deformable cross-attention uses <code>F.grid_sample</code> once per decoder layer; drift compounds and is amplified by the attention softmax. The converter now detects onnx2tf's <code>GridSample → pseudo-GridSample</code> replacement kwarg at runtime (introspecting <code>convert()</code> via <code>inspect.signature</code>) and passes it as <code>True</code>; a warning is logged when the kwarg is absent. (<a href="https://github.com/roboflow/rf-detr/pull/1041">#1041</a>)</p>
@@ -2602,7 +2606,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li><code>predict()</code> now stores the source image in <code>detections.metadata["source_image"]</code> instead of <code>detections.data["source_image"]</code>. supervision indexes every value in <code>data</code> by the detection mask; <code>source_image</code> is per-image, not per-detection, so boolean/integer indexing raised <code>IndexError</code>. Moving it to <code>metadata</code> (passed through unchanged) fixes the issue. Update any code that reads <code>detections.data["source_image"]</code>. (<a href="https://github.com/roboflow/rf-detr/pull/972">#972</a>, <a href="https://github.com/roboflow/rf-detr/issues/968">#968</a>)</li>
 </ul>
-<h3 id="fixed_7">Fixed<a class="headerlink" href="#fixed_7" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_8">Fixed<a class="headerlink" href="#fixed_8" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Fixed segmentation training crash on T4 and P100 GPUs: cuDNN engine selection fails for depthwise convolution backward on some CUDA stacks (Kaggle, Colab). A custom <code>autograd.Function</code> now disables cuDNN in both forward and backward passes. (<a href="https://github.com/roboflow/rf-detr/pull/967">#967</a>)</li>
 <li>Fixed <code>ema_segm_mAP_50_95</code> and <code>ema_segm_mAP_50</code> being computed from the base (non-EMA) metric accumulator instead of the EMA accumulator, producing misleading validation scores for segmentation models. (<a href="https://github.com/roboflow/rf-detr/pull/980">#980</a>)</li>
@@ -2618,7 +2622,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li><code>predict()</code> now includes <code>class_name</code> in <code>detections.data</code>, mapping each detection's 0-indexed class ID to its human-readable name. (<a href="https://github.com/roboflow/rf-detr/pull/914">#914</a>)</li>
 </ul>
-<h3 id="fixed_8">Fixed<a class="headerlink" href="#fixed_8" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_9">Fixed<a class="headerlink" href="#fixed_9" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Fixed segmentation multi-GPU DDP training crash: <code>build_trainer()</code> now wraps <code>strategy="ddp"</code> with <code>DDPStrategy(find_unused_parameters=True)</code> when <code>segmentation_head=True</code>. The segmentation head's <code>sparse_forward()</code> leaves parameters unused on some forward steps; plain <code>"ddp"</code> raised <code>RuntimeError: It looks like your LightningModule has parameters that were not used in producing the loss</code>. Non-segmentation DDP and other strategies are unchanged. (<a href="https://github.com/roboflow/rf-detr/pull/942">#942</a>, <a href="https://github.com/roboflow/rf-detr/pull/947">#947</a>)</li>
 <li>Fixed fused AdamW crash under FP32 multi-GPU training: <code>configure_optimizers()</code> and <code>clip_gradients()</code> now gate fused AdamW on the trainer's actual precision (requiring a BF16 variant) rather than GPU capability alone. On Ampere+ hardware <code>torch.cuda.is_bf16_supported()</code> is always <code>True</code>, so the old code enabled fused AdamW even with <code>precision="32-true"</code>, causing <code>RuntimeError: params, grads, exp_avgs, and exp_avg_sqs must have same dtype, device, and layout</code> from DDP gradient bucket view stride mismatches. (<a href="https://github.com/roboflow/rf-detr/pull/942">#942</a>, <a href="https://github.com/roboflow/rf-detr/pull/947">#947</a>)</li>
@@ -2636,7 +2640,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><code>RFDETR.train()</code> auto-detects <code>num_classes</code> from the dataset directory when not explicitly set, reinitializing the detection head to the correct class count automatically. A warning is emitted when the configured value differs from the dataset count. (<a href="https://github.com/roboflow/rf-detr/pull/893">#893</a>)</li>
 <li><code>optimize_for_inference()</code> now accepts dtype as a string name (e.g. <code>"float16"</code>) in addition to a <code>torch.dtype</code> object; invalid dtype inputs uniformly raise <code>TypeError</code>. (<a href="https://github.com/roboflow/rf-detr/pull/899">#899</a>)</li>
 </ul>
-<h3 id="fixed_9">Fixed<a class="headerlink" href="#fixed_9" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_10">Fixed<a class="headerlink" href="#fixed_10" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Fixed <code>models/lwdetr.py</code>: <code>reinitialize_detection_head</code> now replaces <code>nn.Linear</code> modules instead of mutating <code>.data</code> tensors in-place, ensuring <code>out_features</code> metadata stays consistent with the actual weight shape. This prevents ONNX export and <code>torch.jit.trace</code> from emitting stale (pre-fine-tuning) class counts for fine-tuned models. (<a href="https://github.com/roboflow/rf-detr/pull/904">#904</a>)</li>
 <li>Fixed <code>RFDETR.optimize_for_inference()</code> leaking a CUDA context on multi-GPU setups: the deep-copy, export, and JIT-trace steps now run inside <code>torch.cuda.device(device)</code> to pin the context to the correct device. (<a href="https://github.com/roboflow/rf-detr/pull/899">#899</a>)</li>
@@ -2652,7 +2656,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li><code>ModelConfig.device</code> and <code>RFDETR.train(device=...)</code> now accept <code>torch.device</code> objects and indexed device strings such as <code>"cuda:0"</code>. Values are normalized to canonical torch-style strings. <code>RFDETR.train()</code> warns when an unmapped device type is passed to PyTorch Lightning auto-detection. (<a href="https://github.com/roboflow/rf-detr/pull/872">#872</a>)</li>
 </ul>
-<h3 id="fixed_10">Fixed<a class="headerlink" href="#fixed_10" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_11">Fixed<a class="headerlink" href="#fixed_11" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Fixed ONNX export ignoring an explicit <code>patch_size</code> argument: <code>export()</code> and <code>predict()</code> now resolve <code>patch_size</code> from <code>model_config</code> by default, validate it strictly (positive integer, not bool), and enforce that <code>(H, W)</code> dimensions are divisible by <code>patch_size × num_windows</code>. (<a href="https://github.com/roboflow/rf-detr/pull/876">#876</a>)</li>
 <li>Fixed ONNX export for models with dynamic batch dimensions — replaced <code>H_.expand(N_)</code> with <code>torch.full</code> for Python-int spatial dims to eliminate tracer failures. (<a href="https://github.com/roboflow/rf-detr/pull/871">#871</a>)</li>
@@ -2662,7 +2666,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li><code>RFDETR.export(..., simplify=..., force=...)</code> — both arguments are now no-ops and emit a <code>DeprecationWarning</code>. RF-DETR no longer runs ONNX simplification automatically; remove these arguments from your calls. They will be removed in v1.8. (<a href="https://github.com/roboflow/rf-detr/pull/861">#861</a>)</li>
 </ul>
-<h3 id="fixed_11">Fixed<a class="headerlink" href="#fixed_11" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_12">Fixed<a class="headerlink" href="#fixed_12" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Fixed <code>RFDETR.train()</code>: a missing <code>rfdetr[train]</code> install (e.g. plain <code>pip install rfdetr</code> in Colab) now raises an <code>ImportError</code> with an actionable message — <code>pip install "rfdetr[train,loggers]"</code> — instead of a raw <code>ModuleNotFoundError</code> with no install hint. (<a href="https://github.com/roboflow/rf-detr/pull/858">#858</a>)</li>
 <li>Fixed <code>AUG_AGGRESSIVE</code> preset: <code>translate_percent</code> was <code>(0.1, 0.1)</code> — a degenerate range that forced Albumentations <code>Affine</code> to always translate right/down by exactly 10%. Corrected to <code>(-0.1, 0.1)</code> for symmetric bidirectional translation. (<a href="https://github.com/roboflow/rf-detr/pull/863">#863</a>)</li>
@@ -2699,7 +2703,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><code>rfdetr.deploy.*</code> — redirects to <code>rfdetr.export.*</code> with a <code>DeprecationWarning</code>. Migrate before v1.7.</li>
 <li><code>rfdetr.util.*</code> — redirects to <code>rfdetr.utilities.*</code> with a <code>DeprecationWarning</code>. Migrate before v1.7.</li>
 </ul>
-<h3 id="fixed_12">Fixed<a class="headerlink" href="#fixed_12" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_13">Fixed<a class="headerlink" href="#fixed_13" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Raised a descriptive <code>ValueError</code> instead of a cryptic <code>RuntimeError</code> / tensor-size mismatch when a checkpoint is incompatible with the current model architecture — covers <code>segmentation_head</code> mismatch and <code>patch_size</code> mismatch. (<a href="https://github.com/roboflow/rf-detr/pull/810">#810</a>)</li>
 <li>Fixed <code>class_names</code> not reflecting dataset labels on <code>model.predict()</code> after training — class names are now synced from the dataset so inference always uses the correct label list. (<a href="https://github.com/roboflow/rf-detr/pull/816">#816</a>)</li>
@@ -2718,7 +2722,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>Added peak GPU memory (<code>max_mem</code> in MB) to training and evaluation progress bars on CUDA; omitted on CPU and MPS. (<a href="https://github.com/roboflow/rf-detr/pull/773">#773</a>)</li>
 </ul>
-<h3 id="fixed_13">Fixed<a class="headerlink" href="#fixed_13" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_14">Fixed<a class="headerlink" href="#fixed_14" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Fixed <code>aug_config</code> being silently ignored when training on YOLO-format datasets — <code>build_roboflow_from_yolo</code> never forwarded the value, so transforms always fell back to the default. (<a href="https://github.com/roboflow/rf-detr/pull/774">#774</a>)</li>
 <li>Fixed segmentation evaluation metrics not being written to <code>results_mask.json</code> during validation and test runs. (<a href="https://github.com/roboflow/rf-detr/pull/772">#772</a>)</li>
@@ -2736,7 +2740,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>Migrated dataset transform pipeline to torchvision-native <code>Compose</code>, <code>ToImage</code>, and <code>ToDtype</code>; <code>Normalize</code> now defaults to ImageNet mean/std. (<a href="https://github.com/roboflow/rf-detr/pull/745">#745</a>)</li>
 </ul>
-<h3 id="fixed_14">Fixed<a class="headerlink" href="#fixed_14" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_15">Fixed<a class="headerlink" href="#fixed_15" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Fixed <code>RFDETRMedium</code> missing from the public API — <code>__all__</code> contained a duplicate <code>RFDETRSmall</code> entry. (<a href="https://github.com/roboflow/rf-detr/pull/748">#748</a>)</li>
 <li>Fixed <code>AR50_90</code> reporting an incorrect value in <code>MetricsMLFlowSink</code> due to a wrong COCO evaluation index. (<a href="https://github.com/roboflow/rf-detr/pull/735">#735</a>)</li>
@@ -2761,7 +2765,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Deprecated <code>OPEN_SOURCE_MODELS</code> constant in favour of <code>ModelWeights</code> enum. (<a href="https://github.com/roboflow/rf-detr/pull/696">#696</a>)</li>
 <li>Added MD5 checksum validation for pretrained weight downloads. (<a href="https://github.com/roboflow/rf-detr/pull/679">#679</a>)</li>
 </ul>
-<h3 id="fixed_15">Fixed<a class="headerlink" href="#fixed_15" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_16">Fixed<a class="headerlink" href="#fixed_16" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Fixed Albumentations bool-mask crash during segmentation training. (<a href="https://github.com/roboflow/rf-detr/pull/706">#706</a>)</li>
 <li>Fixed <code>UnboundLocalError</code> when resuming training from a completed checkpoint. (<a href="https://github.com/roboflow/rf-detr/pull/707">#707</a>)</li>
@@ -2782,7 +2786,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>Pretrained weight downloads now validate against an MD5 checksum to detect corrupted files. (<a href="https://github.com/roboflow/rf-detr/pull/679">#679</a>)</li>
 </ul>
-<h3 id="fixed_16">Fixed<a class="headerlink" href="#fixed_16" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_17">Fixed<a class="headerlink" href="#fixed_17" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Fixed <code>deploy_to_roboflow</code> failing for segmentation model exports. (<a href="https://github.com/roboflow/rf-detr/pull/578">#578</a>)</li>
 <li>Fixed missing <code>info</code> key in COCO export format. (<a href="https://github.com/roboflow/rf-detr/pull/681">#681</a>)</li>
@@ -2798,7 +2802,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><code>model.predict()</code> now accepts image URLs directly — no need to download images before inference. (<a href="https://github.com/roboflow/rf-detr/pull/629">#629</a>)</li>
 <li>Plus models (<code>RFDETRXLarge</code>, <code>RFDETR2XLarge</code>) are now distributed as a separate <code>rfdetr_plus</code> package under the Roboflow Model License. (<a href="https://github.com/roboflow/rf-detr/pull/645">#645</a>)</li>
 </ul>
-<h3 id="fixed_17">Fixed<a class="headerlink" href="#fixed_17" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_18">Fixed<a class="headerlink" href="#fixed_18" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Fixed segmentation ONNX export failure. (<a href="https://github.com/roboflow/rf-detr/pull/626">#626</a>)</li>
 </ul>
@@ -2812,7 +2816,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>Pinned <code>transformers</code> to <code>&lt;5.0.0</code> to prevent incompatibility with the transformers v5 API. (<a href="https://github.com/roboflow/rf-detr/pull/599">#599</a>)</li>
 </ul>
-<h3 id="fixed_18">Fixed<a class="headerlink" href="#fixed_18" title="Permanent link">&para;</a></h3>
+<h3 id="fixed_19">Fixed<a class="headerlink" href="#fixed_19" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Fixed class count mismatch in <code>train_from_config</code> for Roboflow-uploaded datasets. (<a href="https://github.com/roboflow/rf-detr/pull/588">#588</a>)</li>
 <li>Improved <code>num_classes</code> mismatch warning messages to be actionable rather than misleading. (<a href="https://github.com/roboflow/rf-detr/pull/261">#261</a>)</li>
