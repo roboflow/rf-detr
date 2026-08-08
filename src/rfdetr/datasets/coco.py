@@ -388,7 +388,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):
     range ``[0, N)``.  The reverse ``label2cat`` mapping is attached to the underlying COCO API object so that
     :class:`~rfdetr.datasets.coco_eval.CocoEvaluator` can convert predicted label indices back to the original category
     IDs required by pycocotools.  Unannotated grouping categories — the synthetic root that Roboflow COCO exports
-    prepend, for example — are excluded by :func:`filter_parent_categories` so they do not consume an output slot.
+    prepend, for example — are excluded by :func:`filter_parent_categories` when ``include_keypoints=False``, so they
+    do not consume an output slot; the keypoint path (:func:`_build_keypoint_cat2label`) keeps them.
 
     ``remap_category_ids`` should be ``True`` for Roboflow / custom datasets (via :func:`build_roboflow_from_coco`) and
     ``False`` (the default) when evaluating pretrained models that were trained with the convention that model output

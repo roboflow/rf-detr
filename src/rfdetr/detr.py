@@ -1748,7 +1748,12 @@ class RFDETR:
 
     @staticmethod
     def _load_classes(dataset_dir: str) -> list[str]:
-        """Load class names from a COCO or YOLO dataset directory."""
+        """Load class names from a COCO or YOLO dataset directory.
+
+        Unannotated grouping categories are dropped by :func:`~rfdetr.datasets.coco.filter_parent_categories`, so the
+        returned names are index-aligned with ``CocoDetection.cat2label``. See
+        :meth:`_detect_num_classes_for_training` for the shared filter basis.
+        """
         if is_valid_coco_dataset(dataset_dir):
             return [category["name"] for category in RFDETR._filtered_coco_categories(dataset_dir)]
 
