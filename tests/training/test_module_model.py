@@ -1018,15 +1018,15 @@ class TestTrainingStep:
         live_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "loss"]
         assert len(live_loss_calls) == expected_live_loss_calls
 
-    def test_logs_learning_rate_without_progress_bar(self, tmp_path):
-        """Current learning rate should be logged without occupying progress-bar metric slots."""
+    def test_logs_learning_rate_to_progress_bar(self, tmp_path):
+        """Current learning rate must be logged every step as a progress-bar metric."""
         module, samples, targets, _, _ = self._run_step(tmp_path)
 
         module.training_step((samples, targets), batch_idx=0)
 
         lr_calls = [c for c in module.log.call_args_list if c[0][0] == "train/lr"]
         assert len(lr_calls) == 1
-        assert lr_calls[0].kwargs.get("prog_bar") is False
+        assert lr_calls[0].kwargs.get("prog_bar") is True
         assert lr_calls[0].kwargs.get("on_step") is True
         assert lr_calls[0].kwargs.get("on_epoch") is False
 
