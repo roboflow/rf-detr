@@ -1058,13 +1058,16 @@ class TestDetectionInputsAreSafeDirectly:
     def test_unsafe_inputs_return_false(
         self, corrupt: Callable[[dict[str, torch.Tensor], list[dict[str, torch.Tensor]]], None]
     ) -> None:
-        """Each unsafe case must be caught: a non-finite value or out-of-range coordinate/label anywhere in the batch
-        — including a MIDDLE image's target boxes/labels and the LAST image's labels, not just the first, which guards
+        """Each unsafe case must be caught: a non-finite value or out-of-range coordinate/label anywhere in the batch —
+        including a MIDDLE image's target boxes/labels and the LAST image's labels, not just the first, which guards
         against a vectorized check that only looks at one image's tensor instead of the concatenation of all of them —
         plus a target whose box dtype or label device disagrees with the predictions' (metadata prechecks, no kernel
-        launch). The device case uses ``torch.device('meta')`` rather than requiring real CUDA hardware, since the
-        device-mismatch branch is a plain attribute comparison that returns before any value-touching op runs, so
-        ``meta`` (shape-only, no real storage) exercises the same code path without a GPU."""
+        launch).
+
+        The device case uses ``torch.device('meta')`` rather than requiring real CUDA hardware, since the device-
+        mismatch branch is a plain attribute comparison that returns before any value-touching op runs, so ``meta``
+        (shape-only, no real storage) exercises the same code path without a GPU.
+        """
         outputs, targets = _random_detection_batch(seed=305, sizes=[2, 3, 2, 4])
         corrupt(outputs, targets)
 
