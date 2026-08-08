@@ -567,10 +567,10 @@ class TestPredictImagePinning:
     def test_cuda_tensor_input_to_cpu_model_is_not_non_blocking(self) -> None:
         """A tensor already on CUDA moving to a CPU-device model must use a blocking transfer.
 
-        ``non_blocking=True`` only pays off, and is only safe without an explicit sync, when the destination is
-        CUDA — matching ``transfer_batch_to_device()`` in ``training/module_data.py``. Here the ``.to()`` call
-        allocates a fresh, unpinned CPU tensor as its destination, so an async D2H copy could leave that tensor
-        holding an in-flight (partially written) result if read before the copy stream drains.
+        ``non_blocking=True`` only pays off, and is only safe without an explicit sync, when the destination is CUDA —
+        matching ``transfer_batch_to_device()`` in ``training/module_data.py``. Here the ``.to()`` call allocates a
+        fresh, unpinned CPU tensor as its destination, so an async D2H copy could leave that tensor holding an in-flight
+        (partially written) result if read before the copy stream drains.
         """
         model = _DummyRFDETR()  # _DummyModel defaults to a CPU device
         tensor = torch.rand(3, 48, 64, device="cuda")
