@@ -1409,6 +1409,15 @@ class TestFilterParentCategories:
         ]
         assert [category["id"] for category in filter_parent_categories(categories, set())] == [1, 2]
 
+    def test_category_without_a_name_reports_the_offending_id(self) -> None:
+        """A category missing the required ``name`` field names itself in the error instead of raising a bare id."""
+        categories = [
+            {"id": 1, "name": "vehicle", "supercategory": "none"},
+            {"id": 2, "supercategory": "vehicle"},
+        ]
+        with pytest.raises(KeyError, match="missing the required 'name' field"):
+            filter_parent_categories(categories, {1})
+
     def test_string_category_id_matches_the_annotated_ids(self) -> None:
         """Exports shipping string ids still match the int-keyed annotated set, so annotated parents survive."""
         categories = [
@@ -1493,6 +1502,11 @@ class TestPhantomRootConsistency:
         dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
         detected = RFDETR._detect_num_classes_for_training(str(tmp_path))
         assert detected == len(set(dataset.cat2label.values()))
+
+    def test_class_names_and_class_count_share_one_basis(self, tmp_path: Path) -> None:
+        """The detected head size and the loaded class names come from one filtered category list, so they agree."""
+        _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
+        assert RFDETR._detect_num_classes_for_training(str(tmp_path)) == len(RFDETR._load_classes(str(tmp_path)))
 
     def test_load_classes_matches_cat2label_order(self, tmp_path: Path) -> None:
         """Class names line up positionally with the label indices assigned by the remapping."""

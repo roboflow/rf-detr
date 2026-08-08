@@ -46,6 +46,22 @@ from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backen
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
 
+# Public API of this module, in definition order — every other top-level name is private by convention and carries no
+# stability guarantee, even where tests or sibling modules import it directly.
+__all__ = [
+    "is_valid_coco_dataset",
+    "annotated_category_ids",
+    "filter_parent_categories",
+    "compute_multi_scale_scales",
+    "convert_coco_poly_to_mask",
+    "CocoDetection",
+    "ConvertCoco",
+    "make_coco_transforms",
+    "make_coco_transforms_square_div_64",
+    "build_coco",
+    "build_roboflow_from_coco",
+]
+
 logger = get_logger()
 
 _COCO_MAX_SIZE = 1333
@@ -56,7 +72,7 @@ def is_valid_coco_dataset(dataset_dir: str) -> bool:
 
 
 # Values a COCO export uses to say "this category has no parent".
-_SUPERCATEGORY_PLACEHOLDERS: set[str | None] = {"", "none", "null", None}
+_SUPERCATEGORY_PLACEHOLDERS: frozenset[str | None] = frozenset({"", "none", "null", None})
 
 
 def annotated_category_ids(coco_data: dict[str, Any]) -> set[int]:
@@ -75,6 +91,17 @@ def annotated_category_ids(coco_data: dict[str, Any]) -> set[int]:
         set()
     """
     return {int(annotation["category_id"]) for annotation in coco_data.get("annotations", [])}
+
+
+def _category_name(category: dict[str, Any]) -> str:
+    """Return a category's ``name``, failing with an actionable message when the field is absent."""
+    try:
+        return category["name"]
+    except KeyError:
+        raise KeyError(
+            f"COCO category {category.get('id', '?')} is missing the required 'name' field; "
+            "every entry of the 'categories' list needs an 'id' and a 'name'."
+        ) from None
 
 
 def _normalized_category_id(category: dict[str, Any]) -> int | None:
@@ -147,7 +174,7 @@ def filter_parent_categories(
     kept = [
         category
         for category in ordered
-        if not (category["name"] in parents and _normalized_category_id(category) not in annotated)
+        if not (_category_name(category) in parents and _normalized_category_id(category) not in annotated)
     ]
     # Safety fallback for pathological inputs where every category is a parent of another.
     return kept or ordered

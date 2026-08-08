@@ -1726,14 +1726,31 @@ class RFDETR:
             self.model.model = self.model.model.to(device)
 
     @staticmethod
+    def _filtered_coco_categories(dataset_dir: str) -> list[dict[str, Any]]:
+        """Read the train-split COCO categories that survive the grouping-category filter.
+
+        Single source for the category basis shared by :meth:`_load_classes` and
+        :meth:`_detect_num_classes_for_training`: both need the categories of ``train/_annotations.coco.json`` that
+        :func:`~rfdetr.datasets.coco.filter_parent_categories` keeps. Hand-copying that read-and-filter pair into each
+        method lets the two drift apart, and drift here means ``num_classes`` disagreeing with the label space.
+
+        Args:
+            dataset_dir: Path to the dataset root directory containing the ``train`` split.
+
+        Returns:
+            The kept ``categories`` entries ordered by category id — the same basis and order
+            :class:`~rfdetr.datasets.coco.CocoDetection` uses to assign label indices.
+        """
+        coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
+        with open(coco_path, encoding="utf-8") as f:
+            anns = json.load(f)
+        return filter_parent_categories(anns["categories"], annotated_category_ids(anns))
+
+    @staticmethod
     def _load_classes(dataset_dir: str) -> list[str]:
         """Load class names from a COCO or YOLO dataset directory."""
         if is_valid_coco_dataset(dataset_dir):
-            coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
-            with open(coco_path, encoding="utf-8") as f:
-                anns = json.load(f)
-            categories = filter_parent_categories(anns["categories"], annotated_category_ids(anns))
-            return [category["name"] for category in categories]
+            return [category["name"] for category in RFDETR._filtered_coco_categories(dataset_dir)]
 
         yaml_path = RFDETR._yolo_data_file_path(dataset_dir) if is_valid_yolo_dataset(dataset_dir) else None
         if yaml_path is not None:
@@ -1762,13 +1779,10 @@ class RFDETR:
         YOLO-style datasets it falls back to ``_load_classes``.
         """
         if is_valid_coco_dataset(dataset_dir):
-            coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
             if use_grouppose_keypoints:
+                coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
                 return len(infer_coco_keypoint_schema(coco_path).class_names)
-            with open(coco_path, encoding="utf-8") as f:
-                anns = json.load(f)
-            categories = filter_parent_categories(anns["categories"], annotated_category_ids(anns))
-            return len({category["id"] for category in categories})
+            return len({category["id"] for category in RFDETR._filtered_coco_categories(dataset_dir)})
 
         return len(RFDETR._load_classes(dataset_dir))
 
