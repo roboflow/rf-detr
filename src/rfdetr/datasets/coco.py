@@ -46,21 +46,6 @@ from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backen
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
 
-# Public API of this module, in definition order — every other top-level name is private by convention and carries no
-# stability guarantee, even where tests or sibling modules import it directly.
-__all__ = [
-    "is_valid_coco_dataset",
-    "annotated_category_ids",
-    "filter_parent_categories",
-    "compute_multi_scale_scales",
-    "convert_coco_poly_to_mask",
-    "CocoDetection",
-    "ConvertCoco",
-    "make_coco_transforms",
-    "make_coco_transforms_square_div_64",
-    "build_coco",
-    "build_roboflow_from_coco",
-]
 
 logger = get_logger()
 
