@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 import io
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import PIL.Image
@@ -462,6 +463,130 @@ class TestPredictSourceData:
         assert isinstance(detections.data["source_shape"], np.ndarray)
         assert detections.data["source_shape"].shape == (2, 2)
         assert np.all(detections.data["source_shape"] == np.array([48, 64]))
+
+
+class TestPredictImagePinning:
+    """``predict()`` should pin CPU-resident image tensors before an accelerator transfer.
+
+    A pageable-memory ``.to(device)`` copy onto CUDA is meaningfully slower than a pinned-memory one because the CUDA
+    driver has to pin the source buffer itself first. But ``Tensor.pin_memory()`` only accepts CPU tensors: a caller who
+    already placed the input tensor on the model's own accelerator (a legitimate use of the tensor-input path, e.g. to
+    skip a host round-trip) must never have that tensor routed through ``pin_memory()``, and a CPU-only target device
+    gets no benefit from pinning at all.
+    """
+
+    @pytest.mark.gpu
+    def test_cpu_tensor_input_is_pinned_before_cuda_transfer(self) -> None:
+        """A CPU tensor input must be pinned exactly once, on itself, before the CUDA device transfer."""
+        model = _DummyRFDETR()
+        model.model.device = torch.device("cuda", 0)
+        tensor = torch.rand(3, 48, 64)
+        real_pin_memory = torch.Tensor.pin_memory
+        real_to = torch.Tensor.to
+        call_order: list[str] = []
+
+        # Plain functions (unlike ``MagicMock``) are descriptors, so ``self`` binds normally when Python resolves the
+        # attribute on the instance. That lets these spies confirm *which* tensor was pinned/transferred and in what
+        # order, instead of only that the methods were called somewhere during predict().
+        def pin_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            assert self is tensor, "pin_memory() must be called on the original input tensor"
+            call_order.append("pin_memory")
+            return real_pin_memory(self, *args, **kwargs)
+
+        def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            call_order.append("to")
+            return real_to(self, *args, **kwargs)
+
+        with patch.object(torch.Tensor, "pin_memory", pin_spy), patch.object(torch.Tensor, "to", to_spy):
+            model.predict(tensor)
+
+        assert call_order.count("pin_memory") == 1, f"expected pin_memory() exactly once, got {call_order}"
+        assert "to" in call_order, "expected the pinned tensor to be moved with .to()"
+        assert call_order.index("pin_memory") < call_order.index("to"), (
+            f"pin_memory() must run before the device transfer, got order {call_order}"
+        )
+
+    @pytest.mark.gpu
+    def test_cpu_tensor_input_to_cuda_transfer_is_non_blocking(self) -> None:
+        """The pinned CPU tensor's transfer to a CUDA-device model must set non_blocking=True."""
+        model = _DummyRFDETR()
+        model.model.device = torch.device("cuda", 0)
+        tensor = torch.rand(3, 48, 64)
+        real_to = torch.Tensor.to
+        captured: list[bool] = []
+
+        def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            if self.device.type == "cpu" and args and isinstance(args[0], torch.device) and args[0].type == "cuda":
+                captured.append(bool(kwargs.get("non_blocking", False)))
+            return real_to(self, *args, **kwargs)
+
+        with patch.object(torch.Tensor, "to", to_spy):
+            model.predict(tensor)
+
+        assert captured, "expected predict() to move the pinned tensor to the CUDA device with .to()"
+        assert all(captured), "CPU -> CUDA image transfer must set non_blocking=True"
+
+    @pytest.mark.gpu
+    def test_pinned_non_blocking_transfer_preserves_values(self) -> None:
+        """Pinning + non_blocking must not change the transferred values versus a plain, blocking .to()."""
+        torch.manual_seed(0)
+        source = torch.rand(3, 48, 64)
+        device = torch.device("cuda", 0)
+
+        plain = source.to(device)
+        pinned = source.pin_memory().to(device, non_blocking=True)
+        torch.cuda.synchronize()
+
+        assert torch.equal(plain, pinned)
+
+    @pytest.mark.gpu
+    def test_already_cuda_tensor_input_is_not_pinned(self) -> None:
+        """A tensor the caller already placed on the accelerator must never be routed through pin_memory()."""
+        model = _DummyRFDETR()
+        model.model.device = torch.device("cuda", 0)
+        tensor = torch.rand(3, 48, 64, device="cuda")
+        pin_spy = MagicMock(side_effect=AssertionError("pin_memory() must not be called on a CUDA tensor"))
+
+        with patch.object(torch.Tensor, "pin_memory", pin_spy):
+            model.predict(tensor)  # must not raise: pin_memory() on a CUDA tensor would itself raise RuntimeError
+
+        pin_spy.assert_not_called()
+
+    def test_cpu_target_device_does_not_pin(self) -> None:
+        """A CPU-only target device gets no benefit from pinning, so it must be skipped entirely."""
+        model = _DummyRFDETR()  # _DummyModel defaults to a CPU device
+        tensor = torch.rand(3, 48, 64)
+        pin_spy = MagicMock(side_effect=AssertionError("pin_memory() must not be called for a CPU target device"))
+
+        with patch.object(torch.Tensor, "pin_memory", pin_spy):
+            model.predict(tensor)
+
+        pin_spy.assert_not_called()
+
+    @pytest.mark.gpu
+    def test_cuda_tensor_input_to_cpu_model_is_not_non_blocking(self) -> None:
+        """A tensor already on CUDA moving to a CPU-device model must use a blocking transfer.
+
+        ``non_blocking=True`` only pays off, and is only safe without an explicit sync, when the destination is
+        CUDA — matching ``transfer_batch_to_device()`` in ``training/module_data.py``. Here the ``.to()`` call
+        allocates a fresh, unpinned CPU tensor as its destination, so an async D2H copy could leave that tensor
+        holding an in-flight (partially written) result if read before the copy stream drains.
+        """
+        model = _DummyRFDETR()  # _DummyModel defaults to a CPU device
+        tensor = torch.rand(3, 48, 64, device="cuda")
+        real_to = torch.Tensor.to
+        captured: list[bool] = []
+
+        def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            if self is tensor:
+                captured.append(bool(kwargs.get("non_blocking", False)))
+            return real_to(self, *args, **kwargs)
+
+        with patch.object(torch.Tensor, "to", to_spy):
+            model.predict(tensor)
+
+        assert captured, "expected predict() to move the image tensor with .to()"
+        assert not any(captured), "CUDA tensor -> CPU-model transfer must not set non_blocking=True"
 
 
 class TestPredictShape:
