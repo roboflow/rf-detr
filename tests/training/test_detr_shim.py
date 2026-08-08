@@ -1702,8 +1702,11 @@ class TestRFDETRTrainNumClassesAutoDetect:
             {"id": index, "image_id": 1, "category_id": category_id, "bbox": [0, 0, 4, 4], "area": 16, "iscrowd": 0}
             for index, category_id in enumerate(annotated_ids or [])
         ]
+        # Annotations reference image_id 1, so a matching "images" entry keeps the fixture COCO-consistent whenever
+        # any annotation is written.
+        images = [{"id": 1, "file_name": "0.jpg", "width": 10, "height": 10}] if annotated_ids else []
         with (dataset_dir / "train" / "_annotations.coco.json").open("w", encoding="utf-8") as f:
-            json.dump({"images": [], "annotations": annotations, "categories": categories}, f)
+            json.dump({"images": images, "annotations": annotations, "categories": categories}, f)
 
     def _write_roboflow_keypoint_categories(self, dataset_dir: Path, keypoint_count: int) -> None:
         """Write a minimal Roboflow COCO keypoint annotation file."""
