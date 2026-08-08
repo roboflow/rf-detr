@@ -19,6 +19,7 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -76,6 +77,14 @@ def annotated_category_ids(coco_data: dict[str, Any]) -> set[int]:
     return {int(annotation["category_id"]) for annotation in coco_data.get("annotations", [])}
 
 
+def _normalized_category_id(category: dict[str, Any]) -> int | None:
+    """Return a category's ``id`` coerced to ``int``, or ``None`` when it is absent or not numeric."""
+    try:
+        return int(category["id"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def filter_parent_categories(
     categories: list[dict[str, Any]],
     annotated_ids: set[int] | None = None,
@@ -88,8 +97,14 @@ def filter_parent_categories(
     remapping in agreement (GitHub #609).
 
     A category is dropped when it is named as another category's ``supercategory`` **and** no annotation references its
-    id. The annotation guard keeps genuinely labelled parents of hierarchical datasets. Flat datasets — every
-    ``supercategory`` a placeholder — are returned untouched, as is any input where filtering would remove everything.
+    id. A category whose own ``supercategory`` equals its own ``name`` — the COCO convention for a top-level class such
+    as ``{"name": "person", "supercategory": "person"}`` — is not a parent of itself and is therefore kept; the same
+    name still counts as a parent when a *different* category groups under it. The annotation guard keeps genuinely
+    labelled parents of hierarchical datasets, and is applied per category by its own ``id`` — categories sharing a
+    ``name`` are judged independently, so an annotated leaf is never dropped alongside a same-named grouping node. Ids
+    are coerced to ``int`` before that lookup, so exports shipping string ids still match ``annotated_ids``. Flat
+    datasets — every ``supercategory`` a placeholder — are returned untouched, as is any input where filtering would
+    remove everything.
 
     Args:
         categories: Raw COCO ``categories`` entries; each needs an ``id`` and a ``name``.
@@ -110,20 +125,66 @@ def filter_parent_categories(
         ['stake', 'tree']
         >>> [category["name"] for category in filter_parent_categories(categories, {0, 1, 2})]
         ['eggmasses', 'stake', 'tree']
+        >>> self_parented = [
+        ...     {"id": 1, "name": "person", "supercategory": "person"},
+        ...     {"id": 2, "name": "vehicle", "supercategory": "none"},
+        ...     {"id": 3, "name": "car", "supercategory": "vehicle"},
+        ... ]
+        >>> [category["name"] for category in filter_parent_categories(self_parented, {3})]
+        ['person', 'car']
     """
     ordered = sorted(categories, key=lambda category: category.get("id", float("inf")))
-    supercategories = [category.get("supercategory", "none") for category in ordered]
-    parents = {name for name in supercategories if name not in _SUPERCATEGORY_PLACEHOLDERS}
+    supercategories = [(category.get("supercategory", "none"), category.get("name")) for category in ordered]
+    parents = {
+        supercategory
+        for supercategory, name in supercategories
+        if supercategory not in _SUPERCATEGORY_PLACEHOLDERS and supercategory != name
+    }
     if not parents:
         return ordered
 
     annotated = annotated_ids or set()
-    dropped = {
-        category["name"] for category in ordered if category["name"] in parents and category.get("id") not in annotated
-    }
-    kept = [category for category in ordered if category["name"] not in dropped]
+    kept = [
+        category
+        for category in ordered
+        if not (category["name"] in parents and _normalized_category_id(category) not in annotated)
+    ]
     # Safety fallback for pathological inputs where every category is a parent of another.
     return kept or ordered
+
+
+def _train_split_cat2label(dataset_root: Path) -> dict[int, int] | None:
+    """Derive the train split's ``category_id`` → label-index mapping so the other splits can reuse it.
+
+    Label indices are positions in the filtered category list, so a grouping category annotated in one split but not
+    in another would receive a different index per split — silently shifting every later label of the smaller split.
+    Deriving the mapping once from ``train`` — the split :meth:`RFDETR._detect_num_classes_for_training` and
+    :meth:`RFDETR._load_classes` already read — keeps validation and test targets aligned with the label space the
+    model is trained on.
+
+    Args:
+        dataset_root: Roboflow dataset root holding the ``train``/``valid``/``test`` split directories.
+
+    Returns:
+        Mapping from COCO category id to contiguous label index, or ``None`` when the train annotation file is missing
+        or unreadable, in which case the caller keeps the split-local mapping.
+    """
+    train_ann_file = dataset_root / "train" / "_annotations.coco.json"
+    if not train_ann_file.exists():
+        return None
+    try:
+        with open(train_ann_file, encoding="utf-8") as file:
+            train_annotations = json.load(file)
+        kept = filter_parent_categories(train_annotations["categories"], annotated_category_ids(train_annotations))
+        return {int(category["id"]): label for label, category in enumerate(kept)}
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        logger.warning(
+            "Could not derive the train-split label mapping from %s (%s); falling back to this split's own mapping. "
+            "Its label indices may diverge from the ones training used.",
+            train_ann_file,
+            exc,
+        )
+        return None
 
 
 def _category_ids_with_keypoints(coco: Any) -> list[int]:
@@ -320,6 +381,11 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         remap_category_ids: If ``True``, build a ``cat2label`` mapping from the
             annotation file that remaps sparse category IDs to contiguous 0-based label indices.  The reverse mapping is
             stored as ``label2cat`` on both this object and the underlying COCO API object.  Defaults to ``False``.
+        cat2label: Pre-built ``category_id`` → label-index mapping to adopt verbatim instead of deriving one from this
+            split's own annotations.  Requires ``remap_category_ids=True`` and takes precedence over both the detection
+            and the keypoint derivation.  :func:`build_roboflow_from_coco` passes the train split's mapping here so
+            that validation and test splits share one label space (see :func:`_train_split_cat2label`); ``None`` (the
+            default) keeps the split-local derivation.
     """
 
     def __init__(
@@ -331,14 +397,22 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         include_keypoints: bool = False,
         num_keypoints_per_class: list[int] | None = None,
         remap_category_ids: bool = False,
+        cat2label: dict[int, int] | None = None,
     ) -> None:
         super().__init__(img_folder, ann_file)
         self._transforms = transforms
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
+        if cat2label is not None and not remap_category_ids:
+            raise ValueError(
+                "cat2label was supplied but remap_category_ids is False, so the mapping would be ignored. "
+                "Pass remap_category_ids=True to apply it, or drop cat2label to keep raw COCO category ids."
+            )
         if remap_category_ids:
             # Mapping from original COCO category_id to contiguous label indices
-            if include_keypoints:
+            if cat2label is not None:
+                self.cat2label = dict(cat2label)
+            elif include_keypoints:
                 self.cat2label = _build_keypoint_cat2label(self.coco, num_keypoints_per_class)
             else:
                 annotated = {int(annotation["category_id"]) for annotation in self.coco.anns.values()}
@@ -1134,6 +1208,10 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     """Build a Roboflow COCO-format dataset.
 
     This uses Roboflow's standard directory structure (train/valid/test folders with _annotations.coco.json).
+
+    Each split is built by its own call, so label indices are taken from the train split for every non-train split (see
+    :func:`_train_split_cat2label`). Letting a split derive its own mapping would shift its label indices whenever its
+    annotation coverage of a grouping category differs from the train split's.
     """
     root = Path(args.dataset_dir)
     if not root.exists():
@@ -1146,7 +1224,8 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
         "test": (root / "test", root / "test" / "_annotations.coco.json"),
     }
 
-    img_folder, ann_file = PATHS[image_set.split("_", maxsplit=1)[0]]
+    split = image_set.split("_", maxsplit=1)[0]
+    img_folder, ann_file = PATHS[split]
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
     multi_scale = getattr(args, "multi_scale", False)
@@ -1162,6 +1241,10 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     scale_jitter = getattr(args, "scale_jitter", True)
     resolved_augmentation_backend = resolve_backend_for_build(getattr(args, "augmentation_backend", "cpu"))
     gpu_postprocess = is_gpu_postprocess(resolved_augmentation_backend)
+    # Label indices come from the train split alone: deriving them per split makes a category that is annotated in
+    # train but not in valid shift every later label index of that split. The keypoint path maps categories onto
+    # schema slots instead of annotation coverage, so it keeps its own derivation.
+    cat2label = None if split == "train" or include_keypoints else _train_split_cat2label(root)
 
     if square_resize_div_64:
         logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")
@@ -1185,6 +1268,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             include_keypoints=include_keypoints,
             num_keypoints_per_class=num_keypoints_per_class,
             remap_category_ids=True,
+            cat2label=cat2label,
         )
     else:
         logger.info(f"Building Roboflow {image_set} dataset at resolution {resolution}")
@@ -1208,5 +1292,6 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             include_keypoints=include_keypoints,
             num_keypoints_per_class=num_keypoints_per_class,
             remap_category_ids=True,
+            cat2label=cat2label,
         )
     return dataset

@@ -1409,6 +1409,40 @@ class TestFilterParentCategories:
         ]
         assert [category["id"] for category in filter_parent_categories(categories, set())] == [1, 2]
 
+    def test_string_category_id_matches_the_annotated_ids(self) -> None:
+        """Exports shipping string ids still match the int-keyed annotated set, so annotated parents survive."""
+        categories = [
+            {"id": "1", "name": "vehicle", "supercategory": "none"},
+            {"id": "2", "name": "car", "supercategory": "vehicle"},
+        ]
+        assert [category["id"] for category in filter_parent_categories(categories, {1, 2})] == ["1", "2"]
+
+    def test_categories_sharing_a_name_are_judged_by_their_own_id(self) -> None:
+        """An annotated leaf keeps its slot even when an unannotated grouping node reuses its name."""
+        categories = [
+            {"id": 1, "name": "tree", "supercategory": "none"},
+            {"id": 2, "name": "trunk", "supercategory": "tree"},
+            {"id": 3, "name": "tree", "supercategory": "tree"},
+        ]
+        assert [category["id"] for category in filter_parent_categories(categories, {2, 3})] == [2, 3]
+
+    def test_self_referential_supercategory_is_not_a_parent(self) -> None:
+        """A category naming itself as its own supercategory is not its own parent, so it keeps its label slot."""
+        categories = [
+            {"id": 1, "name": "person", "supercategory": "person"},
+            {"id": 2, "name": "vehicle", "supercategory": "none"},
+            {"id": 3, "name": "car", "supercategory": "vehicle"},
+        ]
+        assert [category["id"] for category in filter_parent_categories(categories, {3})] == [1, 3]
+
+    def test_self_referential_name_stays_a_parent_for_other_categories(self) -> None:
+        """A self-referencing name another category genuinely groups under is still dropped when unannotated."""
+        categories = [
+            {"id": 1, "name": "person", "supercategory": "person"},
+            {"id": 2, "name": "rider", "supercategory": "person"},
+        ]
+        assert [category["id"] for category in filter_parent_categories(categories, {2})] == [2]
+
     def test_all_categories_parents_falls_back_to_full_list(self) -> None:
         """Pathological input where every category is a parent keeps the full list instead of returning nothing."""
         categories = [
@@ -1466,6 +1500,50 @@ class TestPhantomRootConsistency:
         dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
         names = RFDETR._load_classes(str(tmp_path))
         assert names == [dataset.coco.cats[dataset.label2cat[label]]["name"] for label in range(len(names))]
+
+
+class TestCrossSplitLabelSpace:
+    """Val/test splits must reuse the train label space whatever their own annotation coverage is."""
+
+    def test_val_split_reuses_the_train_label_mapping(self, tmp_path: Path) -> None:
+        """A grouping category annotated in train only keeps its train label slot in val instead of shifting it."""
+        _write_roboflow_hierarchy_split(tmp_path / "train", [0, 1])
+        _write_roboflow_hierarchy_split(tmp_path / "valid", [1])
+        args = types.SimpleNamespace(dataset_dir=str(tmp_path))
+
+        train_dataset = build_roboflow_from_coco("train", args, resolution=64)
+        val_dataset = build_roboflow_from_coco("val", args, resolution=64)
+
+        assert val_dataset.cat2label == train_dataset.cat2label
+
+    def test_val_targets_use_train_label_indices(self, tmp_path: Path) -> None:
+        """Val targets carry the label index training assigned, not the one val's own coverage would produce."""
+        _write_roboflow_hierarchy_split(tmp_path / "train", [0, 1])
+        _write_roboflow_hierarchy_split(tmp_path / "valid", [1])
+        args = types.SimpleNamespace(dataset_dir=str(tmp_path))
+
+        val_dataset = build_roboflow_from_coco("val", args, resolution=64)
+        _, target = val_dataset[0]
+
+        assert target["labels"].tolist() == [1]
+
+    def test_injected_cat2label_replaces_the_split_local_mapping(self, tmp_path: Path) -> None:
+        """An explicitly supplied mapping wins over the one the split would derive from its own annotations."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "valid", [1])
+        injected = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4}
+
+        dataset = CocoDetection(
+            tmp_path / "valid", ann_file, transforms=None, remap_category_ids=True, cat2label=injected
+        )
+
+        assert dataset.cat2label == injected
+
+    def test_cat2label_without_remapping_raises(self, tmp_path: Path) -> None:
+        """Supplying a mapping while remapping is disabled fails loudly instead of silently ignoring it."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "valid", [1])
+
+        with pytest.raises(ValueError, match="remap_category_ids"):
+            CocoDetection(tmp_path / "valid", ann_file, transforms=None, cat2label={1: 0})
 
     def test_annotated_parent_keeps_its_label_slot(self, tmp_path: Path) -> None:
         """A parent category carrying annotations is not dropped, so converting its annotations does not raise."""
