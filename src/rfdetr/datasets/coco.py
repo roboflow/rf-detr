@@ -46,7 +46,6 @@ from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backen
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
 
-
 logger = get_logger()
 
 _COCO_MAX_SIZE = 1333
