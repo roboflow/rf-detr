@@ -199,10 +199,19 @@ class HungarianMatcher(nn.Module):
         # a column neither path materializes into its extracted diagonal blocks, where it cannot
         # change the assignment. Sweeping all of `[bs, num_queries, num_classes]` up front costs
         # more than building the compact matrix it was guarding.
+        #
+        # Both remaining sweeps concatenate the per-image tensors into one before checking them,
+        # instead of looping `isfinite`/`abs`/comparison + `.all()` once per image: each per-image
+        # call launches several tiny kernels, so the loop's cost scales with `bs`. The dtype
+        # precheck above already guarantees every target's boxes share `pred_boxes.dtype`, so
+        # `coordinate_limit` only needs computing once. Concatenation preserves which individual
+        # values are non-finite/out-of-range — it does not change what these checks return, only how
+        # many kernels they launch.
         checks: list[Tensor] = []
-        for boxes in [pred_boxes, *(target["boxes"] for target in targets)]:
-            # Keep enough headroom for cxcywh conversion, pairwise differences, areas, and unions.
-            coordinate_limit = torch.finfo(boxes.dtype).max ** 0.5 / 16
+        # Keep enough headroom for cxcywh conversion, pairwise differences, areas, and unions.
+        coordinate_limit = torch.finfo(pred_boxes.dtype).max ** 0.5 / 16
+        target_boxes = torch.cat([target["boxes"] for target in targets])
+        for boxes in (pred_boxes, target_boxes):
             checks.append(torch.isfinite(boxes).all() & (boxes.abs() <= coordinate_limit).all())
         # `torch.gather` rejects an out-of-range class index outright, where the full path's
         # `flat_pred_logits[:, tgt_ids]` wraps a negative label Python-style onto the last class and
@@ -211,9 +220,8 @@ class HungarianMatcher(nn.Module):
         # new hard error here. Appended to the same `checks` list so it rides the single
         # `torch.stack` sync below instead of adding a second one.
         num_classes = outputs["pred_logits"].shape[-1]
-        for target in targets:
-            labels = target["labels"]
-            checks.append((labels >= 0).all() & (labels < num_classes).all())
+        target_labels = torch.cat([target["labels"] for target in targets])
+        checks.append((target_labels >= 0).all() & (target_labels < num_classes).all())
         return bool(torch.stack(checks).all())
 
     def _compute_compact_detection_cost_matrix(
