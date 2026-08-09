@@ -21,6 +21,15 @@ The training loop will automatically load:
 - Learning rate scheduler state
 - Training epoch number
 
+!!! warning "Lightweight checkpoints resume without optimizer/scheduler state"
+
+    The above applies to the trainer's own full checkpoints (`last.ckpt`, `checkpoint_<epoch>.ckpt`). The best-model
+    tracker also writes four lighter `.pth` files — `checkpoint_best_regular.pth`, `checkpoint_best_ema.pth`,
+    `checkpoint_best_total.pth`, `last_ema.pth` — that intentionally omit optimizer/scheduler state to stay small.
+    Resuming from one of these restores model weights, epoch count, and callback state (best-score tracking, EMA,
+    early stopping), but the optimizer and LR scheduler always start cold. `resume=` logs a warning when it detects
+    one of these files; pass a full trainer checkpoint instead if you need optimizer/scheduler continuity.
+
 === "Object Detection"
 
     ```python

@@ -9,13 +9,17 @@ from __future__ import annotations
 
 import math
 import warnings
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 import torch
-from torch import nn
+from pytorch_lightning import Callback, LightningModule, Trainer
+from torch import Tensor, nn
 from torch.optim.swa_utils import AveragedModel
+from torch.utils.data import DataLoader, TensorDataset
 
+from rfdetr.training.callbacks.best_model import BestModelCallback
 from rfdetr.training.callbacks.ema import RFDETREMACallback
 from rfdetr.training.model_ema import ModelEma
 
@@ -303,6 +307,160 @@ class TestMultiAvgFn:
         for name, old_val in old_state.items():
             assert new_state[name].is_cuda
             assert torch.allclose(new_state[name], old_val, atol=1e-6), f"CUDA parity failed for {name}"
+
+
+class _EMAResumeModule(LightningModule):
+    """Tiny module with enough learnable weights and steps to diverge EMA from live weights."""
+
+    def __init__(self, metric_value: float = 0.5) -> None:
+        """Initialize with the fixed ``val/mAP_50_95`` value to log every epoch.
+
+        Args:
+            metric_value: Value logged as ``val/mAP_50_95`` on every validation epoch.
+        """
+        super().__init__()
+        self.model = torch.nn.Linear(4, 1)
+        self.train_config = {"lr": 1.0}
+        self._metric_value = metric_value
+
+    def training_step(self, batch: tuple[Tensor, Tensor], batch_idx: int) -> Tensor:
+        """Compute MSE loss for one training batch.
+
+        Args:
+            batch: ``(x, y)`` tensors from the ``TensorDataset`` loader.
+            batch_idx: Index of the batch within the current epoch (unused).
+
+        Returns:
+            Scalar MSE loss.
+        """
+        del batch_idx
+        x, y = batch
+        pred = self.model(x)
+        return torch.nn.functional.mse_loss(pred, y)
+
+    def validation_step(self, batch: tuple[Tensor, Tensor], batch_idx: int) -> None:
+        """Log the fixed ``val/mAP_50_95`` value, ignoring the actual batch contents.
+
+        Args:
+            batch: Unused; only the epoch-level log call matters for these tests.
+            batch_idx: Unused.
+        """
+        del batch, batch_idx
+        self.log("val/mAP_50_95", torch.tensor(self._metric_value), on_step=False, on_epoch=True, prog_bar=False)
+
+    def configure_optimizers(self) -> torch.optim.Optimizer:
+        """Return a plain SGD optimizer sufficient to drive ``Trainer.fit()``."""
+        return torch.optim.SGD(self.model.parameters(), lr=1.0)
+
+
+class _EMAStartSnapshotProbe(Callback):
+    """Capture the averaged-model weights as soon as the (post-resume) training loop starts."""
+
+    def __init__(self, ema_callback: RFDETREMACallback) -> None:
+        """Store the EMA callback to snapshot once training starts.
+
+        Args:
+            ema_callback: The (possibly just-resumed) ``RFDETREMACallback`` instance to read from.
+        """
+        super().__init__()
+        self._ema_callback = ema_callback
+        self.snapshot: dict[str, Tensor] | None = None
+
+    def on_train_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
+        """Snapshot the averaged-model state dict at the very start of training.
+
+        Args:
+            trainer: Unused; required by the ``Callback`` hook signature.
+            pl_module: Unused; required by the ``Callback`` hook signature.
+        """
+        del trainer, pl_module
+        state = self._ema_callback.get_ema_model_state_dict()
+        self.snapshot = {k: v.clone() for k, v in state.items()} if state is not None else None
+
+
+class TestRealTrainerResume:
+    """Regression: ``average_model_state_dict`` must survive a real ``Trainer.fit(ckpt_path=...)`` resume.
+
+    ``setup()`` runs before ``load_state_dict()`` for RF-DETR's default strategy (``Trainer._run``
+    calls ``call._call_setup_hook`` before ``_checkpoint_connector._restore_modules_and_callbacks``),
+    so a checkpoint's ``average_model_state_dict`` landing in ``_pending_average_state_dict`` via
+    ``load_state_dict()`` could not be applied inside ``setup()`` — only ``on_train_start`` (this
+    fix) runs late enough, after PTL finishes restoring, to apply it. The prior end-to-end resume
+    test (``test_best_model_score_survives_real_trainer_fit_resume`` in
+    ``test_best_model_callback.py``) only put ``BestModelCallback`` in the trainer's callback list,
+    so it never exercised ``RFDETREMACallback``'s own resume path.
+    """
+
+    def test_average_model_state_survives_real_trainer_fit_resume(self, tmp_path: Path) -> None:
+        """A fresh ``RFDETREMACallback`` resumed via ``ckpt_path=`` must recover the saved EMA average."""
+        torch.manual_seed(0)
+        x = torch.randn(8, 4)
+        y = torch.randn(8, 1)
+        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+
+        best_cb1 = BestModelCallback(output_dir=str(tmp_path), run_test=False)
+        ema_cb1 = RFDETREMACallback(decay=0.5, tau=0)
+        trainer_first = Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=4,
+            limit_val_batches=1,
+            callbacks=[best_cb1, ema_cb1],
+            default_root_dir=str(tmp_path),
+        )
+        trainer_first.fit(_EMAResumeModule(), train_dataloaders=train_loader, val_dataloaders=val_loader)
+
+        ckpt_path = tmp_path / "checkpoint_best_regular.pth"
+        assert ckpt_path.exists()
+        saved = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        raw_ema_state = saved["callbacks"][ema_cb1.state_key]["average_model_state_dict"]
+        expected_avg_state = {
+            key.removeprefix("module.model."): value.clone()
+            for key, value in raw_ema_state.items()
+            if key.startswith("module.model.")
+        }
+        assert expected_avg_state, "checkpoint must embed the EMA average model's weights"
+
+        # Sanity: the averaged weights genuinely diverged from the live regular weights saved
+        # alongside them (decay=0.5 vs a full live SGD step) — otherwise a broken restore could
+        # accidentally "pass" by coincidence.
+        live_weights = saved["model"]
+        assert not torch.allclose(expected_avg_state["weight"], live_weights["weight"])
+
+        best_cb2 = BestModelCallback(output_dir=str(tmp_path), run_test=False)
+        ema_cb2 = RFDETREMACallback(decay=0.5, tau=0)
+        probe = _EMAStartSnapshotProbe(ema_cb2)
+        trainer_second = Trainer(
+            max_epochs=2,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=4,
+            limit_val_batches=1,
+            callbacks=[best_cb2, ema_cb2, probe],
+            default_root_dir=str(tmp_path),
+        )
+        trainer_second.fit(
+            _EMAResumeModule(),
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+            ckpt_path=str(ckpt_path),
+        )
+
+        assert probe.snapshot is not None
+        for key, expected in expected_avg_state.items():
+            assert torch.allclose(probe.snapshot[key], expected), (
+                f"average_model weight {key!r} was not restored from the checkpoint's "
+                '"callbacks" key; without on_train_start applying the pending state, a fresh '
+                "RFDETREMACallback starts averaging from the just-resumed live weights instead"
+            )
 
 
 class TestSuppressTestSwap:

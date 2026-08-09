@@ -23,6 +23,13 @@ _PTL_COMPAT_KEYS = (
     "global_step",
     "pytorch-lightning_version",
     "loops",
+    # Per-callback state (BestModelCallback's own best-tracking high-water marks,
+    # RFDETREMACallback's average model state, RFDETREarlyStopping's wait_count, etc.),
+    # keyed by Callback.state_key — see BestModelCallback._build_checkpoint_payload.
+    # Without this, trainer.fit(ckpt_path="checkpoint_best_total.pth") silently resets
+    # every callback's state even though the regular/EMA source checkpoint it was copied
+    # from does carry it.
+    "callbacks",
     "optimizer_states",
     "lr_schedulers",
 )

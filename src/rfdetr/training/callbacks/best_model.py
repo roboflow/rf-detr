@@ -154,6 +154,19 @@ class BestModelCallback(ModelCheckpoint):
             Checkpoint dictionary that supports ``Trainer.fit(ckpt_path=...)`` while intentionally omitting
             optimizer/scheduler states.
         """
+        # Persist every callback's own state (BestModelCallback's best-tracking high-water
+        # marks, RFDETREMACallback's average model state, RFDETREarlyStopping's wait_count,
+        # etc.) so `trainer.fit(ckpt_path=...)` actually resumes them, matching what each
+        # callback's own state_dict()/load_state_dict() promises. Mirrors PyTorch Lightning's
+        # own `_call_callbacks_state_dict` (keyed by `Callback.state_key`, PTL reads it back
+        # via `_call_callbacks_load_state_dict` — checkpoint.get("callbacks") is None-checked
+        # there, so an *absent* "callbacks" key silently skips restoring every callback).
+        # Only include callbacks with non-empty state so checkpoints stay diffable/minimal.
+        callback_states: dict[str, object] = {}
+        for callback in trainer.callbacks:  # type: ignore[attr-defined]
+            state = callback.state_dict()
+            if state:
+                callback_states[callback.state_key] = state
         payload: dict[str, object] = {
             "model": model_state_dict,
             "args": args_dict,
@@ -170,8 +183,13 @@ class BestModelCallback(ModelCheckpoint):
                 "validate_loop": {"state_dict": {}},
                 "test_loop": {"state_dict": {}},
             },
+            "callbacks": callback_states,
             # Keep keys present with empty values so PTL resume paths that
-            # expect them can proceed without loading optimizer state.
+            # expect them can proceed without loading optimizer state. This is
+            # intentional (checkpoints stay lightweight, "weights-only" files) but
+            # it means resuming from these files always starts the optimizer and LR
+            # scheduler cold — see the warning logged from RFDETR.train() when
+            # `resume=` is used.
             "optimizer_states": [],
             "lr_schedulers": [],
         }
