@@ -468,8 +468,19 @@ class TestSigmoidScoring:
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
         assert len(dets) == 0
 
-    def test_multiclass_class_id_is_argmax_of_logits(self, rgb_image: Path) -> None:
-        """Argmax of sigmoid equals argmax of logits; query with [5,2,1,...] gets class_id==0."""
+    def test_multiclass_query_reports_every_class_above_threshold(self, rgb_image: Path) -> None:
+        """A query scoring above threshold on more than one class must produce one detection per
+        class, not just the argmax class.
+
+        History: this test used to be ``test_multiclass_class_id_is_argmax_of_logits`` and asserted
+        the *opposite* — that only the single highest-scoring class (argmax) survived — codifying a
+        real bug as the expected contract. RF-DETR uses independent per-class sigmoids (not a
+        mutually exclusive softmax): a query with logits [5, 2, 1, ...] has three classes
+        (sigmoid ≈ 0.993, 0.881, 0.731) all above threshold=0.3, and `PostProcess._select_topk`
+        (postprocess.py) — the real predict() selection this decode must mirror — ranks Q*C
+        query/class pairs together, so all three are legitimate separate detections of the same
+        box. See rfdetr/export/_topk.py for the shared selection helper this now uses.
+        """
         # Shape (1, 10, 82): first query has logits [5, 2, 1, 0, ...], rest are -100
         logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
         logits[0, 0, 0] = 5.0
@@ -477,8 +488,14 @@ class TestSigmoidScoring:
         logits[0, 0, 2] = 1.0
         interp = _make_interp(logits=logits)
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
-        # argmax of sigmoid == argmax of logits because sigmoid is monotone increasing
-        assert dets.class_id[0] == 0
+
+        assert len(dets) == 3, "query 0 clears threshold=0.3 on 3 classes; all 3 must be reported"
+        assert sorted(dets.class_id.tolist()) == [0, 1, 2]
+        # All 3 detections share query 0's box (see _make_boxes: identical box per query).
+        np.testing.assert_allclose(dets.xyxy, np.tile(dets.xyxy[0], (3, 1)))
+        # Sorted by descending confidence, matching PostProcess._select_topk / torch.topk order.
+        assert list(dets.confidence) == sorted(dets.confidence, reverse=True)
+        assert dets.class_id[0] == 0  # highest logit (5.0) still ranks first
 
 
 # ---------------------------------------------------------------------------
@@ -649,6 +666,42 @@ class TestMaskDecoding:
         assert dets.mask.shape == (len(dets), img.height, img.width)
         assert dets.mask.dtype == bool
         assert dets.mask[0].all()  # query 0's all-positive logits decode to a full mask
+
+    def test_run_inference_multilabel_query_repeats_its_mask(self, rgb_image: Path) -> None:
+        """A query contributing more than one detection (multi-label) must gather its mask once per
+        detection, repeats included -- not a boolean mask over unique queries.
+
+        Before the fix, mask gathering was ``raw_masks[keep]`` with ``keep`` a boolean vector over
+        queries (at most one True per query, matching the old argmax-per-query decode). With the
+        fix, more than one detection can share a query index, so gathering must be by (possibly
+        repeating) integer index, not a boolean mask -- see _tflite/inference.py's comment on this.
+        """
+        boxes = _make_boxes()
+        logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
+        logits[0, 0, 0] = 5.0  # sigmoid ~0.993, above threshold
+        logits[0, 0, 1] = 2.0  # sigmoid ~0.881, also above threshold -> query 0 yields 2 detections
+        masks = np.full((1, 10, 28, 28), -10.0, dtype=np.float32)
+        masks[0, 0] = 10.0  # query 0's mask: all-positive
+
+        def _get_tensor(index: int) -> np.ndarray:
+            return {1: boxes, 2: logits, 3: masks}[index]
+
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+        interp.get_output_details.return_value = [
+            {"shape": [1, 10, 4], "name": "Identity_0", "index": 1},
+            {"shape": [1, 10, 82], "name": "Identity_1", "index": 2},
+            {"shape": [1, 10, 28, 28], "name": "Identity_2", "index": 3},
+        ]
+        interp.get_tensor.side_effect = _get_tensor
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert len(dets) == 2
+        assert sorted(dets.class_id.tolist()) == [0, 1]
+        # Both detections came from query 0, so both must carry query 0's (all-positive) mask.
+        assert dets.mask.shape[0] == 2
+        assert dets.mask[0].all()
+        assert dets.mask[1].all()
 
     def test_run_inference_no_mask_for_detection_model(self, rgb_image: Path) -> None:
         """A 2-output detection export leaves Detections.mask as None."""

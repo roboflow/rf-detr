@@ -23,6 +23,7 @@ from PIL import Image as PILImage
 from supervision import Detections
 
 from rfdetr.export._resize import _bilinear_resize_half_pixel
+from rfdetr.export._topk import _select_topk_multiclass
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -277,18 +278,20 @@ def _run_inference(
     )
     one = np.asarray(1, dtype=logits.dtype)
     scores_all = one / (one + np.exp(-logits.clip(-88, 88)))
-    scores = scores_all.max(axis=-1)
-    cls = scores_all.argmax(axis=-1)
+    # Flatten (Q, C) to Q*C query/class pairs and take the top-scoring ones before thresholding —
+    # mirrors PostProcess._select_topk. A per-query argmax (the previous approach) keeps at most
+    # one class per query, silently dropping legitimate detections whenever a query scores above
+    # threshold on more than one class; see _topk.py for why that happens routinely here.
+    scores, cls, query_idx = _select_topk_multiclass(scores_all, threshold)
     logger.debug(
         "Scores stats: min=%.3f max=%.3f — detections above threshold %.2f: %d",
-        float(scores.min()),
-        float(scores.max()),
+        float(scores_all.min()),
+        float(scores_all.max()),
         threshold,
-        int((scores > threshold).sum()),
+        int(scores.shape[0]),
     )
-    keep = scores > threshold
 
-    cx, cy, bw, bh = boxes_cwh[keep].T
+    cx, cy, bw, bh = boxes_cwh[query_idx].T
     ow, oh = pil_img.size
     xyxy = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)
     xyxy *= np.array([ow, oh, ow, oh], dtype=np.float32)
@@ -306,9 +309,12 @@ def _run_inference(
                 len(rank4_candidates),
             )
     masks = None
-    if mask_idx is not None and keep.any():
+    if mask_idx is not None and query_idx.shape[0] > 0:
         raw_masks = interp.get_tensor(out_det[mask_idx]["index"])[0]  # (Q, Hm, Wm)
-        masks = _decode_masks(raw_masks[keep], (ow, oh))
+        # Fancy-index by query_idx, NOT a boolean mask: a query can now contribute more than one
+        # detection (see _select_topk_multiclass), so its mask must be gathered once per detection,
+        # repeats included, rather than once per unique query.
+        masks = _decode_masks(raw_masks[query_idx], (ow, oh))
 
-    detections = Detections(xyxy=xyxy, confidence=scores[keep], class_id=cls[keep].astype(int), mask=masks)
+    detections = Detections(xyxy=xyxy, confidence=scores, class_id=cls.astype(int), mask=masks)
     return detections, pil_img
