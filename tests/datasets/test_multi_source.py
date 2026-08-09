@@ -74,9 +74,24 @@ class TestComputeSourceBatchSizes:
     def test_weights_need_not_be_normalised(self) -> None:
         assert compute_source_batch_sizes(16, [6, 3, 1]) == compute_source_batch_sizes(16, [0.6, 0.3, 0.1])
 
+    def test_reclaims_only_the_over_allocated_slots(self) -> None:
+        # Guaranteeing one slot each pushes the total to 6 for a batch of 5, so exactly one slot is reclaimed from a
+        # source that has more than one.
+        counts = compute_source_batch_sizes(5, [0.4, 0.4, 0.1, 0.1])
+        assert sum(counts) == 5
+        assert min(counts) >= 1
+
     def test_rejects_zero_weight(self) -> None:
         with pytest.raises(ValueError, match="strictly positive"):
             compute_source_batch_sizes(8, [0.5, 0.5, 0.0])
+
+    def test_rejects_empty_weights(self) -> None:
+        with pytest.raises(ValueError, match="at least one source"):
+            compute_source_batch_sizes(8, [])
+
+    def test_rejects_weights_below_representable_precision(self) -> None:
+        with pytest.raises(ValueError, match="too small to be represented"):
+            compute_source_batch_sizes(8, [1e-9, 1e-9])
 
     def test_rejects_non_positive_batch_size(self) -> None:
         with pytest.raises(ValueError, match="batch_size must be >= 1"):
@@ -93,6 +108,14 @@ class TestSamplerValidation:
     def test_rejects_empty_source(self) -> None:
         with pytest.raises(ValueError, match="non-empty"):
             WeightedMultiSourceBatchSampler([100, 0], [0.5, 0.5], batch_size=8)
+
+    def test_rejects_missing_sources(self) -> None:
+        with pytest.raises(ValueError, match="at least one source"):
+            WeightedMultiSourceBatchSampler([], [], batch_size=8)
+
+    def test_rejects_non_positive_num_replicas(self) -> None:
+        with pytest.raises(ValueError, match="num_replicas must be >= 1"):
+            WeightedMultiSourceBatchSampler([100, 50], [0.5, 0.5], batch_size=8, num_replicas=0)
 
     def test_rejects_rank_outside_world(self) -> None:
         with pytest.raises(ValueError, match="rank must be in"):
@@ -158,6 +181,23 @@ class TestEpochLength:
     def test_len_matches_number_of_yielded_batches(self) -> None:
         sampler = WeightedMultiSourceBatchSampler([500, 200, 40], [0.6, 0.3, 0.1], batch_size=16)
         assert len(list(sampler)) == len(sampler)
+
+    @pytest.mark.parametrize(
+        ("drop_last", "expected_batches"),
+        [
+            # The driving source has 503 samples and 5 slots per batch, leaving 3 samples over 100 whole batches.
+            pytest.param(True, 100, id="partial_batch_dropped"),
+            pytest.param(False, 101, id="partial_batch_kept"),
+        ],
+    )
+    def test_drop_last_controls_the_trailing_partial_batch(self, drop_last: bool, expected_batches: int) -> None:
+        sampler = WeightedMultiSourceBatchSampler([503, 100], [0.5, 0.5], batch_size=10, drop_last=drop_last)
+        assert len(list(sampler)) == expected_batches
+
+    def test_trailing_partial_batch_is_still_full_size(self) -> None:
+        # Keeping the partial batch tops the driving source up by recycling it, so the model never sees a short batch.
+        sampler = WeightedMultiSourceBatchSampler([503, 100], [0.5, 0.5], batch_size=10, drop_last=False)
+        assert len(list(sampler)[-1]) == 10
 
     def test_tiny_dataset_still_yields_one_batch(self) -> None:
         sampler = WeightedMultiSourceBatchSampler([3, 2], [0.5, 0.5], batch_size=16)
