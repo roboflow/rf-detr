@@ -311,7 +311,10 @@ class TestCappedLongestMaxSizeRuntimeBehavior:
         """Run the wrapped Albumentations resize config and return ``(width, height)``.
 
         Example:
-            >>> size = TestCappedLongestMaxSizeRuntimeBehavior._resize_output_size((90, 120), 640, 1333)
+            >>> size = TestCappedLongestMaxSizeRuntimeBehavior._resize_output_size(
+            ...     (90, 120), 640, 1333
+            ... )  # doctest: +ELLIPSIS
+            [...] [INFO] rf-detr - Built 1 Albumentations transforms from config
             >>> isinstance(size, tuple) and len(size) == 2
             True
         """
