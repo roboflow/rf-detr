@@ -181,9 +181,9 @@ class _ResumeProbeCallback(Callback):
 class _VaryingMetricModule(LightningModule):
     """LightningModule that logs a different ``val/mAP_50_95`` value on each successive epoch.
 
-    ``values`` is consumed one entry per validation epoch (indexed by ``self.current_epoch``, clamped to the last
-    entry once exhausted), letting a single ``Trainer.fit()`` call drive stateful callbacks (e.g.
-    ``RFDETREarlyStopping``'s ``wait_count``) through both improving and non-improving epochs.
+    ``values`` is consumed one entry per validation epoch (indexed by ``self.current_epoch``, clamped to the last entry
+    once exhausted), letting a single ``Trainer.fit()`` call drive stateful callbacks (e.g. ``RFDETREarlyStopping``'s
+    ``wait_count``) through both improving and non-improving epochs.
     """
 
     def __init__(self, values: list[float]) -> None:
@@ -282,8 +282,8 @@ class _EmaMetricModule(LightningModule):
 class _CallbackStateCaptureCallback(Callback):
     """Snapshot other callbacks' resumed state at the first post-resume train-epoch start.
 
-    Runs before any post-resume training step can mutate ``ema_callback``/``early_stop_callback``, so the
-    captured values reflect exactly what PTL's ``_call_callbacks_load_state_dict`` restored from the checkpoint.
+    Runs before any post-resume training step can mutate ``ema_callback``/``early_stop_callback``, so the captured
+    values reflect exactly what PTL's ``_call_callbacks_load_state_dict`` restored from the checkpoint.
     """
 
     def __init__(self, ema_callback: RFDETREMACallback, early_stop_callback: RFDETREarlyStopping) -> None:
@@ -1237,9 +1237,9 @@ class TestBestModelCallback:
     def test_best_model_score_survives_real_trainer_fit_resume(self, tmp_path: Path, checkpoint_name: str) -> None:
         """``best_model_score`` and the on-disk checkpoint must survive a real ``trainer.fit(ckpt_path=...)`` resume.
 
-        Regression test for the "callbacks" key being absent from ``_build_checkpoint_payload``'s output — the bug
-        this PR fixes. Every existing regression test for callback-state persistence (``TestBestEmaStatePersistence``)
-        calls ``state_dict()``/``load_state_dict()`` directly in Python, never through PTL's own
+        Regression test for the "callbacks" key being absent from ``_build_checkpoint_payload``'s output — the bug this
+        PR fixes. Every existing regression test for callback-state persistence (``TestBestEmaStatePersistence``) calls
+        ``state_dict()``/``load_state_dict()`` directly in Python, never through PTL's own
         ``_call_callbacks_load_state_dict``, so none of them would catch the payload missing the "callbacks" key.
         Parametrized over ``checkpoint_best_regular.pth`` (built directly by ``_build_checkpoint_payload``) and
         ``checkpoint_best_total.pth`` (built via ``shutil.copy2`` + ``strip_checkpoint``, a separate code path that
@@ -1489,17 +1489,16 @@ class TestBestModelCallback:
         """A resumed ``output_dir`` different from the checkpoint's own does not restore ``best_model_score``.
 
         Pins PTL's own ``ModelCheckpoint.load_state_dict()`` gate (installed pytorch-lightning,
-        ``model_checkpoint.py``): it only restores ``best_model_score``/``best_k_models`` when the
-        resumed callback's ``dirpath`` matches the value stored in the checkpoint's ``"callbacks"``
-        state exactly; on a mismatch it warns and restores only ``best_model_path``. RF-DETR's
-        ``resume`` and ``output_dir`` config fields are independent (``config.py``), so pointing
-        ``resume=`` at one directory while writing to another is a config-permitted combination, not
-        a corrupted setup — this test locks in the resulting (previously untested) behavior.
+        ``model_checkpoint.py``): it only restores ``best_model_score``/``best_k_models`` when the resumed callback's
+        ``dirpath`` matches the value stored in the checkpoint's ``"callbacks"`` state exactly; on a mismatch it warns
+        and restores only ``best_model_path``. RF-DETR's ``resume`` and ``output_dir`` config fields are independent
+        (``config.py``), so pointing ``resume=`` at one directory while writing to another is a config-permitted
+        combination, not a corrupted setup — this test locks in the resulting (previously untested) behavior.
 
-        ``max_epochs=1`` on both phases means the checkpoint's restored fit-loop progress (1 epoch
-        already completed) leaves zero epochs left to run in phase two: the assertions below capture
-        exactly what ``load_state_dict()`` restored, with no confound from a subsequent training
-        epoch overwriting ``best_model_score``/``best_model_path`` again on its own.
+        ``max_epochs=1`` on both phases means the checkpoint's restored fit-loop progress (1 epoch already completed)
+        leaves zero epochs left to run in phase two: the assertions below capture exactly what ``load_state_dict()``
+        restored, with no confound from a subsequent training epoch overwriting ``best_model_score``/``best_model_path``
+        again on its own.
         """
         x = torch.randn(8, 4)
         y = torch.randn(8, 1)

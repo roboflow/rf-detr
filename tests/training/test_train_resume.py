@@ -168,10 +168,10 @@ def test_resume_from_checkpoint_without_callback_state_warns_it_restarts_cold(
 ) -> None:
     """A lightweight checkpoint with no "callbacks" key (or an empty one) warns everything restarts cold.
 
-    Simulates a checkpoint written before ``BestModelCallback._build_checkpoint_payload`` started
-    persisting per-callback state (or any run where every registered callback had empty state):
-    PTL's ``_call_callbacks_load_state_dict`` no-ops on a missing/empty "callbacks" key, silently
-    skipping best-score/EMA/early-stopping restoration — the warning must not claim otherwise.
+    Simulates a checkpoint written before ``BestModelCallback._build_checkpoint_payload`` started persisting per-
+    callback state (or any run where every registered callback had empty state): PTL's
+    ``_call_callbacks_load_state_dict`` no-ops on a missing/empty "callbacks" key, silently skipping best-
+    score/EMA/early-stopping restoration — the warning must not claim otherwise.
     """
     output_dir = tmp_path / "train_output"
     output_dir.mkdir(parents=True, exist_ok=True)
