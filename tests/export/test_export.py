@@ -281,7 +281,16 @@ class _DeviceTrackingCoreModel(_DummyCoreModel):
 
 
 def _make_tensorrt_export_model(*, device: str = "cpu") -> types.SimpleNamespace:
-    """Build the minimal `self`-like fake `RFDETR.export()` needs for the format="tensorrt" branch."""
+    """Build the minimal `self`-like fake `RFDETR.export()` needs for the format="tensorrt" branch.
+
+    Examples:
+        >>> m = _make_tensorrt_export_model()
+        >>> m.model.device
+        'cpu'
+        >>> m = _make_tensorrt_export_model(device="cuda")
+        >>> m.model.device
+        'cuda'
+    """
     return types.SimpleNamespace(
         model=types.SimpleNamespace(model=_DeviceTrackingCoreModel(), device=device, resolution=14),
         model_config=types.SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False, num_channels=3),
@@ -290,7 +299,15 @@ def _make_tensorrt_export_model(*, device: str = "cpu") -> types.SimpleNamespace
 
 
 def _make_mock_infer_tensor() -> MagicMock:
-    """Mock tensor standing in for `make_infer_image()`'s return value — avoids real-device `.to()`/`.cpu()`."""
+    """Mock tensor standing in for `make_infer_image()`'s return value — avoids real-device `.to()`/`.cpu()`.
+
+    Examples:
+        >>> t = _make_mock_infer_tensor()
+        >>> t.to("cpu") is t
+        True
+        >>> t.cpu() is t
+        True
+    """
     mock_tensor = MagicMock()
     mock_tensor.to.return_value = mock_tensor
     mock_tensor.cpu.return_value = mock_tensor

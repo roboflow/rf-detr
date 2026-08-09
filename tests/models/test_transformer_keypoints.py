@@ -20,6 +20,12 @@ def _build_transformer_inputs(
 ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor], torch.Tensor, torch.Tensor]:
     """Build minimal synthetic multi-scale inputs for `Transformer.forward`.
 
+    Examples:
+        >>> srcs, masks, pos_embeds, refpoint_embed, query_feat = _build_transformer_inputs(hidden_dim=8)
+        >>> len(srcs), srcs[0].shape[1]
+        (2, 8)
+
+
     Args:
         batch_size: Mini-batch size.
         hidden_dim: Transformer and input channel size.

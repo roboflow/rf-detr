@@ -27,7 +27,18 @@ from rfdetr import RFDETR, RFDETRNano
 
 
 def _num_classes(dataset_dir: Path) -> int:
-    """Return the COCO category count from a Roboflow-style dataset's train split."""
+    """Return the COCO category count from a Roboflow-style dataset's train split.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as tmp:
+        ...     root = Path(tmp)
+        ...     train = root / "train"
+        ...     train.mkdir()
+        ...     _ = (train / "_annotations.coco.json").write_text('{"categories": [{}, {}]}')
+        ...     _num_classes(root)
+        2
+    """
     annotations = json.loads((dataset_dir / "train" / "_annotations.coco.json").read_text())
     return len(annotations["categories"])
 
@@ -139,6 +150,11 @@ def _mock_trainer() -> Any:
     """Return a MagicMock standing in for the PTL ``Trainer`` returned by ``build_trainer``.
 
     ``test``/``validate`` return a one-element metrics list so ``evaluate()`` can index ``results[0]``.
+
+    Examples:
+        >>> trainer = _mock_trainer()
+        >>> hasattr(trainer, "test") and hasattr(trainer, "validate")
+        True
     """
     trainer = MagicMock()
     trainer.test.return_value = [{"test/mAP_50_95": 0.0}]

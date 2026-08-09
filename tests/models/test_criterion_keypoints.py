@@ -27,6 +27,13 @@ def _make_outputs(
     num_queries: int,
     num_keypoints: int,
 ) -> dict[str, torch.Tensor]:
+    """Build minimal outputs dict for keypoint SetCriterion tests.
+
+    Examples:
+        >>> outputs = _make_outputs(batch_size=1, num_queries=2, num_keypoints=3)
+        >>> sorted(outputs)
+        ['pred_boxes', 'pred_keypoints', 'pred_logits']
+    """
     return {
         "pred_logits": torch.zeros(batch_size, num_queries, 2),
         "pred_boxes": torch.rand(batch_size, num_queries, 4).clamp(0.05, 0.95),

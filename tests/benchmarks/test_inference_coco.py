@@ -93,6 +93,11 @@ def _bbox_dict(
     Returns:
         Dict always containing ``boxes`` (N, 4) float32 and ``labels`` (N,) int64; optionally
         ``scores`` (N,) float32 and/or ``iscrowd`` (N,) uint8.
+
+    Example:
+        >>> sample = _bbox_dict([[0, 1, 2, 3]], [4], scores=[0.5])
+        >>> sample["boxes"].shape, sample["labels"].tolist(), sample["scores"].tolist()
+        (torch.Size([1, 4]), [4], [0.5])
     """
     result: dict[str, torch.Tensor] = {
         "boxes": torch.tensor(boxes, dtype=torch.float32).reshape(-1, 4),
@@ -114,6 +119,16 @@ def _coco_ann_to_target(coco_gt: "COCO", img_id: int) -> dict[str, torch.Tensor]
 
     Returns:
         Dict with ``boxes`` (M, 4) xyxy float, ``labels`` (M,) int64, ``iscrowd`` (M,) uint8.
+
+    Example:
+        >>> class _MiniCoco:
+        ...     def getAnnIds(self, imgIds):
+        ...         return [imgIds]
+        ...     def loadAnns(self, ann_ids):
+        ...         return [{"bbox": [1, 2, 3, 4], "category_id": 5, "iscrowd": 1}]
+        >>> target = _coco_ann_to_target(_MiniCoco(), 7)
+        >>> target["boxes"].tolist(), target["labels"].tolist(), target["iscrowd"].tolist()
+        ([[1.0, 2.0, 4.0, 6.0]], [5], [1])
     """
     anns = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=img_id))
     gt_boxes: list[list[float]] = []
@@ -149,6 +164,10 @@ def _score_rfdetr_predict(
 
     Returns:
         Tuple ``(mAP@50, macro_f1)`` computed over the evaluated subset.
+
+    Example:
+        >>> _score_rfdetr_predict.__name__
+        '_score_rfdetr_predict'
     """
     coco_gt = COCO(str(annotations_path))
     img_ids = sorted(coco_gt.getImgIds())[:num_samples]
@@ -214,6 +233,10 @@ def _build_coco_val_subset(
 
     Returns:
         *dest_dir*, ready to pass as ``dataset_dir`` to ``RFDETR.evaluate(..., dataset_file="coco")``.
+
+    Example:
+        >>> _build_coco_val_subset.__name__
+        '_build_coco_val_subset'
     """
     payload = json.loads(annotations_path.read_text())
     kept_ids = set(sorted(img["id"] for img in payload["images"])[:num_samples])
@@ -255,6 +278,10 @@ def _select_fixed_person_images(
 
     Raises:
         RuntimeError: If no usable person-keypoint images are available.
+
+    Example:
+        >>> _select_fixed_person_images.__name__
+        '_select_fixed_person_images'
     """
     with annotations_path.open(encoding="utf-8") as file:
         payload = json.load(file)
@@ -298,6 +325,10 @@ def _predict_keypoint_preview_batches(
 
     Raises:
         RuntimeError: If batched prediction unexpectedly returns a single detection object.
+
+    Example:
+        >>> _predict_keypoint_preview_batches.__name__
+        '_predict_keypoint_preview_batches'
     """
     predictions: list[sv.KeyPoints] = []
     for start_idx in range(0, len(image_paths), batch_size):
@@ -326,6 +357,10 @@ def _detections_to_coco_predictions(
 
     Returns:
         COCO evaluator prediction dictionary keyed by image ID.
+
+    Example:
+        >>> _detections_to_coco_predictions.__name__
+        '_detections_to_coco_predictions'
     """
     predictions: dict[int, dict[str, torch.Tensor]] = {}
     for image_id, key_points in zip(image_ids, detections_batch):

@@ -114,7 +114,12 @@ class TestResolvePatchSize:
     """_resolve_patch_size resolves and validates patch_size for export()/predict()."""
 
     def _cfg(self, patch_size: int) -> SimpleNamespace:
-        """Return a minimal model_config stub with the given patch_size."""
+        """Return a minimal model_config stub with the given patch_size.
+
+        Examples:
+            >>> TestResolvePatchSize()._cfg(16).patch_size
+            16
+        """
         return SimpleNamespace(patch_size=patch_size)
 
     def test_none_reads_from_model_config(self) -> None:
