@@ -3,22 +3,20 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Decode-vs-``PostProcess`` selection parity: ``_select_topk_multiclass`` (``rfdetr/export/_topk.py``,
-shared by the ONNX and TFLite reference decoders) must select the exact same set of
-``(query, class, score)`` triples that ``PostProcess._select_topk`` (``rfdetr/models/postprocess.py``)
-selects for the same raw logits — at any query multiplicity, i.e. a query scoring above threshold on
-more than one class must produce more than one detection in both.
+"""Decode-vs-``PostProcess`` selection parity: ``_select_topk_multiclass`` (``rfdetr/export/_topk.py``, shared by the
+ONNX and TFLite reference decoders) must select the exact same set of ``(query, class, score)`` triples that
+``PostProcess._select_topk`` (``rfdetr/models/postprocess.py``) selects for the same raw logits — at any query
+multiplicity, i.e. a query scoring above threshold on more than one class must produce more than one detection in both.
 
-History: before this fix, ``_run_inference`` in both ``_onnx/inference.py`` and
-``_tflite/inference.py`` selected a single class per query via ``scores_all.argmax(axis=-1)``.
-``PostProcess._select_topk`` instead flattens ``(Q, C)`` to ``Q * C`` query/class pairs and ranks all
-of them together, so a query can contribute more than one detection — exactly what happens when
-RF-DETR's independent per-class sigmoids put more than one class above threshold on the same query.
-No test exercised this divergence: ``test_onnx_preprocess_parity.py`` /
-``test_tflite_inference_parity.py`` only cover *preprocessing* (resize/normalise) parity, and the one
-existing decode test (``test_multiclass_class_id_is_argmax_of_logits`` in
-``test_tflite_inference.py``) asserted the old, wrong, single-detection-per-query behaviour as
-correct. This file locks the numeric selection itself, independent of either runtime backend.
+History: before this fix, ``_run_inference`` in both ``_onnx/inference.py`` and ``_tflite/inference.py`` selected a
+single class per query via ``scores_all.argmax(axis=-1)``. ``PostProcess._select_topk`` instead flattens ``(Q, C)`` to
+``Q * C`` query/class pairs and ranks all of them together, so a query can contribute more than one detection — exactly
+what happens when RF-DETR's independent per-class sigmoids put more than one class above threshold on the same query. No
+test exercised this divergence: ``test_onnx_preprocess_parity.py`` / ``test_tflite_inference_parity.py`` only cover
+*preprocessing* (resize/normalise) parity, and the one existing decode test
+(``test_multiclass_class_id_is_argmax_of_logits`` in ``test_tflite_inference.py``) asserted the old, wrong, single-
+detection-per-query behaviour as correct. This file locks the numeric selection itself, independent of either runtime
+backend.
 """
 
 from __future__ import annotations
@@ -43,9 +41,8 @@ def _reference_select_topk(
 class TestTopkSelectionParity:
     @pytest.mark.parametrize("seed", [0, 1, 2, 7, 42])
     def test_matches_postprocess_select_topk(self, seed: int) -> None:
-        """Random logits: the (query, class, score) set our NumPy helper keeps above threshold must
-        equal what PostProcess._select_topk + the same threshold keeps, for arbitrary multiplicity.
-        """
+        """Random logits: the (query, class, score) set our NumPy helper keeps above threshold must equal what
+        PostProcess._select_topk + the same threshold keeps, for arbitrary multiplicity."""
         rng = np.random.default_rng(seed)
         num_queries, num_fg_classes = 40, 12
         threshold = 0.3
@@ -83,8 +80,8 @@ class TestTopkSelectionParity:
             assert got_by_pair[pair] == pytest.approx(ref_s, abs=1e-4)
 
     def test_multilabel_query_yields_multiple_detections(self) -> None:
-        """A single query with two classes above threshold must produce two detections — the exact
-        case the old per-query argmax silently collapsed to one."""
+        """A single query with two classes above threshold must produce two detections — the exact case the old per-
+        query argmax silently collapsed to one."""
         num_queries, num_fg_classes = 5, 4
         threshold = 0.3
         fg_logits = np.full((num_queries, num_fg_classes), -100.0, dtype=np.float32)
@@ -102,9 +99,8 @@ class TestTopkSelectionParity:
         assert list(got_scores) == sorted(got_scores, reverse=True)
 
     def test_num_select_caps_pairs_like_torch_topk(self) -> None:
-        """When more than num_select pairs exceed threshold, only the top num_select by score
-        survive — matching PostProcess._select_topk (topk happens before, not after, thresholding).
-        """
+        """When more than num_select pairs exceed threshold, only the top num_select by score survive — matching
+        PostProcess._select_topk (topk happens before, not after, thresholding)."""
         num_queries, num_fg_classes = 10, 10
         threshold = 0.0
         rng = np.random.default_rng(3)

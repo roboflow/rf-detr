@@ -5,15 +5,15 @@
 # ------------------------------------------------------------------------
 """Torch-free multi-class top-k selection shared by the export inference helpers.
 
-RF-DETR uses independent per-class sigmoids, not a mutually exclusive softmax, so a single query
-can legitimately score above threshold on more than one class at once (e.g. "car" and "truck").
-``PostProcess._select_topk`` (``rfdetr/models/postprocess.py``) accounts for this: it flattens the
-``(Q, C)`` score grid to ``Q * C`` query/class pairs and takes the top ``num_select`` scoring pairs
-*before* any threshold is applied, so a query can contribute more than one detection. Selecting the
-single highest-scoring class per query (``argmax`` over the class axis) silently drops the rest.
+RF-DETR uses independent per-class sigmoids, not a mutually exclusive softmax, so a single query can legitimately score
+above threshold on more than one class at once (e.g. "car" and "truck"). ``PostProcess._select_topk``
+(``rfdetr/models/postprocess.py``) accounts for this: it flattens the ``(Q, C)`` score grid to ``Q * C`` query/class
+pairs and takes the top ``num_select`` scoring pairs *before* any threshold is applied, so a query can contribute more
+than one detection. Selecting the single highest-scoring class per query (``argmax`` over the class axis) silently drops
+the rest.
 
-The export inference helpers must reproduce that exact selection so exported ONNX/TFLite models
-match ``RFDETR.predict()`` detection-for-detection, not just box-for-box.
+The export inference helpers must reproduce that exact selection so exported ONNX/TFLite models match
+``RFDETR.predict()`` detection-for-detection, not just box-for-box.
 """
 
 from __future__ import annotations

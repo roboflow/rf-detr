@@ -5,10 +5,10 @@
 # ------------------------------------------------------------------------
 """Tests for ONNX Runtime inference decoding (``_run_inference`` in ``rfdetr/export/_onnx/inference.py``).
 
-Before this file, ``_run_inference``'s detection decode had no dedicated unit test at all — only its
-preprocessing half was covered (``test_onnx_preprocess_parity.py``). This file covers the multi-label
-query/class selection, using the same ``types.SimpleNamespace`` fake-session pattern the rest of the
-export test suite uses for mocking backend objects (see ``test_export.py``).
+Before this file, ``_run_inference``'s detection decode had no dedicated unit test at all — only its preprocessing half
+was covered (``test_onnx_preprocess_parity.py``). This file covers the multi-label query/class selection, using the same
+``types.SimpleNamespace`` fake-session pattern the rest of the export test suite uses for mocking backend objects (see
+``test_export.py``).
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ def _make_boxes() -> np.ndarray:
 
 
 def _make_logits(high_conf_idx: int | None = 0) -> np.ndarray:
-    """Return (1, 10, 82) logits with one high-confidence entry when requested (mirrors the TFLite
-    test helper of the same name in test_tflite_inference.py)."""
+    """Return (1, 10, 82) logits with one high-confidence entry when requested (mirrors the TFLite test helper of the
+    same name in test_tflite_inference.py)."""
     logits = np.full((1, 10, 82), -10.0, dtype=np.float32)
     if high_conf_idx is not None:
         logits[0, high_conf_idx, 0] = 10.0
@@ -82,10 +82,11 @@ class TestRunInferenceBasics:
 
 
 class TestMulticlassSelection:
-    """``_run_inference`` must select query/class pairs the same way
-    ``PostProcess._select_topk`` does — flatten (Q, C) and rank all pairs together, not a
-    per-query argmax. See the analogous test in ``test_tflite_inference.py`` and the shared
-    selection helper in ``rfdetr/export/_topk.py``.
+    """``_run_inference`` must select query/class pairs the same way ``PostProcess._select_topk`` does — flatten (Q, C)
+    and rank all pairs together, not a per-query argmax.
+
+    See the analogous test in ``test_tflite_inference.py`` and the shared selection helper in
+    ``rfdetr/export/_topk.py``.
     """
 
     def test_multiclass_query_reports_every_class_above_threshold(self, rgb_image: Path) -> None:
