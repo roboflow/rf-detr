@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added live free/total GPU memory (`free_mem`, `torch.cuda.mem_get_info()` in MB) next to `max_mem` in the training progress bar. Unlike `max_mem`, `free_mem` is not process-local and not a peak — it reflects the whole device, including other workloads sharing the GPU, at the instant it is read. It only counts memory actually handed back to the CUDA driver, so freeing a tensor in this process does not raise it on its own (PyTorch keeps that block cached for reuse until `torch.cuda.empty_cache()` runs); it is closer to "room left for a new allocation beyond what every process already claimed" than to the full headroom this run has for a bigger `batch_size`. Same `trainer.fit()`-only scope as `max_mem`. ([#1314](https://github.com/roboflow/rf-detr/issues/1314))
 - Restored peak GPU memory (`max_mem` in MB) in the training progress bar, dropped during the PyTorch Lightning migration (PR #794) along with `rfdetr.engine`. Only covers `trainer.fit()` (training and its periodic in-training validation) — PTL's own progress-bar classes never call `get_metrics()` outside `trainer.state.fn == "fit"`, so a standalone `RFDETR.evaluate()` progress bar shows no metrics at all, not just `max_mem`, same as before this change. ([#974](https://github.com/roboflow/rf-detr/issues/974))
 
 ### Changed
