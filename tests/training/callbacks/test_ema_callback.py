@@ -186,15 +186,15 @@ class TestUpdateInterval:
 class TestEpochBoundaryNoDoubleUpdate:
     """Regression test for the epoch-boundary double-update bug.
 
-    ``on_train_epoch_end`` used to call ``update_parameters`` again after the last
-    optimizer step of the epoch, on top of that step's own ``on_train_batch_end``
-    update, double-counting one update per epoch against ``update_interval_steps``.
+    ``on_train_epoch_end`` used to call ``update_parameters`` again after the last optimizer step of the epoch, on top
+    of that step's own ``on_train_batch_end`` update, double-counting one update per epoch against
+    ``update_interval_steps``.
     """
 
     def test_on_train_epoch_end_is_not_overridden(self) -> None:
-        """The callback must not define its own ``on_train_epoch_end`` — PTL's per-step
-        ``on_train_batch_end`` already fires for the last batch of every epoch, so a
-        separate epoch-end trigger would update on top of that same step."""
+        """The callback must not define its own ``on_train_epoch_end`` — PTL's per-step ``on_train_batch_end`` already
+        fires for the last batch of every epoch, so a separate epoch-end trigger would update on top of that same
+        step."""
         assert "on_train_epoch_end" not in RFDETREMACallback.__dict__
 
     @pytest.mark.parametrize(
@@ -206,9 +206,11 @@ class TestEpochBoundaryNoDoubleUpdate:
         ],
     )
     def test_multi_epoch_training_updates_exactly_once_per_step(self, n_epochs: int, steps_per_epoch: int) -> None:
-        """Simulate ``n_epochs`` of ``steps_per_epoch`` optimizer steps each, including the
-        no-op epoch-end hook Lightning would still call. ``update_parameters`` must fire
-        exactly ``n_epochs * steps_per_epoch`` times — one per step, zero extra per epoch."""
+        """Simulate ``n_epochs`` of ``steps_per_epoch`` optimizer steps each, including the.
+
+        no-op epoch-end hook Lightning would still call. ``update_parameters`` must fire exactly ``n_epochs *
+        steps_per_epoch`` times — one per step, zero extra per epoch.
+        """
         cb = RFDETREMACallback(update_interval_steps=1)
         cb._average_model = MagicMock()
         trainer = MagicMock()
