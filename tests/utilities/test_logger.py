@@ -53,12 +53,11 @@ class TestRedirectAwareStreamHandler:
     def test_emit_writes_to_stream_present_at_construction(self, stream_name: str) -> None:
         """Baseline: with no reassignment in play, emit writes to whatever sys.<stream_name> already is."""
         buffer = io.StringIO()
-        handler = _RedirectAwareStreamHandler(stream_name)
-        handler.setFormatter(logging.Formatter("%(message)s"))
-
         real_stream = getattr(sys, stream_name)
         try:
             setattr(sys, stream_name, buffer)
+            handler = _RedirectAwareStreamHandler(stream_name)
+            handler.setFormatter(logging.Formatter("%(message)s"))
             handler.emit(_make_record("hello"))
         finally:
             setattr(sys, stream_name, real_stream)
@@ -100,6 +99,21 @@ class TestRedirectAwareStreamHandler:
 
         assert "stdout only" in stdout_buffer.getvalue()
         assert "stdout only" not in stderr_buffer.getvalue()
+
+    def test_stdout_handler_falls_back_to_stderr_when_stdout_is_none(self) -> None:
+        """A stdout handler must preserve records when Python temporarily removes sys.stdout."""
+        handler = _RedirectAwareStreamHandler("stdout")
+        handler.setFormatter(logging.Formatter("%(message)s"))
+
+        stderr_buffer = io.StringIO()
+        real_stdout, real_stderr = sys.stdout, sys.stderr
+        try:
+            sys.stdout, sys.stderr = None, stderr_buffer
+            handler.emit(_make_record("fallback to stderr"))
+        finally:
+            sys.stdout, sys.stderr = real_stdout, real_stderr
+
+        assert stderr_buffer.getvalue() == "fallback to stderr\n"
 
 
 class TestGetLoggerUsesRedirectAwareHandlers:

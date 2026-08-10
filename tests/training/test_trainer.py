@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from pytorch_lightning import Callback
+from pytorch_lightning import Callback, LightningModule, Trainer
 from pytorch_lightning.callbacks import RichProgressBar, TQDMProgressBar
 
 from rfdetr.training import build_trainer
@@ -125,7 +126,17 @@ class TestRichProgressBarLoggerIntegration:
         seen_during_batch: list[tuple[object, object]] = []
 
         class _LogDuringBatch(Callback):
-            def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx) -> None:
+            """Log once at batch end and capture the active stdout stream."""
+
+            def on_train_batch_end(
+                self,
+                trainer: Trainer,
+                pl_module: LightningModule,
+                outputs: Any,
+                batch: Any,
+                batch_idx: int,
+            ) -> None:
+                """Record the redirected stream after emitting a training-time log message."""
                 logger.info("checkpoint-style message mid-epoch")
                 seen_during_batch.append((stdout_handler.stream, sys.stdout))
 
