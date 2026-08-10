@@ -47,30 +47,61 @@ class PostProcess(nn.Module):
 
         Args:
             outputs: Model output dictionary containing ``pred_logits`` and ``pred_boxes`` plus optional
-                ``pred_masks`` or ``pred_keypoints``.
+                ``pred_masks``, ``pred_keypoints``, or ``embeddings``.
             target_sizes: Per-image ``(height, width)`` tensor. For inference and evaluation this should be the
                 original image size so normalized boxes and keypoints are returned in source-image pixel coordinates.
 
         Returns:
             One dictionary per image. Every dictionary contains ``scores``, ``labels``, and ``boxes`` in absolute
             pixel coordinates clamped to the respective image dimensions. Segmentation outputs also contain
-            ``masks``. Keypoint outputs also contain ``keypoints`` and ``keypoint_precision_cholesky``.
+            ``masks``. Keypoint outputs also contain ``keypoints`` and ``keypoint_precision_cholesky``. When
+            ``embeddings`` is present in ``outputs``, each result dict also contains ``embeddings`` with shape
+            ``(K, H)`` — one per selected query, gathered with the same indices used for boxes/masks/keypoints.
         """
         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
         out_masks = outputs.get("pred_masks")
         out_keypoints = outputs.get("pred_keypoints")
+        out_embeddings = outputs.get("embeddings")
         self._validate_outputs(out_logits, out_masks, out_keypoints, target_sizes)
 
         scores, labels, topk_boxes = self._select_topk(out_logits)
         boxes = self._gather_and_scale_boxes(out_bbox, topk_boxes, target_sizes)
 
         if out_masks is not None:
-            return self._postprocess_masks(
+            results = self._postprocess_masks(
                 out_masks, scores, labels, boxes, topk_boxes, target_sizes, self.upsample_masks_to_image_size
             )
-        if out_keypoints is not None:
-            return self._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)
-        return self._postprocess_boxes(scores, labels, boxes)
+        elif out_keypoints is not None:
+            results = self._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)
+        else:
+            results = self._postprocess_boxes(scores, labels, boxes)
+
+        if out_embeddings is not None:
+            self._attach_embeddings(results, out_embeddings, topk_boxes)
+
+        return results
+
+    @staticmethod
+    def _attach_embeddings(
+        results: list[dict[str, torch.Tensor]],
+        out_embeddings: torch.Tensor,
+        topk_boxes: torch.Tensor,
+    ) -> None:
+        """Gather per-query embeddings for the selected top-k queries and attach them in-place.
+
+        Args:
+            results: Per-image result dicts already populated by :meth:`forward`; mutated in-place.
+            out_embeddings: Raw per-query embeddings with shape ``(B, Q, H)``.
+            topk_boxes: Selected query indices with shape ``(B, K)``, same indices used to gather
+                boxes/masks/keypoints so embeddings line up 1:1 with the returned detections.
+        """
+        for i, res_i in enumerate(results):
+            k_idx = topk_boxes[i]
+            res_i["embeddings"] = torch.gather(
+                out_embeddings[i],
+                0,
+                k_idx.unsqueeze(-1).repeat(1, out_embeddings.shape[-1]),
+            )  # [K, H]
 
     @staticmethod
     def _validate_outputs(

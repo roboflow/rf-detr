@@ -114,6 +114,7 @@ def _make_optimized_keypoint_model() -> tuple[RFDETR, _TupleOutputModelContext]:
     model._optimized_resolution = stub.resolution
     model._optimized_has_been_compiled = False
     model._optimized_dtype = torch.float32
+    model._optimized_return_embeddings = False
     return model, stub
 
 

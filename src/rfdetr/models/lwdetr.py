@@ -226,6 +226,7 @@ class LWDETR(nn.Module):
                 )
 
         self._export = False
+        self._export_return_embeddings = False
 
     def reinitialize_detection_head(self, num_classes: int) -> None:
         """Resize the detection classification head to *num_classes* outputs.
@@ -347,8 +348,12 @@ class LWDETR(nn.Module):
             for keypoint_embed in enc_keypoint_embed:
                 _reset_keypoint_gaussian_output_rows(keypoint_embed)
 
-    def export(self) -> None:
+    def export(self, return_embeddings: bool = False) -> None:
         self._export = True
+        # `forward_export` is traced/compiled with a fixed control flow, so whether
+        # embeddings are appended to the output tuple must be decided at export time
+        # rather than passed as a runtime argument (unlike the eager `forward`).
+        self._export_return_embeddings = return_embeddings
         self._forward_origin = self.forward
         self.forward = self.forward_export  # type: ignore[method-assign,assignment]
         for name, m in self.named_modules():
@@ -456,7 +461,7 @@ class LWDETR(nn.Module):
             class_boost = class_boost[..., :detection_num_classes]
         return class_boost
 
-    def forward(self, samples: NestedTensor, targets: list[dict[str, Tensor]] | None = None) -> dict[str, Any]:
+    def forward(self, samples: NestedTensor, targets: list[dict[str, Tensor]] | None = None, return_embeddings: bool = False) -> dict[str, Any]:
         """The forward expects a NestedTensor, which consists of:
 
            - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
@@ -570,6 +575,16 @@ class LWDETR(nn.Module):
                     outputs_keypoints,
                 )
 
+            if return_embeddings and hs is not None:
+                # hs goes from shape [batch_size, decoder_layers, num_queries, hidden_dim] to [batch_size, num_queries, hidden_dim * decoder_layers]
+                L, B, Q, H = hs.shape
+                hs = hs.permute(1, 2, 0, 3).reshape(B, Q, L * H)
+                out["embeddings"] = hs
+                if keypoint_hs is not None:
+                    L, B, Q, K, H = keypoint_hs.shape
+                    keypoint_hs = keypoint_hs.permute(1, 2, 3, 0, 4).reshape(B, Q, K, L * H)
+                    out["keypoint_embeddings"] = keypoint_hs
+
         if self.two_stage:
             assert self.transformer.enc_out_class_embed is not None
             group_detr = self.group_detr if self.training else 1
@@ -637,6 +652,7 @@ class LWDETR(nn.Module):
 
         outputs_masks = None
         outputs_keypoints = None
+        outputs_embeddings = None
 
         if hs is not None:
             if self.bbox_reparam:
@@ -672,6 +688,10 @@ class LWDETR(nn.Module):
                     ],
                     tensors.shape[-2:],
                 )[0]
+            if self._export_return_embeddings:
+                # Unlike eager `forward`, the exported/traced decoder only returns the last
+                # layer's hidden state (shape [B, Q, H]), so no multi-layer reshape is needed here.
+                outputs_embeddings = hs
         else:
             assert self.two_stage, "if not using decoder, two_stage must be True"
             assert self.transformer.enc_out_class_embed is not None
@@ -693,13 +713,24 @@ class LWDETR(nn.Module):
                     tensors.shape[-2:],
                     skip_blocks=True,
                 )[0]
+            if self._export_return_embeddings:
+                outputs_embeddings = hs_enc
 
+        # Embeddings are always appended as the *last* element of the output tuple (when
+        # present) so their position doesn't depend on whether masks/keypoints are also
+        # returned. Callers must gate on `self._export_return_embeddings` (known at export
+        # time) rather than inferring structure from `len(...)`, since that would be
+        # ambiguous once embeddings coexist with masks or keypoints.
         if outputs_masks is not None:
-            return outputs_coord, outputs_class, outputs_masks
-        if outputs_keypoints is not None:
-            return outputs_coord, outputs_class, outputs_keypoints
+            base_predictions: tuple[Tensor, ...] = (outputs_coord, outputs_class, outputs_masks)
+        elif outputs_keypoints is not None:
+            base_predictions = (outputs_coord, outputs_class, outputs_keypoints)
         else:
-            return outputs_coord, outputs_class
+            base_predictions = (outputs_coord, outputs_class)
+
+        if self._export_return_embeddings:
+            return base_predictions + (outputs_embeddings,)
+        return base_predictions
 
     @torch.jit.unused
     def _set_aux_loss(

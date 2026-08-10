@@ -21,6 +21,19 @@ import torch
 from rfdetr.detr import RFDETR
 
 
+class _IdentityAcceptingReturnEmbeddings(torch.nn.Module):
+    """``torch.nn.Identity``-like stub whose ``forward`` also accepts (and ignores) ``return_embeddings``.
+
+    ``predict()`` always calls the unoptimized model with ``return_embeddings=<bool>``, mirroring the real
+    ``LWDETR.forward`` signature. Plain ``torch.nn.Identity`` doesn't accept that kwarg, so test doubles standing
+    in for the base model use this instead.
+    """
+
+    def forward(self, x: torch.Tensor, return_embeddings: bool = False) -> torch.Tensor:
+        """Return the input unchanged, ignoring ``return_embeddings``."""
+        return x
+
+
 class _BaseFakeRFDETR(RFDETR):
     """RFDETR test double that skips weight downloads and returns a minimal model config.
 
@@ -59,7 +72,7 @@ class _DummyModel:
         """Initialise stub with optional class names, label list, and keypoint flag."""
         self.device = torch.device("cpu")
         self.resolution = 28
-        self.model = torch.nn.Identity()
+        self.model = _IdentityAcceptingReturnEmbeddings()
         self.class_names = class_names
         self._labels = labels if labels is not None else [1]
         self._include_keypoints = include_keypoints
