@@ -5,11 +5,10 @@
 # ------------------------------------------------------------------------
 """Benchmark pageable and pinned CPU-to-CUDA image transfers used by prediction.
 
-The benchmark transfers a list of CHW CPU tensors, matching the per-image transfer
-shape used by ``RFDETR.predict``. It compares blocking pageable copies, pageable
-``non_blocking`` copies, and explicit ``pin_memory`` plus ``non_blocking`` copies.
-It emits JSON so CUDA hosts can retain the raw samples and system context needed to
-compare results without relying on a prose summary.
+The benchmark transfers a list of CHW CPU tensors, matching the per-image transfer shape used by ``RFDETR.predict``. It
+compares blocking pageable copies, pageable ``non_blocking`` copies, and explicit ``pin_memory`` plus ``non_blocking``
+copies. It emits JSON so CUDA hosts can retain the raw samples and system context needed to compare results without
+relying on a prose summary.
 """
 
 from __future__ import annotations
