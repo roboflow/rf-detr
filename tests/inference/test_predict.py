@@ -475,56 +475,115 @@ class TestPredictImagePinning:
     gets no benefit from pinning at all.
     """
 
-    @pytest.mark.gpu
-    def test_cpu_tensor_input_is_pinned_before_cuda_transfer(self) -> None:
-        """A CPU tensor input must be pinned exactly once, on itself, before the CUDA device transfer."""
+    def test_cpu_tensor_inputs_transfer_pinned_buffers_to_cuda_non_blocking(self) -> None:
+        """Every CPU input transfers its own pinned buffer to CUDA and reaches the model boundary.
+
+        The pinning call returns a different tensor, so this catches the regression where ``predict()`` pins an input
+        but transfers the original pageable tensor instead. CUDA allocation is intercepted so this dispatch contract
+        also runs in CPU-only CI; the separate value-parity test exercises the real CUDA transfer.
+        """
         model = _DummyRFDETR()
         model.model.device = torch.device("cuda", 0)
-        tensor = torch.rand(3, 48, 64)
-        real_pin_memory = torch.Tensor.pin_memory
+        source_tensors = [torch.zeros(3, 48, 64), torch.ones(3, 48, 64)]
+        pinned_tensors = [
+            torch.full_like(source_tensors[0], 0.25),
+            torch.full_like(source_tensors[1], 0.75),
+        ]
+        transferred_tensors = [
+            torch.full_like(source_tensors[0], 0.125),
+            torch.full_like(source_tensors[1], 0.875),
+        ]
         real_to = torch.Tensor.to
-        call_order: list[str] = []
+        real_tensor = torch.tensor
+        pinned_inputs: list[torch.Tensor] = []
+        cuda_transfer_sources: list[torch.Tensor] = []
+        model_inputs: list[torch.Tensor] = []
 
-        # Plain functions (unlike ``MagicMock``) are descriptors, so ``self`` binds normally when Python resolves the
-        # attribute on the instance. That lets these spies confirm *which* tensor was pinned/transferred and in what
-        # order, instead of only that the methods were called somewhere during predict().
         def pin_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
-            assert self is tensor, "pin_memory() must be called on the original input tensor"
-            call_order.append("pin_memory")
-            return real_pin_memory(self, *args, **kwargs)
+            """Return the distinct pseudo-pinned buffer paired with a source tensor.
+
+            Examples:
+                This test-local closure requires its enclosing tensors.
+                >>> pin_spy(source_tensors[0])  # doctest: +SKIP
+            """
+            source_index = next(
+                (index for index, source_tensor in enumerate(source_tensors) if self is source_tensor),
+                None,
+            )
+            assert source_index is not None, "pin_memory() must be called on an original input tensor"
+            pinned_inputs.append(self)
+            return pinned_tensors[source_index]
 
         def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
-            call_order.append("to")
+            """Return a distinct pseudo-CUDA buffer for each pinned transfer source.
+
+            Examples:
+                This test-local closure requires its enclosing tensors.
+                >>> to_spy(pinned_tensors[0], torch.device("cuda"), non_blocking=True)  # doctest: +SKIP
+            """
+            if args and isinstance(args[0], torch.device) and args[0].type == "cuda":
+                cuda_transfer_sources.append(self)
+                transfer_index = next(
+                    (index for index, pinned_tensor in enumerate(pinned_tensors) if self is pinned_tensor),
+                    None,
+                )
+                if transfer_index is not None:
+                    assert kwargs.get("non_blocking") is True
+                    return transferred_tensors[transfer_index]
+                return self
             return real_to(self, *args, **kwargs)
 
-        with patch.object(torch.Tensor, "pin_memory", pin_spy), patch.object(torch.Tensor, "to", to_spy):
-            model.predict(tensor)
+        def tensor_spy(data: object, **kwargs: object) -> torch.Tensor:
+            """Redirect CUDA target-size construction to CPU for the simulated transfer.
 
-        assert call_order.count("pin_memory") == 1, f"expected pin_memory() exactly once, got {call_order}"
-        assert "to" in call_order, "expected the pinned tensor to be moved with .to()"
-        assert call_order.index("pin_memory") < call_order.index("to"), (
-            f"pin_memory() must run before the device transfer, got order {call_order}"
+            Examples:
+                This test-local closure requires the captured real tensor constructor.
+                >>> tensor_spy([[48, 64]], device=torch.device("cuda"))  # doctest: +SKIP
+            """
+            device = kwargs.get("device")
+            if isinstance(device, torch.device) and device.type == "cuda":
+                kwargs["device"] = torch.device("cpu")
+            return real_tensor(data, **kwargs)
+
+        def capture_model_input(_module: torch.nn.Module, args: tuple[torch.Tensor, ...]) -> None:
+            """Capture the normalized batch delivered to the model boundary.
+
+            Examples:
+                This test-local closure requires the enclosing capture list.
+                >>> capture_model_input(torch.nn.Identity(), (torch.zeros(1, 3, 28, 28),))  # doctest: +SKIP
+            """
+            model_inputs.append(args[0].detach().clone())
+
+        model_module = model.model.model
+        assert model_module is not None
+        with model_module.register_forward_pre_hook(capture_model_input):
+            with (
+                patch.object(torch.Tensor, "pin_memory", pin_spy),
+                patch.object(torch.Tensor, "to", to_spy),
+                patch.object(torch, "tensor", tensor_spy),
+            ):
+                model.predict(source_tensors)
+
+        assert len(pinned_inputs) == len(source_tensors)
+        assert all(pinned_input is source_tensor for pinned_input, source_tensor in zip(pinned_inputs, source_tensors))
+        assert len(cuda_transfer_sources) == len(pinned_tensors)
+        assert all(
+            cuda_transfer_source is pinned_tensor
+            for cuda_transfer_source, pinned_tensor in zip(cuda_transfer_sources, pinned_tensors)
         )
-
-    @pytest.mark.gpu
-    def test_cpu_tensor_input_to_cuda_transfer_is_non_blocking(self) -> None:
-        """The pinned CPU tensor's transfer to a CUDA-device model must set non_blocking=True."""
-        model = _DummyRFDETR()
-        model.model.device = torch.device("cuda", 0)
-        tensor = torch.rand(3, 48, 64)
-        real_to = torch.Tensor.to
-        captured: list[bool] = []
-
-        def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
-            if self.device.type == "cpu" and args and isinstance(args[0], torch.device) and args[0].type == "cuda":
-                captured.append(bool(kwargs.get("non_blocking", False)))
-            return real_to(self, *args, **kwargs)
-
-        with patch.object(torch.Tensor, "to", to_spy):
-            model.predict(tensor)
-
-        assert captured, "expected predict() to move the pinned tensor to the CUDA device with .to()"
-        assert all(captured), "CPU -> CUDA image transfer must set non_blocking=True"
+        assert len(model_inputs) == 1
+        captured_batch = model_inputs[0].cpu()
+        expected_batch = torch.stack(
+            [
+                (
+                    torch.full((3, model.model.resolution, model.model.resolution), value)
+                    - torch.tensor(model.means)[:, None, None]
+                )
+                / torch.tensor(model.stds)[:, None, None]
+                for value in (0.125, 0.875)
+            ]
+        )
+        torch.testing.assert_close(captured_batch, expected_batch)
 
     @pytest.mark.gpu
     def test_pinned_non_blocking_transfer_preserves_values(self) -> None:
