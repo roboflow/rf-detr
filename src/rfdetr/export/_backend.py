@@ -11,6 +11,8 @@ These are utility functions shared by the export CLI (:mod:`rfdetr.export.main`)
 
 from __future__ import annotations
 
+import importlib
+import sys
 import warnings
 from pathlib import Path
 from typing import Literal, cast
@@ -106,6 +108,45 @@ def _resolve_export_backend(format: str, backend: str | None, soc: str | None) -
     if soc is None:
         raise ValueError(f"backend {backend!r} requires a valid soc, but none was provided.")
     return backend, soc
+
+
+def preload_tensorflow_before_onnx() -> None:
+    """Import TensorFlow before ONNX's C extension so TFLite conversion cannot deadlock.
+
+    ``onnx``'s compiled extension and TensorFlow both statically link Abseil and export its symbols as *weak external*
+    definitions.  The dynamic loader coalesces weak definitions onto the first image that provides them, so whichever
+    library is imported first supplies Abseil's synchronization primitives — including the per-thread semaphore that
+    ``absl::Mutex`` and ``absl::Notification`` block on — to *both* libraries.
+
+    When ONNX wins that race, TensorFlow's executor blocks in ``absl::Notification::WaitForNotification()`` while
+    restoring the SavedModel bundle and is never woken, hanging the export at 0% CPU with no traceback and no
+    ``.tflite``.  ``format="tflite"`` reaches ``onnx2tf`` only after a full ONNX export, so ONNX always wins unless
+    TensorFlow is preloaded here.  See https://github.com/roboflow/rf-detr/issues/1322 for the measured comparison.
+
+    Note:
+        No-op when TensorFlow is already imported, and silent when TensorFlow is not installed — the actionable
+        missing-dependency error is raised later, by
+        :func:`~rfdetr.export._tflite.converter._check_onnx2tf_available`.
+
+    Examples:
+        >>> preload_tensorflow_before_onnx()  # no-op without the tflite extra installed
+    """
+    if "tensorflow" in sys.modules:
+        return
+
+    onnx_already_imported = any(name == "onnx" or name.startswith("onnx.") for name in tuple(sys.modules))
+
+    try:
+        importlib.import_module("tensorflow")
+    except ImportError:
+        return
+
+    if onnx_already_imported:
+        logger.warning(
+            "onnx was imported before TensorFlow. Both statically link Abseil and export its symbols weakly, so "
+            "TensorFlow can block forever while restoring the SavedModel bundle during TFLite conversion. If the "
+            "export hangs with no output, import tensorflow before onnx or run the export in a fresh process."
+        )
 
 
 def _export_executorch_format(

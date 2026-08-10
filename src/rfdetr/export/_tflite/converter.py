@@ -30,6 +30,13 @@ into an equivalent bilinear sampling subgraph built from ``Gather(axis=0)`` on a
 ``batch_dims`` — the only TFLite gather path that is unconditionally supported, neither crashing on
 ``AllocateTensors()`` nor producing wrong values.
 
+Import order
+------------
+TensorFlow must be imported **before** ONNX's C extension, otherwise the TFLite conversion deadlocks while restoring
+the SavedModel bundle.  :func:`~rfdetr.export._backend.preload_tensorflow_before_onnx` documents the shared-Abseil
+cause and is called at the start of :func:`export_tflite` (and, earlier still, by :meth:`rfdetr.detr.RFDETR.export`
+before it runs the ONNX export).
+
 The converter uses the ``onnx2tf`` Python API directly (rather than shelling out to the CLI) so that we can:
 
 * Apply a compatibility shim for older ``onnx2tf`` releases that call
@@ -885,6 +892,13 @@ def export_tflite(
             f"Choose from: {sorted(q for q in _VALID_QUANTIZATIONS if q is not None)}. "
             "Static / full-integer INT8 is not supported; 'int8' is dynamic-range."
         )
+
+    # Load TensorFlow before the GridSample rewrite below imports onnx: a wrong load order makes
+    # TensorFlow's SavedModel restore deadlock (see preload_tensorflow_before_onnx).  RFDETR.export()
+    # already calls this before its ONNX export; repeating it here covers direct export_tflite() calls.
+    from rfdetr.export._backend import preload_tensorflow_before_onnx
+
+    preload_tensorflow_before_onnx()
 
     _check_onnx2tf_available()
 

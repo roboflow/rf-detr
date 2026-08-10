@@ -284,6 +284,11 @@ predictions = model(image)
         may produce slightly different predictions from the original PyTorch model.
     - Installation of the `[tflite]` extra may conflict with existing TensorFlow
         or NumPy versions in your environment.
+    - `onnx` and TensorFlow both bundle Abseil and export its symbols weakly, so whichever
+        loads first supplies them to both. RF-DETR imports TensorFlow first on the TFLite route;
+        if your own code imports `onnx` before calling `export()`, RF-DETR logs a warning and the
+        conversion may block forever while restoring the SavedModel (no error, 0% CPU). Import
+        `tensorflow` before `onnx`, or run the export in a fresh process.
 
     **Recommendations:**
 
