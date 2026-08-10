@@ -11,7 +11,51 @@ import logging
 import os
 import sys
 from types import TracebackType
-from typing import Mapping
+from typing import TYPE_CHECKING, Literal, Mapping, TextIO
+
+if TYPE_CHECKING:
+    # typeshed declares ``logging.StreamHandler`` as ``Generic[AnyStr]`` for type
+    # checkers only; the runtime class does not implement ``__class_getitem__`` on
+    # Python 3.10/3.11 (subscripting it raises ``TypeError``), so the parametrized
+    # form must stay behind ``TYPE_CHECKING``.
+    _StreamHandlerBase = logging.StreamHandler[TextIO]
+else:
+    _StreamHandlerBase = logging.StreamHandler
+
+
+class _RedirectAwareStreamHandler(_StreamHandlerBase):
+    """``StreamHandler`` that re-resolves ``sys.stdout``/``sys.stderr`` on every emitted record.
+
+    Rich's ``Live`` display (used internally by pytorch_lightning's ``RichProgressBar``, see ``trainer.py``'s progress-
+    bar callback wiring) temporarily replaces *both* the ``sys.stdout`` and ``sys.stderr`` module attributes with
+    proxies while training runs (``redirect_stdout``/``redirect_stderr`` default to ``True`` in ``rich.live.Live``), so
+    ordinary writes are printed above the live-rendered progress bar instead of corrupting it. A plain
+    ``StreamHandler(sys.stdout)`` (or ``sys.stderr``) captures that attribute once, at construction time — which happens
+    at import time here, long before any ``Trainer.fit()`` call — so it keeps writing through the pre-redirect stream
+    forever, bypassing Rich's coordination. With ``RichProgressBar(leave=True)`` this corruption is no longer
+    overwritten by the next refresh and shows up as a duplicated/garbled epoch bar in the terminal history whenever a
+    training-time log call fires mid-epoch (e.g. ``BestModelCallback`` logging a new best checkpoint on stdout, or a
+    fallback warning on stderr).
+
+    Tracks the target stream by *name* (``"stdout"`` or ``"stderr"``) rather than by the object passed at construction
+    time, so ``emit`` always resolves the current ``sys.<name>`` — including Rich's proxy.
+    """
+
+    def __init__(self, stream_name: Literal["stdout", "stderr"]) -> None:
+        self._stream_name = stream_name
+        super().__init__(getattr(sys, stream_name))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Refresh ``self.stream`` from the current ``sys.<stream_name>`` before writing *record*.
+
+        Falls back to ``sys.stderr`` when the target attribute is ``None`` (e.g. under ``pythonw``/frozen builds, or a
+        stream closed during interpreter shutdown), matching ``logging.StreamHandler.__init__``'s own ``stream is None``
+        fallback — otherwise a ``None`` stream reaches the base class' ``emit`` and the record is dropped with an
+        ``AttributeError`` from ``logging``'s error handler instead of being written.
+        """
+        stream = getattr(sys, self._stream_name)
+        self.stream = stream if stream is not None else sys.stderr
+        super().emit(record)
 
 
 class _RFDETRLogger(logging.Logger):
@@ -85,12 +129,12 @@ def get_logger(name: str = "rf-detr", level: int | None = None) -> _RFDETRLogger
             "[%(asctime)s] [%(levelname)s] %(name)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         )
 
-        stdout_handler = logging.StreamHandler(sys.stdout)
+        stdout_handler = _RedirectAwareStreamHandler("stdout")
         stdout_handler.setLevel(logging.DEBUG)
         stdout_handler.addFilter(lambda r: r.levelno <= logging.INFO)
         stdout_handler.setFormatter(formatter)
 
-        stderr_handler = logging.StreamHandler(sys.stderr)
+        stderr_handler = _RedirectAwareStreamHandler("stderr")
         stderr_handler.setLevel(logging.WARNING)
         stderr_handler.setFormatter(formatter)
 
