@@ -244,7 +244,7 @@ class TestExportTfliteConverter:
         assert kwargs["output_signaturedefs"] is True
         assert kwargs["non_verbose"] is True
         assert "output_integer_quantized_tflite" not in kwargs
-        assert result == tflite_output / "model_float32.tflite"
+        assert result == tflite_output / "model_fp32.tflite"
 
     def test_custom_input_not_passed_to_convert(
         self,
