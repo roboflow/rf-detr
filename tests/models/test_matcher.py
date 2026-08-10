@@ -1171,6 +1171,7 @@ class TestCompactPathRouting:
             pytest.param(lambda o, t: t[0]["boxes"].__setitem__((0, 1), float("nan")), id="target_box_nan"),
             pytest.param(lambda o, t: t[0]["boxes"].__setitem__((0, 1), float("inf")), id="target_box_inf"),
             pytest.param(lambda o, t: o["pred_boxes"].__setitem__((1, 0, 2), 1e30), id="pred_box_extreme"),
+            pytest.param(lambda o, t: t[1]["boxes"].__setitem__((0, 1), 1e30), id="target_box_extreme"),
         ],
     )
     def test_unsafe_inputs_use_fallback_path(
@@ -1179,10 +1180,10 @@ class TestCompactPathRouting:
         matcher: HungarianMatcher,
         corrupt: Callable[[dict[str, torch.Tensor], list[dict[str, torch.Tensor]]], None],
     ) -> None:
-        """Each of the 7 unsafe-input cases verified in the exploration script (NaN/Inf on predicted logits, predicted
-        boxes, or target boxes, plus one coordinate large enough to risk overflow in ``cdist``/GIoU area terms) must
-        route to the fallback path instead of the compact one, for an otherwise compact-eligible (``bs > 1``, detection-
-        only) batch."""
+        """Each unsafe-input case verified in the exploration script (NaN/Inf on predicted logits, predicted boxes, or
+        target boxes, plus one coordinate large enough to risk overflow in ``cdist``/GIoU area terms) must route to the
+        fallback path instead of the compact one, for an otherwise compact-eligible (``bs > 1``, detection- only)
+        batch."""
         calls = _spy_on_compact_path(monkeypatch)
         outputs, targets = _random_detection_batch(seed=105, sizes=[2, 3])
         corrupt(outputs, targets)
