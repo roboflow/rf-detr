@@ -1053,6 +1053,10 @@ class TestDetectionInputsAreSafeDirectly:
                 lambda o, t: t[1].__setitem__("labels", t[1]["labels"].to("meta")),
                 id="target_label_device_mismatch",
             ),
+            pytest.param(
+                lambda o, t: t[1].__setitem__("labels", t[1]["labels"].to(torch.int32)),
+                id="target_label_dtype_mismatch",
+            ),
         ],
     )
     def test_unsafe_inputs_return_false(
@@ -1061,8 +1065,8 @@ class TestDetectionInputsAreSafeDirectly:
         """Each unsafe case must be caught: a non-finite value or out-of-range coordinate/label anywhere in the batch —
         including a MIDDLE image's target boxes/labels and the LAST image's labels, not just the first, which guards
         against a vectorized check that only looks at one image's tensor instead of the concatenation of all of them —
-        plus a target whose box dtype or label device disagrees with the predictions' (metadata prechecks, no kernel
-        launch).
+        plus a target whose box dtype, label device, or label dtype disagrees with the predictions/batch (metadata
+        prechecks, no kernel launch).
 
         The device case uses ``torch.device('meta')`` rather than requiring real CUDA hardware, since the device-
         mismatch branch is a plain attribute comparison that returns before any value-touching op runs, so ``meta``
@@ -1172,6 +1176,10 @@ class TestCompactPathRouting:
             pytest.param(lambda o, t: t[0]["boxes"].__setitem__((0, 1), float("inf")), id="target_box_inf"),
             pytest.param(lambda o, t: o["pred_boxes"].__setitem__((1, 0, 2), 1e30), id="pred_box_extreme"),
             pytest.param(lambda o, t: t[1]["boxes"].__setitem__((0, 1), 1e30), id="target_box_extreme"),
+            pytest.param(
+                lambda o, t: t[1].__setitem__("labels", t[1]["labels"].to(torch.int32)),
+                id="target_label_dtype_mismatch",
+            ),
         ],
     )
     def test_unsafe_inputs_use_fallback_path(

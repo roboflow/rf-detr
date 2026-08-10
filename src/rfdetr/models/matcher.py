@@ -186,10 +186,11 @@ class HungarianMatcher(nn.Module):
         # silently cast into the padded tensor and matched at whatever precision the batch ordering
         # happens to produce, where the full path's `torch.cat` promotes and then fails loudly.
         # Route those batches to the full path so that loud failure is preserved.
+        target_label_dtype = targets[0]["labels"].dtype
         for target in targets:
             if target["boxes"].dtype != pred_boxes.dtype or target["boxes"].device != pred_boxes.device:
                 return False
-            if target["labels"].device != pred_boxes.device:
+            if target["labels"].device != pred_boxes.device or target["labels"].dtype != target_label_dtype:
                 return False
 
         # `pred_logits` is deliberately not swept here. A non-finite logit either lands in a class
@@ -202,8 +203,9 @@ class HungarianMatcher(nn.Module):
         #
         # Both remaining sweeps concatenate the per-image tensors into one before checking them,
         # instead of looping `isfinite`/`abs`/comparison + `.all()` once per image: each per-image
-        # call launches several tiny kernels, so the loop's cost scales with `bs`. The dtype
-        # precheck above already guarantees every target's boxes share `pred_boxes.dtype`, so
+        # call launches several tiny kernels, so the loop's cost scales with `bs`. The metadata
+        # prechecks above guarantee every target's boxes share `pred_boxes.dtype` and every target's
+        # labels share dtype/device, so the concatenations cannot fail on metadata mismatches.
         # `coordinate_limit` only needs computing once. Concatenation preserves which individual
         # values are non-finite/out-of-range — it does not change what these checks return, only how
         # many kernels they launch.
