@@ -144,7 +144,13 @@ def filter_parent_categories(
         >>> [category["name"] for category in filter_parent_categories(self_parented, {3})]
         ['person', 'car']
     """
-    ordered = sorted(categories, key=lambda category: category.get("id", float("inf")))
+    ordered = sorted(
+        categories,
+        key=lambda category: (
+            _normalized_category_id(category) is None,
+            _normalized_category_id(category) or 0,
+        ),
+    )
     supercategories = [(category.get("supercategory", "none"), category.get("name")) for category in ordered]
     parents = {
         supercategory
@@ -154,7 +160,7 @@ def filter_parent_categories(
     if not parents:
         return ordered
 
-    annotated = annotated_ids or set()
+    annotated = {int(category_id) for category_id in (annotated_ids or set()) if isinstance(category_id, (int, str))}
     kept = [
         category
         for category in ordered

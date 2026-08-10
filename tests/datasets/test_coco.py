@@ -1452,6 +1452,16 @@ class TestFilterParentCategories:
         ]
         assert [category["id"] for category in filter_parent_categories(categories, {1, 2})] == ["1", "2"]
 
+    def test_mixed_and_missing_ids_sort_after_numeric_categories(self) -> None:
+        """Numeric IDs sort consistently even when malformed entries are present."""
+        categories = [
+            {"name": "missing", "supercategory": "none"},
+            {"id": "2", "name": "two", "supercategory": "none"},
+            {"id": 1, "name": "one", "supercategory": "none"},
+        ]
+        result = filter_parent_categories(categories, set())
+        assert [category["name"] for category in result] == ["one", "two", "missing"]
+
     def test_categories_sharing_a_name_are_judged_by_their_own_id(self) -> None:
         """An annotated leaf keeps its slot even when an unannotated grouping node reuses its name."""
         categories = [
