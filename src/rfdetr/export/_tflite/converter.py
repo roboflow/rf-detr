@@ -41,6 +41,8 @@ The converter uses the ``onnx2tf`` Python API directly (rather than shelling out
   :func:`numpy.load` on pickled data without ``allow_pickle=True``.
 * Redirect ``onnx2tf``'s built-in ``download_test_image_data()`` to use
   locally-prepared calibration data instead of downloading from GitHub (which can fail in many environments).
+* Put the running interpreter's script directory on ``PATH`` (:func:`_interpreter_scripts_on_path`) so the bare
+  ``onnxsim`` console script that ``onnx2tf`` shells out to resolves under a non-activated virtual environment.
 
 ``onnx2tf`` calls ``download_test_image_data()`` for its ONNX-vs-TF output validation.  ``_patch_validation_download()``
 redirects that call to local data, avoiding the network dependency.
@@ -69,6 +71,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
+import sysconfig
 import threading
 from pathlib import Path
 from typing import Any, Generator, cast
@@ -548,6 +551,47 @@ def _numpy_allow_pickle() -> Generator[None, None, None]:
 
 
 @contextlib.contextmanager
+def _interpreter_scripts_on_path() -> Generator[None, None, None]:
+    """Temporarily put the running interpreter's script directory first on ``PATH``.
+
+    ``onnx2tf`` simplifies the ONNX graph by shelling out to the bare ``onnxsim`` console script.  The lookup relies on
+    ``PATH``, so it fails whenever RF-DETR runs under a virtual environment that was never *activated*:
+    calling ``<venv>/bin/python`` by absolute path (the norm for subprocess-driven tooling, IDE run
+    configurations, and desktop app integrations) leaves the venv's ``bin`` / ``Scripts`` directory
+    off ``PATH`` even though ``onnxsim`` is installed there.
+
+    Prepending the interpreter's own script directory makes the subprocess lookup resolve to the ``onnxsim``
+    installed by the ``rfdetr[tflite]`` extra, matching the interpreter that is driving the export.
+
+    Yields:
+        ``None``.  ``PATH`` is restored to its previous value on exit, including on exception.
+
+    Note:
+        ``os.environ`` is process-global, so this is not safe against concurrent mutation of ``PATH`` from other
+        threads.  Restore is unconditional rather than merged, so a concurrent ``PATH`` edit made inside the context
+        is lost.
+    """
+    scripts_dirs = [str(Path(sys.executable).parent), sysconfig.get_path("scripts")]
+    original_path = os.environ.get("PATH", "")
+    entries = original_path.split(os.pathsep) if original_path else []
+    missing = [d for d in dict.fromkeys(scripts_dirs) if d and d not in entries]
+
+    if not missing:
+        yield
+        return
+
+    logger.debug(f"Prepending {missing} to PATH so onnx2tf's onnxsim subprocess resolves.")
+    os.environ["PATH"] = os.pathsep.join(missing + entries)
+    try:
+        yield
+    finally:
+        if original_path:
+            os.environ["PATH"] = original_path
+        else:
+            os.environ.pop("PATH", None)
+
+
+@contextlib.contextmanager
 def _patch_validation_download(npy_path: str) -> Generator[None, None, None]:
     """Redirect ``download_test_image_data()`` to use local calibration data.
 
@@ -866,9 +910,10 @@ def export_tflite(
 
     Note:
         This function is **not thread-safe**.  It globally monkey-patches :func:`numpy.load` (via
-        :func:`_numpy_allow_pickle`) and ``onnx2tf.download_test_image_data`` (via :func:`_patch_validation_download`)
-        for the duration of the conversion.  Concurrent calls from multiple threads will interfere with each other.  Run
-        conversion in a subprocess if isolation is required.
+        :func:`_numpy_allow_pickle`), ``onnx2tf.download_test_image_data`` (via :func:`_patch_validation_download`), and
+        ``os.environ["PATH"]`` (via :func:`_interpreter_scripts_on_path`) for the duration of the conversion.
+        Concurrent calls from multiple threads will interfere with each other.  Run conversion in a subprocess if
+        isolation is required.
 
         ``tf_converter`` backend is forced unconditionally (overriding onnx2tf's 2.x ``flatbuffer_direct`` default) to
         avoid a runtime error in the TFLite TopK_V2 kernel.  ``Erf`` and ``GeLU`` ops are substituted with TFLite-native
@@ -953,6 +998,7 @@ def export_tflite(
         with (
             _numpy_allow_pickle(),
             _patch_validation_download(str(calib_npy_path)),
+            _interpreter_scripts_on_path(),
         ):
             from onnx2tf import convert
 
