@@ -308,6 +308,7 @@ class TestCappedLongestMaxSizeRuntimeBehavior:
 
     @staticmethod
     def _resize_output_size(image_hw, resolution, max_size, scale_jitter=False):
+        """Run the wrapped Albumentations resize config and return ``(width, height)``."""
         import numpy as np
         import torch
         from PIL import Image

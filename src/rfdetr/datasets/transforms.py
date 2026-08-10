@@ -995,7 +995,8 @@ class AlbumentationsWrapper:
             ...     "Rotate": {"limit": 45, "p": 0.3},
             ...     "GaussianBlur": {"p": 0.2}
             ... }
-            >>> transforms = AlbumentationsWrapper.from_config(config)
+            >>> transforms = AlbumentationsWrapper.from_config(config)  # doctest: +ELLIPSIS
+            [...] [INFO] rf-detr - Built 3 Albumentations transforms from config
             >>> [t.transform.transforms[0].__class__.__name__ for t in transforms]
             ['HorizontalFlip', 'Rotate', 'GaussianBlur']
 

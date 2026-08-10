@@ -596,6 +596,7 @@ def build_trainer(
         callbacks.append(
             RichProgressBar(
                 refresh_rate=5,
+                leave=True,
                 theme=RichProgressBarTheme(metrics_format=".3e"),
             )
         )
