@@ -12,7 +12,7 @@ This page covers advanced training topics including resuming training, early sto
 
 ## Resume Training
 
-You can resume training from a previously saved checkpoint by passing the path to the `checkpoint.pth` file using the `resume` argument. This is useful when training is interrupted or you want to continue fine-tuning an already partially trained model.
+You can resume training from a previously saved full checkpoint by passing the path to `last.ckpt` using the `resume` argument. This is useful when training is interrupted or you want to continue fine-tuning an already partially trained model.
 
 The training loop will automatically load:
 
@@ -26,9 +26,11 @@ The training loop will automatically load:
     The above applies to the trainer's own full checkpoints (`last.ckpt`, `checkpoint_<epoch>.ckpt`). The best-model
     tracker also writes four lighter `.pth` files — `checkpoint_best_regular.pth`, `checkpoint_best_ema.pth`,
     `checkpoint_best_total.pth`, `last_ema.pth` — that intentionally omit optimizer/scheduler state to stay small.
-    Resuming from one of these restores model weights, epoch count, and callback state (best-score tracking, EMA,
-    early stopping), but the optimizer and LR scheduler always start cold. `resume=` logs a warning when it detects
-    one of these files; pass a full trainer checkpoint instead if you need optimizer/scheduler continuity.
+    New files with matching configured callbacks can restore callback state (EMA and early stopping). Best-score
+    tracking additionally requires `output_dir` to be the exact directory where the checkpoint was written. Files
+    created before callback-state persistence (or with an empty callback section) restart callback state. The optimizer
+    and LR scheduler always start cold. `resume=` logs the applicable warning; pass a full trainer checkpoint instead
+    if you need optimizer/scheduler continuity.
 
 === "Object Detection"
 
@@ -44,7 +46,7 @@ The training loop will automatically load:
         grad_accum_steps=4,
         lr=1e-4,
         output_dir="output",
-        resume="output/checkpoint.pth",
+        resume="output/last.ckpt",
     )
     ```
 
@@ -62,13 +64,13 @@ The training loop will automatically load:
         grad_accum_steps=4,
         lr=1e-4,
         output_dir="output",
-        resume="output/checkpoint.pth",
+        resume="output/last.ckpt",
     )
     ```
 
 !!! tip "Resume vs Pretrain Weights"
 
-    - Use `resume="checkpoint.pth"` to continue training with optimizer state
+    - Use `resume="last.ckpt"` to continue training with optimizer state
     - Use `pretrain_weights="checkpoint_best_total.pth"` when initializing a model to start fresh training from those weights
 
 ---

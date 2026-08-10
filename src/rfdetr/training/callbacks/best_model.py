@@ -140,6 +140,7 @@ class BestModelCallback(ModelCheckpoint):
         trainer: Trainer,
         model_name: str | None = None,
         model_config_dict: object | None = None,
+        share_ema_model_state: bool = False,
     ) -> dict[str, object]:
         """Build a PTL-compatible RF-DETR checkpoint payload.
 
@@ -149,6 +150,7 @@ class BestModelCallback(ModelCheckpoint):
             trainer: Active Lightning trainer providing epoch/step counters.
             model_name: Name of the model class (e.g. ``"RFDETRLarge"``).
             model_config_dict: Serialized architecture config needed to reconstruct schema-dependent models.
+            share_ema_model_state: Whether EMA callback tensors should share storage with top-level EMA weights.
 
         Returns:
             Checkpoint dictionary that supports ``Trainer.fit(ckpt_path=...)`` while intentionally omitting
@@ -167,6 +169,20 @@ class BestModelCallback(ModelCheckpoint):
             state = callback.state_dict()
             if state:
                 callback_states[callback.state_key] = state
+        if share_ema_model_state:
+            # EMA-named checkpoints expose the same average-model weights at the top level
+            # and inside callback state. Reuse those tensors so torch.save stores one copy.
+            for state in callback_states.values():
+                if not isinstance(state, dict):
+                    continue
+                average_state = state.get("average_model_state_dict")
+                if not isinstance(average_state, dict):
+                    continue
+                for key in average_state:
+                    if key.startswith("module.model."):
+                        model_key = key.removeprefix("module.model.")
+                        if model_key in model_state_dict:
+                            average_state[key] = model_state_dict[model_key]
         payload: dict[str, object] = {
             "model": model_state_dict,
             "args": args_dict,
@@ -290,6 +306,7 @@ class BestModelCallback(ModelCheckpoint):
                 trainer,
                 model_name=self._resolve_model_name(pl_module),
                 model_config_dict=self._serialize_model_config(pl_module, ema_state_dict),
+                share_ema_model_state=True,
             ),
             dest,
         )

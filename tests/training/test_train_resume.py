@@ -94,6 +94,10 @@ def _train_with_resume(tmp_path: Path, ckpt_path: Path, output_dir: Path) -> Non
         tmp_path: Pytest temporary directory, used as ``dataset_dir``.
         ckpt_path: Path passed as ``resume=``.
         output_dir: Path passed as ``output_dir=``.
+
+    Examples:
+        >>> _train_with_resume  # doctest: +SKIP
+        Needs patched training dependencies and a pytest tmp_path fixture.
     """
     model = RFDETRNano(pretrain_weights=None, num_classes=3, device="cpu")
     with (
@@ -159,7 +163,7 @@ def test_resume_from_checkpoint_with_callback_state_warns_it_resumes_correctly(
 
     _train_with_resume_capturing_warnings(tmp_path, ckpt_path, output_dir, caplog)
 
-    assert any("will resume correctly" in record.message for record in caplog.records)
+    assert any("matching configured callbacks" in record.message for record in caplog.records)
     assert not any("predates callback-state persistence" in record.message for record in caplog.records)
 
 
@@ -181,7 +185,7 @@ def test_resume_from_checkpoint_without_callback_state_warns_it_restarts_cold(
     _train_with_resume_capturing_warnings(tmp_path, ckpt_path, output_dir, caplog)
 
     assert any("restart cold" in record.message for record in caplog.records)
-    assert not any("will resume correctly" in record.message for record in caplog.records)
+    assert not any("matching configured callbacks" in record.message for record in caplog.records)
 
 
 def test_resume_dirpath_mismatch_warns_best_score_restarts_fresh(

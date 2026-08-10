@@ -152,7 +152,7 @@ class RFDETREMACallback(Callback):
 
         self._average_model = AveragedModel(
             model=pl_module,
-            device=pl_module.device,
+            device=cast(torch.device, pl_module.device),
             use_buffers=self._use_buffers,
             multi_avg_fn=self._multi_avg_fn,
         )
@@ -199,6 +199,10 @@ class RFDETREMACallback(Callback):
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
         """
+        # Lightweight checkpoints deliberately restart optimizer-loop progress at
+        # zero. An absolute saved guard would otherwise skip that many new batches.
+        if trainer.global_step < self._latest_update_step:
+            self._latest_update_step = trainer.global_step
         if self._pending_average_state_dict is not None and self._average_model is not None:
             self._average_model.load_state_dict(self._pending_average_state_dict)
             self._pending_average_state_dict = None

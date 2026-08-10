@@ -347,6 +347,7 @@ class _EMAResumeModule(LightningModule):
         """
         del batch, batch_idx
         self.log("val/mAP_50_95", torch.tensor(self._metric_value), on_step=False, on_epoch=True, prog_bar=False)
+        self.log("val/ema_mAP_50_95", torch.tensor(self._metric_value), on_step=False, on_epoch=True, prog_bar=False)
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         """Return a plain SGD optimizer sufficient to drive ``Trainer.fit()``."""
@@ -365,9 +366,10 @@ class _EMAStartSnapshotProbe(Callback):
         super().__init__()
         self._ema_callback = ema_callback
         self.snapshot: dict[str, Tensor] | None = None
+        self.average_state: dict[str, Tensor] | None = None
 
-    def on_train_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        """Snapshot the averaged-model state dict at the very start of training.
+    def on_train_epoch_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
+        """Snapshot the averaged-model state dict before the first resumed batch.
 
         Args:
             trainer: Unused; required by the ``Callback`` hook signature.
@@ -376,6 +378,9 @@ class _EMAStartSnapshotProbe(Callback):
         del trainer, pl_module
         state = self._ema_callback.get_ema_model_state_dict()
         self.snapshot = {k: v.clone() for k, v in state.items()} if state is not None else None
+        average_model = self._ema_callback._average_model
+        if average_model is not None:
+            self.average_state = {key: value.clone() for key, value in average_model.state_dict().items()}
 
 
 class TestRealTrainerResume:
@@ -461,6 +466,76 @@ class TestRealTrainerResume:
                 '"callbacks" key; without on_train_start applying the pending state, a fresh '
                 "RFDETREMACallback starts averaging from the just-resumed live weights instead"
             )
+
+    def test_last_ema_preserves_full_state_and_resumes_batch_updates(self, tmp_path: Path) -> None:
+        """A ``last_ema.pth`` resume restores EMA state without suppressing new batch updates."""
+        torch.manual_seed(0)
+        x = torch.randn(8, 4)
+        y = torch.randn(8, 1)
+        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+
+        best_cb1 = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+            run_test=False,
+        )
+        ema_cb1 = RFDETREMACallback(decay=0.5, tau=0)
+        trainer_first = Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=4,
+            limit_val_batches=1,
+            callbacks=[best_cb1, ema_cb1],
+            default_root_dir=str(tmp_path),
+        )
+        trainer_first.fit(_EMAResumeModule(), train_dataloaders=train_loader, val_dataloaders=val_loader)
+
+        ckpt_path = tmp_path / "last_ema.pth"
+        checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        expected_state = checkpoint["callbacks"][ema_cb1.state_key]["average_model_state_dict"]
+        expected_updates = int(expected_state["n_averaged"])
+        for name, tensor in checkpoint["model"].items():
+            callback_tensor = expected_state[f"module.model.{name}"]
+            assert tensor.untyped_storage().data_ptr() == callback_tensor.untyped_storage().data_ptr()
+
+        best_cb2 = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+            run_test=False,
+        )
+        ema_cb2 = RFDETREMACallback(decay=0.5, tau=0)
+        probe = _EMAStartSnapshotProbe(ema_cb2)
+        trainer_second = Trainer(
+            # ``last_ema.pth`` is written after the first phase advances the
+            # fit-loop epoch counter to 2, so allow one additional real epoch.
+            max_epochs=3,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=4,
+            limit_val_batches=1,
+            callbacks=[best_cb2, ema_cb2, probe],
+            default_root_dir=str(tmp_path),
+        )
+        trainer_second.fit(
+            _EMAResumeModule(),
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+            ckpt_path=str(ckpt_path),
+        )
+
+        assert probe.average_state is not None
+        for key, expected in expected_state.items():
+            assert torch.equal(probe.average_state[key], expected)
+        assert ema_cb2._average_model is not None
+        assert int(ema_cb2._average_model.n_averaged) == expected_updates + len(train_loader) + 1
 
 
 class TestSuppressTestSwap:

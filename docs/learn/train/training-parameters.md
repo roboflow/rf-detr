@@ -27,14 +27,14 @@ model.train(
 
 These are the essential parameters for training:
 
-| Parameter          | Type            | Default    | Description                                                                                                                                                       |
-| ------------------ | --------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dataset_dir`      | `str`           | Required   | Path to your dataset directory. RF-DETR auto-detects if it's in COCO or YOLO format. See [Dataset Formats](dataset-formats.md).                                   |
-| `output_dir`       | `str`           | `"output"` | Directory where training artifacts (checkpoints, logs) are saved.                                                                                                 |
-| `epochs`           | `int`           | `100`      | Number of full passes over the training dataset.                                                                                                                  |
-| `batch_size`       | `int or "auto"` | `4`        | Number of samples processed per iteration. Higher values require more GPU memory. Set to `"auto"` to probe the GPU for the largest safe batch size automatically. |
-| `grad_accum_steps` | `int`           | `4`        | Accumulates gradients over multiple mini-batches. Use with `batch_size` to achieve effective batch size.                                                          |
-| `resume`           | `str`           | `None`     | Path to a saved checkpoint to continue training. Restores model weights, optimizer state, and scheduler.                                                          |
+| Parameter          | Type            | Default    | Description                                                                                                                                                                             |
+| ------------------ | --------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dataset_dir`      | `str`           | Required   | Path to your dataset directory. RF-DETR auto-detects if it's in COCO or YOLO format. See [Dataset Formats](dataset-formats.md).                                                         |
+| `output_dir`       | `str`           | `"output"` | Directory where training artifacts (checkpoints, logs) are saved.                                                                                                                       |
+| `epochs`           | `int`           | `100`      | Number of full passes over the training dataset.                                                                                                                                        |
+| `batch_size`       | `int or "auto"` | `4`        | Number of samples processed per iteration. Higher values require more GPU memory. Set to `"auto"` to probe the GPU for the largest safe batch size automatically.                       |
+| `grad_accum_steps` | `int`           | `4`        | Accumulates gradients over multiple mini-batches. Use with `batch_size` to achieve effective batch size.                                                                                |
+| `resume`           | `str`           | `None`     | Path to a saved checkpoint to continue training. Full `.ckpt` files restore model, optimizer, and scheduler state; lightweight best `.pth` files restart optimizer and scheduler state. |
 
 ### Understanding Batch Size
 
@@ -129,13 +129,14 @@ For example, `RFDETRSegXLarge` uses `624x624`, which is valid because `624` is d
 
 During training, multiple checkpoints are saved:
 
-| File                          | Description                               |
-| ----------------------------- | ----------------------------------------- |
-| `checkpoint.pth`              | Most recent checkpoint (for resuming)     |
-| `checkpoint_<N>.pth`          | Periodic checkpoint at epoch N            |
-| `checkpoint_best_ema.pth`     | Best validation performance (EMA weights) |
-| `checkpoint_best_regular.pth` | Best validation performance (raw weights) |
-| `checkpoint_best_total.pth`   | Final best model for inference            |
+| File                          | Description                                                  |
+| ----------------------------- | ------------------------------------------------------------ |
+| `last.ckpt`                   | Most recent full checkpoint (for resuming)                   |
+| `checkpoint_<epoch>.ckpt`     | Periodic full checkpoint at an epoch                         |
+| `checkpoint_best_ema.pth`     | Best EMA weights; lightweight callback state when available  |
+| `checkpoint_best_regular.pth` | Best raw weights; lightweight callback state when available  |
+| `checkpoint_best_total.pth`   | Final best model; lightweight callback state when available  |
+| `last_ema.pth`                | Final EMA weights; lightweight callback state when available |
 
 Best validation performance uses the task metric for the model family: box mAP for detection/segmentation and COCO
 keypoint AP for keypoint preview.

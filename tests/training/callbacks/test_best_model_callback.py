@@ -1323,7 +1323,9 @@ class TestBestModelCallback:
         trainer, so it exercises restoration of best-score tracking alone. The warning added to ``RFDETR.train()``
         promises "best-score tracking, EMA, early stopping" all resume correctly together — this test registers
         all three callbacks so ``_build_checkpoint_payload``'s generic ``trainer.callbacks`` loop is actually
-        exercised for the other two, not just ``BestModelCallback`` itself.
+        exercised for the other two, not just ``BestModelCallback`` itself. Lightweight checkpoints reset the
+        optimizer loop's global step, so EMA restores its averaged weights but resets its step guard to permit the
+        first new batch update.
         """
         x = torch.randn(8, 4)
         y = torch.randn(8, 1)
@@ -1394,9 +1396,9 @@ class TestBestModelCallback:
             ckpt_path=str(ckpt_path),
         )
 
-        assert capture.ema_latest_update_step == persisted_ema_step, (
-            "RFDETREMACallback._latest_update_step must be restored from the checkpoint's 'callbacks' "
-            "key; without the fix a fresh callback starts at 0"
+        assert capture.ema_latest_update_step == 0, (
+            "RFDETREMACallback must reset its absolute step guard when a lightweight checkpoint resets "
+            "trainer.global_step, otherwise the resumed phase skips EMA updates"
         )
         assert capture.early_stop_wait_count == persisted_wait_count, (
             "RFDETREarlyStopping.wait_count must be restored from the checkpoint's 'callbacks' key; "

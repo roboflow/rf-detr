@@ -917,16 +917,12 @@ class RFDETR:
             # BestModelCallback's four lightweight checkpoint files (unlike the trainer's own
             # `last.ckpt` / `checkpoint_<epoch>.ckpt`, which retain full PTL state) intentionally
             # omit optimizer/LR-scheduler state to stay small — see
-            # BestModelCallback._build_checkpoint_payload. Model weights, epoch count, and
-            # callback state (EMA average model, early stopping) resume correctly from them,
-            # PROVIDED the file actually has a "callbacks" section — see the has-callback-state
-            # peek below, since checkpoints written before this feature landed don't. best-score
-            # tracking (best_model_score/best_k_models) resumes too, but ONLY when output_dir also
-            # matches the directory the checkpoint was originally written to — see the
-            # dirpath-mismatch warning below, PTL's own ModelCheckpoint.load_state_dict() gate.
-            # Flag the optimizer/scheduler gap explicitly instead of letting it pass silently,
-            # since docs/learn/train/advanced.md promises full optimizer/scheduler restoration on
-            # resume.
+            # BestModelCallback._build_checkpoint_payload. They retain model weights, epoch
+            # metadata, and per-callback state only when the resumed callback configuration
+            # matches the saved keys. Checkpoints written before callback-state persistence have
+            # no such state. Best-score tracking additionally requires exactly the original
+            # output_dir because of PTL's ModelCheckpoint.load_state_dict() dirpath gate.
+            # Flag the optimizer/scheduler gap explicitly instead of letting it pass silently.
             _light_checkpoint_names = frozenset(
                 {"checkpoint_best_regular.pth", "checkpoint_best_ema.pth", "checkpoint_best_total.pth", "last_ema.pth"}
             )
@@ -943,16 +939,18 @@ class RFDETR:
                 _resume_ckpt = _safe_torch_load(config.resume, trust=True)
                 _has_callback_state = bool(_resume_ckpt.get("callbacks"))
                 del _resume_ckpt
+                _resume_dir = Path(config.resume).resolve().parent
+                _configured_output_dir = Path(config.output_dir).resolve()
+                _best_score_restores = _resume_dir == _configured_output_dir
 
                 if _has_callback_state:
                     logger.warning(
                         "resume=%r points at one of BestModelCallback's lightweight checkpoints, "
                         "which intentionally omit optimizer/LR-scheduler state to stay small. "
-                        "Model weights, epoch count, and callback state (best-score tracking, EMA, "
-                        "early stopping) will resume correctly, but the optimizer and LR scheduler "
-                        "restart cold this run. To resume with optimizer/scheduler state too, pass "
-                        "the trainer's full checkpoint instead (e.g. %s/last.ckpt or "
-                        "%s/checkpoint_<epoch>.ckpt).",
+                        "Model weights and epoch count will resume. Callback state can restore only "
+                        "for matching configured callbacks; the optimizer and LR scheduler restart cold. "
+                        "To resume with optimizer/scheduler state too, pass the trainer's full "
+                        "checkpoint instead (e.g. %s/last.ckpt or %s/checkpoint_<epoch>.ckpt).",
                         config.resume,
                         config.output_dir,
                         config.output_dir,
@@ -981,22 +979,19 @@ class RFDETR:
                 # best_model_path, so the first metric logged after resume looks like an automatic
                 # improvement over an empty best_model_score. Only worth flagging when there was
                 # callback state to lose in the first place.
-                if _has_callback_state:
-                    _resume_dir = Path(config.resume).resolve().parent
-                    _configured_output_dir = Path(config.output_dir).resolve()
-                    if _resume_dir != _configured_output_dir:
-                        logger.warning(
-                            "resume=%r was written under %s but output_dir=%r points elsewhere. "
-                            "PyTorch Lightning only restores best_model_score/best_k_models when "
-                            "output_dir matches the checkpoint's original directory exactly — with "
-                            "this output_dir, best-score tracking (BestModelCallback's high-water "
-                            "mark) restarts fresh in the new directory instead of resuming. Set "
-                            "output_dir=%r to keep it.",
-                            config.resume,
-                            _resume_dir,
-                            config.output_dir,
-                            str(_resume_dir),
-                        )
+                if _has_callback_state and not _best_score_restores:
+                    logger.warning(
+                        "resume=%r was written under %s but output_dir=%r points elsewhere. "
+                        "PyTorch Lightning only restores best_model_score/best_k_models when "
+                        "output_dir matches the checkpoint's original directory exactly — with "
+                        "this output_dir, best-score tracking (BestModelCallback's high-water "
+                        "mark) restarts fresh in the new directory instead of resuming. Set "
+                        "output_dir=%r to keep it.",
+                        config.resume,
+                        _resume_dir,
+                        config.output_dir,
+                        str(_resume_dir),
+                    )
 
         trainer_kwargs: dict[str, Any] = {"accelerator": _accelerator}
         if _devices is not None:
