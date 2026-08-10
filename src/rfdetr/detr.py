@@ -2223,6 +2223,14 @@ class RFDETR:
             Legacy keypoint checkpoints with ``args.num_keypoints_per_class[0] == 0`` use a background-first layout:
             slot 0 maps to ``"__background__"`` and foreground slots map to ``class_names`` in order.
 
+        Note:
+            A CPU tensor image is pinned before its transfer to a CUDA-device model, and that transfer is
+            non-blocking; passing a tensor already on the model's accelerator skips this image transfer entirely.
+            But with the default ``include_source_image=True``, capturing ``source_image`` from that same tensor
+            still does its own separate, blocking ``.cpu()`` call earlier in the loop — so an already-CUDA tensor
+            input alone does not make the call fully round-trip-free. Pass ``include_source_image=False`` to avoid
+            that copy as well.
+
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
@@ -2309,7 +2317,19 @@ class RFDETR:
             h, w = img_tensor.shape[1:]
             orig_sizes.append((h, w))
 
-            processed_images.append(img_tensor.to(self.model.device))
+            # A pageable-memory .to(device) copy onto CUDA is slower than a pinned-memory one: the driver has to
+            # pin the source buffer itself before it can start the transfer. Pin it explicitly here — but only for a
+            # CPU tensor headed to an accelerator; pin_memory() raises on a tensor the caller already placed on the
+            # accelerator (a legitimate tensor-input use to skip a host round-trip), and pinning buys nothing when
+            # the target device is the CPU itself.
+            if img_tensor.device.type == "cpu" and self.model.device.type == "cuda":
+                img_tensor = img_tensor.pin_memory()
+            # non_blocking only pays off (and is only safe without an explicit sync) when the destination is CUDA,
+            # matching the transfer_batch_to_device() convention in training/module_data.py: a CUDA-tensor-input ->
+            # CPU-model transfer with non_blocking=True races the copy — the CPU destination is never pinned, so
+            # reads of the tensor's data can observe an in-flight (partially written) copy.
+            non_blocking = self.model.device.type == "cuda"
+            processed_images.append(img_tensor.to(self.model.device, non_blocking=non_blocking))
 
         resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
         # antialias=False matches the antialias-free bilinear resize (cv2.INTER_LINEAR)
