@@ -1270,7 +1270,7 @@ class COCOEvalCallback(Callback):
             # (and PTL's progress bar) is never touched, so there is no flicker.
             if self._output_widget is None:
                 with contextlib.suppress(ImportError):
-                    import ipywidgets as widgets  # type: ignore[import-untyped]
+                    widgets = importlib.import_module("ipywidgets")
 
                     ipython_display = importlib.import_module("IPython.display")
                     display = cast(Callable[..., Any], getattr(ipython_display, "display"))

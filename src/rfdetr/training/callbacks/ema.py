@@ -150,9 +150,13 @@ class RFDETREMACallback(Callback):
         if stage != "fit":
             return
 
+        device = pl_module.device
+        if not isinstance(device, torch.device):
+            raise TypeError(f"Expected a torch.device from the Lightning module, got {type(device).__name__}.")
+
         self._average_model = AveragedModel(
             model=pl_module,
-            device=cast(torch.device, pl_module.device),
+            device=device,
             use_buffers=self._use_buffers,
             multi_avg_fn=self._multi_avg_fn,
         )
