@@ -73,17 +73,18 @@ def _try_import_tensorboard_summary_writer() -> None:
 # pickle can serialise them for the spawned child processes.
 
 
+_InteractiveSpawnLauncher: type[Any] | None = None
+
 if _MultiProcessingLauncher is not None:
 
-    class _InteractiveSpawnLauncher(_MultiProcessingLauncher):
+    class _InteractiveSpawnLauncherImpl(_MultiProcessingLauncher):
         """Spawn launcher that reports itself as interactive-compatible."""
 
         @property
         def is_interactive_compatible(self) -> bool:
             return True
 
-else:
-    _InteractiveSpawnLauncher = None  # type: ignore[misc]
+    _InteractiveSpawnLauncher = _InteractiveSpawnLauncherImpl
 
 
 class _NotebookSpawnDDPStrategy(_DDPStrategy):
