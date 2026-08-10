@@ -220,3 +220,90 @@ class TestPostProcessMasks:
         results = pp(outputs, target_sizes)
 
         assert results[0]["masks"].shape[-2:] == (mask_h, mask_w)
+
+
+class TestAttachEmbeddings:
+    """Tests for :meth:`PostProcess._attach_embeddings` and its wiring into ``forward``."""
+
+    def test_forward_omits_embeddings_key_when_absent_from_outputs(self) -> None:
+        """No 'embeddings' key is added to results when outputs has no 'embeddings' entry."""
+        pp = PostProcess(num_select=2)
+        outputs = {
+            "pred_logits": torch.tensor([[[10.0, -10.0], [9.0, -10.0]]]),
+            "pred_boxes": torch.tensor([[[0.3, 0.3, 0.2, 0.2], [0.6, 0.6, 0.1, 0.1]]]),
+        }
+        target_sizes = torch.tensor([[480, 640]])
+
+        results = pp(outputs, target_sizes)
+
+        assert "embeddings" not in results[0]
+
+    def test_forward_attaches_embeddings_with_expected_shape(self) -> None:
+        """embeddings in outputs is gathered per-selected-query and attached with shape (K, H)."""
+        hidden_dim = 4
+        pp = PostProcess(num_select=2)
+        outputs = {
+            "pred_logits": torch.tensor([[[10.0, -10.0], [9.0, -10.0]]]),
+            "pred_boxes": torch.tensor([[[0.3, 0.3, 0.2, 0.2], [0.6, 0.6, 0.1, 0.1]]]),
+            "embeddings": torch.arange(2 * hidden_dim, dtype=torch.float32).reshape(1, 2, hidden_dim),
+        }
+        target_sizes = torch.tensor([[480, 640]])
+
+        results = pp(outputs, target_sizes)
+
+        assert "embeddings" in results[0]
+        assert results[0]["embeddings"].shape == (2, hidden_dim)
+
+    def test_attach_embeddings_gathers_by_topk_indices(self) -> None:
+        """_attach_embeddings must select embeddings for the exact queries in topk_boxes, in that order."""
+        hidden_dim = 3
+        # 4 queries per image, embeddings identifiable by their first column value == query index.
+        out_embeddings = torch.zeros(1, 4, hidden_dim)
+        for q in range(4):
+            out_embeddings[0, q, 0] = q
+
+        # Select queries [2, 0] (reversed, non-contiguous) as the "top-k" selection.
+        topk_boxes = torch.tensor([[2, 0]])
+        results: list[dict[str, torch.Tensor]] = [{}]
+
+        PostProcess._attach_embeddings(results, out_embeddings, topk_boxes)
+
+        gathered = results[0]["embeddings"]
+        assert gathered.shape == (2, hidden_dim)
+        assert gathered[0, 0].item() == 2
+        assert gathered[1, 0].item() == 0
+
+    def test_attach_embeddings_batch_of_two_images(self) -> None:
+        """Embeddings are gathered independently per image in the batch."""
+        hidden_dim = 2
+        out_embeddings = torch.tensor(
+            [
+                [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]],  # image 0
+                [[10.0, 10.0], [11.0, 11.0], [12.0, 12.0]],  # image 1
+            ]
+        )
+        topk_boxes = torch.tensor([[1, 0], [2, 1]])
+        results: list[dict[str, torch.Tensor]] = [{}, {}]
+
+        PostProcess._attach_embeddings(results, out_embeddings, topk_boxes)
+
+        assert torch.equal(results[0]["embeddings"], torch.tensor([[1.0, 1.0], [0.0, 0.0]]))
+        assert torch.equal(results[1]["embeddings"], torch.tensor([[12.0, 12.0], [11.0, 11.0]]))
+
+    def test_forward_attaches_embeddings_alongside_masks(self) -> None:
+        """embeddings and masks can coexist in the same forward() call without interfering with each other."""
+        batch, num_queries, mask_h, mask_w, hidden_dim, num_classes = 1, 4, 8, 8, 4, 2
+        pp = PostProcess(num_select=4)
+        outputs = {
+            "pred_logits": torch.randn(batch, num_queries, num_classes),
+            "pred_boxes": torch.rand(batch, num_queries, 4),
+            "pred_masks": torch.randn(batch, num_queries, mask_h, mask_w),
+            "embeddings": torch.randn(batch, num_queries, hidden_dim),
+        }
+        target_sizes = torch.tensor([[256, 256]])
+
+        results = pp(outputs, target_sizes)
+
+        assert "masks" in results[0]
+        assert "embeddings" in results[0]
+        assert results[0]["embeddings"].shape == (4, hidden_dim)

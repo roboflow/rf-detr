@@ -27,10 +27,23 @@ class _IdentityAcceptingReturnEmbeddings(torch.nn.Module):
     ``predict()`` always calls the unoptimized model with ``return_embeddings=<bool>``, mirroring the real
     ``LWDETR.forward`` signature. Plain ``torch.nn.Identity`` doesn't accept that kwarg, so test doubles standing
     in for the base model use this instead.
+
+    Examples:
+        >>> stub = _IdentityAcceptingReturnEmbeddings()
+        >>> x = torch.zeros(1)
+        >>> torch.equal(stub(x, return_embeddings=True), x)
+        True
     """
 
+    def __init__(self, hidden_dim: int = 4) -> None:
+        """Initialise the stub, remembering ``hidden_dim`` for the synthetic embeddings tensor."""
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.last_return_embeddings: bool | None = None
+
     def forward(self, x: torch.Tensor, return_embeddings: bool = False) -> torch.Tensor:
-        """Return the input unchanged, ignoring ``return_embeddings``."""
+        """Return the input unchanged, recording ``return_embeddings`` for later assertions."""
+        self.last_return_embeddings = return_embeddings
         return x
 
 
@@ -68,18 +81,22 @@ class _DummyModel:
         labels: list[int] | None = None,
         include_keypoints: bool = False,
         num_keypoints: int = 17,
+        include_embeddings: bool = False,
+        embedding_dim: int = 4,
     ) -> None:
-        """Initialise stub with optional class names, label list, and keypoint flag."""
+        """Initialise stub with optional class names, label list, keypoint flag, and embeddings flag."""
         self.device = torch.device("cpu")
         self.resolution = 28
-        self.model = _IdentityAcceptingReturnEmbeddings()
+        self.model = _IdentityAcceptingReturnEmbeddings(hidden_dim=embedding_dim)
         self.class_names = class_names
         self._labels = labels if labels is not None else [1]
         self._include_keypoints = include_keypoints
         self._num_keypoints = num_keypoints
+        self._include_embeddings = include_embeddings
+        self._embedding_dim = embedding_dim
 
     def postprocess(self, predictions: Any, target_sizes: torch.Tensor) -> list[dict[str, torch.Tensor]]:
-        """Return fixed scores/boxes (and optional keypoints) for every image in the batch."""
+        """Return fixed scores/boxes (and optional keypoints/embeddings) for every image in the batch."""
         batch = target_sizes.shape[0]
         results = []
         for _ in range(batch):
@@ -92,6 +109,11 @@ class _DummyModel:
                 result["keypoints"] = torch.full((len(self._labels), self._num_keypoints, 3), 0.5, dtype=torch.float32)
                 result["keypoint_precision_cholesky"] = torch.full(
                     (len(self._labels), self._num_keypoints, 3), 0.25, dtype=torch.float32
+                )
+            if self._include_embeddings:
+                # Identifiable per-label embeddings: row i is filled with value i, so tests can assert on content.
+                result["embeddings"] = torch.stack(
+                    [torch.full((self._embedding_dim,), float(i)) for i in range(len(self._labels))]
                 )
             results.append(result)
         return results
