@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-07-17T14:17:30">
+  <meta property="article:modified_time" content="2026-08-10T23:25:30">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-07-17T14:17:30",
+    "dateModified": "2026-08-10T23:25:30",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2820,10 +2820,10 @@ pose labels.</p>
 <p>During training, multiple model checkpoints are saved to the output directory:</p>
 <ul>
 <li>
-<p><code>checkpoint.pth</code> – the most recent checkpoint, saved at the end of the latest epoch.</p>
+<p><code>last.ckpt</code> – the most recent full checkpoint, saved at the end of the latest epoch.</p>
 </li>
 <li>
-<p><code>checkpoint_&lt;number&gt;.pth</code> – periodic checkpoints saved every N epochs (default is every 10).</p>
+<p><code>checkpoint_&lt;epoch&gt;.ckpt</code> – periodic full checkpoints saved every N epochs (default is every 10).</p>
 </li>
 <li>
 <p><code>checkpoint_best_ema.pth</code> – best checkpoint based on validation score, using the EMA (Exponential Moving Average) weights. EMA weights are a smoothed version of the model's parameters across training steps, often yielding better generalization.</p>
@@ -2832,7 +2832,9 @@ pose labels.</p>
 <p><code>checkpoint_best_regular.pth</code> – best checkpoint based on validation score, using the raw (non-EMA) model weights.</p>
 </li>
 <li>
-<p><code>checkpoint_best_total.pth</code> – final checkpoint selected for inference and benchmarking. It contains only the model weights (no optimizer state or scheduler) and is chosen as the better of the EMA and non-EMA models based on validation performance.</p>
+<p><code>checkpoint_best_total.pth</code> – final checkpoint selected for inference and benchmarking. It contains model weights,
+    epoch/PTL metadata, and callback state when available, but no optimizer or scheduler state. It is chosen as the
+    better of the EMA and non-EMA models based on validation performance.</p>
 </li>
 </ul>
 <p>For detection and segmentation models, the validation score is box mAP (<code>val/mAP_50_95</code>). For keypoint preview models,
@@ -2843,13 +2845,13 @@ schema so <code>RFDETR.from_checkpoint()</code> can reconstruct the same label/k
 <p>Checkpoint sizes vary based on what they contain:</p>
 <ul>
 <li>
-<p><strong>Training checkpoints</strong> (e.g. <code>checkpoint.pth</code>, <code>checkpoint_&lt;number&gt;.pth</code>) include model weights, optimizer state, scheduler state, and training metadata. Use these to resume training.</p>
+<p><strong>Training checkpoints</strong> (e.g. <code>last.ckpt</code>, <code>checkpoint_&lt;epoch&gt;.ckpt</code>) include model weights, optimizer state, scheduler state, and training metadata. Use these to resume training.</p>
 </li>
 <li>
-<p><strong>Evaluation checkpoints</strong> (e.g. <code>checkpoint_best_ema.pth</code>, <code>checkpoint_best_regular.pth</code>) store only the model weights — either EMA or raw — and are used to track the best-performing models. These may come from different epochs depending on which version achieved the highest validation score.</p>
+<p><strong>Lightweight best checkpoints</strong> (e.g. <code>checkpoint_best_ema.pth</code>, <code>checkpoint_best_regular.pth</code>, <code>last_ema.pth</code>) store model weights, epoch/PTL metadata, and callback state when available, but intentionally omit optimizer and scheduler state. These may come from different epochs depending on which version achieved the highest validation score.</p>
 </li>
 <li>
-<p><strong>Stripped checkpoint</strong> (e.g. <code>checkpoint_best_total.pth</code>) contains only the final model weights and is optimized for inference and deployment.</p>
+<p><strong>Lightweight total checkpoint</strong> (e.g. <code>checkpoint_best_total.pth</code>) keeps the same lightweight resume metadata while selecting the final best model for inference and deployment.</p>
 </li>
 </ul>
 </details>
@@ -2924,7 +2926,7 @@ weights already in memory are evaluated, so no checkpoint file is re-loaded.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 17, 2026 14:17:30 UTC">2026-07-17 14:17:30</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 10, 2026 23:25:30 UTC">2026-08-10 23:25:30</span>
   </span>
 
     
