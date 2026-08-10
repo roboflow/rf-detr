@@ -1690,11 +1690,23 @@ class TestRFDETRTrainNumClassesAutoDetect:
         mock._align_num_classes_from_dataset = lambda ds: RFDETR._align_num_classes_from_dataset(mock, ds)
         return mock
 
-    def _write_coco_categories(self, dataset_dir: Path, categories: list[dict[str, Any]]) -> None:
-        """Write a minimal COCO annotation file with provided categories."""
+    def _write_coco_categories(
+        self,
+        dataset_dir: Path,
+        categories: list[dict[str, Any]],
+        annotated_ids: list[int] | None = None,
+    ) -> None:
+        """Write a minimal COCO annotation file with provided categories and one annotation per annotated id."""
         (dataset_dir / "train").mkdir(parents=True, exist_ok=True)
+        annotations = [
+            {"id": index, "image_id": 1, "category_id": category_id, "bbox": [0, 0, 4, 4], "area": 16, "iscrowd": 0}
+            for index, category_id in enumerate(annotated_ids or [])
+        ]
+        # Annotations reference image_id 1, so a matching "images" entry keeps the fixture COCO-consistent whenever
+        # any annotation is written.
+        images = [{"id": 1, "file_name": "0.jpg", "width": 10, "height": 10}] if annotated_ids else []
         with (dataset_dir / "train" / "_annotations.coco.json").open("w", encoding="utf-8") as f:
-            json.dump({"images": [], "annotations": [], "categories": categories}, f)
+            json.dump({"images": images, "annotations": annotations, "categories": categories}, f)
 
     def _write_roboflow_keypoint_categories(self, dataset_dir: Path, keypoint_count: int) -> None:
         """Write a minimal Roboflow COCO keypoint annotation file."""
@@ -1727,11 +1739,11 @@ class TestRFDETRTrainNumClassesAutoDetect:
 
         assert mock_self.model_config.num_classes == 4
 
-    def test_coco_auto_detect_uses_full_category_mapping_not_leaf_only_names(self, mock_self, patch_lit):
-        """COCO class-count detection must follow ``coco.cats`` semantics.
+    def test_coco_auto_detect_skips_unannotated_grouping_category(self, mock_self, patch_lit):
+        """COCO class-count detection must follow the same category basis as ``cat2label``.
 
-        Regression test for hierarchical COCO datasets where leaf-only class names can undercount categories relative to
-        label remapping.
+        Roboflow COCO exports prepend a grouping category that owns no annotations; it consumes no label index, so it
+        must not inflate the detected class count either.
         """
         dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
         self._write_coco_categories(
@@ -1741,10 +1753,31 @@ class TestRFDETRTrainNumClassesAutoDetect:
                 {"id": 2, "name": "dog", "supercategory": "animal"},
                 {"id": 3, "name": "cat", "supercategory": "animal"},
             ],
+            annotated_ids=[2, 3],
         )
 
         p_mod, p_dm, p_bt, *_ = patch_lit
         load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["dog", "cat"])
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 2
+
+    def test_coco_auto_detect_counts_annotated_parent_category(self, mock_self, patch_lit):
+        """A parent category that owns annotations keeps its label index, so it is counted."""
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_coco_categories(
+            dataset_dir,
+            categories=[
+                {"id": 1, "name": "animal", "supercategory": "none"},
+                {"id": 2, "name": "dog", "supercategory": "animal"},
+                {"id": 3, "name": "cat", "supercategory": "animal"},
+            ],
+            annotated_ids=[1, 2, 3],
+        )
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["animal", "dog", "cat"])
         with p_mod, p_dm, p_bt, load_classes_patch:
             RFDETR.train(mock_self)
 

@@ -38,7 +38,7 @@ from rfdetr.datasets._keypoint_schema import (
     infer_coco_keypoint_schema,
     infer_yolo_keypoint_schema,
 )
-from rfdetr.datasets.coco import is_valid_coco_dataset
+from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categories, is_valid_coco_dataset
 from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -205,6 +205,12 @@ def _move_model_context_to_device(model_ctx: Any) -> None:
         return
     if isinstance(target, str):
         target = torch.device(target)
+    if target.type == "cuda" and target.index is None:
+        # An index-less ``torch.device("cuda")`` never compares equal to the indexed device (e.g. ``cuda:0``) a
+        # real parameter reports once placed, even when they name the same physical GPU — resolve it to the index
+        # ``.to("cuda")`` would actually place on, so the guard below can detect "already on the right device" and
+        # skip re-moving every parameter on every call.
+        target = torch.device(target.type, torch.cuda.current_device())
     first_param = next(inner.parameters(), None)
     if first_param is not None and first_param.device != target:
         # ``predict()`` stacks ``@torch.inference_mode()`` on top of ``@_ensure_model_on_device``, so the deferred
@@ -1726,31 +1732,36 @@ class RFDETR:
             self.model.model = self.model.model.to(device)
 
     @staticmethod
+    def _filtered_coco_categories(dataset_dir: str) -> list[dict[str, Any]]:
+        """Read the train-split COCO categories that survive the grouping-category filter.
+
+        Single source for the category basis shared by :meth:`_load_classes` and
+        :meth:`_detect_num_classes_for_training`: both need the categories of ``train/_annotations.coco.json`` that
+        :func:`~rfdetr.datasets.coco.filter_parent_categories` keeps. Hand-copying that read-and-filter pair into each
+        method lets the two drift apart, and drift here means ``num_classes`` disagreeing with the label space.
+
+        Args:
+            dataset_dir: Path to the dataset root directory containing the ``train`` split.
+
+        Returns:
+            The kept ``categories`` entries ordered by category id — the same basis and order
+            :class:`~rfdetr.datasets.coco.CocoDetection` uses to assign label indices.
+        """
+        coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
+        with open(coco_path, encoding="utf-8") as f:
+            anns = json.load(f)
+        return filter_parent_categories(anns["categories"], annotated_category_ids(anns))
+
+    @staticmethod
     def _load_classes(dataset_dir: str) -> list[str]:
-        """Load class names from a COCO or YOLO dataset directory."""
+        """Load class names from a COCO or YOLO dataset directory.
+
+        Unannotated grouping categories are dropped by :func:`~rfdetr.datasets.coco.filter_parent_categories`, so the
+        returned names are index-aligned with ``CocoDetection.cat2label``. See
+        :meth:`_detect_num_classes_for_training` for the shared filter basis.
+        """
         if is_valid_coco_dataset(dataset_dir):
-            coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
-            with open(coco_path, encoding="utf-8") as f:
-                anns = json.load(f)
-            categories = sorted(anns["categories"], key=lambda category: category.get("id", float("inf")))
-
-            # Catch possible placeholders for no supercategory
-            placeholders = {"", "none", "null", None}
-
-            # If no meaningful supercategory exists anywhere, treat as flat dataset
-            has_any_sc = any(c.get("supercategory", "none") not in placeholders for c in categories)
-            if not has_any_sc:
-                return [c["name"] for c in categories]
-
-            # Mixed/Hierarchical: keep only categories that are not parents of other categories.
-            # Both leaves (with a real supercategory) and standalone top-level nodes (supercategory is a
-            # placeholder) satisfy this condition — neither appears as another category's supercategory.
-            parents = {c.get("supercategory") for c in categories if c.get("supercategory", "none") not in placeholders}
-            has_children = {c["name"] for c in categories if c["name"] in parents}
-
-            class_names = [c["name"] for c in categories if c["name"] not in has_children]
-            # Safety fallback for pathological inputs
-            return class_names or [c["name"] for c in categories]
+            return [category["name"] for category in RFDETR._filtered_coco_categories(dataset_dir)]
 
         yaml_path = RFDETR._yolo_data_file_path(dataset_dir) if is_valid_yolo_dataset(dataset_dir) else None
         if yaml_path is not None:
@@ -1770,21 +1781,19 @@ class RFDETR:
     def _detect_num_classes_for_training(dataset_dir: str, *, use_grouppose_keypoints: bool = False) -> int:
         """Detect the class count using the same category basis as training labels.
 
-        For COCO-style datasets this counts all categories by ``id`` from ``train/_annotations.coco.json`` (matching the
-        remapping based on ``coco.cats`` used by the training datamodule). In keypoint mode it instead counts the
+        For COCO-style datasets this counts the categories of ``train/_annotations.coco.json`` that
+        :func:`~rfdetr.datasets.coco.filter_parent_categories` keeps, which is the same basis
+        :class:`~rfdetr.datasets.coco.CocoDetection` uses to build ``cat2label`` — unannotated grouping categories
+        consume neither a label index nor an output slot. In keypoint mode it instead counts the
         inferred RF-DETR keypoint label slots. In legacy background-first schemas (e.g. ``[0, 17]``) slot ``0`` is
         reserved for classes without keypoints; active-first schemas (e.g. ``[17]``) use normal 0-based indices. For
         YOLO-style datasets it falls back to ``_load_classes``.
         """
         if is_valid_coco_dataset(dataset_dir):
-            coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
             if use_grouppose_keypoints:
+                coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
                 return len(infer_coco_keypoint_schema(coco_path).class_names)
-            with open(coco_path, encoding="utf-8") as f:
-                anns = json.load(f)
-            categories = anns["categories"]
-            cat_by_id = {category["id"]: category for category in categories}
-            return len(cat_by_id)
+            return len({category["id"] for category in RFDETR._filtered_coco_categories(dataset_dir)})
 
         return len(RFDETR._load_classes(dataset_dir))
 
