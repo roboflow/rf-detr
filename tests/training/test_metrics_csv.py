@@ -178,3 +178,66 @@ class TestDetectionMetricsCSV:
             f"({expected_if_divided:.4f}) than the raw criterion output "
             f"({expected_unscaled:.4f}). The division must have been removed."
         )
+
+
+class TestMetricsCSVResume:
+    """metrics.csv must retain history across a resumed run.
+
+    Regression test for #1321: resuming training builds a brand-new ``Trainer``/``CSVLogger`` pointed at the same
+    ``output_dir``. Every row written before the resume must still be present afterward, not just the rows from the
+    resumed epoch(s).
+    """
+
+    def _fit_one_run(self, mc, tc, fake_criterion, max_epochs: int, ckpt_path: str | None):
+        with (
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(fake_criterion, MagicMock(side_effect=_fake_postprocess)),
+            ),
+            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20)),
+            patch(
+                "rfdetr.training.module_model.get_param_dict",
+                side_effect=lambda args, model: _make_param_dicts(model),
+            ),
+        ):
+            module = RFDETRModelModule(mc, tc)
+            datamodule = RFDETRDataModule(mc, tc)
+            trainer = build_trainer(
+                tc,
+                mc,
+                accelerator="cpu",
+                max_epochs=max_epochs,
+                limit_train_batches=2,
+                limit_val_batches=2,
+                log_every_n_steps=1,
+            )
+            trainer.fit(module, datamodule=datamodule, ckpt_path=ckpt_path)
+
+    def test_history_preserved_across_resume(self, base_model_config, base_train_config):
+        """A second build_trainer() call against the same output_dir must APPEND, not overwrite, metrics.csv."""
+        mc = base_model_config()
+        tc = base_train_config(use_ema=False, run_test=False)
+        fake_criterion = _FakeCriterion()
+
+        self._fit_one_run(mc, tc, fake_criterion, max_epochs=1, ckpt_path=None)
+
+        csv_path = Path(tc.output_dir) / "metrics.csv"
+        assert csv_path.exists(), "First run must have written metrics.csv"
+        rows_before_resume = pd.read_csv(csv_path)
+        assert not rows_before_resume.empty, "First run must have logged at least one row"
+
+        last_ckpt = Path(tc.output_dir) / "last.ckpt"
+        assert last_ckpt.exists(), "checkpoint_interval default (10) must still save a `last` checkpoint every epoch"
+
+        self._fit_one_run(mc, tc, fake_criterion, max_epochs=2, ckpt_path=str(last_ckpt))
+
+        rows_after_resume = pd.read_csv(csv_path)
+        assert len(rows_after_resume) > len(rows_before_resume), (
+            "metrics.csv must grow across a resume, not shrink or reset"
+        )
+        assert set(rows_before_resume["step"]).issubset(set(rows_after_resume["step"])), (
+            "Every row logged before the resume must still be present afterward — "
+            'CSVLogger(version="") must not silently delete pre-existing metrics.csv history '
+            "when re-instantiated against the same output_dir."
+        )
