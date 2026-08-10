@@ -205,6 +205,12 @@ def _move_model_context_to_device(model_ctx: Any) -> None:
         return
     if isinstance(target, str):
         target = torch.device(target)
+    if target.type == "cuda" and target.index is None:
+        # An index-less ``torch.device("cuda")`` never compares equal to the indexed device (e.g. ``cuda:0``) a
+        # real parameter reports once placed, even when they name the same physical GPU — resolve it to the index
+        # ``.to("cuda")`` would actually place on, so the guard below can detect "already on the right device" and
+        # skip re-moving every parameter on every call.
+        target = torch.device(target.type, torch.cuda.current_device())
     first_param = next(inner.parameters(), None)
     if first_param is not None and first_param.device != target:
         # ``predict()`` stacks ``@torch.inference_mode()`` on top of ``@_ensure_model_on_device``, so the deferred
