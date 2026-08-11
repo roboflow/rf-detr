@@ -281,8 +281,8 @@ class RFDETRDataModule(LightningDataModule):
         not required to declare one; when the split cannot be resolved the ``val`` split is used instead and the
         substitution is logged, because falling back silently reports validation numbers under the name "test".
 
-        ``coco`` and ``o365`` always fall back to ``val``: their ``test`` split is COCO test-dev, which ships without
-        annotations and therefore cannot be scored locally.
+        ``coco`` falls back to ``val`` because its ``test`` split is unlabelled COCO test-dev and cannot be scored
+        locally.  ``o365`` also falls back because its dataset builder exposes only ``train`` and ``val`` splits.
 
         Args:
             ns: Merged model/train config namespace forwarded to :func:`build_dataset`.
