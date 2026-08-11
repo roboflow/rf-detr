@@ -1202,3 +1202,75 @@ class TestResolveBackendForBuild:
             pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
         ):
             resolve_backend_for_build("gpu", has_cuda=True)
+
+
+class TestPerspectiveFactory:
+    """`Perspective` on the Kornia backend (issue #1252).
+
+    Perspective is the one geometric name from that issue that can be mapped without changing the output resolution,
+    which is what makes it safe here: the GPU augmentation path in ``module_data.on_after_batch_transfer`` rebuilds the
+    batch as ``NestedTensor(img_aug, samples.mask)``, reusing the *pre-augmentation* padding mask. A transform that
+    resizes the image would leave the mask describing a different shape, so the crop names in #1252 stay unsupported.
+    """
+
+    def test_scale_range_collapses_to_upper_bound_and_warns(self):
+        """Kornia takes one distortion_scale, so a (min, max) pair must collapse loudly, not silently."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warn:
+            kornia_transforms.build_kornia_pipeline({"Perspective": {"scale": (0.05, 0.2)}}, 560)
+
+        assert warn.called, "a non-degenerate scale range diverges from the CPU path and must be reported"
+        assert "Perspective" in warn.call_args[0][0]
+
+    def test_scalar_scale_does_not_warn(self):
+        """A scalar is an exact request, not a collapse, so it must stay quiet."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warn:
+            kornia_transforms.build_kornia_pipeline({"Perspective": {"scale": 0.2}}, 560)
+
+        assert not warn.called
+
+    def test_keep_size_false_is_refused_not_ignored(self):
+        """keep_size=False changes the output resolution, which this pipeline cannot express."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        with pytest.raises(ValueError, match="keep_size=False"):
+            build_kornia_pipeline({"Perspective": {"keep_size": False}}, 560)
+
+    def test_output_keeps_the_input_resolution(self):
+        """The property the whole mapping rests on: image height and width survive the transform."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        img = torch.rand(2, 3, 64, 64)
+        boxes = torch.tensor([[[8.0, 8.0, 40.0, 40.0]], [[4.0, 4.0, 20.0, 20.0]]])
+
+        pipeline = build_kornia_pipeline({"Perspective": {"scale": 0.3, "p": 1.0}}, 560)
+        img_out, _ = pipeline(img, boxes)
+
+        assert img_out.shape[-2:] == img.shape[-2:]
+
+    def test_boxes_follow_the_warp(self):
+        """A geometric transform that left the boxes where they were would silently mislabel every image."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        img = torch.rand(1, 3, 64, 64)
+        boxes = torch.tensor([[[8.0, 8.0, 40.0, 40.0]]])
+
+        pipeline = build_kornia_pipeline({"Perspective": {"scale": 0.4, "p": 1.0}}, 560)
+        _, boxes_out = pipeline(img, boxes)
+
+        assert not torch.allclose(boxes_out, boxes), "boxes must be warped with the image"
+
+    def test_crop_names_from_1252_remain_unsupported(self):
+        """Guard for the reason Perspective ships alone: the crops resize, so they are still rejected."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        for name in ("RandomCrop", "CenterCrop", "RandomResizedCrop"):
+            with pytest.raises(ValueError, match="Unknown augmentation key"):
+                build_kornia_pipeline({name: {"height": 32, "width": 32}}, 560)

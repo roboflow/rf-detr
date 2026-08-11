@@ -598,6 +598,45 @@ def _make_clahe(params: dict[str, Any]) -> Any:
     )
 
 
+def _make_perspective(params: dict[str, Any]) -> Any:
+    """Build a ``K.RandomPerspective`` from aug_config ``Perspective`` params.
+
+    Both libraries express the same thing, the corner displacement as a fraction of the image side, so ``scale`` maps
+    onto ``distortion_scale`` directly. The asymmetry is the same one ``GaussNoise`` has: Albumentations samples a
+    fresh fraction per call from a ``(min, max)`` range, while Kornia takes a single fixed value, so a non-degenerate
+    pair collapses to its upper bound and the divergence is logged.
+
+    ``keep_size`` is not accepted. Albumentations defaults it to ``True`` (the output keeps the input's height and
+    width) and Kornia's ``RandomPerspective`` always behaves that way, so the default maps cleanly; ``keep_size=False``
+    would change the output resolution, which this pipeline cannot express (see the note in :func:`build_kornia_pipeline`
+    about size-preserving transforms), so it is refused rather than silently ignored.
+    """
+    from kornia.augmentation import RandomPerspective
+
+    if params.get("keep_size") is False:
+        raise ValueError(
+            "Perspective(keep_size=False) is not supported on the Kornia GPU backend: it changes the output "
+            "resolution, and the GPU augmentation path reuses the batch's padding mask, which assumes the "
+            "image keeps its height and width. Use keep_size=True (the Albumentations default), or run this "
+            "augmentation on the CPU (albumentations) backend."
+        )
+
+    scale = _as_range(params.get("scale", (0.05, 0.1)))
+    if scale[0] != scale[1]:
+        logger.warning(
+            "GPU augmentation (Kornia) uses fixed distortion_scale=%.3f for Perspective "
+            "(Kornia does not support per-sample distortion ranges). "
+            "CPU augmentation (albumentations) samples from [%.3f, %.3f].",
+            scale[1],
+            scale[0],
+            scale[1],
+        )
+    return RandomPerspective(
+        distortion_scale=scale[1],
+        p=params.get("p", 0.5),
+    )
+
+
 _REGISTRY: dict[str, Callable[[dict[str, Any]], Any]] = {
     "HorizontalFlip": _make_horizontal_flip,
     "VerticalFlip": _make_vertical_flip,
@@ -612,6 +651,7 @@ _REGISTRY: dict[str, Callable[[dict[str, Any]], Any]] = {
     "Sharpen": _make_sharpen,
     "Equalize": _make_equalize,
     "CLAHE": _make_clahe,
+    "Perspective": _make_perspective,
 }
 
 
