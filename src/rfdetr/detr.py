@@ -38,7 +38,7 @@ from rfdetr.datasets._keypoint_schema import (
     infer_coco_keypoint_schema,
     infer_yolo_keypoint_schema,
 )
-from rfdetr.datasets.coco import is_valid_coco_dataset
+from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categories, is_valid_coco_dataset
 from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -205,6 +205,12 @@ def _move_model_context_to_device(model_ctx: Any) -> None:
         return
     if isinstance(target, str):
         target = torch.device(target)
+    if target.type == "cuda" and target.index is None:
+        # An index-less ``torch.device("cuda")`` never compares equal to the indexed device (e.g. ``cuda:0``) a
+        # real parameter reports once placed, even when they name the same physical GPU — resolve it to the index
+        # ``.to("cuda")`` would actually place on, so the guard below can detect "already on the right device" and
+        # skip re-moving every parameter on every call.
+        target = torch.device(target.type, torch.cuda.current_device())
     first_param = next(inner.parameters(), None)
     if first_param is not None and first_param.device != target:
         # ``predict()`` stacks ``@torch.inference_mode()`` on top of ``@_ensure_model_on_device``, so the deferred
@@ -790,7 +796,8 @@ class RFDETR:
 
         Returns:
             ``(accelerator, devices)`` where ``devices`` is ``None`` unless an explicit device index is provided (for
-            example ``cuda:1``).
+            example ``cuda:1``). ``device.type == "xla"`` maps to ``accelerator="tpu"`` -- PTL's accelerator
+            registry has no ``"xla"`` string; ``"tpu"`` is its canonical name for the XLA backend.
 
         Raises:
             ValueError: If ``device`` is not a valid torch device specifier.
@@ -811,6 +818,12 @@ class RFDETR:
             return "gpu", [resolved_device.index] if resolved_device.index is not None else None
         if resolved_device.type == "mps":
             return "mps", [resolved_device.index] if resolved_device.index is not None else None
+        if resolved_device.type == "xla":
+            # PTL's accelerator registry has no "xla" string -- "tpu" is its canonical name for
+            # the XLA backend (torch.device("xla") is valid and .type is always "xla", even on
+            # TPU; torch.device("tpu") itself raises RuntimeError). Bridge explicitly instead of
+            # falling through to the auto-detection warning below.
+            return "tpu", [resolved_device.index] if resolved_device.index is not None else None
 
         warnings.warn(
             f"Device type {resolved_device.type!r} is not explicitly mapped to a PyTorch Lightning "
@@ -835,8 +848,9 @@ class RFDETR:
           PE=37 at 560 px) are left unchanged to preserve checkpoint compatibility.
         * ``device`` — normalized via :class:`torch.device` and mapped to PyTorch
           Lightning trainer arguments. ``"cpu"`` becomes ``accelerator="cpu"``; ``"cuda"`` and ``"cuda:N"`` become
-          ``accelerator="gpu"`` and optionally ``devices=[N]``; ``"mps"`` becomes ``accelerator="mps"``. Other valid
-          torch device types fall back to PTL auto-detection and emit a :class:`UserWarning`.
+          ``accelerator="gpu"`` and optionally ``devices=[N]``; ``"mps"`` becomes ``accelerator="mps"``; ``"xla"``
+          becomes ``accelerator="tpu"`` (PTL's canonical name for the XLA backend). Other valid torch device types
+          fall back to PTL auto-detection and emit a :class:`UserWarning`.
         * ``notes`` — optional user-defined metadata (string, dict, list, or
           any JSON-serialisable value) stored under the ``"notes"`` key in every ``.pth`` checkpoint produced during
           training.  The value is also available inside ``args["notes"]`` for full provenance.  Pass the same value to
@@ -1069,7 +1083,10 @@ class RFDETR:
         finally:
             if _moved_to_cpu:
                 _move_model_context_to_device(self.model)
-        datamodule = RFDETRDataModule(self.model_config, config)
+        # `self.model_config` was already restored to its pre-call values by the `finally` block above; a
+        # `resolution` override only survives on `eval_model_config`, which is what actually built `module`.
+        # The datamodule must use the same config so the dataloader resizes to the resolution being evaluated.
+        datamodule = RFDETRDataModule(eval_model_config, config)
 
         # Warn (do not adapt) when the dataset class count differs from the model's head.
         stage = "test" if split == "test" else "validate"
@@ -1727,31 +1744,36 @@ class RFDETR:
             self.model.model = self.model.model.to(device)
 
     @staticmethod
+    def _filtered_coco_categories(dataset_dir: str) -> list[dict[str, Any]]:
+        """Read the train-split COCO categories that survive the grouping-category filter.
+
+        Single source for the category basis shared by :meth:`_load_classes` and
+        :meth:`_detect_num_classes_for_training`: both need the categories of ``train/_annotations.coco.json`` that
+        :func:`~rfdetr.datasets.coco.filter_parent_categories` keeps. Hand-copying that read-and-filter pair into each
+        method lets the two drift apart, and drift here means ``num_classes`` disagreeing with the label space.
+
+        Args:
+            dataset_dir: Path to the dataset root directory containing the ``train`` split.
+
+        Returns:
+            The kept ``categories`` entries ordered by category id — the same basis and order
+            :class:`~rfdetr.datasets.coco.CocoDetection` uses to assign label indices.
+        """
+        coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
+        with open(coco_path, encoding="utf-8") as f:
+            anns = json.load(f)
+        return filter_parent_categories(anns["categories"], annotated_category_ids(anns))
+
+    @staticmethod
     def _load_classes(dataset_dir: str) -> list[str]:
-        """Load class names from a COCO or YOLO dataset directory."""
+        """Load class names from a COCO or YOLO dataset directory.
+
+        Unannotated grouping categories are dropped by :func:`~rfdetr.datasets.coco.filter_parent_categories`, so the
+        returned names are index-aligned with ``CocoDetection.cat2label``. See
+        :meth:`_detect_num_classes_for_training` for the shared filter basis.
+        """
         if is_valid_coco_dataset(dataset_dir):
-            coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
-            with open(coco_path, encoding="utf-8") as f:
-                anns = json.load(f)
-            categories = sorted(anns["categories"], key=lambda category: category.get("id", float("inf")))
-
-            # Catch possible placeholders for no supercategory
-            placeholders = {"", "none", "null", None}
-
-            # If no meaningful supercategory exists anywhere, treat as flat dataset
-            has_any_sc = any(c.get("supercategory", "none") not in placeholders for c in categories)
-            if not has_any_sc:
-                return [c["name"] for c in categories]
-
-            # Mixed/Hierarchical: keep only categories that are not parents of other categories.
-            # Both leaves (with a real supercategory) and standalone top-level nodes (supercategory is a
-            # placeholder) satisfy this condition — neither appears as another category's supercategory.
-            parents = {c.get("supercategory") for c in categories if c.get("supercategory", "none") not in placeholders}
-            has_children = {c["name"] for c in categories if c["name"] in parents}
-
-            class_names = [c["name"] for c in categories if c["name"] not in has_children]
-            # Safety fallback for pathological inputs
-            return class_names or [c["name"] for c in categories]
+            return [category["name"] for category in RFDETR._filtered_coco_categories(dataset_dir)]
 
         yaml_path = RFDETR._yolo_data_file_path(dataset_dir) if is_valid_yolo_dataset(dataset_dir) else None
         if yaml_path is not None:
@@ -1771,21 +1793,19 @@ class RFDETR:
     def _detect_num_classes_for_training(dataset_dir: str, *, use_grouppose_keypoints: bool = False) -> int:
         """Detect the class count using the same category basis as training labels.
 
-        For COCO-style datasets this counts all categories by ``id`` from ``train/_annotations.coco.json`` (matching the
-        remapping based on ``coco.cats`` used by the training datamodule). In keypoint mode it instead counts the
+        For COCO-style datasets this counts the categories of ``train/_annotations.coco.json`` that
+        :func:`~rfdetr.datasets.coco.filter_parent_categories` keeps, which is the same basis
+        :class:`~rfdetr.datasets.coco.CocoDetection` uses to build ``cat2label`` — unannotated grouping categories
+        consume neither a label index nor an output slot. In keypoint mode it instead counts the
         inferred RF-DETR keypoint label slots. In legacy background-first schemas (e.g. ``[0, 17]``) slot ``0`` is
         reserved for classes without keypoints; active-first schemas (e.g. ``[17]``) use normal 0-based indices. For
         YOLO-style datasets it falls back to ``_load_classes``.
         """
         if is_valid_coco_dataset(dataset_dir):
-            coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
             if use_grouppose_keypoints:
+                coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
                 return len(infer_coco_keypoint_schema(coco_path).class_names)
-            with open(coco_path, encoding="utf-8") as f:
-                anns = json.load(f)
-            categories = anns["categories"]
-            cat_by_id = {category["id"]: category for category in categories}
-            return len(cat_by_id)
+            return len({category["id"] for category in RFDETR._filtered_coco_categories(dataset_dir)})
 
         return len(RFDETR._load_classes(dataset_dir))
 
@@ -2393,7 +2413,7 @@ class RFDETR:
                 return_predictions["embeddings"] = embeddings
             predictions = return_predictions
         target_sizes = torch.tensor(orig_sizes, device=self.model.device)
-        results = self.model.postprocess(predictions, target_sizes=target_sizes)
+        results = self.model.postprocess(predictions, target_sizes=target_sizes, score_threshold=threshold)
 
         model_class_names = self.class_names
         n = len(model_class_names)
@@ -2436,6 +2456,11 @@ class RFDETR:
             labels = result["labels"]
             boxes = result["boxes"]
 
+            # INVARIANT: this predicate must stay identical (same operator and threshold) to the
+            # pre-filter in PostProcess._postprocess_masks (`scores_i > score_threshold`), which is
+            # fed `score_threshold=threshold` above. The seg path drops below-threshold masks before
+            # upsampling on the strength of that match; diverging here (e.g. `>=`, per-class, top-k)
+            # would make it silently drop rows this filter keeps — a behaviour change with no failing test.
             keep = scores > threshold
             scores = scores[keep]
             labels = labels[keep]

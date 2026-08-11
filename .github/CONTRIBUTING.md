@@ -452,6 +452,9 @@ def sample_function(param1: int, param2: int = 10) -> bool:
 
 Following this pattern helps ensure consistency throughout the codebase.
 
+> [!IMPORTANT]
+> This applies to helper functions inside `tests/` too, not just `src/`. Any non-`test_*` function used as a test fixture/builder (e.g. `_make_checkpoint`, `_random_xyxy_boxes`) needs a docstring with an `Examples` doctest that exercises it directly — a small, fast check that the helper still does what its callers assume. `pyproject.toml`'s `--doctest-plus` runs doctests across `tests/` for exactly this reason (see the comment above `[tool.pytest.ini_options]`). Skip the live doctest (`# doctest: +SKIP` with a one-line reason) only when the helper cannot run standalone — e.g. it is a `@pytest.fixture` (pytest now hard-fails on direct fixture calls) or needs real GPU/XLA/network hardware.
+
 ## Reporting Bugs
 
 Bug reports are vital for continued improvement. When reporting an issue, please include a clear, minimal reproducible example that demonstrates the problem. Detailed bug reports assist us in swiftly diagnosing and addressing issues.

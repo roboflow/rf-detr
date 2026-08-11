@@ -153,7 +153,7 @@ RF-DETR achieves the best accuracy–latency trade-off among real-time object de
 
 | Architecture               | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
 | -------------------------- | ----------------------- | ------------ | ---------- | ---------- |
-| RF-DETR Keypoint (Preview) | 71.8                    | 9.7          | 126.4      | 576×576    |
+| RF-DETR Keypoint (Preview) | 71.8                    | 9.7          | 40.7       | 576×576    |
 
 > Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric.
 > For the full competitor comparison (YOLO11-pose, YOLO26-pose), see the [Benchmarks](learn/benchmarks.md#keypoints) page.

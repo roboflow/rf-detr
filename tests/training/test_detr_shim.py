@@ -41,12 +41,27 @@ from rfdetr.training.module_model import RFDETRModelModule
 
 
 def _make_model_config(**overrides):
+    """Build a minimal RFDETRBaseConfig for shim tests.
+
+    Examples:
+        >>> config = _make_model_config(num_classes=7)
+        >>> config.device, config.num_classes, config.pretrain_weights
+        ('cpu', 7, None)
+    """
     defaults = dict(pretrain_weights=None, num_classes=3, device="cpu")
     defaults.update(overrides)
     return RFDETRBaseConfig(**defaults)
 
 
 def _make_train_config(tmp_path, **overrides):
+    """Build a minimal TrainConfig for shim tests.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> config = _make_train_config(Path("/tmp/example"), epochs=3)
+        >>> config.epochs, Path(config.dataset_dir).name, Path(config.output_dir).name
+        (3, 'ds', 'out')
+    """
     defaults = dict(
         dataset_dir=str(tmp_path / "ds"),
         output_dir=str(tmp_path / "out"),
@@ -61,6 +76,12 @@ def _make_rfdetr_self(tmp_path, **train_overrides):
     """Return a MagicMock shaped like RFDETR with real config objects.
 
     No spec is used because RFDETR.model is set in __init__ (instance attr) and spec=RFDETR would block access to it.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> mock_self = _make_rfdetr_self(Path('/tmp/example'))
+        >>> mock_self.model_config.device, Path(mock_self.get_train_config().output_dir).name
+        ('cpu', 'out')
     """
     mock = MagicMock()
     mock.model_config = _make_model_config()
@@ -431,6 +452,25 @@ class TestRFDETRTrainPTLAbsorption:
             RFDETR.train(mock_self, device=torch.device("cuda:2"))
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu", devices=[2])
+
+    def test_device_xla_absorbed_as_accelerator_tpu(self, tmp_path, patch_lit):
+        """Device='xla' forwards accelerator='tpu' -- PTL's canonical name for the XLA backend."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, device="xla")
+        config = mock_self.get_train_config.return_value
+        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="tpu")
+        assert "devices" not in mock_bt.call_args.kwargs
+
+    def test_device_torch_device_xla_index_absorbed_as_accelerator_tpu_devices_list(self, tmp_path, patch_lit):
+        """device=torch.device('xla:0') forwards accelerator='tpu' and devices=[0]."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, device=torch.device("xla:0"))
+        config = mock_self.get_train_config.return_value
+        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="tpu", devices=[0])
 
     def test_device_invalid_raises_value_error_with_expected_message(self, tmp_path, patch_lit):
         """Invalid device strings raise a ValueError with the train() device hint."""
@@ -1650,11 +1690,23 @@ class TestRFDETRTrainNumClassesAutoDetect:
         mock._align_num_classes_from_dataset = lambda ds: RFDETR._align_num_classes_from_dataset(mock, ds)
         return mock
 
-    def _write_coco_categories(self, dataset_dir: Path, categories: list[dict[str, Any]]) -> None:
-        """Write a minimal COCO annotation file with provided categories."""
+    def _write_coco_categories(
+        self,
+        dataset_dir: Path,
+        categories: list[dict[str, Any]],
+        annotated_ids: list[int] | None = None,
+    ) -> None:
+        """Write a minimal COCO annotation file with provided categories and one annotation per annotated id."""
         (dataset_dir / "train").mkdir(parents=True, exist_ok=True)
+        annotations = [
+            {"id": index, "image_id": 1, "category_id": category_id, "bbox": [0, 0, 4, 4], "area": 16, "iscrowd": 0}
+            for index, category_id in enumerate(annotated_ids or [])
+        ]
+        # Annotations reference image_id 1, so a matching "images" entry keeps the fixture COCO-consistent whenever
+        # any annotation is written.
+        images = [{"id": 1, "file_name": "0.jpg", "width": 10, "height": 10}] if annotated_ids else []
         with (dataset_dir / "train" / "_annotations.coco.json").open("w", encoding="utf-8") as f:
-            json.dump({"images": [], "annotations": [], "categories": categories}, f)
+            json.dump({"images": images, "annotations": annotations, "categories": categories}, f)
 
     def _write_roboflow_keypoint_categories(self, dataset_dir: Path, keypoint_count: int) -> None:
         """Write a minimal Roboflow COCO keypoint annotation file."""
@@ -1687,11 +1739,11 @@ class TestRFDETRTrainNumClassesAutoDetect:
 
         assert mock_self.model_config.num_classes == 4
 
-    def test_coco_auto_detect_uses_full_category_mapping_not_leaf_only_names(self, mock_self, patch_lit):
-        """COCO class-count detection must follow ``coco.cats`` semantics.
+    def test_coco_auto_detect_skips_unannotated_grouping_category(self, mock_self, patch_lit):
+        """COCO class-count detection must follow the same category basis as ``cat2label``.
 
-        Regression test for hierarchical COCO datasets where leaf-only class names can undercount categories relative to
-        label remapping.
+        Roboflow COCO exports prepend a grouping category that owns no annotations; it consumes no label index, so it
+        must not inflate the detected class count either.
         """
         dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
         self._write_coco_categories(
@@ -1701,10 +1753,31 @@ class TestRFDETRTrainNumClassesAutoDetect:
                 {"id": 2, "name": "dog", "supercategory": "animal"},
                 {"id": 3, "name": "cat", "supercategory": "animal"},
             ],
+            annotated_ids=[2, 3],
         )
 
         p_mod, p_dm, p_bt, *_ = patch_lit
         load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["dog", "cat"])
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 2
+
+    def test_coco_auto_detect_counts_annotated_parent_category(self, mock_self, patch_lit):
+        """A parent category that owns annotations keeps its label index, so it is counted."""
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_coco_categories(
+            dataset_dir,
+            categories=[
+                {"id": 1, "name": "animal", "supercategory": "none"},
+                {"id": 2, "name": "dog", "supercategory": "animal"},
+                {"id": 3, "name": "cat", "supercategory": "animal"},
+            ],
+            annotated_ids=[1, 2, 3],
+        )
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["animal", "dog", "cat"])
         with p_mod, p_dm, p_bt, load_classes_patch:
             RFDETR.train(mock_self)
 

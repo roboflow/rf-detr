@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import torch
 import torch.utils.data
@@ -527,10 +527,14 @@ class RFDETRDataModule(LightningDataModule):
                 scene = sv.BoxAnnotator(thickness=1).annotate(scene=scene, detections=detections)
                 # LabelAnnotator.annotate() is typed as PIL-only, but its @ensure_cv2_image_for_class_method
                 # decorator accepts and returns ndarray at runtime too (see its docstring).
-                scene = sv.LabelAnnotator(text_scale=0.4, text_padding=2).annotate(  # type: ignore[assignment]
-                    scene=scene,  # type: ignore[arg-type]
-                    detections=detections,
-                    labels=labels_text,
+                label_annotator = sv.LabelAnnotator(text_scale=0.4, text_padding=2)
+                scene = cast(
+                    np.ndarray[Any, np.dtype[Any]],
+                    label_annotator.annotate(
+                        scene=cast(Any, scene),
+                        detections=detections,
+                        labels=labels_text,
+                    ),
                 )
 
             keypoints = target.get("keypoints")

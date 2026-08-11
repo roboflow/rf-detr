@@ -215,13 +215,14 @@ def _bilinear_grid_sample(
     padding_mode: str = "zeros",
     align_corners: bool = False,
 ) -> Tensor:
-    """Bilinear grid sampling compatible with all PyTorch backends including MPS.
+    """Bilinear grid sampling compatible with all PyTorch backends including MPS and XLA.
 
     Drop-in replacement for ``F.grid_sample(input, grid, mode='bilinear', ...)``. On MPS, ``F.grid_sample`` backward
-    (``grid_sampler_2d_backward``) is not yet implemented and silently falls back to CPU.  This function uses
-    gather-based index arithmetic — natively supported on every backend — for the MPS path, while delegating to
-    ``F.grid_sample`` on CUDA/CPU where its fused kernel is faster.  The two paths are numerically identical, so model
-    accuracy is unaffected.
+    (``grid_sampler_2d_backward``) is not yet implemented and silently falls back to CPU. On XLA, routing through the
+    gather path avoids relying on ``F.grid_sample``'s XLA decomposition (host-fallback risk on older torch_xla).  This
+    function uses gather-based index arithmetic — natively supported on every backend — for the MPS/XLA path, while
+    delegating to ``F.grid_sample`` on CUDA/CPU where its fused kernel is faster.  The two paths are numerically
+    identical, so model accuracy is unaffected.
 
     Args:
         input: Feature map of shape ``(N, C, H, W)``.
@@ -234,7 +235,7 @@ def _bilinear_grid_sample(
     """
     import torch.nn.functional as F  # noqa: N812
 
-    if input.device.type != "mps":
+    if input.device.type not in ("mps", "xla"):
         return F.grid_sample(input, grid, mode="bilinear", padding_mode=padding_mode, align_corners=align_corners)
 
     if padding_mode not in ("zeros", "border"):

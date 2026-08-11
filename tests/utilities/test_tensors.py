@@ -32,7 +32,14 @@ def _grid_sample_reference(
     padding_mode: str = "zeros",
     align_corners: bool = False,
 ) -> torch.Tensor:
-    """Ground-truth output from F.grid_sample for comparison."""
+    """Ground-truth output from F.grid_sample for comparison.
+
+    Examples:
+        >>> input = torch.arange(4, dtype=torch.float32).reshape(1, 1, 2, 2)
+        >>> grid = torch.zeros(1, 1, 1, 2)
+        >>> _grid_sample_reference(input, grid, align_corners=True)
+        tensor([[[[1.5000]]]])
+    """
     return F.grid_sample(
         input,
         grid,
@@ -47,23 +54,31 @@ def _call_manual_path(
     grid: torch.Tensor,
     padding_mode: str = "zeros",
     align_corners: bool = False,
+    device_type: str = "mps",
 ) -> torch.Tensor:
     """Force the manual gather-based code path by mocking input.device.type.
 
-    The function checks ``input.device.type != "mps"`` to decide which branch to take.  We patch ``torch.Tensor.device``
-    to return an object whose ``.type`` is ``"mps"`` so the manual path runs on a normal CPU tensor.
+    The function checks ``input.device.type not in ("mps", "xla")`` to decide which branch to take.  We patch
+    ``torch.Tensor.device`` to return an object whose ``.type`` is *device_type* so the manual path runs on a normal CPU
+    tensor without needing real MPS/XLA hardware.
+
+    Examples:
+        >>> input = torch.arange(4, dtype=torch.float32).reshape(1, 1, 2, 2)
+        >>> grid = torch.zeros(1, 1, 1, 2)
+        >>> _call_manual_path(input, grid, align_corners=True)
+        tensor([[[[1.5000]]]])
     """
 
-    class _FakeMPSDevice:
-        type = "mps"
+    class _FakeDevice:
+        type = device_type
 
         def __eq__(self, other):
             return False
 
         def __repr__(self):
-            return "device(type='mps')"
+            return f"device(type='{device_type}')"
 
-    with patch.object(torch.Tensor, "device", new_callable=lambda: property(lambda self: _FakeMPSDevice())):
+    with patch.object(torch.Tensor, "device", new_callable=lambda: property(lambda self: _FakeDevice())):
         return _bilinear_grid_sample(input, grid, padding_mode=padding_mode, align_corners=align_corners)
 
 
@@ -74,7 +89,15 @@ def _call_manual_path(
 
 @pytest.fixture
 def seed():
-    """Fix random seed for reproducible grid/input generation."""
+    """Fix random seed for reproducible grid/input generation.
+
+    Examples:
+        Injected by pytest as a fixture argument -- calling it directly (bypassing pytest's fixture machinery)
+        raises ``Failed: Fixture "seed" called directly``, so this is illustrative only, not run here. The
+        underlying effect is a plain ``torch.manual_seed(42)`` call:
+
+        >>> torch.manual_seed(42)  # doctest: +SKIP
+    """
     torch.manual_seed(42)
 
 
@@ -100,7 +123,19 @@ _LOW_PRECISION_GRAD_TOLERANCES = {
 
 
 def _require_grid_sample_dtype_support(dtype: torch.dtype) -> None:
-    """Skip test when current backend does not support grid_sample for dtype."""
+    """Skip test when current backend does not support grid_sample for dtype.
+
+    Examples:
+        Returns silently for a dtype the current backend supports:
+
+        >>> _require_grid_sample_dtype_support(torch.float32)
+
+        For a low-precision dtype the current backend may lack support for (e.g. float16/bfloat16 on some CPU
+        builds), this calls ``pytest.skip`` instead of raising -- not run here since the outcome is
+        backend-dependent.
+
+        >>> _require_grid_sample_dtype_support(torch.float16)  # doctest: +SKIP
+    """
     input = torch.randn(1, 1, 2, 2, dtype=dtype, requires_grad=True)
     grid = (torch.rand(1, 1, 1, 2, dtype=dtype) * 1.6 - 0.8).requires_grad_(True)
     try:
@@ -256,6 +291,52 @@ class TestBilinearGridSampleDelegation:
         actual = _bilinear_grid_sample(input, grid, padding_mode="border", align_corners=False)
 
         torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+
+
+class TestBilinearGridSampleDeviceRouting:
+    """Both MPS and XLA route through the manual gather path (WP1 Task 1.1)."""
+
+    @pytest.mark.parametrize(
+        "device_type",
+        [pytest.param("mps", id="mps"), pytest.param("xla", id="xla")],
+    )
+    def test_gather_path_taken_and_matches_reference(self, seed, device_type):
+        """Manual gather path is taken for mps/xla -- F.grid_sample itself is never called -- and matches it."""
+        input = torch.randn(1, 3, 8, 8)
+        grid = torch.rand(1, 4, 4, 2) * 1.6 - 0.8
+
+        expected = _grid_sample_reference(input, grid, "zeros", False)
+        with patch.object(F, "grid_sample", wraps=F.grid_sample) as mock_grid_sample:
+            actual = _call_manual_path(input, grid, "zeros", False, device_type=device_type)
+
+        mock_grid_sample.assert_not_called()
+        torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+
+
+class TestBilinearGridSampleXLAExecution:
+    """Real torch_xla PJRT execution -- proves the gather path takes no aten:: CPU fallback (T1 lane, WP2)."""
+
+    @pytest.mark.xla
+    def test_gather_path_no_cpu_fallback_on_real_xla_device(self, seed):
+        """On a real XLA device (any PJRT backend) the gather path runs with zero aten:: fallback ops."""
+        pytest.importorskip("torch_xla")
+        import torch_xla.core.xla_model as xm
+        import torch_xla.debug.metrics as met
+
+        device = xm.xla_device()
+        input = torch.randn(1, 3, 8, 8, device=device)
+        grid = torch.rand(1, 4, 4, 2, device=device) * 1.6 - 0.8
+
+        met.clear_all()
+        actual = _bilinear_grid_sample(input, grid, padding_mode="zeros", align_corners=False)
+        xm.mark_step()
+
+        report = met.metrics_report()
+        aten_lines = [line for line in report.splitlines() if "aten::" in line.lower()]
+        assert not aten_lines, "CPU fallback ops detected:\n" + "\n".join(aten_lines)
+
+        expected = _grid_sample_reference(input.cpu(), grid.cpu(), "zeros", False)
+        torch.testing.assert_close(actual.cpu(), expected, atol=1e-5, rtol=1e-5)
 
 
 class TestBilinearGridSampleOutputShape:

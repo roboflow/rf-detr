@@ -64,6 +64,38 @@ class TestPredictReturnTypes:
         assert all(isinstance(result, sv.KeyPoints) for result in batch)
 
 
+class TestPredictScoreThresholdEquivalence:
+    """The mask pre-filter perf path must not change ``predict()``'s final output."""
+
+    def test_mask_prefilter_output_equivalent_at_predict_boundary(self) -> None:
+        """``predict()`` masks/boxes/scores must be bit-identical whether the mask pre-filter runs or not.
+
+        The optimization forwards ``predict(threshold=...)`` into ``PostProcess`` so below-threshold masks skip
+        upsampling. Disabling the pre-filter (``score_threshold=None``) makes ``PostProcess`` upsample every mask and
+        lets ``predict()``'s own downstream filter drop them instead. The two paths must produce the same
+        ``Detections``, proving the pre-filter drops only rows ``predict()`` itself discards — the equivalence that the
+        unit test at ``_postprocess_masks`` level asserts, now verified end-to-end through the real ``predict()`` path.
+        """
+        img = PIL.Image.new("RGB", (640, 640), color=(128, 128, 128))
+        model = RFDETRSegNano(pretrain_weights=None)
+        threshold = 0.3
+
+        optimized = model.predict(img, threshold=threshold)
+
+        real_postprocess = model.model.postprocess
+
+        def postprocess_without_prefilter(predictions, target_sizes, score_threshold=None):
+            return real_postprocess(predictions, target_sizes, score_threshold=None)
+
+        model.model.postprocess = postprocess_without_prefilter
+        baseline = model.predict(img, threshold=threshold)
+
+        np.testing.assert_array_equal(optimized.xyxy, baseline.xyxy)
+        np.testing.assert_array_equal(optimized.confidence, baseline.confidence)
+        np.testing.assert_array_equal(optimized.class_id, baseline.class_id)
+        np.testing.assert_array_equal(optimized.mask, baseline.mask)
+
+
 class _TupleOutputModelContext:
     """Model context whose forward returns a 3-tuple, mirroring ``forward_export()`` after ``inference()``.
 
@@ -79,6 +111,7 @@ class _TupleOutputModelContext:
         self.model = torch.nn.Identity()
         self.inference_model = self._forward
         self.captured_predictions: dict[str, torch.Tensor] | None = None
+        self.captured_score_threshold: float | None = None
 
     def _forward(self, batch_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch = batch_tensor.shape[0]
@@ -88,9 +121,13 @@ class _TupleOutputModelContext:
         return boxes, logits, keypoints
 
     def postprocess(
-        self, predictions: dict[str, torch.Tensor], target_sizes: torch.Tensor
+        self,
+        predictions: dict[str, torch.Tensor],
+        target_sizes: torch.Tensor,
+        score_threshold: float | None = None,
     ) -> list[dict[str, torch.Tensor]]:
         self.captured_predictions = predictions
+        self.captured_score_threshold = score_threshold
         batch = target_sizes.shape[0]
         results = []
         for _ in range(batch):
@@ -106,7 +143,15 @@ class _TupleOutputModelContext:
 
 
 def _make_optimized_keypoint_model() -> tuple[RFDETR, _TupleOutputModelContext]:
-    """Build a ``_DummyRFDETR`` wired to look like it already ran ``inference()``."""
+    """Build a ``_DummyRFDETR`` wired to look like it already ran ``inference()``.
+
+    Examples:
+        >>> model, stub = _make_optimized_keypoint_model()
+        >>> model._is_optimized_for_inference
+        True
+        >>> isinstance(stub, _TupleOutputModelContext)
+        True
+    """
     model = _DummyRFDETR()
     stub = _TupleOutputModelContext()
     model.model = stub
@@ -287,6 +332,15 @@ class TestPredictOptimizedInferenceKeypoints:
         assert isinstance(result, sv.KeyPoints), (
             f"expected sv.KeyPoints for optimized keypoint model, got {type(result)}"
         )
+
+    def test_predict_forwards_threshold_to_postprocess(self) -> None:
+        """Predict must pass its public threshold to post-processing before mask work begins."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model, stub = _make_optimized_keypoint_model()
+
+        model.predict(img, threshold=0.31)
+
+        assert stub.captured_score_threshold == 0.31
 
 
 def test_predict_accepts_image_url() -> None:
@@ -1263,7 +1317,13 @@ class TestPredictNonRGBAutoConvert:
 
 
 def _png_bytes(size: tuple[int, int] = (28, 28)) -> bytes:
-    """Return the PNG-encoded bytes of a solid grey image."""
+    """Return the PNG-encoded bytes of a solid grey image.
+
+    Examples:
+        >>> data = _png_bytes((8, 8))
+        >>> data[:4]
+        b'\\x89PNG'
+    """
     buf = io.BytesIO()
     PIL.Image.new("RGB", size, (128, 128, 128)).save(buf, format="PNG")
     return buf.getvalue()

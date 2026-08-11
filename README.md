@@ -53,7 +53,7 @@ pip install https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip
 
 ## Benchmarks
 
-RF-DETR achieves state-of-the-art results in both object detection and instance segmentation, with benchmarks reported on Microsoft COCO and RF100-VL (RF100-VL for detection only). The charts and tables below compare RF-DETR against other top real-time models across accuracy and latency for detection and segmentation. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. For full benchmarking methodology and reproducibility details, see [roboflow/sab](https://github.com/roboflow/single_artifact_benchmarking).
+RF-DETR achieves state-of-the-art results in both object detection and instance segmentation, with benchmarks reported on Microsoft COCO and RF100-VL (RF100-VL for detection only). The charts and tables below compare RF-DETR against other top real-time models across accuracy and latency for detection and segmentation. All COCO accuracy numbers are measured in-house for every model shown, computed with pycocotools in SAB over the full 5,000-image `val2017` split, so every row is directly comparable and may differ from vendor-reported figures. The sole exception is rows marked †, which are quoted from the original authors' paper and were not measured in SAB. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Parameter counts are deployment (fused) `nn.Module` parameter counts (`model.parameters()`, not the raw tensor count of the saved checkpoint), except rows marked †, which are the authors' reported counts. For full benchmarking methodology and reproducibility details, see [roboflow/sab](https://github.com/roboflow/single_artifact_benchmarking).
 
 ### Detection
 
@@ -92,6 +92,9 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 |   D-FINE-M    |         72.6         |          55.0           |          85.5           |            60.6            |     5.4      |    19.2    |  640x640   | Apache 2.0 |
 |   D-FINE-L    |         74.9         |          57.2           |          86.4           |            61.6            |     7.5      |    31.0    |  640x640   | Apache 2.0 |
 |   D-FINE-X    |         76.8         |          59.3           |          86.9           |            62.2            |     11.5     |    62.0    |  640x640   | Apache 2.0 |
+|    SAM 3 †    |          —           |            —            |            —            |            61.6            |      —       |    ~850    | 1008x1008  |    N/A     |
+
+> † Reported by the SAM 3 authors ([arXiv:2511.16719](https://arxiv.org/abs/2511.16719), Table 36), **not** measured by us in SAB. The value is SAM 3 fine-tuned on the full RF100-VL training set, which is the same setting as the RF100VL columns above — SAM 3's paper reports LW-DETR-m at 59.8 on this benchmark, matching our own measurement, so the numbers line up. Dashes mark results SAM 3 does not report under this protocol. Parameter count is the paper's stated ~850 M (~450 M vision + ~300 M text encoders + ~100 M detector/tracker).
 
 </details>
 
@@ -139,19 +142,19 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 <br>
 
-|        Architecture        | COCO AP<sub>50:95</sub> | Latency (ms) |  License   |
-| :------------------------: | :---------------------: | :----------: | :--------: |
-| RF-DETR Keypoint (Preview) |          71.8           |     9.7      | Apache 2.0 |
-|       YOLO11-pose N        |          48.9           |     3.2      |  AGPL-3.0  |
-|       YOLO11-pose S        |          57.5           |     3.4      |  AGPL-3.0  |
-|       YOLO11-pose M        |          64.2           |     5.2      |  AGPL-3.0  |
-|       YOLO11-pose L        |          65.2           |     6.6      |  AGPL-3.0  |
-|       YOLO11-pose X        |          68.6           |     10.6     |  AGPL-3.0  |
-|       YOLO26-pose N        |          55.9           |     1.9      |  AGPL-3.0  |
-|       YOLO26-pose S        |          62.0           |     2.7      |  AGPL-3.0  |
-|       YOLO26-pose M        |          68.0           |     4.6      |  AGPL-3.0  |
-|       YOLO26-pose L        |          69.2           |     5.9      |  AGPL-3.0  |
-|       YOLO26-pose X        |          71.0           |     9.8      |  AGPL-3.0  |
+|        Architecture        | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) |  License   |
+| :------------------------: | :---------------------: | :----------: | :--------: | :--------: |
+| RF-DETR Keypoint (Preview) |          71.8           |     9.7      |    40.7    | Apache 2.0 |
+|       YOLO11-pose N        |          48.9           |     3.2      |    2.9     |  AGPL-3.0  |
+|       YOLO11-pose S        |          57.5           |     3.4      |    9.9     |  AGPL-3.0  |
+|       YOLO11-pose M        |          64.2           |     5.2      |    20.9    |  AGPL-3.0  |
+|       YOLO11-pose L        |          65.2           |     6.6      |    26.2    |  AGPL-3.0  |
+|       YOLO11-pose X        |          68.6           |     10.6     |    58.8    |  AGPL-3.0  |
+|       YOLO26-pose N        |          55.9           |     1.9      |    2.9     |  AGPL-3.0  |
+|       YOLO26-pose S        |          62.0           |     2.7      |    10.4    |  AGPL-3.0  |
+|       YOLO26-pose M        |          68.0           |     4.6      |    21.5    |  AGPL-3.0  |
+|       YOLO26-pose L        |          69.2           |     5.9      |    25.9    |  AGPL-3.0  |
+|       YOLO26-pose X        |          71.0           |     9.8      |    57.6    |  AGPL-3.0  |
 
 </details>
 
@@ -288,7 +291,7 @@ key_points = model.predict("image.jpg", threshold=0.5)
 
 |        Size        |  RF-DETR package class  | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :----------------: | :---------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
-| Keypoint (Preview) | `RFDETRKeypointPreview` |          71.8           |     9.7      |   126.4    |  576x576   | Apache 2.0 |
+| Keypoint (Preview) | `RFDETRKeypointPreview` |          71.8           |     9.7      |    40.7    |  576x576   | Apache 2.0 |
 
 ### Train Models
 

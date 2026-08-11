@@ -95,8 +95,13 @@ class _DummyModel:
         self._include_embeddings = include_embeddings
         self._embedding_dim = embedding_dim
 
-    def postprocess(self, predictions: Any, target_sizes: torch.Tensor) -> list[dict[str, torch.Tensor]]:
-        """Return fixed scores/boxes (and optional keypoints/embeddings) for every image in the batch."""
+    def postprocess(
+        self,
+        predictions: Any,
+        target_sizes: torch.Tensor,
+        score_threshold: float | None = None,
+    ) -> list[dict[str, torch.Tensor]]:
+        """Return fixed scores/boxes (and optional keypoints) for every image in the batch."""
         batch = target_sizes.shape[0]
         results = []
         for _ in range(batch):

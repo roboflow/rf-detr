@@ -111,8 +111,13 @@ def infer_transforms(size: tuple[int, int] = _DEFAULT_INPUT_SIZE) -> Any:
             :data:`_DEFAULT_INPUT_SIZE` for dynamic-axis models where a static size cannot be read.
 
     Returns:
-        A ``torchvision.transforms.v2.Compose`` that resizes, tensorizes, normalizes, and returns
+        A ``torchvision.transforms.v2.Compose`` that tensorizes, resizes, normalizes, and returns
         the image as a contiguous tensor.
+
+    Note:
+        Tensorize-then-resize with ``antialias=False`` mirrors ``RFDETR.predict()``'s preprocessing
+        (``detr.py``): resizing the PIL image first would apply PIL's adaptive antialias filter and
+        benchmark the model on inputs predict() never produces.
     """
     from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
@@ -120,9 +125,9 @@ def infer_transforms(size: tuple[int, int] = _DEFAULT_INPUT_SIZE) -> Any:
 
     return Compose(
         [
-            Resize(size),
             ToImage(),
             ToDtype(torch.float32, scale=True),
+            Resize(size, antialias=False),
             Normalize(),
             _ensure_contiguous,
         ]
@@ -158,7 +163,7 @@ def post_process(
     topk_boxes = topk_indexes // out_logits.shape[2]
     labels = topk_indexes % out_logits.shape[2]
     boxes = box_cxcywh_to_xyxy(out_bbox)
-    boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1, 1, 4))
+    boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).expand(-1, -1, 4))
 
     # and from relative [0, 1] to absolute [0, height] coordinates
     img_h, img_w = target_sizes.unbind(1)

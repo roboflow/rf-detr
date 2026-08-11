@@ -19,6 +19,8 @@ from rfdetr.training.callbacks import (
     BestModelCallback,
     COCOEvalCallback,
     DropPathCallback,
+    GPUMemoryRichProgressBar,
+    GPUMemoryTQDMProgressBar,
     RFDETREarlyStopping,
     RFDETREMACallback,
 )
@@ -35,6 +37,8 @@ __all__ = [
     "BestModelCallback",
     "COCOEvalCallback",
     "DropPathCallback",
+    "GPUMemoryRichProgressBar",
+    "GPUMemoryTQDMProgressBar",
     "RFDETRCli",
     "RFDETRDataModule",
     "RFDETREMACallback",

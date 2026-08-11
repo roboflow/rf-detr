@@ -206,6 +206,7 @@ notebooks/
 # tracking work in progress
 .codex/logs
 .developments/
+.notes/
 .plans/
 .reports/
 .temp/
@@ -227,3 +228,9 @@ docs/cookbooks/*.py
 # export artifacts written by the export cookbooks when run in place (.pte/.trt weigh 100+ MB)
 docs/cookbooks/export_executorch/
 docs/cookbooks/export_tensorrt/
+
+# deprecated code
+visualizer
+
+# VSCode metadata directory
+.vscode

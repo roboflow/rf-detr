@@ -27,7 +27,18 @@ from rfdetr import RFDETR, RFDETRNano
 
 
 def _num_classes(dataset_dir: Path) -> int:
-    """Return the COCO category count from a Roboflow-style dataset's train split."""
+    """Return the COCO category count from a Roboflow-style dataset's train split.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as tmp:
+        ...     root = Path(tmp)
+        ...     train = root / "train"
+        ...     train.mkdir()
+        ...     _ = (train / "_annotations.coco.json").write_text('{"categories": [{}, {}]}')
+        ...     _num_classes(root)
+        2
+    """
     annotations = json.loads((dataset_dir / "train" / "_annotations.coco.json").read_text())
     return len(annotations["categories"])
 
@@ -139,6 +150,11 @@ def _mock_trainer() -> Any:
     """Return a MagicMock standing in for the PTL ``Trainer`` returned by ``build_trainer``.
 
     ``test``/``validate`` return a one-element metrics list so ``evaluate()`` can index ``results[0]``.
+
+    Examples:
+        >>> trainer = _mock_trainer()
+        >>> hasattr(trainer, "test") and hasattr(trainer, "validate")
+        True
     """
     trainer = MagicMock()
     trainer.test.return_value = [{"test/mAP_50_95": 0.0}]
@@ -326,6 +342,71 @@ class TestEvaluateResolutionOverride:
         assert "test/mAP_50_95" in metrics
         assert model.model_config.resolution == original_resolution
         assert model.model_config.positional_encoding_size == original_pe
+
+    def test_resolution_override_resizes_real_batches(self, synthetic_shape_dataset_dir: Path, tmp_path: Path) -> None:
+        """evaluate(resolution=...) must actually feed the model images resized to the override, repeatably.
+
+        Unlike ``test_resolution_override_evaluates`` above, the PTL trainer is NOT mocked here: this runs a real
+        ``trainer.test`` pass and inspects the pixel tensor shape ``RFDETRModelModule.test_step`` receives, which is
+        what the datamodule (not the PE-interpolated model) actually controls. A datamodule built from the wrong config
+        would silently keep evaluating at the original resolution while the model's positional embeddings were
+        interpolated for the override, invalidating any resolution-vs-mAP comparison.
+
+        Runs three sequential calls on the same model instance: a first override, a second and distinct override, then
+        a call with no override at all. This checks that the fix isn't specific to the first transition and that it
+        releases the datamodule back to the model's original resolution afterwards, not just to the previous override.
+        """
+        from rfdetr.training import RFDETRModelModule
+
+        model = RFDETRNano(
+            pretrain_weights=None,
+            num_classes=_num_classes(synthetic_shape_dataset_dir),
+            device="cpu",
+        )
+        original_resolution = model.model_config.resolution
+        block_size = model.model_config.patch_size * model.model_config.num_windows
+        first_override = block_size * (original_resolution // block_size + 1)
+        second_override = block_size * (original_resolution // block_size + 2)
+
+        observed_shapes: list[tuple[int, int]] = []
+        original_test_step = RFDETRModelModule.test_step
+
+        def recording_test_step(self: RFDETRModelModule, batch: Any, batch_idx: int) -> Any:
+            """Spy on ``test_step`` and record the pixel shape of each batch it actually receives."""
+            observed_shapes.append(tuple(batch[0].tensors.shape[-2:]))
+            return original_test_step(self, batch, batch_idx)
+
+        def run_and_get_shape(resolution: int | None, output_dir: Path) -> tuple[int, int]:
+            """Run one evaluate() call, spying on test_step, and return the single uniform batch shape it saw."""
+            observed_shapes.clear()
+            kwargs: dict[str, Any] = {"resolution": resolution} if resolution is not None else {}
+            with patch.object(RFDETRModelModule, "test_step", recording_test_step):
+                model.evaluate(
+                    dataset_dir=str(synthetic_shape_dataset_dir),
+                    split="test",
+                    device="cpu",
+                    output_dir=str(output_dir),
+                    batch_size=4,
+                    num_workers=0,
+                    tensorboard=False,
+                    **kwargs,
+                )
+            assert observed_shapes, "test_step was never called"
+            shapes = set(observed_shapes)
+            assert len(shapes) == 1, f"evaluate(resolution={resolution}) fed inconsistently shaped batches: {shapes}"
+            return next(iter(shapes))
+
+        assert run_and_get_shape(first_override, tmp_path / "o1") == (first_override, first_override), (
+            f"evaluate(resolution={first_override}) did not resize batches to the override."
+        )
+        assert run_and_get_shape(second_override, tmp_path / "o2") == (second_override, second_override), (
+            f"evaluate(resolution={second_override}) did not resize batches to the override on a second, distinct "
+            "call — the datamodule fix must not be specific to the first transition."
+        )
+        assert run_and_get_shape(None, tmp_path / "o3") == (original_resolution, original_resolution), (
+            "evaluate() without a resolution override did not return to the model's original resolution after "
+            "two prior overrides — the datamodule must not stay pinned to the last override."
+        )
 
 
 def test_auto_batch_probe_not_invoked(nano_model: RFDETRNano, tmp_path: Path) -> None:

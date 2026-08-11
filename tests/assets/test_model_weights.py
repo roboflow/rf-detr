@@ -20,6 +20,7 @@ class TestGetModelCacheDir:
     def test_default_when_rf_home_not_set(self, monkeypatch):
         """Returns ~/.roboflow/models when RF_HOME env var is absent."""
         monkeypatch.delenv("RF_HOME", raising=False)
+        monkeypatch.delenv("ROBOFLOW_HOME", raising=False)
         expected = os.path.normpath(os.path.expanduser("~/.roboflow/models"))
         assert get_model_cache_dir() == expected
 
@@ -38,7 +39,34 @@ class TestGetModelCacheDir:
     def test_returns_string(self, monkeypatch):
         """Return value is always a str, not a Path."""
         monkeypatch.delenv("RF_HOME", raising=False)
+        monkeypatch.delenv("ROBOFLOW_HOME", raising=False)
         assert isinstance(get_model_cache_dir(), str)
+
+    def test_roboflow_home_alias_used_when_rf_home_absent(self, monkeypatch, tmp_path):
+        """ROBOFLOW_HOME acts as an alias for RF_HOME when RF_HOME is unset."""
+        monkeypatch.delenv("RF_HOME", raising=False)
+        monkeypatch.setenv("ROBOFLOW_HOME", str(tmp_path))
+        assert get_model_cache_dir() == str(tmp_path)
+
+    def test_rf_home_wins_when_both_set(self, monkeypatch, tmp_path):
+        """RF_HOME is canonical and takes precedence over ROBOFLOW_HOME when both are set."""
+        rf_home = tmp_path / "rf_home"
+        monkeypatch.setenv("RF_HOME", str(rf_home))
+        monkeypatch.setenv("ROBOFLOW_HOME", str(tmp_path / "roboflow_home"))
+        assert get_model_cache_dir() == str(rf_home)
+
+    def test_empty_rf_home_falls_through_to_roboflow_home(self, monkeypatch, tmp_path):
+        """An empty RF_HOME is treated as unset and falls through to ROBOFLOW_HOME."""
+        monkeypatch.setenv("RF_HOME", "")
+        monkeypatch.setenv("ROBOFLOW_HOME", str(tmp_path))
+        assert get_model_cache_dir() == str(tmp_path)
+
+    def test_empty_roboflow_home_falls_through_to_default(self, monkeypatch):
+        """An empty ROBOFLOW_HOME is treated as unset and falls back to the default."""
+        monkeypatch.delenv("RF_HOME", raising=False)
+        monkeypatch.setenv("ROBOFLOW_HOME", "")
+        expected = os.path.normpath(os.path.expanduser("~/.roboflow/models"))
+        assert get_model_cache_dir() == expected
 
 
 def test_from_filename_found():

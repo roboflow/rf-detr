@@ -24,7 +24,7 @@ from torch import Tensor, nn
 from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
-from rfdetr.export._onnx.exporter import export_onnx
+from rfdetr.export._onnx.exporter import export_onnx as export_onnx  # re-exported for rfdetr.detr and the CLI
 from rfdetr.export._tensorrt import build_engine
 from rfdetr.models import BuilderArgs, build_model
 from rfdetr.models.backbone.backbone import Backbone
@@ -143,13 +143,16 @@ def make_infer_image(
                 "Providing `infer_dir` is only supported for RGB models (num_channels=3). "
                 "For non-RGB models, omit `infer_dir` to use a synthetic dummy input."
             )
-        image = Image.open(infer_dir).convert("RGB")
+        with Image.open(infer_dir) as _img:
+            image = _img.convert("RGB")
 
+    # Tensorize-then-resize with antialias=False mirrors RFDETR.predict()'s preprocessing, so the
+    # traced example input (and any export sanity check run on it) sees production-domain tensors.
     transforms = Compose(
         [
-            Resize((shape[0], shape[1])),
             ToImage(),
             ToDtype(torch.float32, scale=True),
+            Resize((shape[0], shape[1]), antialias=False),
             Normalize(),
         ]
     )

@@ -41,6 +41,27 @@ _PE_KEY_SUFFIX = "embeddings.position_embeddings"
 _QUERY_PARAM_SUFFIXES: tuple[str, ...] = ("refpoint_embed.weight", "query_feat.weight")
 
 
+def _is_query_param(name: str) -> bool:
+    """Return whether *name* is a state-dict key for a packed query parameter.
+
+    Single source of truth for the ``_QUERY_PARAM_SUFFIXES`` suffix match, so every call site agrees on which keys are
+    reshaped per group.
+
+    Args:
+        name: A checkpoint / model ``state_dict`` key.
+
+    Returns:
+        ``True`` when the key ends with one of ``_QUERY_PARAM_SUFFIXES``.
+
+    Examples:
+        >>> _is_query_param("transformer.refpoint_embed.weight")
+        True
+        >>> _is_query_param("class_embed.weight")
+        False
+    """
+    return name.endswith(_QUERY_PARAM_SUFFIXES)
+
+
 def _slice_query_param_per_group(
     tensor: Tensor,
     ckpt_num_queries: int,
@@ -161,6 +182,15 @@ def _warn_on_partial_load(incompatible: Any, pretrain_weights_path: str) -> None
     not reach this function — they raise :class:`RuntimeError` directly from ``load_state_dict`` and are therefore
     impossible to miss.
 
+    Two separate exclusions are applied before deciding whether to warn, for two different reasons:
+
+    * :func:`_filter_intentional_keys` drops head / query-embedding keys in *both* directions, because the loader
+      itself reinitialises or trims them.  Matching there is module-prefix based.
+    * ``_kp_active_mask`` is dropped from ``missing_keys`` only, because it is a deterministic schema buffer rather
+      than a learned parameter — the model always rebuilds it from the configured keypoint schema, so a checkpoint
+      predating keypoint support is not actually missing anything.  Matching is on the exact terminal key so a
+      similarly-named real parameter still warns, and the ``unexpected_keys`` direction is deliberately left alone.
+
     Args:
         incompatible: The ``_IncompatibleKeys`` namedtuple returned by
             :meth:`torch.nn.Module.load_state_dict`.
@@ -175,7 +205,22 @@ def _warn_on_partial_load(incompatible: Any, pretrain_weights_path: str) -> None
     except TypeError:
         # Result wasn't iterable (e.g. a MagicMock in unit tests) — quietly skip.
         return
-    missing = _filter_intentional_keys(missing_keys)
+    # `_kp_active_mask` is a deterministic schema buffer, not a learned
+    # parameter. Detection checkpoints published before keypoint support do not
+    # contain it; the current model correctly reconstructs it from the configured
+    # keypoint schema (an empty mask for detection-only variants).
+    missing: list[str] = []
+    for key in _filter_intentional_keys(missing_keys):
+        if key == "_kp_active_mask" or key.endswith("._kp_active_mask"):
+            # Keep the breadcrumb at debug level: harmless for detection-only variants, but a keypoint model
+            # loading a mask-less checkpoint keeps its config-derived schema, and this is the only remaining trace.
+            logger.debug(
+                "Checkpoint %r has no %r — rebuilding it from the configured keypoint schema.",
+                pretrain_weights_path,
+                key,
+            )
+            continue
+        missing.append(key)
     unexpected = _filter_intentional_keys(unexpected_keys)
     if not missing and not unexpected:
         return
@@ -427,7 +472,7 @@ def load_pretrain_weights(
     # but TrainConfig does not include num_queries (it lives on ModelConfig).
     if (ckpt_num_queries is None) != (ckpt_group_detr is None):
         _first_query_key = next(
-            (k for k in checkpoint["model"] if any(k.endswith(s) for s in _QUERY_PARAM_SUFFIXES)),
+            (k for k in checkpoint["model"] if _is_query_param(k)),
             None,
         )
         if _first_query_key is not None:
@@ -449,8 +494,23 @@ def load_pretrain_weights(
                     _known,
                     _known_val,
                 )
-    # Warn once (not once per suffix key) when falling back to the legacy flat slice.
-    if mc.group_detr > 1 and (ckpt_num_queries is None or ckpt_group_detr is None):
+    target_query_rows = mc.num_queries * mc.group_detr
+    # Warn once (not once per suffix key) only when the fallback truncates a
+    # query tensor. Checkpoints without args.num_queries/args.group_detr
+    # (published legacy files and BestModelCallback output, whose args value is a
+    # TrainConfig dump lacking both fields) already have exactly the configured
+    # number of rows, so their flat slice is a data identity: it cannot reorder
+    # or drop rows, but it does not guarantee that the checkpoint's (num_queries,
+    # group_detr) factorization matches the target.
+    # The truncation scan is the last conjunct so the cheap scalar guards short-circuit
+    # it away on every load that cannot warn.
+    if (
+        mc.group_detr > 1
+        and (ckpt_num_queries is None or ckpt_group_detr is None)
+        and any(
+            tensor.shape[0] > target_query_rows for name, tensor in checkpoint["model"].items() if _is_query_param(name)
+        )
+    ):
         logger.warning(
             "load_pretrain_weights: checkpoint lacks args.num_queries / "
             "args.group_detr; falling back to flat slice. With "
@@ -459,7 +519,7 @@ def load_pretrain_weights(
             mc.group_detr,
         )
     for name in list(checkpoint["model"].keys()):
-        if any(name.endswith(x) for x in _QUERY_PARAM_SUFFIXES):
+        if _is_query_param(name):
             tensor = checkpoint["model"][name]
             if ckpt_num_queries is not None and ckpt_group_detr is not None:
                 checkpoint["model"][name] = _slice_query_param_per_group(
@@ -470,12 +530,14 @@ def load_pretrain_weights(
                     target_group_detr=mc.group_detr,
                 )
             else:
-                # Legacy checkpoint with no num_queries/group_detr in args:
+                # Checkpoint without args.num_queries/args.group_detr (published legacy files
+                # and BestModelCallback output, whose args value is a TrainConfig dump lacking
+                # both fields):
                 # preserve the original flat slice for backward compatibility.
-                # NOTE: the flat slice is incorrect for group_detr > 1 — it scrambles
-                # groups 1+ when num_queries decreases. Legacy checkpoints predate
-                # multi-group training, so in practice they are all group_detr == 1.
-                checkpoint["model"][name] = tensor[: mc.num_queries * mc.group_detr]
+                # This is only a data identity when the row total already matches;
+                # without metadata, a different (num_queries, group_detr) split
+                # is still reinterpreted under the target partition undetectably.
+                checkpoint["model"][name] = tensor[:target_query_rows]
 
     checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)
 

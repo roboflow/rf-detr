@@ -281,6 +281,7 @@ result = subprocess.run(
 - MANDATORY Google-style docstrings for all functions and classes
 - **Do not duplicate types in docstrings** - types are in the function signature
 - Target Python version: 3.10+
+- **Helper functions in `tests/` need a doctest too**: any non-`test_*` function used by tests (fixture builders, assertion helpers, reference implementations) needs a docstring with an `Examples` doctest that exercises it directly — `pyproject.toml` runs `--doctest-plus` across `tests/` on purpose. Skip the live doctest (`# doctest: +SKIP` + one-line reason) only when the helper can't run standalone (e.g. a `@pytest.fixture`, or needs real GPU/XLA/network hardware).
 
 ## Common Workflows
 
@@ -321,6 +322,7 @@ GitHub Actions workflows in `.github/workflows/`:
 - **ci-tests-cpu.yml:** CPU tests across OS/Python versions
 - **ci-tests-gpu.yml:** GPU-dependent tests
 - **ci-legacy-checkpoints.yml:** Backward-compatibility checkpoint-loading tests across historical rfdetr releases (advisory only — not a required check; a compat break does not block merge)
+- **ci-deps-resolution.yml:** Dependency resolution (`uv lock`) plus an install-plan check (`uv sync --dry-run`) for every extra on every Python interpreter allowed by requires-python (3.10-3.14). Resolution alone does not prove a pinned version ships a wheel for the interpreter in use. The `list-extras` job derives the checked set from every `[project.optional-dependencies]` extra, so a new extra is covered automatically
 - **build-package.yml:** Build and validate distributions
 - **ci-build-docs.yml:** Documentation builds
 - **publish-docs.yml:** Deploy docs to GitHub Pages

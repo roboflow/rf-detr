@@ -46,6 +46,13 @@ def _structured_parity_input(
 
     Returns:
         Float tensor shaped ``(batch, channels, height, width)`` in roughly ImageNet-normalized range.
+
+    Examples:
+        >>> t = _structured_parity_input(2, 3, 8, 8)
+        >>> t.shape
+        torch.Size([2, 3, 8, 8])
+        >>> t.dtype
+        torch.float32
     """
     ys = torch.linspace(-1.0, 1.0, height).view(1, 1, height, 1)
     xs = torch.linspace(-1.0, 1.0, width).view(1, 1, 1, width)
@@ -76,6 +83,17 @@ def _parity_input_from_image(path: Path, resolution: int) -> torch.Tensor:
 
     Raises:
         FileNotFoundError: If ``path`` does not exist.
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> from PIL import Image as _PIL
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     p = Path(d) / "img.png"
+        ...     _PIL.new("RGB", (64, 64), color=(128, 64, 32)).save(p)
+        ...     t = _parity_input_from_image(p, 32)
+        ...     t.shape
+        torch.Size([1, 3, 32, 32])
     """
     if not path.is_file():
         raise FileNotFoundError(f"parity fixture image not found: {path}")
@@ -103,6 +121,18 @@ def eager_reference_tensors(pytorch_model: torch.nn.Module, example_input: torch
 
     Raises:
         AssertionError: If the model produces no tensor outputs.
+
+    Examples:
+        >>> import torch.nn as nn
+        >>> class _Identity(nn.Module):
+        ...     def forward(self, x):
+        ...         return (x,)
+        >>> t = torch.zeros(1, 3, 4, 4)
+        >>> outs = eager_reference_tensors(_Identity(), t)
+        >>> len(outs)
+        1
+        >>> outs[0].shape
+        torch.Size([1, 3, 4, 4])
     """
     from torch.utils._pytree import tree_flatten
 
@@ -133,6 +163,15 @@ def max_abs_output_diffs(
 
     Raises:
         AssertionError: If output counts (or, when ``check_shape``, shapes) disagree.
+
+    Examples:
+        >>> import torch
+        >>> a = [torch.tensor([1.0, 2.0])]
+        >>> b = [torch.tensor([1.0, 2.5])]
+        >>> max_abs_output_diffs(a, b)
+        [0.5]
+        >>> max_abs_output_diffs(a, a)
+        [0.0]
     """
     assert len(other_tensors) == len(eager_tensors), (
         f"backend output count {len(other_tensors)} != PyTorch {len(eager_tensors)}"

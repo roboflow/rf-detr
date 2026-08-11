@@ -408,7 +408,11 @@ class RFDETRModelModule(LightningModule):
             model_config.compile and DEVICE == "cuda" and uses_cuda_accelerator and not train_config.multi_scale
         )
         if model_config.compile and train_config.multi_scale:
-            logger.info("Disabling torch.compile because multi_scale=True introduces dynamic input shapes.")
+            logger.info(
+                "Disabling torch.compile: multi_scale=True causes dynamic shapes "
+                "(incompatible with XLA -- each scale = separate graph trace). "
+                "Use do_random_resize_via_padding=True on TPU to avoid recompilation overhead."
+            )
         if compile_enabled:
             # dynamic=True: one compiled graph handles all multi-scale input sizes instead
             # of recompiling per (H, W) pair. suppress_errors=True: if inductor can't
