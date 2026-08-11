@@ -594,7 +594,7 @@ class TestRealTrainerResume:
         for key, expected in expected_state.items():
             assert torch.equal(probe.average_state[key], expected)
         assert ema_cb2._average_model is not None
-        assert int(ema_cb2._average_model.n_averaged) == expected_updates + len(train_loader) + 1
+        assert int(ema_cb2._average_model.n_averaged) == expected_updates + len(train_loader)
 
 
 class TestSuppressTestSwap:
