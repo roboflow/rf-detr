@@ -128,7 +128,7 @@ class TestEagerForwardReturnEmbeddings:
         assert "embeddings" not in outputs
 
     def test_return_embeddings_true_adds_embeddings_with_expected_shape(self) -> None:
-        """return_embeddings=True adds 'embeddings' with shape [B, Q, L*H] (all decoder layers concatenated)."""
+        """return_embeddings=True adds 'embeddings' with shape [B, Q, H] from the last decoder layer only."""
         batch_size, num_queries, hidden_dim, num_decoder_layers = 2, 3, 8, 2
         model, _ = _make_detection_model(
             batch_size=batch_size,
@@ -140,7 +140,7 @@ class TestEagerForwardReturnEmbeddings:
         outputs = model(torch.ones(batch_size, 3, 8, 8), return_embeddings=True)
 
         assert "embeddings" in outputs
-        assert outputs["embeddings"].shape == (batch_size, num_queries, num_decoder_layers * hidden_dim)
+        assert outputs["embeddings"].shape == (batch_size, num_queries, hidden_dim)
 
     def test_return_embeddings_does_not_affect_other_outputs(self) -> None:
         """Turning on return_embeddings must not change pred_logits/pred_boxes shapes or values."""

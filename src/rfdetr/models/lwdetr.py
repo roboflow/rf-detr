@@ -493,11 +493,11 @@ class LWDETR(nn.Module):
            - "aux_outputs": Optional, only returned when auxiliary losses are activated. It is a list of
                             dictionaries containing the two above keys for each decoder layer.
            - "embeddings": Optional, only present when ``return_embeddings=True``. Per-query embeddings with shape
-                           [batch_size x num_queries x (hidden_dim * decoder_layers)], concatenating all decoder
-                           layers' hidden states for each query.
+                           [batch_size x num_queries x hidden_dim], taken from the last decoder layer's hidden
+                           state — consistent with the exported/traced path.
            - "keypoint_embeddings": Optional, only present when ``return_embeddings=True`` and the model predicts
                            keypoints (GroupPose). Per-keypoint embeddings with shape
-                           [batch_size x num_queries x num_keypoints x (hidden_dim * decoder_layers)].
+                           [batch_size x num_queries x num_keypoints x hidden_dim], taken from the last decoder layer.
 
         Args:
             samples: Batched input images and their padding mask, or a list of image tensors to be
@@ -608,14 +608,10 @@ class LWDETR(nn.Module):
                 )
 
             if return_embeddings and hs is not None:
-                # hs goes from shape [batch_size, decoder_layers, num_queries, hidden_dim] to [batch_size, num_queries, hidden_dim * decoder_layers]
-                L, B, Q, H = hs.shape
-                hs = hs.permute(1, 2, 0, 3).reshape(B, Q, L * H)
-                out["embeddings"] = hs
+                # hs shape: [L, B, Q, H] — take only the last decoder layer to match the exported path.
+                out["embeddings"] = hs[-1]
                 if keypoint_hs is not None:
-                    L, B, Q, K, H = keypoint_hs.shape
-                    keypoint_hs = keypoint_hs.permute(1, 2, 3, 0, 4).reshape(B, Q, K, L * H)
-                    out["keypoint_embeddings"] = keypoint_hs
+                    out["keypoint_embeddings"] = keypoint_hs[-1]
 
         if self.two_stage:
             assert self.transformer.enc_out_class_embed is not None
