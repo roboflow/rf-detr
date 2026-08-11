@@ -349,6 +349,17 @@ class LWDETR(nn.Module):
                 _reset_keypoint_gaussian_output_rows(keypoint_embed)
 
     def export(self, return_embeddings: bool = False) -> None:
+        """Switch ``forward`` to the traced/compiled ``forward_export`` path.
+
+        Also recursively calls ``export()`` on any submodule that exposes it, so the whole model
+        (backbone, transformer, segmentation head, etc.) is prepared for tracing/compilation together.
+
+        Args:
+            return_embeddings: If ``True``, ``forward_export`` also appends per-query embeddings as the last
+                element of its output tuple. Unlike the eager ``forward``, ``forward_export`` is traced/compiled
+                with fixed control flow, so this must be decided here, at export time, rather than passed as a
+                runtime argument to ``forward_export`` itself.
+        """
         self._export = True
         # `forward_export` is traced/compiled with a fixed control flow, so whether
         # embeddings are appended to the output tuple must be decided at export time
@@ -461,7 +472,12 @@ class LWDETR(nn.Module):
             class_boost = class_boost[..., :detection_num_classes]
         return class_boost
 
-    def forward(self, samples: NestedTensor, targets: list[dict[str, Tensor]] | None = None, return_embeddings: bool = False) -> dict[str, Any]:
+    def forward(
+        self,
+        samples: NestedTensor,
+        targets: list[dict[str, Tensor]] | None = None,
+        return_embeddings: bool = False,
+    ) -> dict[str, Any]:
         """The forward expects a NestedTensor, which consists of:
 
            - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
@@ -476,6 +492,22 @@ class LWDETR(nn.Module):
                            information on how to retrieve the unnormalized bounding box.
            - "aux_outputs": Optional, only returned when auxiliary losses are activated. It is a list of
                             dictionaries containing the two above keys for each decoder layer.
+           - "embeddings": Optional, only present when ``return_embeddings=True``. Per-query embeddings with shape
+                           [batch_size x num_queries x (hidden_dim * decoder_layers)], concatenating all decoder
+                           layers' hidden states for each query.
+           - "keypoint_embeddings": Optional, only present when ``return_embeddings=True`` and the model predicts
+                           keypoints (GroupPose). Per-keypoint embeddings with shape
+                           [batch_size x num_queries x num_keypoints x (hidden_dim * decoder_layers)].
+
+        Args:
+            samples: Batched input images and their padding mask, or a list of image tensors to be
+                converted into a :class:`NestedTensor`.
+            targets: Optional ground-truth annotations, unused by the forward pass itself but accepted for
+                interface parity with training call sites.
+            return_embeddings: If ``True``, also computes and returns ``"embeddings"`` (and, for keypoint
+                models, ``"keypoint_embeddings"``) in the output dict. Unlike the exported/traced
+                ``forward_export``, this can be toggled per call since the eager forward has no fixed
+                control-flow constraint.
         """
         if isinstance(samples, (list, Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
@@ -630,6 +662,21 @@ class LWDETR(nn.Module):
         return out
 
     def forward_export(self, tensors: Tensor) -> tuple[Tensor, ...]:
+        """Traced/compiled forward pass used after :meth:`export`.
+
+        Unlike :meth:`forward`, this has fixed control flow (required for tracing/compilation), so it takes a
+        single image tensor (no ``NestedTensor``/mask) and returns a plain tuple instead of a dict. Whether
+        embeddings are included is decided once at :meth:`export` time via ``self._export_return_embeddings``,
+        not per call.
+
+        Args:
+            tensors: Batched input images, shape ``[batch_size x 3 x H x W]``.
+
+        Returns:
+            A tuple ``(pred_boxes, pred_logits[, pred_masks | pred_keypoints][, embeddings])``. Embeddings are
+            always the last element when present, so callers must gate on ``self._export_return_embeddings``
+            (known at export time) rather than inferring structure from the tuple length alone.
+        """
         srcs, _, poss, cross_attn_srcs = self.backbone(tensors)
         # only use one group in inference
         refpoint_embed_weight = self.refpoint_embed.weight[: self.num_queries]

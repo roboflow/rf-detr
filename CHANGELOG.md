@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `RFDETR.predict(..., return_embeddings=True)` now attaches a per-detection embedding vector as `detections.data["embeddings"]` (or `key_points.data["embeddings"]` for keypoint outputs), shape `(K, H)`, gathered with the same indices used for boxes/masks/keypoints — useful for downstream similarity search, clustering, or re-identification. On the eager (unoptimized) model this can be toggled per `predict()` call. On a model optimized via `model.inference(...)`, the exported/traced forward pass has fixed control flow, so `inference()` now also accepts `return_embeddings` and the value must be decided at optimization time and match the `return_embeddings` passed to `predict()`; a mismatch raises `RuntimeError`.
 - Restored peak GPU memory (`max_mem` in MB) in the training progress bar, dropped during the PyTorch Lightning migration (PR #794) along with `rfdetr.engine`. Only covers `trainer.fit()` (training and its periodic in-training validation) — PTL's own progress-bar classes never call `get_metrics()` outside `trainer.state.fn == "fit"`, so a standalone `RFDETR.evaluate()` progress bar shows no metrics at all, not just `max_mem`, same as before this change. ([#974](https://github.com/roboflow/rf-detr/issues/974))
 
 ### Changed
