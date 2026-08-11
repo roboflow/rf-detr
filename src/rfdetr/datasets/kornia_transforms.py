@@ -602,14 +602,14 @@ def _make_perspective(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomPerspective`` from aug_config ``Perspective`` params.
 
     Both libraries express the same thing, the corner displacement as a fraction of the image side, so ``scale`` maps
-    onto ``distortion_scale`` directly. The asymmetry is the same one ``GaussNoise`` has: Albumentations samples a
-    fresh fraction per call from a ``(min, max)`` range, while Kornia takes a single fixed value, so a non-degenerate
-    pair collapses to its upper bound and the divergence is logged.
+    onto ``distortion_scale`` directly. The asymmetry is the same one ``GaussNoise`` has: Albumentations samples a fresh
+    fraction per call from a ``(min, max)`` range, while Kornia takes a single fixed value, so a non-degenerate pair
+    collapses to its upper bound and the divergence is logged.
 
     ``keep_size`` is not accepted. Albumentations defaults it to ``True`` (the output keeps the input's height and
     width) and Kornia's ``RandomPerspective`` always behaves that way, so the default maps cleanly; ``keep_size=False``
-    would change the output resolution, which this pipeline cannot express (see the note in :func:`build_kornia_pipeline`
-    about size-preserving transforms), so it is refused rather than silently ignored.
+    would change the output resolution, which this pipeline cannot express (see the note in
+    :func:`build_kornia_pipeline` about size-preserving transforms), so it is refused rather than silently ignored.
     """
     from kornia.augmentation import RandomPerspective
 
