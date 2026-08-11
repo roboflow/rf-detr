@@ -140,6 +140,7 @@ class BestModelCallback(ModelCheckpoint):
         trainer: Trainer,
         model_name: str | None = None,
         model_config_dict: object | None = None,
+        share_ema_model_state: bool = False,
     ) -> dict[str, object]:
         """Build a PTL-compatible RF-DETR checkpoint payload.
 
@@ -149,11 +150,39 @@ class BestModelCallback(ModelCheckpoint):
             trainer: Active Lightning trainer providing epoch/step counters.
             model_name: Name of the model class (e.g. ``"RFDETRLarge"``).
             model_config_dict: Serialized architecture config needed to reconstruct schema-dependent models.
+            share_ema_model_state: Whether EMA callback tensors should share storage with top-level EMA weights.
 
         Returns:
             Checkpoint dictionary that supports ``Trainer.fit(ckpt_path=...)`` while intentionally omitting
             optimizer/scheduler states.
         """
+        # Persist every callback's own state (BestModelCallback's best-tracking high-water
+        # marks, RFDETREMACallback's average model state, RFDETREarlyStopping's wait_count,
+        # etc.) so `trainer.fit(ckpt_path=...)` actually resumes them, matching what each
+        # callback's own state_dict()/load_state_dict() promises. Mirrors PyTorch Lightning's
+        # own `_call_callbacks_state_dict` (keyed by `Callback.state_key`, PTL reads it back
+        # via `_call_callbacks_load_state_dict` — checkpoint.get("callbacks") is None-checked
+        # there, so an *absent* "callbacks" key silently skips restoring every callback).
+        # Only include callbacks with non-empty state so checkpoints stay diffable/minimal.
+        callback_states: dict[str, object] = {}
+        for callback in trainer.callbacks:  # type: ignore[attr-defined]
+            state = callback.state_dict()
+            if state:
+                callback_states[callback.state_key] = state
+        if share_ema_model_state:
+            # EMA-named checkpoints expose the same average-model weights at the top level
+            # and inside callback state. Reuse those tensors so torch.save stores one copy.
+            for state in callback_states.values():
+                if not isinstance(state, dict):
+                    continue
+                average_state = state.get("average_model_state_dict")
+                if not isinstance(average_state, dict):
+                    continue
+                for key in average_state:
+                    if key.startswith("module.model."):
+                        model_key = key.removeprefix("module.model.")
+                        if model_key in model_state_dict:
+                            average_state[key] = model_state_dict[model_key]
         payload: dict[str, object] = {
             "model": model_state_dict,
             "args": args_dict,
@@ -170,8 +199,13 @@ class BestModelCallback(ModelCheckpoint):
                 "validate_loop": {"state_dict": {}},
                 "test_loop": {"state_dict": {}},
             },
+            "callbacks": callback_states,
             # Keep keys present with empty values so PTL resume paths that
-            # expect them can proceed without loading optimizer state.
+            # expect them can proceed without loading optimizer state. This is
+            # intentional (checkpoints stay lightweight, "weights-only" files) but
+            # it means resuming from these files always starts the optimizer and LR
+            # scheduler cold — see the warning logged from RFDETR.train() when
+            # `resume=` is used.
             "optimizer_states": [],
             "lr_schedulers": [],
         }
@@ -272,6 +306,7 @@ class BestModelCallback(ModelCheckpoint):
                 trainer,
                 model_name=self._resolve_model_name(pl_module),
                 model_config_dict=self._serialize_model_config(pl_module, ema_state_dict),
+                share_ema_model_state=True,
             ),
             dest,
         )
