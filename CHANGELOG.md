@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- EMA training no longer performs an extra averaged-model update at epoch boundaries after the final optimizer step,
+    preventing one update per epoch from bypassing `ema_update_interval` and changing the EMA trajectory. ([#1319](https://github.com/roboflow/rf-detr/pull/1319))
 - Loading a detection checkpoint published before keypoint support no longer warns that `_kp_active_mask` is a "model parameter not in checkpoint (left at random init)". The key is a deterministic schema buffer the model always rebuilds from the configured keypoint schema — empty for detection-only variants — not a learned parameter, so its absence never affected the loaded weights. Affects `Nano`, `Small`, `Large` (2026) and `SegSmall`. The filter matches the exact terminal key, so a similarly-named real parameter still warns, and an *unexpected* `_kp_active_mask` in a checkpoint still warns; the filtered key is now recorded at debug level. ([#1302](https://github.com/roboflow/rf-detr/pull/1302))
 
 ### Breaking Changes

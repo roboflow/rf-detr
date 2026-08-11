@@ -183,20 +183,19 @@ class RFDETREMACallback(Callback):
         step_idx: int | None = None,
         epoch_idx: int | None = None,
     ) -> bool:
-        """Return ``True`` after every optimizer step.
+        """Return whether either trigger index is present.
 
-        ``epoch_idx`` is accepted for interface symmetry with ``step_idx`` but is otherwise unused: the legacy
-        ``ModelEma`` this callback replaces (see ``rfdetr.training.model_ema``) updates its averaged weights exactly
-        once per optimizer step and never at epoch boundaries, so ``on_train_epoch_end`` no longer calls this with
-        ``epoch_idx`` set -- it previously did, which double-counted the last step of every epoch against
-        ``update_interval_steps``.
+        ``epoch_idx`` remains part of the callback interface for backwards compatibility and still counts as a
+        trigger when supplied. The callback now invokes this method only from ``on_train_batch_end`` with ``step_idx``;
+        it no longer dispatches an epoch-end EMA update, which previously double-counted the last step of each epoch
+        and bypassed ``update_interval_steps``.
 
         Args:
             step_idx: Index of the last optimizer step, or ``None``.
-            epoch_idx: Unused; retained for backwards API compatibility.
+            epoch_idx: Index of the last epoch, or ``None``. Retained for backwards API compatibility.
 
         Returns:
-            Whether the averaged model should be updated.
+            ``True`` when either trigger index is not ``None``.
         """
         return step_idx is not None or epoch_idx is not None
 

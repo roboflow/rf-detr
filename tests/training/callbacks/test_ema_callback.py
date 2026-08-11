@@ -198,20 +198,23 @@ class TestEpochBoundaryNoDoubleUpdate:
         assert "on_train_epoch_end" not in RFDETREMACallback.__dict__
 
     @pytest.mark.parametrize(
-        ("n_epochs", "steps_per_epoch"),
+        ("n_epochs", "steps_per_epoch", "update_interval_steps"),
         [
-            pytest.param(3, 4, id="3-epochs-4-steps"),
-            pytest.param(1, 1, id="1-epoch-1-step"),
-            pytest.param(2, 1, id="2-epochs-1-step"),
+            pytest.param(3, 4, 1, id="3-epochs-4-steps-interval-1"),
+            pytest.param(1, 1, 1, id="1-epoch-1-step-interval-1"),
+            pytest.param(2, 1, 1, id="2-epochs-1-step-interval-1"),
+            pytest.param(2, 2, 2, id="2-epochs-2-steps-interval-2"),
         ],
     )
-    def test_multi_epoch_training_updates_exactly_once_per_step(self, n_epochs: int, steps_per_epoch: int) -> None:
-        """Simulate ``n_epochs`` of ``steps_per_epoch`` optimizer steps each, including the.
+    def test_multi_epoch_training_updates_exactly_once_per_step(
+        self, n_epochs: int, steps_per_epoch: int, update_interval_steps: int
+    ) -> None:
+        """Simulate ``n_epochs`` of ``steps_per_epoch`` optimizer steps each, including the no-op epoch-end hook.
 
-        no-op epoch-end hook Lightning would still call. ``update_parameters`` must fire exactly ``n_epochs *
-        steps_per_epoch`` times — one per step, zero extra per epoch.
+        Lightning still calls the no-op epoch-end hook. ``update_parameters`` must fire exactly once per configured
+        update interval, with no extra update at an epoch boundary.
         """
-        cb = RFDETREMACallback(update_interval_steps=1)
+        cb = RFDETREMACallback(update_interval_steps=update_interval_steps)
         cb._average_model = MagicMock()
         trainer = MagicMock()
         pl_module = MagicMock()
@@ -227,11 +230,20 @@ class TestEpochBoundaryNoDoubleUpdate:
             # instance so a still-present override (the bug) fires, not just the base no-op.
             cb.on_train_epoch_end(trainer, pl_module)
 
-        assert cb._average_model.update_parameters.call_count == n_epochs * steps_per_epoch
+        total_steps = n_epochs * steps_per_epoch
+        assert cb._average_model.update_parameters.call_count == total_steps // update_interval_steps
 
 
 class TestLegacyEMAResume:
     """Legacy checkpoint EMA payload is consumed by the callback setup path."""
+
+    def test_load_state_dict_ignores_removed_epoch_state(self) -> None:
+        """Older callback state with ``latest_update_epoch`` remains loadable after the state was removed."""
+        cb = RFDETREMACallback()
+
+        cb.load_state_dict({"latest_update_step": 7, "latest_update_epoch": 4})
+
+        assert cb.state_dict() == {"latest_update_step": 7}
 
     def test_setup_loads_pending_legacy_ema_state_into_average_model(self) -> None:
         """`_pending_legacy_ema_state` must initialize EMA weights at fit setup."""
