@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-07-27T08:55:05">
+  <meta property="article:modified_time" content="2026-08-10T23:25:30">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-07-27T08:55:05",
+    "dateModified": "2026-08-10T23:25:30",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3000,7 +3000,7 @@
 <p>All examples on this page use the <code>RFDETR.train()</code> high-level API. For custom callbacks, non-default loggers, and fine-grained distributed training control, see the <a href="../customization/">Custom Training API</a> guide.</p>
 </div>
 <h2 id="resume-training">Resume Training<a class="headerlink" href="#resume-training" title="Permanent link">&para;</a></h2>
-<p>You can resume training from a previously saved checkpoint by passing the path to the <code>checkpoint.pth</code> file using the <code>resume</code> argument. This is useful when training is interrupted or you want to continue fine-tuning an already partially trained model.</p>
+<p>You can resume training from a previously saved full checkpoint by passing the path to <code>last.ckpt</code> using the <code>resume</code> argument. This is useful when training is interrupted or you want to continue fine-tuning an already partially trained model.</p>
 <p>The training loop will automatically load:</p>
 <ul>
 <li>Model weights</li>
@@ -3008,6 +3008,17 @@
 <li>Learning rate scheduler state</li>
 <li>Training epoch number</li>
 </ul>
+<div class="admonition warning">
+<p class="admonition-title">Lightweight checkpoints resume without optimizer/scheduler state</p>
+<p>The above applies to the trainer's own full checkpoints (<code>last.ckpt</code>, <code>checkpoint_&lt;epoch&gt;.ckpt</code>). The best-model
+tracker also writes four lighter <code>.pth</code> files — <code>checkpoint_best_regular.pth</code>, <code>checkpoint_best_ema.pth</code>,
+<code>checkpoint_best_total.pth</code>, <code>last_ema.pth</code> — that intentionally omit optimizer/scheduler state to stay small.
+New files with matching configured callbacks can restore callback state (EMA and early stopping). Best-score
+tracking additionally requires <code>output_dir</code> to be the exact directory where the checkpoint was written. Files
+created before callback-state persistence (or with an empty callback section) restart callback state. The optimizer
+and LR scheduler always start cold. <code>resume=</code> logs the applicable warning; pass a full trainer checkpoint instead
+if you need optimizer/scheduler continuity.</p>
+</div>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Object Detection</label><label for="__tabbed_1_2">Image Segmentation</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
@@ -3022,7 +3033,7 @@
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
 </span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
 </span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;output&quot;</span><span class="p">,</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="n">resume</span><span class="o">=</span><span class="s2">&quot;output/checkpoint.pth&quot;</span><span class="p">,</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="n">resume</span><span class="o">=</span><span class="s2">&quot;output/last.ckpt&quot;</span><span class="p">,</span>
 </span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="p">)</span>
 </span></code></pre></div>
 </div>
@@ -3038,7 +3049,7 @@
 </span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
 </span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
 </span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;output&quot;</span><span class="p">,</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    <span class="n">resume</span><span class="o">=</span><span class="s2">&quot;output/checkpoint.pth&quot;</span><span class="p">,</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    <span class="n">resume</span><span class="o">=</span><span class="s2">&quot;output/last.ckpt&quot;</span><span class="p">,</span>
 </span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="p">)</span>
 </span></code></pre></div>
 </div>
@@ -3047,7 +3058,7 @@
 <div class="admonition tip">
 <p class="admonition-title">Resume vs Pretrain Weights</p>
 <ul>
-<li>Use <code>resume="checkpoint.pth"</code> to continue training with optimizer state</li>
+<li>Use <code>resume="last.ckpt"</code> to continue training with optimizer state</li>
 <li>Use <code>pretrain_weights="checkpoint_best_total.pth"</code> when initializing a model to start fresh training from those weights</li>
 </ul>
 </div>
@@ -3460,7 +3471,7 @@ no random crop, so annotations near image borders are never clipped.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 27, 2026 08:55:05 UTC">2026-07-27 08:55:05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 10, 2026 23:25:30 UTC">2026-08-10 23:25:30</span>
   </span>
 
     
