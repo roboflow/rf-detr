@@ -460,7 +460,7 @@ class TestAttachEmbeddings:
         assert "embeddings" not in results[0]
 
     def test_forward_attaches_embeddings_with_expected_shape(self) -> None:
-        """embeddings in outputs is gathered per-selected-query and attached with shape (K, H)."""
+        """Embeddings in outputs is gathered per-selected-query and attached with shape (K, H)."""
         hidden_dim = 4
         pp = PostProcess(num_select=2)
         outputs = {
@@ -512,7 +512,7 @@ class TestAttachEmbeddings:
         assert torch.equal(results[1]["embeddings"], torch.tensor([[12.0, 12.0], [11.0, 11.0]]))
 
     def test_forward_attaches_embeddings_alongside_masks(self) -> None:
-        """embeddings and masks can coexist in the same forward() call without interfering with each other."""
+        """Embeddings and masks can coexist in the same forward() call without interfering with each other."""
         batch, num_queries, mask_h, mask_w, hidden_dim, num_classes = 1, 4, 8, 8, 4, 2
         pp = PostProcess(num_select=4)
         outputs = {
