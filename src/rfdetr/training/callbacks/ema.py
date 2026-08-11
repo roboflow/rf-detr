@@ -149,9 +149,13 @@ class RFDETREMACallback(Callback):
         if stage != "fit":
             return
 
+        device = pl_module.device
+        if not isinstance(device, torch.device):
+            raise TypeError(f"Expected a torch.device from the Lightning module, got {type(device).__name__}.")
+
         self._average_model = AveragedModel(
             model=pl_module,
-            device=pl_module.device,
+            device=device,
             use_buffers=self._use_buffers,
             multi_avg_fn=self._multi_avg_fn,
         )
@@ -177,6 +181,34 @@ class RFDETREMACallback(Callback):
                         stacklevel=2,
                     )
             delattr(pl_module, "_pending_legacy_ema_state")
+
+    def on_train_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
+        """Apply a resumed ``average_model_state_dict`` that arrived after ``setup()``.
+
+        For every strategy RF-DETR ships (``strategy.restore_checkpoint_after_setup`` is ``False``
+        except for FSDP/DeepSpeed/model-parallel), PTL's ``Trainer._run`` calls
+        ``call._call_setup_hook`` (which invokes this callback's ``setup()``) *before*
+        ``_checkpoint_connector._restore_modules_and_callbacks`` (which invokes
+        ``load_state_dict()``). So on a resumed run, ``load_state_dict()`` stashes the checkpoint's
+        ``average_model_state_dict`` into ``_pending_average_state_dict`` only after ``setup()``
+        already built ``_average_model`` from the not-yet-restored live weights — the ``elif``
+        branch in ``setup()`` that applies a pending *plain* state dict never fires for this
+        ordering, silently leaving the averaged model un-resumed. ``on_train_start`` runs from
+        inside ``_run_stage()``, strictly after all checkpoint restoration completes, so it is the
+        first safe point to apply it. A no-op when ``setup()`` already consumed the pending state
+        (the reverse ordering used by FSDP/DeepSpeed/model-parallel).
+
+        Args:
+            trainer: The Lightning Trainer instance.
+            pl_module: The ``RFDETRModelModule`` being trained.
+        """
+        # Lightweight checkpoints deliberately restart optimizer-loop progress at
+        # zero. An absolute saved guard would otherwise skip that many new batches.
+        if trainer.global_step < self._latest_update_step:
+            self._latest_update_step = trainer.global_step
+        if self._pending_average_state_dict is not None and self._average_model is not None:
+            self._average_model.load_state_dict(self._pending_average_state_dict)
+            self._pending_average_state_dict = None
 
     def should_update(
         self,

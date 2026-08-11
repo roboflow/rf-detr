@@ -1007,6 +1007,77 @@ def _assert_assignment_lengths(
         assert target_indices.shape == (expected_length,), f"target index count wrong for image {image_idx}"
 
 
+class TestDetectionInputsAreSafeDirectly:
+    """Direct, isolated coverage of ``HungarianMatcher._detection_inputs_are_safe``.
+
+    ``TestCompactPathRouting`` below already exercises this method indirectly, through the routing behaviour it
+    controls. These tests call it directly instead, so a future change to *how* it computes its answer (e.g. vectorizing
+    the per-image loops into a single concatenated check) has a fast, precise regression guard that pins down the exact
+    boolean it must keep returning for each case, independent of the compact-path machinery around it.
+    """
+
+    @pytest.mark.parametrize(
+        "sizes",
+        [
+            pytest.param([2, 3, 1], id="every_image_has_targets"),
+            pytest.param([0, 4, 0, 2], id="some_images_empty"),
+            pytest.param([0, 0, 0], id="every_image_empty"),
+        ],
+    )
+    def test_safe_batches_return_true(self, sizes: list[int]) -> None:
+        """A batch with finite, in-range boxes and labels is safe, whether every image carries targets, only some do
+        (mixed with zero-target images), or none do — the last case is vacuously safe, since there is nothing to
+        check."""
+        outputs, targets = _random_detection_batch(seed=301, sizes=sizes)
+
+        assert HungarianMatcher._detection_inputs_are_safe(outputs, targets) is True
+
+    @pytest.mark.parametrize(
+        "corrupt",
+        [
+            pytest.param(lambda o, t: o["pred_boxes"].__setitem__((1, 0, 2), float("nan")), id="nan_in_pred_boxes"),
+            pytest.param(
+                lambda o, t: t[2]["boxes"].__setitem__((0, 1), float("inf")),
+                id="inf_in_a_middle_image_target_boxes",
+            ),
+            pytest.param(lambda o, t: o["pred_boxes"].__setitem__((0, 0, 0), 1e30), id="extreme_coordinate"),
+            pytest.param(lambda o, t: t[1]["labels"].__setitem__(0, -1), id="negative_label_in_a_middle_image"),
+            pytest.param(
+                lambda o, t: t[-1]["labels"].__setitem__(0, 5),  # num_classes=5, valid range is [0, 5)
+                id="out_of_range_label_in_the_last_image",
+            ),
+            pytest.param(
+                lambda o, t: t[1].__setitem__("boxes", t[1]["boxes"].double()), id="target_box_dtype_mismatch"
+            ),
+            pytest.param(
+                lambda o, t: t[1].__setitem__("labels", t[1]["labels"].to("meta")),
+                id="target_label_device_mismatch",
+            ),
+            pytest.param(
+                lambda o, t: t[1].__setitem__("labels", t[1]["labels"].to(torch.int32)),
+                id="target_label_dtype_mismatch",
+            ),
+        ],
+    )
+    def test_unsafe_inputs_return_false(
+        self, corrupt: Callable[[dict[str, torch.Tensor], list[dict[str, torch.Tensor]]], None]
+    ) -> None:
+        """Each unsafe case must be caught: a non-finite value or out-of-range coordinate/label anywhere in the batch —
+        including a MIDDLE image's target boxes/labels and the LAST image's labels, not just the first, which guards
+        against a vectorized check that only looks at one image's tensor instead of the concatenation of all of them —
+        plus a target whose box dtype, label device, or label dtype disagrees with the predictions/batch (metadata
+        prechecks, no kernel launch).
+
+        The device case uses ``torch.device('meta')`` rather than requiring real CUDA hardware, since the device-
+        mismatch branch is a plain attribute comparison that returns before any value-touching op runs, so ``meta``
+        (shape-only, no real storage) exercises the same code path without a GPU.
+        """
+        outputs, targets = _random_detection_batch(seed=305, sizes=[2, 3, 2, 4])
+        corrupt(outputs, targets)
+
+        assert HungarianMatcher._detection_inputs_are_safe(outputs, targets) is False
+
+
 class TestCompactPathRouting:
     """The padded-compact cost path (``_compute_compact_detection_cost_matrix``) must run only for detection-only
     batches with ``batch_size > 1`` and finite, bounded inputs — every other case must fall back to the diagonal-block
@@ -1104,6 +1175,11 @@ class TestCompactPathRouting:
             pytest.param(lambda o, t: t[0]["boxes"].__setitem__((0, 1), float("nan")), id="target_box_nan"),
             pytest.param(lambda o, t: t[0]["boxes"].__setitem__((0, 1), float("inf")), id="target_box_inf"),
             pytest.param(lambda o, t: o["pred_boxes"].__setitem__((1, 0, 2), 1e30), id="pred_box_extreme"),
+            pytest.param(lambda o, t: t[1]["boxes"].__setitem__((0, 1), 1e30), id="target_box_extreme"),
+            pytest.param(
+                lambda o, t: t[1].__setitem__("labels", t[1]["labels"].to(torch.int32)),
+                id="target_label_dtype_mismatch",
+            ),
         ],
     )
     def test_unsafe_inputs_use_fallback_path(
@@ -1112,10 +1188,10 @@ class TestCompactPathRouting:
         matcher: HungarianMatcher,
         corrupt: Callable[[dict[str, torch.Tensor], list[dict[str, torch.Tensor]]], None],
     ) -> None:
-        """Each of the 7 unsafe-input cases verified in the exploration script (NaN/Inf on predicted logits, predicted
-        boxes, or target boxes, plus one coordinate large enough to risk overflow in ``cdist``/GIoU area terms) must
-        route to the fallback path instead of the compact one, for an otherwise compact-eligible (``bs > 1``, detection-
-        only) batch."""
+        """Each unsafe-input case verified in the exploration script (NaN/Inf on predicted logits, predicted boxes, or
+        target boxes, plus one coordinate large enough to risk overflow in ``cdist``/GIoU area terms) must route to the
+        fallback path instead of the compact one, for an otherwise compact-eligible (``bs > 1``, detection- only)
+        batch."""
         calls = _spy_on_compact_path(monkeypatch)
         outputs, targets = _random_detection_batch(seed=105, sizes=[2, 3])
         corrupt(outputs, targets)

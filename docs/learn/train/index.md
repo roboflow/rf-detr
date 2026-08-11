@@ -193,15 +193,17 @@ Track your experiments with popular logging platforms:
 
 During training, multiple model checkpoints are saved to the output directory:
 
-- `checkpoint.pth` – the most recent checkpoint, saved at the end of the latest epoch.
+- `last.ckpt` – the most recent full checkpoint, saved at the end of the latest epoch.
 
-- `checkpoint_<number>.pth` – periodic checkpoints saved every N epochs (default is every 10).
+- `checkpoint_<epoch>.ckpt` – periodic full checkpoints saved every N epochs (default is every 10).
 
 - `checkpoint_best_ema.pth` – best checkpoint based on validation score, using the EMA (Exponential Moving Average) weights. EMA weights are a smoothed version of the model's parameters across training steps, often yielding better generalization.
 
 - `checkpoint_best_regular.pth` – best checkpoint based on validation score, using the raw (non-EMA) model weights.
 
-- `checkpoint_best_total.pth` – final checkpoint selected for inference and benchmarking. It contains only the model weights (no optimizer state or scheduler) and is chosen as the better of the EMA and non-EMA models based on validation performance.
+- `checkpoint_best_total.pth` – final checkpoint selected for inference and benchmarking. It contains model weights,
+    epoch/PTL metadata, and callback state when available, but no optimizer or scheduler state. It is chosen as the
+    better of the EMA and non-EMA models based on validation performance.
 
 For detection and segmentation models, the validation score is box mAP (`val/mAP_50_95`). For keypoint preview models,
 best-checkpoint selection uses COCO keypoint AP (`val/keypoint_map_50_95`) and checkpoints persist the model keypoint
@@ -211,11 +213,11 @@ schema so `RFDETR.from_checkpoint()` can reconstruct the same label/keypoint slo
 
     Checkpoint sizes vary based on what they contain:
 
-    - **Training checkpoints** (e.g. `checkpoint.pth`, `checkpoint_<number>.pth`) include model weights, optimizer state, scheduler state, and training metadata. Use these to resume training.
+    - **Training checkpoints** (e.g. `last.ckpt`, `checkpoint_<epoch>.ckpt`) include model weights, optimizer state, scheduler state, and training metadata. Use these to resume training.
 
-    - **Evaluation checkpoints** (e.g. `checkpoint_best_ema.pth`, `checkpoint_best_regular.pth`) store only the model weights — either EMA or raw — and are used to track the best-performing models. These may come from different epochs depending on which version achieved the highest validation score.
+    - **Lightweight best checkpoints** (e.g. `checkpoint_best_ema.pth`, `checkpoint_best_regular.pth`, `last_ema.pth`) store model weights, epoch/PTL metadata, and callback state when available, but intentionally omit optimizer and scheduler state. These may come from different epochs depending on which version achieved the highest validation score.
 
-    - **Stripped checkpoint** (e.g. `checkpoint_best_total.pth`) contains only the final model weights and is optimized for inference and deployment.
+    - **Lightweight total checkpoint** (e.g. `checkpoint_best_total.pth`) keeps the same lightweight resume metadata while selecting the final best model for inference and deployment.
 
 ## Load and Run Fine-Tuned Model
 
