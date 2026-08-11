@@ -288,7 +288,8 @@ predictions = model(image)
         loads first supplies them to both. RF-DETR imports TensorFlow first on the TFLite route;
         if your own code imports `onnx` before `tensorflow`, RF-DETR logs a warning and the
         conversion may block forever while restoring the SavedModel (no error, 0% CPU). Importing
-        `onnx` *after* `tensorflow` is safe; otherwise run the export in a fresh process.
+        `onnx` *after* `tensorflow` is safe; otherwise, in a fresh process, preload/import
+        `tensorflow` before `onnx` and then run the export — freshness alone is not sufficient.
 
     **Recommendations:**
 

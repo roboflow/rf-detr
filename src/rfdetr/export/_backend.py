@@ -155,14 +155,16 @@ def preload_tensorflow_before_onnx() -> None:
         :func:`~rfdetr.export._tflite.converter._check_onnx2tf_available`.
 
     Examples:
-        >>> preload_tensorflow_before_onnx()  # no-op without the tflite extra installed
+        >>> preload_tensorflow_before_onnx()  # returns when the top-level tensorflow package is unavailable
     """
     onnx_won_the_race = _onnx_imported_before_tensorflow()
 
     if "tensorflow" not in sys.modules:
         try:
             importlib.import_module("tensorflow")
-        except ImportError:
+        except ModuleNotFoundError as error:
+            if error.name != "tensorflow":
+                raise
             return
 
     if onnx_won_the_race:

@@ -581,21 +581,47 @@ class TestExportFormatParameter:
         obj.export(format="onnx", output_dir=str(self._tmp_path / "out"))
         self._mock_export_tflite.assert_not_called()
 
-    def test_tflite_format_preloads_tensorflow_before_onnx_export(self) -> None:
-        """TensorFlow is preloaded before the ONNX export, which is what imports onnx's C extension."""
+    def test_tflite_format_preloads_tensorflow_before_first_onnx_package_import(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TensorFlow is preloaded before importing the module that first loads ONNX.
+
+        The usual ``main.export_onnx`` patch imports ``rfdetr.export.main`` while arranging the test, which masks a
+        regression that moves the preload below that import.  Intercepting the first ``onnx`` import instead keeps it
+        inside the action under test.
+        """
         obj = self._make_rfdetr()
         calls: list[str] = []
-        with mock.patch(
-            "rfdetr.export._backend.preload_tensorflow_before_onnx",
-            side_effect=lambda: calls.append("preload"),
-        ):
-            self._mock_export_onnx.side_effect = lambda *args, **kwargs: (
-                calls.append("export_onnx"),
-                str(self._tmp_path / "inference_model.onnx"),
-            )[1]
-            obj.export(format="tflite", output_dir=str(self._tmp_path / "out"))
+        original_import = __import__
 
-        assert calls == ["preload", "export_onnx"], f"Expected preload before export_onnx, got {calls}"
+        def import_with_exporter_probe(
+            name: str,
+            globals: dict[str, object] | None = None,
+            locals: dict[str, object] | None = None,
+            fromlist: tuple[str, ...] = (),
+            level: int = 0,
+        ) -> object:
+            """Stop at and record the first ONNX package import."""
+            if name == "onnx":
+                calls.append("first_onnx_package_import")
+                raise RuntimeError("onnx import probe")
+            return original_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.delitem(sys.modules, "rfdetr.export.main", raising=False)
+        monkeypatch.delitem(sys.modules, "rfdetr.export._onnx.exporter", raising=False)
+        with (
+            mock.patch(
+                "rfdetr.export._backend.preload_tensorflow_before_onnx",
+                side_effect=lambda: calls.append("preload"),
+            ),
+            mock.patch("builtins.__import__", side_effect=import_with_exporter_probe),
+        ):
+            with pytest.raises(RuntimeError, match="onnx import probe"):
+                obj.export(format="tflite", output_dir=str(self._tmp_path / "out"))
+
+        assert calls == ["preload", "first_onnx_package_import"], (
+            f"Expected preload before the first ONNX package import, got {calls}"
+        )
 
     def test_onnx_format_does_not_preload_tensorflow(self) -> None:
         """Non-TFLite formats never import TensorFlow."""
@@ -1301,11 +1327,26 @@ class TestPreloadTensorflowBeforeOnnx:
         _drop_from_sys_modules(monkeypatch, "tensorflow")
         monkeypatch.setattr(
             "rfdetr.export._backend.importlib.import_module",
-            mock.MagicMock(side_effect=ImportError("No module named 'tensorflow'")),
+            mock.MagicMock(side_effect=ModuleNotFoundError("No module named 'tensorflow'", name="tensorflow")),
         )
         from rfdetr.export._backend import preload_tensorflow_before_onnx
 
         preload_tensorflow_before_onnx()  # must not raise
+
+    def test_surfaces_transitive_tensorflow_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A missing dependency imported by TensorFlow is not mistaken for TensorFlow being absent."""
+        _drop_from_sys_modules(monkeypatch, "tensorflow")
+        missing_absl = ModuleNotFoundError("No module named 'absl'", name="absl")
+        monkeypatch.setattr(
+            "rfdetr.export._backend.importlib.import_module",
+            mock.MagicMock(side_effect=missing_absl),
+        )
+        from rfdetr.export._backend import preload_tensorflow_before_onnx
+
+        with pytest.raises(ModuleNotFoundError, match="No module named 'absl'") as caught:
+            preload_tensorflow_before_onnx()
+
+        assert caught.value.name == "absl"
 
     @pytest.mark.parametrize(
         ("preloaded", "expect_warning"),
