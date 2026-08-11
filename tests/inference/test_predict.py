@@ -167,8 +167,8 @@ def _make_optimized_keypoint_model() -> tuple[RFDETR, _TupleOutputModelContext]:
 class _TupleOutputEmbeddingsModelContext:
     """Model context whose forward returns a tuple ending in embeddings, mirroring an optimized detection model.
 
-    Used to test that ``predict()`` correctly pops embeddings off the end of the optimized tuple output (rather
-    than misreading them as ``pred_masks``/``pred_keypoints``) when ``_optimized_return_embeddings`` is True.
+    Used to test that ``predict()`` correctly pops embeddings off the end of the optimized tuple output (rather than
+    misreading them as ``pred_masks``/``pred_keypoints``) when ``_optimized_return_embeddings`` is True.
     """
 
     def __init__(self, embedding_dim: int = 4) -> None:

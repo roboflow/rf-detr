@@ -36,9 +36,8 @@ def _make_detection_model(
     """Build an LWDETR detection model whose backbone/transformer are mocked with fixed-shape outputs.
 
     The mock backbone's ``return_value`` is a plain 3-tuple ``(features, poss, cross_attn_features)``, matching the
-    eager forward's unpacking (``forward``). For the exported/traced path (``forward_export``), which unpacks a
-    4-tuple ``(feats, masks, poss, cross_attn_feats)``, tests reconfigure ``backbone.return_value`` before calling
-    ``export()``.
+    eager forward's unpacking (``forward``). For the exported/traced path (``forward_export``), which unpacks a 4-tuple
+    ``(feats, masks, poss, cross_attn_feats)``, tests reconfigure ``backbone.return_value`` before calling ``export()``.
     """
     features = _build_feature_batch(batch_size=batch_size, hidden_dim=hidden_dim)
     poss = [torch.zeros(batch_size, hidden_dim, 4, 4)]
@@ -81,9 +80,9 @@ def _make_export_ready_model(
 ) -> LWDETR:
     """Build an LWDETR model with mocked backbone/transformer shaped for ``forward_export`` (traced/optimized path).
 
-    Unlike :func:`_make_detection_model`, the mock backbone here returns the export-time 4-tuple
-    ``(feats, masks, poss, cross_attn_feats)`` expected by ``forward_export``, and the mock transformer returns
-    the export-time last-decoder-layer-only shapes ``[B, Q, H]`` (not ``[L, B, Q, H]``).
+    Unlike :func:`_make_detection_model`, the mock backbone here returns the export-time 4-tuple ``(feats, masks, poss,
+    cross_attn_feats)`` expected by ``forward_export``, and the mock transformer returns the export-time last-decoder-
+    layer-only shapes ``[B, Q, H]`` (not ``[L, B, Q, H]``).
     """
     features = _build_feature_batch(batch_size=batch_size, hidden_dim=hidden_dim)
     masks = [torch.zeros(batch_size, 4, 4, dtype=torch.bool)]
@@ -209,7 +208,7 @@ class TestExportForwardReturnEmbeddings:
         assert embeddings.shape == (batch_size, num_queries, hidden_dim)
 
     def test_export_return_embeddings_defaults_to_false_when_omitted(self) -> None:
-        """export() with no arguments behaves exactly like export(return_embeddings=False)."""
+        """Export() with no arguments behaves exactly like export(return_embeddings=False)."""
         model = _make_export_ready_model()
         model.export()
 
