@@ -919,6 +919,86 @@ class RFDETR:
                     exc_info=True,
                 )
 
+        if config.resume:
+            # BestModelCallback's four lightweight checkpoint files (unlike the trainer's own
+            # `last.ckpt` / `checkpoint_<epoch>.ckpt`, which retain full PTL state) intentionally
+            # omit optimizer/LR-scheduler state to stay small — see
+            # BestModelCallback._build_checkpoint_payload. They retain model weights, epoch
+            # metadata, and per-callback state only when the resumed callback configuration
+            # matches the saved keys. Checkpoints written before callback-state persistence have
+            # no such state. Best-score tracking additionally requires exactly the original
+            # output_dir because of PTL's ModelCheckpoint.load_state_dict() dirpath gate.
+            # Flag the optimizer/scheduler gap explicitly instead of letting it pass silently.
+            _light_checkpoint_names = frozenset(
+                {"checkpoint_best_regular.pth", "checkpoint_best_ema.pth", "checkpoint_best_total.pth", "last_ema.pth"}
+            )
+            if Path(config.resume).name in _light_checkpoint_names:
+                from rfdetr.utilities.io import _safe_torch_load
+
+                # checkpoint.get("callbacks") is None-checked by PTL's own
+                # _call_callbacks_load_state_dict(), which no-ops (skipping every callback's
+                # restoration) when the key is absent or empty. Checkpoints written before
+                # BestModelCallback._build_checkpoint_payload started persisting per-callback state
+                # — or from a run where every registered callback happened to have empty state —
+                # are exactly this case, so peek at the file rather than let the warning below
+                # overclaim a restoration that silently does not happen.
+                _resume_ckpt = _safe_torch_load(config.resume, trust=True)
+                _has_callback_state = bool(_resume_ckpt.get("callbacks"))
+                del _resume_ckpt
+                _resume_dir = Path(config.resume).resolve().parent
+                _configured_output_dir = Path(config.output_dir).resolve()
+                _best_score_restores = _resume_dir == _configured_output_dir
+
+                if _has_callback_state:
+                    logger.warning(
+                        "resume=%r points at one of BestModelCallback's lightweight checkpoints, "
+                        "which intentionally omit optimizer/LR-scheduler state to stay small. "
+                        "Model weights and epoch count will resume. Callback state can restore only "
+                        "for matching configured callbacks; the optimizer and LR scheduler restart cold. "
+                        "To resume with optimizer/scheduler state too, pass the trainer's full "
+                        "checkpoint instead (e.g. %s/last.ckpt or %s/checkpoint_<epoch>.ckpt).",
+                        config.resume,
+                        config.output_dir,
+                        config.output_dir,
+                    )
+                else:
+                    logger.warning(
+                        "resume=%r points at one of BestModelCallback's lightweight checkpoints, "
+                        "which intentionally omit optimizer/LR-scheduler state to stay small. "
+                        "Model weights and epoch count will resume, but this particular file has no "
+                        "saved callback state (it predates callback-state persistence, or every "
+                        "registered callback had nothing to save), so best-score tracking, EMA, and "
+                        "early-stopping state all restart cold this run too — not just the "
+                        "optimizer and LR scheduler. To resume with full state, pass the trainer's "
+                        "full checkpoint instead (e.g. %s/last.ckpt or %s/checkpoint_<epoch>.ckpt).",
+                        config.resume,
+                        config.output_dir,
+                        config.output_dir,
+                    )
+
+                # BestModelCallback always writes these four files directly under its own
+                # `dirpath` (== output_dir at save time; see BestModelCallback.__init__ and
+                # _build_checkpoint_payload). PTL's ModelCheckpoint.load_state_dict() only
+                # restores best_model_score/best_k_models/kth_value/last_model_path when the
+                # resumed dirpath matches the checkpoint's saved dirpath exactly (model_checkpoint.py,
+                # installed pytorch-lightning) — with a different output_dir this run only recovers
+                # best_model_path, so the first metric logged after resume looks like an automatic
+                # improvement over an empty best_model_score. Only worth flagging when there was
+                # callback state to lose in the first place.
+                if _has_callback_state and not _best_score_restores:
+                    logger.warning(
+                        "resume=%r was written under %s but output_dir=%r points elsewhere. "
+                        "PyTorch Lightning only restores best_model_score/best_k_models when "
+                        "output_dir matches the checkpoint's original directory exactly — with "
+                        "this output_dir, best-score tracking (BestModelCallback's high-water "
+                        "mark) restarts fresh in the new directory instead of resuming. Set "
+                        "output_dir=%r to keep it.",
+                        config.resume,
+                        _resume_dir,
+                        config.output_dir,
+                        str(_resume_dir),
+                    )
+
         trainer_kwargs: dict[str, Any] = {"accelerator": _accelerator}
         if _devices is not None:
             trainer_kwargs["devices"] = _devices
@@ -2223,6 +2303,14 @@ class RFDETR:
             Legacy keypoint checkpoints with ``args.num_keypoints_per_class[0] == 0`` use a background-first layout:
             slot 0 maps to ``"__background__"`` and foreground slots map to ``class_names`` in order.
 
+        Note:
+            A CPU tensor image is pinned before its transfer to a CUDA-device model, and that transfer is
+            non-blocking; passing a tensor already on the model's accelerator skips this image transfer entirely.
+            But with the default ``include_source_image=True``, capturing ``source_image`` from that same tensor
+            still does its own separate, blocking ``.cpu()`` call earlier in the loop — so an already-CUDA tensor
+            input alone does not make the call fully round-trip-free. Pass ``include_source_image=False`` to avoid
+            that copy as well.
+
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
@@ -2309,7 +2397,19 @@ class RFDETR:
             h, w = img_tensor.shape[1:]
             orig_sizes.append((h, w))
 
-            processed_images.append(img_tensor.to(self.model.device))
+            # A pageable-memory .to(device) copy onto CUDA is slower than a pinned-memory one: the driver has to
+            # pin the source buffer itself before it can start the transfer. Pin it explicitly here — but only for a
+            # CPU tensor headed to an accelerator; pin_memory() raises on a tensor the caller already placed on the
+            # accelerator (a legitimate tensor-input use to skip a host round-trip), and pinning buys nothing when
+            # the target device is the CPU itself.
+            if img_tensor.device.type == "cpu" and self.model.device.type == "cuda":
+                img_tensor = img_tensor.pin_memory()
+            # non_blocking only pays off (and is only safe without an explicit sync) when the destination is CUDA,
+            # matching the transfer_batch_to_device() convention in training/module_data.py: a CUDA-tensor-input ->
+            # CPU-model transfer with non_blocking=True races the copy — the CPU destination is never pinned, so
+            # reads of the tensor's data can observe an in-flight (partially written) copy.
+            non_blocking = self.model.device.type == "cuda"
+            processed_images.append(img_tensor.to(self.model.device, non_blocking=non_blocking))
 
         resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
         # antialias=False matches the antialias-free bilinear resize (cv2.INTER_LINEAR)
