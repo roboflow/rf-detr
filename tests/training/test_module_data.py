@@ -461,8 +461,53 @@ class TestSetup:
         dm, _, _, fake_test = self._setup_with_mock(tmp_path, "test", dataset_file="roboflow")
         assert dm._dataset_test is fake_test
 
-    def test_test_stage_non_roboflow_uses_val_split(self, tmp_path):
-        """Setup('test') falls back to 'val' split for non-roboflow datasets."""
+    def test_test_stage_yolo_uses_test_split(self, tmp_path):
+        """Setup('test') requests 'test' split when dataset_file=='yolo'."""
+        dm, _, _, fake_test = self._setup_with_mock(tmp_path, "test", dataset_file="yolo")
+        assert dm._dataset_test is fake_test
+
+    def test_test_stage_yolo_falls_back_to_val_without_test_split(self, tmp_path):
+        """Setup('test') falls back to 'val' when a YOLO dataset declares no test split."""
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path, dataset_file="yolo")
+        from rfdetr.training.module_data import RFDETRDataModule
+
+        dm = RFDETRDataModule(mc, tc)
+        fake_val = _fake_dataset(20)
+
+        def _build(image_set, args, resolution):
+            if image_set == "test":
+                raise FileNotFoundError(str(tmp_path / "test" / "images"))
+            return fake_val
+
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
+            dm.setup("test")
+
+        assert dm._dataset_test is fake_val
+
+    def test_test_stage_yolo_warns_when_falling_back_to_val(self, tmp_path):
+        """The YOLO test-to-val fallback is logged at WARNING rather than applied silently."""
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path, dataset_file="yolo")
+        from rfdetr.training.module_data import RFDETRDataModule
+
+        dm = RFDETRDataModule(mc, tc)
+
+        def _build(image_set, args, resolution):
+            if image_set == "test":
+                raise FileNotFoundError(str(tmp_path / "test" / "images"))
+            return _fake_dataset(20)
+
+        with (
+            patch("rfdetr.training.module_data.build_dataset", side_effect=_build),
+            patch("rfdetr.training.module_data.logger") as mock_logger,
+        ):
+            dm.setup("test")
+
+        mock_logger.warning.assert_called_once()
+
+    def test_test_stage_coco_uses_val_split(self, tmp_path):
+        """Setup('test') falls back to 'val' for COCO, whose test2017 split is unlabelled test-dev."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, dataset_file="coco")
         from rfdetr.training.module_data import RFDETRDataModule

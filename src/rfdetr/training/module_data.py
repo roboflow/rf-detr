@@ -269,11 +269,40 @@ class RFDETRDataModule(LightningDataModule):
                 self._dataset_val = build_dataset("val", ns, resolution)
         elif stage == "test":
             if self._dataset_test is None:
-                split = "test" if self.train_config.dataset_file == "roboflow" else "val"
-                self._dataset_test = build_dataset(split, ns, resolution)
+                self._dataset_test = self._build_test_dataset(ns, resolution)
         elif stage == "predict":
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
+
+    def _build_test_dataset(self, ns: Any, resolution: int) -> torch.utils.data.Dataset[Any]:
+        """Build the dataset backing ``setup("test")``, preferring a real test split.
+
+        ``roboflow`` and ``yolo`` datasets carry a labelled ``test`` split, so it is used directly.  A YOLO dataset is
+        not required to declare one; when the split cannot be resolved the ``val`` split is used instead and the
+        substitution is logged, because falling back silently reports validation numbers under the name "test".
+
+        ``coco`` and ``o365`` always fall back to ``val``: their ``test`` split is COCO test-dev, which ships without
+        annotations and therefore cannot be scored locally.
+
+        Args:
+            ns: Merged model/train config namespace forwarded to :func:`build_dataset`.
+            resolution: Target square resolution in pixels.
+
+        Returns:
+            The dataset to evaluate during the ``test`` stage.
+        """
+        dataset_file = self.train_config.dataset_file
+        if dataset_file == "roboflow":
+            return build_dataset("test", ns, resolution)
+        if dataset_file == "yolo":
+            try:
+                return build_dataset("test", ns, resolution)
+            except FileNotFoundError as exc:
+                logger.warning(
+                    "No resolvable 'test' split for this YOLO dataset (%s); evaluating the 'val' split instead.",
+                    exc,
+                )
+        return build_dataset("val", ns, resolution)
 
     def _resolve_batch_size(self) -> int:
         """Return the concrete training batch size.
