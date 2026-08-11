@@ -188,7 +188,41 @@ class TestMetricsCSVResume:
     resumed epoch(s).
     """
 
-    def _fit_one_run(self, mc, tc, fake_criterion, max_epochs: int, ckpt_path: str | None):
+    def _fit_one_run(
+        self,
+        mc: RFDETRBaseConfig,
+        tc: TrainConfig,
+        fake_criterion: _FakeCriterion,
+        max_epochs: int,
+        ckpt_path: str | None,
+    ) -> None:
+        """Run one PTL ``fit()`` call against mocked model internals, writing into ``tc.output_dir``.
+
+        Args:
+            mc: Model config for the run.
+            tc: Train config for the run; ``tc.output_dir`` is where ``metrics.csv`` and checkpoints land.
+            fake_criterion: Shared criterion instance so loss values stay comparable across resumed runs.
+            max_epochs: Epoch count passed to ``build_trainer``.
+            ckpt_path: Checkpoint to resume PTL's trainer state from, or ``None`` for a fresh run.
+
+        Examples:
+            >>> import contextlib
+            >>> import io
+            >>> from tempfile import TemporaryDirectory
+            >>> with TemporaryDirectory() as d:
+            ...     mc = RFDETRBaseConfig(pretrain_weights=None, device='cpu', num_classes=3)
+            ...     tc = TrainConfig(
+            ...         dataset_dir=str(Path(d) / 'ds'),
+            ...         output_dir=str(Path(d) / 'out'),
+            ...         epochs=1,
+            ...         batch_size=2,
+            ...         tensorboard=False,
+            ...     )
+            ...     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            ...         TestMetricsCSVResume()._fit_one_run(mc, tc, _FakeCriterion(), max_epochs=1, ckpt_path=None)
+            ...     (Path(tc.output_dir) / 'metrics.csv').exists()
+            True
+        """
         with (
             patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
             patch(
@@ -230,6 +264,7 @@ class TestMetricsCSVResume:
         last_ckpt = Path(tc.output_dir) / "last.ckpt"
         assert last_ckpt.exists(), "checkpoint_interval default (10) must still save a `last` checkpoint every epoch"
 
+        tc.resume = str(last_ckpt)
         self._fit_one_run(mc, tc, fake_criterion, max_epochs=2, ckpt_path=str(last_ckpt))
 
         rows_after_resume = pd.read_csv(csv_path)
@@ -240,4 +275,26 @@ class TestMetricsCSVResume:
             "Every row logged before the resume must still be present afterward — "
             'CSVLogger(version="") must not silently delete pre-existing metrics.csv history '
             "when re-instantiated against the same output_dir."
+        )
+
+    def test_reused_output_dir_without_resume_resets_history(self, base_model_config, base_train_config):
+        """A fresh run (``resume=None``) reusing a prior run's output_dir must reset metrics.csv, not append."""
+        mc = base_model_config()
+        tc = base_train_config(use_ema=False, run_test=False)
+        fake_criterion = _FakeCriterion()
+
+        self._fit_one_run(mc, tc, fake_criterion, max_epochs=1, ckpt_path=None)
+
+        csv_path = Path(tc.output_dir) / "metrics.csv"
+        rows_from_first_run = pd.read_csv(csv_path)
+        assert not rows_from_first_run.empty, "First run must have logged at least one row"
+
+        assert tc.resume is None, "This case only applies to a fresh run, not a resumed one"
+        self._fit_one_run(mc, tc, fake_criterion, max_epochs=1, ckpt_path=None)
+
+        rows_from_second_run = pd.read_csv(csv_path)
+        assert len(rows_from_second_run) == len(rows_from_first_run), (
+            f"Fresh run wrote {len(rows_from_second_run)} rows but the prior run wrote "
+            f"{len(rows_from_first_run)} — a fresh run (resume=None) reusing output_dir must let "
+            "CSVLogger reset metrics.csv, not silently append onto an unrelated prior run's history."
         )

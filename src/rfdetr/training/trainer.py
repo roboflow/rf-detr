@@ -216,6 +216,10 @@ def _preserve_csv_history_across_resume(csv_logger: CSVLogger, output_dir: str |
     the file before that deletion happens, restore it immediately after, and seed the writer's column
     cache to match so the next ``save()`` call appends rather than starting over.
 
+    Only call this for a resumed run (``tc.resume is not None``). Reusing ``output_dir`` for a fresh
+    run must still let ``CSVLogger`` reset ``metrics.csv`` — appending a fresh run's history onto an
+    unrelated prior run's would silently corrupt the log.
+
     Args:
         csv_logger: The just-constructed ``CSVLogger`` for this run, not yet attached to a ``Trainer``.
         output_dir: The training run's output directory; must match ``csv_logger``'s log location
@@ -356,7 +360,8 @@ def _append_training_callbacks(
     # CSVLogger is always enabled — no extra package required.
     # Produces metrics.csv in output_dir so there is always a log file.
     csv_logger = CSVLogger(save_dir=tc.output_dir, name="", version="")
-    _preserve_csv_history_across_resume(csv_logger, tc.output_dir)
+    if tc.resume is not None:
+        _preserve_csv_history_across_resume(csv_logger, tc.output_dir)
     loggers.append(csv_logger)
 
     if tc.tensorboard:
