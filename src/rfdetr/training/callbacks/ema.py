@@ -60,7 +60,6 @@ class RFDETREMACallback(Callback):
 
         self._average_model: AveragedModel | None = None
         self._latest_update_step = 0
-        self._latest_update_epoch = -1
         self._swapped_state_dict: dict[str, Tensor] | None = None
         self._pending_average_state_dict: dict[str, Any] | None = None
 
@@ -216,17 +215,19 @@ class RFDETREMACallback(Callback):
         step_idx: int | None = None,
         epoch_idx: int | None = None,
     ) -> bool:
-        """Return ``True`` after every optimizer step and every epoch end.
+        """Return whether either trigger index is present.
 
-        The base ``WeightAveraging`` only updates on steps. This override also triggers an update at epoch boundaries,
-        matching RF-DETR's existing EMA behaviour.
+        ``epoch_idx`` remains part of the callback interface for backwards compatibility and still counts as a
+        trigger when supplied. The callback now invokes this method only from ``on_train_batch_end`` with ``step_idx``;
+        it no longer dispatches an epoch-end EMA update, which previously double-counted the last step of each epoch
+        and bypassed ``update_interval_steps``.
 
         Args:
             step_idx: Index of the last optimizer step, or ``None``.
-            epoch_idx: Index of the last epoch, or ``None``.
+            epoch_idx: Index of the last epoch, or ``None``. Retained for backwards API compatibility.
 
         Returns:
-            Whether the averaged model should be updated.
+            ``True`` when either trigger index is not ``None``.
         """
         return step_idx is not None or epoch_idx is not None
 
@@ -261,14 +262,6 @@ class RFDETREMACallback(Callback):
         if should_update_step and self.should_update(step_idx=step_idx):
             self._average_model.update_parameters(pl_module)
 
-    def on_train_epoch_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        """Optionally update EMA at epoch boundaries."""
-        if self._average_model is None:
-            return
-        if trainer.current_epoch > self._latest_update_epoch and self.should_update(epoch_idx=trainer.current_epoch):
-            self._average_model.update_parameters(pl_module)
-            self._latest_update_epoch = trainer.current_epoch
-
     def on_test_epoch_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Evaluate tests using averaged EMA weights unless the swap is suppressed."""
         if self.suppress_test_swap:
@@ -291,7 +284,6 @@ class RFDETREMACallback(Callback):
         """Return callback state for checkpointing."""
         state: dict[str, Any] = {
             "latest_update_step": self._latest_update_step,
-            "latest_update_epoch": self._latest_update_epoch,
         }
         if self._average_model is not None:
             state["average_model_state_dict"] = self._average_model.state_dict()
@@ -300,7 +292,6 @@ class RFDETREMACallback(Callback):
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         """Restore callback state from checkpoints."""
         self._latest_update_step = state_dict.get("latest_update_step", 0)
-        self._latest_update_epoch = state_dict.get("latest_update_epoch", -1)
         self._pending_average_state_dict = state_dict.get("average_model_state_dict")
 
     def get_ema_model_state_dict(self) -> dict[str, Tensor] | None:
