@@ -163,7 +163,8 @@ class HungarianMatcher(nn.Module):
         probabilities = logits.sigmoid()
         negative_cost = (1 - alpha) * (probabilities**gamma) * (-F.logsigmoid(-logits))
         positive_cost = alpha * ((1 - probabilities) ** gamma) * (-F.logsigmoid(logits))
-        return positive_cost - negative_cost
+        cost: Tensor = positive_cost - negative_cost
+        return cost
 
     @staticmethod
     def _detection_inputs_are_safe(outputs: dict[str, Any], targets: list[dict[str, Any]]) -> bool:
