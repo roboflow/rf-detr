@@ -1,0 +1,3688 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Customize RF-DETR training with PyTorch Lightning primitives. Direct access to RFDETRModelModule, RFDETRDataModule, and build_trainer.">
+      
+      
+        <meta name="author" content="Roboflow">
+      
+      
+        <link rel="canonical" href="https://rfdetr.roboflow.com/1.9.2/learn/train/customization/">
+      
+      
+        <link rel="prev" href="../advanced/">
+      
+      
+        <link rel="next" href="../augmentations/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/roboflow-logo.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+  
+    
+      
+        <title>Custom Training API - RF-DETR</title>
+      
+    
+  
+
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CIBM+Plex+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"IBM Plex Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/rf.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  
+  
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-5M220DKLMB"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){window.dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-5M220DKLMB');
+  </script>
+  <link rel="preconnect" href="https://storage.googleapis.com">
+
+  
+  
+  
+  <meta property="og:title" content="Custom Training API - RF-DETR">
+  <meta property="og:description" content="Customize RF-DETR training with PyTorch Lightning primitives. Direct access to RFDETRModelModule, RFDETRDataModule, and build_trainer.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://rfdetr.roboflow.com/1.9.2/learn/train/customization/">
+  <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
+  <meta property="og:image:width" content="840">
+  <meta property="og:image:height" content="630">
+
+  
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@roboflow">
+  <meta name="twitter:title" content="Custom Training API - RF-DETR">
+  <meta name="twitter:description" content="Customize RF-DETR training with PyTorch Lightning primitives. Direct access to RFDETRModelModule, RFDETRDataModule, and build_trainer.">
+  <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
+
+  
+  
+  
+  
+  <meta property="article:modified_time" content="2026-07-18T18:16:15">
+  
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Custom Training API",
+    "description": "Customize RF-DETR training with PyTorch Lightning primitives. Direct access to RFDETRModelModule, RFDETRDataModule, and build_trainer.",
+    "url": "https://rfdetr.roboflow.com/1.9.2/learn/train/customization/",
+    "isPartOf": {"@id": "https://rfdetr.roboflow.com/1.9.2#website"},
+    "about": {"@id": "https://rfdetr.roboflow.com/1.9.2#software"},
+    "proficiencyLevel": "Beginner to advanced",
+    "inLanguage": "en",
+    "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
+    "datePublished": "2025-03-01",
+    "dateModified": "2026-07-18T18:16:15",
+    "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
+    "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/1.9.2/learn/train/customization/"},
+    "speakable": {
+      "@type": "SpeakableSpecification",
+      "cssSelector": [".md-content h1", ".md-typeset > p:first-child"]
+    }
+  }
+  </script>
+  
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "RF-DETR",
+        "item": "https://rfdetr.roboflow.com/1.9.2"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Train Model",
+        "item": "https://rfdetr.roboflow.com/1.9.2/learn/train/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": "Custom Training API",
+        "item": "https://rfdetr.roboflow.com/1.9.2/learn/train/customization/"
+      }
+      
+    ]
+  }
+  </script>
+  
+  
+
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#custom-training-api" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+
+<!-- Header -->
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav
+    class="md-header__inner md-grid"
+    aria-label="Header"
+  >
+
+    <!-- Link to home -->
+    <a
+      href="../../.."
+      title="RF-DETR"
+      class="md-header__button md-logo"
+      aria-label="RF-DETR"
+      data-md-component="logo"
+    >
+      
+  <img src="../../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
+
+    </a>
+
+    <!-- Button to open drawer -->
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+
+    <!-- Header title -->
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            RF-DETR Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis" style="display: flex; align-items: center; gap: 0.5rem;">
+            <a
+            href="../../.."
+            title="RF-DETR"
+            class="md-header__button md-logo"
+            aria-label="RF-DETR"
+            data-md-component="logo"
+            id="item-logo"
+            >
+            
+  <img src="../../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
+
+            </a>
+            
+              Custom Training API
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    <!-- Button to open search modal -->
+    
+      
+
+      <!-- Check if search is actually enabled - see https://t.ly/DT_0V -->
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+
+        <!-- Search interface -->
+        <div class="md-search" data-md-component="search" role="dialog" aria-modal="true" aria-label="Search">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+
+
+    <ul class="header-list">
+        <li style="align-items: center;" id="resources-list">
+            <label for="dropdown-resources"><span>Resources <span class="header-chevron" aria-hidden="true"></span></span></label>
+            <input type="radio" name="dropdown" id="dropdown-resources" style="display: none;" />
+            <ul class="resources-sublist sublist">
+                <li><a href="https://blog.roboflow.com">Blog</a></li>
+                <li><a href="https://discuss.roboflow.com">Community Forum</a></li>
+                <li><a href="https://roboflow.com/sales">Contact Sales</a></li>
+                <li><a href="https://universe.roboflow.com">Universe</a></li>
+            </ul>
+        </li>
+        <li style="align-items: center;" id="products-list">
+            <label for="dropdown-products"><span>Docs <span class="header-chevron" aria-hidden="true"></span></span></label>
+            <input type="radio" name="dropdown" id="dropdown-products" style="display: none;" />
+            <ul class="products-sublist sublist">
+                <li><a href="https://inference.roboflow.com">Inference</a></li>
+                <li><a href="https://supervision.roboflow.com">Supervision</a></li>
+                <li><a href="https://trackers.roboflow.com">Trackers</a></li>
+                <li><a href="https://rfdetr.roboflow.com">RF-DETR</a></li>
+                <li><a href="https://maestro.roboflow.com">Maestro</a></li>
+                <li><a href="https://docs.roboflow.com">Roboflow</a></li>
+            </ul>
+        </li>
+        <li>
+          <a href="https://github.com/roboflow/rf-detr" class="header-btn" style="border-radius: 5px; color: white; background: var(--md-typeset-a-color); padding-top: 0.25rem; padding-left: 0.5rem; padding-bottom: 0.25rem; padding-right: 0.5rem; border: 1px solid #8315F9;">Go to GitHub</a>
+        </li>
+    </ul>
+    <script>
+      document.addEventListener('click', function(event) {
+        const resourcesList = document.getElementById('resources-list');
+        const productsList = document.getElementById('products-list');
+        const dropdownResources = document.getElementById('dropdown-resources');
+        const dropdownProducts = document.getElementById('dropdown-products');
+
+        if (!resourcesList.contains(event.target)) {
+          dropdownResources.checked = false;
+        }
+        if (!productsList.contains(event.target)) {
+          dropdownProducts.checked = false;
+        }
+      });
+      document.getElementById('resources-list').addEventListener('mouseover', function() {
+        document.getElementById('dropdown-resources').checked = true;
+      });
+      document.getElementById('products-list').addEventListener('mouseover', function() {
+        document.getElementById('dropdown-products').checked = true;
+      });
+      document.getElementById('resources-list').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.resources-sublist:hover') && !document.querySelector('#resources-list:hover')) {
+            document.getElementById('dropdown-resources').checked = false;
+          }
+        }, 350);
+      });
+      document.querySelector('.resources-sublist').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.resources-sublist:hover') && !document.querySelector('#resources-list:hover')) {
+            document.getElementById('dropdown-resources').checked = false;
+          }
+        }, 450);
+      });
+      document.getElementById('products-list').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.products-sublist:hover') && !document.querySelector('#products-list:hover')) {
+            document.getElementById('dropdown-products').checked = false;
+          }
+        }, 500);
+      });
+      document.querySelector('.products-sublist').addEventListener('mouseout', function() {
+        setTimeout(function() {
+          if (!document.querySelector('.products-sublist:hover') && !document.querySelector('#products-list:hover')) {
+            document.getElementById('dropdown-products').checked = false;
+          }
+        }, 500);
+      });
+      function labelCurrentVersion() {
+        document.querySelectorAll('.md-version__current').forEach(function(button) {
+          const label = button.textContent.trim();
+          if (label) {
+            button.setAttribute('aria-label', label);
+          }
+        });
+      }
+      labelCurrentVersion();
+      const versionMenu = document.querySelector('.md-version');
+      if (versionMenu) {
+        new MutationObserver(labelCurrentVersion).observe(versionMenu, { childList: true, subtree: true });
+      }
+    </script>
+  </nav>
+
+  <!-- Navigation tabs (sticky) -->
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../../getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  How to
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../reference/rfdetr/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../faq/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  FAQ
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../cookbooks/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Cookbooks
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../resources/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Resources
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../changelog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Changelog
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="RF-DETR" class="md-nav__button md-logo" aria-label="RF-DETR" data-md-component="logo">
+      
+  <img src="../../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
+
+    </a>
+    RF-DETR
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/roboflow/rf-detr" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    roboflow/rf-detr
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How to
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How to
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_1" id="__nav_2_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_2" id="__nav_2_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run Model
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Run Model
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../run/detection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Detection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../run/segmentation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Segmentation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../run/keypoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keypoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pretrained/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pretrained Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Train Model
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Train Model
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dataset-formats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset Formats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../training-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Training Parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Training
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Custom Training API
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Custom Training API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-rfdetrtrain-relates-to-ptl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How RFDETR.train() relates to PTL
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetrmodelmodule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RFDETRModelModule
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RFDETRModelModule">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lifecycle-hooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lifecycle hooks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#accessing-the-underlying-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accessing the underlying model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom-optimizer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom optimizer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom-lr-scheduler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom LR scheduler
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetrdatamodule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RFDETRDataModule
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RFDETRDataModule">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stages
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#class_names-property" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        class_names property
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#build_trainer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        build_trainer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="build_trainer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-build_trainer-configures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What build_trainer configures
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#overriding-ptl-trainer-kwargs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overriding PTL Trainer kwargs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-the-training-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running the training loop
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Running the training loop">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#full-training-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Full training run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resume-from-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resume from checkpoint
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validation-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation only
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inference-with-the-data-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inference with the data pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multi-gpu-training" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-GPU training
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Multi-GPU training">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#data-parallel-ddp-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Parallel (DDP) — recommended
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#effective-batch-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Effective batch size
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-callbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom callbacks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Custom callbacks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#built-in-callbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-in callbacks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-loggers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom loggers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logged-metrics-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logged metrics reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../augmentations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Augmentations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../loggers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Training Loggers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/rfdetr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Detection Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Detection Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/nano/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Nano
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/small/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Small
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/medium/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Medium
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/large/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Large
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/xlarge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR XLarge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/2xlarge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR 2XLarge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Segmentation Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Segmentation Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/seg_nano/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg Nano
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/seg_small/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg Small
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/seg_medium/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg Medium
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/seg_large/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg Large
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/seg_xlarge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg XLarge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/seg_2xlarge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg 2XLarge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keypoint Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Keypoint Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/kp_preview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Keypoint Preview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Training Configs
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Training Configs
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/train_config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Train Config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/segmentation_train_config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Segmentation Train Config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/keypoint_train_config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keypoint Train Config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lightning Training
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Lightning Training
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/training/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Training Primitives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cookbooks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cookbooks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../resources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Resources
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-rfdetrtrain-relates-to-ptl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How RFDETR.train() relates to PTL
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetrmodelmodule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RFDETRModelModule
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RFDETRModelModule">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lifecycle-hooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lifecycle hooks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#accessing-the-underlying-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accessing the underlying model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom-optimizer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom optimizer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom-lr-scheduler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom LR scheduler
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetrdatamodule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RFDETRDataModule
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RFDETRDataModule">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stages
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#class_names-property" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        class_names property
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#build_trainer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        build_trainer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="build_trainer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-build_trainer-configures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What build_trainer configures
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#overriding-ptl-trainer-kwargs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overriding PTL Trainer kwargs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-the-training-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running the training loop
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Running the training loop">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#full-training-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Full training run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resume-from-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resume from checkpoint
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validation-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation only
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inference-with-the-data-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inference with the data pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multi-gpu-training" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-GPU training
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Multi-GPU training">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#data-parallel-ddp-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Parallel (DDP) — recommended
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#effective-batch-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Effective batch size
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-callbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom callbacks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Custom callbacks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#built-in-callbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-in callbacks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-loggers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom loggers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logged-metrics-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logged metrics reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="custom-training-api">Custom Training API<a class="headerlink" href="#custom-training-api" title="Permanent link">&para;</a></h1>
+<p>The high-level <code>RFDETR.train()</code> method is the quickest path to fine-tuning, but the underlying training primitives are fully public and are the <strong>recommended path for any customisation</strong>: custom callbacks, alternative loggers, mixed-precision overrides, multi-GPU strategies, or integration with external training frameworks.</p>
+<div class="admonition tip">
+<p class="admonition-title">Quickstart vs. customisation</p>
+<p>If you want to start training with minimal code, use <code>model.train()</code> — it sets up and runs the full PTL stack automatically. Come here when you need to take direct control over any part of that stack.</p>
+</div>
+<h2 id="how-rfdetrtrain-relates-to-ptl">How <code>RFDETR.train()</code> relates to PTL<a class="headerlink" href="#how-rfdetrtrain-relates-to-ptl" title="Permanent link">&para;</a></h2>
+<p>When you call <code>model.train(...)</code>, three things happen internally:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRModelModule</span><span class="p">,</span> <span class="n">RFDETRDataModule</span><span class="p">,</span> <span class="n">build_trainer</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">module</span> <span class="o">=</span> <span class="n">RFDETRModelModule</span><span class="p">(</span><span class="n">model_config</span><span class="p">,</span> <span class="n">train_config</span><span class="p">)</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">datamodule</span> <span class="o">=</span> <span class="n">RFDETRDataModule</span><span class="p">(</span><span class="n">model_config</span><span class="p">,</span> <span class="n">train_config</span><span class="p">)</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">trainer</span> <span class="o">=</span> <span class="n">build_trainer</span><span class="p">(</span><span class="n">train_config</span><span class="p">,</span> <span class="n">model_config</span><span class="p">)</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">datamodule</span><span class="p">,</span> <span class="n">ckpt_path</span><span class="o">=</span><span class="n">train_config</span><span class="o">.</span><span class="n">resume</span> <span class="ow">or</span> <span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Each of these objects is a standard PTL class. You can construct them directly, modify them, swap out callbacks, or replace the trainer entirely.</p>
+<hr />
+<h2 id="rfdetrmodelmodule">RFDETRModelModule<a class="headerlink" href="#rfdetrmodelmodule" title="Permanent link">&para;</a></h2>
+<p><code>RFDETRModelModule</code> is a <code>pytorch_lightning.LightningModule</code>. It owns the model weights, the criterion, the postprocessor, and the optimizer/scheduler configuration.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.config</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">RFDETRMediumConfig</span><span class="p">,</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">TrainConfig</span><span class="p">,</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="p">)</span>  <span class="c1"># config classes live in rfdetr.config, not the top-level rfdetr namespace</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRModelModule</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">model_config</span> <span class="o">=</span> <span class="n">RFDETRMediumConfig</span><span class="p">(</span><span class="n">num_classes</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;output&quot;</span><span class="p">,</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="p">)</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="n">module</span> <span class="o">=</span> <span class="n">RFDETRModelModule</span><span class="p">(</span><span class="n">model_config</span><span class="p">,</span> <span class="n">train_config</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="lifecycle-hooks">Lifecycle hooks<a class="headerlink" href="#lifecycle-hooks" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Hook</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>on_fit_start</code></td>
+<td>Seeds RNGs when <code>train_config.seed</code> is set.</td>
+</tr>
+<tr>
+<td><code>on_train_batch_start</code></td>
+<td>Applies multi-scale random resize when <code>train_config.multi_scale=True</code>.</td>
+</tr>
+<tr>
+<td><code>transfer_batch_to_device</code></td>
+<td>Moves <code>NestedTensor</code> batches to the target device.</td>
+</tr>
+<tr>
+<td><code>training_step</code></td>
+<td>Computes loss and logs <code>train/loss</code> plus per-term losses. Keypoint models use manual optimization with box-normalized accumulation across microbatches; detection and segmentation use Lightning's automatic optimization path.</td>
+</tr>
+<tr>
+<td><code>validation_step</code></td>
+<td>Runs forward pass and postprocessing; returns <code>{results, targets}</code> for <code>COCOEvalCallback</code>.</td>
+</tr>
+<tr>
+<td><code>test_step</code></td>
+<td>Same as <code>validation_step</code>, logs under <code>test/</code>.</td>
+</tr>
+<tr>
+<td><code>predict_step</code></td>
+<td>Runs inference-only forward pass and returns postprocessed detections.</td>
+</tr>
+<tr>
+<td><code>configure_optimizers</code></td>
+<td>Builds the configured optimizer, preserves layer-wise LR decay, applies optional parameter-group kwargs, and attaches the configured LR scheduler (managed preset, import path, or callable).</td>
+</tr>
+<tr>
+<td><code>on_load_checkpoint</code></td>
+<td>Auto-converts legacy <code>.pth</code> checkpoints to PTL format.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="accessing-the-underlying-model">Accessing the underlying model<a class="headerlink" href="#accessing-the-underlying-model" title="Permanent link">&para;</a></h3>
+<p>The raw <code>nn.Module</code> is <code>module.model</code>. After training completes, <code>RFDETR.train()</code> syncs it back onto <code>self.model.model</code> so <code>predict()</code> and <code>export()</code> continue to work.</p>
+<h3 id="custom-optimizer">Custom optimizer<a class="headerlink" href="#custom-optimizer" title="Permanent link">&para;</a></h3>
+<p><code>TrainConfig.optimizer</code> accepts either a <strong>name / import path</strong> (a string) or a <strong>callable</strong> (a class or <code>functools.partial</code>), and selects the optimizer built in <code>configure_optimizers</code>.</p>
+<ul>
+<li><strong>Managed short name</strong> — a bare <code>torch.optim</code> optimizer name such as the default <code>"adamw"</code>, <code>"sgd"</code>, or <code>"adam"</code> (case-insensitive). <strong>Only native <code>torch.optim</code> optimizers may be chosen by short name.</strong> RF-DETR manages construction here: it injects <code>lr</code>, a signature-aware <code>weight_decay</code>, and your <code>optimizer_kwargs</code>.</li>
+<li><strong>Explicit import path</strong> — a dotted string such as <code>"torch.optim.AdamW"</code> or <code>"pytorch_optimizer.Lion"</code>. This is how you select any non-<code>torch.optim</code> optimizer, e.g. one from <a href="https://kozistr.tech/pytorch_optimizer/"><code>pytorch-optimizer</code></a> (a third-party library you install yourself — RF-DETR does not depend on it). The class is constructed from the RF-DETR parameter groups (which already carry per-group learning rates) plus your <code>optimizer_kwargs</code> only; RF-DETR injects no <code>lr</code> or <code>weight_decay</code>, so pass any you need in <code>optimizer_kwargs</code>.</li>
+<li><strong>Callable</strong> — a class or <code>functools.partial</code> is called as <code>optimizer(param_groups)</code> and nothing else, so bake all hyperparameters into the callable. <code>optimizer_kwargs</code> is ignored (with a warning) in this mode. A reconstructable callable (an importable top-level class / <code>functools.partial</code> with JSON-serializable keyword arguments) is desugared to its dotted import path plus keyword arguments so the config round-trips through <code>training_config.json</code>; a lambda, locally-defined class, or non-serializable argument still trains but cannot be restored from a saved config (RF-DETR warns with a specific hint).</li>
+</ul>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">functools</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="c1"># managed native torch.optim short name — RF-DETR injects lr + weight_decay</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">optimizer</span><span class="o">=</span><span class="s2">&quot;adamw&quot;</span><span class="p">)</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="c1"># explicit import path (incl. pytorch-optimizer) — supply hyperparameters via optimizer_kwargs</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">optimizer</span><span class="o">=</span><span class="s2">&quot;pytorch_optimizer.Lion&quot;</span><span class="p">,</span> <span class="n">optimizer_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;weight_decouple&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">})</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="c1"># callable / functools.partial — bake arguments in; optimizer_kwargs is ignored</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">optimizer</span><span class="o">=</span><span class="n">functools</span><span class="o">.</span><span class="n">partial</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">,</span> <span class="n">weight_decay</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">))</span>
+</span></code></pre></div>
+<p>See <a href="../training-parameters/">Training parameters — optimizer</a> for the full parameter reference and examples.</p>
+<p><code>fused_optimizer</code> only affects the built-in <code>optimizer="adamw"</code> path; it is ignored for custom optimizers. On a BF16/CUDA run where fused AdamW would otherwise apply, RF-DETR logs a warning if <code>fused_optimizer=True</code> is combined with a non-default optimizer.</p>
+<div class="admonition warning">
+<p class="admonition-title">Wrapper optimizers (SAM, Lookahead, …) need extra care</p>
+<p>Non-<code>torch.optim</code> optimizers are selected by import path (e.g. <code>"pytorch_optimizer.Lion"</code>) or a callable. Most <code>pytorch-optimizer</code> optimizers are drop-in replacements and work directly — including <code>Lion</code>, <code>AdaBelief</code>, <code>SophiaH</code>, <code>Adan</code>, <code>Ranger</code>, and <code>Ranger21</code>, which take <code>params</code> first like any standard optimizer. Two groups need extra care:</p>
+<ul>
+<li><strong>Base-optimizer wrappers — <code>SAM</code> / <code>BSAM</code> / <code>GSAM</code> / <code>WSAM</code>.</strong> They require a <code>base_optimizer</code> as a second positional argument, so <code>optimizer="pytorch_optimizer.SAM"</code> raises a <code>TypeError</code> at training start (RF-DETR calls the class with the parameter groups only). They also change <code>optimizer.step()</code> semantics (SAM needs two forward/backward passes per step) and are incompatible with PyTorch Lightning's default <code>automatic_optimization=True</code>. Supply the <code>base_optimizer</code> via a <code>functools.partial</code>, but such an optimizer will not round-trip through a saved config.</li>
+<li><strong><code>Lookahead</code> / <code>PCGrad</code> / <code>GradientCentralization</code>.</strong> These wrap or post-process another optimizer and likewise cannot be built from parameter groups alone; construction with the parameter groups only raises a <code>TypeError</code>.</li>
+</ul>
+<p>If you need SAM or Lookahead, override <code>configure_optimizers</code> and set <code>self.automatic_optimization = False</code> in <code>RFDETRModelModule.__init__</code>. For standard use, pick a <code>torch.optim</code> optimizer by name or a drop-in <code>pytorch-optimizer</code> optimizer by import path (e.g. <code>"pytorch_optimizer.Lion"</code>).</p>
+</div>
+<h3 id="custom-lr-scheduler">Custom LR scheduler<a class="headerlink" href="#custom-lr-scheduler" title="Permanent link">&para;</a></h3>
+<p><code>TrainConfig.lr_scheduler</code> accepts either a <strong>preset name / import path</strong> (a string) or a <strong>callable</strong> (a class or <code>functools.partial</code>), mirroring <code>optimizer</code>, and selects the scheduler built in <code>configure_optimizers</code>.</p>
+<ul>
+<li><strong>Managed preset</strong> — the built-in <code>"step"</code> (10x drop after <code>lr_drop</code> epochs) or <code>"cosine"</code> (annealing to <code>min_factor</code>). These own linear warmup and full-run step sizing; pass <code>lr_drop</code> / <code>min_factor</code> via <code>lr_scheduler_kwargs</code>.</li>
+<li><strong>Explicit import path</strong> — a dotted string such as <code>"torch.optim.lr_scheduler.OneCycleLR"</code>. The class is constructed as <code>scheduler(optimizer, **lr_scheduler_kwargs)</code>; RF-DETR injects no <code>total_steps</code> / <code>T_max</code>, so pass any the scheduler needs in <code>lr_scheduler_kwargs</code>.</li>
+<li><strong>Callable</strong> — a class or <code>functools.partial</code> is called as <code>lr_scheduler(optimizer)</code> and nothing else, so bake all hyperparameters into the callable. <code>lr_scheduler_kwargs</code> is ignored (with a warning) in this mode. Reconstructable callables desugar to a dotted path plus kwargs so the config round-trips through <code>training_config.json</code>; a lambda or locally-defined class still trains but cannot be restored from a saved config.</li>
+</ul>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">functools</span><span class="o">,</span><span class="w"> </span><span class="nn">torch</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1"># managed preset — warmup + full-run sizing handled by RF-DETR</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">lr_scheduler</span><span class="o">=</span><span class="s2">&quot;cosine&quot;</span><span class="p">,</span> <span class="n">lr_scheduler_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;min_factor&quot;</span><span class="p">:</span> <span class="mf">0.1</span><span class="p">})</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c1"># explicit import path — supply scheduler arguments via lr_scheduler_kwargs</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="o">...</span><span class="p">,</span> <span class="n">lr_scheduler</span><span class="o">=</span><span class="s2">&quot;torch.optim.lr_scheduler.StepLR&quot;</span><span class="p">,</span> <span class="n">lr_scheduler_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;step_size&quot;</span><span class="p">:</span> <span class="mi">30</span><span class="p">,</span> <span class="s2">&quot;gamma&quot;</span><span class="p">:</span> <span class="mf">0.1</span><span class="p">}</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">)</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="c1"># callable / functools.partial — bake arguments in; lr_scheduler_kwargs is ignored</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">lr_scheduler</span><span class="o">=</span><span class="n">functools</span><span class="o">.</span><span class="n">partial</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">lr_scheduler</span><span class="o">.</span><span class="n">StepLR</span><span class="p">,</span> <span class="n">step_size</span><span class="o">=</span><span class="mi">30</span><span class="p">))</span>
+</span></code></pre></div>
+<p>With <code>warmup_epochs &gt; 0</code>, an explicit scheduler is automatically prepended with a linear warmup ramp via <code>SequentialLR</code> (managed presets bake warmup into their own schedule). <code>ReduceLROnPlateau</code> is special: it cannot be warmup-wrapped, always steps once per epoch, and reads the metric named by <code>lr_scheduler_monitor</code> (default <code>"val/loss"</code>). Use <code>lr_scheduler_interval="epoch"</code> to step other explicit schedulers per epoch instead of per optimizer step.</p>
+<p>See <a href="../training-parameters/#scheduler-and-regularization">Training parameters — scheduler</a> for the full parameter reference.</p>
+<hr />
+<h2 id="rfdetrdatamodule">RFDETRDataModule<a class="headerlink" href="#rfdetrdatamodule" title="Permanent link">&para;</a></h2>
+<p><code>RFDETRDataModule</code> is a <code>pytorch_lightning.LightningDataModule</code>. It builds train/val/test datasets and wraps them in <code>DataLoader</code> objects.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRDataModule</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">datamodule</span> <span class="o">=</span> <span class="n">RFDETRDataModule</span><span class="p">(</span><span class="n">model_config</span><span class="p">,</span> <span class="n">train_config</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="stages">Stages<a class="headerlink" href="#stages" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Datasets built</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"fit"</code></td>
+<td><code>train</code> + <code>val</code></td>
+</tr>
+<tr>
+<td><code>"validate"</code></td>
+<td><code>val</code> only</td>
+</tr>
+<tr>
+<td><code>"test"</code></td>
+<td><code>test</code> (or <code>val</code> for COCO-format datasets)</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>setup(stage)</code> method is lazy — each split is built at most once, even if called multiple times.</p>
+<h3 id="class_names-property">class_names property<a class="headerlink" href="#class_names-property" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">datamodule</span><span class="o">.</span><span class="n">setup</span><span class="p">(</span><span class="s2">&quot;fit&quot;</span><span class="p">)</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">datamodule</span><span class="o">.</span><span class="n">class_names</span><span class="p">)</span>  <span class="c1"># e.g. [&quot;cat&quot;, &quot;dog&quot;, &quot;person&quot;]</span>
+</span></code></pre></div>
+<p>Returns sorted category names from the COCO annotation file of the first available split, or <code>None</code> if the dataset has not been set up yet.</p>
+<hr />
+<h2 id="build_trainer">build_trainer<a class="headerlink" href="#build_trainer" title="Permanent link">&para;</a></h2>
+<p><code>build_trainer</code> assembles a <code>pytorch_lightning.Trainer</code> with the full RF-DETR callback and logger stack. All <code>TrainConfig</code> fields are wired automatically.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_trainer</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">trainer</span> <span class="o">=</span> <span class="n">build_trainer</span><span class="p">(</span><span class="n">train_config</span><span class="p">,</span> <span class="n">model_config</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="what-build_trainer-configures">What build_trainer configures<a class="headerlink" href="#what-build_trainer-configures" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Max epochs</td>
+<td><code>train_config.epochs</code></td>
+</tr>
+<tr>
+<td>Gradient accumulation</td>
+<td>Detection/segmentation: <code>train_config.grad_accum_steps</code> forwarded to Trainer. Keypoint models: owned by <code>RFDETRModelModule</code> manual optimization (Trainer always sees <code>1</code>).</td>
+</tr>
+<tr>
+<td>Gradient clipping</td>
+<td>Detection/segmentation: <code>train_config.clip_max_norm</code> forwarded to Trainer. Keypoint models: owned by <code>RFDETRModelModule</code> manual optimization (Trainer always sees <code>None</code>).</td>
+</tr>
+<tr>
+<td>Mixed precision</td>
+<td><code>model_config.amp</code> enables AMP; dtype resolved from <code>train_config.amp_dtype</code> (<code>"auto"</code> selects <code>bf16-mixed</code> on Ampere+, <code>"bf16"</code> / <code>"fp16"</code> force a specific dtype)</td>
+</tr>
+<tr>
+<td>Accelerator</td>
+<td><code>train_config.accelerator</code> (default <code>"auto"</code>)</td>
+</tr>
+<tr>
+<td>Strategy</td>
+<td>Set via <code>train_config.strategy</code> (default <code>"auto"</code>) or pass <code>strategy=</code> as a <code>**trainer_kwarg</code> to <code>build_trainer</code>. Common values: <code>"auto"</code>, <code>"ddp"</code>, <code>"ddp_spawn"</code>. <code>TrainConfig</code> also exposes <code>devices</code> and <code>num_nodes</code> for multi-GPU and multi-node training.</td>
+</tr>
+<tr>
+<td>Sync batch norm</td>
+<td><code>train_config.sync_bn</code></td>
+</tr>
+<tr>
+<td>Progress bar</td>
+<td><code>train_config.progress_bar</code></td>
+</tr>
+<tr>
+<td>Loggers</td>
+<td>CSVLogger always; TensorBoard, WandB, MLflow when their <code>train_config</code> flags are <code>True</code></td>
+</tr>
+<tr>
+<td>Callbacks</td>
+<td><code>RFDETREMACallback</code>, <code>DropPathCallback</code>, <code>COCOEvalCallback</code>, <code>BestModelCallback</code>, <code>RFDETREarlyStopping</code> (conditional)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="overriding-ptl-trainer-kwargs">Overriding PTL Trainer kwargs<a class="headerlink" href="#overriding-ptl-trainer-kwargs" title="Permanent link">&para;</a></h3>
+<p>Pass keyword arguments accepted by <code>pytorch_lightning.Trainer</code> via <code>**trainer_kwargs</code>. Most keys override the built configuration.</p>
+<p><strong>Detection and segmentation models</strong> forward <code>accumulate_grad_batches</code> and <code>gradient_clip_val</code> to the Trainer normally — you can override them via <code>trainer_kwargs</code> or configure them on <code>TrainConfig</code> (<code>grad_accum_steps</code>, <code>clip_max_norm</code>).</p>
+<p><strong>Keypoint models</strong> use manual optimization, so <code>RFDETRModelModule</code> owns accumulation and clipping internally. <code>build_trainer()</code> forces <code>accumulate_grad_batches=1</code> and <code>gradient_clip_val=None</code> regardless of what is passed, and emits a <code>UserWarning</code> if those keys appear in <code>trainer_kwargs</code> so the override is visible:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">trainer</span> <span class="o">=</span> <span class="n">build_trainer</span><span class="p">(</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">train_config</span><span class="p">,</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">model_config</span><span class="p">,</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">fast_dev_run</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>  <span class="c1"># run 2 batches per epoch for a smoke test</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">log_every_n_steps</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="p">)</span>
+</span></code></pre></div>
+<hr />
+<h2 id="running-the-training-loop">Running the training loop<a class="headerlink" href="#running-the-training-loop" title="Permanent link">&para;</a></h2>
+<h3 id="full-training-run">Full training run<a class="headerlink" href="#full-training-run" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.config</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="n">RFDETRMediumConfig</span><span class="p">,</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">TrainConfig</span><span class="p">,</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="p">)</span>  <span class="c1"># config classes live in rfdetr.config, not the top-level rfdetr namespace</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRModelModule</span><span class="p">,</span> <span class="n">RFDETRDataModule</span><span class="p">,</span> <span class="n">build_trainer</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="n">model_config</span> <span class="o">=</span> <span class="n">RFDETRMediumConfig</span><span class="p">(</span><span class="n">num_classes</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;output&quot;</span><span class="p">,</span>
+</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="p">)</span>
+</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>
+</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="n">module</span> <span class="o">=</span> <span class="n">RFDETRModelModule</span><span class="p">(</span><span class="n">model_config</span><span class="p">,</span> <span class="n">train_config</span><span class="p">)</span>
+</span><span id="__span-8-18"><a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="n">datamodule</span> <span class="o">=</span> <span class="n">RFDETRDataModule</span><span class="p">(</span><span class="n">model_config</span><span class="p">,</span> <span class="n">train_config</span><span class="p">)</span>
+</span><span id="__span-8-19"><a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="n">trainer</span> <span class="o">=</span> <span class="n">build_trainer</span><span class="p">(</span><span class="n">train_config</span><span class="p">,</span> <span class="n">model_config</span><span class="p">)</span>
+</span><span id="__span-8-20"><a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a>
+</span><span id="__span-8-21"><a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">datamodule</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="resume-from-checkpoint">Resume from checkpoint<a class="headerlink" href="#resume-from-checkpoint" title="Permanent link">&para;</a></h3>
+<p>Pass the checkpoint path to <code>trainer.fit</code> via <code>ckpt_path</code>. The path can be a PTL <code>.ckpt</code> file or a legacy RF-DETR <code>.pth</code> file — <code>RFDETRModelModule.on_load_checkpoint</code> converts either format automatically.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">datamodule</span><span class="p">,</span> <span class="n">ckpt_path</span><span class="o">=</span><span class="s2">&quot;output/last.ckpt&quot;</span><span class="p">)</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="c1"># or a legacy checkpoint:</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">datamodule</span><span class="p">,</span> <span class="n">ckpt_path</span><span class="o">=</span><span class="s2">&quot;output/checkpoint.pth&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<blockquote>
+<p><strong>Note:</strong> When <code>checkpoint_interval=1</code>, no <code>last.ckpt</code> is written. Use <code>checkpoint_{epoch}.ckpt</code> (e.g. <code>output/checkpoint_epoch=4.ckpt</code>) to resume instead.</p>
+</blockquote>
+<p>If you need to persist a converted checkpoint on disk (for example to inspect it, share it, or use it outside of PTL), convert it explicitly before passing it to <code>trainer.fit</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">convert_legacy_checkpoint</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">convert_legacy_checkpoint</span><span class="p">(</span><span class="s2">&quot;old_checkpoint.pth&quot;</span><span class="p">,</span> <span class="s2">&quot;new_checkpoint.ckpt&quot;</span><span class="p">)</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">datamodule</span><span class="p">,</span> <span class="n">ckpt_path</span><span class="o">=</span><span class="s2">&quot;new_checkpoint.ckpt&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p><code>convert_legacy_checkpoint</code> reads a pre-PTL <code>.pth</code> file produced by the legacy <code>engine.py</code> training loop and writes a PTL-compatible <code>.ckpt</code> file. Use it when migrating saved checkpoints to the PTL format rather than relying on on-the-fly conversion at load time.</p>
+<h3 id="validation-only">Validation only<a class="headerlink" href="#validation-only" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">trainer</span><span class="o">.</span><span class="n">validate</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">datamodule</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Runs one full validation pass and logs <code>val/mAP_50_95</code>, <code>val/mAP_50</code>, <code>val/F1</code>, and per-class AP metrics to all active loggers.</p>
+<h3 id="inference-with-the-data-pipeline">Inference with the data pipeline<a class="headerlink" href="#inference-with-the-data-pipeline" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">trainer</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">dataloaders</span><span class="o">=</span><span class="n">datamodule</span><span class="o">.</span><span class="n">val_dataloader</span><span class="p">())</span>
+</span></code></pre></div>
+<p>Calls <code>module.predict_step</code> on every batch and returns a list of postprocessed detection results. Pass any <code>DataLoader</code> instance — <code>datamodule.val_dataloader()</code>, <code>datamodule.test_dataloader()</code>, or a custom loader — as the <code>dataloaders</code> argument. This is useful for offline evaluation or generating submission files.</p>
+<div class="admonition note">
+<p class="admonition-title">predict_dataloader not implemented</p>
+<p><code>RFDETRDataModule</code> does not define a <code>predict_dataloader()</code> method, so <code>trainer.predict(module, datamodule)</code> will raise an error. Always pass a dataloader explicitly via the <code>dataloaders=</code> argument.</p>
+</div>
+<hr />
+<h2 id="multi-gpu-training">Multi-GPU training<a class="headerlink" href="#multi-gpu-training" title="Permanent link">&para;</a></h2>
+<p><code>build_trainer</code> configures PyTorch Lightning's <code>Trainer</code> directly, so all PTL strategies work out of the box.</p>
+<h3 id="data-parallel-ddp-recommended">Data Parallel (DDP) — recommended<a class="headerlink" href="#data-parallel-ddp-recommended" title="Permanent link">&para;</a></h3>
+<p>Set <code>train_config.accelerator = "auto"</code> and pass <code>strategy="ddp"</code> to <code>build_trainer</code>, then launch with <code>torchrun</code>:</p>
+<div class="admonition note">
+<p class="admonition-title"><code>devices</code> must be overridden for multi-GPU runs</p>
+<p><code>build_trainer</code> defaults to <code>devices=1</code>. To use all available GPUs, pass <code>devices="auto"</code> (or an explicit count) as a <code>**trainer_kwarg</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">trainer</span> <span class="o">=</span> <span class="n">build_trainer</span><span class="p">(</span><span class="n">train_config</span><span class="p">,</span> <span class="n">model_config</span><span class="p">,</span> <span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;ddp&quot;</span><span class="p">,</span> <span class="n">devices</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Without this override, <code>torchrun</code> will spawn multiple processes but each process will only see one device, defeating the purpose of the multi-GPU launch.</p>
+</div>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>torchrun<span class="w"> </span>--nproc_per_node<span class="o">=</span><span class="m">4</span><span class="w"> </span>train.py
+</span></code></pre></div>
+<p>where <code>train.py</code> contains:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.config</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>    <span class="n">RFDETRMediumConfig</span><span class="p">,</span>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>    <span class="n">TrainConfig</span><span class="p">,</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="p">)</span>  <span class="c1"># config classes live in rfdetr.config, not the top-level rfdetr namespace</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRModelModule</span><span class="p">,</span> <span class="n">RFDETRDataModule</span><span class="p">,</span> <span class="n">build_trainer</span>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="n">model_config</span> <span class="o">=</span> <span class="n">RFDETRMediumConfig</span><span class="p">(</span><span class="n">num_classes</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span>
+</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>  <span class="c1"># per-GPU batch size</span>
+</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>  <span class="c1"># reduce when using more GPUs</span>
+</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;output&quot;</span><span class="p">,</span>
+</span><span id="__span-15-14"><a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>    <span class="n">sync_bn</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># sync batch norms across GPUs</span>
+</span><span id="__span-15-15"><a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a><span class="p">)</span>
+</span><span id="__span-15-16"><a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>
+</span><span id="__span-15-17"><a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a><span class="n">module</span> <span class="o">=</span> <span class="n">RFDETRModelModule</span><span class="p">(</span><span class="n">model_config</span><span class="p">,</span> <span class="n">train_config</span><span class="p">)</span>
+</span><span id="__span-15-18"><a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a><span class="n">datamodule</span> <span class="o">=</span> <span class="n">RFDETRDataModule</span><span class="p">(</span><span class="n">model_config</span><span class="p">,</span> <span class="n">train_config</span><span class="p">)</span>
+</span><span id="__span-15-19"><a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="n">trainer</span> <span class="o">=</span> <span class="n">build_trainer</span><span class="p">(</span><span class="n">train_config</span><span class="p">,</span> <span class="n">model_config</span><span class="p">,</span> <span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;ddp&quot;</span><span class="p">,</span> <span class="n">devices</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">)</span>
+</span><span id="__span-15-20"><a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a>
+</span><span id="__span-15-21"><a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">datamodule</span><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">EMA is not compatible with FSDP or DeepSpeed</p>
+<p><code>build_trainer</code> automatically disables <code>RFDETREMACallback</code> when <code>strategy</code> contains <code>"fsdp"</code> or <code>"deepspeed"</code>, and emits a <code>UserWarning</code>. Use <code>strategy="ddp"</code> or <code>strategy="auto"</code> to keep EMA active.</p>
+</div>
+<h3 id="effective-batch-size">Effective batch size<a class="headerlink" href="#effective-batch-size" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>effective_batch_size = batch_size × grad_accum_steps × num_gpus
+</span></code></pre></div>
+<p>Maintain an effective batch size of 16 regardless of GPU count:</p>
+<table>
+<thead>
+<tr>
+<th>GPUs</th>
+<th><code>batch_size</code></th>
+<th><code>grad_accum_steps</code></th>
+<th>Effective</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>4</td>
+<td>4</td>
+<td>16</td>
+</tr>
+<tr>
+<td>2</td>
+<td>4</td>
+<td>2</td>
+<td>16</td>
+</tr>
+<tr>
+<td>4</td>
+<td>4</td>
+<td>1</td>
+<td>16</td>
+</tr>
+<tr>
+<td>8</td>
+<td>2</td>
+<td>1</td>
+<td>16</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="custom-callbacks">Custom callbacks<a class="headerlink" href="#custom-callbacks" title="Permanent link">&para;</a></h2>
+<p><code>build_trainer</code> builds the default callback stack. To add your own callbacks alongside the built-in ones, pass them via <code>trainer_kwargs</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pytorch_lightning.callbacks</span><span class="w"> </span><span class="kn">import</span> <span class="n">LearningRateMonitor</span><span class="p">,</span> <span class="n">ModelSummary</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_trainer</span>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="n">extra_callbacks</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>    <span class="n">LearningRateMonitor</span><span class="p">(</span><span class="n">logging_interval</span><span class="o">=</span><span class="s2">&quot;step&quot;</span><span class="p">),</span>
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>    <span class="n">ModelSummary</span><span class="p">(</span><span class="n">max_depth</span><span class="o">=</span><span class="mi">3</span><span class="p">),</span>
+</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="p">]</span>
+</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>
+</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="n">trainer</span> <span class="o">=</span> <span class="n">build_trainer</span><span class="p">(</span>
+</span><span id="__span-17-10"><a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>    <span class="n">train_config</span><span class="p">,</span>
+</span><span id="__span-17-11"><a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a>    <span class="n">model_config</span><span class="p">,</span>
+</span><span id="__span-17-12"><a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a>    <span class="n">callbacks</span><span class="o">=</span><span class="n">extra_callbacks</span><span class="p">,</span>  <span class="c1"># replaces the default callback list entirely</span>
+</span><span id="__span-17-13"><a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Replacing vs. extending callbacks</p>
+<p>Passing <code>callbacks=</code> to <code>build_trainer</code> via <code>trainer_kwargs</code> <strong>replaces</strong> the entire default callback list built inside <code>build_trainer</code> (EMA, COCO eval, best-model checkpointing, etc.). To extend rather than replace, build the extra callbacks separately and merge them after calling <code>build_trainer</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="n">trainer</span> <span class="o">=</span> <span class="n">build_trainer</span><span class="p">(</span><span class="n">train_config</span><span class="p">,</span> <span class="n">model_config</span><span class="p">)</span>
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="n">trainer</span><span class="o">.</span><span class="n">callbacks</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>    <span class="p">[</span>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>        <span class="n">LearningRateMonitor</span><span class="p">(</span><span class="n">logging_interval</span><span class="o">=</span><span class="s2">&quot;step&quot;</span><span class="p">),</span>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>    <span class="p">]</span>
+</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="p">)</span>
+</span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">datamodule</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<h3 id="built-in-callbacks">Built-in callbacks<a class="headerlink" href="#built-in-callbacks" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Purpose</th>
+<th>Enabled when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RFDETREMACallback</code></td>
+<td>Maintains an EMA copy of model weights</td>
+<td><code>train_config.use_ema=True</code> and strategy is not sharded</td>
+</tr>
+<tr>
+<td><code>DropPathCallback</code></td>
+<td>Anneals drop-path rate over training</td>
+<td><code>train_config.drop_path &gt; 0</code></td>
+</tr>
+<tr>
+<td><code>COCOEvalCallback</code></td>
+<td>Computes task validation metrics after each validation epoch</td>
+<td>Always</td>
+</tr>
+<tr>
+<td><code>BestModelCallback</code></td>
+<td>Saves <code>checkpoint_best_regular.pth</code>, <code>checkpoint_best_ema.pth</code>, <code>checkpoint_best_total.pth</code></td>
+<td>Always</td>
+</tr>
+<tr>
+<td><code>RFDETREarlyStopping</code></td>
+<td>Stops training when the validation task metric stops improving</td>
+<td><code>train_config.early_stopping=True</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="custom-loggers">Custom loggers<a class="headerlink" href="#custom-loggers" title="Permanent link">&para;</a></h2>
+<p><code>build_trainer</code> adds loggers based on <code>TrainConfig</code> flags. To attach a logger not supported by <code>TrainConfig</code> (for example a custom Neptune or Comet logger), build it yourself and pass it alongside the defaults:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pytorch_lightning.loggers</span><span class="w"> </span><span class="kn">import</span> <span class="n">NeptuneLogger</span>  <span class="c1"># hypothetical</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_trainer</span>
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="n">trainer</span> <span class="o">=</span> <span class="n">build_trainer</span><span class="p">(</span><span class="n">train_config</span><span class="p">,</span> <span class="n">model_config</span><span class="p">)</span>
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="n">trainer</span><span class="o">.</span><span class="n">loggers</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">NeptuneLogger</span><span class="p">(</span><span class="n">project</span><span class="o">=</span><span class="s2">&quot;my-workspace/rf-detr&quot;</span><span class="p">))</span>
+</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">datamodule</span><span class="p">)</span>
+</span></code></pre></div>
+<p>All logged keys (<code>train/loss</code>, <code>val/mAP_50_95</code>, <code>val/keypoint_map_50_95</code>, <code>val/F1</code>, <code>val/ema_mAP_50_95</code>, etc.) are written to every active logger in the list.</p>
+<hr />
+<h2 id="logged-metrics-reference">Logged metrics reference<a class="headerlink" href="#logged-metrics-reference" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>When logged</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>train/loss</code></td>
+<td>Every step / epoch</td>
+<td>Total weighted training loss</td>
+</tr>
+<tr>
+<td><code>train/&lt;term&gt;</code></td>
+<td>Every step / epoch</td>
+<td>Individual loss terms (e.g. <code>train/loss_bbox</code>)</td>
+</tr>
+<tr>
+<td><code>val/loss</code></td>
+<td>Each epoch</td>
+<td>Validation loss (if <code>train_config.compute_val_loss=True</code>)</td>
+</tr>
+<tr>
+<td><code>val/mAP_50_95</code></td>
+<td>Each eval epoch</td>
+<td>COCO box mAP@[.50:.05:.95]</td>
+</tr>
+<tr>
+<td><code>val/mAP_50</code></td>
+<td>Each eval epoch</td>
+<td>COCO box mAP@.50</td>
+</tr>
+<tr>
+<td><code>val/mAP_75</code></td>
+<td>Each eval epoch</td>
+<td>COCO box mAP@.75</td>
+</tr>
+<tr>
+<td><code>val/mAR</code></td>
+<td>Each eval epoch</td>
+<td>COCO mean average recall</td>
+</tr>
+<tr>
+<td><code>val/ema_mAP_50_95</code></td>
+<td>Each eval epoch</td>
+<td>EMA-model mAP@[.50:.05:.95] (if EMA active)</td>
+</tr>
+<tr>
+<td><code>val/F1</code></td>
+<td>Each eval epoch</td>
+<td>Macro F1 at best confidence threshold</td>
+</tr>
+<tr>
+<td><code>val/precision</code></td>
+<td>Each eval epoch</td>
+<td>Precision at best F1 threshold</td>
+</tr>
+<tr>
+<td><code>val/recall</code></td>
+<td>Each eval epoch</td>
+<td>Recall at best F1 threshold</td>
+</tr>
+<tr>
+<td><code>val/AP/&lt;class&gt;</code></td>
+<td>Each eval epoch</td>
+<td>Per-class AP (if <code>log_per_class_metrics=True</code>)</td>
+</tr>
+<tr>
+<td><code>val/segm_mAP_50_95</code></td>
+<td>Each eval epoch</td>
+<td>Segmentation mAP (segmentation models only)</td>
+</tr>
+<tr>
+<td><code>val/segm_mAP_50</code></td>
+<td>Each eval epoch</td>
+<td>Segmentation mAP@.50 (segmentation models only)</td>
+</tr>
+<tr>
+<td><code>val/keypoint_map_50_95</code></td>
+<td>Each eval epoch</td>
+<td>COCO keypoint AP@[.50:.05:.95] (keypoint preview only)</td>
+</tr>
+<tr>
+<td><code>val/keypoint_map_50</code></td>
+<td>Each eval epoch</td>
+<td>COCO keypoint AP@.50 (keypoint preview only)</td>
+</tr>
+<tr>
+<td><code>test/*</code></td>
+<td>After <code>trainer.test()</code></td>
+<td>Mirror of <code>val/*</code> keys</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../#quick-start">RFDETR.train() — high-level API</a> — the one-liner training path</li>
+<li><a href="../training-parameters/">Training parameters</a> — all <code>TrainConfig</code> fields</li>
+<li><a href="../loggers/">Training loggers</a> — TensorBoard, WandB, MLflow setup</li>
+<li><a href="../advanced/">Advanced training</a> — checkpointing, early stopping, memory optimisation</li>
+<li><a href="../../../reference/training/">PTL primitives API reference</a> — full docstring reference</li>
+</ul>
+
+
+
+
+
+
+
+  
+    
+  
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 18, 2026 18:16:15 UTC">2026-07-18 18:16:15</span>
+  </span>
+
+    
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Roboflow 2025–2026. All rights reserved.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/roboflow" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://www.youtube.com/roboflow" target="_blank" rel="noopener" title="www.youtube.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M549.7 124.1c-6.2-23.7-24.8-42.3-48.3-48.6C458.9 64 288.1 64 288.1 64S117.3 64 74.7 75.5c-23.5 6.3-42 24.9-48.3 48.6C15 167 15 256.4 15 256.4s0 89.4 11.4 132.3c6.3 23.6 24.8 41.5 48.3 47.8C117.3 448 288.1 448 288.1 448s170.8 0 213.4-11.5c23.5-6.3 42-24.2 48.3-47.8 11.4-42.9 11.4-132.3 11.4-132.3s0-89.4-11.4-132.3zM232.2 337.6V175.2l142.7 81.2z"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://www.linkedin.com/company/roboflow-ai/mycompany/" target="_blank" rel="noopener" title="www.linkedin.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M416 32H31.9C14.3 32 0 46.5 0 64.3v383.4C0 465.5 14.3 480 31.9 480H416c17.6 0 32-14.5 32-32.3V64.3c0-17.8-14.4-32.3-32-32.3M135.4 416H69V202.2h66.5V416zM102.2 96a38.5 38.5 0 1 1 0 77 38.5 38.5 0 1 1 0-77m282.1 320h-66.4V312c0-24.8-.5-56.7-34.5-56.7-34.6 0-39.9 27-39.9 54.9V416h-66.4V202.2h63.7v29.2h.9c8.9-16.8 30.6-34.5 62.9-34.5 67.2 0 79.7 44.3 79.7 101.9z"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://twitter.com/roboflow" target="_blank" rel="noopener" title="twitter.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M459.4 151.7c.3 4.5.3 9.1.3 13.6 0 138.7-105.6 298.6-298.6 298.6-59.5 0-114.7-17.2-161.1-47.1 8.4 1 16.6 1.3 25.3 1.3 49.1 0 94.2-16.6 130.3-44.8-46.1-1-84.8-31.2-98.1-72.8 6.5 1 13 1.6 19.8 1.6 9.4 0 18.8-1.3 27.6-3.6-48.1-9.7-84.1-52-84.1-103v-1.3c14 7.8 30.2 12.7 47.4 13.3-28.3-18.8-46.8-51-46.8-87.4 0-19.5 5.2-37.4 14.3-53C87.4 130.8 165 172.4 252.1 176.9c-1.6-7.8-2.6-15.9-2.6-24C249.5 95.1 296.3 48 354.4 48c30.2 0 57.5 12.7 76.7 33.1 23.7-4.5 46.5-13.3 66.6-25.3-7.8 24.4-24.4 44.8-46.1 57.8 21.1-2.3 41.6-8.1 60.4-16.2-14.3 20.8-32.2 39.3-52.6 54.3"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
