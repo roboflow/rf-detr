@@ -364,10 +364,30 @@ class TestRunInference:
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
         assert len(dets) >= 1
 
+    def test_explicit_num_select_caps_export_decode(self, rgb_image: Path) -> None:
+        """An explicit exported-model cap limits query/class pairs before thresholding."""
+        logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
+        logits[0, :, 0] = 10.0
+        interp = _make_interp(logits=logits)
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3, num_select=3)
+
+        assert len(dets) == 3
+
     def test_detections_below_threshold_filtered(self, rgb_image: Path) -> None:
         """No detections survive when all logits are zero (uniform probs < 0.3)."""
         interp = _make_interp(logits=_make_logits(high_conf_idx=None))
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert len(dets) == 0
+
+    def test_empty_class_dimension_returns_no_detections(self, rgb_image: Path) -> None:
+        """A backend output with only the no-object logit decodes to an empty result."""
+        logits = np.empty((1, 10, 1), dtype=np.float32)
+        label_out = {"shape": [1, 10, 1], "name": "serving_default_labels:0", "index": 2}
+        interp = _make_interp(logits=logits, out_dets=[_DET_OUTPUT, label_out])
+
+        dets, _ = _run_inference(interp, rgb_image)
+
         assert len(dets) == 0
 
     def test_boxes_in_pixel_space(self, rgb_image: Path) -> None:
@@ -493,7 +513,7 @@ class TestSigmoidScoring:
         assert sorted(dets.class_id.tolist()) == [0, 1, 2]
         # All 3 detections share query 0's box (see _make_boxes: identical box per query).
         np.testing.assert_allclose(dets.xyxy, np.tile(dets.xyxy[0], (3, 1)))
-        # Sorted by descending confidence, matching PostProcess._select_topk / torch.topk order.
+        # Sorted by descending confidence, matching PostProcess._select_topk order.
         assert list(dets.confidence) == sorted(dets.confidence, reverse=True)
         assert dets.class_id[0] == 0  # highest logit (5.0) still ranks first
 

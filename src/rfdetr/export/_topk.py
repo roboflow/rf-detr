@@ -21,16 +21,9 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-# Matches PostProcess.__init__'s own ``num_select`` default (postprocess.py) and is the largest
-# value used by any shipped RF-DETR variant — the detection sizes (Nano/Small/Medium/Large) all
-# inherit 300 from RFDETRBaseConfig unchanged, but the segmentation configs override it lower
-# (RFDETRSegNano/SegSmall use 100, RFDETRSegMedium/SegLarge use 200; see config.py).
-# Exported ONNX/TFLite artifacts carry no training-time config, so there is no way for this decode
-# to recover the exact value a given checkpoint was trained/exported with; 300 is used as a
-# permissive ceiling. In the extreme case where a checkpoint configured with a smaller num_select
-# produces more than that many query/class pairs above `threshold` in a single image, this can
-# return a few more detections than `predict()` would for that same checkpoint — same order of
-# rarity as the multi-label case this module exists to fix correctly, and never fewer detections.
+# Matches ``PostProcess.__init__``'s default for callers that use the helper directly. Inference
+# decoders pass their exported model's query count (or an explicit configured cap) so segmentation
+# variants with smaller ``num_select`` values preserve the same selection contract.
 DEFAULT_NUM_SELECT = 300
 
 
@@ -40,15 +33,13 @@ def _select_topk_multiclass(
     """Select the top ``num_select`` query/class pairs, then threshold.
 
     Mirrors ``PostProcess._select_topk`` (flatten ``(Q, C)`` to ``Q * C``, take the top
-    ``num_select`` scoring pairs by ``torch.topk``, in descending score order) followed by the
+    ``num_select`` scoring pairs in deterministic descending-score order) followed by the
     caller's own ``scores > threshold`` filter — ``PostProcess`` never bakes thresholding into
     ``_select_topk`` itself, it is always applied by the caller afterwards.
 
-    Uses ``np.argpartition`` + a stable ``np.argsort`` rather than a full sort, for the same
-    result with lower complexity on a large flattened array. This has not been verified to break
-    ties in the exact same order as ``torch.topk`` when two query/class pairs share the identical
-    floating-point score — real network logits essentially never tie exactly, so this is not
-    expected to matter in practice, but it is untested at that edge.
+    Uses a deterministic lexicographic order: descending score, then ascending flattened
+    query/class index. ``PostProcess._select_topk`` uses the same stable tie rule so exported
+    inference remains reproducible when scores are equal.
 
     Args:
         scores_all: Per-query, per-class sigmoid probabilities, shape ``(Q, C)``.
@@ -61,16 +52,27 @@ def _select_topk_multiclass(
         box/mask outputs and, unlike a per-query argmax, can repeat when a query has more than one
         detection.
     """
+    if scores_all.ndim != 2:
+        raise ValueError(f"scores_all must have shape (Q, C); got {scores_all.shape}")
+    if num_select < 0:
+        raise ValueError(f"num_select must be non-negative; got {num_select}")
+
     num_queries, num_classes = scores_all.shape
     flat_scores = scores_all.reshape(-1)
+    if num_select == 0 or flat_scores.size == 0:
+        return (
+            flat_scores[:0],
+            np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=np.int64),
+        )
+
     num_to_select = min(num_select, flat_scores.shape[0])
-    if num_to_select < flat_scores.shape[0]:
-        top_idx = np.argpartition(flat_scores, -num_to_select)[-num_to_select:]
-    else:
-        top_idx = np.arange(flat_scores.shape[0])
-    # argpartition doesn't sort its output; PostProcess._select_topk relies on torch.topk's
-    # descending order (consumers like early-exit display code assume the highest score is first).
-    top_idx = top_idx[np.argsort(-flat_scores[top_idx], kind="stable")]
+    flat_idx = np.arange(flat_scores.shape[0], dtype=np.int64)
+    # PyTorch ranks NaNs ahead of finite values for descending argsort; preserve that ordering
+    # so the subsequent ``> threshold`` filter drops the same malformed scores rather than
+    # allowing a lower finite score to occupy the cap.
+    sort_scores = np.where(np.isnan(flat_scores), np.inf, flat_scores)
+    top_idx = np.lexsort((flat_idx, -sort_scores))[:num_to_select]
 
     topk_scores = flat_scores[top_idx]
     topk_query = top_idx // num_classes

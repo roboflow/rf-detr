@@ -143,6 +143,7 @@ def _run_inference(
     session: Any,
     image_path: str | Path,
     threshold: float = 0.3,
+    num_select: int | None = None,
 ) -> tuple[Detections, PILImage.Image]:
     """Preprocess one image, run ONNX Runtime inference, and decode detections.
 
@@ -172,6 +173,8 @@ def _run_inference(
         image_path: Path to the input image (any format supported by Pillow).
             RGB images are used as-is; RGBA / palette images are converted.
         threshold: Confidence threshold; detections below this are discarded.
+        num_select: Maximum query/class pairs selected before thresholding. ``None`` uses the exported model's query
+            count, matching shipped RF-DETR configurations; pass an explicit value for custom exports.
 
     Returns:
         A tuple of ``(detections, pil_img)`` where ``detections`` contains pixel-space ``xyxy`` boxes and ``pil_img`` is
@@ -241,27 +244,34 @@ def _run_inference(
     logits = raw_outputs[logits_idx][0, :, :-1]  # (Q, num_classes)
 
     # RF-DETR uses per-class sigmoid (not softmax) — mirrors PostProcess.forward in postprocess.py.
-    logger.debug(
-        "Logits stats: shape=%s min=%.3f max=%.3f mean=%.3f",
-        logits.shape,
-        float(logits.min()),
-        float(logits.max()),
-        float(logits.mean()),
-    )
+    if logits.size:
+        logger.debug(
+            "Logits stats: shape=%s min=%.3f max=%.3f mean=%.3f",
+            logits.shape,
+            float(logits.min()),
+            float(logits.max()),
+            float(logits.mean()),
+        )
+    else:
+        logger.debug("Logits stats: empty shape=%s", logits.shape)
     one = np.asarray(1, dtype=logits.dtype)
     scores_all = one / (one + np.exp(-logits.clip(-88, 88)))
     # Flatten (Q, C) to Q*C query/class pairs and take the top-scoring ones before thresholding —
     # mirrors PostProcess._select_topk. A per-query argmax (the previous approach) keeps at most
     # one class per query, silently dropping legitimate detections whenever a query scores above
     # threshold on more than one class; see _topk.py for why that happens routinely here.
-    scores, cls, query_idx = _select_topk_multiclass(scores_all, threshold)
-    logger.debug(
-        "Scores stats: min=%.3f max=%.3f — detections above threshold %.2f: %d",
-        float(scores_all.min()),
-        float(scores_all.max()),
-        threshold,
-        int(scores.shape[0]),
-    )
+    selection_cap = boxes_cwh.shape[0] if num_select is None else num_select
+    scores, cls, query_idx = _select_topk_multiclass(scores_all, threshold, num_select=selection_cap)
+    if scores_all.size:
+        logger.debug(
+            "Scores stats: min=%.3f max=%.3f — detections above threshold %.2f: %d",
+            float(scores_all.min()),
+            float(scores_all.max()),
+            threshold,
+            int(scores.shape[0]),
+        )
+    else:
+        logger.debug("Scores stats: empty — detections above threshold %.2f: %d", threshold, int(scores.shape[0]))
 
     cx, cy, bw, bh = boxes_cwh[query_idx].T
     ow, oh = pil_img.size

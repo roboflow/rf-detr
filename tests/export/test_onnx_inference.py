@@ -26,13 +26,24 @@ _INPUT_SHAPE = [1, 3, 224, 224]
 
 
 def _make_boxes() -> np.ndarray:
-    """Return (1, 10, 4) array of normalised cxcywh boxes, all centred at 0.5."""
+    """Return normalised cxcywh boxes, all centred at 0.5.
+
+    Examples:
+        >>> _make_boxes().shape
+        (1, 10, 4)
+    """
     return np.array([[[0.5, 0.5, 0.1, 0.1]] * 10], dtype=np.float32)
 
 
 def _make_logits(high_conf_idx: int | None = 0) -> np.ndarray:
-    """Return (1, 10, 82) logits with one high-confidence entry when requested (mirrors the TFLite test helper of the
-    same name in test_tflite_inference.py)."""
+    """Return logits with one high-confidence entry when requested.
+
+    Examples:
+        >>> _make_logits().shape
+        (1, 10, 82)
+        >>> float(_make_logits()[0, 0, 0])
+        10.0
+    """
     logits = np.full((1, 10, 82), -10.0, dtype=np.float32)
     if high_conf_idx is not None:
         logits[0, high_conf_idx, 0] = 10.0
@@ -80,6 +91,14 @@ class TestRunInferenceBasics:
         dets, _ = _run_inference(session, rgb_image, threshold=0.3)
         assert len(dets) == 0
 
+    def test_empty_class_dimension_returns_no_detections(self, rgb_image: Path) -> None:
+        """A backend output with only the no-object logit decodes to an empty result."""
+        session = _FakeSession(_make_boxes(), np.empty((1, 10, 1), dtype=np.float32))
+
+        dets, _ = _run_inference(session, rgb_image)
+
+        assert len(dets) == 0
+
 
 class TestMulticlassSelection:
     """``_run_inference`` must select query/class pairs the same way ``PostProcess._select_topk`` does — flatten (Q, C)
@@ -102,3 +121,13 @@ class TestMulticlassSelection:
         assert sorted(dets.class_id.tolist()) == [0, 1, 2]
         assert list(dets.confidence) == sorted(dets.confidence, reverse=True)
         assert dets.class_id[0] == 0  # highest logit (5.0) still ranks first
+
+    def test_explicit_num_select_caps_export_decode(self, rgb_image: Path) -> None:
+        """An explicit exported-model cap limits query/class pairs before thresholding."""
+        logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
+        logits[0, :, 0] = 10.0
+        session = _FakeSession(_make_boxes(), logits)
+
+        dets, _ = _run_inference(session, rgb_image, threshold=0.3, num_select=3)
+
+        assert len(dets) == 3

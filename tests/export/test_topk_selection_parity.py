@@ -32,7 +32,13 @@ from rfdetr.models.postprocess import PostProcess
 def _reference_select_topk(
     logits_with_bg: torch.Tensor, num_select: int
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Call the real ``PostProcess._select_topk`` directly on one image's logits (batch size 1)."""
+    """Call ``PostProcess._select_topk`` directly on one image's logits (batch size 1).
+
+    Examples:
+        >>> logits = torch.zeros((2, 3))
+        >>> tuple(value.shape for value in _reference_select_topk(logits, num_select=2))
+        (torch.Size([2]), torch.Size([2]), torch.Size([2]))
+    """
     pp = PostProcess(num_select=num_select)
     scores, labels, boxes = pp._select_topk(logits_with_bg.unsqueeze(0))
     return scores[0], labels[0], boxes[0]
@@ -113,3 +119,60 @@ class TestTopkSelectionParity:
         got_scores, _, _ = _select_topk_multiclass(scores_all, threshold, num_select=num_select)
         assert got_scores.shape[0] == num_select
         assert list(got_scores) == sorted(got_scores, reverse=True)
+
+    @pytest.mark.parametrize("num_select", [100, 200], ids=["seg-nano-small", "seg-medium-large"])
+    def test_model_selection_caps_are_preserved(self, num_select: int) -> None:
+        """Export decoding retains the configured cap used by shipped segmentation variants."""
+        scores_all = np.full((250, 1), 0.9, dtype=np.float32)
+
+        got_scores, got_labels, got_query = _select_topk_multiclass(scores_all, threshold=0.0, num_select=num_select)
+
+        assert got_scores.shape == (num_select,)
+        assert got_labels.shape == (num_select,)
+        assert got_query.tolist() == list(range(num_select))
+
+    def test_zero_selection_returns_empty_arrays(self) -> None:
+        """Selecting zero pairs returns no detections, even when scores clear the threshold."""
+        scores, labels, queries = _select_topk_multiclass(np.array([[0.9, 0.8]], dtype=np.float32), 0.0, num_select=0)
+
+        assert scores.shape == (0,)
+        assert labels.shape == (0,)
+        assert queries.shape == (0,)
+
+    def test_tied_cutoff_uses_flattened_index_order(self) -> None:
+        """Equal scores use the same ascending flattened-index tie rule as ``PostProcess``."""
+        logits = torch.tensor([[0.0, 0.0], [0.0, -1.0]])
+        reference_scores, reference_labels, reference_queries = _reference_select_topk(logits, num_select=2)
+        scores_all = torch.sigmoid(logits).numpy()
+        scores, labels, queries = _select_topk_multiclass(scores_all, 0.0, num_select=2)
+
+        np.testing.assert_allclose(scores, reference_scores.numpy())
+        np.testing.assert_array_equal(labels, reference_labels.numpy())
+        np.testing.assert_array_equal(queries, reference_queries.numpy())
+
+    def test_negative_selection_is_rejected(self) -> None:
+        """Negative selection caps are invalid for both export and PyTorch postprocessing."""
+        with pytest.raises(ValueError, match="non-negative"):
+            _select_topk_multiclass(np.ones((1, 1), dtype=np.float32), 0.0, num_select=-1)
+        with pytest.raises(ValueError, match="non-negative"):
+            PostProcess(num_select=-1)
+
+    def test_nan_cutoff_matches_postprocess_filtering(self) -> None:
+        """NaN scores consume the same ranked slot and are then removed by the threshold filter."""
+        logits = torch.tensor([[float("nan"), 3.0], [2.0, -1.0]])
+        reference_scores, _, _ = _reference_select_topk(logits, num_select=1)
+        reference_kept = reference_scores[reference_scores > 0.3]
+        scores, labels, queries = _select_topk_multiclass(torch.sigmoid(logits).numpy(), 0.3, num_select=1)
+
+        assert reference_kept.shape == (0,)
+        assert scores.shape == (0,)
+        assert labels.shape == (0,)
+        assert queries.shape == (0,)
+
+    def test_empty_query_grid_returns_empty_arrays(self) -> None:
+        """An empty query grid is valid and produces typed empty outputs."""
+        scores, labels, queries = _select_topk_multiclass(np.empty((0, 3), dtype=np.float32), 0.0)
+
+        assert scores.shape == (0,)
+        assert labels.shape == (0,)
+        assert queries.shape == (0,)
