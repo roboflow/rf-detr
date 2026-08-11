@@ -1227,22 +1227,30 @@ class TestGridSampleOnnxRewrite:
 # ---------------------------------------------------------------------------
 
 
-def _drop_onnx_from_sys_modules(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Remove every already-imported ``onnx`` module from ``sys.modules`` for one test.
+def _drop_from_sys_modules(monkeypatch: pytest.MonkeyPatch, top_level: str) -> None:
+    """Remove *top_level* and every already-imported submodule of it from ``sys.modules`` for one test.
 
-    Other tests in this suite import ``onnx`` (and ``onnxruntime``), so ``sys.modules`` state leaks across tests.
-    ``monkeypatch.delitem`` restores each entry at teardown.
+    Import state leaks across tests — other tests in this suite import ``onnx``, and an environment with the ``tflite``
+    extra installed may have TensorFlow loaded — which would otherwise make the import-order assertions below depend on
+    test ordering. Submodules matter as much as the top-level name: a leftover ``tensorflow.python`` entry means
+    TensorFlow is loaded, and it sits ahead of any freshly inserted key. ``monkeypatch.delitem`` restores every entry at
+    teardown.
+
+    Args:
+        monkeypatch: Fixture used to delete and later restore the entries.
+        top_level: Top-level package name, e.g. ``"onnx"`` or ``"tensorflow"``.
 
     Examples:
         >>> import sys, types
         >>> mp = pytest.MonkeyPatch()
         >>> mp.setitem(sys.modules, "onnx", types.ModuleType("onnx"))
-        >>> _drop_onnx_from_sys_modules(mp)
-        >>> "onnx" in sys.modules
+        >>> mp.setitem(sys.modules, "onnx.helper", types.ModuleType("onnx.helper"))
+        >>> _drop_from_sys_modules(mp, "onnx")
+        >>> any(n == "onnx" or n.startswith("onnx.") for n in sys.modules)
         False
         >>> mp.undo()
     """
-    for name in [n for n in list(sys.modules) if n == "onnx" or n.startswith("onnx.")]:
+    for name in [n for n in list(sys.modules) if n == top_level or n.startswith(f"{top_level}.")]:
         monkeypatch.delitem(sys.modules, name)
 
 
@@ -1251,7 +1259,20 @@ class TestPreloadTensorflowBeforeOnnx:
 
     @staticmethod
     def _call_with_fake_tf(monkeypatch: pytest.MonkeyPatch) -> mock.MagicMock:
-        """Run the preload with a stubbed ``importlib.import_module`` and return the stub."""
+        """Run the preload with a stubbed ``importlib.import_module`` and return the stub.
+
+        Args:
+            monkeypatch: Fixture used to stub the import and undo it afterwards.
+
+        Returns:
+            The stubbed ``import_module``, for asserting whether TensorFlow was imported.
+
+        Examples:
+            Needs pytest's ``monkeypatch`` fixture, so the live call is covered by tests rather than doctest.
+
+            >>> callable(TestPreloadTensorflowBeforeOnnx._call_with_fake_tf)  # doctest: +SKIP
+            True
+        """
         import_mock = mock.MagicMock(return_value=types.ModuleType("tensorflow"))
         monkeypatch.setattr("rfdetr.export._backend.importlib.import_module", import_mock)
         from rfdetr.export._backend import preload_tensorflow_before_onnx
@@ -1261,7 +1282,7 @@ class TestPreloadTensorflowBeforeOnnx:
 
     def test_imports_tensorflow_when_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """TensorFlow is imported when it is not yet in sys.modules."""
-        monkeypatch.delitem(sys.modules, "tensorflow", raising=False)
+        _drop_from_sys_modules(monkeypatch, "tensorflow")
 
         import_mock = self._call_with_fake_tf(monkeypatch)
 
@@ -1277,7 +1298,7 @@ class TestPreloadTensorflowBeforeOnnx:
 
     def test_silent_when_tensorflow_not_installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A missing TensorFlow is swallowed — ``_check_onnx2tf_available`` reports it with install instructions."""
-        monkeypatch.delitem(sys.modules, "tensorflow", raising=False)
+        _drop_from_sys_modules(monkeypatch, "tensorflow")
         monkeypatch.setattr(
             "rfdetr.export._backend.importlib.import_module",
             mock.MagicMock(side_effect=ImportError("No module named 'tensorflow'")),
@@ -1286,10 +1307,31 @@ class TestPreloadTensorflowBeforeOnnx:
 
         preload_tensorflow_before_onnx()  # must not raise
 
-    def test_warns_when_onnx_imported_first(self, monkeypatch: pytest.MonkeyPatch, caplog: Any) -> None:
-        """Importing onnx first is unrecoverable in-process, so the deadlock risk is logged."""
-        monkeypatch.delitem(sys.modules, "tensorflow", raising=False)
-        monkeypatch.setitem(sys.modules, "onnx", types.ModuleType("onnx"))
+    @pytest.mark.parametrize(
+        ("preloaded", "expect_warning"),
+        [
+            pytest.param(("onnx",), True, id="onnx-only"),
+            pytest.param((), False, id="neither"),
+            pytest.param(("onnx", "tensorflow"), True, id="onnx-then-tensorflow"),
+            pytest.param(("tensorflow", "onnx"), False, id="tensorflow-then-onnx"),
+        ],
+    )
+    def test_warning_tracks_import_order(
+        self,
+        preloaded: tuple[str, ...],
+        expect_warning: bool,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: Any,
+    ) -> None:
+        """Warn only when ``onnx`` entered ``sys.modules`` ahead of ``tensorflow``.
+
+        ``onnx`` first is unrecoverable in-process, so the deadlock risk is logged.  ``tensorflow`` first — the safe
+        order — must stay quiet, otherwise the warning trains callers who did the right thing to ignore it.
+        """
+        for package in ("onnx", "tensorflow"):
+            _drop_from_sys_modules(monkeypatch, package)
+        for package in preloaded:
+            monkeypatch.setitem(sys.modules, package, types.ModuleType(package))
         rf_detr_logger = logging.getLogger("rf-detr")
         monkeypatch.setattr(rf_detr_logger, "propagate", True)
 
@@ -1297,29 +1339,19 @@ class TestPreloadTensorflowBeforeOnnx:
             self._call_with_fake_tf(monkeypatch)
 
         messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
-        assert any("onnx was imported before TensorFlow" in msg for msg in messages), (
-            f"Expected an import-order warning, got: {messages}"
-        )
-
-    def test_no_warning_when_onnx_not_imported(self, monkeypatch: pytest.MonkeyPatch, caplog: Any) -> None:
-        """The clean load order stays quiet."""
-        monkeypatch.delitem(sys.modules, "tensorflow", raising=False)
-        _drop_onnx_from_sys_modules(monkeypatch)
-        rf_detr_logger = logging.getLogger("rf-detr")
-        monkeypatch.setattr(rf_detr_logger, "propagate", True)
-
-        with caplog.at_level(logging.WARNING, logger="rf-detr"):
-            self._call_with_fake_tf(monkeypatch)
-
-        messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
-        assert not any("imported before TensorFlow" in msg for msg in messages), (
-            f"Expected no import-order warning, got: {messages}"
+        warned = any("onnx was imported before TensorFlow" in msg for msg in messages)
+        assert warned is expect_warning, (
+            f"Preloaded {preloaded or '()'}: expected warning={expect_warning}, got messages: {messages}"
         )
 
 
-@onnx2tf_available
 class TestExportTflitePreloadOrder:
-    """``export_tflite()`` preloads TensorFlow before it touches onnx."""
+    """``export_tflite()`` preloads TensorFlow before it touches onnx.
+
+    Deliberately **not** gated on ``onnx2tf_available``: the ``fake_onnx2tf`` fixture injects a stub module and the
+    availability check is patched out, so this runs — and covers the preload call inside ``export_tflite()`` — in CI,
+    which never installs the ``tflite`` extra.
+    """
 
     def test_preload_runs_before_onnx2tf_check(
         self,

@@ -32,10 +32,8 @@ into an equivalent bilinear sampling subgraph built from ``Gather(axis=0)`` on a
 
 Import order
 ------------
-TensorFlow must be imported **before** ONNX's C extension, otherwise the TFLite conversion deadlocks while restoring
-the SavedModel bundle.  :func:`~rfdetr.export._backend.preload_tensorflow_before_onnx` documents the shared-Abseil
-cause and is called at the start of :func:`export_tflite` (and, earlier still, by :meth:`rfdetr.detr.RFDETR.export`
-before it runs the ONNX export).
+TensorFlow must be imported before ONNX's C extension or the conversion deadlocks, so :func:`export_tflite` calls
+:func:`~rfdetr.export._backend.preload_tensorflow_before_onnx` first — see there for why.
 
 The converter uses the ``onnx2tf`` Python API directly (rather than shelling out to the CLI) so that we can:
 
