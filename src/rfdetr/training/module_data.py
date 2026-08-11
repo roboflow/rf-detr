@@ -525,10 +525,8 @@ class RFDETRDataModule(LightningDataModule):
                 if mask_array is not None:
                     scene = sv.MaskAnnotator().annotate(scene=scene, detections=detections)
                 scene = sv.BoxAnnotator(thickness=1).annotate(scene=scene, detections=detections)
-                # LabelAnnotator.annotate() is typed as PIL-only, but its @ensure_cv2_image_for_class_method
-                # decorator accepts and returns ndarray at runtime too (see its docstring).
-                scene = sv.LabelAnnotator(text_scale=0.4, text_padding=2).annotate(  # type: ignore[assignment]
-                    scene=scene,  # type: ignore[arg-type]
+                scene = sv.LabelAnnotator(text_scale=0.4, text_padding=2).annotate(
+                    scene=scene,
                     detections=detections,
                     labels=labels_text,
                 )
