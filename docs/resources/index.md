@@ -75,8 +75,7 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
 
     ---
 
-    ![](https://blog.roboflow.com/content/images/size/w1000/format/webp/2025/03/img-blog-nycerebro--2--min.png)
-    Learn how to deploy RF-DETR as a scalable inference server using LitServe, the AI model serving framework from Lightning AI.
+    ![](https://blog.roboflow.com/content/images/size/w1000/format/webp/2025/03/img-blog-nycerebro--2--min.png) Learn how to deploy RF-DETR as a scalable inference server using LitServe, the AI model serving framework from Lightning AI.
 
     [:octicons-arrow-right-24: Open the Studio](https://lightning.ai/bhimrajyadav/studios/deploy-rf-detr-a-sota-real-time-object-detection-model-using-litserve)
 

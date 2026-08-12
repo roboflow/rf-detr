@@ -12,7 +12,7 @@ This page covers advanced training topics including resuming training, early sto
 
 ## Resume Training
 
-You can resume training from a previously saved checkpoint by passing the path to the `checkpoint.pth` file using the `resume` argument. This is useful when training is interrupted or you want to continue fine-tuning an already partially trained model.
+You can resume training from a previously saved full checkpoint by passing the path to `last.ckpt` using the `resume` argument. This is useful when training is interrupted or you want to continue fine-tuning an already partially trained model.
 
 The training loop will automatically load:
 
@@ -20,6 +20,10 @@ The training loop will automatically load:
 - Optimizer state
 - Learning rate scheduler state
 - Training epoch number
+
+!!! warning "Lightweight checkpoints resume without optimizer/scheduler state"
+
+    The above applies to the trainer's own full checkpoints (`last.ckpt`, `checkpoint_<epoch>.ckpt`). The best-model tracker also writes four lighter `.pth` files — `checkpoint_best_regular.pth`, `checkpoint_best_ema.pth`, `checkpoint_best_total.pth`, `last_ema.pth` — that intentionally omit optimizer/scheduler state to stay small. New files with matching configured callbacks can restore callback state (EMA and early stopping). Best-score tracking additionally requires `output_dir` to be the exact directory where the checkpoint was written. Files created before callback-state persistence (or with an empty callback section) restart callback state. The optimizer and LR scheduler always start cold. `resume=` logs the applicable warning; pass a full trainer checkpoint instead if you need optimizer/scheduler continuity.
 
 === "Object Detection"
 
@@ -35,7 +39,7 @@ The training loop will automatically load:
         grad_accum_steps=4,
         lr=1e-4,
         output_dir="output",
-        resume="output/checkpoint.pth",
+        resume="output/last.ckpt",
     )
     ```
 
@@ -53,21 +57,20 @@ The training loop will automatically load:
         grad_accum_steps=4,
         lr=1e-4,
         output_dir="output",
-        resume="output/checkpoint.pth",
+        resume="output/last.ckpt",
     )
     ```
 
 !!! tip "Resume vs Pretrain Weights"
 
-    - Use `resume="checkpoint.pth"` to continue training with optimizer state
+    - Use `resume="last.ckpt"` to continue training with optimizer state
     - Use `pretrain_weights="checkpoint_best_total.pth"` when initializing a model to start fresh training from those weights
 
 ---
 
 ## Early Stopping
 
-Early stopping monitors the validation task metric and halts training if improvements remain below a threshold for a
-set number of epochs. Detection and segmentation models use box mAP; keypoint preview models use COCO keypoint AP.
+Early stopping monitors the validation task metric and halts training if improvements remain below a threshold for a set number of epochs. Detection and segmentation models use box mAP; keypoint preview models use COCO keypoint AP.
 
 ### Basic Usage
 
@@ -178,12 +181,9 @@ torchrun --nproc_per_node=4 train.py
 
 !!! warning "Pass `devices=` explicitly"
 
-    `build_trainer()` defaults to `devices=1`. Without overriding this, training silently
-    runs on a single GPU even when `torchrun` launches multiple processes.
+    `build_trainer()` defaults to `devices=1`. Without overriding this, training silently runs on a single GPU even when `torchrun` launches multiple processes.
 
-    Pass `devices="auto"` to use all GPUs visible to the process, or pass an explicit
-    integer (e.g. `devices=4`). These values are forwarded to `build_trainer` via
-    `**trainer_kwargs`:
+    Pass `devices="auto"` to use all GPUs visible to the process, or pass an explicit integer (e.g. `devices=4`). These values are forwarded to `build_trainer` via `**trainer_kwargs`:
 
     ```python
     model.train(
@@ -236,9 +236,7 @@ Run this command on each node, changing `--node_rank` accordingly.
 
 ### Keypoint / Pose models
 
-Keypoint models (`RFDETRKeypointPreview`) train under `DistributedDataParallel` on multiple GPUs and
-multiple nodes exactly like detection models — build a script and launch it with `torchrun`, setting
-`devices=` (e.g. `"auto"` or an integer like `8`):
+Keypoint models (`RFDETRKeypointPreview`) train under `DistributedDataParallel` on multiple GPUs and multiple nodes exactly like detection models — build a script and launch it with `torchrun`, setting `devices=` (e.g. `"auto"` or an integer like `8`):
 
 ```python
 # train_pose.py
@@ -263,15 +261,9 @@ torchrun --nproc_per_node=8 train_pose.py
 
 !!! note "Prefer `grad_accum_steps=1` on multi-GPU for keypoints"
 
-    Keypoint models use **manual optimization** so the per-step box-count loss normalization is
-    computed over the full accumulated batch. As a result, gradients synchronize on **every**
-    microbatch rather than only at the end of an accumulation window. Training with
-    `grad_accum_steps > 1` on multiple GPUs is still numerically correct, but performs one
-    `all_reduce` per microbatch (i.e. `grad_accum_steps`× the necessary communication). For best
-    throughput, scale with more GPUs / a larger per-GPU `batch_size` and keep `grad_accum_steps=1`.
+    Keypoint models use **manual optimization** so the per-step box-count loss normalization is computed over the full accumulated batch. As a result, gradients synchronize on **every** microbatch rather than only at the end of an accumulation window. Training with `grad_accum_steps > 1` on multiple GPUs is still numerically correct, but performs one `all_reduce` per microbatch (i.e. `grad_accum_steps`× the necessary communication). For best throughput, scale with more GPUs / a larger per-GPU `batch_size` and keep `grad_accum_steps=1`.
 
-    Sharded strategies (FSDP / DeepSpeed) are **not** supported for keypoint models — use `ddp`
-    (or `strategy="auto"` with `devices > 1`).
+    Sharded strategies (FSDP / DeepSpeed) are **not** supported for keypoint models — use `ddp` (or `strategy="auto"` with `devices > 1`).
 
 ### Advanced multi-GPU options (PTL API)
 
@@ -334,18 +326,14 @@ To disable all augmentations, pass an empty dict:
 model.train(dataset_dir="path/to/dataset", aug_config={})
 ```
 
-`aug_config` controls only the augmentation stack (Albumentations on CPU, or the
-equivalent Kornia pipeline when `augmentation_backend="kornia"`/`"auto"`). The training
-resize pipeline's independent resize → crop → resize branch (Option B) is controlled
-separately by `scale_jitter`:
+`aug_config` controls only the augmentation stack (Albumentations on CPU, or the equivalent Kornia pipeline when `augmentation_backend="kornia"`/`"auto"`). The training resize pipeline's independent resize → crop → resize branch (Option B) is controlled separately by `scale_jitter`:
 
 ```python
 # Keep aug_config's default augmentation stack, but disable random crop/scale jitter
 model.train(dataset_dir="path/to/dataset", scale_jitter=False)
 ```
 
-`scale_jitter` defaults to `True`. Set it to `False` to use direct resize only —
-no random crop, so annotations near image borders are never clipped.
+`scale_jitter` defaults to `True`. Set it to `False` to use direct resize only — no random crop, so annotations near image borders are never clipped.
 
 ---
 

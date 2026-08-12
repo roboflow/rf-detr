@@ -11,6 +11,7 @@ import pytest
 import torch
 
 from rfdetr.models import matcher as matcher_module
+from rfdetr.models.heads.segmentation import SegmentationHead
 from rfdetr.models.matcher import HungarianMatcher
 
 
@@ -1007,6 +1008,77 @@ def _assert_assignment_lengths(
         assert target_indices.shape == (expected_length,), f"target index count wrong for image {image_idx}"
 
 
+class TestDetectionInputsAreSafeDirectly:
+    """Direct, isolated coverage of ``HungarianMatcher._detection_inputs_are_safe``.
+
+    ``TestCompactPathRouting`` below already exercises this method indirectly, through the routing behaviour it
+    controls. These tests call it directly instead, so a future change to *how* it computes its answer (e.g. vectorizing
+    the per-image loops into a single concatenated check) has a fast, precise regression guard that pins down the exact
+    boolean it must keep returning for each case, independent of the compact-path machinery around it.
+    """
+
+    @pytest.mark.parametrize(
+        "sizes",
+        [
+            pytest.param([2, 3, 1], id="every_image_has_targets"),
+            pytest.param([0, 4, 0, 2], id="some_images_empty"),
+            pytest.param([0, 0, 0], id="every_image_empty"),
+        ],
+    )
+    def test_safe_batches_return_true(self, sizes: list[int]) -> None:
+        """A batch with finite, in-range boxes and labels is safe, whether every image carries targets, only some do
+        (mixed with zero-target images), or none do — the last case is vacuously safe, since there is nothing to
+        check."""
+        outputs, targets = _random_detection_batch(seed=301, sizes=sizes)
+
+        assert HungarianMatcher._detection_inputs_are_safe(outputs, targets) is True
+
+    @pytest.mark.parametrize(
+        "corrupt",
+        [
+            pytest.param(lambda o, t: o["pred_boxes"].__setitem__((1, 0, 2), float("nan")), id="nan_in_pred_boxes"),
+            pytest.param(
+                lambda o, t: t[2]["boxes"].__setitem__((0, 1), float("inf")),
+                id="inf_in_a_middle_image_target_boxes",
+            ),
+            pytest.param(lambda o, t: o["pred_boxes"].__setitem__((0, 0, 0), 1e30), id="extreme_coordinate"),
+            pytest.param(lambda o, t: t[1]["labels"].__setitem__(0, -1), id="negative_label_in_a_middle_image"),
+            pytest.param(
+                lambda o, t: t[-1]["labels"].__setitem__(0, 5),  # num_classes=5, valid range is [0, 5)
+                id="out_of_range_label_in_the_last_image",
+            ),
+            pytest.param(
+                lambda o, t: t[1].__setitem__("boxes", t[1]["boxes"].double()), id="target_box_dtype_mismatch"
+            ),
+            pytest.param(
+                lambda o, t: t[1].__setitem__("labels", t[1]["labels"].to("meta")),
+                id="target_label_device_mismatch",
+            ),
+            pytest.param(
+                lambda o, t: t[1].__setitem__("labels", t[1]["labels"].to(torch.int32)),
+                id="target_label_dtype_mismatch",
+            ),
+        ],
+    )
+    def test_unsafe_inputs_return_false(
+        self, corrupt: Callable[[dict[str, torch.Tensor], list[dict[str, torch.Tensor]]], None]
+    ) -> None:
+        """Each unsafe case must be caught: a non-finite value or out-of-range coordinate/label anywhere in the batch —
+        including a MIDDLE image's target boxes/labels and the LAST image's labels, not just the first, which guards
+        against a vectorized check that only looks at one image's tensor instead of the concatenation of all of them —
+        plus a target whose box dtype, label device, or label dtype disagrees with the predictions/batch (metadata
+        prechecks, no kernel launch).
+
+        The device case uses ``torch.device('meta')`` rather than requiring real CUDA hardware, since the device-
+        mismatch branch is a plain attribute comparison that returns before any value-touching op runs, so ``meta``
+        (shape-only, no real storage) exercises the same code path without a GPU.
+        """
+        outputs, targets = _random_detection_batch(seed=305, sizes=[2, 3, 2, 4])
+        corrupt(outputs, targets)
+
+        assert HungarianMatcher._detection_inputs_are_safe(outputs, targets) is False
+
+
 class TestCompactPathRouting:
     """The padded-compact cost path (``_compute_compact_detection_cost_matrix``) must run only for detection-only
     batches with ``batch_size > 1`` and finite, bounded inputs — every other case must fall back to the diagonal-block
@@ -1104,6 +1176,11 @@ class TestCompactPathRouting:
             pytest.param(lambda o, t: t[0]["boxes"].__setitem__((0, 1), float("nan")), id="target_box_nan"),
             pytest.param(lambda o, t: t[0]["boxes"].__setitem__((0, 1), float("inf")), id="target_box_inf"),
             pytest.param(lambda o, t: o["pred_boxes"].__setitem__((1, 0, 2), 1e30), id="pred_box_extreme"),
+            pytest.param(lambda o, t: t[1]["boxes"].__setitem__((0, 1), 1e30), id="target_box_extreme"),
+            pytest.param(
+                lambda o, t: t[1].__setitem__("labels", t[1]["labels"].to(torch.int32)),
+                id="target_label_dtype_mismatch",
+            ),
         ],
     )
     def test_unsafe_inputs_use_fallback_path(
@@ -1112,10 +1189,10 @@ class TestCompactPathRouting:
         matcher: HungarianMatcher,
         corrupt: Callable[[dict[str, torch.Tensor], list[dict[str, torch.Tensor]]], None],
     ) -> None:
-        """Each of the 7 unsafe-input cases verified in the exploration script (NaN/Inf on predicted logits, predicted
-        boxes, or target boxes, plus one coordinate large enough to risk overflow in ``cdist``/GIoU area terms) must
-        route to the fallback path instead of the compact one, for an otherwise compact-eligible (``bs > 1``, detection-
-        only) batch."""
+        """Each unsafe-input case verified in the exploration script (NaN/Inf on predicted logits, predicted boxes, or
+        target boxes, plus one coordinate large enough to risk overflow in ``cdist``/GIoU area terms) must route to the
+        fallback path instead of the compact one, for an otherwise compact-eligible (``bs > 1``, detection- only)
+        batch."""
         calls = _spy_on_compact_path(monkeypatch)
         outputs, targets = _random_detection_batch(seed=105, sizes=[2, 3])
         corrupt(outputs, targets)
@@ -1669,3 +1746,75 @@ class TestCompactPathCriterionEquivalence:
         for layer, (compact_grad_logits, compact_grad_boxes) in zip(all_layer_outputs, compact_grads):
             assert torch.equal(compact_grad_logits, layer["pred_logits"].grad)
             assert torch.equal(compact_grad_boxes, layer["pred_boxes"].grad)
+
+
+def _spy_on_assign(monkeypatch: pytest.MonkeyPatch) -> list[torch.Tensor]:
+    """Wrap the static ``_assign_compact_cost_matrix`` to record each cost matrix it receives, without changing its
+    behavior — lets a test compare the matrix's numeric content between two ``forward()`` calls.
+
+    Examples:
+        >>> _spy_on_assign(pytest.MonkeyPatch())  # doctest: +SKIP
+
+        # Needs a live pytest.MonkeyPatch fixture torn down by a running test, not standalone.
+    """
+    captured: list[torch.Tensor] = []
+    original = HungarianMatcher._assign_compact_cost_matrix
+
+    def spy(cost_matrix: torch.Tensor, sizes: list[int], group_detr: int) -> list[tuple[torch.Tensor, torch.Tensor]]:
+        captured.append(cost_matrix.clone())
+        return original(cost_matrix, sizes, group_detr)
+
+    monkeypatch.setattr(HungarianMatcher, "_assign_compact_cost_matrix", staticmethod(spy))
+    return captured
+
+
+class TestMatcherDictMaskCostUsesProjectedFeatures:
+    """The dict form of ``pred_masks`` (the ``else`` branch around matcher.py:409) point-samples
+    ``outputs["pred_masks"]["spatial_features"]`` straight off the dict for the mask cost — it applies no projection of
+    its own, trusting whatever produced the dict.
+
+    Only ``SegmentationHead``-level tests existed before this; none ran a real head's dict output through the matcher.
+    This builds the dict with a real ``SegmentationHead`` (``sparse_forward(skip_blocks=True)``, non-identity
+    ``spatial_features_proj``) and checks the resulting cost matrix is sensitive to whether that projection was applied.
+    """
+
+    def test_cost_matrix_differs_between_projected_and_raw_spatial_features(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        torch.manual_seed(10)
+        hidden, mask_size, num_queries = 4, 8, 4
+        head = SegmentationHead(in_dim=hidden, num_blocks=1, bottleneck_ratio=1, downsample_ratio=1)
+        sizes = [1, 2]
+        outputs, targets = _random_detection_batch(seed=11, sizes=sizes, num_queries=num_queries)
+        bs = len(targets)
+        spatial_features = torch.randn(bs, hidden, mask_size, mask_size)
+        query_features = torch.randn(bs, num_queries, hidden)
+        for target, size in zip(targets, sizes):
+            target["masks"] = torch.rand(size, mask_size, mask_size)
+
+        real_dict = head.sparse_forward(spatial_features, [query_features], (mask_size, mask_size), skip_blocks=True)[0]
+        matcher = HungarianMatcher()
+        captured = _spy_on_assign(monkeypatch)
+
+        outputs["pred_masks"] = real_dict
+        torch.manual_seed(20)  # controls the mask point_coords draw, shared across both calls below
+        matcher(outputs, targets)
+        real_cost = captured[-1]
+
+        with torch.no_grad():
+            # Raw, unprojected spatial_features at the same resolution sparse_forward interpolates to —
+            # exactly what the pre-fix skip_blocks=True branch used to hand the matcher.
+            raw_resized = torch.nn.functional.interpolate(
+                spatial_features, size=(mask_size, mask_size), mode="bilinear", align_corners=False
+            )
+        corrupted_dict = {
+            "spatial_features": raw_resized,
+            "query_features": real_dict["query_features"].detach(),
+            "bias": real_dict["bias"].detach(),
+        }
+        outputs["pred_masks"] = corrupted_dict
+        torch.manual_seed(20)  # same point_coords draw as the real-dict call above, for a fair comparison
+        matcher(outputs, targets)
+        corrupted_cost = captured[-1]
+
+        assert not torch.allclose(real_cost, corrupted_cost)
