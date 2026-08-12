@@ -614,12 +614,12 @@ def _make_perspective(params: dict[str, Any]) -> Any:
 
     Both libraries displace the corners by a fraction of the image side, but they do not sample that fraction the same
     way, so this is an approximation rather than a parameter rename. Albumentations treats ``scale`` as the standard
-    deviation of a normal and takes ``abs(N(0, sigma))`` per corner (normalizing a scalar ``v`` to ``(0, v)``), so
-    small displacements dominate and large ones are possible but rare. Kornia draws uniformly from
-    ``[0, distortion_scale]``. Passing the upper bound of ``scale`` as ``distortion_scale`` keeps the worst-case
-    distortion roughly aligned while making the typical distortion noticeably stronger on the GPU path; there is no
-    setting that makes the two distributions equal. The divergence is logged so a run does not silently change
-    character when it moves onto the GPU.
+    deviation of a normal and takes ``abs(N(0, sigma))`` per corner (normalizing a scalar ``v`` to ``(0, v)``), so small
+    displacements dominate and large ones are possible but rare. Kornia draws uniformly from ``[0, distortion_scale]``.
+    Passing the upper bound of ``scale`` as ``distortion_scale`` keeps the worst-case distortion roughly aligned while
+    making the typical distortion noticeably stronger on the GPU path; there is no setting that makes the two
+    distributions equal. The divergence is logged so a run does not silently change character when it moves onto the
+    GPU.
 
     Other Albumentations ``Perspective`` options (``fit_output``, ``interpolation``, ``mask_interpolation``,
     ``border_mode``, ``fill``, ``fill_mask``) have no ``RandomPerspective`` equivalent and are ignored with a warning
