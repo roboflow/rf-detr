@@ -3,14 +3,15 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for DepthwiseConvBlock and _DepthwiseConvWithoutCuDNN (segmentation head)."""
+"""Tests for DepthwiseConvBlock, _DepthwiseConvWithoutCuDNN, and SegmentationHead."""
 
 from contextlib import contextmanager
 
 import pytest
 import torch
+import torch.nn.functional as F  # noqa: N812
 
-from rfdetr.models.heads.segmentation import DepthwiseConvBlock
+from rfdetr.models.heads.segmentation import DepthwiseConvBlock, SegmentationHead
 
 
 @pytest.fixture(autouse=True)
@@ -261,3 +262,108 @@ def test_depthwise_conv_block_layer_scale(layer_scale_init_value: float) -> None
     if layer_scale_init_value > 0:
         assert block.gamma is not None
         assert block.gamma.grad is not None
+
+
+class TestSegmentationHeadSkipBlocksAppliesProjection:
+    """``skip_blocks=True`` must run ``spatial_features_proj`` on the spatial features, exactly like the
+    ``skip_blocks=False`` branch and ``forward_export()`` both already do — the two-stage encoder-only mask path
+    (``skip_blocks=True``) is not a distinct architecture, just a shorter path through the same head, so it must not
+    skip a learned layer the other paths apply."""
+
+    @staticmethod
+    def _build_head(bottleneck_ratio: int = 1) -> SegmentationHead:
+        """Build a tiny head whose spatial_features_proj is a real, non-identity layer.
+
+        A non-``None`` bottleneck ratio makes ``spatial_features_proj`` a real, randomly initialized convolution rather
+        than ``nn.Identity()``, so skipping it is numerically observable. Ratios greater than one also verify the
+        channel-reducing contract shared by the spatial and query projections.
+
+        Examples:
+            >>> head = TestSegmentationHeadSkipBlocksAppliesProjection._build_head()
+            >>> isinstance(head.spatial_features_proj, torch.nn.Conv2d)
+            True
+        """
+        return SegmentationHead(in_dim=4, num_blocks=1, bottleneck_ratio=bottleneck_ratio, downsample_ratio=1)
+
+    def test_forward_skip_blocks_applies_spatial_features_proj(self) -> None:
+        """forward(skip_blocks=True) must project spatial_features before the mask einsum."""
+        head = self._build_head()
+        spatial_features = torch.randn(1, 4, 4, 4)
+        query_features = torch.randn(1, 2, 4)
+        image_size = (4, 4)
+
+        with torch.no_grad():
+            resized = F.interpolate(spatial_features, size=image_size, mode="bilinear", align_corners=False)
+            expected_proj = head.spatial_features_proj(resized)
+            expected_qf = head.query_features_proj(head.query_features_block(query_features))
+            expected = torch.einsum("bchw,bnc->bnhw", expected_proj, expected_qf) + head.bias
+
+            actual = head.forward(spatial_features, [query_features], image_size, skip_blocks=True)[0]
+
+        torch.testing.assert_close(actual, expected)
+
+    def test_sparse_forward_skip_blocks_applies_spatial_features_proj(self) -> None:
+        """sparse_forward(skip_blocks=True) must return the already-projected spatial_features in its dict output."""
+        head = self._build_head()
+        spatial_features = torch.randn(1, 4, 4, 4)
+        query_features = torch.randn(1, 2, 4)
+        image_size = (4, 4)
+
+        with torch.no_grad():
+            resized = F.interpolate(spatial_features, size=image_size, mode="bilinear", align_corners=False)
+            expected_proj = head.spatial_features_proj(resized)
+
+            actual = head.sparse_forward(spatial_features, [query_features], image_size, skip_blocks=True)[0]
+
+        torch.testing.assert_close(actual["spatial_features"], expected_proj)
+
+    @pytest.mark.parametrize(
+        "bottleneck_ratio",
+        [pytest.param(1, id="same_channels"), pytest.param(2, id="projected_channels")],
+    )
+    def test_forward_export_skip_blocks_matches_training_path(self, bottleneck_ratio: int) -> None:
+        """Exported encoder-only masks must apply the same spatial projection as the training path."""
+        head = self._build_head(bottleneck_ratio)
+        spatial_features = torch.randn(1, 4, 4, 4)
+        query_features = [torch.randn(1, 2, 4)]
+        image_size = (4, 4)
+
+        with torch.no_grad():
+            expected = head.forward(spatial_features, query_features, image_size, skip_blocks=True)[0]
+            head.export()
+            actual = head.forward(spatial_features, query_features, image_size, skip_blocks=True)[0]
+
+        assert actual.shape == (1, 2, 4, 4)
+        torch.testing.assert_close(actual, expected)
+
+
+class TestSegmentationHeadSkipBlocksFalseUnaffected:
+    """Regression guard for the ``skip_blocks=False`` branch, untouched by this fix.
+
+    ``SegmentationHead`` had no test coverage at all before this PR (neither branch), so this class
+    covers the branch this fix does not modify, alongside ``TestSegmentationHeadSkipBlocksAppliesProjection``
+    for the branch it does.
+    """
+
+    def test_forward_skip_blocks_false_applies_spatial_features_proj(self) -> None:
+        """forward(skip_blocks=False) already projects spatial_features per decoder layer."""
+        head = SegmentationHead(in_dim=4, num_blocks=2, bottleneck_ratio=1, downsample_ratio=1)
+        spatial_features = torch.randn(1, 4, 4, 4)
+        query_features = [torch.randn(1, 2, 4), torch.randn(1, 2, 4)]
+        image_size = (4, 4)
+
+        with torch.no_grad():
+            resized = F.interpolate(spatial_features, size=image_size, mode="bilinear", align_corners=False)
+            expected_logits = []
+            block_input = resized
+            for block, qf in zip(head.blocks, query_features):
+                block_input = block(block_input)
+                sf_proj = head.spatial_features_proj(block_input)
+                qf_proj = head.query_features_proj(head.query_features_block(qf))
+                expected_logits.append(torch.einsum("bchw,bnc->bnhw", sf_proj, qf_proj) + head.bias)
+
+            actual_logits = head.forward(spatial_features, query_features, image_size, skip_blocks=False)
+
+        assert len(actual_logits) == len(expected_logits)
+        for actual, expected in zip(actual_logits, expected_logits):
+            torch.testing.assert_close(actual, expected)
