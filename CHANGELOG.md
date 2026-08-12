@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Restored peak GPU memory (`max_mem` in MB) in the training progress bar, dropped during the PyTorch Lightning migration (PR #794) along with `rfdetr.engine`. Only covers `trainer.fit()` (training and its periodic in-training validation) — PTL's own progress-bar classes never call `get_metrics()` outside `trainer.state.fn == "fit"`, so a standalone `RFDETR.evaluate()` progress bar shows no metrics at all, not just `max_mem`, same as before this change. ([#974](https://github.com/roboflow/rf-detr/issues/974))
 
+- `WeightedMultiSourceBatchSampler` (`rfdetr.datasets.multi_source`) fixes the per-source composition of every training batch when training on a `ConcatDataset` of several datasets, so a small hand-labelled set is not drowned out by a large public one. Sources are recycled with reshuffling when they run out mid-epoch, epoch length can be driven by the largest or smallest source, and batches are sharded across DDP ranks. Opt-in: no existing training path changes.
+
 ### Changed
 
 ### Fixed
@@ -47,9 +49,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - COCO datasets that contain an unannotated grouping category no longer spend a model output slot on it. Roboflow COCO exports prepend a synthetic root category (id `0`, `supercategory: "none"`, named after the project) that every real class then lists as its own `supercategory`; it carries no annotations, but it previously took label index `0` and an extra class channel. `CocoDetection.cat2label`, the auto-detected `num_classes` and `RFDETR._load_classes()` now share one filter (`rfdetr.datasets.coco.filter_parent_categories`), so training such a dataset builds an *N*-class head instead of *N+1* and every real class shifts down one label index. A parent category that owns annotations keeps its slot, and flat datasets are unaffected. Checkpoints trained before this change keep their *N+1*-class head — evaluating one against the same dataset now misaligns per-class metrics (the existing class-count `UserWarning` fires); retrain. Passing `num_classes` explicitly preserves the checkpoint's *N+1*-class head width so the weights still load, but it does not restore the old label indices — `CocoDetection` drops the grouping category whenever `remap_category_ids=True`, so every real class still shifts down one slot and the pretrained head is misaligned against the new labels. The keypoint remapping path (`_build_keypoint_cat2label`) is unchanged, so keypoint datasets still include the grouping category. For hierarchical datasets, the `train`/`valid`/`test` splits now share one label mapping — always derived from the `train` split — so a grouping category annotated in only some splits no longer shifts that split's label indices out from under the others. ([#1303](https://github.com/roboflow/rf-detr/pull/1303))
 
-### Added
-
-- `WeightedMultiSourceBatchSampler` (`rfdetr.datasets.multi_source`) fixes the per-source composition of every training batch when training on a `ConcatDataset` of several datasets, so a small hand-labelled set is not drowned out by a large public one. Sources are recycled with reshuffling when they run out mid-epoch, epoch length can be driven by the largest or smallest source, and batches are sharded across DDP ranks. Opt-in: no existing training path changes.
 
 ## [1.9.1] — 2026-08-03
 
