@@ -8,7 +8,9 @@
 
 RF-DETR is a real-time transformer architecture for object detection and instance segmentation. Built on DINOv2 vision transformer backbone with PyTorch.
 
-**Project Type:** Python ML library (computer vision) **Python:** >=3.10 (3.10, 3.11, 3.12, 3.13) **License:** Apache 2.0 (Plus models under PML 1.0)
+- **Project Type:** Python ML library (computer vision)
+- **Python:** >=3.10 (3.10, 3.11, 3.12, 3.13)
+- **License:** Apache 2.0 (Plus models under PML 1.0)
 
 > [!TIP]
 >
