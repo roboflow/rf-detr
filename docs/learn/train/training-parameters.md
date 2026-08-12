@@ -138,8 +138,7 @@ During training, multiple checkpoints are saved:
 | `checkpoint_best_total.pth`   | Final best model; lightweight callback state when available  |
 | `last_ema.pth`                | Final EMA weights; lightweight callback state when available |
 
-Best validation performance uses the task metric for the model family: box mAP for detection/segmentation and COCO
-keypoint AP for keypoint preview.
+Best validation performance uses the task metric for the model family: box mAP for detection/segmentation and COCO keypoint AP for keypoint preview.
 
 ## Early Stopping Parameters
 
@@ -173,10 +172,7 @@ This configuration will:
 
 !!! note "Transfer learning with `pretrain_weights`"
 
-    When fine-tuning from `pretrain_weights`, the pretrained model's epoch-0 validation metric can be artificially high
-    relative to the training trajectory on the new dataset. This causes `checkpoint_best_total.pth` to always contain
-    the untrained pretrained weights and may trigger early stopping prematurely. Use `skip_best_epochs` to defer
-    best-checkpoint selection and patience counting until the model has had time to adapt.
+    When fine-tuning from `pretrain_weights`, the pretrained model's epoch-0 validation metric can be artificially high relative to the training trajectory on the new dataset. This causes `checkpoint_best_total.pth` to always contain the untrained pretrained weights and may trigger early stopping prematurely. Use `skip_best_epochs` to defer best-checkpoint selection and patience counting until the model has had time to adapt.
 
 ## Logging Parameters
 

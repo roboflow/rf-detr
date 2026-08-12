@@ -62,13 +62,9 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
 
 !!! note "Using COCO classes vs. fine-tuned model classes"
 
-    `COCO_CLASSES` works for COCO-pretrained models (80 COCO classes, indexed 0-79).
-    For fine-tuned models, use `detections.data["class_name"]` instead — it resolves
-    class names from the checkpoint and works for both COCO and custom datasets.
+    `COCO_CLASSES` works for COCO-pretrained models (80 COCO classes, indexed 0-79). For fine-tuned models, use `detections.data["class_name"]` instead — it resolves class names from the checkpoint and works for both COCO and custom datasets.
 
-For memory-constrained inference-only deployments with the `rfdetr` package, optimize the loaded model in place before
-calling `predict()`. Pass `dtype="float16"` to halve weight memory in addition to clearing the base model reference.
-This operation is irreversible — to restore the original model, create a new `RFDETR` instance:
+For memory-constrained inference-only deployments with the `rfdetr` package, optimize the loaded model in place before calling `predict()`. Pass `dtype="float16"` to halve weight memory in addition to clearing the base model reference. This operation is irreversible — to restore the original model, create a new `RFDETR` instance:
 
 ```python
 model.inference(compile=False, inplace=True, dtype="float16")
