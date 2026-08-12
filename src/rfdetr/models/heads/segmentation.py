@@ -264,8 +264,9 @@ class SegmentationHead(nn.Module):
                 mask_logits.append(torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf) + self.bias)
         else:
             assert len(query_features) == 1, "skip_blocks is only supported for length 1 query features"
+            spatial_features_proj = self.spatial_features_proj(spatial_features)
             qf = self.query_features_proj(self.query_features_block(query_features[0]))
-            mask_logits.append(torch.einsum("bchw,bnc->bnhw", spatial_features, qf) + self.bias)
+            mask_logits.append(torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf) + self.bias)
 
         return mask_logits
 
@@ -302,11 +303,12 @@ class SegmentationHead(nn.Module):
         else:
             assert len(query_features) == 1, "skip_blocks is only supported for length 1 query features"
 
+            spatial_features_proj = self.spatial_features_proj(spatial_features)
             qf = self.query_features_proj(self.query_features_block(query_features[0]))
 
             output_dicts.append(
                 {
-                    "spatial_features": spatial_features,
+                    "spatial_features": spatial_features_proj,
                     "query_features": qf,
                     "bias": self.bias,
                 }

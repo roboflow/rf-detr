@@ -11,6 +11,7 @@ import pytest
 import torch
 
 from rfdetr.models import matcher as matcher_module
+from rfdetr.models.heads.segmentation import SegmentationHead
 from rfdetr.models.matcher import HungarianMatcher
 
 
@@ -1745,3 +1746,75 @@ class TestCompactPathCriterionEquivalence:
         for layer, (compact_grad_logits, compact_grad_boxes) in zip(all_layer_outputs, compact_grads):
             assert torch.equal(compact_grad_logits, layer["pred_logits"].grad)
             assert torch.equal(compact_grad_boxes, layer["pred_boxes"].grad)
+
+
+def _spy_on_assign(monkeypatch: pytest.MonkeyPatch) -> list[torch.Tensor]:
+    """Wrap the static ``_assign_compact_cost_matrix`` to record each cost matrix it receives, without changing its
+    behavior — lets a test compare the matrix's numeric content between two ``forward()`` calls.
+
+    Examples:
+        >>> _spy_on_assign(pytest.MonkeyPatch())  # doctest: +SKIP
+
+        # Needs a live pytest.MonkeyPatch fixture torn down by a running test, not standalone.
+    """
+    captured: list[torch.Tensor] = []
+    original = HungarianMatcher._assign_compact_cost_matrix
+
+    def spy(cost_matrix: torch.Tensor, sizes: list[int], group_detr: int) -> list[tuple[torch.Tensor, torch.Tensor]]:
+        captured.append(cost_matrix.clone())
+        return original(cost_matrix, sizes, group_detr)
+
+    monkeypatch.setattr(HungarianMatcher, "_assign_compact_cost_matrix", staticmethod(spy))
+    return captured
+
+
+class TestMatcherDictMaskCostUsesProjectedFeatures:
+    """The dict form of ``pred_masks`` (the ``else`` branch around matcher.py:409) point-samples
+    ``outputs["pred_masks"]["spatial_features"]`` straight off the dict for the mask cost — it applies no projection of
+    its own, trusting whatever produced the dict.
+
+    Only ``SegmentationHead``-level tests existed before this; none ran a real head's dict output through the matcher.
+    This builds the dict with a real ``SegmentationHead`` (``sparse_forward(skip_blocks=True)``, non-identity
+    ``spatial_features_proj``) and checks the resulting cost matrix is sensitive to whether that projection was applied.
+    """
+
+    def test_cost_matrix_differs_between_projected_and_raw_spatial_features(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        torch.manual_seed(10)
+        hidden, mask_size, num_queries = 4, 8, 4
+        head = SegmentationHead(in_dim=hidden, num_blocks=1, bottleneck_ratio=1, downsample_ratio=1)
+        sizes = [1, 2]
+        outputs, targets = _random_detection_batch(seed=11, sizes=sizes, num_queries=num_queries)
+        bs = len(targets)
+        spatial_features = torch.randn(bs, hidden, mask_size, mask_size)
+        query_features = torch.randn(bs, num_queries, hidden)
+        for target, size in zip(targets, sizes):
+            target["masks"] = torch.rand(size, mask_size, mask_size)
+
+        real_dict = head.sparse_forward(spatial_features, [query_features], (mask_size, mask_size), skip_blocks=True)[0]
+        matcher = HungarianMatcher()
+        captured = _spy_on_assign(monkeypatch)
+
+        outputs["pred_masks"] = real_dict
+        torch.manual_seed(20)  # controls the mask point_coords draw, shared across both calls below
+        matcher(outputs, targets)
+        real_cost = captured[-1]
+
+        with torch.no_grad():
+            # Raw, unprojected spatial_features at the same resolution sparse_forward interpolates to —
+            # exactly what the pre-fix skip_blocks=True branch used to hand the matcher.
+            raw_resized = torch.nn.functional.interpolate(
+                spatial_features, size=(mask_size, mask_size), mode="bilinear", align_corners=False
+            )
+        corrupted_dict = {
+            "spatial_features": raw_resized,
+            "query_features": real_dict["query_features"].detach(),
+            "bias": real_dict["bias"].detach(),
+        }
+        outputs["pred_masks"] = corrupted_dict
+        torch.manual_seed(20)  # same point_coords draw as the real-dict call above, for a fair comparison
+        matcher(outputs, targets)
+        corrupted_cost = captured[-1]
+
+        assert not torch.allclose(real_cost, corrupted_cost)
