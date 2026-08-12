@@ -148,9 +148,7 @@ RF-DETR **automatically detects** whether your dataset is in COCO or YOLO format
 | **COCO** | Looks for `train/_annotations.coco.json` | [COCO Format Guide](dataset-formats.md#coco-format) |
 | **YOLO** | Looks for `data.yaml` + `train/images/`  | [YOLO Format Guide](dataset-formats.md#yolo-format) |
 
-For keypoint preview training, use COCO keypoint JSON or YOLO pose labels. YOLO pose datasets must declare
-`kpt_shape` in `data.yaml`; detection-only YOLO datasets still fail clearly in keypoint mode instead of being treated as
-pose labels.
+For keypoint preview training, use COCO keypoint JSON or YOLO pose labels. YOLO pose datasets must declare `kpt_shape` in `data.yaml`; detection-only YOLO datasets still fail clearly in keypoint mode instead of being treated as pose labels.
 
 [Roboflow](https://roboflow.com/annotate) allows you to create object detection datasets from scratch and export them in either COCO JSON or YOLO format for training. You can also explore [Roboflow Universe](https://universe.roboflow.com/) to find pre-labeled datasets for a range of use cases.
 
@@ -201,13 +199,9 @@ During training, multiple model checkpoints are saved to the output directory:
 
 - `checkpoint_best_regular.pth` – best checkpoint based on validation score, using the raw (non-EMA) model weights.
 
-- `checkpoint_best_total.pth` – final checkpoint selected for inference and benchmarking. It contains model weights,
-    epoch/PTL metadata, and callback state when available, but no optimizer or scheduler state. It is chosen as the
-    better of the EMA and non-EMA models based on validation performance.
+- `checkpoint_best_total.pth` – final checkpoint selected for inference and benchmarking. It contains model weights, epoch/PTL metadata, and callback state when available, but no optimizer or scheduler state. It is chosen as the better of the EMA and non-EMA models based on validation performance.
 
-For detection and segmentation models, the validation score is box mAP (`val/mAP_50_95`). For keypoint preview models,
-best-checkpoint selection uses COCO keypoint AP (`val/keypoint_map_50_95`) and checkpoints persist the model keypoint
-schema so `RFDETR.from_checkpoint()` can reconstruct the same label/keypoint slots.
+For detection and segmentation models, the validation score is box mAP (`val/mAP_50_95`). For keypoint preview models, best-checkpoint selection uses COCO keypoint AP (`val/keypoint_map_50_95`) and checkpoints persist the model keypoint schema so `RFDETR.from_checkpoint()` can reconstruct the same label/keypoint slots.
 
 ??? note "Checkpoint file sizes"
 
@@ -243,9 +237,7 @@ schema so `RFDETR.from_checkpoint()` can reconstruct the same label/keypoint slo
 
 ## Evaluate a Fine-Tuned Model
 
-`model.evaluate()` runs a single evaluation pass over a dataset split and returns (and prints) the COCO metrics — mAP,
-mAR, and the macro-F1 sweep. It works both right after `model.train()` and on a model loaded from a checkpoint; the
-weights already in memory are evaluated, so no checkpoint file is re-loaded.
+`model.evaluate()` runs a single evaluation pass over a dataset split and returns (and prints) the COCO metrics — mAP, mAR, and the macro-F1 sweep. It works both right after `model.train()` and on a model loaded from a checkpoint; the weights already in memory are evaluated, so no checkpoint file is re-loaded.
 
 ```python
 from rfdetr import RFDETRMedium
@@ -256,17 +248,10 @@ metrics = model.evaluate(dataset_dir="<DATASET_PATH>", split="test")
 print(metrics["test/mAP_50_95"])
 ```
 
-- `split="test"` evaluates the `test/` folder on Roboflow-exported datasets (`dataset_file="roboflow"`, the default).
-    For other dataset formats (COCO, YOLO, Objects365) there is no dedicated test split, so `split="test"` silently
-    evaluates the `valid/` folder instead — the returned metric keys are still prefixed `test/*`, so double-check
-    `dataset_file` before treating `test/mAP_50_95` as held-out-test performance on a non-Roboflow dataset.
-    `split="val"` always evaluates `valid/` directly.
-- The detection head is never adapted to the dataset — the model is evaluated exactly as configured. If the dataset's
-    class count differs from the model's `num_classes`, a warning is emitted and evaluation proceeds unchanged.
+- `split="test"` evaluates the `test/` folder on Roboflow-exported datasets (`dataset_file="roboflow"`, the default). For other dataset formats (COCO, YOLO, Objects365) there is no dedicated test split, so `split="test"` silently evaluates the `valid/` folder instead — the returned metric keys are still prefixed `test/*`, so double-check `dataset_file` before treating `test/mAP_50_95` as held-out-test performance on a non-Roboflow dataset. `split="val"` always evaluates `valid/` directly.
+- The detection head is never adapted to the dataset — the model is evaluated exactly as configured. If the dataset's class count differs from the model's `num_classes`, a warning is emitted and evaluation proceeds unchanged.
 - Evaluation writes no checkpoints or logs to `output_dir`.
-- `evaluate()` accepts the same keyword arguments as `train()` for convenience, but training-only fields (`epochs`,
-    `lr`, `ema`, `early_stopping`, logger flags, etc.) have no effect — evaluation runs through an eval-only trainer
-    that never builds those callbacks.
+- `evaluate()` accepts the same keyword arguments as `train()` for convenience, but training-only fields (`epochs`, `lr`, `ema`, `early_stopping`, logger flags, etc.) have no effect — evaluation runs through an eval-only trainer that never builds those callbacks.
 
 ## Next Steps
 
