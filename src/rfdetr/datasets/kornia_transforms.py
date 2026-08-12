@@ -598,13 +598,32 @@ def _make_clahe(params: dict[str, Any]) -> Any:
     )
 
 
+#: Albumentations ``Perspective`` options with no ``K.RandomPerspective`` equivalent.
+_PERSPECTIVE_IGNORED_KEYS = (
+    "fit_output",
+    "interpolation",
+    "mask_interpolation",
+    "border_mode",
+    "fill",
+    "fill_mask",
+)
+
+
 def _make_perspective(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomPerspective`` from aug_config ``Perspective`` params.
 
-    Both libraries express the same thing, the corner displacement as a fraction of the image side, so ``scale`` maps
-    onto ``distortion_scale`` directly. The asymmetry is the same one ``GaussNoise`` has: Albumentations samples a fresh
-    fraction per call from a ``(min, max)`` range, while Kornia takes a single fixed value, so a non-degenerate pair
-    collapses to its upper bound and the divergence is logged.
+    Both libraries displace the corners by a fraction of the image side, but they do not sample that fraction the same
+    way, so this is an approximation rather than a parameter rename. Albumentations treats ``scale`` as the standard
+    deviation of a normal and takes ``abs(N(0, sigma))`` per corner (normalizing a scalar ``v`` to ``(0, v)``), so
+    small displacements dominate and large ones are possible but rare. Kornia draws uniformly from
+    ``[0, distortion_scale]``. Passing the upper bound of ``scale`` as ``distortion_scale`` keeps the worst-case
+    distortion roughly aligned while making the typical distortion noticeably stronger on the GPU path; there is no
+    setting that makes the two distributions equal. The divergence is logged so a run does not silently change
+    character when it moves onto the GPU.
+
+    Other Albumentations ``Perspective`` options (``fit_output``, ``interpolation``, ``mask_interpolation``,
+    ``border_mode``, ``fill``, ``fill_mask``) have no ``RandomPerspective`` equivalent and are ignored with a warning
+    when set to a non-default value.
 
     ``keep_size`` is not accepted. Albumentations defaults it to ``True`` (the output keeps the input's height and
     width) and Kornia's ``RandomPerspective`` always behaves that way, so the default maps cleanly; ``keep_size=False``
@@ -621,16 +640,29 @@ def _make_perspective(params: dict[str, Any]) -> Any:
             "augmentation on the CPU (albumentations) backend."
         )
 
-    scale = _as_range(params.get("scale", (0.05, 0.1)))
-    if scale[0] != scale[1]:
+    ignored = [k for k in _PERSPECTIVE_IGNORED_KEYS if k in params]
+    if ignored:
         logger.warning(
-            "GPU augmentation (Kornia) uses fixed distortion_scale=%.3f for Perspective "
-            "(Kornia does not support per-sample distortion ranges). "
-            "CPU augmentation (albumentations) samples from [%.3f, %.3f].",
-            scale[1],
-            scale[0],
-            scale[1],
+            "GPU augmentation (Kornia) Perspective ignores %s "
+            "(Kornia's RandomPerspective exposes only distortion_scale and p). "
+            "CPU augmentation (albumentations) honors them.",
+            ", ".join(repr(k) for k in ignored),
         )
+
+    # Albumentations reads a scalar ``scale`` as ``(0, v)`` rather than ``(v, v)``, so it is normalized here
+    # instead of going through ``_as_range``; otherwise the reported CPU-side range would be wrong.
+    raw_scale = params.get("scale", (0.05, 0.1))
+    scale = (0.0, float(raw_scale)) if isinstance(raw_scale, (int, float)) else _as_range(raw_scale)
+    logger.warning(
+        "GPU augmentation (Kornia) Perspective uses distortion_scale=%.3f sampled uniformly from "
+        "[0, %.3f]. CPU augmentation (albumentations) samples each corner offset from abs(N(0, sigma)) "
+        "over sigma in [%.3f, %.3f], so the GPU path distorts more on a typical sample. "
+        "Use the albumentations backend if the exact distribution matters.",
+        scale[1],
+        scale[1],
+        scale[0],
+        scale[1],
+    )
     return RandomPerspective(
         distortion_scale=scale[1],
         p=params.get("p", 0.5),

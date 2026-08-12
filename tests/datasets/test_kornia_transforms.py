@@ -1213,37 +1213,54 @@ class TestPerspectiveFactory:
     resizes the image would leave the mask describing a different shape, so the crop names in #1252 stay unsupported.
     """
 
-    def test_scale_range_collapses_to_upper_bound_and_warns(self):
-        """Kornia takes one distortion_scale, so a (min, max) pair must collapse loudly, not silently."""
+    @pytest.mark.parametrize("scale", [(0.05, 0.2), 0.2], ids=["range", "scalar"])
+    def test_distribution_divergence_is_always_reported(self, scale) -> None:
+        """The GPU path draws uniformly where the CPU path draws a half-normal, so every config diverges.
+
+        This holds for a scalar too: albumentations reads ``0.2`` as ``sigma`` in ``(0, 0.2)`` and samples
+        ``abs(N(0, sigma))``, so even an "exact" request is not the same distribution Kornia produces.
+        """
         from unittest import mock
 
         from rfdetr.datasets import kornia_transforms
 
         with mock.patch.object(kornia_transforms.logger, "warning") as warn:
-            kornia_transforms.build_kornia_pipeline({"Perspective": {"scale": (0.05, 0.2)}}, 560)
+            kornia_transforms.build_kornia_pipeline({"Perspective": {"scale": scale}}, 560)
 
-        assert warn.called, "a non-degenerate scale range diverges from the CPU path and must be reported"
-        assert "Perspective" in warn.call_args[0][0]
+        messages = [call[0][0] for call in warn.call_args_list]
+        assert any("Perspective" in m and "abs(N(0, sigma))" in m for m in messages), messages
 
-    def test_scalar_scale_does_not_warn(self):
-        """A scalar is an exact request, not a collapse, so it must stay quiet."""
+    @pytest.mark.parametrize(
+        "key,value",
+        [
+            ("fit_output", True),
+            ("interpolation", 1),
+            ("mask_interpolation", 0),
+            ("border_mode", 0),
+            ("fill", 0),
+            ("fill_mask", 0),
+        ],
+    )
+    def test_unmappable_options_are_reported_not_silently_dropped(self, key, value) -> None:
+        """Kornia's RandomPerspective exposes only distortion_scale and p; the rest must not vanish quietly."""
         from unittest import mock
 
         from rfdetr.datasets import kornia_transforms
 
         with mock.patch.object(kornia_transforms.logger, "warning") as warn:
-            kornia_transforms.build_kornia_pipeline({"Perspective": {"scale": 0.2}}, 560)
+            kornia_transforms.build_kornia_pipeline({"Perspective": {key: value}}, 560)
 
-        assert not warn.called
+        messages = [call[0][0] % call[0][1:] if len(call[0]) > 1 else call[0][0] for call in warn.call_args_list]
+        assert any("ignores" in m and key in m for m in messages), messages
 
-    def test_keep_size_false_is_refused_not_ignored(self):
+    def test_keep_size_false_is_refused_not_ignored(self) -> None:
         """keep_size=False changes the output resolution, which this pipeline cannot express."""
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
 
         with pytest.raises(ValueError, match="keep_size=False"):
             build_kornia_pipeline({"Perspective": {"keep_size": False}}, 560)
 
-    def test_output_keeps_the_input_resolution(self):
+    def test_output_keeps_the_input_resolution(self) -> None:
         """The property the whole mapping rests on: image height and width survive the transform."""
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
 
@@ -1255,7 +1272,7 @@ class TestPerspectiveFactory:
 
         assert img_out.shape[-2:] == img.shape[-2:]
 
-    def test_boxes_follow_the_warp(self):
+    def test_boxes_follow_the_warp(self) -> None:
         """A geometric transform that left the boxes where they were would silently mislabel every image."""
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
 
@@ -1267,10 +1284,10 @@ class TestPerspectiveFactory:
 
         assert not torch.allclose(boxes_out, boxes), "boxes must be warped with the image"
 
-    def test_crop_names_from_1252_remain_unsupported(self):
+    @pytest.mark.parametrize("name", ["RandomCrop", "CenterCrop", "RandomResizedCrop"])
+    def test_crop_names_from_1252_remain_unsupported(self, name) -> None:
         """Guard for the reason Perspective ships alone: the crops resize, so they are still rejected."""
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
 
-        for name in ("RandomCrop", "CenterCrop", "RandomResizedCrop"):
-            with pytest.raises(ValueError, match="Unknown augmentation key"):
-                build_kornia_pipeline({name: {"height": 32, "width": 32}}, 560)
+        with pytest.raises(ValueError, match="Unknown augmentation key"):
+            build_kornia_pipeline({name: {"height": 32, "width": 32}}, 560)
