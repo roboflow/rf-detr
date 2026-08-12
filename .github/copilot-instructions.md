@@ -1,6 +1,8 @@
 # RF-DETR Copilot Instructions
 
-> [!NOTE] This document is GitHub Copilot-specific guidance. For canonical contribution guidelines (test-driven development, code quality, docstrings, etc.), see [CONTRIBUTING.md](CONTRIBUTING.md). For detailed agent-specific context, see [AGENTS.md](../AGENTS.md).
+> [!NOTE]
+>
+> This document is GitHub Copilot-specific guidance. For canonical contribution guidelines (test-driven development, code quality, docstrings, etc.), see [CONTRIBUTING.md](CONTRIBUTING.md). For detailed agent-specific context, see [AGENTS.md](../AGENTS.md).
 
 ## Repository Overview
 
@@ -28,7 +30,9 @@ uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=
 uv build
 ```
 
-> [!IMPORTANT] Run `uv sync` after pulling changes to update dependencies.
+> [!IMPORTANT]
+>
+> Run `uv sync` after pulling changes to update dependencies.
 
 **Dependency extras:** `rfdetr[train]` is intentionally minimal and uses torchvision-native default augmentations. Custom Albumentations CPU configs and Kornia GPU augmentation both require `rfdetr[augment]`.
 
@@ -44,7 +48,9 @@ pre-commit run --all-files
 
 ## Key Conventions
 
-> [!NOTE] Internal package organization (`src/rfdetr/`) is subject to change as this is an active research project. Explore the codebase to understand current module organization.
+> [!NOTE]
+>
+> Internal package organization (`src/rfdetr/`) is subject to change as this is an active research project. Explore the codebase to understand current module organization.
 
 **Imports:**
 
