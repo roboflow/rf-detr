@@ -106,6 +106,7 @@ rf-detr/
 - **`mkdocs.yaml`** - Documentation site configuration
 
 > [!TIP]
+>
 > When contributing, focus on the relevant directory for your change:
 >
 > - Bug fixes/features → `src/rfdetr/` and `tests/`
@@ -275,6 +276,7 @@ Tests marked with `@pytest.mark.gpu` are excluded from CPU CI workflows and run 
 ### CI Testing
 
 > [!NOTE]
+>
 > **CI Workflows (Source of Truth):** See `.github/workflows/ci-tests-cpu.yml` and `.github/workflows/ci-tests-gpu.yml` for exact commands.
 
 Our continuous integration tests run on:
@@ -317,6 +319,7 @@ uv run --no-sync pytest tests/models/test_model.py::test_model_loading
 All code must pass linting and formatting checks before being merged. We use **pre-commit hooks** to automate this process.
 
 > [!TIP]
+>
 > Pre-commit hooks will auto-format many issues. If pre-commit fails, review the changes it made and re-stage the files.
 
 ### Setting Up Pre-commit
@@ -365,6 +368,7 @@ def old_fn(*args, **kwargs): ...
 RF-DETR's documentation is built with [MkDocs](https://www.mkdocs.org/) and the [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) theme. API reference pages are auto-generated from docstrings using [mkdocstrings](https://mkdocstrings.github.io/).
 
 > [!NOTE]
+>
 > Building the full documentation locally requires the `plus` extra (`rfdetr[plus]`), which provides the XLarge and 2XLarge model pages. Without it, the build will fail on those reference pages.
 
 ### Install Documentation Dependencies
@@ -410,6 +414,7 @@ mkdocs.yaml               # MkDocs configuration and navigation
 ```
 
 > [!TIP]
+>
 > When adding a new documentation page, add it to the `nav` section in `mkdocs.yaml` so it appears in the site navigation. Pages that exist in `docs/` but are not listed in `nav` will not be included in the site.
 
 ## CLA Signing
@@ -427,6 +432,7 @@ This step is essential before any merge can occur.
 For clarity and maintainability, any new functions or classes must include [Google-style docstrings](https://google.github.io/styleguide/pyguide.html) and use Python type hints. Type hints are mandatory in all function definitions, ensuring explicit parameter and return type declarations.
 
 > [!IMPORTANT]
+>
 > Type hints are in the function signature. **Do not duplicate types in docstrings** - describe the parameter's purpose instead.
 
 For example:
@@ -459,6 +465,7 @@ Bug reports are vital for continued improvement. When reporting an issue, please
 ## Adding a New Model
 
 > [!IMPORTANT]
+>
 > Before implementing a new model, **discuss with maintainers first**. Project structure and patterns are subject to change.
 
 **General workflow:**

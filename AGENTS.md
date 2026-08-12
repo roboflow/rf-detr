@@ -45,11 +45,13 @@ As an AI agent contributing to RF-DETR, you are responsible for:
     - Follow existing patterns in the codebase
 
 > [!NOTE]
+>
 > Keeping documentation current ensures consistency across agent contributions and reduces repeated feedback on the same issues.
 
 ## Build & Development Environment
 
 > [!NOTE]
+>
 > **Canonical Reference:** See [Development Environment Setup](.github/CONTRIBUTING.md#development-environment-setup) in CONTRIBUTING.md for complete setup instructions.
 
 ### Setup
@@ -80,6 +82,7 @@ See `pyproject.toml` for complete dependency specifications:
 ## Testing
 
 > [!NOTE]
+>
 > **Canonical Reference:** See [Test-Driven Development](.github/CONTRIBUTING.md#test-driven-development) in CONTRIBUTING.md for complete guidelines.
 >
 > **CI Workflows (Source of Truth):** See `.github/workflows/ci-tests-cpu.yml` and `.github/workflows/ci-tests-gpu.yml` for exact test commands used in CI.
@@ -100,6 +103,7 @@ pre-commit run --all-files
 ### Testing Principles
 
 > [!IMPORTANT]
+>
 > **Testing Requirements:**
 >
 > - ⚠️ **During development:** Tests may fail as you work through TDD cycle
@@ -117,17 +121,15 @@ pre-commit run --all-files
 - Use `@pytest.mark.parametrize` with `pytest.param(..., id="name")`
 - Mark GPU/heavy tests with `@pytest.mark.gpu`
 - Avoid multiple validation cases in a single test - see [CONTRIBUTING.md](.github/CONTRIBUTING.md#avoid-multiple-validation-cases-in-a-single-test) for details
-- Fixtures return ready-to-use concrete state or a cohesive tuple of related state. Do not return a callable factory
-    unless fixture-managed lifecycle is required; use an ordinary helper function for configurable construction.
-- Keep fixture dependencies minimal, unpack only the values a test needs, and avoid aliases or wrappers that merely
-    rename or forward an object without adding meaning.
+- Fixtures return ready-to-use concrete state or a cohesive tuple of related state. Do not return a callable factory unless fixture-managed lifecycle is required; use an ordinary helper function for configurable construction.
+- Keep fixture dependencies minimal, unpack only the values a test needs, and avoid aliases or wrappers that merely rename or forward an object without adding meaning.
 
-**CI Information:**
-See [CI Testing](.github/CONTRIBUTING.md#ci-testing) in CONTRIBUTING.md for details on OS/Python version matrix and workflow configurations.
+**CI Information:** See [CI Testing](.github/CONTRIBUTING.md#ci-testing) in CONTRIBUTING.md for details on OS/Python version matrix and workflow configurations.
 
 ## Code Quality & Linting
 
 > [!NOTE]
+>
 > **Canonical Reference:** See [Code Quality and Linting](.github/CONTRIBUTING.md#code-quality-and-linting) in CONTRIBUTING.md for setup and details.
 
 ### Command
@@ -138,6 +140,7 @@ pre-commit run --all-files
 ```
 
 > [!TIP]
+>
 > Pre-commit hooks will auto-format many issues. Review changes and re-stage files.
 
 **Configuration Files:**
@@ -147,12 +150,8 @@ pre-commit run --all-files
 
 **Abstraction Discipline:**
 
-- Introduce an abstraction only when it reduces cognitive load and the number of concepts a reader must follow.
-    Extract stable repeated behavior or irrelevant construction mechanics while keeping behavior-defining inputs and
-    outcomes explicit at call sites.
-- Design an extracted helper for the complete related behavior already present, including relevant edge cases, and
-    place it in the narrowest scope shared by its consumers. Prefer small visible duplication over a helper, wrapper,
-    alias, or layer that adds indirection without semantic value.
+- Introduce an abstraction only when it reduces cognitive load and the number of concepts a reader must follow. Extract stable repeated behavior or irrelevant construction mechanics while keeping behavior-defining inputs and outcomes explicit at call sites.
+- Design an extracted helper for the complete related behavior already present, including relevant edge cases, and place it in the narrowest scope shared by its consumers. Prefer small visible duplication over a helper, wrapper, alias, or layer that adds indirection without semantic value.
 
 **License Header (required for all Python files):**
 
@@ -208,6 +207,7 @@ uv run twine check --strict dist/*
 ## Project Structure
 
 > [!NOTE]
+>
 > **Canonical Reference:** See [Project Structure](.github/CONTRIBUTING.md#project-structure) in CONTRIBUTING.md for complete project organization, directory descriptions, and configuration files.
 >
 > **Quick summary:** `src/rfdetr/` (source code), `tests/` (test suite), `docs/` (documentation), `.github/` (CI/CD), `pyproject.toml` (dependencies and config).
@@ -240,9 +240,7 @@ uv run twine check --strict dist/*
 
 **Imports:**
 
-- Keep imports at module scope by default. Use a local import only for a verified circular-import boundary, optional
-    dependency boundary, import-behavior test, or material startup/side-effect constraint; the reason must be evident
-    from the surrounding code or documented where it is not obvious.
+- Keep imports at module scope by default. Use a local import only for a verified circular-import boundary, optional dependency boundary, import-behavior test, or material startup/side-effect constraint; the reason must be evident from the surrounding code or documented where it is not obvious.
 
 ```python
 # Prefer direct project imports. Standard aliases such as `numpy as np`,
@@ -290,6 +288,7 @@ result = subprocess.run(
 ### Type Hints & Docstrings
 
 > [!IMPORTANT]
+>
 > **Canonical Reference:** See [Google-Style Docstrings and Mandatory Type Hints](.github/CONTRIBUTING.md#google-style-docstrings-and-mandatory-type-hints) in CONTRIBUTING.md for complete requirements and examples.
 
 **Requirements:**
@@ -320,6 +319,7 @@ result = subprocess.run(
 ### Adding New Model Variants
 
 > [!IMPORTANT]
+>
 > **Canonical Reference:** See [Adding a New Model](.github/CONTRIBUTING.md#adding-a-new-model) in CONTRIBUTING.md for detailed guidance.
 >
 > Always consult maintainers before implementing new models.
