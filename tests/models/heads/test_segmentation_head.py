@@ -271,19 +271,19 @@ class TestSegmentationHeadSkipBlocksAppliesProjection:
     skip a learned layer the other paths apply."""
 
     @staticmethod
-    def _build_head() -> SegmentationHead:
+    def _build_head(bottleneck_ratio: int = 1) -> SegmentationHead:
         """Build a tiny head whose spatial_features_proj is a real, non-identity layer.
 
-        bottleneck_ratio=1 (the default used by every released segmentation model) makes
-        spatial_features_proj a real, randomly-initialized Conv2d(4, 4, kernel_size=1) — not
-        nn.Identity() — so skipping it is numerically observable.
+        A non-``None`` bottleneck ratio makes ``spatial_features_proj`` a real, randomly initialized convolution rather
+        than ``nn.Identity()``, so skipping it is numerically observable. Ratios greater than one also verify the
+        channel-reducing contract shared by the spatial and query projections.
 
         Examples:
             >>> head = TestSegmentationHeadSkipBlocksAppliesProjection._build_head()
             >>> isinstance(head.spatial_features_proj, torch.nn.Conv2d)
             True
         """
-        return SegmentationHead(in_dim=4, num_blocks=1, bottleneck_ratio=1, downsample_ratio=1)
+        return SegmentationHead(in_dim=4, num_blocks=1, bottleneck_ratio=bottleneck_ratio, downsample_ratio=1)
 
     def test_forward_skip_blocks_applies_spatial_features_proj(self) -> None:
         """forward(skip_blocks=True) must project spatial_features before the mask einsum."""
@@ -316,6 +316,25 @@ class TestSegmentationHeadSkipBlocksAppliesProjection:
             actual = head.sparse_forward(spatial_features, [query_features], image_size, skip_blocks=True)[0]
 
         torch.testing.assert_close(actual["spatial_features"], expected_proj)
+
+    @pytest.mark.parametrize(
+        "bottleneck_ratio",
+        [pytest.param(1, id="same_channels"), pytest.param(2, id="projected_channels")],
+    )
+    def test_forward_export_skip_blocks_matches_training_path(self, bottleneck_ratio: int) -> None:
+        """Exported encoder-only masks must apply the same spatial projection as the training path."""
+        head = self._build_head(bottleneck_ratio)
+        spatial_features = torch.randn(1, 4, 4, 4)
+        query_features = [torch.randn(1, 2, 4)]
+        image_size = (4, 4)
+
+        with torch.no_grad():
+            expected = head.forward(spatial_features, query_features, image_size, skip_blocks=True)[0]
+            head.export()
+            actual = head.forward(spatial_features, query_features, image_size, skip_blocks=True)[0]
+
+        assert actual.shape == (1, 2, 4, 4)
+        torch.testing.assert_close(actual, expected)
 
 
 class TestSegmentationHeadSkipBlocksFalseUnaffected:
