@@ -36,6 +36,11 @@ def _recycling_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [record.getMessage() for record in caplog.records if "is repeated" in record.getMessage()]
 
 
+def _ratio_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the emitted requested-versus-realised ratio warnings."""
+    return [record.getMessage() for record in caplog.records if "cannot hold" in record.getMessage()]
+
+
 def _source_of(index: int, source_sizes: list[int]) -> int:
     """Return the source a concatenated-dataset index belongs to."""
     for source, size in enumerate(source_sizes):
@@ -51,6 +56,23 @@ def _batch_composition(batch: list[int], source_sizes: list[int]) -> list[int]:
     return [counts[source] for source in range(len(source_sizes))]
 
 
+# Weight sets skewed enough that guaranteeing every source one slot over-allocates the batch, which is where the
+# largest-remainder allocation has to reclaim slots again.
+_SKEWED_WEIGHT_SETS = {
+    "dominant_of_two": [0.99, 0.01],
+    "dominant_of_four": [0.9, 0.04, 0.03, 0.03],
+    "long_tail_of_five": [0.8, 0.1, 0.05, 0.03, 0.02],
+    "thirds_of_three": [1 / 3, 1 / 3, 1 / 3],
+    "unnormalised_of_three": [97.0, 2.0, 1.0],
+}
+_SUM_INVARIANT_BATCH_SIZES = (1, 2, 3, 4, 5, 7, 8, 16, 64)
+_SUM_INVARIANT_CASES = [
+    pytest.param(batch_size, weights, id=f"{name}-batch{batch_size}")
+    for name, weights in _SKEWED_WEIGHT_SETS.items()
+    for batch_size in _SUM_INVARIANT_BATCH_SIZES
+]
+
+
 class TestComputeSourceBatchSizes:
     """Allocation of batch slots across weighted sources."""
 
@@ -63,6 +85,9 @@ class TestComputeSourceBatchSizes:
             pytest.param(10, [1 / 3, 1 / 3, 1 / 3], [4, 3, 3], id="thirds_with_remainder"),
             pytest.param(4, [0.97, 0.02, 0.01], [2, 1, 1], id="tiny_weights_still_represented"),
             pytest.param(2, [0.6, 0.3, 0.1], [1, 1, 0], id="batch_smaller_than_source_count"),
+            # The dominant source is clamped up by two slots at once, so one reclaim pass per source is not enough.
+            pytest.param(8, [0.9, 0.04, 0.03, 0.03], [5, 1, 1, 1], id="dominant_weight_gives_back_several_slots"),
+            pytest.param(4, [0.97, 0.01, 0.01, 0.01], [1, 1, 1, 1], id="minimum_slots_consume_the_whole_batch"),
         ],
     )
     def test_allocation(self, batch_size: int, weights: list[float], expected: list[int]) -> None:
@@ -70,6 +95,11 @@ class TestComputeSourceBatchSizes:
 
     def test_counts_sum_to_batch_size(self) -> None:
         assert sum(compute_source_batch_sizes(37, [0.55, 0.25, 0.15, 0.05])) == 37
+
+    @pytest.mark.parametrize(("batch_size", "weights"), _SUM_INVARIANT_CASES)
+    def test_sum_invariant_holds_for_skewed_weights(self, batch_size: int, weights: list[float]) -> None:
+        """Skewed weights across many batch sizes never allocate more or fewer slots than the batch holds."""
+        assert sum(compute_source_batch_sizes(batch_size, weights)) == batch_size
 
     def test_weights_need_not_be_normalised(self) -> None:
         assert compute_source_batch_sizes(16, [6, 3, 1]) == compute_source_batch_sizes(16, [0.6, 0.3, 0.1])
@@ -247,6 +277,53 @@ class TestRecyclingWarning:
             self.STARVED_SIZES, self.STARVED_WEIGHTS, batch_size=self.STARVED_BATCH_SIZE, epoch_length=3
         )
         assert sampler.source_batch_sizes[sampler.driving_source] > 0
+
+
+class TestRatioDivergenceWarning:
+    """Warnings about batches that cannot hold the requested weights.
+
+    ``batch_size=4`` over four sources leaves exactly one slot each, so the dominant source realises 25% of every batch
+    instead of the requested 97% and the three tiny sources realise 25x their requested share.
+    """
+
+    INVERTED_SIZES = [1000, 500, 500, 500]
+    INVERTED_WEIGHTS = [0.97, 0.01, 0.01, 0.01]
+    INVERTED_BATCH_SIZE = 4
+
+    def _build_inverted_sampler(self) -> WeightedMultiSourceBatchSampler:
+        return WeightedMultiSourceBatchSampler(
+            self.INVERTED_SIZES, self.INVERTED_WEIGHTS, batch_size=self.INVERTED_BATCH_SIZE
+        )
+
+    def test_warns_when_the_guaranteed_slot_inverts_the_requested_share(self, caplog: pytest.LogCaptureFixture) -> None:
+        """The dominant source is reported with both its requested and its realised share."""
+        with _capture_warnings(caplog):
+            self._build_inverted_sampler()
+        assert "source 0 requested 97.0% but gets 25.0%" in "".join(_ratio_warnings(caplog))
+
+    def test_suggests_a_batch_size_that_fits_the_smallest_weight(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A weight of 1% needs 100 slots before it stops being rounded up to a whole one."""
+        with _capture_warnings(caplog):
+            self._build_inverted_sampler()
+        assert "at least 100" in "".join(_ratio_warnings(caplog))
+
+    def test_no_warning_when_the_batch_holds_the_requested_ratio(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Weights of [0.6, 0.3, 0.1] fit a batch of 16 closely enough to stay quiet."""
+        with _capture_warnings(caplog):
+            WeightedMultiSourceBatchSampler([500, 200, 40], [0.6, 0.3, 0.1], batch_size=16)
+        assert _ratio_warnings(caplog) == []
+
+    def test_no_warning_when_only_the_relative_share_diverges(self, caplog: pytest.LogCaptureFixture) -> None:
+        # A source requested at 3% gets one of 16 slots (6.25%): double its share, but only 3 points of the batch.
+        with _capture_warnings(caplog):
+            WeightedMultiSourceBatchSampler([1000, 500, 500], [0.94, 0.03, 0.03], batch_size=16)
+        assert _ratio_warnings(caplog) == []
+
+    def test_starved_sources_are_left_to_the_dedicated_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        # Source 2 is requested at 15% and realises 0%, which the starved-source warning already reports.
+        with _capture_warnings(caplog):
+            WeightedMultiSourceBatchSampler([1000, 20, 50, 5], [0.5, 0.3, 0.15, 0.05], batch_size=3)
+        assert _ratio_warnings(caplog) == []
 
 
 class TestShufflingDeterminism:
