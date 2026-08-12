@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Restored peak GPU memory (`max_mem` in MB) in the training progress bar, dropped during the PyTorch Lightning migration (PR #794) along with `rfdetr.engine`. Only covers `trainer.fit()` (training and its periodic in-training validation) — PTL's own progress-bar classes never call `get_metrics()` outside `trainer.state.fn == "fit"`, so a standalone `RFDETR.evaluate()` progress bar shows no metrics at all, not just `max_mem`, same as before this change. ([#974](https://github.com/roboflow/rf-detr/issues/974))
 
-- `WeightedMultiSourceBatchSampler` (`rfdetr.datasets.multi_source`) fixes the per-source composition of every training batch when training on a `ConcatDataset` of several datasets, so a small hand-labelled set is not drowned out by a large public one. Sources are recycled with reshuffling when they run out mid-epoch, epoch length can be driven by the largest or smallest source, and batches are sharded across DDP ranks. Opt-in: no existing training path changes.
+- `WeightedMultiSourceBatchSampler` (`rfdetr.datasets.multi_source`) fixes the per-source composition of every training batch when training on a `ConcatDataset` of several datasets, so a small hand-labelled set is not drowned out by a large public one. Sources are recycled with reshuffling when they run out mid-epoch, epoch length can be driven by the largest or smallest source, and batches are sharded across DDP ranks. Opt-in: no existing training path changes. ([#1287](https://github.com/roboflow/rf-detr/pull/1287))
 
 ### Changed
 
