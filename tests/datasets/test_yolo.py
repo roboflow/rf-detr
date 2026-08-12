@@ -106,6 +106,36 @@ kpt_names:
     return image_dir, label_dir, data_file
 
 
+def _write_yolo_test_split(
+    tmp_path: Path,
+    *,
+    images: bool = True,
+    labels: bool = True,
+    image_name: str = "sample.png",
+    label_content: str | None = None,
+) -> tuple[Path, Path]:
+    """Create the standard YOLO test split used by builder regression tests.
+
+    Examples:
+        >>> import tempfile
+        >>> root = Path(tempfile.mkdtemp())
+        >>> image_dir, label_dir = _write_yolo_test_split(root, images=False)
+        >>> image_dir.is_dir(), label_dir.is_dir()
+        (True, True)
+    """
+    (tmp_path / "data.yaml").write_text("names:\n  0: person\n", encoding="utf-8")
+    image_dir = tmp_path / "test" / "images"
+    label_dir = tmp_path / "test" / "labels"
+    image_dir.mkdir(parents=True)
+    if images:
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / image_name)
+    if labels:
+        label_dir.mkdir(parents=True)
+        if label_content is not None:
+            label_dir.joinpath(Path(image_name).with_suffix(".txt")).write_text(label_content, encoding="utf-8")
+    return image_dir, label_dir
+
+
 class TestBuildRoboflowFromYoloAugConfig:
     """Regression tests for #769: aug_config forwarded to transform builders."""
 
@@ -1162,24 +1192,17 @@ class TestBuildRoboflowFromYoloUltralytics:
             build_roboflow_from_yolo("test", args, resolution=64)
 
     @pytest.mark.parametrize(
-        "setup_case, expected_message",
+        "images, labels, expected_message",
         [
-            pytest.param("empty_images", "contains no supported images", id="empty-images"),
-            pytest.param("missing_labels", "labels directory not found", id="missing-labels"),
+            pytest.param(False, True, "contains no supported images", id="empty-images"),
+            pytest.param(True, False, "labels directory not found", id="missing-labels"),
         ],
     )
     def test_invalid_existing_test_split_propagates(
-        self, tmp_path: Path, setup_case: str, expected_message: str
+        self, tmp_path: Path, images: bool, labels: bool, expected_message: str
     ) -> None:
         """Existing but unusable test data must not fall back to validation data."""
-        (tmp_path / "data.yaml").write_text("names:\n  0: person\n", encoding="utf-8")
-        images_dir = tmp_path / "test" / "images"
-        labels_dir = tmp_path / "test" / "labels"
-        images_dir.mkdir(parents=True)
-        if setup_case != "missing_labels":
-            labels_dir.mkdir()
-        if setup_case != "empty_images":
-            Image.new("RGB", (8, 6), color=(255, 255, 255)).save(images_dir / "sample.png")
+        _write_yolo_test_split(tmp_path, images=images, labels=labels)
 
         args = self._make_args(str(tmp_path))
         from rfdetr.datasets.yolo import build_roboflow_from_yolo
@@ -1222,13 +1245,7 @@ class TestBuildRoboflowFromYoloUltralytics:
 
     def test_valid_test_split_builds_real_dataset(self, tmp_path: Path) -> None:
         """A non-empty labelled test split builds and preserves its sample."""
-        (tmp_path / "data.yaml").write_text("names:\n  0: person\n", encoding="utf-8")
-        images_dir = tmp_path / "test" / "images"
-        labels_dir = tmp_path / "test" / "labels"
-        images_dir.mkdir(parents=True)
-        labels_dir.mkdir()
-        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(images_dir / "sample.png")
-        (labels_dir / "sample.txt").write_text("0 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+        _write_yolo_test_split(tmp_path, label_content="0 0.5 0.5 0.5 0.5\n")
         args = self._make_args(str(tmp_path))
 
         from rfdetr.datasets.yolo import build_roboflow_from_yolo
@@ -1242,12 +1259,7 @@ class TestBuildRoboflowFromYoloUltralytics:
 
     def test_background_only_test_split_is_valid_with_labels_directory(self, tmp_path: Path) -> None:
         """A true-negative test image remains valid when its labels directory exists."""
-        (tmp_path / "data.yaml").write_text("names:\n  0: person\n", encoding="utf-8")
-        images_dir = tmp_path / "test" / "images"
-        labels_dir = tmp_path / "test" / "labels"
-        images_dir.mkdir(parents=True)
-        labels_dir.mkdir()
-        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(images_dir / "background.png")
+        _write_yolo_test_split(tmp_path, image_name="background.png")
         args = self._make_args(str(tmp_path))
 
         from rfdetr.datasets.yolo import build_roboflow_from_yolo
