@@ -117,6 +117,10 @@ pre-commit run --all-files
 - Use `@pytest.mark.parametrize` with `pytest.param(..., id="name")`
 - Mark GPU/heavy tests with `@pytest.mark.gpu`
 - Avoid multiple validation cases in a single test - see [CONTRIBUTING.md](.github/CONTRIBUTING.md#avoid-multiple-validation-cases-in-a-single-test) for details
+- Fixtures return ready-to-use concrete state or a cohesive tuple of related state. Do not return a callable factory
+    unless fixture-managed lifecycle is required; use an ordinary helper function for configurable construction.
+- Keep fixture dependencies minimal, unpack only the values a test needs, and avoid aliases or wrappers that merely
+    rename or forward an object without adding meaning.
 
 **CI Information:**
 See [CI Testing](.github/CONTRIBUTING.md#ci-testing) in CONTRIBUTING.md for details on OS/Python version matrix and workflow configurations.
@@ -140,6 +144,15 @@ pre-commit run --all-files
 
 - `.pre-commit-config.yaml` - Pre-commit hooks (ruff, mdformat, prettier, codespell, license headers)
 - `pyproject.toml` - Ruff linting rules (`[tool.ruff]` section)
+
+**Abstraction Discipline:**
+
+- Introduce an abstraction only when it reduces cognitive load and the number of concepts a reader must follow.
+    Extract stable repeated behavior or irrelevant construction mechanics while keeping behavior-defining inputs and
+    outcomes explicit at call sites.
+- Design an extracted helper for the complete related behavior already present, including relevant edge cases, and
+    place it in the narrowest scope shared by its consumers. Prefer small visible duplication over a helper, wrapper,
+    alias, or layer that adds indirection without semantic value.
 
 **License Header (required for all Python files):**
 
@@ -226,6 +239,10 @@ uv run twine check --strict dist/*
 - **`-preview` variants** are for capabilities with **no released sized version yet**. Only keypoints remain preview-only: `RFDETRKeypointPreview` / `"rfdetr-keypoint-preview"`. Use a preview variant **only** for that task — never as a stand-in for detection or segmentation.
 
 **Imports:**
+
+- Keep imports at module scope by default. Use a local import only for a verified circular-import boundary, optional
+    dependency boundary, import-behavior test, or material startup/side-effect constraint; the reason must be evident
+    from the surrounding code or documented where it is not obvious.
 
 ```python
 # Prefer direct project imports. Standard aliases such as `numpy as np`,
