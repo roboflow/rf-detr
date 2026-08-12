@@ -11,6 +11,8 @@ These are utility functions shared by the export CLI (:mod:`rfdetr.export.main`)
 
 from __future__ import annotations
 
+import importlib
+import sys
 import warnings
 from pathlib import Path
 from typing import Literal, cast
@@ -106,6 +108,72 @@ def _resolve_export_backend(format: str, backend: str | None, soc: str | None) -
     if soc is None:
         raise ValueError(f"backend {backend!r} requires a valid soc, but none was provided.")
     return backend, soc
+
+
+def _onnx_imported_before_tensorflow() -> bool:
+    """Report whether ``onnx`` entered ``sys.modules`` ahead of ``tensorflow``.
+
+    ``sys.modules`` is an ordinary dict, so iterating it yields keys in insertion order — which for a top-level package
+    is the order the two libraries were first imported in. That is a heuristic, not a loader guarantee: deleting and
+    re-importing a module moves it to the end. It only ever decides whether to emit a warning, never what gets
+    imported, so a wrong answer costs a log line.
+
+    ``onnx2tf`` is deliberately not treated as ``onnx``: it is a pure-Python package whose import does not load ONNX's
+    compiled extension.
+
+    Returns:
+        ``True`` when an ``onnx`` module precedes every ``tensorflow`` module, or when ``onnx`` is imported and
+        ``tensorflow`` is not. ``False`` otherwise, including when neither is imported.
+    """
+    for name in tuple(sys.modules):
+        if name == "onnx" or name.startswith("onnx."):
+            return True
+        if name == "tensorflow" or name.startswith("tensorflow."):
+            return False
+    return False
+
+
+def preload_tensorflow_before_onnx() -> None:
+    """Import TensorFlow before ONNX's C extension so TFLite conversion cannot deadlock.
+
+    ``onnx``'s compiled extension and TensorFlow both statically link Abseil and export its symbols as *weak external*
+    definitions.  The dynamic loader coalesces weak definitions onto the first image that provides them, so whichever
+    library is imported first supplies Abseil's synchronization primitives — including the per-thread semaphore that
+    ``absl::Mutex`` and ``absl::Notification`` block on — to *both* libraries.
+
+    When ONNX wins that race, TensorFlow's executor blocks in ``absl::Notification::WaitForNotification()`` while
+    restoring the SavedModel bundle and is never woken, hanging the export at 0% CPU with no traceback and no
+    ``.tflite``.  ``format="tflite"`` reaches ``onnx2tf`` only after a full ONNX export, so ONNX always wins unless
+    TensorFlow is preloaded here.  See https://github.com/roboflow/rf-detr/issues/1322 for the measured comparison.
+
+    Importing ``onnx`` *after* TensorFlow is safe, so the warning below is keyed on the relative order of the two
+    imports (:func:`_onnx_imported_before_tensorflow`) rather than on ``onnx`` merely being imported.
+
+    Note:
+        Does not re-import TensorFlow when it is already loaded, and stays silent when TensorFlow is not installed —
+        the actionable missing-dependency error is raised later, by
+        :func:`~rfdetr.export._tflite.converter._check_onnx2tf_available`.
+
+    Examples:
+        >>> preload_tensorflow_before_onnx()  # returns when the top-level tensorflow package is unavailable
+    """
+    onnx_won_the_race = _onnx_imported_before_tensorflow()
+
+    if "tensorflow" not in sys.modules:
+        try:
+            importlib.import_module("tensorflow")
+        except ModuleNotFoundError as error:
+            if error.name != "tensorflow":
+                raise
+            return
+
+    if onnx_won_the_race:
+        logger.warning(
+            "onnx was imported before TensorFlow. Both statically link Abseil and export its symbols weakly, so "
+            "TensorFlow can block forever while restoring the SavedModel bundle during TFLite conversion. That order "
+            "cannot be repaired once both are loaded. If the export hangs with no output, import tensorflow before "
+            "onnx or run the export in a fresh process."
+        )
 
 
 def _export_executorch_format(
