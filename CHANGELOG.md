@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `model.export(format="tflite")` no longer hangs forever at the ONNX → TFLite conversion step. `onnx`'s C extension and TensorFlow both statically link Abseil and export its symbols as *weak* definitions, which the dynamic loader coalesces onto whichever library loads first. Because the TFLite route runs a full ONNX export before reaching `onnx2tf`, ONNX won that race and supplied Abseil's synchronization primitives to TensorFlow, whose executor then blocked forever in `absl::Notification::WaitForNotification()` while restoring the SavedModel bundle — no traceback, no error, 0% CPU, no `.tflite`. TensorFlow is now imported before the ONNX export (`rfdetr.export._backend.preload_tensorflow_before_onnx`), and a warning is logged when the calling process had already imported `onnx` before TensorFlow (e.g. a direct `export_tflite()` call), since that order cannot be repaired in-process. Importing `onnx` *after* TensorFlow is safe and does not warn. ([#1322](https://github.com/roboflow/rf-detr/issues/1322))
+
 ### Breaking Changes
 
 - Exported artifact filenames now encode precision or backend for variant-derived/default names: TFLite `{stem}_float32.tflite` / `{stem}_float16.tflite` → `{stem}_fp32.tflite` / `{stem}_fp16.tflite`; ExecuTorch `{variant}.pte` → `{variant}_{backend}.pte` (or `{variant}_qnn_{soc}.pte`); CoreML `{variant}.mlpackage` → `{variant}_fp32.mlpackage` / `{variant}_fp16.mlpackage`; TensorRT `{stem}.trt` → `{stem}_fp16.trt` / `{stem}_fp32.trt`. ONNX filenames are unchanged. Update scripts that hardcode or glob these artifact filenames; explicit `output_name` overrides remain unchanged.

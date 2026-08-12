@@ -1629,7 +1629,12 @@ class RFDETR:
             format = "tensorrt"
         if format == "pte":  # "pte" is an alias for "executorch"
             format = "executorch"
-        from rfdetr.export._backend import _resolve_export_backend
+        from rfdetr.export._backend import _resolve_export_backend, preload_tensorflow_before_onnx
+
+        if format == "tflite":
+            # Must run before the ONNX export imports onnx's C extension: onnx and TensorFlow share weakly-exported
+            # Abseil symbols, and the wrong load order deadlocks TFLite conversion.
+            preload_tensorflow_before_onnx()
 
         backend, soc = _resolve_export_backend(format, backend, soc)
         # Fail fast: dynamic_batch is statically incompatible with ExecuTorch / CoreML; refuse before any forward
