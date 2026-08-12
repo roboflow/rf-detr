@@ -470,6 +470,7 @@ class TestSetup:
         """Setup('test') falls back to 'val' when a YOLO dataset declares no test split."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, dataset_file="yolo")
+        from rfdetr.datasets.yolo import YoloSplitUnavailableError
         from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
@@ -477,7 +478,7 @@ class TestSetup:
 
         def _build(image_set, args, resolution):
             if image_set == "test":
-                raise FileNotFoundError(str(tmp_path / "test" / "images"))
+                raise YoloSplitUnavailableError(str(tmp_path / "test" / "images"))
             return fake_val
 
         with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
@@ -485,8 +486,8 @@ class TestSetup:
 
         assert dm._dataset_test is fake_val
 
-    def test_test_stage_yolo_warns_when_falling_back_to_val(self, tmp_path):
-        """The YOLO test-to-val fallback is logged at WARNING rather than applied silently."""
+    def test_test_stage_yolo_propagates_broken_test_split(self, tmp_path):
+        """Setup('test') propagates builder failures after a test split is resolved."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, dataset_file="yolo")
         from rfdetr.training.module_data import RFDETRDataModule
@@ -495,7 +496,25 @@ class TestSetup:
 
         def _build(image_set, args, resolution):
             if image_set == "test":
-                raise FileNotFoundError(str(tmp_path / "test" / "images"))
+                raise FileNotFoundError("declared test label file is broken")
+            return _fake_dataset(20)
+
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
+            with pytest.raises(FileNotFoundError, match="declared test label file is broken"):
+                dm.setup("test")
+
+    def test_test_stage_yolo_warns_when_falling_back_to_val(self, tmp_path):
+        """The YOLO test-to-val fallback is logged at WARNING rather than applied silently."""
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path, dataset_file="yolo")
+        from rfdetr.datasets.yolo import YoloSplitUnavailableError
+        from rfdetr.training.module_data import RFDETRDataModule
+
+        dm = RFDETRDataModule(mc, tc)
+
+        def _build(image_set, args, resolution):
+            if image_set == "test":
+                raise YoloSplitUnavailableError(str(tmp_path / "test" / "images"))
             return _fake_dataset(20)
 
         with (
@@ -504,7 +523,10 @@ class TestSetup:
         ):
             dm.setup("test")
 
-        mock_logger.warning.assert_called_once()
+        mock_logger.warning.assert_called_once_with(
+            "No resolvable 'test' split for this YOLO dataset (%s); evaluating the 'val' split instead.",
+            str(tmp_path / "test" / "images"),
+        )
 
     def test_test_stage_coco_uses_val_split(self, tmp_path):
         """Setup('test') falls back to 'val' for COCO, whose test2017 split is unlabelled test-dev."""

@@ -19,6 +19,7 @@ from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import AugmentationBackend, ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
 from rfdetr.datasets.aug_configs import AUG_CONFIG
+from rfdetr.datasets.yolo import YoloSplitUnavailableError
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import make_collate_fn
@@ -297,10 +298,10 @@ class RFDETRDataModule(LightningDataModule):
         if dataset_file == "yolo":
             try:
                 return build_dataset("test", ns, resolution)
-            except FileNotFoundError as exc:
+            except YoloSplitUnavailableError as exc:
                 logger.warning(
                     "No resolvable 'test' split for this YOLO dataset (%s); evaluating the 'val' split instead.",
-                    exc,
+                    str(exc),
                 )
         return build_dataset("val", ns, resolution)
 

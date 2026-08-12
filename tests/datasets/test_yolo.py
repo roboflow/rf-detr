@@ -16,6 +16,7 @@ from pycocotools.coco import COCO
 
 from rfdetr.datasets.yolo import (
     YoloDetection,
+    YoloSplitUnavailableError,
     _extract_yolo_class_names,
     _LazyYoloDetectionDataset,
     _resolve_yolo_split_dirs,
@@ -1136,6 +1137,127 @@ class TestBuildRoboflowFromYoloUltralytics:
 
         _, kwargs = mock_dataset.call_args
         assert "valid" in kwargs["img_folder"]
+
+    def test_missing_test_images_signal_unavailable_split(self, tmp_path: Path) -> None:
+        """A missing test image directory is the explicit val-fallback signal."""
+        (tmp_path / "data.yaml").write_text("names:\n  0: person\n", encoding="utf-8")
+        args = self._make_args(str(tmp_path))
+
+        from rfdetr.datasets.yolo import build_roboflow_from_yolo
+
+        with pytest.raises(YoloSplitUnavailableError, match="test images directory"):
+            build_roboflow_from_yolo("test", args, resolution=64)
+
+    def test_broken_test_images_symlink_is_not_treated_as_missing(self, tmp_path: Path) -> None:
+        """A broken test image symlink is invalid data, not an unavailable split."""
+        (tmp_path / "data.yaml").write_text("names:\n  0: person\n", encoding="utf-8")
+        images_dir = tmp_path / "test" / "images"
+        images_dir.parent.mkdir(parents=True)
+        images_dir.symlink_to(tmp_path / "deleted-images", target_is_directory=True)
+
+        args = self._make_args(str(tmp_path))
+        from rfdetr.datasets.yolo import build_roboflow_from_yolo
+
+        with pytest.raises(ValueError, match="invalid symlink"):
+            build_roboflow_from_yolo("test", args, resolution=64)
+
+    @pytest.mark.parametrize(
+        "setup_case, expected_message",
+        [
+            pytest.param("empty_images", "contains no supported images", id="empty-images"),
+            pytest.param("missing_labels", "labels directory not found", id="missing-labels"),
+        ],
+    )
+    def test_invalid_existing_test_split_propagates(
+        self, tmp_path: Path, setup_case: str, expected_message: str
+    ) -> None:
+        """Existing but unusable test data must not fall back to validation data."""
+        (tmp_path / "data.yaml").write_text("names:\n  0: person\n", encoding="utf-8")
+        images_dir = tmp_path / "test" / "images"
+        labels_dir = tmp_path / "test" / "labels"
+        images_dir.mkdir(parents=True)
+        if setup_case != "missing_labels":
+            labels_dir.mkdir()
+        if setup_case != "empty_images":
+            Image.new("RGB", (8, 6), color=(255, 255, 255)).save(images_dir / "sample.png")
+
+        args = self._make_args(str(tmp_path))
+        from rfdetr.datasets.yolo import build_roboflow_from_yolo
+
+        with pytest.raises(ValueError, match=expected_message):
+            build_roboflow_from_yolo("test", args, resolution=64)
+
+    def test_declared_broken_test_path_propagates(self, tmp_path: Path) -> None:
+        """A declared but unusable YAML test path must not become a val fallback."""
+        (tmp_path / "data.yaml").write_text(
+            "path: .\nval: val/images\ntest: missing-test/images\nnames:\n  0: person\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "val" / "images").mkdir(parents=True)
+        (tmp_path / "val" / "labels").mkdir()
+        args = self._make_args(str(tmp_path))
+
+        from rfdetr.datasets.yolo import build_roboflow_from_yolo
+
+        with pytest.raises(ValueError, match="test split declared"):
+            build_roboflow_from_yolo("test", args, resolution=64)
+
+    def test_declared_test_path_with_missing_labels_propagates(self, tmp_path: Path) -> None:
+        """A declared test image path with missing labels must not become a val fallback."""
+        (tmp_path / "data.yaml").write_text(
+            "path: .\nval: val/images\ntest: custom/images\nnames:\n  0: person\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "val" / "images").mkdir(parents=True)
+        (tmp_path / "val" / "labels").mkdir()
+        custom_images = tmp_path / "custom" / "images"
+        custom_images.mkdir(parents=True)
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(custom_images / "sample.png")
+        args = self._make_args(str(tmp_path))
+
+        from rfdetr.datasets.yolo import build_roboflow_from_yolo
+
+        with pytest.raises(ValueError, match="test split declared"):
+            build_roboflow_from_yolo("test", args, resolution=64)
+
+    def test_valid_test_split_builds_real_dataset(self, tmp_path: Path) -> None:
+        """A non-empty labelled test split builds and preserves its sample."""
+        (tmp_path / "data.yaml").write_text("names:\n  0: person\n", encoding="utf-8")
+        images_dir = tmp_path / "test" / "images"
+        labels_dir = tmp_path / "test" / "labels"
+        images_dir.mkdir(parents=True)
+        labels_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(images_dir / "sample.png")
+        (labels_dir / "sample.txt").write_text("0 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+        args = self._make_args(str(tmp_path))
+
+        from rfdetr.datasets.yolo import build_roboflow_from_yolo
+
+        with patch("rfdetr.datasets.yolo.make_coco_transforms", return_value=None):
+            dataset = build_roboflow_from_yolo("test", args, resolution=64)
+
+        assert len(dataset) == 1
+        _, target = dataset[0]
+        assert target["labels"].tolist() == [0]
+
+    def test_background_only_test_split_is_valid_with_labels_directory(self, tmp_path: Path) -> None:
+        """A true-negative test image remains valid when its labels directory exists."""
+        (tmp_path / "data.yaml").write_text("names:\n  0: person\n", encoding="utf-8")
+        images_dir = tmp_path / "test" / "images"
+        labels_dir = tmp_path / "test" / "labels"
+        images_dir.mkdir(parents=True)
+        labels_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(images_dir / "background.png")
+        args = self._make_args(str(tmp_path))
+
+        from rfdetr.datasets.yolo import build_roboflow_from_yolo
+
+        with patch("rfdetr.datasets.yolo.make_coco_transforms", return_value=None):
+            dataset = build_roboflow_from_yolo("test", args, resolution=64)
+
+        assert len(dataset) == 1
+        _, target = dataset[0]
+        assert target["labels"].numel() == 0
 
 
 class TestExtractYoloClassNames:
