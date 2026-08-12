@@ -44,11 +44,15 @@ As an AI agent contributing to RF-DETR, you are responsible for:
     - Write secure code (prevent injection vulnerabilities)
     - Follow existing patterns in the codebase
 
-> [!NOTE] Keeping documentation current ensures consistency across agent contributions and reduces repeated feedback on the same issues.
+> [!NOTE]
+>
+> Keeping documentation current ensures consistency across agent contributions and reduces repeated feedback on the same issues.
 
 ## Build & Development Environment
 
-> [!NOTE] **Canonical Reference:** See [Development Environment Setup](.github/CONTRIBUTING.md#development-environment-setup) in CONTRIBUTING.md for complete setup instructions.
+> [!NOTE]
+>
+> **Canonical Reference:** See [Development Environment Setup](.github/CONTRIBUTING.md#development-environment-setup) in CONTRIBUTING.md for complete setup instructions.
 
 ### Setup
 
@@ -77,7 +81,9 @@ See `pyproject.toml` for complete dependency specifications:
 
 ## Testing
 
-> [!NOTE] **Canonical Reference:** See [Test-Driven Development](.github/CONTRIBUTING.md#test-driven-development) in CONTRIBUTING.md for complete guidelines.
+> [!NOTE]
+>
+> **Canonical Reference:** See [Test-Driven Development](.github/CONTRIBUTING.md#test-driven-development) in CONTRIBUTING.md for complete guidelines.
 >
 > **CI Workflows (Source of Truth):** See `.github/workflows/ci-tests-cpu.yml` and `.github/workflows/ci-tests-gpu.yml` for exact test commands used in CI.
 
@@ -96,7 +102,9 @@ pre-commit run --all-files
 
 ### Testing Principles
 
-> [!IMPORTANT] **Testing Requirements:**
+> [!IMPORTANT]
+>
+> **Testing Requirements:**
 >
 > - ⚠️ **During development:** Tests may fail as you work through TDD cycle
 > - ✅ **Before opening PR:** Final commit MUST have all tests passing
@@ -120,7 +128,9 @@ pre-commit run --all-files
 
 ## Code Quality & Linting
 
-> [!NOTE] **Canonical Reference:** See [Code Quality and Linting](.github/CONTRIBUTING.md#code-quality-and-linting) in CONTRIBUTING.md for setup and details.
+> [!NOTE]
+>
+> **Canonical Reference:** See [Code Quality and Linting](.github/CONTRIBUTING.md#code-quality-and-linting) in CONTRIBUTING.md for setup and details.
 
 ### Command
 
@@ -129,7 +139,9 @@ pre-commit run --all-files
 pre-commit run --all-files
 ```
 
-> [!TIP] Pre-commit hooks will auto-format many issues. Review changes and re-stage files.
+> [!TIP]
+>
+> Pre-commit hooks will auto-format many issues. Review changes and re-stage files.
 
 **Configuration Files:**
 
@@ -194,7 +206,9 @@ uv run twine check --strict dist/*
 
 ## Project Structure
 
-> [!NOTE] **Canonical Reference:** See [Project Structure](.github/CONTRIBUTING.md#project-structure) in CONTRIBUTING.md for complete project organization, directory descriptions, and configuration files.
+> [!NOTE]
+>
+> **Canonical Reference:** See [Project Structure](.github/CONTRIBUTING.md#project-structure) in CONTRIBUTING.md for complete project organization, directory descriptions, and configuration files.
 >
 > **Quick summary:** `src/rfdetr/` (source code), `tests/` (test suite), `docs/` (documentation), `.github/` (CI/CD), `pyproject.toml` (dependencies and config).
 >
@@ -273,15 +287,17 @@ result = subprocess.run(
 
 ### Type Hints & Docstrings
 
-> [!IMPORTANT] **Canonical Reference:** See [Google-Style Docstrings and Mandatory Type Hints](.github/CONTRIBUTING.md#google-style-docstrings-and-mandatory-type-hints) in CONTRIBUTING.md for complete requirements and examples.
-
-**Requirements:**
-
-- MANDATORY type hints for all function parameters and return types
-- MANDATORY Google-style docstrings for all functions and classes
-- **Do not duplicate types in docstrings** - types are in the function signature
-- Target Python version: 3.10+
-- **Helper functions in `tests/` need a doctest too**: any non-`test_*` function used by tests (fixture builders, assertion helpers, reference implementations) needs a docstring with an `Examples` doctest that exercises it directly — `pyproject.toml` runs `--doctest-plus` across `tests/` on purpose. Skip the live doctest (`# doctest: +SKIP` + one-line reason) only when the helper can't run standalone (e.g. a `@pytest.fixture`, or needs real GPU/XLA/network hardware).
+> [!IMPORTANT]
+>
+> **Canonical Reference:** See [Google-Style Docstrings and Mandatory Type Hints](.github/CONTRIBUTING.md#google-style-docstrings-and-mandatory-type-hints) in CONTRIBUTING.md for complete requirements and examples.
+>
+> **Requirements:**
+>
+> - MANDATORY type hints for all function parameters and return types
+> - MANDATORY Google-style docstrings for all functions and classes
+> - **Do not duplicate types in docstrings** - types are in the function signature
+> - Target Python version: 3.10+
+> - **Helper functions in `tests/` need a doctest too**: any non-`test_*` function used by tests (fixture builders, assertion helpers, reference implementations) needs a docstring with an `Examples` doctest that exercises it directly — `pyproject.toml` runs `--doctest-plus` across `tests/` on purpose. Skip the live doctest (`# doctest: +SKIP` + one-line reason) only when the helper can't run standalone (e.g. a `@pytest.fixture`, or needs real GPU/XLA/network hardware).
 
 ## Common Workflows
 
@@ -303,7 +319,9 @@ result = subprocess.run(
 
 ### Adding New Model Variants
 
-> [!IMPORTANT] **Canonical Reference:** See [Adding a New Model](.github/CONTRIBUTING.md#adding-a-new-model) in CONTRIBUTING.md for detailed guidance.
+> [!IMPORTANT]
+>
+> **Canonical Reference:** See [Adding a New Model](.github/CONTRIBUTING.md#adding-a-new-model) in CONTRIBUTING.md for detailed guidance.
 >
 > Always consult maintainers before implementing new models.
 

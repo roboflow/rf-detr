@@ -140,7 +140,9 @@ Pass `output_name="my-model"` to override the variant name and write `{output_na
 
 If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX model to a TensorRT engine.
 
-> [!IMPORTANT] Run TensorRT conversion on the same machine and GPU family where you plan to deploy inference.
+> [!IMPORTANT]
+>
+> Run TensorRT conversion on the same machine and GPU family where you plan to deploy inference.
 
 ### Prerequisites
 
