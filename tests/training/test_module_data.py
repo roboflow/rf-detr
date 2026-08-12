@@ -170,9 +170,12 @@ def _build_datamodule(model_config=None, train_config=None, tmp_path=None):
 
 
 @pytest.fixture
-def datamodule(tmp_path):
-    """Return a default RFDETRDataModule for tests that only need construction."""
-    return _build_datamodule(tmp_path=tmp_path)
+def fixture_training_setup():
+    """Return the default model config, train config, and DataModule together."""
+    model_config = _base_model_config()
+    train_config = _base_train_config()
+    datamodule = _build_datamodule(model_config, train_config)
+    return model_config, train_config, datamodule
 
 
 @pytest.fixture
@@ -213,9 +216,9 @@ class TestInit:
         dm = _build_datamodule(train_config=tc, tmp_path=tmp_path)
         assert dm.train_config is tc
 
-    def test_datasets_start_as_none(self, datamodule):
+    def test_datasets_start_as_none(self, fixture_training_setup):
         """All three dataset slots are None before setup() is called."""
-        dm = datamodule
+        _, _, dm = fixture_training_setup
         assert dm._dataset_train is None
         assert dm._dataset_val is None
         assert dm._dataset_test is None
@@ -276,15 +279,15 @@ class TestInit:
 class TestPrivateShowSamples:
     """RFDETRDataModule._show_samples renders transformed input samples."""
 
-    def test_private_show_samples_returns_figure_for_keypoint_targets(self, datamodule, monkeypatch):
+    def test_private_show_samples_returns_figure_for_keypoint_targets(self, fixture_training_setup, monkeypatch):
         """_show_samples should render transformed boxes and keypoints without raw COCO parsing."""
+        _, _, dm = fixture_training_setup
         import matplotlib
 
         matplotlib.use("Agg", force=True)
         from matplotlib import pyplot as plt
         from matplotlib.figure import Figure
 
-        dm = datamodule
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
 
         figure = dm._show_samples(1, split="train", columns=1)
@@ -293,14 +296,16 @@ class TestPrivateShowSamples:
         assert len(figure.axes) == 1
         plt.close(figure)
 
-    def test_private_show_samples_accepts_figure_size_and_shortens_long_titles(self, datamodule, monkeypatch):
+    def test_private_show_samples_accepts_figure_size_and_shortens_long_titles(
+        self, fixture_training_setup, monkeypatch
+    ):
         """_show_samples should keep long image names inside subplot titles."""
+        _, _, dm = fixture_training_setup
         import matplotlib
 
         matplotlib.use("Agg", force=True)
         from matplotlib import pyplot as plt
 
-        dm = datamodule
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
         monkeypatch.setattr(dm, "_source_image_path", lambda dataset, idx: Path(f"{'very_long_name_' * 8}.jpg"))
 
@@ -312,22 +317,21 @@ class TestPrivateShowSamples:
         assert len(title) <= 48
         plt.close(figure)
 
-    def test_private_show_samples_rejects_non_positive_count(self, datamodule):
+    def test_private_show_samples_rejects_non_positive_count(self, fixture_training_setup):
         """_show_samples should fail fast for invalid counts."""
-        dm = datamodule
-
+        _, _, dm = fixture_training_setup
         with pytest.raises(ValueError, match=r"count must be positive"):
             dm._show_samples(0)
 
-    def test_private_show_samples_rejects_invalid_figure_size(self, datamodule):
+    def test_private_show_samples_rejects_invalid_figure_size(self, fixture_training_setup):
         """_show_samples should fail fast for invalid figure sizes."""
-        dm = datamodule
-
+        _, _, dm = fixture_training_setup
         with pytest.raises(ValueError, match=r"figure_size values must be positive"):
             dm._show_samples(1, figure_size=(4.0, 0.0))
 
-    def test_private_show_samples_missing_visual_extra_has_install_hint(self, datamodule, monkeypatch):
+    def test_private_show_samples_missing_visual_extra_has_install_hint(self, fixture_training_setup, monkeypatch):
         """_show_samples should explain how to install optional visualization dependencies."""
+        _, _, dm = fixture_training_setup
         real_import = builtins.__import__
 
         def fake_import(name, *args, **kwargs):
@@ -335,15 +339,15 @@ class TestPrivateShowSamples:
                 raise ImportError("matplotlib is intentionally unavailable")
             return real_import(name, *args, **kwargs)
 
-        dm = datamodule
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
         monkeypatch.setattr(builtins, "__import__", fake_import)
 
         with pytest.raises(ImportError, match=r"rfdetr\[visual\]"):
             dm._show_samples(1)
 
-    def test_private_show_samples_returns_figure_for_segmentation_targets(self, datamodule, monkeypatch):
+    def test_private_show_samples_returns_figure_for_segmentation_targets(self, fixture_training_setup, monkeypatch):
         """_show_samples renders mask overlays when dataset targets include instance masks."""
+        _, _, dm = fixture_training_setup
         import matplotlib
         import numpy as np
 
@@ -369,7 +373,6 @@ class TestPrivateShowSamples:
                     },
                 )
 
-        dm = datamodule
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _SegDataset())
 
         mock_instance = MagicMock()
@@ -383,8 +386,11 @@ class TestPrivateShowSamples:
         mock_instance.annotate.assert_called_once()
         plt.close(figure)
 
-    def test_private_show_samples_detection_only_does_not_call_mask_annotator(self, datamodule, monkeypatch):
+    def test_private_show_samples_detection_only_does_not_call_mask_annotator(
+        self, fixture_training_setup, monkeypatch
+    ):
         """_show_samples skips MaskAnnotator when dataset targets have no masks key."""
+        _, _, dm = fixture_training_setup
         from unittest.mock import patch as _patch
 
         import matplotlib
@@ -392,7 +398,6 @@ class TestPrivateShowSamples:
 
         matplotlib.use("Agg", force=True)
 
-        dm = datamodule
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
 
         with _patch("supervision.MaskAnnotator") as mock_mask_ann:
@@ -401,8 +406,9 @@ class TestPrivateShowSamples:
         mock_mask_ann.assert_not_called()
         plt.close(figure)
 
-    def test_private_show_samples_empty_masks_skips_mask_annotator(self, datamodule, monkeypatch):
+    def test_private_show_samples_empty_masks_skips_mask_annotator(self, fixture_training_setup, monkeypatch):
         """_show_samples skips MaskAnnotator when masks tensor has zero instances (0, H, W)."""
+        _, _, dm = fixture_training_setup
         from unittest.mock import patch as _patch
 
         import matplotlib
@@ -425,7 +431,6 @@ class TestPrivateShowSamples:
                     },
                 )
 
-        dm = datamodule
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _EmptyMasksDataset())
 
         with _patch("supervision.MaskAnnotator") as mock_mask_ann:
@@ -481,7 +486,6 @@ class TestSetup:
 
     def test_test_stage_yolo_falls_back_to_val_without_test_split(self, tmp_path, yolo_datamodule):
         """Setup('test') falls back to 'val' when a YOLO dataset declares no test split."""
-        dm = yolo_datamodule
         fake_val = _fake_dataset(20)
 
         def _build(image_set, args, resolution):
@@ -490,13 +494,12 @@ class TestSetup:
             return fake_val
 
         with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
-            dm.setup("test")
+            yolo_datamodule.setup("test")
 
-        assert dm._dataset_test is fake_val
+        assert yolo_datamodule._dataset_test is fake_val
 
     def test_test_stage_yolo_propagates_broken_test_split(self, yolo_datamodule):
         """Setup('test') propagates builder failures after a test split is resolved."""
-        dm = yolo_datamodule
 
         def _build(image_set, args, resolution):
             if image_set == "test":
@@ -505,11 +508,10 @@ class TestSetup:
 
         with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
             with pytest.raises(FileNotFoundError, match="declared test label file is broken"):
-                dm.setup("test")
+                yolo_datamodule.setup("test")
 
     def test_test_stage_yolo_warns_when_falling_back_to_val(self, tmp_path, yolo_datamodule):
         """The YOLO test-to-val fallback is logged at WARNING rather than applied silently."""
-        dm = yolo_datamodule
 
         def _build(image_set, args, resolution):
             if image_set == "test":
@@ -520,7 +522,7 @@ class TestSetup:
             patch("rfdetr.training.module_data.build_dataset", side_effect=_build),
             patch("rfdetr.training.module_data.logger") as mock_logger,
         ):
-            dm.setup("test")
+            yolo_datamodule.setup("test")
 
         mock_logger.warning.assert_called_once_with(
             "No resolvable 'test' split for this YOLO dataset (%s); evaluating the 'val' split instead.",
@@ -529,7 +531,6 @@ class TestSetup:
 
     def test_test_stage_coco_uses_val_split(self, coco_datamodule):
         """Setup('test') falls back to 'val' for COCO, whose test2017 split is unlabelled test-dev."""
-        dm = coco_datamodule
         requested_splits = []
 
         def _build(image_set, args, resolution):
@@ -537,7 +538,7 @@ class TestSetup:
             return _fake_dataset(10)
 
         with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
-            dm.setup("test")
+            coco_datamodule.setup("test")
 
         assert "val" in requested_splits
         assert "test" not in requested_splits
@@ -965,9 +966,9 @@ class TestPredictDataloader:
 class TestClassNames:
     """class_names property extracts names from COCO dataset annotations."""
 
-    def test_returns_none_before_setup(self, datamodule):
+    def test_returns_none_before_setup(self, fixture_training_setup):
         """class_names is None when no dataset has been set up."""
-        dm = datamodule
+        _, _, dm = fixture_training_setup
         assert dm.class_names is None
 
     def test_returns_names_from_train_dataset(self, tmp_path):
@@ -1051,9 +1052,9 @@ class TestTransferBatchToDevice:
     unwrapping the NestedTensor into plain tensors.
     """
 
-    def test_samples_transferred_to_target_device(self, datamodule):
+    def test_samples_transferred_to_target_device(self, fixture_training_setup):
         """Both tensors and mask in NestedTensor must land on the target device."""
-        dm = datamodule
+        _, _, dm = fixture_training_setup
         samples, targets = _make_batch()
         device = torch.device("cpu")
 
@@ -1062,9 +1063,9 @@ class TestTransferBatchToDevice:
         assert result_samples.tensors.device == device
         assert result_samples.mask.device == device
 
-    def test_targets_transferred_to_target_device(self, datamodule):
+    def test_targets_transferred_to_target_device(self, fixture_training_setup):
         """All tensor values in every target dict must be moved to the target device."""
-        dm = datamodule
+        _, _, dm = fixture_training_setup
         samples, targets = _make_batch()
         device = torch.device("cpu")
 
@@ -1074,17 +1075,17 @@ class TestTransferBatchToDevice:
             for v in t.values():
                 assert v.device == device
 
-    def test_returns_tuple_of_correct_length(self, datamodule):
+    def test_returns_tuple_of_correct_length(self, fixture_training_setup):
         """Return value must be a (samples, targets) tuple to match batch contract."""
-        dm = datamodule
+        _, _, dm = fixture_training_setup
         result = dm.transfer_batch_to_device(_make_batch(), torch.device("cpu"), dataloader_idx=0)
 
         assert isinstance(result, tuple)
         assert len(result) == 2
 
-    def test_preserves_nested_tensor_type(self, datamodule):
+    def test_preserves_nested_tensor_type(self, fixture_training_setup):
         """Device transfer must not unwrap NestedTensor into plain tensors."""
-        dm = datamodule
+        _, _, dm = fixture_training_setup
         samples, targets = _make_batch()
 
         result_samples, _ = dm.transfer_batch_to_device((samples, targets), torch.device("cpu"), dataloader_idx=0)
@@ -1538,11 +1539,11 @@ class TestWorkerInitFn:
             pytest.param("predict_dataloader", id="predict"),
         ],
     )
-    def test_eval_dataloaders_set_worker_init_fn(self, datamodule, loader_name):
+    def test_eval_dataloaders_set_worker_init_fn(self, fixture_training_setup, loader_name):
         """Validation/test/predict DataLoaders wire the module-level worker seeding hook."""
         from rfdetr.training.module_data import _worker_init_fn
 
-        dm = datamodule
+        _, _, dm = fixture_training_setup
         dm._dataset_val = _fake_dataset()
         dm._dataset_test = _fake_dataset()
 
@@ -1550,11 +1551,11 @@ class TestWorkerInitFn:
 
         assert loader.worker_init_fn is _worker_init_fn
 
-    def test_train_dataloader_sets_worker_init_fn(self, datamodule):
+    def test_train_dataloader_sets_worker_init_fn(self, fixture_training_setup):
         """The training DataLoader wires the module-level worker seeding hook."""
         from rfdetr.training.module_data import _worker_init_fn
 
-        dm = datamodule
+        _, _, dm = fixture_training_setup
         dm._dataset_train = _fake_dataset()
 
         loader = dm.train_dataloader()
