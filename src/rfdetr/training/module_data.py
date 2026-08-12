@@ -330,12 +330,48 @@ class RFDETRDataModule(LightningDataModule):
             raise RuntimeError(f"{split} dataset was not built; call setup({split!r}) before requesting a dataloader.")
         return dataset
 
+    def build_train_sampler(self, dataset: torch.utils.data.Dataset[Any]) -> torch.utils.data.Sampler[list[int]] | None:
+        """Return a custom training batch sampler, or ``None`` to use the default sampling strategy.
+
+        Override this hook to plug in a batch sampler such as
+        :class:`~rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler` without reimplementing
+        :meth:`train_dataloader`. When this returns a sampler, ``train_dataloader`` passes it as the
+        DataLoader's ``batch_sampler`` and keeps every other DataLoader kwarg from the base configuration
+        (``num_workers``, ``pin_memory``, ``persistent_workers``, ``prefetch_factor``, ``worker_init_fn``,
+        ``collate_fn``) — only the batching strategy changes. The default ``batch_size``/``shuffle``/
+        ``drop_last``/small-dataset replacement-sampler logic and the :class:`GradAccumAlignedDataset`
+        padding wrapper are all skipped in that case, since a batch sampler already fully owns which
+        indices make up each batch and ``GradAccumAlignedDataset`` only pads a length that a custom batch
+        sampler never consults.
+
+        A returned sampler is responsible for its own DDP sharding (for example via ``num_replicas``/
+        ``rank`` constructor arguments): Lightning's automatic ``DistributedSampler`` injection only wraps
+        a plain ``sampler``, not a ``batch_sampler``.
+
+        Args:
+            dataset: The training dataset built by :meth:`setup`, i.e. ``self._dataset_train``.
+
+        Returns:
+            A batch sampler yielding lists of dataset indices, or ``None`` to use the default strategy.
+
+        Example:
+            >>> # class MyDataModule(RFDETRDataModule):
+            >>> #     def build_train_sampler(self, dataset):
+            >>> #         return WeightedMultiSourceBatchSampler.from_concat_dataset(
+            >>> #             dataset, weights=[0.6, 0.3, 0.1], batch_size=self.train_config.batch_size,
+            >>> #         )
+        """
+        return None
+
     def train_dataloader(self) -> DataLoader[Any]:
         """Return the training DataLoader.
 
-        Uses a replacement sampler when the dataset is too small to fill ``_MIN_TRAIN_BATCHES`` effective batches
-        (matching legacy behaviour in ``main.py``).  Otherwise wraps the dataset with :class:`GradAccumAlignedDataset`
-        to ensure its length is an exact multiple of ``effective_batch_size * world_size`` (workaround for
+        Consults :meth:`build_train_sampler` first: when it returns a sampler, that sampler is used as the
+        DataLoader's ``batch_sampler`` and the logic below is skipped entirely (see that method's docstring
+        for exactly which kwargs still apply). Otherwise, uses a replacement sampler when the dataset is too
+        small to fill ``_MIN_TRAIN_BATCHES`` effective batches (matching legacy behaviour in ``main.py``).
+        Otherwise wraps the dataset with :class:`GradAccumAlignedDataset` to ensure its length is an exact
+        multiple of ``effective_batch_size * world_size`` (workaround for
         https://github.com/Lightning-AI/pytorch-lightning/issues/19987) and then uses ``shuffle=True, drop_last=True``
         so that PTL can auto-inject ``DistributedSampler`` in DDP mode.
 
@@ -343,9 +379,23 @@ class RFDETRDataModule(LightningDataModule):
             DataLoader for the training dataset.
         """
         dataset: torch.utils.data.Dataset[Any] = self._require_dataset(self._dataset_train, "fit")
+        num_workers = self._num_workers
+
+        custom_batch_sampler = self.build_train_sampler(dataset)
+        if custom_batch_sampler is not None:
+            return DataLoader(
+                dataset,
+                batch_sampler=custom_batch_sampler,
+                collate_fn=self._collate_fn,
+                num_workers=num_workers,
+                pin_memory=self._pin_memory,
+                persistent_workers=self._persistent_workers,
+                prefetch_factor=self._prefetch_factor,
+                worker_init_fn=_worker_init_fn,
+            )
+
         batch_size = self._resolve_batch_size()
         effective_batch_size = batch_size * self.train_config.grad_accum_steps
-        num_workers = self._num_workers
 
         dataset_length = len(dataset)  # type: ignore[arg-type]
         if dataset_length < effective_batch_size * _MIN_TRAIN_BATCHES:

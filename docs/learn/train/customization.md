@@ -166,7 +166,7 @@ Returns sorted category names from the COCO annotation file of the first availab
 Concatenating datasets samples each one in proportion to its size, so a large public dataset dominates every batch and a small hand-labelled set contributes almost nothing. `WeightedMultiSourceBatchSampler` fixes the composition of every batch instead: with `batch_size=16` and weights `[0.6, 0.3, 0.1]`, each batch holds 10 samples from the first source, 5 from the second, and 1 from the third — regardless of how the source sizes compare.
 
 ```python
-from torch.utils.data import ConcatDataset, DataLoader
+from torch.utils.data import ConcatDataset
 
 from rfdetr.datasets import WeightedMultiSourceBatchSampler
 from rfdetr.training import RFDETRDataModule
@@ -178,16 +178,17 @@ class MultiSourceDataModule(RFDETRDataModule):
         if stage == "fit":
             self._dataset_train = ConcatDataset([labeled_dataset, synthetic_dataset, public_dataset])
 
-    def train_dataloader(self) -> DataLoader:
-        sampler = WeightedMultiSourceBatchSampler.from_concat_dataset(
-            self._dataset_train,
+    def build_train_sampler(self, dataset: ConcatDataset) -> WeightedMultiSourceBatchSampler:
+        return WeightedMultiSourceBatchSampler.from_concat_dataset(
+            dataset,
             weights=[0.6, 0.3, 0.1],
             batch_size=self.train_config.batch_size,
             num_replicas=self.trainer.world_size if self.trainer else 1,
             rank=self.trainer.global_rank if self.trainer else 0,
         )
-        return DataLoader(self._dataset_train, batch_sampler=sampler, collate_fn=self._collate_fn)
 ```
+
+Overriding `build_train_sampler` instead of `train_dataloader` keeps the base `DataLoader` construction — `num_workers`, `pin_memory`, `persistent_workers`, `prefetch_factor`, `collate_fn`, and per-worker augmentation-stream seeding all still apply; only the batching strategy changes.
 
 A source that runs out of samples part-way through an epoch is reshuffled and reused, which is what keeps the ratio exact. Epoch length is set by the largest source by default; pass `epoch_length="smallest"` to instead end the epoch when the smallest source has been seen once, so the larger sources are sub-sampled and the small one is not repeated.
 
