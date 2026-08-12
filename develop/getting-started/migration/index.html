@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-08-04T11:27:07">
+  <meta property="article:modified_time" content="2026-08-12T14:13:29">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-08-04T11:27:07",
+    "dateModified": "2026-08-12T14:13:29",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2806,22 +2806,16 @@
 
 
 <h1 id="migration-guide">Migration Guide<a class="headerlink" href="#migration-guide" title="Permanent link">&para;</a></h1>
-<p>Read each section between your current version and your target — every section covers
-only the delta between two adjacent releases.</p>
+<p>Read each section between your current version and your target — every section covers only the delta between two adjacent releases.</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9
 </span></code></pre></div>
-<p>You can apply all changes in one go; working through sections one release at a time
-and verifying between each step is optional but makes failures easier to isolate.
-Deprecated APIs emit a <code>DeprecationWarning</code> until the version marked for removal.
-See the <a href="../../changelog/">Changelog</a> for the full list of changes in each release.</p>
+<p>You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs emit a <code>DeprecationWarning</code> until the version marked for removal. See the <a href="../../changelog/">Changelog</a> for the full list of changes in each release.</p>
 <hr />
 <h2 id="upgrade-18-19">Upgrade 1.8 → 1.9<a class="headerlink" href="#upgrade-18-19" title="Permanent link">&para;</a></h2>
 <h3 id="breaking-changes">Breaking changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
 <div class="admonition warning">
 <p class="admonition-title">Breaking: <code>albumentations</code> and <code>kornia</code> extras merged into <code>augment</code></p>
-<p><strong>PyPI extras renamed.</strong> Default training/validation/prediction/export augmentations now use
-torchvision-native transforms, so <code>[train]</code> no longer installs Albumentations. Custom CPU
-(Albumentations) and GPU (Kornia) augmentation both live behind a single new <code>augment</code> extra.</p>
+<p><strong>PyPI extras renamed.</strong> Default training/validation/prediction/export augmentations now use torchvision-native transforms, so <code>[train]</code> no longer installs Albumentations. Custom CPU (Albumentations) and GPU (Kornia) augmentation both live behind a single new <code>augment</code> extra.</p>
 <table>
 <thead>
 <tr>
@@ -2851,17 +2845,11 @@ torchvision-native transforms, so <code>[train]</code> no longer installs Albume
 </div>
 <div class="admonition note">
 <p class="admonition-title"><code>augmentation_backend</code> values renamed</p>
-<p><code>augmentation_backend="tv"</code> and <code>"albu"</code> are renamed to <code>"torchvision"</code> and
-<code>"albumentations"</code>. The old strings (and <code>"gpu"</code>) still work as aliases, so no code
-changes are required — see <a href="../../learn/train/augmentations/#augmentation-backend-values">Augmentation Backend Values</a>
-for the full accepted set.</p>
+<p><code>augmentation_backend="tv"</code> and <code>"albu"</code> are renamed to <code>"torchvision"</code> and <code>"albumentations"</code>. The old strings (and <code>"gpu"</code>) still work as aliases, so no code changes are required — see <a href="../../learn/train/augmentations/#augmentation-backend-values">Augmentation Backend Values</a> for the full accepted set.</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">Breaking: default resize interpolation changed — pixel values and mAP may shift</p>
-<p>The default resize backend changed from Albumentations (cv2 <code>INTER_LINEAR</code>, no antialias) to
-torchvision (<code>BILINEAR</code> + <code>antialias=True</code>). Resized pixel values differ slightly from previous
-versions, and mAP may drift on existing benchmarks. <strong>This affects training as well as
-validation and test preprocessing</strong> — not just the training split.</p>
+<p>The default resize backend changed from Albumentations (cv2 <code>INTER_LINEAR</code>, no antialias) to torchvision (<code>BILINEAR</code> + <code>antialias=True</code>). Resized pixel values differ slightly from previous versions, and mAP may drift on existing benchmarks. <strong>This affects training as well as validation and test preprocessing</strong> — not just the training split.</p>
 <p>To restore the previous pixel-exact behaviour:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;rfdetr[augment]&#39;</span>
 </span></code></pre></div>
@@ -2869,11 +2857,7 @@ validation and test preprocessing</strong> — not just the training split.</p>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span><span class="n">aug_config</span><span class="o">=</span><span class="n">AUG_CONFIG</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Installing <code>rfdetr[augment]</code> alone is <strong>not</strong> sufficient to pin this behaviour — with
-Albumentations installed, <code>augmentation_backend="auto"</code>/<code>"cpu"</code> (the default) auto-selects
-Albumentations for you, but identical code on a machine without <code>[augment]</code> installed silently
-falls back to torchvision instead. The only setting that pins resize behaviour regardless of
-what is installed is:</p>
+<p>Installing <code>rfdetr[augment]</code> alone is <strong>not</strong> sufficient to pin this behaviour — with Albumentations installed, <code>augmentation_backend="auto"</code>/<code>"cpu"</code> (the default) auto-selects Albumentations for you, but identical code on a machine without <code>[augment]</code> installed silently falls back to torchvision instead. The only setting that pins resize behaviour regardless of what is installed is:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span><span class="n">augmentation_backend</span><span class="o">=</span><span class="s2">&quot;torchvision&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
@@ -2963,8 +2947,7 @@ what is installed is:</p>
 <h3 id="deprecated-in-v19-remove-in-v111">Deprecated in v1.9 → Remove in v1.11<a class="headerlink" href="#deprecated-in-v19-remove-in-v111" title="Permanent link">&para;</a></h3>
 <div class="admonition note">
 <p class="admonition-title">Deprecated: <code>RFDETR.optimize_for_inference()</code> renamed to <code>RFDETR.inference()</code></p>
-<p><strong><code>optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=...)</code></strong> — renamed to
-<code>inference()</code> with the same signature.</p>
+<p><strong><code>optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=...)</code></strong> — renamed to <code>inference()</code> with the same signature.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Before (deprecated)</span>
 </span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">model</span><span class="o">.</span><span class="n">optimize_for_inference</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">)</span>
 </span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
@@ -2974,9 +2957,7 @@ what is installed is:</p>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Deprecated: <code>TrainConfig.lr_drop</code> and <code>TrainConfig.lr_min_factor</code></p>
-<p><strong><code>lr_drop</code> / <code>lr_min_factor</code></strong> — pass them through <code>lr_scheduler_kwargs</code> instead. For the managed
-<code>"step"</code> / <code>"cosine"</code> presets the fields are still folded into <code>lr_scheduler_kwargs</code> (with a
-<code>FutureWarning</code>); set with an explicit scheduler they are inert and warn.</p>
+<p><strong><code>lr_drop</code> / <code>lr_min_factor</code></strong> — pass them through <code>lr_scheduler_kwargs</code> instead. For the managed <code>"step"</code> / <code>"cosine"</code> presets the fields are still folded into <code>lr_scheduler_kwargs</code> (with a <code>FutureWarning</code>); set with an explicit scheduler they are inert and warn.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Before (deprecated)</span>
 </span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">TrainConfig</span><span class="p">(</span><span class="n">lr_scheduler</span><span class="o">=</span><span class="s2">&quot;step&quot;</span><span class="p">,</span> <span class="n">lr_drop</span><span class="o">=</span><span class="mi">80</span><span class="p">,</span> <span class="n">lr_min_factor</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
 </span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
@@ -2989,8 +2970,7 @@ what is installed is:</p>
 <h3 id="breaking-changes_1">Breaking changes<a class="headerlink" href="#breaking-changes_1" title="Permanent link">&para;</a></h3>
 <div class="admonition note">
 <p class="admonition-title">Breaking in v1.8.2: default keypoint schema changed to active-first <code>[17]</code></p>
-<p>New checkpoints created from v1.8.2 onwards use <code>class_id=0</code> for person. Legacy <code>[0, 17]</code> checkpoints
-are still supported — RF-DETR auto-detects the schema from the checkpoint at load time.</p>
+<p>New checkpoints created from v1.8.2 onwards use <code>class_id=0</code> for person. Legacy <code>[0, 17]</code> checkpoints are still supported — RF-DETR auto-detects the schema from the checkpoint at load time.</p>
 <p>If your post-processing code offsets class IDs by 1 (common for background-first models), update it:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># Before (background-first [0, 17]: person was at class_id=1)</span>
 </span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">class_name</span> <span class="o">=</span> <span class="s2">&quot;person&quot;</span> <span class="k">if</span> <span class="n">detection</span><span class="o">.</span><span class="n">class_id</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="s2">&quot;other&quot;</span>
@@ -3013,8 +2993,7 @@ are still supported — RF-DETR auto-detects the schema from the checkpoint at l
 </div>
 <div class="admonition warning">
 <p class="admonition-title">Breaking: <code>supervision&gt;=0.29.0</code> now required</p>
-<p>Required for <code>sv.KeyPoints</code> support. <code>pip install rfdetr==1.8.0</code> pulls this automatically.
-If another dependency pins <code>supervision&lt;0.29.0</code>, resolve the conflict manually.</p>
+<p>Required for <code>sv.KeyPoints</code> support. <code>pip install rfdetr==1.8.0</code> pulls this automatically. If another dependency pins <code>supervision&lt;0.29.0</code>, resolve the conflict manually.</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">Breaking: <code>pyDeprecate</code> constraint narrowed to <code>&gt;=0.9,&lt;0.10</code></p>
@@ -3027,8 +3006,7 @@ If another dependency pins <code>supervision&lt;0.29.0</code>, resolve the confl
 <h3 id="breaking-changes_2">Breaking changes<a class="headerlink" href="#breaking-changes_2" title="Permanent link">&para;</a></h3>
 <div class="admonition warning">
 <p class="admonition-title">Breaking: <code>peft</code> removed from the default install</p>
-<p>LoRA fine-tuning now requires the <code>lora</code> extra. If you use LoRA adapters during
-training, update your install command.</p>
+<p>LoRA fine-tuning now requires the <code>lora</code> extra. If you use LoRA adapters during training, update your install command.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># Before</span>
 </span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>pip<span class="w"> </span>install<span class="w"> </span>rfdetr
 </span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
@@ -3055,8 +3033,7 @@ training, update your install command.</p>
 <h3 id="deprecated-in-v17-remove-in-v19">Deprecated in v1.7 → Remove in v1.9<a class="headerlink" href="#deprecated-in-v17-remove-in-v19" title="Permanent link">&para;</a></h3>
 <div class="admonition note">
 <p class="admonition-title">Deprecated: <code>build_namespace()</code> split into two functions</p>
-<p><strong><code>build_namespace(model_config, train_config)</code></strong> — use <code>build_model_from_config</code> or
-<code>build_criterion_from_config</code> instead.</p>
+<p><strong><code>build_namespace(model_config, train_config)</code></strong> — use <code>build_model_from_config</code> or <code>build_criterion_from_config</code> instead.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># Before (deprecated)</span>
 </span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_namespace</span>
 </span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
@@ -3071,8 +3048,7 @@ training, update your install command.</p>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Deprecated: <code>load_pretrain_weights()</code> no longer takes <code>train_config</code></p>
-<p><strong><code>load_pretrain_weights(nn_model, model_config, train_config)</code></strong> — drop the
-<code>train_config</code> positional argument.</p>
+<p><strong><code>load_pretrain_weights(nn_model, model_config, train_config)</code></strong> — drop the <code>train_config</code> positional argument.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># Before (deprecated)</span>
 </span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_pretrain_weights</span>
 </span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
@@ -3134,9 +3110,7 @@ training, update your install command.</p>
 <h3 id="deprecated-in-v17-remove-in-v20">Deprecated in v1.7 → Remove in v2.0<a class="headerlink" href="#deprecated-in-v17-remove-in-v20" title="Permanent link">&para;</a></h3>
 <div class="admonition note">
 <p class="admonition-title">Deprecated: <code>RFDETRBase</code> replaced by size-specific classes</p>
-<p><strong><code>RFDETRBase</code></strong> defaulted to the small variant and is replaced by size-specific
-classes. Choose the variant that matches your previous model size. If you used
-<code>RFDETRBase()</code> without arguments, switch to <code>RFDETRSmall()</code>.</p>
+<p><strong><code>RFDETRBase</code></strong> defaulted to the small variant and is replaced by size-specific classes. Choose the variant that matches your previous model size. If you used <code>RFDETRBase()</code> without arguments, switch to <code>RFDETRSmall()</code>.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="c1"># Before (deprecated)</span>
 </span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRBase</span>
 </span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
@@ -3150,9 +3124,7 @@ classes. Choose the variant that matches your previous model size. If you used
 </div>
 <div class="admonition note">
 <p class="admonition-title">Deprecated: <code>RFDETRSegPreview</code> replaced by size-specific segmentation classes</p>
-<p><strong><code>RFDETRSegPreview</code></strong> defaulted to the small variant and is replaced by size-specific
-segmentation classes. If you used <code>RFDETRSegPreview()</code> without arguments, switch to
-<code>RFDETRSegSmall()</code>.</p>
+<p><strong><code>RFDETRSegPreview</code></strong> defaulted to the small variant and is replaced by size-specific segmentation classes. If you used <code>RFDETRSegPreview()</code> without arguments, switch to <code>RFDETRSegSmall()</code>.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="c1"># Before (deprecated)</span>
 </span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegPreview</span>
 </span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>
@@ -3170,8 +3142,7 @@ segmentation classes. If you used <code>RFDETRSegPreview()</code> without argume
 <div class="admonition warning">
 <p class="admonition-title">Breaking: <code>transformers</code> minimum version raised to <code>&gt;=5.1.0</code></p>
 <p><strong><code>transformers</code> minimum version raised to <code>&gt;=5.1.0,&lt;6.0.0</code>.</strong></p>
-<p>Projects pinned to <code>transformers&lt;5.0.0</code> must upgrade. If upgrading is not possible,
-pin <code>rfdetr&lt;1.6.0</code>.</p>
+<p>Projects pinned to <code>transformers&lt;5.0.0</code> must upgrade. If upgrading is not possible, pin <code>rfdetr&lt;1.6.0</code>.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;transformers&gt;=5.1.0,&lt;6.0.0&#39;</span>
 </span></code></pre></div>
 </div>
@@ -3220,8 +3191,7 @@ pin <code>rfdetr&lt;1.6.0</code>.</p>
 <h3 id="deprecated-in-v16-removed-in-v18">Deprecated in v1.6 → Removed in v1.8<a class="headerlink" href="#deprecated-in-v16-removed-in-v18" title="Permanent link">&para;</a></h3>
 <div class="admonition note">
 <p class="admonition-title">Deprecated: <code>simplify</code> and <code>force</code> arguments in <code>RFDETR.export()</code></p>
-<p><strong><code>RFDETR.export(..., simplify=..., force=...)</code></strong> — both arguments are no-ops.
-Remove them from your calls.</p>
+<p><strong><code>RFDETR.export(..., simplify=..., force=...)</code></strong> — both arguments are no-ops. Remove them from your calls.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="c1"># Before (deprecated)</span>
 </span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">&quot;model.onnx&quot;</span><span class="p">,</span> <span class="n">simplify</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">force</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>
@@ -3232,8 +3202,7 @@ Remove them from your calls.</p>
 <h3 id="deprecated-in-v16-remove-in-v19">Deprecated in v1.6 → Remove in v1.9<a class="headerlink" href="#deprecated-in-v16-remove-in-v19" title="Permanent link">&para;</a></h3>
 <div class="admonition note">
 <p class="admonition-title">Deprecated: <code>rfdetr.util.*</code> and <code>rfdetr.deploy.*</code> import paths</p>
-<p>Backward-compatibility shims are still active but emit <code>DeprecationWarning</code> on import.
-Replace with the canonical paths listed in the table below.</p>
+<p>Backward-compatibility shims are still active but emit <code>DeprecationWarning</code> on import. Replace with the canonical paths listed in the table below.</p>
 <table>
 <thead>
 <tr>
@@ -3318,8 +3287,7 @@ Replace with the canonical paths listed in the table below.</p>
 <div class="admonition warning">
 <p class="admonition-title">Breaking: <code>ModelConfig</code> rejects unknown keyword arguments</p>
 <p><strong><code>ModelConfig</code> now raises <code>ValidationError</code> on unknown keyword arguments.</strong></p>
-<p>Previously, unrecognised fields were silently ignored. Remove or rename any
-unrecognised keys you pass to <code>ModelConfig(...)</code>.</p>
+<p>Previously, unrecognised fields were silently ignored. Remove or rename any unrecognised keys you pass to <code>ModelConfig(...)</code>.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="c1"># Before — silently accepted</span>
 </span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="n">config</span> <span class="o">=</span> <span class="n">ModelConfig</span><span class="p">(</span><span class="n">unknown_field</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>
@@ -3330,9 +3298,7 @@ unrecognised keys you pass to <code>ModelConfig(...)</code>.</p>
 <h3 id="deprecated-in-v15-removed-in-v17">Deprecated in v1.5 → Removed in v1.7<a class="headerlink" href="#deprecated-in-v15-removed-in-v17" title="Permanent link">&para;</a></h3>
 <div class="admonition note">
 <p class="admonition-title">Deprecated: <code>OPEN_SOURCE_MODELS</code> replaced by <code>ModelWeights</code> enum</p>
-<p><strong><code>OPEN_SOURCE_MODELS</code> constant</strong> — use the <code>ModelWeights</code> enum instead. A
-<code>DeprecationWarning</code> is emitted on access. See the
-<a href="../../reference/rfdetr/">API reference</a> for available enum values.</p>
+<p><strong><code>OPEN_SOURCE_MODELS</code> constant</strong> — use the <code>ModelWeights</code> enum instead. A <code>DeprecationWarning</code> is emitted on access. See the <a href="../../reference/rfdetr/">API reference</a> for available enum values.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="c1"># Before (deprecated)</span>
 </span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">OPEN_SOURCE_MODELS</span>
 </span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>
@@ -3360,7 +3326,7 @@ unrecognised keys you pass to <code>ModelConfig(...)</code>.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 4, 2026 11:27:07 UTC">2026-08-04 11:27:07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 12, 2026 14:13:29 UTC">2026-08-12 14:13:29</span>
   </span>
 
     

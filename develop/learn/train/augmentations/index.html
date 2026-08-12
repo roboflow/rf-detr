@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-07-17T05:43:52">
+  <meta property="article:modified_time" content="2026-08-12T14:13:29">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-07-17T05:43:52",
+    "dateModified": "2026-08-12T14:13:29",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2684,11 +2684,7 @@
 </span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>To disable all optional training augmentation including the torchvision default horizontal flip: <code>aug_config={}</code>.</p>
-<p><code>aug_config</code> controls only the augmentation stack — the torchvision-native default, or the
-Albumentations/Kornia stack when a non-empty <code>aug_config</code> is passed. To also disable
-the independent resize → crop → resize branch (Option B) in the training resize
-pipeline — so no spatial clipping occurs and annotations near image borders stay
-intact — pass <code>scale_jitter=False</code> to <code>model.train()</code>.</p>
+<p><code>aug_config</code> controls only the augmentation stack — the torchvision-native default, or the Albumentations/Kornia stack when a non-empty <code>aug_config</code> is passed. To also disable the independent resize → crop → resize branch (Option B) in the training resize pipeline — so no spatial clipping occurs and annotations near image borders stay intact — pass <code>scale_jitter=False</code> to <code>model.train()</code>.</p>
 <h2 id="built-in-presets">Built-in Presets<a class="headerlink" href="#built-in-presets" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -2839,7 +2835,7 @@ intact — pass <code>scale_jitter=False</code> to <code>model.train()</code>.</
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 17, 2026 05:43:52 UTC">2026-07-17 05:43:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 12, 2026 14:13:29 UTC">2026-08-12 14:13:29</span>
   </span>
 
     
