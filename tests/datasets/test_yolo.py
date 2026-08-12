@@ -1088,6 +1088,7 @@ class TestBuildRoboflowFromYoloUltralytics:
         label_content: str | None = None,
         test_yaml_path: str | None = None,
         create_test_images_dir: bool = True,
+        image_symlink_target: Path | None = None,
     ) -> tuple[Path, Path]:
         """Create the YOLO dataset layout used by builder regression tests.
 
@@ -1107,7 +1108,10 @@ class TestBuildRoboflowFromYoloUltralytics:
 
         image_dir = tmp_path / (test_yaml_path or "test/images")
         label_dir = image_dir.parent / "labels"
-        if create_test_images_dir:
+        if image_symlink_target is not None:
+            image_dir.parent.mkdir(parents=True)
+            image_dir.symlink_to(image_symlink_target, target_is_directory=True)
+        elif create_test_images_dir:
             image_dir.mkdir(parents=True)
         if images:
             Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / image_name)
@@ -1178,10 +1182,12 @@ class TestBuildRoboflowFromYoloUltralytics:
 
     def test_broken_test_images_symlink_is_not_treated_as_missing(self, tmp_path: Path) -> None:
         """A broken test image symlink is invalid data, not an unavailable split."""
-        (tmp_path / "data.yaml").write_text("names:\n  0: person\n", encoding="utf-8")
-        images_dir = tmp_path / "test" / "images"
-        images_dir.parent.mkdir(parents=True)
-        images_dir.symlink_to(tmp_path / "deleted-images", target_is_directory=True)
+        self._write_yolo_dataset(
+            tmp_path,
+            images=False,
+            labels=False,
+            image_symlink_target=tmp_path / "deleted-images",
+        )
 
         args = self._make_args(str(tmp_path))
         with pytest.raises(ValueError, match="invalid symlink"):
