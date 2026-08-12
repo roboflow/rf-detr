@@ -754,6 +754,51 @@ class TestTrainDataloader:
         assert len(loader.dataset) % (2 * 4 * 3) == 0
         assert len(loader.dataset) == 120
 
+    def test_build_train_sampler_default_returns_none(self, tmp_path):
+        """The base build_train_sampler() hook returns None, leaving default sampling untouched."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+        assert dm.build_train_sampler(dm._dataset_train) is None
+
+    def test_custom_batch_sampler_is_used_as_is(self, tmp_path):
+        """A non-None build_train_sampler() override is passed straight through as batch_sampler."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200, num_workers=0)
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm.build_train_sampler = MagicMock(return_value=custom_sampler)
+
+        loader = dm.train_dataloader()
+
+        assert loader.batch_sampler is custom_sampler
+        dm.build_train_sampler.assert_called_once_with(dm._dataset_train)
+
+    def test_custom_batch_sampler_preserves_loader_kwargs(self, tmp_path):
+        """The custom-sampler branch keeps collate_fn/num_workers/pin_memory from the base config."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200, num_workers=0)
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm.build_train_sampler = MagicMock(return_value=custom_sampler)
+
+        loader = dm.train_dataloader()
+
+        assert loader.collate_fn is dm._collate_fn
+        assert loader.num_workers == dm._num_workers
+        assert loader.pin_memory == dm._pin_memory
+
+    def test_custom_batch_sampler_skips_grad_accum_alignment(self, tmp_path):
+        """The custom-sampler branch does not wrap the dataset in GradAccumAlignedDataset."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=101, batch_size=2, grad_accum_steps=4)
+        original_dataset = dm._dataset_train
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(original_dataset), batch_size=4, drop_last=False
+        )
+        dm.build_train_sampler = MagicMock(return_value=custom_sampler)
+
+        loader = dm.train_dataloader()
+
+        assert loader.dataset is original_dataset
+
 
 class TestGradAccumAlignedDataset:
     """Unit tests for the GradAccumAlignedDataset wrapper."""
