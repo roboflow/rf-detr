@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
+import csv
 import warnings
+from pathlib import Path
 from typing import Any, Literal
 
 import torch
@@ -204,6 +206,48 @@ def _requests_multiple_devices(devices: int | str, accelerator: str | None = Non
     return False
 
 
+def _preserve_csv_history_across_resume(csv_logger: CSVLogger, output_dir: str | Path) -> None:
+    """Stop CSVLogger from silently deleting metrics.csv history when a run resumes.
+
+    ``build_trainer`` constructs a brand-new ``CSVLogger(version="")`` every time training starts or
+    resumes, always pointed at the same ``output_dir``. The first access to ``CSVLogger.experiment``
+    triggers PTL's ``_ExperimentWriter._check_log_dir_exists``, which deletes any pre-existing
+    ``metrics.csv`` in that directory (see ``lightning.fabric.loggers.csv_logs``). On a fresh run there
+    is nothing to delete, but on a resumed run this wipes every row logged before the resume. Snapshot
+    the file before that deletion happens, restore it immediately after, and seed the writer's column
+    cache to match so the next ``save()`` call appends rather than starting over.
+
+    Only call this for a resumed run (a truthy tc.resume). This matches the
+    public Trainer.fit(..., ckpt_path=config.resume or None) normalization.
+    Reusing output_dir for a fresh run, including an empty resume value, must
+    still let CSVLogger reset metrics.csv — appending fresh-run history onto
+    unrelated prior-run history would silently corrupt the log.
+
+    Args:
+        csv_logger: The just-constructed ``CSVLogger`` for this run, not yet attached to a ``Trainer``.
+        output_dir: The training run's output directory; must match ``csv_logger``'s log location
+            (``name=""``, ``version=""``).
+
+    Regression fix for :issue:`1321`.
+    """
+    metrics_path = Path(output_dir) / "metrics.csv"
+    if not metrics_path.is_file():
+        return
+    with metrics_path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+    if not rows:
+        return
+
+    experiment = csv_logger.experiment  # Triggers PTL's delete-on-init; restored right after.
+    with metrics_path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    experiment.metrics_keys = sorted(fieldnames)
+
+
 def _append_training_callbacks(
     callbacks: list[Callback],
     loggers: list[Any],
@@ -318,7 +362,10 @@ def _append_training_callbacks(
     # emits a UserWarning instead of crashing.
     # CSVLogger is always enabled — no extra package required.
     # Produces metrics.csv in output_dir so there is always a log file.
-    loggers.append(CSVLogger(save_dir=tc.output_dir, name="", version=""))
+    csv_logger = CSVLogger(save_dir=tc.output_dir, name="", version="")
+    if tc.resume:
+        _preserve_csv_history_across_resume(csv_logger, tc.output_dir)
+    loggers.append(csv_logger)
 
     if tc.tensorboard:
         try:
