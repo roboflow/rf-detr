@@ -271,10 +271,36 @@ class TestMetricsCSVResume:
         assert len(rows_after_resume) > len(rows_before_resume), (
             "metrics.csv must grow across a resume, not shrink or reset"
         )
-        assert set(rows_before_resume["step"]).issubset(set(rows_after_resume["step"])), (
-            "Every row logged before the resume must still be present afterward — "
-            'CSVLogger(version="") must not silently delete pre-existing metrics.csv history '
-            "when re-instantiated against the same output_dir."
+        assert set(rows_before_resume.columns).issubset(rows_after_resume.columns), (
+            "Every pre-resume metric column must remain available after the resume"
+        )
+        pd.testing.assert_frame_equal(
+            rows_before_resume.reset_index(drop=True),
+            rows_after_resume.loc[: len(rows_before_resume) - 1, rows_before_resume.columns].reset_index(drop=True),
+            check_dtype=False,
+        )
+
+    def test_reused_output_dir_with_empty_resume_resets_history(self, base_model_config, base_train_config):
+        """A fresh run with an empty resume value reusing output_dir must reset metrics.csv, like resume=None."""
+        mc = base_model_config()
+        tc = base_train_config(use_ema=False, run_test=False)
+        fake_criterion = _FakeCriterion()
+
+        self._fit_one_run(mc, tc, fake_criterion, max_epochs=1, ckpt_path=None)
+
+        csv_path = Path(tc.output_dir) / "metrics.csv"
+        rows_from_first_run = pd.read_csv(csv_path)
+        assert not rows_from_first_run.empty, "First run must have logged at least one row"
+
+        tc.resume = ""
+        assert tc.resume == "", "This case must exercise the public empty-string resume value"
+        self._fit_one_run(mc, tc, fake_criterion, max_epochs=1, ckpt_path=None)
+
+        rows_from_second_run = pd.read_csv(csv_path)
+        assert len(rows_from_second_run) == len(rows_from_first_run), (
+            f"Fresh run wrote {len(rows_from_second_run)} rows but the prior run wrote "
+            f"{len(rows_from_first_run)} — resume='' must let CSVLogger reset metrics.csv, "
+            "not silently append onto an unrelated prior run's history."
         )
 
     def test_reused_output_dir_without_resume_resets_history(self, base_model_config, base_train_config):
