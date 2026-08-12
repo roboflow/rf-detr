@@ -12,8 +12,7 @@ description: Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, and na
     - INT8 quantization requires calibration data from your dataset for accurate results
     - Custom input resolutions supported (must be divisible by `patch_size × num_windows`, which varies by model variant)
     - Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN)
-    - Export directly to native CoreML (`.mlpackage`) for Xcode / Apple-platform deployment — see
-        [Native CoreML Export](#native-coreml-export-mlpackage)
+    - Export directly to native CoreML (`.mlpackage`) for Xcode / Apple-platform deployment — see [Native CoreML Export](#native-coreml-export-mlpackage)
 
 RF-DETR supports exporting models to ONNX, TFLite, ExecuTorch, and native CoreML formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
 
@@ -127,15 +126,14 @@ model.export(backbone_only=True)
 After running the export, you will find the following files in your output directory:
 
 - `inference_model.onnx` - The exported ONNX model (or `backbone_model.onnx` if `backbone_only=True`)
-- `{variant}.mlpackage` - The exported native CoreML model when `format="coreml"` (see
-    [Native CoreML Export](#native-coreml-export-mlpackage)); `inference_model.mlpackage` if no
-    variant name is available.
+- `{variant}.mlpackage` - The exported native CoreML model when `format="coreml"` (see [Native CoreML Export](#native-coreml-export-mlpackage)); `inference_model.mlpackage` if no variant name is available.
 
 ## Optional: Convert ONNX to TensorRT
 
 If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX model to a TensorRT engine.
 
 > [!IMPORTANT]
+>
 > Run TensorRT conversion on the same machine and GPU family where you plan to deploy inference.
 
 ### Prerequisites
@@ -160,15 +158,9 @@ This exports `output/inference_model.onnx` first and then produces `output/infer
 
 !!! note "Who consumes the `.trt` engine?"
 
-    The `.trt` engine produced by `format="tensorrt"` is a standalone artifact for raw
-    TensorRT deployment. It is locked to the GPU architecture and
-    TensorRT version of the machine that built it, so it is not portable across
-    different GPUs or TensorRT releases.
+    The `.trt` engine produced by `format="tensorrt"` is a standalone artifact for raw TensorRT deployment. It is locked to the GPU architecture and TensorRT version of the machine that built it, so it is not portable across different GPUs or TensorRT releases.
 
-    If you plan to run inference with [`inference-models`](#run-inference-with-inference-models)
-    (the recommended path below), do **not** pass `format="tensorrt"` — `inference-models`
-    builds and manages its own TensorRT engine internally and does not consume this file.
-    Export a plain ONNX model instead and let `inference-models` handle the backend.
+    If you plan to run inference with [`inference-models`](#run-inference-with-inference-models) (the recommended path below), do **not** pass `format="tensorrt"` — `inference-models` builds and manages its own TensorRT engine internally and does not consume this file. Export a plain ONNX model instead and let `inference-models` handle the backend.
 
 ### Python API Conversion
 
@@ -182,9 +174,7 @@ engine_path = build_engine("output/inference_model.onnx", fp16=True)
 
 ## Run Inference with `inference-models`
 
-[`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) is the
-recommended library for running RF-DETR inference. It supports multiple backends — PyTorch,
-ONNX, and TensorRT — with automatic backend selection and a unified API.
+[`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) is the recommended library for running RF-DETR inference. It supports multiple backends — PyTorch, ONNX, and TensorRT — with automatic backend selection and a unified API.
 
 ### Installation
 
@@ -196,8 +186,7 @@ pip install inference-models
 pip install "inference-models[trt10]"  # TensorRT 10
 ```
 
-See the [inference-models installation guide](https://inference-models.roboflow.com/getting-started/installation/)
-for all installation options including Jetson and CUDA 11.x.
+See the [inference-models installation guide](https://inference-models.roboflow.com/getting-started/installation/) for all installation options including Jetson and CUDA 11.x.
 
 ### Load a Pre-trained RF-DETR Model
 
@@ -245,46 +234,29 @@ image = cv2.imread("image.jpg")
 predictions = model(image)
 ```
 
-`AutoModel.from_pretrained` accepts `backend="onnx"`, `backend="torch"`, or
-`backend="trt"` to override automatic backend selection.
+`AutoModel.from_pretrained` accepts `backend="onnx"`, `backend="torch"`, or `backend="trt"` to override automatic backend selection.
 
 ## TFLite Export
 
 !!! warning "Experimental — Use with Caution"
 
-    TFLite export is **experimental and work-in-progress**. The pipeline depends on
-    several upstream packages (`onnx2tf`, `ai_edge_litert`, `tflite-runtime`) that
-    have experienced breaking API changes and installation instabilities across
-    releases. You may encounter errors or unexpected results.
+    TFLite export is **experimental and work-in-progress**. The pipeline depends on several upstream packages (`onnx2tf`, `ai_edge_litert`, `tflite-runtime`) that have experienced breaking API changes and installation instabilities across releases. You may encounter errors or unexpected results.
 
     **Known instabilities:**
 
-    - `onnx2tf` output graph structure can change between minor versions, silently
-        altering output tensor layout and breaking downstream inference code.
-    - `ai_edge_litert` (Google's replacement for `tflite-runtime`) is still
-        stabilising its public API; version pinning is strongly recommended.
-    - INT8 quantization accuracy is sensitive to calibration data quality — poor
-        calibration causes silent precision loss with no error at export time.
-    - The ONNX → TF → TFLite conversion chain introduces numerical rounding that
-        may produce slightly different predictions from the original PyTorch model.
-    - Installation of the `[tflite]` extra may conflict with existing TensorFlow
-        or NumPy versions in your environment.
-    - `onnx` and TensorFlow both bundle Abseil and export its symbols weakly, so whichever
-        loads first supplies them to both. RF-DETR imports TensorFlow first on the TFLite route;
-        if your own code imports `onnx` before `tensorflow`, RF-DETR logs a warning and the
-        conversion may block forever while restoring the SavedModel (no error, 0% CPU). Importing
-        `onnx` *after* `tensorflow` is safe; otherwise, in a fresh process, preload/import
-        `tensorflow` before `onnx` and then run the export — freshness alone is not sufficient.
+    - `onnx2tf` output graph structure can change between minor versions, silently altering output tensor layout and breaking downstream inference code.
+    - `ai_edge_litert` (Google's replacement for `tflite-runtime`) is still stabilising its public API; version pinning is strongly recommended.
+    - INT8 quantization accuracy is sensitive to calibration data quality — poor calibration causes silent precision loss with no error at export time.
+    - The ONNX → TF → TFLite conversion chain introduces numerical rounding that may produce slightly different predictions from the original PyTorch model.
+    - Installation of the `[tflite]` extra may conflict with existing TensorFlow or NumPy versions in your environment.
+    - `onnx` and TensorFlow both bundle Abseil and export its symbols weakly, so whichever loads first supplies them to both. RF-DETR imports TensorFlow first on the TFLite route; if your own code imports `onnx` before `tensorflow`, RF-DETR logs a warning and the conversion may block forever while restoring the SavedModel (no error, 0% CPU). Importing `onnx` *after* `tensorflow` is safe; otherwise, in a fresh process, preload/import `tensorflow` before `onnx` and then run the export — freshness alone is not sufficient.
 
     **Recommendations:**
 
     - Pin your dependency versions (e.g. `onnx2tf==X.Y.Z`) and test before each upgrade.
     - Validate exported `.tflite` files against a held-out evaluation set before deploying.
-    - Prefer ONNX export when your target runtime supports it — it is more stable and
-        better tested.
-    - If export fails, check the [open issues](https://github.com/roboflow/rf-detr/issues)
-        for known workarounds or report a new one with your environment details
-        (`pip freeze`, Python version, OS).
+    - Prefer ONNX export when your target runtime supports it — it is more stable and better tested.
+    - If export fails, check the [open issues](https://github.com/roboflow/rf-detr/issues) for known workarounds or report a new one with your environment details (`pip freeze`, Python version, OS).
 
 Export your model to TFLite for deployment on mobile devices, microcontrollers, and edge hardware via TensorFlow Lite. The TFLite export pipeline converts ONNX → TensorFlow → TFLite using [onnx2tf](https://github.com/PINTO0309/onnx2tf).
 
@@ -475,22 +447,15 @@ labels = interpreter.get_tensor(labels_detail["index"])
 
 !!! warning "Experimental — Use with Caution"
 
-    ExecuTorch export is **experimental**. The `executorch` package is under active
-    development and its installation and API are subject to breaking changes between
-    releases.
+    ExecuTorch export is **experimental**. The `executorch` package is under active development and its installation and API are subject to breaking changes between releases.
 
     **Known limitations:**
 
-    - `dynamic_batch=True` is not supported: the runtime cannot resize RF-DETR's
-        windowed-attention reshapes, so export one `.pte` per batch size instead.
-    - The `"qnn"` backend requires a **source build** of ExecuTorch against the QAIRT
-        SDK and cannot be installed via `pip`.
-    - CoreML export runs in fp16; top-level detections are correct but raw tensor
-        values will differ from the PyTorch fp32 model as expected for fp16 computation.
+    - `dynamic_batch=True` is not supported: the runtime cannot resize RF-DETR's windowed-attention reshapes, so export one `.pte` per batch size instead.
+    - The `"qnn"` backend requires a **source build** of ExecuTorch against the QAIRT SDK and cannot be installed via `pip`.
+    - CoreML export runs in fp16; top-level detections are correct but raw tensor values will differ from the PyTorch fp32 model as expected for fp16 computation.
 
-ExecuTorch is PyTorch's on-device inference runtime. Unlike ONNX export, the model is exported
-directly via `torch.export` to a portable `.pte` binary — no intermediate ONNX conversion step
-is involved.
+ExecuTorch is PyTorch's on-device inference runtime. Unlike ONNX export, the model is exported directly via `torch.export` to a portable `.pte` binary — no intermediate ONNX conversion step is involved.
 
 ### Prerequisites
 
@@ -500,9 +465,7 @@ pip install "rfdetr[executorch]"
 
 ### XNNPACK Backend (Portable CPU, fp32)
 
-The `"xnnpack"` backend targets any CPU platform and runs in fp32. It is the recommended,
-portable backend and requires only the standard `rfdetr[executorch]` wheel. `backend` has no
-default — it must always be passed explicitly for `format="executorch"`.
+The `"xnnpack"` backend targets any CPU platform and runs in fp32. It is the recommended, portable backend and requires only the standard `rfdetr[executorch]` wheel. `backend` has no default — it must always be passed explicitly for `format="executorch"`.
 
 === "Object Detection"
 
@@ -524,21 +487,15 @@ default — it must always be passed explicitly for `format="executorch"`.
     model.export(format="executorch", backend="xnnpack")
     ```
 
-This produces `output/rfdetr-seg-medium.pte` — the file is named after the model variant
-(`{variant}.pte`), not a generic `inference_model.pte`.
+This produces `output/rfdetr-seg-medium.pte` — the file is named after the model variant (`{variant}.pte`), not a generic `inference_model.pte`.
 
 ### CoreML Backend (Apple Neural Engine, fp16)
 
 !!! note "Not the same as native CoreML export"
 
-    This is the ExecuTorch delegate — `format="executorch", backend="coreml"` — which produces a
-    `.pte` file for the ExecuTorch runtime. It is distinct from `format="coreml"`, which produces a
-    native `.mlpackage` directly (no ExecuTorch runtime involved); see
-    [Native CoreML Export](#native-coreml-export-mlpackage) below.
+    This is the ExecuTorch delegate — `format="executorch", backend="coreml"` — which produces a `.pte` file for the ExecuTorch runtime. It is distinct from `format="coreml"`, which produces a native `.mlpackage` directly (no ExecuTorch runtime involved); see [Native CoreML Export](#native-coreml-export-mlpackage) below.
 
-The `"coreml"` backend targets Apple devices (iPhone, iPad, Mac) and runs in fp16 on the
-Neural Engine. It requires `coremltools`, which is **not** included in the `rfdetr[executorch]`
-extra — install it separately:
+The `"coreml"` backend targets Apple devices (iPhone, iPad, Mac) and runs in fp16 on the Neural Engine. It requires `coremltools`, which is **not** included in the `rfdetr[executorch]` extra — install it separately:
 
 ```bash
 pip install coremltools
@@ -554,14 +511,11 @@ model.export(format="executorch", backend="coreml")
 
 !!! note
 
-    CoreML export uses fp16 arithmetic. Top-level detections (bounding boxes and class labels)
-    are correct, but raw tensor values will differ from the PyTorch fp32 baseline at the fp16
-    precision level — this is expected behavior.
+    CoreML export uses fp16 arithmetic. Top-level detections (bounding boxes and class labels) are correct, but raw tensor values will differ from the PyTorch fp32 baseline at the fp16 precision level — this is expected behavior.
 
 ### QNN Backend (Qualcomm Snapdragon HTP, fp16)
 
-The `"qnn"` backend targets the Qualcomm AI Engine (HTP) on Snapdragon SoCs and runs in fp16.
-It **requires a source build** of ExecuTorch against the QAIRT SDK and cannot be installed via `pip`.
+The `"qnn"` backend targets the Qualcomm AI Engine (HTP) on Snapdragon SoCs and runs in fp16. It **requires a source build** of ExecuTorch against the QAIRT SDK and cannot be installed via `pip`.
 
 ```python
 from rfdetr import RFDETRMedium
@@ -571,41 +525,26 @@ model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 model.export(format="executorch", backend="qnn", soc="SM8650")
 ```
 
-The `soc` parameter is required for QNN and must be a `QcomChipset` name matching your target
-device. For example, `"SM8650"` targets the Snapdragon 8 Gen 3.
+The `soc` parameter is required for QNN and must be a `QcomChipset` name matching your target device. For example, `"SM8650"` targets the Snapdragon 8 Gen 3.
 
 !!! warning
 
-    QNN export is validated on-device but cannot be tested in CI (requires QAIRT SDK).
-    Validate detections on your target Snapdragon device before deploying to production.
+    QNN export is validated on-device but cannot be tested in CI (requires QAIRT SDK). Validate detections on your target Snapdragon device before deploying to production.
 
 ### ExecuTorch Limitations
 
-- **`dynamic_batch=True` is not supported.** The ExecuTorch runtime cannot resize RF-DETR's
-    windowed-attention reshapes for a variable batch size. Export one `.pte` file per batch size
-    instead (e.g. `batch_size=1` for single-image inference).
-- **QNN requires a source build.** The QNN backend is not available via the pip wheel; see the
-    ExecuTorch documentation for source-build instructions against the QAIRT SDK.
+- **`dynamic_batch=True` is not supported.** The ExecuTorch runtime cannot resize RF-DETR's windowed-attention reshapes for a variable batch size. Export one `.pte` file per batch size instead (e.g. `batch_size=1` for single-image inference).
+- **QNN requires a source build.** The QNN backend is not available via the pip wheel; see the ExecuTorch documentation for source-build instructions against the QAIRT SDK.
 
 ### ExecuTorch Inference Example
 
 !!! warning "torch/executorch ABI compatibility"
 
-    Loading a `.pte` via `executorch.runtime` (below) requires a `torch` version whose ABI
-    matches the `executorch` wheel you installed — `.pte` **export** itself does not need
-    `executorch.runtime` and is unaffected. For `executorch==1.3.1`, pin `torch<2.13`
-    (`pip install "torch<2.13"`); a newer `torch` release can silently break `executorch.runtime`
-    with an `undefined symbol` / `dlopen` error at import time, since ExecuTorch's prebuilt wheels
-    are compiled against whichever `torch` ABI existed at their release time.
+    Loading a `.pte` via `executorch.runtime` (below) requires a `torch` version whose ABI matches the `executorch` wheel you installed — `.pte` **export** itself does not need `executorch.runtime` and is unaffected. For `executorch==1.3.1`, pin `torch<2.13` (`pip install "torch<2.13"`); a newer `torch` release can silently break `executorch.runtime` with an `undefined symbol` / `dlopen` error at import time, since ExecuTorch's prebuilt wheels are compiled against whichever `torch` ABI existed at their release time.
 
 !!! warning "The input tensor must be contiguous"
 
-    The ExecuTorch runtime reads the input buffer as contiguous NCHW and ignores tensor strides.
-    Preprocessing steps that permute axes — `np.transpose`, `Tensor.permute`, torchvision's
-    `ToImage` — return a strided view rather than a copy, and such a view is misread as a
-    scrambled image. Nothing errors: the model runs without error and returns plausible-shaped
-    output, but every detection's score collapses below threshold. Finish preprocessing with
-    `np.ascontiguousarray(...)` (or `Tensor.contiguous()`) before calling `execute`.
+    The ExecuTorch runtime reads the input buffer as contiguous NCHW and ignores tensor strides. Preprocessing steps that permute axes — `np.transpose`, `Tensor.permute`, torchvision's `ToImage` — return a strided view rather than a copy, and such a view is misread as a scrambled image. Nothing errors: the model runs without error and returns plausible-shaped output, but every detection's score collapses below threshold. Finish preprocessing with `np.ascontiguousarray(...)` (or `Tensor.contiguous()`) before calling `execute`.
 
 ```python
 import torch
@@ -639,22 +578,13 @@ boxes, labels = outputs[0], outputs[1]
 
 !!! warning "Experimental — Use with Caution"
 
-    Native CoreML export is **experimental and work-in-progress**. `dynamic_batch=True` is not
-    supported — fixed shapes are required for reliable ANE / GPU scheduling. Export one
-    `.mlpackage` per batch size instead.
+    Native CoreML export is **experimental and work-in-progress**. `dynamic_batch=True` is not supported — fixed shapes are required for reliable ANE / GPU scheduling. Export one `.mlpackage` per batch size instead.
 
 !!! note "Not the same as the ExecuTorch CoreML backend"
 
-    `format="coreml"` exports directly via `torch.export` + `coremltools` to a native
-    `.mlpackage` (mlprogram, iOS 16+) — no ONNX and no ExecuTorch runtime involved. This is
-    distinct from [`format="executorch", backend="coreml"`](#coreml-backend-apple-neural-engine-fp16),
-    which produces a `.pte` file for the ExecuTorch runtime. Passing both `format="coreml"` and
-    `backend="coreml"` together does not fall through to the ExecuTorch delegate — `backend` is
-    ignored (with a warning) and the native `.mlpackage` path always runs.
+    `format="coreml"` exports directly via `torch.export` + `coremltools` to a native `.mlpackage` (mlprogram, iOS 16+) — no ONNX and no ExecuTorch runtime involved. This is distinct from [`format="executorch", backend="coreml"`](#coreml-backend-apple-neural-engine-fp16), which produces a `.pte` file for the ExecuTorch runtime. Passing both `format="coreml"` and `backend="coreml"` together does not fall through to the ExecuTorch delegate — `backend` is ignored (with a warning) and the native `.mlpackage` path always runs.
 
-RF-DETR's native CoreML export produces a `.mlpackage` you can drag directly into Xcode, with no
-ONNX intermediary and no ExecuTorch runtime dependency — the lowest-friction path for Apple-native
-(iOS / macOS) developers.
+RF-DETR's native CoreML export produces a `.mlpackage` you can drag directly into Xcode, with no ONNX intermediary and no ExecuTorch runtime dependency — the lowest-friction path for Apple-native (iOS / macOS) developers.
 
 ### Prerequisites
 
@@ -684,13 +614,11 @@ pip install "rfdetr[coreml]"
     model.export(format="coreml")
     ```
 
-This produces `output/rfdetr-medium.mlpackage` — the file is named after the model variant
-(`{variant}.mlpackage`), not a generic `inference_model.mlpackage`.
+This produces `output/rfdetr-medium.mlpackage` — the file is named after the model variant (`{variant}.mlpackage`), not a generic `inference_model.mlpackage`.
 
 ### Compute Precision
 
-CoreML export defaults to `FLOAT32` for tight CPU parity with eager PyTorch. Pass
-`coreml_precision="float16"` for a smaller, ANE-oriented bundle (expect larger numeric drift):
+CoreML export defaults to `FLOAT32` for tight CPU parity with eager PyTorch. Pass `coreml_precision="float16"` for a smaller, ANE-oriented bundle (expect larger numeric drift):
 
 ```python
 model.export(format="coreml", coreml_precision="float16")
@@ -698,9 +626,7 @@ model.export(format="coreml", coreml_precision="float16")
 
 !!! note
 
-    Output tensor names in the saved `.mlpackage` spec are coremltools-inferred, not renamed to
-    `dets`/`labels`/etc. — match outputs by **position**, in the same order as the ONNX
-    `output_names` contract (`dets, labels` for detection; `dets, labels, masks` for segmentation).
+    Output tensor names in the saved `.mlpackage` spec are coremltools-inferred, not renamed to `dets`/`labels`/etc. — match outputs by **position**, in the same order as the ONNX `output_names` contract (`dets, labels` for detection; `dets, labels, masks` for segmentation).
 
 ### CoreML Inference Example
 
@@ -734,19 +660,11 @@ Once exported, you can use the ONNX model with various inference frameworks:
 
 ### ONNX Runtime
 
-The exported graph returns **raw** tensors — `dets` (`pred_boxes`, normalized `cxcywh`) and
-`labels` (`pred_logits`, un-activated). Nothing is decoded inside the graph, so your inference
-code must apply sigmoid, drop the no-object background column, and convert box format
-yourself.
+The exported graph returns **raw** tensors — `dets` (`pred_boxes`, normalized `cxcywh`) and `labels` (`pred_logits`, un-activated). Nothing is decoded inside the graph, so your inference code must apply sigmoid, drop the no-object background column, and convert box format yourself.
 
 !!! warning "Match outputs by name, not by shape"
 
-    RF-DETR always adds an implicit no-object class, so the logits tensor's last dimension is
-    `num_classes + 1`. If `num_classes == 3`, that dimension is `4` — identical to the box
-    tensor's last dimension (`4`, `cxcywh`). Disambiguating outputs by shape instead of by name
-    (`"dets"` / `"labels"`) will silently swap boxes and logits at exactly `num_classes == 3`,
-    producing garbage detections while every other `num_classes` value looks fine. Always match
-    by name first.
+    RF-DETR always adds an implicit no-object class, so the logits tensor's last dimension is `num_classes + 1`. If `num_classes == 3`, that dimension is `4` — identical to the box tensor's last dimension (`4`, `cxcywh`). Disambiguating outputs by shape instead of by name (`"dets"` / `"labels"`) will silently swap boxes and logits at exactly `num_classes == 3`, producing garbage detections while every other `num_classes` value looks fine. Always match by name first.
 
 ```python
 import onnxruntime as ort
@@ -801,9 +719,7 @@ xyxy *= np.array([image.width, image.height, image.width, image.height], dtype=n
 boxes, labels, confidences = xyxy, class_ids[keep], scores[keep]
 ```
 
-For a fuller reference implementation (name-based matching with a documented shape-based
-fallback), see `_run_inference` in
-[`src/rfdetr/export/_onnx/inference.py`](https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/export/_onnx/inference.py).
+For a fuller reference implementation (name-based matching with a documented shape-based fallback), see `_run_inference` in [`src/rfdetr/export/_onnx/inference.py`](https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/export/_onnx/inference.py).
 
 ## Next Steps
 
@@ -811,8 +727,7 @@ After exporting your model, you may want to:
 
 - [Deploy to Roboflow](deploy.md) for cloud-based inference and workflow integration
 
-- Use [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) for
-    multi-backend inference (PyTorch, ONNX, TensorRT) with automatic backend selection
+- Use [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) for multi-backend inference (PyTorch, ONNX, TensorRT) with automatic backend selection
 
 - Deploy TFLite models on mobile/edge devices with TensorFlow Lite
 
