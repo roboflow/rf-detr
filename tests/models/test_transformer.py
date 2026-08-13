@@ -1177,3 +1177,85 @@ def test_two_stage_topk_gather_cuda_matches_cpu_for_out_of_position_order_indice
     cuda_selected = torch.gather(source.cuda(), 1, topk_proposals.cuda().unsqueeze(-1).expand(-1, -1, hidden_dim))
 
     assert torch.equal(cpu_selected, cuda_selected.cpu())
+
+
+class _ShapeRecordingLinear(nn.Module):
+    """Wraps a real ``nn.Linear`` and records the shape of every input it is called with.
+
+    Lets a test assert how many rows the wrapped layer actually processed, independent of the values
+    it produced (already covered by the ``test_two_stage_topk_gather_selects_correct_rows_*`` tests).
+    """
+
+    def __init__(self, inner: nn.Linear, input_shapes: list[torch.Size]) -> None:
+        super().__init__()
+        self.inner = inner
+        self._input_shapes = input_shapes
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Record ``x.shape`` then delegate to the wrapped ``nn.Linear``."""
+        self._input_shapes.append(x.shape)
+        return self.inner(x)
+
+
+@pytest.mark.parametrize("group_detr", [1, 3], ids=["group_detr=1", "group_detr=3"])
+def test_two_stage_bbox_embed_only_runs_on_selected_rows_not_full_encoder_memory(group_detr: int) -> None:
+    """The bbox-delta MLP must only run on the rows torch.topk selects, not on every encoder position.
+
+    ``enc_out_bbox_embed`` is a pointwise MLP with no cross-token mixing, so it only needs the
+    ``num_queries`` rows that survive ``torch.topk`` selection -- every one of the other
+    ``sum(H*W) - num_queries`` encoder positions it used to also run on was discarded by the gather
+    that immediately followed, per group.
+
+    Regression: prior to this fix, Transformer.forward ran ``enc_out_bbox_embed[g_idx]`` on the full
+    ``output_memory_gidx`` (bs, sum_hw, d) for every one of ``group_detr`` groups and only kept the
+    ``num_queries`` gathered rows -- this pins the shape ``enc_out_bbox_embed`` is actually called
+    with to the post-topk size, per group. Row *values* are covered separately by
+    test_two_stage_topk_gather_selects_correct_rows_out_of_position_order and
+    test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mode, which assert
+    ``memory_ts``/``boxes_ts`` are bit-identical to gathering after running the MLP on every row --
+    this test only pins how much work the MLP itself does, not what it produces.
+    """
+    torch.manual_seed(0)
+    hidden_dim, num_queries = 16, 3
+    spatial_shapes_hw = [(4, 4), (2, 2)]
+    total_hw = sum(ht * wd for ht, wd in spatial_shapes_hw)
+    assert total_hw > num_queries  # sanity: some rows must be discarded for this to matter
+
+    srcs = [torch.randn(1, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    masks = [torch.zeros(1, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]
+    pos_embeds = [torch.randn(1, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries * group_detr, 4)
+    query_feat = torch.randn(num_queries * group_detr, hidden_dim)
+
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=len(spatial_shapes_hw),
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=group_detr,
+    )
+    assert transformer.training  # default nn.Module state; group_detr>1 only takes effect while training
+
+    num_classes = 5
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, num_classes) for _ in range(group_detr)])
+    bbox_embed_input_shapes: list[torch.Size] = []
+    transformer.enc_out_bbox_embed = nn.ModuleList(
+        [_ShapeRecordingLinear(nn.Linear(hidden_dim, 4), bbox_embed_input_shapes) for _ in range(group_detr)]
+    )
+
+    transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+
+    assert len(bbox_embed_input_shapes) == group_detr
+    for shape in bbox_embed_input_shapes:
+        assert shape == torch.Size([1, num_queries, hidden_dim]), (
+            "enc_out_bbox_embed must only run on the num_queries rows selected by torch.topk, not the "
+            f"full sum(H*W)={total_hw} encoder positions (Transformer.forward two-stage top-k gather); "
+            f"got input shape {tuple(shape)}"
+        )
