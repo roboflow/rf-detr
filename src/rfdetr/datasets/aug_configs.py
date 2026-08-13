@@ -87,13 +87,14 @@ or torchvision defaults. Install it with ``pip install 'rfdetr[augment]'``.
 | ``Sharpen`` | ``K.RandomSharpness`` | ``sharpness = 1.0 + alpha`` (1.0-pivoted); ``lightness``/``method`` ignored |
 | ``Equalize`` | ``K.RandomEqualize`` | Only ``p`` honored; ``mode``/``by_channels``/``mask`` ignored |
 | ``CLAHE`` | ``K.RandomClahe`` | ``clip_limit`` and ``tile_grid_size`` map directly |
-| ``Perspective`` | ``K.RandomPerspective`` | Approximate; see the note below. ``keep_size=False`` raises, other options are ignored |
+| ``Perspective`` | ``K.RandomPerspective`` | Approximate; see the note below. ``keep_size=False`` raises |
 
 ``Perspective`` is the one entry in the table that is not a faithful mapping. Albumentations samples each
 corner offset from ``abs(N(0, scale))``, Kornia samples uniformly from ``distortion_scale``, so the two
 produce different distortion distributions for the same config. The upper bound of ``scale`` is used as
-``distortion_scale`` and a scalar ``scale`` is read as ``(0, scale)``; a range whose ends differ logs a
-warning. ``keep_size=False`` raises rather than silently resizing, and ``fit_output``, ``interpolation``,
+``distortion_scale`` and a scalar ``scale`` is read as ``(0, scale)``; the divergence is logged for every
+config, not only for a range. ``keep_size=False`` raises rather than silently resizing, and
+``fit_output``, ``interpolation``,
 ``mask_interpolation``, ``border_mode``, ``fill`` and ``fill_mask`` are ignored. Use the Albumentations
 backend when the exact Albumentations semantics matter.
 
