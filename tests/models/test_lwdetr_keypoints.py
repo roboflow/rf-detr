@@ -106,6 +106,79 @@ def test_lwdetr_keypoint_forward_outputs() -> None:
     assert "keypoint_hidden_states" not in outputs["aux_outputs"][0]
 
 
+def test_lwdetr_keypoint_nan_delta_does_not_poison_ref_wh_gradient() -> None:
+    """A non-finite keypoint-embed output must not poison ``ref_unsigmoid``'s gradient.
+
+    Regression: ``keypoints_xy = outputs_keypoints_delta[..., :2] * ref_wh + ref_xy`` combines the
+    keypoint head's raw delta with the shared box reference point *before* ``compute_l1_keypoint_loss``
+    ever sees the result. That function's own ``torch.where`` guards can zero the gradient flowing
+    *into* this multiply, but not the multiply's own local backward (``d(a*b)/d(b) == a``): a
+    non-finite delta still poisons ``ref_wh``'s (and therefore ``ref_unsigmoid``'s, shared with the box
+    head) gradient via ``0.0 * nan == nan``. Fixed by ``nan_to_num``-ing ``outputs_keypoints_delta`` at
+    the source, before the multiply.
+    """
+    batch_size = 2
+    num_queries = 3
+    hidden_dim = 8
+    num_classes = 6
+
+    features = _build_feature_batch(batch_size=batch_size, hidden_dim=hidden_dim)
+    poss = [torch.zeros(batch_size, hidden_dim, 4, 4)]
+
+    backbone = MagicMock()
+    backbone.return_value = (features, poss, None)
+
+    ref_unsigmoid = torch.zeros(2, batch_size, num_queries, 4, requires_grad=True)
+    transformer = MagicMock()
+    transformer.d_model = hidden_dim
+    transformer.return_value = (
+        torch.zeros(2, batch_size, num_queries, hidden_dim),  # hs
+        ref_unsigmoid,
+        torch.zeros(batch_size, num_queries, hidden_dim),  # hs_enc
+        torch.zeros(batch_size, num_queries, 4),  # ref_enc
+        torch.zeros(2, batch_size, num_queries, 17, hidden_dim),  # keypoint_hs
+        torch.zeros(batch_size, num_queries, 17, 8),  # enc_kp_predictions
+        torch.zeros(batch_size, num_queries, 17, hidden_dim),  # unused keypoint encoder hidden state
+    )
+
+    model = LWDETR(
+        backbone=backbone,
+        transformer=transformer,
+        segmentation_head=None,
+        num_classes=num_classes,
+        num_queries=num_queries,
+        aux_loss=False,
+        group_detr=1,
+        two_stage=False,
+        lite_refpoint_refine=False,
+        bbox_reparam=False,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=[17],
+        grouppose_keypoint_dim_downscale=1,
+    )
+
+    def _inject_nan(_module: nn.Module, _inputs: tuple, output: torch.Tensor) -> torch.Tensor:
+        poisoned = output.clone()
+        with torch.no_grad():
+            poisoned[0, 0, 0, 0] = float("nan")
+        return poisoned
+
+    model.keypoint_embed.register_forward_hook(_inject_nan)
+
+    outputs = model(torch.ones(batch_size, 3, 8, 8))
+    assert torch.isfinite(outputs["pred_keypoints"]).all(), (
+        "the injected NaN must be sanitized before it reaches ref_wh/ref_xy composition, "
+        f"got pred_keypoints={outputs['pred_keypoints']}"
+    )
+    outputs["pred_keypoints"].sum().backward()
+
+    assert ref_unsigmoid.grad is not None
+    assert torch.isfinite(ref_unsigmoid.grad).all(), (
+        f"a single non-finite keypoint-embed output must not poison ref_unsigmoid's gradient, "
+        f"got grad={ref_unsigmoid.grad}"
+    )
+
+
 def test_lwdetr_reinitialize_keypoint_head_updates_schema_dependent_state() -> None:
     """Keypoint schema reinit should resize masks and learned keypoint query embeddings."""
     hidden_dim = 8
