@@ -408,7 +408,6 @@ overrides = [
   { module = [
     "rfdetr.config",
     "rfdetr.datasets.coco",
-    "rfdetr.datasets.synthetic",
     "rfdetr.datasets.transforms",
   ], ignore_errors = true },
 ]
