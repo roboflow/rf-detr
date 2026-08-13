@@ -918,7 +918,10 @@ def _make_out_of_order_scores(total_hw: int, picks: list[int]) -> torch.Tensor:
     return scores
 
 
-def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mode(monkeypatch) -> None:
+@pytest.mark.parametrize("bbox_reparam", [False, True], ids=["bbox_reparam=False", "bbox_reparam=True"])
+def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mode(
+    monkeypatch, bbox_reparam: bool
+) -> None:
     """With group_detr>1 and the module left in its default training mode, every per-group gather index
     must still broadcast via Tensor.expand, and the concatenated memory_ts/boxes_ts must reproduce each
     group's exact top-k rows.
@@ -936,7 +939,7 @@ def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mo
     spatial_shapes_hw = [(4, 4), (2, 2)]
     total_hw = sum(ht * wd for ht, wd in spatial_shapes_hw)
 
-    srcs = [torch.randn(1, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    srcs = [torch.randn(1, hidden_dim, ht, wd, requires_grad=True) for ht, wd in spatial_shapes_hw]
     masks = [torch.zeros(1, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]
     pos_embeds = [torch.randn(1, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
     refpoint_embed = torch.rand(num_queries * group_detr, 4)
@@ -953,7 +956,7 @@ def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mo
         return_intermediate_dec=True,
         lite_refpoint_refine=True,
         two_stage=True,
-        bbox_reparam=False,
+        bbox_reparam=bbox_reparam,
         group_detr=group_detr,
     )
     assert transformer.training  # default nn.Module state; group_detr>1 only takes effect while training
@@ -962,7 +965,9 @@ def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mo
     picks_per_group = [[17, 2, 9], [5, 19, 0], [11, 14, 3]]
     scores_per_group = [_make_out_of_order_scores(total_hw, picks) for picks in picks_per_group]
     transformer.enc_out_class_embed = nn.ModuleList([_FixedTopkScores(scores) for scores in scores_per_group])
-    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4) for _ in range(group_detr)])
+    transformer.enc_out_bbox_embed = nn.ModuleList(
+        [MLP(hidden_dim, hidden_dim, 4, num_layers=3) for _ in range(group_detr)]
+    )
 
     gather_index_calls: list[torch.Tensor] = []
     original_gather = torch.gather
@@ -989,27 +994,47 @@ def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mo
     memory = torch.cat([src.flatten(2).transpose(1, 2) for src in srcs], 1)
     mask_flatten = torch.cat([m.flatten(1) for m in masks], 1)
     output_memory, output_proposals = gen_encoder_output_proposals(
-        memory, mask_flatten, spatial_shapes_hw, unsigmoid=True
+        memory, mask_flatten, spatial_shapes_hw, unsigmoid=not bbox_reparam
     )
     picks_tensors = [torch.tensor(picks) for picks in picks_per_group]
     output_memory_per_group = [
         transformer.enc_output_norm[g](transformer.enc_output[g](output_memory)) for g in range(group_detr)
     ]
-    coord_unselected_per_group = [
-        transformer.enc_out_bbox_embed[g](output_memory_per_group[g]) + output_proposals for g in range(group_detr)
-    ]
+    if bbox_reparam:
+        coord_unselected_per_group = []
+        for g in range(group_detr):
+            delta = transformer.enc_out_bbox_embed[g](output_memory_per_group[g])
+            coord_unselected_per_group.append(
+                torch.cat(
+                    [
+                        delta[..., :2] * output_proposals[..., 2:] + output_proposals[..., :2],
+                        delta[..., 2:].exp() * output_proposals[..., 2:],
+                    ],
+                    dim=-1,
+                )
+            )
+    else:
+        coord_unselected_per_group = [
+            transformer.enc_out_bbox_embed[g](output_memory_per_group[g]) + output_proposals for g in range(group_detr)
+        ]
 
     expected_memory = torch.cat(
         [output_memory_per_group[g][0, picks_tensors[g]] for g in range(group_detr)], dim=0
     ).unsqueeze(0)
-    # forward() returns boxes_ts.sigmoid() when bbox_reparam=False.
-    expected_coord = (
-        torch.cat([coord_unselected_per_group[g][0, picks_tensors[g]] for g in range(group_detr)], dim=0)
-        .unsqueeze(0)
-        .sigmoid()
-    )
-    assert torch.equal(memory_ts, expected_memory)
-    assert torch.equal(boxes_ts, expected_coord)
+    # forward() returns boxes_ts.sigmoid() only when bbox_reparam=False.
+    expected_coord = torch.cat(
+        [coord_unselected_per_group[g][0, picks_tensors[g]] for g in range(group_detr)], dim=0
+    ).unsqueeze(0)
+    if not bbox_reparam:
+        expected_coord = expected_coord.sigmoid()
+    torch.testing.assert_close(memory_ts, expected_memory, atol=1e-5, rtol=1e-4)
+    torch.testing.assert_close(boxes_ts, expected_coord, atol=1e-5, rtol=1e-4)
+
+    parameters = [parameter for module in transformer.enc_out_bbox_embed for parameter in module.parameters()]
+    new_gradients = torch.autograd.grad(boxes_ts.sum(), [*srcs, *parameters], retain_graph=True)
+    reference_gradients = torch.autograd.grad(expected_coord.sum(), [*srcs, *parameters])
+    for new_gradient, reference_gradient in zip(new_gradients, reference_gradients, strict=True):
+        torch.testing.assert_close(new_gradient, reference_gradient, atol=1e-5, rtol=1e-4)
 
 
 def test_two_stage_topk_gather_selects_correct_rows_with_bbox_reparam(monkeypatch) -> None:
@@ -1267,31 +1292,26 @@ def test_two_stage_bbox_mlp_gather_order_matches_on_cuda_for_real_three_layer_ml
 
     Deliberately compares old-order-on-CUDA against new-order-on-CUDA (both on the same device), not
     CUDA against CPU: CPU/CUDA cuBLAS reduction order already differs for this MLP's matmuls
-    independently of gather order (~1e-4 absolute on this GPU, confirmed separately), which would
-    swamp the gather-order comparison this test exists to make. ``torch.use_deterministic_algorithms``
-    makes CUDA matmul reduction order (and so the result) reproducible for a fixed op sequence, so
-    old-vs-new on the same device is still a meaningful bit-exactness check.
+    independently of gather order, which would swamp the gather-order comparison this test exists to
+    make. The two paths may use different CUDA kernels and reduction orders, so this test uses a
+    small numerical tolerance without mutating process-wide deterministic-algorithm state or requiring
+    ``CUBLAS_WORKSPACE_CONFIG``.
     """
     torch.manual_seed(0)
     bs, sum_hw, d, num_queries = 2, 20, 16, 3
-    previously_deterministic = torch.are_deterministic_algorithms_enabled()
-    torch.use_deterministic_algorithms(True)
-    try:
-        bbox_mlp = MLP(d, d, 4, num_layers=3).cuda()
-        output_memory = torch.randn(bs, sum_hw, d, device="cuda")
-        output_proposals = torch.rand(bs, sum_hw, 4, device="cuda") * 0.9 + 0.05
-        topk_idx = torch.stack([torch.randperm(sum_hw, device="cuda")[:num_queries] for _ in range(bs)])
+    bbox_mlp = MLP(d, d, 4, num_layers=3).cuda()
+    output_memory = torch.randn(bs, sum_hw, d, device="cuda")
+    output_proposals = torch.rand(bs, sum_hw, 4, device="cuda") * 0.9 + 0.05
+    topk_idx = torch.stack([torch.randperm(sum_hw, device="cuda")[:num_queries] for _ in range(bs)])
 
-        box_old_full = _bbox_from_delta(bbox_mlp(output_memory), output_proposals, bbox_reparam)
-        box_old = torch.gather(box_old_full, 1, topk_idx.unsqueeze(-1).expand(-1, -1, 4))
+    box_old_full = _bbox_from_delta(bbox_mlp(output_memory), output_proposals, bbox_reparam)
+    box_old = torch.gather(box_old_full, 1, topk_idx.unsqueeze(-1).expand(-1, -1, 4))
 
-        tgt_new = torch.gather(output_memory, 1, topk_idx.unsqueeze(-1).expand(-1, -1, d))
-        proposals_g = torch.gather(output_proposals, 1, topk_idx.unsqueeze(-1).expand(-1, -1, 4))
-        box_new = _bbox_from_delta(bbox_mlp(tgt_new), proposals_g, bbox_reparam)
-    finally:
-        torch.use_deterministic_algorithms(previously_deterministic)
+    tgt_new = torch.gather(output_memory, 1, topk_idx.unsqueeze(-1).expand(-1, -1, d))
+    proposals_g = torch.gather(output_proposals, 1, topk_idx.unsqueeze(-1).expand(-1, -1, 4))
+    box_new = _bbox_from_delta(bbox_mlp(tgt_new), proposals_g, bbox_reparam)
 
-    assert torch.equal(box_old, box_new)
+    torch.testing.assert_close(box_old, box_new, atol=1e-5, rtol=1e-4)
 
 
 class _ShapeRecordingLinear(nn.Module):
@@ -1299,9 +1319,23 @@ class _ShapeRecordingLinear(nn.Module):
 
     Lets a test assert how many rows the wrapped layer actually processed, independent of the values
     it produced (already covered by the ``test_two_stage_topk_gather_selects_correct_rows_*`` tests).
+
+    Examples:
+        >>> input_shapes = []
+        >>> layer = _ShapeRecordingLinear(nn.Linear(2, 3), input_shapes)
+        >>> layer(torch.zeros(1, 2)).shape
+        torch.Size([1, 3])
+        >>> input_shapes
+        [torch.Size([1, 2])]
     """
 
     def __init__(self, inner: nn.Linear, input_shapes: list[torch.Size]) -> None:
+        """Initialize the recording wrapper around a linear layer.
+
+        Args:
+            inner: Linear layer whose input shapes should be recorded.
+            input_shapes: Mutable list receiving each input shape in call order.
+        """
         super().__init__()
         self.inner = inner
         self._input_shapes = input_shapes
@@ -1314,8 +1348,9 @@ class _ShapeRecordingLinear(nn.Module):
 
 @pytest.mark.parametrize("group_detr", [1, 3], ids=["group_detr=1", "group_detr=3"])
 @pytest.mark.parametrize("bbox_reparam", [False, True], ids=["bbox_reparam=False", "bbox_reparam=True"])
+@pytest.mark.parametrize("num_queries", [3, 20], ids=["topk_smaller_than_encoder_memory", "topk_equals_encoder_memory"])
 def test_two_stage_bbox_embed_only_runs_on_selected_rows_not_full_encoder_memory(
-    group_detr: int, bbox_reparam: bool
+    group_detr: int, bbox_reparam: bool, num_queries: int
 ) -> None:
     """The bbox-delta MLP must only run on the rows torch.topk selects, not on every encoder position.
 
@@ -1340,10 +1375,10 @@ def test_two_stage_bbox_embed_only_runs_on_selected_rows_not_full_encoder_memory
     is actually used in production unchecked.
     """
     torch.manual_seed(0)
-    hidden_dim, num_queries = 16, 3
+    hidden_dim = 16
     spatial_shapes_hw = [(4, 4), (2, 2)]
     total_hw = sum(ht * wd for ht, wd in spatial_shapes_hw)
-    assert total_hw > num_queries  # sanity: some rows must be discarded for this to matter
+    assert total_hw >= num_queries  # also cover the topk == encoder-memory boundary
 
     srcs = [torch.randn(1, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
     masks = [torch.zeros(1, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]

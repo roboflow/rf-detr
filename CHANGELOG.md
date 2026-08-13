@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- `Transformer.forward`'s two-stage query selection now gathers the `torch.topk`-selected rows *before* running the bbox-delta MLP (`enc_out_bbox_embed`), not after — the MLP is pointwise with no cross-token mixing, so it only ever needs the `num_queries` rows that survive selection, not every one of the `sum(H*W)` encoder positions.
+- `Transformer.forward`'s two-stage query selection now gathers the `torch.topk`-selected rows *before* running the bbox-delta MLP (`enc_out_bbox_embed`), not after — the MLP is pointwise with no cross-token mixing, so it only ever needs at most `num_queries` rows that survive selection, not every one of the `sum(H*W)` encoder positions.
 
 ### Fixed
 

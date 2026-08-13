@@ -371,8 +371,9 @@ class Transformer(nn.Module):
                 # Ranking needs every position's class score, but the box MLP is a pointwise (no
                 # cross-token mixing) transform of a single token's features -- gather the selected
                 # tokens first and run the MLP only on those, instead of on every encoder position and
-                # discarding all but ``topk`` of the results. Mathematically identical to running it on
-                # the full ``output_memory_gidx``/``output_proposals`` and gathering afterwards.
+                # discarding all but ``topk`` of the results. This is equivalent only while
+                # ``enc_out_bbox_embed`` remains token-pointwise; a future stateful or cross-token head
+                # must move the MLP back before this gather.
                 output_proposals_gidx = torch.gather(
                     output_proposals, 1, topk_proposals_gidx.unsqueeze(-1).expand(-1, -1, 4)
                 )
