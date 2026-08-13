@@ -36,6 +36,8 @@ class PostProcess(nn.Module):
         upsample_masks_to_image_size: bool = True,
     ) -> None:
         super().__init__()
+        if num_select < 0:
+            raise ValueError(f"num_select must be non-negative; got {num_select}")
         self.num_select = num_select
         self.num_keypoints_per_class = num_keypoints_per_class or []
         self.trace_alpha = trace_alpha
@@ -160,7 +162,11 @@ class PostProcess(nn.Module):
         prob = out_logits.sigmoid()
         logits_for_topk = prob.view(out_logits.shape[0], -1)
         num_to_select = min(self.num_select, logits_for_topk.shape[1])
-        topk_values, topk_indexes = torch.topk(logits_for_topk, num_to_select, dim=1)
+        # Use the same deterministic tie rule as the torch-free export decoders: descending
+        # score, then ascending flattened query/class index.
+        sorted_indexes = torch.argsort(logits_for_topk, dim=1, descending=True, stable=True)
+        topk_indexes = sorted_indexes[:, :num_to_select]
+        topk_values = logits_for_topk.gather(1, topk_indexes)
         scores = topk_values
         topk_boxes = topk_indexes // out_logits.shape[2]
         labels = topk_indexes % out_logits.shape[2]

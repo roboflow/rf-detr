@@ -4,17 +4,13 @@ description: Per-version migration guide for RF-DETR. Covers breaking changes an
 
 # Migration Guide
 
-Read each section between your current version and your target — every section covers
-only the delta between two adjacent releases.
+Read each section between your current version and your target — every section covers only the delta between two adjacent releases.
 
 ```
 1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9
 ```
 
-You can apply all changes in one go; working through sections one release at a time
-and verifying between each step is optional but makes failures easier to isolate.
-Deprecated APIs emit a `DeprecationWarning` until the version marked for removal.
-See the [Changelog](../changelog.md) for the full list of changes in each release.
+You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs emit a `DeprecationWarning` until the version marked for removal. See the [Changelog](../changelog.md) for the full list of changes in each release.
 
 ---
 
@@ -24,9 +20,7 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
 
 !!! warning "Breaking: `albumentations` and `kornia` extras merged into `augment`"
 
-    **PyPI extras renamed.** Default training/validation/prediction/export augmentations now use
-    torchvision-native transforms, so `[train]` no longer installs Albumentations. Custom CPU
-    (Albumentations) and GPU (Kornia) augmentation both live behind a single new `augment` extra.
+    **PyPI extras renamed.** Default training/validation/prediction/export augmentations now use torchvision-native transforms, so `[train]` no longer installs Albumentations. Custom CPU (Albumentations) and GPU (Kornia) augmentation both live behind a single new `augment` extra.
 
     | Old extra                                | New extra               |
     | ---------------------------------------- | ----------------------- |
@@ -45,17 +39,11 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
 
 !!! note "`augmentation_backend` values renamed"
 
-    `augmentation_backend="tv"` and `"albu"` are renamed to `"torchvision"` and
-    `"albumentations"`. The old strings (and `"gpu"`) still work as aliases, so no code
-    changes are required — see [Augmentation Backend Values](../learn/train/augmentations.md#augmentation-backend-values)
-    for the full accepted set.
+    `augmentation_backend="tv"` and `"albu"` are renamed to `"torchvision"` and `"albumentations"`. The old strings (and `"gpu"`) still work as aliases, so no code changes are required — see [Augmentation Backend Values](../learn/train/augmentations.md#augmentation-backend-values) for the full accepted set.
 
 !!! warning "Breaking: default resize interpolation changed — pixel values and mAP may shift"
 
-    The default resize backend changed from Albumentations (cv2 `INTER_LINEAR`, no antialias) to
-    torchvision (`BILINEAR` + `antialias=True`). Resized pixel values differ slightly from previous
-    versions, and mAP may drift on existing benchmarks. **This affects training as well as
-    validation and test preprocessing** — not just the training split.
+    The default resize backend changed from Albumentations (cv2 `INTER_LINEAR`, no antialias) to torchvision (`BILINEAR` + `antialias=True`). Resized pixel values differ slightly from previous versions, and mAP may drift on existing benchmarks. **This affects training as well as validation and test preprocessing** — not just the training split.
 
     To restore the previous pixel-exact behaviour:
 
@@ -69,11 +57,7 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     train_config = TrainConfig(aug_config=AUG_CONFIG, ...)
     ```
 
-    Installing `rfdetr[augment]` alone is **not** sufficient to pin this behaviour — with
-    Albumentations installed, `augmentation_backend="auto"`/`"cpu"` (the default) auto-selects
-    Albumentations for you, but identical code on a machine without `[augment]` installed silently
-    falls back to torchvision instead. The only setting that pins resize behaviour regardless of
-    what is installed is:
+    Installing `rfdetr[augment]` alone is **not** sufficient to pin this behaviour — with Albumentations installed, `augmentation_backend="auto"`/`"cpu"` (the default) auto-selects Albumentations for you, but identical code on a machine without `[augment]` installed silently falls back to torchvision instead. The only setting that pins resize behaviour regardless of what is installed is:
 
     ```python
     train_config = TrainConfig(augmentation_backend="torchvision", ...)
@@ -144,8 +128,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `RFDETR.optimize_for_inference()` renamed to `RFDETR.inference()`"
 
-    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=...)`** — renamed to
-    `inference()` with the same signature.
+    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=...)`** — renamed to `inference()` with the same signature.
 
     ```python
     # Before (deprecated)
@@ -157,9 +140,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `TrainConfig.lr_drop` and `TrainConfig.lr_min_factor`"
 
-    **`lr_drop` / `lr_min_factor`** — pass them through `lr_scheduler_kwargs` instead. For the managed
-    `"step"` / `"cosine"` presets the fields are still folded into `lr_scheduler_kwargs` (with a
-    `FutureWarning`); set with an explicit scheduler they are inert and warn.
+    **`lr_drop` / `lr_min_factor`** — pass them through `lr_scheduler_kwargs` instead. For the managed `"step"` / `"cosine"` presets the fields are still folded into `lr_scheduler_kwargs` (with a `FutureWarning`); set with an explicit scheduler they are inert and warn.
 
     ```python
     # Before (deprecated)
@@ -177,8 +158,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Breaking in v1.8.2: default keypoint schema changed to active-first `[17]`"
 
-    New checkpoints created from v1.8.2 onwards use `class_id=0` for person. Legacy `[0, 17]` checkpoints
-    are still supported — RF-DETR auto-detects the schema from the checkpoint at load time.
+    New checkpoints created from v1.8.2 onwards use `class_id=0` for person. Legacy `[0, 17]` checkpoints are still supported — RF-DETR auto-detects the schema from the checkpoint at load time.
 
     If your post-processing code offsets class IDs by 1 (common for background-first models), update it:
 
@@ -208,8 +188,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! warning "Breaking: `supervision>=0.29.0` now required"
 
-    Required for `sv.KeyPoints` support. `pip install rfdetr==1.8.0` pulls this automatically.
-    If another dependency pins `supervision<0.29.0`, resolve the conflict manually.
+    Required for `sv.KeyPoints` support. `pip install rfdetr==1.8.0` pulls this automatically. If another dependency pins `supervision<0.29.0`, resolve the conflict manually.
 
 !!! warning "Breaking: `pyDeprecate` constraint narrowed to `>=0.9,<0.10`"
 
@@ -227,8 +206,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! warning "Breaking: `peft` removed from the default install"
 
-    LoRA fine-tuning now requires the `lora` extra. If you use LoRA adapters during
-    training, update your install command.
+    LoRA fine-tuning now requires the `lora` extra. If you use LoRA adapters during training, update your install command.
 
     ```bash
     # Before
@@ -262,8 +240,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `build_namespace()` split into two functions"
 
-    **`build_namespace(model_config, train_config)`** — use `build_model_from_config` or
-    `build_criterion_from_config` instead.
+    **`build_namespace(model_config, train_config)`** — use `build_model_from_config` or `build_criterion_from_config` instead.
 
     ```python
     # Before (deprecated)
@@ -280,8 +257,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `load_pretrain_weights()` no longer takes `train_config`"
 
-    **`load_pretrain_weights(nn_model, model_config, train_config)`** — drop the
-    `train_config` positional argument.
+    **`load_pretrain_weights(nn_model, model_config, train_config)`** — drop the `train_config` positional argument.
 
     ```python
     # Before (deprecated)
@@ -320,9 +296,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `RFDETRBase` replaced by size-specific classes"
 
-    **`RFDETRBase`** defaulted to the small variant and is replaced by size-specific
-    classes. Choose the variant that matches your previous model size. If you used
-    `RFDETRBase()` without arguments, switch to `RFDETRSmall()`.
+    **`RFDETRBase`** defaulted to the small variant and is replaced by size-specific classes. Choose the variant that matches your previous model size. If you used `RFDETRBase()` without arguments, switch to `RFDETRSmall()`.
 
     ```python
     # Before (deprecated)
@@ -338,9 +312,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `RFDETRSegPreview` replaced by size-specific segmentation classes"
 
-    **`RFDETRSegPreview`** defaulted to the small variant and is replaced by size-specific
-    segmentation classes. If you used `RFDETRSegPreview()` without arguments, switch to
-    `RFDETRSegSmall()`.
+    **`RFDETRSegPreview`** defaulted to the small variant and is replaced by size-specific segmentation classes. If you used `RFDETRSegPreview()` without arguments, switch to `RFDETRSegSmall()`.
 
     ```python
     # Before (deprecated)
@@ -364,8 +336,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
     **`transformers` minimum version raised to `>=5.1.0,<6.0.0`.**
 
-    Projects pinned to `transformers<5.0.0` must upgrade. If upgrading is not possible,
-    pin `rfdetr<1.6.0`.
+    Projects pinned to `transformers<5.0.0` must upgrade. If upgrading is not possible, pin `rfdetr<1.6.0`.
 
     ```bash
     pip install 'transformers>=5.1.0,<6.0.0'
@@ -410,8 +381,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `simplify` and `force` arguments in `RFDETR.export()`"
 
-    **`RFDETR.export(..., simplify=..., force=...)`** — both arguments are no-ops.
-    Remove them from your calls.
+    **`RFDETR.export(..., simplify=..., force=...)`** — both arguments are no-ops. Remove them from your calls.
 
     ```python
     # Before (deprecated)
@@ -425,8 +395,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `rfdetr.util.*` and `rfdetr.deploy.*` import paths"
 
-    Backward-compatibility shims are still active but emit `DeprecationWarning` on import.
-    Replace with the canonical paths listed in the table below.
+    Backward-compatibility shims are still active but emit `DeprecationWarning` on import. Replace with the canonical paths listed in the table below.
 
     | Deprecated module                 | Canonical replacement              |
     | --------------------------------- | ---------------------------------- |
@@ -478,8 +447,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
     **`ModelConfig` now raises `ValidationError` on unknown keyword arguments.**
 
-    Previously, unrecognised fields were silently ignored. Remove or rename any
-    unrecognised keys you pass to `ModelConfig(...)`.
+    Previously, unrecognised fields were silently ignored. Remove or rename any unrecognised keys you pass to `ModelConfig(...)`.
 
     ```python
     # Before — silently accepted
@@ -493,9 +461,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `OPEN_SOURCE_MODELS` replaced by `ModelWeights` enum"
 
-    **`OPEN_SOURCE_MODELS` constant** — use the `ModelWeights` enum instead. A
-    `DeprecationWarning` is emitted on access. See the
-    [API reference](../reference/rfdetr.md) for available enum values.
+    **`OPEN_SOURCE_MODELS` constant** — use the `ModelWeights` enum instead. A `DeprecationWarning` is emitted on access. See the [API reference](../reference/rfdetr.md) for available enum values.
 
     ```python
     # Before (deprecated)

@@ -20,9 +20,7 @@ TensorBoard logging is enabled by default. Pass `tensorboard=False` to disable i
 
 !!! note "Missing package behaviour"
 
-    If the `tensorboard` package is not installed, training continues without error — a
-    `UserWarning` is emitted and TensorBoard logging is silently suppressed. Install
-    `rfdetr[loggers]` to avoid this.
+    If the `tensorboard` package is not installed, training continues without error — a `UserWarning` is emitted and TensorBoard logging is silently suppressed. Install `rfdetr[loggers]` to avoid this.
 
 ### Setup
 
@@ -309,8 +307,6 @@ trainer.loggers.append(CSVLogger(save_dir="output", name="extra"))
 trainer.fit(module, datamodule)
 ```
 
-CSVLogger is always active (it requires no extra packages). All logged metric keys — `train/loss`, `val/mAP_50_95`,
-`val/keypoint_map_50_95`, `val/F1`, `val/ema_mAP_50_95`, `val/AP/<class>`, etc. — are written to every logger in the
-list.
+CSVLogger is always active (it requires no extra packages). All logged metric keys — `train/loss`, `val/mAP_50_95`, `val/keypoint_map_50_95`, `val/F1`, `val/ema_mAP_50_95`, `val/AP/<class>`, etc. — are written to every logger in the list.
 
 → **[Full list of logged metrics](customization.md#logged-metrics-reference)**
