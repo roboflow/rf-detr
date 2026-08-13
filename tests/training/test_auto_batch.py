@@ -710,6 +710,7 @@ def test_train_auto_batch_ensures_model_on_device_before_resolve(
     assert call_order == ["ensure", "resolve"]
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for segmentation probe")
 def test_probe_step_with_real_segmentation_criterion(tmp_path):
     """Run one probe step with real segmentation model and criterion so loss_masks and t['masks'] are exercised."""
