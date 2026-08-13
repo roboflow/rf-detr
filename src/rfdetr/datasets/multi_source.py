@@ -15,12 +15,13 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from itertools import pairwise
-from math import ceil
+from math import ceil, isfinite
 from typing import Any, Literal
 
 import torch
 from torch.utils.data import ConcatDataset, Sampler
 
+from rfdetr.utilities.distributed import get_rank, get_world_size
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -28,6 +29,83 @@ logger = get_logger()
 # Weights are converted to integers on this scale so the largest-remainder allocation below is exact. Float remainders
 # would make ties resolve by rounding error (e.g. ``0.6 * 16 - 9`` compares as slightly less than ``0.1 * 16 - 1``).
 _WEIGHT_SCALE = 1_000_000
+
+
+def _validate_and_scale_weights(batch_size: int, weights: Sequence[float]) -> list[int]:
+    """Check the allocation inputs and convert the weights to the internal integer scale.
+
+    Args:
+        batch_size: Number of samples in one batch.
+        weights: Relative sampling weight per source.
+
+    Returns:
+        The weights on the ``_WEIGHT_SCALE`` integer scale, in the same order as ``weights``.
+
+    Raises:
+        ValueError: If ``batch_size`` is not positive, ``weights`` is empty, any weight is not finite and strictly
+            positive, or any weight rounds to zero at 1e-6 precision.
+
+    Example:
+        >>> _validate_and_scale_weights(8, [0.6, 0.4])
+        [600000, 400000]
+    """
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+    if len(weights) == 0:
+        raise ValueError("weights must contain at least one source")
+    invalid = [(index, weight) for index, weight in enumerate(weights) if not (isfinite(weight) and weight > 0)]
+    if invalid:
+        raise ValueError(
+            f"weights must be finite and strictly positive, got invalid entries at (index, value): {invalid}. "
+            "To exclude a source, drop it from the sampler instead of giving it zero weight."
+        )
+
+    scaled = [round(float(weight) * _WEIGHT_SCALE) for weight in weights]
+    # A weight that survives the positivity check can still round to zero, which the allocation below would silently
+    # turn into a full guaranteed slot — the opposite of what such a weight asks for.
+    underflowed = [(index, weights[index]) for index, value in enumerate(scaled) if value == 0]
+    if underflowed:
+        raise ValueError(
+            f"weights are too small to be represented at 1e-6 precision, at (index, value): {underflowed}. "
+            "To exclude a source, drop it from the sampler instead of giving it a negligible weight."
+        )
+    return scaled
+
+
+def _rebalance_counts(counts: list[int], remainders: list[int], scaled: list[int], shortfall: int) -> list[int]:
+    """Hand back the slots that the one-slot-per-source guarantee over-allocated.
+
+    Slots are reclaimed from the smallest remainders first and no source is ever dropped to zero. A single pass frees
+    at most one slot per source, which is not always enough (a dominant weight can be clamped up by more slots than
+    there are other sources), so passes repeat until the counts balance. Every pass either reaches the target or
+    shrinks a count towards 1, and ``batch_size >= len(counts)`` whenever the clamp fires, so enough slack always
+    exists; the empty-``reclaimable`` guard only keeps the loop bounded.
+
+    Args:
+        counts: Per-source slot counts, over-allocated by ``-shortfall`` slots.
+        remainders: Largest-remainder tie-breaker per source, in the same order as ``counts``.
+        scaled: Weights on the ``_WEIGHT_SCALE`` integer scale, in the same order as ``counts``.
+        shortfall: Negative number of slots that have to be handed back.
+
+    Returns:
+        Balanced per-source slot counts.
+
+    Example:
+        >>> _rebalance_counts([3, 1, 1, 1], [600000, 160000, 120000, 120000], [900000, 40000, 30000, 30000], -2)
+        [1, 1, 1, 1]
+    """
+    balanced = list(counts)
+    order = sorted(range(len(balanced)), key=lambda index: (remainders[index], scaled[index], index))
+    while shortfall < 0:
+        reclaimable = [index for index in order if balanced[index] > 1]
+        if not reclaimable:
+            break
+        for index in reclaimable:
+            if shortfall == 0:
+                break
+            balanced[index] -= 1
+            shortfall += 1
+    return balanced
 
 
 def compute_source_batch_sizes(batch_size: int, weights: Sequence[float]) -> list[int]:
@@ -40,13 +118,15 @@ def compute_source_batch_sizes(batch_size: int, weights: Sequence[float]) -> lis
     Args:
         batch_size: Number of samples in one batch.
         weights: Relative sampling weight per source. Weights need not sum to 1; they are normalised internally. All
-            weights must be strictly positive.
+            weights must be finite, strictly positive, and no smaller than ``1e-6``, which is the precision the
+            allocation works at.
 
     Returns:
         Per-source sample counts, in the same order as ``weights``, summing to ``batch_size``.
 
     Raises:
-        ValueError: If ``batch_size`` is not positive, ``weights`` is empty, or any weight is not strictly positive.
+        ValueError: If ``batch_size`` is not positive, ``weights`` is empty, any weight is not finite and strictly
+            positive, or any weight rounds to zero at 1e-6 precision.
 
     Example:
         >>> compute_source_batch_sizes(16, [0.6, 0.3, 0.1])
@@ -54,21 +134,8 @@ def compute_source_batch_sizes(batch_size: int, weights: Sequence[float]) -> lis
         >>> compute_source_batch_sizes(8, [0.9, 0.04, 0.03, 0.03])  # the minimum of one slot each costs the leader
         [5, 1, 1, 1]
     """
-    if batch_size < 1:
-        raise ValueError(f"batch_size must be >= 1, got {batch_size}")
-    if len(weights) == 0:
-        raise ValueError("weights must contain at least one source")
-    non_positive = [(index, weight) for index, weight in enumerate(weights) if not weight > 0]
-    if non_positive:
-        raise ValueError(
-            f"weights must be strictly positive, got non-positive entries at (index, value): {non_positive}. "
-            "To exclude a source, drop it from the sampler instead of giving it zero weight."
-        )
-
-    scaled = [round(float(weight) * _WEIGHT_SCALE) for weight in weights]
+    scaled = _validate_and_scale_weights(batch_size, weights)
     total = sum(scaled)
-    if total <= 0:
-        raise ValueError(f"weights are too small to be represented at 1e-6 precision: {list(weights)}")
 
     counts: list[int] = []
     remainders: list[int] = []
@@ -88,24 +155,52 @@ def compute_source_batch_sizes(batch_size: int, weights: Sequence[float]) -> lis
         for index in order[:shortfall]:
             counts[index] += 1
     elif shortfall < 0:
-        # The guarantee above over-allocated; reclaim from the smallest remainders, never dropping a source to zero. A
-        # single pass frees at most one slot per source, which is not always enough (a dominant weight can be clamped
-        # up by more slots than there are other sources), so keep passing until the counts balance. Every pass either
-        # reaches the target or shrinks a count towards 1, and ``batch_size >= len(weights)`` whenever the clamp fires,
-        # so enough slack always exists; the empty-``reclaimable`` guard only keeps the loop bounded.
-        order = sorted(range(len(weights)), key=lambda index: (remainders[index], scaled[index], index))
-        while shortfall < 0:
-            reclaimable = [index for index in order if counts[index] > 1]
-            if not reclaimable:
-                break
-            for index in reclaimable:
-                if shortfall == 0:
-                    break
-                counts[index] -= 1
-                shortfall += 1
+        # The guarantee above over-allocated, so give the surplus slots back.
+        counts = _rebalance_counts(counts, remainders, scaled, shortfall)
 
     assert sum(counts) == batch_size, f"allocation {counts} does not sum to batch_size={batch_size}"
     return counts
+
+
+def _resolve_distributed_layout(num_replicas: int | None, rank: int | None) -> tuple[int, int]:
+    """Resolve the DDP layout, defaulting to the live ``torch.distributed`` process group.
+
+    Defaulting matters: a sampler built with ``num_replicas=1`` inside a DDP run hands every rank the identical batch
+    stream, which duplicates gradients silently instead of failing.
+
+    Args:
+        num_replicas: Number of DDP processes, or ``None`` to read the world size from ``torch.distributed``.
+        rank: Rank of the current process, or ``None`` to read it from ``torch.distributed``.
+
+    Returns:
+        The resolved ``(num_replicas, rank)`` pair.
+
+    Raises:
+        ValueError: If the resolved ``num_replicas`` is below 1, or the resolved ``rank`` falls outside
+            ``[0, num_replicas)``.
+
+    Example:
+        >>> _resolve_distributed_layout(None, None)  # no process group: single-process defaults
+        (1, 0)
+        >>> _resolve_distributed_layout(4, 3)  # explicit values are used as given
+        (4, 3)
+    """
+    resolved_replicas = get_world_size() if num_replicas is None else int(num_replicas)
+    resolved_rank = get_rank() if rank is None else int(rank)
+    if resolved_replicas < 1:
+        raise ValueError(f"num_replicas must be >= 1, got {resolved_replicas}")
+    if not 0 <= resolved_rank < resolved_replicas:
+        raise ValueError(f"rank must be in [0, {resolved_replicas}), got {resolved_rank}")
+
+    world_size = get_world_size()
+    if resolved_replicas == 1 and world_size > 1:
+        logger.warning(
+            "num_replicas=1 while torch.distributed reports a world size of %d: every rank would iterate the same "
+            "batch stream and see the same samples. Leave num_replicas and rank unset to shard across the live "
+            "process group.",
+            world_size,
+        )
+    return resolved_replicas, resolved_rank
 
 
 class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
@@ -123,6 +218,8 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
     Under DDP each rank consumes a disjoint stride of the global batch stream (``rank``, ``rank + num_replicas``, ...),
     mirroring :class:`~torch.utils.data.distributed.DistributedSampler`. The number of global batches is truncated to a
     multiple of ``num_replicas`` so every rank runs the same number of steps and no rank stalls in gradient all-reduce.
+    ``num_replicas`` and ``rank`` default to the live ``torch.distributed`` process group, so a DDP run shards itself
+    without extra wiring; passing them explicitly overrides that.
 
     Like :class:`~torch.utils.data.distributed.DistributedSampler`, :meth:`set_epoch` must be called at the start of
     each epoch, otherwise every epoch reuses the same shuffle.
@@ -144,8 +241,10 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
             batch is always produced (even when the driving source is smaller than its per-batch slot count), so
             ``drop_last=True`` will not reduce an epoch to zero batches for tiny datasets.
         shuffle: Whether to shuffle indices within each source.
-        num_replicas: Number of DDP processes participating.
-        rank: Rank of the current process, in ``[0, num_replicas)``.
+        num_replicas: Number of DDP processes participating. ``None`` (the default) reads the world size from the live
+            ``torch.distributed`` process group, which is 1 outside DDP; pass an integer to override.
+        rank: Rank of the current process, in ``[0, num_replicas)``. ``None`` (the default) reads the rank from the
+            live ``torch.distributed`` process group, which is 0 outside DDP; pass an integer to override.
         seed: Base seed shared by all ranks; combined with the epoch to shuffle identically across ranks.
         epoch_length: Which source defines the length of an epoch — ``"largest"`` (every sample of the biggest source
             is seen roughly once per epoch, smaller sources cycle), ``"smallest"`` (the smallest source is seen once
@@ -173,8 +272,8 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         *,
         drop_last: bool = True,
         shuffle: bool = True,
-        num_replicas: int = 1,
-        rank: int = 0,
+        num_replicas: int | None = None,
+        rank: int | None = None,
         seed: int = 0,
         epoch_length: Literal["largest", "smallest"] | int = "largest",
     ) -> None:
@@ -187,18 +286,15 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         empty = [index for index, size in enumerate(source_sizes) if size <= 0]
         if empty:
             raise ValueError(f"every source must be non-empty, got empty sources at indices {empty}")
-        if num_replicas < 1:
-            raise ValueError(f"num_replicas must be >= 1, got {num_replicas}")
-        if not 0 <= rank < num_replicas:
-            raise ValueError(f"rank must be in [0, {num_replicas}), got {rank}")
+        resolved_replicas, resolved_rank = _resolve_distributed_layout(num_replicas, rank)
 
         self.source_sizes = [int(size) for size in source_sizes]
         self.weights = [float(weight) for weight in weights]
         self.batch_size = int(batch_size)
         self.drop_last = bool(drop_last)
         self.shuffle = bool(shuffle)
-        self.num_replicas = int(num_replicas)
-        self.rank = int(rank)
+        self.num_replicas = resolved_replicas
+        self.rank = resolved_rank
         self.seed = int(seed)
         self.epoch = 0
 
@@ -238,8 +334,8 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         *,
         drop_last: bool = True,
         shuffle: bool = True,
-        num_replicas: int = 1,
-        rank: int = 0,
+        num_replicas: int | None = None,
+        rank: int | None = None,
         seed: int = 0,
         epoch_length: Literal["largest", "smallest"] | int = "largest",
     ) -> "WeightedMultiSourceBatchSampler":
@@ -257,8 +353,10 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
             batch_size: Number of samples per batch on a single rank.
             drop_last: Whether to drop the final partial batch of the driving source.
             shuffle: Whether to shuffle indices within each source.
-            num_replicas: Number of DDP processes participating.
-            rank: Rank of the current process, in ``[0, num_replicas)``.
+            num_replicas: Number of DDP processes participating, or ``None`` to read the world size from the live
+                ``torch.distributed`` process group.
+            rank: Rank of the current process, in ``[0, num_replicas)``, or ``None`` to read it from the live
+                ``torch.distributed`` process group.
             seed: Base seed shared by all ranks.
             epoch_length: Source that defines the epoch length; see the class docstring.
 
@@ -406,7 +504,11 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         generator = torch.Generator()
         generator.manual_seed(self.seed + self.epoch)
 
-        streams = [self._shuffled_indices(index, generator) for index in range(len(self.source_sizes))]
+        # A starved source (zero slots per batch) is never drawn from, so shuffling it would only burn RNG draws.
+        streams = [
+            self._shuffled_indices(index, generator) if self.source_batch_sizes[index] else []
+            for index in range(len(self.source_sizes))
+        ]
         cursors = [0] * len(self.source_sizes)
 
         def draw(source: int, count: int) -> list[int]:
