@@ -135,9 +135,8 @@ def _assert_results_equal(actual: list[dict[str, Any]], expected: list[dict[str,
 
 
 class TestSweepConfidenceThresholdsMatchesReference:
-    """sweep_confidence_thresholds must return numerically identical results to the O(T*N) reference
-    it replaced, across random data, empty classes, all-ignored classes, and threshold/score ties.
-    """
+    """sweep_confidence_thresholds must return numerically identical results to the O(T*N) reference it replaced, across
+    random data, empty classes, all-ignored classes, and threshold/score ties."""
 
     @pytest.mark.parametrize("seed", [0, 1, 2, 3, 4], ids=lambda s: f"seed={s}")
     def test_matches_reference_on_random_data(self, seed: int) -> None:
@@ -180,8 +179,8 @@ class TestSweepConfidenceThresholdsMatchesReference:
         assert actual[0]["macro_precision"] == 0.0  # tp+fp==0 when everything is ignored
 
     def test_matches_reference_with_scores_exactly_on_threshold_boundaries(self) -> None:
-        """`scores >= conf_thresh` is inclusive; a detection scored exactly at a threshold must count
-        as above it in both implementations, and thresholds are chosen to land exactly on scores."""
+        """`scores >= conf_thresh` is inclusive; a detection scored exactly at a threshold must count as above it in
+        both implementations, and thresholds are chosen to land exactly on scores."""
         per_class_data = [
             {
                 "scores": np.array([0.3, 0.3, 0.7, 0.7, 1.0]),
@@ -198,10 +197,12 @@ class TestSweepConfidenceThresholdsMatchesReference:
         _assert_results_equal(actual, expected)
 
     def test_matches_reference_with_nan_scores(self) -> None:
-        """A NaN score fails `scores >= conf_thresh` for every threshold, so the O(T*N) reference
-        always excludes it. `np.argsort` sorts NaN to the end of ascending order, which would put it
-        in the "above every threshold" suffix if not masked out the same way `ignore` is -- this
-        regresses `macro_f1` from 0.0 to 1.0 for the exact case below if the mask is dropped."""
+        """A NaN score fails `scores >= conf_thresh` for every threshold, so the O(T*N) reference always excludes it.
+
+        `np.argsort` sorts NaN to the end of ascending order, which would put it in the "above every threshold" suffix
+        if not masked out the same way `ignore` is -- this regresses `macro_f1` from 0.0 to 1.0 for the exact case below
+        if the mask is dropped.
+        """
         per_class_data = [
             {
                 "scores": np.array([np.nan]),
@@ -220,9 +221,9 @@ class TestSweepConfidenceThresholdsMatchesReference:
 
     def test_matches_reference_with_generator_conf_thresholds(self) -> None:
         """conf_thresholds is documented as any iterable, including a one-shot generator -- pins that
-        sweep_confidence_thresholds materializes it exactly once instead of consuming it partway
-        through (e.g. once to measure its length, again to iterate results), which would silently
-        return fewer thresholds than requested for a genuinely single-pass iterable."""
+        sweep_confidence_thresholds materializes it exactly once instead of consuming it partway through (e.g. once to
+        measure its length, again to iterate results), which would silently return fewer thresholds than requested for a
+        genuinely single-pass iterable."""
         per_class_data = [
             {
                 "scores": np.array([0.9, 0.4]),
@@ -233,18 +234,15 @@ class TestSweepConfidenceThresholdsMatchesReference:
         ]
         thresholds_list = [0.0, 0.5, 1.0]
 
-        actual = sweep_confidence_thresholds(
-            per_class_data, (t for t in thresholds_list), classes_with_gt=[0]
-        )
+        actual = sweep_confidence_thresholds(per_class_data, (t for t in thresholds_list), classes_with_gt=[0])
 
         assert len(actual) == len(thresholds_list)
         assert [r["confidence_threshold"] for r in actual] == pytest.approx(thresholds_list)
 
 
 class TestSweepConfidenceThresholdsBasicCorrectness:
-    """A few hand-computed cases pin the actual precision/recall/F1 values, independent of the
-    reference-equivalence tests above (which would pass even if both implementations shared the same
-    bug)."""
+    """A few hand-computed cases pin the actual precision/recall/F1 values, independent of the reference-equivalence
+    tests above (which would pass even if both implementations shared the same bug)."""
 
     def test_all_correct_detections_gives_perfect_scores(self) -> None:
         per_class_data = [
