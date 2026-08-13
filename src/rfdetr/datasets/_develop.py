@@ -169,9 +169,9 @@ class _SimpleDataset:
             image, target = self.transforms(image, target)
 
         # Convert PIL Image to tensor
-        image = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
+        tensor_image = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
 
-        return image, target
+        return tensor_image, target
 
 
 _DOWNLOAD_MAX_ATTEMPTS: int = 3
