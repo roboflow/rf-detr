@@ -302,7 +302,7 @@ class RFDETRDataModule(LightningDataModule):
             try:
                 return build_dataset("test", ns, resolution)
             except YoloSplitUnavailableError as exc:
-                dataset_label = "Roboflow" if dataset_file == "roboflow" else "YOLO"
+                dataset_label = {"roboflow": "Roboflow", "yolo": "YOLO"}[dataset_file]
                 logger.warning(
                     "No resolvable 'test' split for this %s dataset (%s); evaluating the 'val' split instead.",
                     dataset_label,
