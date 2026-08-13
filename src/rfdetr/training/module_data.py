@@ -278,9 +278,14 @@ class RFDETRDataModule(LightningDataModule):
     def _build_test_dataset(self, ns: Any, resolution: int) -> torch.utils.data.Dataset[Any]:
         """Build the dataset backing ``setup("test")``, preferring a real test split.
 
-        ``roboflow`` and ``yolo`` datasets carry a labelled ``test`` split, so it is used directly.  A YOLO dataset is
-        not required to declare one; when the split cannot be resolved the ``val`` split is used instead and the
-        substitution is logged, because falling back silently reports validation numbers under the name "test".
+        ``roboflow`` and ``yolo`` datasets carry a labelled ``test`` split, so it is used directly.  A YOLO-format
+        dataset is not required to declare one: a ``roboflow`` dataset whose detected format is YOLO-style routes
+        through the same builder as ``dataset_file="yolo"`` (:func:`rfdetr.datasets.build_roboflow` ->
+        ``build_roboflow_from_yolo``), and Roboflow's export UI does not require a test split any more than a
+        hand-built YOLO dataset does. When that YOLO-style split cannot be resolved, the ``val`` split is used
+        instead and the substitution is logged, because falling back silently reports validation numbers under
+        the name "test".  A ``roboflow`` export in COCO format still has to ship ``test/_annotations.coco.json``:
+        its absence raises a plain ``FileNotFoundError`` from the COCO builder, which this fallback does not catch.
 
         ``coco`` falls back to ``val`` because its ``test`` split is unlabelled COCO test-dev and cannot be scored
         locally.  ``o365`` also falls back because its dataset builder exposes only ``train`` and ``val`` splits.
@@ -293,14 +298,14 @@ class RFDETRDataModule(LightningDataModule):
             The dataset to evaluate during the ``test`` stage.
         """
         dataset_file = self.train_config.dataset_file
-        if dataset_file == "roboflow":
-            return build_dataset("test", ns, resolution)
-        if dataset_file == "yolo":
+        if dataset_file in ("roboflow", "yolo"):
             try:
                 return build_dataset("test", ns, resolution)
             except YoloSplitUnavailableError as exc:
+                dataset_label = {"roboflow": "Roboflow", "yolo": "YOLO"}[dataset_file]
                 logger.warning(
-                    "No resolvable 'test' split for this YOLO dataset (%s); evaluating the 'val' split instead.",
+                    "No resolvable 'test' split for this %s dataset (%s); evaluating the 'val' split instead.",
+                    dataset_label,
                     str(exc),
                 )
         return build_dataset("val", ns, resolution)
