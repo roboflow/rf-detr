@@ -138,7 +138,7 @@ class _SimpleDataset:
         import torch  # lazy: keep torch off the module-load path (see class docstring)
 
         # Create synthetic image
-        image = Image.new("RGB", (640, 480))
+        image: Image.Image | torch.Tensor = Image.new("RGB", (640, 480))
 
         # Create synthetic target with varying number of boxes
         # Cycles through 1, 2, and 3 boxes to test different edge cases
@@ -167,6 +167,9 @@ class _SimpleDataset:
         # Apply transforms if any
         if self.transforms:
             image, target = self.transforms(image, target)
+
+        if isinstance(image, torch.Tensor):
+            return image, target
 
         # Convert PIL Image to tensor
         image = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
