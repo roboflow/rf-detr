@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- `Transformer.forward`'s two-stage query selection now gathers the `torch.topk`-selected rows *before* running the bbox-delta MLP (`enc_out_bbox_embed`), not after — the MLP is pointwise with no cross-token mixing, so it only ever needs the `num_queries` rows that survive selection, not every one of the `sum(H*W)` encoder positions.
+
 ### Fixed
 
 - `model.export(format="tflite")` no longer hangs forever at the ONNX → TFLite conversion step. `onnx`'s C extension and TensorFlow both statically link Abseil and export its symbols as *weak* definitions, which the dynamic loader coalesces onto whichever library loads first. Because the TFLite route runs a full ONNX export before reaching `onnx2tf`, ONNX won that race and supplied Abseil's synchronization primitives to TensorFlow, whose executor then blocked forever in `absl::Notification::WaitForNotification()` while restoring the SavedModel bundle — no traceback, no error, 0% CPU, no `.tflite`. TensorFlow is now imported before the ONNX export (`rfdetr.export._backend.preload_tensorflow_before_onnx`), and a warning is logged when the calling process had already imported `onnx` before TensorFlow (e.g. a direct `export_tflite()` call), since that order cannot be repaired in-process. Importing `onnx` *after* TensorFlow is safe and does not warn. ([#1322](https://github.com/roboflow/rf-detr/issues/1322))
