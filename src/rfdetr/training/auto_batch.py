@@ -15,6 +15,11 @@ Probe assumptions (worst-case so training does not OOM):
 - EMA: When use_ema is True, an EMA copy of the model is kept in memory. We
   apply auto_batch_ema_headroom (e.g. 0.7) to the probed batch size so the effective safe batch leaves room for the EMA
   model.
+- Optimizer state: AdamW allocates exp_avg/exp_avg_sq lazily, on its first
+  step() rather than at construction, each the same size as the trainable parameters -- so the combined state is 2x
+  that size, 3x with amsgrad. The probe runs a shadow AdamW step (see _build_shadow_optimizer) so that memory is part
+  of the estimate instead of first appearing on training's own first optimizer step. Only AdamW-shaped optimizers are
+  modeled this way (see _is_adamw_shaped); anything else gets the runtime warning in resolve_auto_batch_config.
 """
 
 from __future__ import annotations
@@ -142,8 +147,8 @@ def _build_shadow_optimizer(
     """Build an AdamW optimizer over throwaway tensors shaped like ``trainable_params``, for probing optimizer-state
     memory without ever writing to the real model's weights.
 
-    ``optimizer.step()`` needs to run against *some* set of parameters to allocate AdamW's per-
-    parameter state (``exp_avg``/``exp_avg_sq``), but running it against the real model's own
+    ``optimizer.step()`` needs to run against *some* set of parameters to allocate
+    AdamW's per-parameter state (``exp_avg``/``exp_avg_sq``), but running it against the real model's own
     parameters would apply a real (garbage, synthetic-data-derived) gradient update to weights that
     may already hold a loaded pretrained checkpoint -- corrupting them before training even starts.
     The shadow tensors this returns are separate GPU allocations of the same shape/dtype, so the
@@ -231,6 +236,30 @@ def _probe_step(
     only for parameters that carry a gradient, so those are absent from the estimate. The caller sets it for the first
     step only (every later iteration would recount the same parameters), and the report is emitted only if that step
     goes on to succeed.
+
+    Args:
+        model: The model to probe; already in train mode, and left untouched apart from its gradients.
+        criterion: The loss criterion (must match model output and target format).
+        micro_batch_size: Per-device batch size to attempt in this single step.
+        resolution: Input spatial size (square) for the synthetic images.
+        device: CUDA device the synthetic batch is allocated on.
+        num_classes: Number of classes, used to pick synthetic target labels.
+        amp: Whether to run the forward under autocast.
+        trainable_params: The model's ``requires_grad`` parameters, in the order ``shadow_params`` was built from --
+            index i of one must correspond to index i of the other, which the aliasing loop asserts.
+        shadow_optimizer: The AdamW built over ``shadow_params``; stepped here so its state is allocated and stays
+            resident for later iterations.
+        shadow_params: Throwaway tensors mirroring ``trainable_params``, which take the update in their place.
+        segmentation_head: If True, synthetic targets include "masks" so loss_masks is exercised.
+        max_targets_per_image: Number of synthetic targets per image (worst-case matcher and loss memory).
+        num_channels: Number of input image channels for the synthetic images.
+        autocast_dtype: Explicit autocast dtype; ``None`` leaves torch's own default for the device.
+        warn_missing_grads: Whether to report parameters that received no gradient (see above). Off by default so
+            only the caller's chosen step reports.
+
+    Returns:
+        True if the step ran to completion, False if it hit a CUDA OOM (the signal that this ``micro_batch_size``
+        does not fit). Any other RuntimeError propagates.
     """
     try:
         model.zero_grad(set_to_none=True)
