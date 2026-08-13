@@ -44,6 +44,10 @@ REQUIRED_DATA_SUBDIRS = ["images", "labels"]
 YOLO_IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpg", ".jpeg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
 
 
+class YoloSplitUnavailableError(FileNotFoundError):
+    """Signal that a requested YOLO split has no image directory to evaluate."""
+
+
 def _parse_yolo_box(values: list[str]) -> NDArray[np.float32]:
     """Parse a YOLO center-width-height box into relative XYXY coordinates."""
     x_center, y_center, width, height = values
@@ -754,6 +758,17 @@ def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[P
     Returns:
         ``(images_dir, labels_dir)`` as resolved :class:`~pathlib.Path` objects.
     """
+    if split == "test" and data_file.exists():
+        try:
+            declared_test_path = _load_yaml_mapping(data_file).get("test")
+        except (OSError, ValueError, TypeError, yaml.YAMLError):
+            declared_test_path = None
+        if declared_test_path is not None:
+            result = _resolve_split_from_yaml(root, data_file, split)
+            if result is None:
+                raise ValueError(f"YOLO test split declared in {data_file} could not be resolved")
+            return result
+
     result = _resolve_split_from_yaml(root, data_file, split)
     if result is not None:
         return result
@@ -771,6 +786,36 @@ def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[P
                 return candidate, candidate_labels
 
     return img_dir, lb_dir
+
+
+def _validate_yolo_test_split(images_dir: Path, labels_dir: Path) -> None:
+    """Validate the filesystem contract for a YOLO test split.
+
+    A missing image directory means that the split is unavailable and may be
+    replaced with validation data.  Once the image directory exists, an empty
+    image directory or missing labels directory is invalid test data and must
+    propagate as an error instead of being relabeled as validation data.  An
+    existing labels directory may contain omitted or empty label files for
+    legitimate background images.
+
+    Args:
+        images_dir: Resolved directory containing test images.
+        labels_dir: Resolved directory containing test labels.
+
+    Raises:
+        YoloSplitUnavailableError: If the test image directory is absent.
+        ValueError: If the test images or labels directory is unusable.
+    """
+    if not images_dir.is_dir():
+        if images_dir.is_symlink():
+            raise ValueError(f"YOLO test images directory is an invalid symlink: {images_dir}")
+        raise YoloSplitUnavailableError(f"YOLO test images directory not found: {images_dir}")
+    if not labels_dir.is_dir():
+        raise ValueError(f"YOLO test labels directory not found: {labels_dir}")
+
+    image_paths = _list_yolo_image_paths(str(images_dir))
+    if not image_paths:
+        raise ValueError(f"YOLO test images directory contains no supported images: {images_dir}")
 
 
 class ConvertYolo:
@@ -1004,6 +1049,8 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     data_file = next((root / f for f in REQUIRED_YOLO_YAML_FILES if (root / f).exists()), root / "data.yaml")
     split_key = image_set.split("_")[0]
     img_folder, lb_folder = _resolve_yolo_split_dirs(root, data_file, split_key)
+    if split_key == "test":
+        _validate_yolo_test_split(img_folder, lb_folder)
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
     multi_scale = getattr(args, "multi_scale", False)
