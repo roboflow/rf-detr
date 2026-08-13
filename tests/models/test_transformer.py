@@ -12,6 +12,7 @@ import pytest
 import torch
 from torch import nn
 
+from rfdetr.models.math import MLP
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
 from rfdetr.models.transformer import Transformer, gen_encoder_output_proposals, gen_sineembed_for_position
@@ -1179,6 +1180,114 @@ def test_two_stage_topk_gather_cuda_matches_cpu_for_out_of_position_order_indice
     assert torch.equal(cpu_selected, cuda_selected.cpu())
 
 
+def _bbox_from_delta(delta: torch.Tensor, proposals: torch.Tensor, bbox_reparam: bool) -> torch.Tensor:
+    """Reproduce Transformer.forward's two-stage box construction from a bbox-delta MLP output.
+
+    Args:
+        delta: Raw ``enc_out_bbox_embed`` output, shape ``(..., 4)``.
+        proposals: Matching ``output_proposals`` rows, shape ``(..., 4)``.
+        bbox_reparam: Selects the ``bbox_reparam`` branch (cx/cy/w/h reparam vs. plain unsigmoid add).
+
+    Returns:
+        Box tensor, shape ``(..., 4)``.
+
+    Examples:
+        >>> import torch
+        >>> delta = torch.zeros(1, 1, 4)
+        >>> proposals = torch.full((1, 1, 4), 0.5)
+        >>> torch.equal(_bbox_from_delta(delta, proposals, bbox_reparam=False), proposals)
+        True
+    """
+    if bbox_reparam:
+        return torch.cat(
+            [
+                delta[..., :2] * proposals[..., 2:] + proposals[..., :2],
+                delta[..., 2:].exp() * proposals[..., 2:],
+            ],
+            dim=-1,
+        )
+    return delta + proposals
+
+
+@pytest.mark.parametrize("bbox_reparam", [False, True], ids=["bbox_reparam=False", "bbox_reparam=True"])
+def test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_three_layer_mlp(
+    bbox_reparam: bool,
+) -> None:
+    """Gathering top-k rows before vs. after the bbox-delta MLP must match in both forward value and
+    gradient, using the real production MLP (``rfdetr.models.math.MLP(d, d, 4, num_layers=3)``,
+    matching ``LWDETR.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)`` in ``lwdetr.py``) -- not the
+    single ``nn.Linear`` stand-in ``test_two_stage_topk_gather_selects_correct_rows_out_of_position_order``
+    and the ``bbox_embed_input_shapes`` test above use, and covering gradient parity, which those
+    two only check indirectly (nonzero/zero row pattern, not old-vs-new equality).
+
+    The bbox MLP has no cross-token mixing (no LayerNorm/attention across the token dimension), so
+    ``d(mlp(x)_i)/dx_j`` is zero for every ``j != i`` -- backward is as row-independent as forward,
+    and gathering before or after the MLP must produce identical gradients w.r.t. the shared input,
+    not just identical box values.
+    """
+    torch.manual_seed(0)
+    bs, sum_hw, d, num_queries = 2, 20, 16, 3
+    bbox_mlp = MLP(d, d, 4, num_layers=3)
+    output_memory = torch.randn(bs, sum_hw, d, requires_grad=True)
+    output_proposals = torch.rand(bs, sum_hw, 4) * 0.9 + 0.05
+    topk_idx = torch.stack([torch.randperm(sum_hw)[:num_queries] for _ in range(bs)])
+
+    # Old: MLP on every row (bs, sum_hw, d), gather the box afterwards.
+    box_old_full = _bbox_from_delta(bbox_mlp(output_memory), output_proposals, bbox_reparam)
+    box_old = torch.gather(box_old_full, 1, topk_idx.unsqueeze(-1).expand(-1, -1, 4))
+    box_old.sum().backward()
+    grad_old = output_memory.grad.clone()
+    output_memory.grad = None
+
+    # New (this fix): gather the selected rows first, run the MLP only on those.
+    tgt_new = torch.gather(output_memory, 1, topk_idx.unsqueeze(-1).expand(-1, -1, d))
+    proposals_g = torch.gather(output_proposals, 1, topk_idx.unsqueeze(-1).expand(-1, -1, 4))
+    box_new = _bbox_from_delta(bbox_mlp(tgt_new), proposals_g, bbox_reparam)
+    box_new.sum().backward()
+    grad_new = output_memory.grad.clone()
+
+    assert torch.equal(box_old, box_new)
+    assert torch.equal(grad_old, grad_new)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.parametrize("bbox_reparam", [False, True], ids=["bbox_reparam=False", "bbox_reparam=True"])
+def test_two_stage_bbox_mlp_gather_order_matches_on_cuda_for_real_three_layer_mlp(bbox_reparam: bool) -> None:
+    """CUDA twin of test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_three_layer_mlp:
+    the same gather-before-vs-after-MLP comparison, but running the real bbox MLP itself on CUDA (not
+    only the bare ``torch.gather`` isolated by
+    test_two_stage_topk_gather_cuda_matches_cpu_for_out_of_position_order_indices).
+
+    Deliberately compares old-order-on-CUDA against new-order-on-CUDA (both on the same device), not
+    CUDA against CPU: CPU/CUDA cuBLAS reduction order already differs for this MLP's matmuls
+    independently of gather order (~1e-4 absolute on this GPU, confirmed separately), which would
+    swamp the gather-order comparison this test exists to make. ``torch.use_deterministic_algorithms``
+    makes CUDA matmul reduction order (and so the result) reproducible for a fixed op sequence, so
+    old-vs-new on the same device is still a meaningful bit-exactness check.
+    """
+    torch.manual_seed(0)
+    bs, sum_hw, d, num_queries = 2, 20, 16, 3
+    previously_deterministic = torch.are_deterministic_algorithms_enabled()
+    torch.use_deterministic_algorithms(True)
+    try:
+        bbox_mlp = MLP(d, d, 4, num_layers=3).cuda()
+        output_memory = torch.randn(bs, sum_hw, d, device="cuda")
+        output_proposals = torch.rand(bs, sum_hw, 4, device="cuda") * 0.9 + 0.05
+        topk_idx = torch.stack([torch.randperm(sum_hw, device="cuda")[:num_queries] for _ in range(bs)])
+
+        box_old_full = _bbox_from_delta(bbox_mlp(output_memory), output_proposals, bbox_reparam)
+        box_old = torch.gather(box_old_full, 1, topk_idx.unsqueeze(-1).expand(-1, -1, 4))
+
+        tgt_new = torch.gather(output_memory, 1, topk_idx.unsqueeze(-1).expand(-1, -1, d))
+        proposals_g = torch.gather(output_proposals, 1, topk_idx.unsqueeze(-1).expand(-1, -1, 4))
+        box_new = _bbox_from_delta(bbox_mlp(tgt_new), proposals_g, bbox_reparam)
+    finally:
+        torch.use_deterministic_algorithms(previously_deterministic)
+
+    assert torch.equal(box_old, box_new)
+
+
 class _ShapeRecordingLinear(nn.Module):
     """Wraps a real ``nn.Linear`` and records the shape of every input it is called with.
 
@@ -1198,7 +1307,10 @@ class _ShapeRecordingLinear(nn.Module):
 
 
 @pytest.mark.parametrize("group_detr", [1, 3], ids=["group_detr=1", "group_detr=3"])
-def test_two_stage_bbox_embed_only_runs_on_selected_rows_not_full_encoder_memory(group_detr: int) -> None:
+@pytest.mark.parametrize("bbox_reparam", [False, True], ids=["bbox_reparam=False", "bbox_reparam=True"])
+def test_two_stage_bbox_embed_only_runs_on_selected_rows_not_full_encoder_memory(
+    group_detr: int, bbox_reparam: bool
+) -> None:
     """The bbox-delta MLP must only run on the rows torch.topk selects, not on every encoder position.
 
     ``enc_out_bbox_embed`` is a pointwise MLP with no cross-token mixing, so it only needs the
@@ -1214,6 +1326,12 @@ def test_two_stage_bbox_embed_only_runs_on_selected_rows_not_full_encoder_memory
     test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mode, which assert
     ``memory_ts``/``boxes_ts`` are bit-identical to gathering after running the MLP on every row --
     this test only pins how much work the MLP itself does, not what it produces.
+
+    Parametrized over ``bbox_reparam`` because it is not merely a config toggle here: the fixed
+    (production default per ``ModelConfig.bbox_reparam``, ``config.py``) ``True`` branch runs
+    additional pointwise ops (``.exp()``, multiply, ``torch.concat``) on ``enc_out_bbox_embed``'s
+    *output* that ``False`` does not, so a test pinning only ``False`` would leave the branch that
+    is actually used in production unchecked.
     """
     torch.manual_seed(0)
     hidden_dim, num_queries = 16, 3
@@ -1238,7 +1356,7 @@ def test_two_stage_bbox_embed_only_runs_on_selected_rows_not_full_encoder_memory
         return_intermediate_dec=True,
         lite_refpoint_refine=True,
         two_stage=True,
-        bbox_reparam=False,
+        bbox_reparam=bbox_reparam,
         group_detr=group_detr,
     )
     assert transformer.training  # default nn.Module state; group_detr>1 only takes effect while training
