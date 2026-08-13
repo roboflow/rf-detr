@@ -71,6 +71,74 @@ def test_probe_max_micro_batch_raises_if_one_is_not_safe():
         )
 
 
+def test_probe_max_micro_batch_reprobes_batch_one_with_state_resident():
+    """shadow_optimizer.step() allocates AdamW's exp_avg/exp_avg_sq state lazily on its first-ever call, so a lone
+    success at micro_batch_size=1 only proves the batch fits *before* that state exists -- not once it's resident, which
+    is what every real training step from the second one onward looks like.
+
+    probe_max_micro_batch must re-probe batch=1 a second time (with the state now resident) and fail loudly if that re-
+    probe doesn't hold, instead of silently returning a "safe" batch size that was never actually validated under
+    steady-state memory.
+    """
+    model = _TinyModule()
+    criterion = _TinyModule()
+    calls: list[int] = []
+
+    def _fake_probe(*args, **kwargs):
+        micro_batch_size = args[2]
+        calls.append(micro_batch_size)
+        # First-ever call (state not yet resident) succeeds; the re-probe (state resident) fails.
+        return len(calls) == 1
+
+    with (
+        patch("rfdetr.training.auto_batch._probe_step", side_effect=_fake_probe),
+        patch("rfdetr.training.auto_batch.torch.cuda.empty_cache"),
+        pytest.raises(RuntimeError, match="optimizer state is resident"),
+    ):
+        auto_batch.probe_max_micro_batch(
+            model=model,
+            criterion=criterion,
+            resolution=64,
+            device=torch.device("cuda"),
+            num_classes=5,
+            amp=False,
+        )
+
+    assert calls == [1, 1]
+
+
+def test_probe_max_micro_batch_warms_up_state_before_exponential_search():
+    """Once batch=1 survives both the state-allocating call and the state-resident re-probe, the exponential search must
+    start from candidate=2 -- not re-probe 1 a third time, and not skip probing larger candidates under the now-resident
+    state."""
+    model = _TinyModule()
+    criterion = _TinyModule()
+    calls: list[int] = []
+
+    def _fake_probe(*args, **kwargs):
+        micro_batch_size = args[2]
+        calls.append(micro_batch_size)
+        return micro_batch_size <= 4
+
+    with (
+        patch("rfdetr.training.auto_batch._probe_step", side_effect=_fake_probe),
+        patch("rfdetr.training.auto_batch.torch.cuda.empty_cache"),
+    ):
+        safe = auto_batch.probe_max_micro_batch(
+            model=model,
+            criterion=criterion,
+            resolution=64,
+            device=torch.device("cuda"),
+            num_classes=5,
+            amp=False,
+            safety_margin=1.0,
+        )
+
+    assert safe == 4
+    assert calls[:2] == [1, 1]
+    assert calls.count(1) == 2
+
+
 def test_probe_step_raises_when_loss_keys_do_not_overlap_weight_keys():
     """_probe_step must fail fast when weighted loss would be empty."""
 
@@ -267,6 +335,41 @@ class TestProbeStepShadowOptimizer:
         for shadow_p in shadow_params:
             assert shadow_p.grad is None
 
+    def test_shadow_grad_cleared_when_step_itself_ooms(self) -> None:
+        """A CUDA OOM raised by shadow_optimizer.step() itself (not by forward/backward) must still clear
+        shadow_p.grad -- otherwise the alias is the only remaining reference keeping that iteration's real
+        gradient tensor alive, unreachable by torch.cuda.empty_cache(), for the rest of the search."""
+
+        class _OomOnStep:
+            def step(self) -> None:
+                raise RuntimeError("CUDA out of memory.")
+
+        model = _WorkingDummyModel()
+        criterion = _WorkingDummyCriterion()
+        trainable_params = list(model.parameters())
+        _, shadow_params = auto_batch._build_shadow_optimizer(trainable_params, lr=1e-2, weight_decay=0.0)
+
+        with patch(
+            "rfdetr.training.auto_batch._make_synthetic_batch",
+            return_value=(MagicMock(), [{}]),
+        ):
+            ok = auto_batch._probe_step(
+                model=model,
+                criterion=criterion,
+                micro_batch_size=1,
+                resolution=64,
+                device=torch.device("cpu"),
+                num_classes=5,
+                amp=False,
+                trainable_params=trainable_params,
+                shadow_optimizer=_OomOnStep(),
+                shadow_params=shadow_params,
+            )
+
+        assert ok is False
+        for shadow_p in shadow_params:
+            assert shadow_p.grad is None
+
 
 def test_build_shadow_optimizer_forwards_optimizer_kwargs():
     """train_config.optimizer_kwargs (e.g. amsgrad=True, which adds a third max_exp_avg_sq state buffer per
@@ -282,6 +385,18 @@ def test_build_shadow_optimizer_forwards_optimizer_kwargs():
     optimizer.step()
 
     assert "max_exp_avg_sq" in optimizer.state[shadow_params[0]]
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="fused AdamW requires CUDA")
+def test_build_shadow_optimizer_forwards_fused():
+    """Fused must reach the shadow AdamW so its step-time temporary memory matches the real optimizer's fused vs.
+
+    foreach/single-tensor implementation (see RFDETRModelModule._use_fused_optimizer).
+    """
+    params = [torch.nn.Parameter(torch.zeros(3, device="cuda"))]
+    optimizer, _ = auto_batch._build_shadow_optimizer(params, lr=1e-3, weight_decay=0.0, fused=True)
+
+    assert optimizer.defaults["fused"] is True
 
 
 def test_probe_max_micro_batch_restores_train_mode_when_shadow_optimizer_build_fails():
@@ -450,6 +565,94 @@ def test_resolve_auto_batch_config_does_not_forward_optimizer_kwargs_for_non_ada
         auto_batch.resolve_auto_batch_config(model_context, model_config, train_config)
 
     assert mock_probe.call_args.kwargs["optimizer_kwargs"] is None
+
+
+def test_resolve_auto_batch_config_forwards_fused_when_bf16_and_builtin_adamw():
+    """When the real run would use bf16-mixed precision with the built-in adamw optimizer and
+    model_config.fused_optimizer=True (RFDETRModelModule._use_fused_optimizer's own conditions), the shadow optimizer
+    must be built fused too -- otherwise its step-time temporary memory (foreach/single-tensor) can diverge from what
+    the real fused AdamW actually needs."""
+    model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
+    model_config = SimpleNamespace(resolution=64, num_classes=5, amp=True, segmentation_head=True, fused_optimizer=True)
+    train_config = SimpleNamespace(
+        batch_size="auto",
+        auto_batch_target_effective=16,
+        lr=1e-4,
+        weight_decay=1e-4,
+        optimizer="adamw",
+        amp_dtype="auto",
+    )
+    criterion = MagicMock()
+    criterion.to.return_value = criterion
+
+    with (
+        patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
+        patch("rfdetr.training.auto_batch.torch.cuda.is_bf16_supported", return_value=True),
+        patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
+        patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5) as mock_probe,
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
+    ):
+        auto_batch.resolve_auto_batch_config(model_context, model_config, train_config)
+
+    assert mock_probe.call_args.kwargs["optimizer_fused"] is True
+
+
+def test_resolve_auto_batch_config_does_not_force_fused_for_fp16():
+    """amp_dtype='fp16' resolves to '16-mixed' precision, not a bf16 variant -- fused AdamW is only safe under
+    bf16-mixed (see RFDETRModelModule._use_fused_optimizer), so the shadow optimizer must not be forced fused."""
+    model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
+    model_config = SimpleNamespace(resolution=64, num_classes=5, amp=True, segmentation_head=True, fused_optimizer=True)
+    train_config = SimpleNamespace(
+        batch_size="auto",
+        auto_batch_target_effective=16,
+        lr=1e-4,
+        weight_decay=1e-4,
+        optimizer="adamw",
+        amp_dtype="fp16",
+    )
+    criterion = MagicMock()
+    criterion.to.return_value = criterion
+
+    with (
+        patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
+        patch("rfdetr.training.auto_batch.torch.cuda.is_bf16_supported", return_value=True),
+        patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
+        patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5) as mock_probe,
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
+    ):
+        auto_batch.resolve_auto_batch_config(model_context, model_config, train_config)
+
+    assert mock_probe.call_args.kwargs["optimizer_fused"] is False
+
+
+def test_resolve_auto_batch_config_does_not_force_fused_when_model_config_disables_it():
+    """model_config.fused_optimizer=False must be honored the same way RFDETRModelModule._use_fused_optimizer honors it
+    for the real optimizer."""
+    model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
+    model_config = SimpleNamespace(
+        resolution=64, num_classes=5, amp=True, segmentation_head=True, fused_optimizer=False
+    )
+    train_config = SimpleNamespace(
+        batch_size="auto",
+        auto_batch_target_effective=16,
+        lr=1e-4,
+        weight_decay=1e-4,
+        optimizer="adamw",
+        amp_dtype="auto",
+    )
+    criterion = MagicMock()
+    criterion.to.return_value = criterion
+
+    with (
+        patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
+        patch("rfdetr.training.auto_batch.torch.cuda.is_bf16_supported", return_value=True),
+        patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
+        patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5) as mock_probe,
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
+    ):
+        auto_batch.resolve_auto_batch_config(model_context, model_config, train_config)
+
+    assert mock_probe.call_args.kwargs["optimizer_fused"] is False
 
 
 @patch("rfdetr.detr.is_main_process", return_value=False)

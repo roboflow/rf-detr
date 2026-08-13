@@ -104,6 +104,7 @@ def _build_shadow_optimizer(
     lr: float,
     weight_decay: float,
     optimizer_kwargs: dict[str, Any] | None = None,
+    fused: bool | None = None,
 ) -> tuple[torch.optim.Optimizer, list[torch.Tensor]]:
     """Build an AdamW optimizer over throwaway tensors shaped like ``trainable_params``, for probing optimizer-state
     memory without ever writing to the real model's weights.
@@ -124,13 +125,19 @@ def _build_shadow_optimizer(
             which adds a third ``max_exp_avg_sq`` state buffer). Only meaningful when the real training run
             uses the built-in ``"adamw"`` path -- pass ``None`` otherwise, since these kwargs are AdamW-specific
             and would raise for a different optimizer class.
+        fused: Whether to build a fused AdamW, matching ``RFDETRModelModule._use_fused_optimizer`` for the real
+            optimizer (``module_model.py``). The fused and foreach/single-tensor implementations differ in
+            step-time temporary memory, so leaving this unset (``None``, torch's own default selection) can
+            make the probe's memory profile diverge from the real optimizer's -- in either direction.
 
     Returns:
         The shadow optimizer and the list of shadow tensors it steps, in the same order as
         ``trainable_params`` so gradients can be paired up by index before each ``step()``.
     """
     shadow_params = [torch.zeros_like(p, requires_grad=True) for p in trainable_params]
-    optimizer = torch.optim.AdamW(shadow_params, lr=lr, weight_decay=weight_decay, **(optimizer_kwargs or {}))
+    optimizer = torch.optim.AdamW(
+        shadow_params, lr=lr, weight_decay=weight_decay, fused=fused, **(optimizer_kwargs or {})
+    )
     return optimizer, shadow_params
 
 
@@ -157,7 +164,7 @@ def _probe_step(
     first ``step()`` call -- forward+backward alone never touches that allocation.
     ``shadow_optimizer``/``shadow_params`` are built once by the caller and reused across every probe iteration, so this
     first call is the only one that pays the allocation; every later iteration (larger candidate batch sizes) competes
-    for GPU memory against that already- resident state, the same way a real second-and-later training step would. The
+    for GPU memory against that already-resident state, the same way a real second-and-later training step would. The
     shadow tensors, not the real model parameters, receive the update, so this never mutates the model being probed.
     """
     try:
@@ -197,13 +204,16 @@ def _probe_step(
         # without allocating a second copy of every gradient.
         for shadow_p, real_p in zip(shadow_params, trainable_params):
             shadow_p.grad = real_p.grad
-        shadow_optimizer.step()
-        # Drop the alias immediately: shadow_p.grad is the only remaining reference to real_p's
-        # gradient tensor once model.zero_grad() below clears real_p.grad, so leaving it set would
-        # keep that tensor resident through the next iteration's backward() -- two gradient buffers
-        # (this iteration's stale one plus the next iteration's fresh one) alive at once instead of one.
-        for shadow_p in shadow_params:
-            shadow_p.grad = None
+        try:
+            shadow_optimizer.step()
+        finally:
+            # Drop the alias whether step() succeeded or raised (e.g. OOM inside AdamW's own state
+            # allocation): shadow_p.grad is the only remaining reference to real_p's gradient tensor
+            # once model.zero_grad() below clears real_p.grad, so leaving it set on an OOM would keep
+            # that tensor resident -- unreachable by empty_cache() -- through every later probe
+            # iteration for the rest of this search, not just the next one.
+            for shadow_p in shadow_params:
+                shadow_p.grad = None
         model.zero_grad(set_to_none=True)
         criterion.zero_grad(set_to_none=True)
         return True
@@ -230,6 +240,7 @@ def probe_max_micro_batch(
     optimizer_lr: float = 1e-4,
     optimizer_weight_decay: float = 1e-4,
     optimizer_kwargs: dict[str, Any] | None = None,
+    optimizer_fused: bool | None = None,
 ) -> int:
     """Find the largest per-device batch size that fits in memory for one train step.
 
@@ -239,9 +250,9 @@ def probe_max_micro_batch(
 
     Every probe iteration also runs a shadow AdamW step (see ``_build_shadow_optimizer``): forward and
     backward alone never trigger the ``exp_avg``/``exp_avg_sq`` state AdamW allocates lazily on its
-    first real ``step()``, which is the same size as the trainable parameters themselves, so a probe
-    that skipped this would report a batch size that fits forward+backward but can still OOM training
-    on its first real optimizer step.
+    first real ``step()`` -- each buffer the same size as the trainable parameters themselves, so the
+    combined state is 2x that size (3x with ``amsgrad``) -- so a probe that skipped this would report a
+    batch size that fits forward+backward but can still OOM training on its first real optimizer step.
 
     Args:
         model: The model to probe (will be set to train mode).
@@ -261,6 +272,10 @@ def probe_max_micro_batch(
         optimizer_weight_decay: Weight decay for the shadow AdamW optimizer (same caveat as ``optimizer_lr``).
         optimizer_kwargs: Extra AdamW kwargs from ``train_config.optimizer_kwargs`` (e.g. ``amsgrad=True``).
             Pass only when the real run uses the built-in ``"adamw"`` path -- see ``_build_shadow_optimizer``.
+        optimizer_fused: Whether the real training run will use fused AdamW (mirrors
+            ``RFDETRModelModule._use_fused_optimizer``). Forwarded to ``_build_shadow_optimizer`` so the shadow
+            optimizer's step-time temporary memory matches the real one's, since fused and foreach/single-tensor
+            AdamW allocate different amounts of scratch memory during ``step()``.
 
     Returns:
         Safe micro-batch size (>= 1).
@@ -287,18 +302,14 @@ def probe_max_micro_batch(
 
         trainable_params = [p for p in model.parameters() if p.requires_grad]
         shadow_optimizer, shadow_params = _build_shadow_optimizer(
-            trainable_params, optimizer_lr, optimizer_weight_decay, optimizer_kwargs
+            trainable_params, optimizer_lr, optimizer_weight_decay, optimizer_kwargs, optimizer_fused
         )
 
-        lower_ok = 0
-        candidate = 1
-        upper_fail = None
-
-        while candidate <= max_micro_batch:
-            if _probe_step(
+        def _probe(candidate_size: int) -> bool:
+            return _probe_step(
                 model,
                 criterion,
-                candidate,
+                candidate_size,
                 resolution,
                 device,
                 num_classes,
@@ -310,18 +321,39 @@ def probe_max_micro_batch(
                 max_targets_per_image,
                 num_channels,
                 autocast_dtype,
-            ):
+            )
+
+        # shadow_optimizer.step() allocates AdamW's exp_avg/exp_avg_sq state lazily, on its first-ever
+        # call. That first call is necessarily made without the state resident yet -- unlike every real
+        # training step from the second one onward, which always runs forward+backward with that state
+        # already occupying memory. So a lone success at micro_batch_size=1 only proves the batch fits
+        # *before* the state exists; it says nothing about whether it still fits once the state is
+        # resident, which matters because the exponential search below can terminate immediately (if
+        # candidate=2 already fails) without ever re-probing batch=1 under that steady-state condition.
+        # Probe batch=1 twice up front so its own "safe" verdict is measured the same way every other
+        # candidate's is: with the state already resident.
+        if not _probe(1):
+            raise RuntimeError(
+                "auto-batch probe failed at micro_batch_size=1. "
+                "Try lowering resolution or enabling gradient_checkpointing."
+            )
+        if not _probe(1):
+            raise RuntimeError(
+                "auto-batch probe failed at micro_batch_size=1 once optimizer state is resident. "
+                "Try lowering resolution or enabling gradient_checkpointing."
+            )
+
+        lower_ok = 1
+        candidate = 2
+        upper_fail = None
+
+        while candidate <= max_micro_batch:
+            if _probe(candidate):
                 lower_ok = candidate
                 candidate *= 2
             else:
                 upper_fail = candidate
                 break
-
-        if lower_ok < 1:
-            raise RuntimeError(
-                "auto-batch probe failed at micro_batch_size=1. "
-                "Try lowering resolution or enabling gradient_checkpointing."
-            )
 
         if upper_fail is None:
             upper_fail = max_micro_batch + 1
@@ -330,22 +362,7 @@ def probe_max_micro_batch(
         hi = min(upper_fail - 1, max_micro_batch)
         while lo <= hi:
             mid = (lo + hi) // 2
-            if _probe_step(
-                model,
-                criterion,
-                mid,
-                resolution,
-                device,
-                num_classes,
-                amp,
-                trainable_params,
-                shadow_optimizer,
-                shadow_params,
-                segmentation_head,
-                max_targets_per_image,
-                num_channels,
-                autocast_dtype,
-            ):
+            if _probe(mid):
                 lower_ok = mid
                 lo = mid + 1
             else:
@@ -407,7 +424,9 @@ def resolve_auto_batch_config(
     that is the only optimizer the shadow step builds. When train_config.optimizer selects anything else (e.g. "sgd",
     a pytorch-optimizer name, or a custom callable/dotted path -- all supported by configure_optimizers), this logs a
     warning: the real optimizer's state memory may differ from AdamW's, so the resulting batch size can be too
-    conservative or too permissive.
+    conservative or too permissive. Also re-derives whether the real run will use fused AdamW (see
+    RFDETRModelModule._use_fused_optimizer) so the shadow optimizer's step-time temporary memory matches it --
+    fused and foreach/single-tensor AdamW have different scratch-memory profiles during step().
 
     Args:
         model_context: Object with .device and .model (e.g. RFDETR.model from get_model()).
@@ -476,6 +495,20 @@ def resolve_auto_batch_config(
     else:
         probe_autocast_dtype = None
 
+    # Mirrors RFDETRModelModule._use_fused_optimizer (module_model.py), which build_trainer's
+    # real AdamW reads at construction time -- but that Lightning module doesn't exist yet at
+    # probe time, so re-derive its two conditions instead of calling it directly: (1) the
+    # built-in "adamw" path (already computed above as is_builtin_adamw), and (2) the resolved
+    # precision is a bf16 variant, which for this function's CUDA-only autocast resolution above
+    # is exactly the case where probe_autocast_dtype came out to torch.bfloat16 (see
+    # trainer.py's _resolve_precision: bf16-mixed iff CUDA + bf16-capable + amp_dtype in
+    # {"auto", "bf16"}, the same inputs probe_autocast_dtype was derived from).
+    use_fused_optimizer = (
+        is_builtin_adamw
+        and bool(getattr(model_config, "fused_optimizer", True))
+        and probe_autocast_dtype is torch.bfloat16
+    )
+
     safe_micro_batch = probe_max_micro_batch(
         model=model_context.model,
         criterion=criterion,
@@ -492,6 +525,7 @@ def resolve_auto_batch_config(
         optimizer_lr=train_config.lr,
         optimizer_weight_decay=train_config.weight_decay,
         optimizer_kwargs=shadow_optimizer_kwargs,
+        optimizer_fused=use_fused_optimizer,
     )
 
     use_ema = getattr(train_config, "use_ema", False)
