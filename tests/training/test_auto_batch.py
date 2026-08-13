@@ -139,6 +139,33 @@ def test_probe_max_micro_batch_warms_up_state_before_exponential_search():
     assert calls.count(1) == 2
 
 
+def test_probe_max_micro_batch_raises_before_building_shadow_optimizer_when_no_trainable_params():
+    """A fully-frozen model (every parameter requires_grad=False) drives the real (unmocked) guard that fails fast with
+    a dedicated RuntimeError before ever reaching _build_shadow_optimizer's torch.optim.AdamW([]) call, and still
+    restores train-mode on this early-exit path."""
+    model = _TinyModule()
+    model.w.requires_grad_(False)
+    criterion = _TinyModule()
+    model.eval()
+    criterion.eval()
+
+    with (
+        patch("rfdetr.training.auto_batch.torch.cuda.empty_cache"),
+        pytest.raises(RuntimeError, match=r"requires at least one trainable parameter; .*requires_grad=False\."),
+    ):
+        auto_batch.probe_max_micro_batch(
+            model=model,
+            criterion=criterion,
+            resolution=64,
+            device=torch.device("cuda"),
+            num_classes=5,
+            amp=False,
+        )
+
+    assert model.training is False
+    assert criterion.training is False
+
+
 def test_probe_step_raises_when_loss_keys_do_not_overlap_weight_keys():
     """_probe_step must fail fast when weighted loss would be empty."""
 
@@ -181,6 +208,27 @@ def test_probe_step_raises_when_loss_keys_do_not_overlap_weight_keys():
             trainable_params=trainable_params,
             shadow_optimizer=shadow_optimizer,
             shadow_params=shadow_params,
+        )
+
+
+def test_probe_step_rejects_trainable_params_shadow_args_passed_positionally():
+    """trainable_params/shadow_optimizer/shadow_params (and every parameter after them) are keyword-only -- a caller
+    still passing them positionally must get a TypeError, not have them silently bound to the wrong parameter."""
+    model = _TinyModule()
+    criterion = _TinyModule()
+
+    with pytest.raises(TypeError):
+        auto_batch._probe_step(
+            model,
+            criterion,
+            1,
+            64,
+            torch.device("cpu"),
+            5,
+            False,
+            [],  # trainable_params passed positionally -- must raise, not bind
+            None,
+            [],
         )
 
 
@@ -371,6 +419,128 @@ class TestProbeStepShadowOptimizer:
             assert shadow_p.grad is None
 
 
+class _CpuAsCuda(str):
+    """A ``str`` subclass equal to ``"cpu"`` whose ``.type`` reports ``"cuda"``.
+
+    ``probe_max_micro_batch`` hard-requires ``device.type == "cuda"`` before it will run at all, but every
+    downstream tensor factory call (``torch.randn(..., device=...)`` and friends) accepts any string that names a
+    real device -- so this lets a CPU-only test satisfy the guard while every actual tensor op still runs on CPU,
+    driving the real search loop without a GPU.
+
+    Examples:
+        >>> device = _CpuAsCuda("cpu")
+        >>> device.type
+        'cuda'
+        >>> torch.zeros(1, device=device).device.type
+        'cpu'
+    """
+
+    @property
+    def type(self) -> str:
+        return "cuda"
+
+
+class _PartiallyUsedDummyModel(torch.nn.Module):
+    """A model with two trainable parameters where only one participates in the forward pass, so the other's ``.grad``
+    stays ``None`` after ``backward()`` -- the scenario ``warn_missing_grads`` exists to report."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.used = torch.nn.Parameter(torch.ones(3))
+        self.unused = torch.nn.Parameter(torch.ones(2))
+
+    def forward(self, samples, targets):
+        return {"pred": self.used.sum() * len(targets)}
+
+
+def test_probe_max_micro_batch_drives_real_search_loop_end_to_end():
+    """A CPU-only run of the actual (unmocked) probe_max_micro_batch search loop -- real _probe_step and
+    _build_shadow_optimizer calls, not mocked stand-ins -- must drive at least two candidate batch sizes past the warm-
+    up re-probe and produce the same safe batch size the exponential/binary search math predicts."""
+    device = _CpuAsCuda("cpu")
+    model = _WorkingDummyModel()
+    criterion = _WorkingDummyCriterion()
+
+    with patch("rfdetr.training.auto_batch._probe_step", wraps=auto_batch._probe_step) as spy_probe_step:
+        safe = auto_batch.probe_max_micro_batch(
+            model=model,
+            criterion=criterion,
+            resolution=8,
+            device=device,
+            num_classes=5,
+            amp=False,
+            safety_margin=1.0,
+            max_micro_batch=4,
+        )
+
+    assert safe == 4
+    # 1 (warm-up), 1 (state-resident re-probe), 2, 4 -- four real candidates, driven by the real loop.
+    candidate_sizes = [call.args[2] for call in spy_probe_step.call_args_list]
+    assert candidate_sizes == [1, 1, 2, 4]
+
+
+def test_probe_max_micro_batch_builds_shadow_optimizer_exactly_once():
+    """_build_shadow_optimizer allocates one extra copy of the trainable parameters and (via the first real step())
+    AdamW's exp_avg/exp_avg_sq state -- a probe that rebuilt it per candidate batch size would pay both costs on every
+    iteration instead of once for the whole search."""
+    device = _CpuAsCuda("cpu")
+    model = _WorkingDummyModel()
+    criterion = _WorkingDummyCriterion()
+
+    with patch(
+        "rfdetr.training.auto_batch._build_shadow_optimizer",
+        wraps=auto_batch._build_shadow_optimizer,
+    ) as spy_build_shadow_optimizer:
+        safe = auto_batch.probe_max_micro_batch(
+            model=model,
+            criterion=criterion,
+            resolution=8,
+            device=device,
+            num_classes=5,
+            amp=False,
+            safety_margin=1.0,
+            max_micro_batch=4,
+        )
+
+    assert safe == 4
+    assert spy_build_shadow_optimizer.call_count == 1
+
+
+def test_probe_step_warns_once_with_correct_missing_grad_count_when_armed():
+    """warn_missing_grads=True must report exactly the trainable params the synthetic forward pass never reached -- here
+    1 of 2 -- since AdamW only allocates state for params that carry a gradient, so an unreported miss would silently
+    under-count the probe's optimizer-state memory estimate."""
+    model = _PartiallyUsedDummyModel()
+    criterion = _WorkingDummyCriterion()
+    trainable_params = list(model.parameters())
+    shadow_optimizer, shadow_params = auto_batch._build_shadow_optimizer(trainable_params, lr=1e-2, weight_decay=0.0)
+
+    with (
+        patch(
+            "rfdetr.training.auto_batch._make_synthetic_batch",
+            return_value=(MagicMock(), [{}]),
+        ),
+        patch("rfdetr.training.auto_batch.logger.warning") as mock_warning,
+    ):
+        ok = auto_batch._probe_step(
+            model=model,
+            criterion=criterion,
+            micro_batch_size=1,
+            resolution=64,
+            device=torch.device("cpu"),
+            num_classes=5,
+            amp=False,
+            trainable_params=trainable_params,
+            shadow_optimizer=shadow_optimizer,
+            shadow_params=shadow_params,
+            warn_missing_grads=True,
+        )
+
+    assert ok is True
+    mock_warning.assert_called_once()
+    assert mock_warning.call_args.args[1:] == (1, 2)
+
+
 def test_build_shadow_optimizer_forwards_optimizer_kwargs():
     """train_config.optimizer_kwargs (e.g. amsgrad=True, which adds a third max_exp_avg_sq state buffer per
     parameter -- see torch.optim.AdamW) must reach the shadow AdamW, the same way configure_optimizers forwards
@@ -385,6 +555,17 @@ def test_build_shadow_optimizer_forwards_optimizer_kwargs():
     optimizer.step()
 
     assert "max_exp_avg_sq" in optimizer.state[shadow_params[0]]
+
+
+def test_build_shadow_optimizer_does_not_raise_when_optimizer_kwargs_also_sets_lr():
+    """optimizer_kwargs must merge into (not be splatted alongside) the lr/weight_decay/fused defaults: a dotted- path
+    config keeps its own lr inside optimizer_kwargs (see the docstring's merge-precedence note), so splatting both would
+    raise "got multiple values for keyword argument 'lr'" instead of the caller's value winning."""
+    params = [torch.nn.Parameter(torch.zeros(3))]
+
+    optimizer, _ = auto_batch._build_shadow_optimizer(params, lr=1e-4, weight_decay=1e-4, optimizer_kwargs={"lr": 5e-2})
+
+    assert optimizer.param_groups[0]["lr"] == 5e-2
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="fused AdamW requires CUDA")
@@ -522,6 +703,34 @@ def test_resolve_auto_batch_config_forwards_optimizer_kwargs_for_builtin_adamw()
         lr=1e-4,
         weight_decay=1e-4,
         optimizer="adamw",
+        optimizer_kwargs={"amsgrad": True},
+    )
+    criterion = MagicMock()
+    criterion.to.return_value = criterion
+
+    with (
+        patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
+        patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
+        patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5) as mock_probe,
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
+    ):
+        auto_batch.resolve_auto_batch_config(model_context, model_config, train_config)
+
+    assert mock_probe.call_args.kwargs["optimizer_kwargs"] == {"amsgrad": True}
+
+
+def test_resolve_auto_batch_config_forwards_optimizer_kwargs_for_dotted_path_adamw():
+    """optimizer="torch.optim.AdamW" is AdamW-shaped just like the built-in "adamw" short name (see _is_adamw_shaped),
+    so optimizer_kwargs must reach the shadow optimizer for this dotted-path spelling too -- previously it was silently
+    dropped for any spelling other than the short name."""
+    model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
+    model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=True)
+    train_config = SimpleNamespace(
+        batch_size="auto",
+        auto_batch_target_effective=16,
+        lr=1e-4,
+        weight_decay=1e-4,
+        optimizer="torch.optim.AdamW",
         optimizer_kwargs={"amsgrad": True},
     )
     criterion = MagicMock()
