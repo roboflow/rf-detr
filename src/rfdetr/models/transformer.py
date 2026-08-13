@@ -420,6 +420,9 @@ class Transformer(nn.Module):
             kp_pred_chunks = []
             for g_idx in range(group_detr):
                 kp_delta = self.enc_out_keypoint_embed[g_idx](kp_mem_chunks[g_idx])
+                # Sanitize the full encoder prediction at this model boundary: its channels feed both the
+                # shared box-reference multiply and outer classification/matching consumers.
+                kp_delta = torch.nan_to_num(kp_delta, nan=0.0, posinf=0.0, neginf=0.0)
                 ref_wh = boxes_chunks[g_idx][..., 2:].unsqueeze(-2)
                 ref_xy = boxes_chunks[g_idx][..., :2].unsqueeze(-2)
                 kp_xy = kp_delta[..., :2] * ref_wh + ref_xy

@@ -535,6 +535,12 @@ class LWDETR(nn.Module):
                     raise ValueError("use_grouppose_keypoints=True requires keypoint_hs from transformer outputs.")
 
                 outputs_keypoints_delta = self.keypoint_embed(keypoint_hs)
+                # ``compute_l1_keypoint_loss`` guards its own non-finite inputs with ``torch.where``,
+                # but that can only zero the gradient flowing *into* this multiply, not the multiply's
+                # own local backward (``d(a*b)/d(b) == a``): a non-finite ``a`` here still poisons
+                # ``ref_wh``'s gradient via ``0.0 * nan == nan``, and ``ref_wh`` is shared with the
+                # box head. Sanitize at the source instead, before it ever reaches that multiply.
+                outputs_keypoints_delta = torch.nan_to_num(outputs_keypoints_delta, nan=0.0, posinf=0.0, neginf=0.0)
                 ref_wh = ref_unsigmoid[..., 2:].unsqueeze(-2)
                 ref_xy = ref_unsigmoid[..., :2].unsqueeze(-2)
                 keypoints_xy = outputs_keypoints_delta[..., :2] * ref_wh + ref_xy
