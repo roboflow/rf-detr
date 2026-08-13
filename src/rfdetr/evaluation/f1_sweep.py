@@ -86,9 +86,16 @@ def sweep_confidence_thresholds(
 ) -> list[dict[str, Any]]:
     """Sweep confidence thresholds and compute precision/recall/F1 at each.
 
+    Each class's detections are sorted by score once and reduced to suffix TP/FP sums; every
+    threshold's counts are then a single ``np.searchsorted`` binary search away, giving
+    O(N log N + T log N) per class instead of rescanning every detection at every threshold.
+
     Args:
-        per_class_data: Per-class matching data list indexed by class id.
-            Each entry is a dict with keys ``"scores"``, ``"matches"``, ``"ignore"``, and ``"total_gt"``.
+        per_class_data: Per-class matching data list indexed by class id. Each entry is a dict with
+            keys ``"scores"`` and ``"matches"`` (equal-length ndarrays), ``"ignore"`` (a boolean
+            ndarray of the same length), and ``"total_gt"`` (an integer -- a float value silently
+            truncates via an int64 cast rather than raising). Mismatched ``"scores"``/``"ignore"``
+            lengths raise ``IndexError``.
         conf_thresholds: Iterable of float confidence thresholds to evaluate. Comparisons against
             detection scores always happen in float64, regardless of the dtype of
             ``per_class_data`` scores or of the threshold values themselves. This is deliberate,
@@ -106,6 +113,13 @@ def sweep_confidence_thresholds(
             - ``"per_class_prec"``: float ndarray
             - ``"per_class_rec"``: float ndarray
             - ``"per_class_f1"``: float ndarray
+
+    Examples:
+        >>> data = [{"scores": np.array([0.9, 0.4]), "matches": np.array([1, 0]),
+        ...          "ignore": np.array([False, False]), "total_gt": 1}]
+        >>> results = sweep_confidence_thresholds(data, [0.5], classes_with_gt=[0])
+        >>> round(results[0]["macro_precision"], 3), round(results[0]["macro_recall"], 3)
+        (1.0, 1.0)
     """
     # Materialized exactly once: `conf_thresholds` is documented as any iterable, which a generator
     # would satisfy, and every use below (the length, the per-class searchsorted, and the per-threshold
@@ -114,12 +128,8 @@ def sweep_confidence_thresholds(
     conf_thresholds_arr = np.asarray(list(conf_thresholds), dtype=np.float64)
     num_classes = len(per_class_data)
 
-    # Per-class TP/FP counts at every threshold, computed once per class instead of rescanning every
-    # detection at every threshold (the pre-rewrite loop did exactly that: for each of T thresholds,
-    # `scores >= conf_thresh` scans all of that class's N detections -- O(T*N) total). Sorting each
-    # class's detections by score once (O(N log N)) and taking suffix sums over the sorted order lets
-    # every threshold's TP/FP be a single `np.searchsorted` binary search plus an array lookup instead
-    # of a full rescan, so the whole function becomes O(N log N + T log N) per class.
+    # Per-class TP/FP counts at every threshold, tabulated once per class via sort + suffix sums +
+    # searchsorted -- see `_per_class_counts` for the O(N log N + T log N) derivation.
     per_class_tp, per_class_fp, total_gt_per_class = _per_class_counts(per_class_data, conf_thresholds_arr)
 
     results: list[dict[str, Any]] = []
