@@ -28,6 +28,7 @@ import torch
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models import build_criterion_from_config
+from rfdetr.training.module_model import _is_builtin_fused_adamw
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import NestedTensor
 
@@ -98,6 +99,41 @@ def _make_synthetic_batch(
     return samples, targets
 
 
+def _build_shadow_optimizer(
+    trainable_params: list[torch.nn.Parameter],
+    lr: float,
+    weight_decay: float,
+    optimizer_kwargs: dict[str, Any] | None = None,
+) -> tuple[torch.optim.Optimizer, list[torch.Tensor]]:
+    """Build an AdamW optimizer over throwaway tensors shaped like ``trainable_params``, for probing optimizer-state
+    memory without ever writing to the real model's weights.
+
+    ``optimizer.step()`` needs to run against *some* set of parameters to allocate AdamW's per-
+    parameter state (``exp_avg``/``exp_avg_sq``), but running it against the real model's own
+    parameters would apply a real (garbage, synthetic-data-derived) gradient update to weights that
+    may already hold a loaded pretrained checkpoint -- corrupting them before training even starts.
+    The shadow tensors this returns are separate GPU allocations of the same shape/dtype, so the
+    optimizer state they accumulate costs the same memory as the real optimizer eventually would,
+    without the update ever touching a real parameter.
+
+    Args:
+        trainable_params: The real model parameters being probed for (only used for shape/dtype/device).
+        lr: Learning rate for the shadow optimizer (does not affect state tensor size).
+        weight_decay: Weight decay for the shadow optimizer (does not affect state tensor size).
+        optimizer_kwargs: Extra AdamW kwargs from ``train_config.optimizer_kwargs`` (e.g. ``amsgrad=True``,
+            which adds a third ``max_exp_avg_sq`` state buffer). Only meaningful when the real training run
+            uses the built-in ``"adamw"`` path -- pass ``None`` otherwise, since these kwargs are AdamW-specific
+            and would raise for a different optimizer class.
+
+    Returns:
+        The shadow optimizer and the list of shadow tensors it steps, in the same order as
+        ``trainable_params`` so gradients can be paired up by index before each ``step()``.
+    """
+    shadow_params = [torch.zeros_like(p, requires_grad=True) for p in trainable_params]
+    optimizer = torch.optim.AdamW(shadow_params, lr=lr, weight_decay=weight_decay, **(optimizer_kwargs or {}))
+    return optimizer, shadow_params
+
+
 def _probe_step(
     model: torch.nn.Module,
     criterion: torch.nn.Module,
@@ -106,12 +142,24 @@ def _probe_step(
     device: torch.device,
     num_classes: int,
     amp: bool,
+    trainable_params: list[torch.nn.Parameter],
+    shadow_optimizer: torch.optim.Optimizer,
+    shadow_params: list[torch.Tensor],
     segmentation_head: bool = False,
     max_targets_per_image: int = 1,
     num_channels: int = 3,
     autocast_dtype: torch.dtype | None = None,
 ) -> bool:
-    """Run one forward + loss + backward; return True if successful, False on OOM."""
+    """Run one forward + loss + backward + shadow optimizer step; return True if successful, False on OOM.
+
+    The shadow step matters for the memory estimate, not just for realism: AdamW (and most stateful optimizers) allocate
+    their per-parameter state (``exp_avg``/``exp_avg_sq``, each the same size as the parameter itself) lazily, on the
+    first ``step()`` call -- forward+backward alone never touches that allocation.
+    ``shadow_optimizer``/``shadow_params`` are built once by the caller and reused across every probe iteration, so this
+    first call is the only one that pays the allocation; every later iteration (larger candidate batch sizes) competes
+    for GPU memory against that already- resident state, the same way a real second-and-later training step would. The
+    shadow tensors, not the real model parameters, receive the update, so this never mutates the model being probed.
+    """
     try:
         model.zero_grad(set_to_none=True)
         criterion.zero_grad(set_to_none=True)
@@ -144,6 +192,18 @@ def _probe_step(
             raise RuntimeError("auto-batch probe produced a non-finite training loss.")
 
         torch.autograd.backward(loss)
+        # Alias (not copy) each real parameter's freshly populated .grad onto its shadow counterpart:
+        # AdamW.step() only reads .grad, so sharing the tensor is enough to drive a real state update
+        # without allocating a second copy of every gradient.
+        for shadow_p, real_p in zip(shadow_params, trainable_params):
+            shadow_p.grad = real_p.grad
+        shadow_optimizer.step()
+        # Drop the alias immediately: shadow_p.grad is the only remaining reference to real_p's
+        # gradient tensor once model.zero_grad() below clears real_p.grad, so leaving it set would
+        # keep that tensor resident through the next iteration's backward() -- two gradient buffers
+        # (this iteration's stale one plus the next iteration's fresh one) alive at once instead of one.
+        for shadow_p in shadow_params:
+            shadow_p.grad = None
         model.zero_grad(set_to_none=True)
         criterion.zero_grad(set_to_none=True)
         return True
@@ -167,12 +227,21 @@ def probe_max_micro_batch(
     max_micro_batch: int = 128,
     num_channels: int = 3,
     autocast_dtype: torch.dtype | None = None,
+    optimizer_lr: float = 1e-4,
+    optimizer_weight_decay: float = 1e-4,
+    optimizer_kwargs: dict[str, Any] | None = None,
 ) -> int:
     """Find the largest per-device batch size that fits in memory for one train step.
 
     Uses exponential search (1, 2, 4, ...) up to the first failure, then binary search between the last successful size
     and the first failure to get the exact maximum. The returned value is floor(max_ok * safety_margin), so
     safety_margin in (0, 1] scales down the result for headroom (e.g. 0.9 keeps 10% margin).
+
+    Every probe iteration also runs a shadow AdamW step (see ``_build_shadow_optimizer``): forward and
+    backward alone never trigger the ``exp_avg``/``exp_avg_sq`` state AdamW allocates lazily on its
+    first real ``step()``, which is the same size as the trainable parameters themselves, so a probe
+    that skipped this would report a batch size that fits forward+backward but can still OOM training
+    on its first real optimizer step.
 
     Args:
         model: The model to probe (will be set to train mode).
@@ -186,6 +255,12 @@ def probe_max_micro_batch(
         safety_margin: Fraction of max batch to return (0 < safety_margin <= 1).
         max_micro_batch: Cap on batch size to try.
         num_channels: Number of input image channels (for synthetic probe images).
+        optimizer_lr: Learning rate for the shadow AdamW optimizer used to size its state (does not
+            affect the state tensors' shape/size, only included so the shadow optimizer is
+            constructible without a training config on hand).
+        optimizer_weight_decay: Weight decay for the shadow AdamW optimizer (same caveat as ``optimizer_lr``).
+        optimizer_kwargs: Extra AdamW kwargs from ``train_config.optimizer_kwargs`` (e.g. ``amsgrad=True``).
+            Pass only when the real run uses the built-in ``"adamw"`` path -- see ``_build_shadow_optimizer``.
 
     Returns:
         Safe micro-batch size (>= 1).
@@ -203,10 +278,18 @@ def probe_max_micro_batch(
 
     model_training = model.training
     criterion_training = criterion.training
-    model.train()
-    criterion.train()
 
+    shadow_optimizer: torch.optim.Optimizer | None = None
+    shadow_params: list[torch.Tensor] | None = None
     try:
+        model.train()
+        criterion.train()
+
+        trainable_params = [p for p in model.parameters() if p.requires_grad]
+        shadow_optimizer, shadow_params = _build_shadow_optimizer(
+            trainable_params, optimizer_lr, optimizer_weight_decay, optimizer_kwargs
+        )
+
         lower_ok = 0
         candidate = 1
         upper_fail = None
@@ -220,6 +303,9 @@ def probe_max_micro_batch(
                 device,
                 num_classes,
                 amp,
+                trainable_params,
+                shadow_optimizer,
+                shadow_params,
                 segmentation_head,
                 max_targets_per_image,
                 num_channels,
@@ -252,6 +338,9 @@ def probe_max_micro_batch(
                 device,
                 num_classes,
                 amp,
+                trainable_params,
+                shadow_optimizer,
+                shadow_params,
                 segmentation_head,
                 max_targets_per_image,
                 num_channels,
@@ -270,6 +359,13 @@ def probe_max_micro_batch(
         criterion.train(criterion_training)
         model.zero_grad(set_to_none=True)
         criterion.zero_grad(set_to_none=True)
+        # shadow_optimizer/shadow_params may still be None if _build_shadow_optimizer itself OOM'd
+        # (e.g. allocating the shadow parameter tensors for a very large model) -- guard so this
+        # cleanup still restores train-mode and clears the CUDA cache on that path.
+        if shadow_optimizer is not None:
+            del shadow_optimizer
+        if shadow_params is not None:
+            del shadow_params
         torch.cuda.empty_cache()
 
 
@@ -307,6 +403,12 @@ def resolve_auto_batch_config(
     device, segmentation flag, resolution, and the chosen values; also logs that the probe is train-step-only and that
     eval/test may use more memory.
 
+    The optimizer-state memory the probe accounts for (see probe_max_micro_batch) is always modeled as AdamW's, since
+    that is the only optimizer the shadow step builds. When train_config.optimizer selects anything else (e.g. "sgd",
+    a pytorch-optimizer name, or a custom callable/dotted path -- all supported by configure_optimizers), this logs a
+    warning: the real optimizer's state memory may differ from AdamW's, so the resulting batch size can be too
+    conservative or too permissive.
+
     Args:
         model_context: Object with .device and .model (e.g. RFDETR.model from get_model()).
         model_config: Architecture config (resolution, num_classes, amp, segmentation_head).
@@ -343,6 +445,23 @@ def resolve_auto_batch_config(
 
     max_targets_per_image = getattr(train_config, "auto_batch_max_targets_per_image", 100)
 
+    optimizer_cfg = getattr(train_config, "optimizer", "adamw")
+    is_builtin_adamw = _is_builtin_fused_adamw(optimizer_cfg)
+    if is_builtin_adamw:
+        # Same kwargs configure_optimizers passes to the real AdamW (module_model.py); forwarding
+        # them here matters because some (e.g. amsgrad=True) add a third per-parameter state buffer
+        # that the shadow optimizer would otherwise silently miss.
+        shadow_optimizer_kwargs = getattr(train_config, "optimizer_kwargs", {})
+    else:
+        shadow_optimizer_kwargs = None
+        logger.warning(
+            "[auto-batch] optimizer=%r is not the built-in 'adamw'; the probe only models AdamW's "
+            "exp_avg/exp_avg_sq optimizer-state memory (see _build_shadow_optimizer), so this "
+            "batch-size estimate may be too conservative or too permissive for the optimizer "
+            "actually configured for training.",
+            optimizer_cfg,
+        )
+
     criterion, _ = build_criterion_from_config(model_config, train_config)
     criterion = criterion.to(device)
 
@@ -370,6 +489,9 @@ def resolve_auto_batch_config(
         max_micro_batch=max_micro_batch,
         num_channels=getattr(model_config, "num_channels", 3),
         autocast_dtype=probe_autocast_dtype,
+        optimizer_lr=train_config.lr,
+        optimizer_weight_decay=train_config.weight_decay,
+        optimizer_kwargs=shadow_optimizer_kwargs,
     )
 
     use_ema = getattr(train_config, "use_ema", False)
