@@ -99,6 +99,39 @@ def _make_synthetic_batch(
     return samples, targets
 
 
+def _is_adamw_shaped(optimizer_cfg: object) -> bool:
+    """Return whether a configured optimizer allocates the same per-parameter state as ``torch.optim.AdamW``.
+
+    Deliberately broader than ``module_model._is_builtin_fused_adamw``, which answers a different question (does this
+    config select RF-DETR's managed fused-kernel path?) and must stay narrow. For a memory estimate the only thing that
+    matters is whether the real optimizer keeps ``exp_avg``/``exp_avg_sq`` per parameter, which a dotted path importing
+    ``torch.optim.AdamW`` does just as much as the built-in ``"adamw"`` short name.
+
+    Args:
+        optimizer_cfg: The ``TrainConfig.optimizer`` value; a callable's state layout is unknowable here, so it
+            reports ``False``.
+
+    Returns:
+        ``True`` for the ``"adamw"`` short name (case-insensitive) and for a dotted path naming ``torch.optim.AdamW``.
+
+    Examples:
+        >>> _is_adamw_shaped("AdamW")
+        True
+        >>> _is_adamw_shaped("torch.optim.AdamW")
+        True
+        >>> _is_adamw_shaped("torch.optim.SGD")
+        False
+    """
+    if not isinstance(optimizer_cfg, str):
+        return False
+    name = optimizer_cfg.strip()
+    if "." in name:
+        # A dotted value is an import path, so it has to match one exactly: capitalization is part of the attribute
+        # name, and "torch.optim.adamw" alone names the module rather than the class.
+        return name in {"torch.optim.AdamW", "torch.optim.adamw.AdamW"}
+    return name.lower() == "adamw"
+
+
 def _build_shadow_optimizer(
     trainable_params: list[torch.nn.Parameter],
     lr: float,
@@ -123,8 +156,11 @@ def _build_shadow_optimizer(
         weight_decay: Weight decay for the shadow optimizer (does not affect state tensor size).
         optimizer_kwargs: Extra AdamW kwargs from ``train_config.optimizer_kwargs`` (e.g. ``amsgrad=True``,
             which adds a third ``max_exp_avg_sq`` state buffer). Only meaningful when the real training run
-            uses the built-in ``"adamw"`` path -- pass ``None`` otherwise, since these kwargs are AdamW-specific
-            and would raise for a different optimizer class.
+            uses an AdamW-shaped optimizer (see ``_is_adamw_shaped``) -- pass ``None`` otherwise, since these
+            kwargs are AdamW-specific and would raise for a different optimizer class. Keys given here override
+            ``lr``/``weight_decay``/``fused`` below: on the dotted-path config (``"torch.optim.AdamW"``)
+            ``configure_optimizers`` builds the real optimizer from this dict alone, injecting no lr or
+            weight_decay of its own (``module_model.py``), so this dict is where that run's real values live.
         fused: Whether to build a fused AdamW, matching ``RFDETRModelModule._use_fused_optimizer`` for the real
             optimizer (``module_model.py``). The fused and foreach/single-tensor implementations differ in
             step-time temporary memory, so leaving this unset (``None``, torch's own default selection) can
@@ -133,11 +169,23 @@ def _build_shadow_optimizer(
     Returns:
         The shadow optimizer and the list of shadow tensors it steps, in the same order as
         ``trainable_params`` so gradients can be paired up by index before each ``step()``.
+
+    Raises:
+        TypeError: If ``optimizer_kwargs`` carries an argument ``torch.optim.AdamW`` does not accept.
     """
     shadow_params = [torch.zeros_like(p, requires_grad=True) for p in trainable_params]
-    optimizer = torch.optim.AdamW(
-        shadow_params, lr=lr, weight_decay=weight_decay, fused=fused, **(optimizer_kwargs or {})
-    )
+    # Merge rather than splat both sets side by side: a dotted-path config keeps its lr/weight_decay/fused inside
+    # optimizer_kwargs (see the Args note above), so passing them separately would raise "got multiple values for
+    # keyword argument". The caller's dict wins, since that is what the real optimizer will be built with.
+    adamw_kwargs: dict[str, Any] = {"lr": lr, "weight_decay": weight_decay, "fused": fused}
+    adamw_kwargs.update(optimizer_kwargs or {})
+    try:
+        optimizer = torch.optim.AdamW(shadow_params, **adamw_kwargs)
+    except TypeError as exc:
+        raise TypeError(
+            f"Failed to initialize the auto-batch probe's shadow 'adamw' optimizer: {exc}. "
+            "Check optimizer_kwargs for arguments supported by torch.optim.AdamW."
+        ) from exc
     return optimizer, shadow_params
 
 
@@ -149,6 +197,7 @@ def _probe_step(
     device: torch.device,
     num_classes: int,
     amp: bool,
+    *,
     trainable_params: list[torch.nn.Parameter],
     shadow_optimizer: torch.optim.Optimizer,
     shadow_params: list[torch.Tensor],
@@ -202,7 +251,7 @@ def _probe_step(
         # Alias (not copy) each real parameter's freshly populated .grad onto its shadow counterpart:
         # AdamW.step() only reads .grad, so sharing the tensor is enough to drive a real state update
         # without allocating a second copy of every gradient.
-        for shadow_p, real_p in zip(shadow_params, trainable_params):
+        for shadow_p, real_p in zip(shadow_params, trainable_params, strict=True):
             shadow_p.grad = real_p.grad
         try:
             shadow_optimizer.step()
@@ -268,7 +317,9 @@ def probe_max_micro_batch(
         num_channels: Number of input image channels (for synthetic probe images).
         optimizer_lr: Learning rate for the shadow AdamW optimizer used to size its state (does not
             affect the state tensors' shape/size, only included so the shadow optimizer is
-            constructible without a training config on hand).
+            constructible without a training config on hand). Not derived from ``train_config``:
+            ``resolve_auto_batch_config`` leaves this and ``optimizer_weight_decay`` at their defaults,
+            since neither changes the memory the probe measures.
         optimizer_weight_decay: Weight decay for the shadow AdamW optimizer (same caveat as ``optimizer_lr``).
         optimizer_kwargs: Extra AdamW kwargs from ``train_config.optimizer_kwargs`` (e.g. ``amsgrad=True``).
             Pass only when the real run uses the built-in ``"adamw"`` path -- see ``_build_shadow_optimizer``.
@@ -314,13 +365,13 @@ def probe_max_micro_batch(
                 device,
                 num_classes,
                 amp,
-                trainable_params,
-                shadow_optimizer,
-                shadow_params,
-                segmentation_head,
-                max_targets_per_image,
-                num_channels,
-                autocast_dtype,
+                trainable_params=trainable_params,
+                shadow_optimizer=shadow_optimizer,
+                shadow_params=shadow_params,
+                segmentation_head=segmentation_head,
+                max_targets_per_image=max_targets_per_image,
+                num_channels=num_channels,
+                autocast_dtype=autocast_dtype,
             )
 
         # shadow_optimizer.step() allocates AdamW's exp_avg/exp_avg_sq state lazily, on its first-ever
@@ -421,10 +472,11 @@ def resolve_auto_batch_config(
     eval/test may use more memory.
 
     The optimizer-state memory the probe accounts for (see probe_max_micro_batch) is always modeled as AdamW's, since
-    that is the only optimizer the shadow step builds. When train_config.optimizer selects anything else (e.g. "sgd",
-    a pytorch-optimizer name, or a custom callable/dotted path -- all supported by configure_optimizers), this logs a
-    warning: the real optimizer's state memory may differ from AdamW's, so the resulting batch size can be too
-    conservative or too permissive. Also re-derives whether the real run will use fused AdamW (see
+    that is the only optimizer the shadow step builds. When train_config.optimizer selects something that is not
+    AdamW-shaped (e.g. "sgd", a pytorch-optimizer name, or a custom callable -- all supported by configure_optimizers;
+    see _is_adamw_shaped for what still counts as AdamW), this logs a warning: the real optimizer's state memory may
+    differ from AdamW's, so the resulting batch size can be too conservative or too permissive. Also re-derives whether
+    the real run will use fused AdamW (see
     RFDETRModelModule._use_fused_optimizer) so the shadow optimizer's step-time temporary memory matches it --
     fused and foreach/single-tensor AdamW have different scratch-memory profiles during step().
 
@@ -465,8 +517,12 @@ def resolve_auto_batch_config(
     max_targets_per_image = getattr(train_config, "auto_batch_max_targets_per_image", 100)
 
     optimizer_cfg = getattr(train_config, "optimizer", "adamw")
-    is_builtin_adamw = _is_builtin_fused_adamw(optimizer_cfg)
-    if is_builtin_adamw:
+    # Whether the real optimizer's *state* is AdamW-shaped -- a broader question than which optimizer
+    # gets RF-DETR's fused kernel (derived separately below from _is_builtin_fused_adamw), so this uses
+    # its own local predicate: "torch.optim.AdamW" allocates exactly the state the shadow models, while
+    # never being eligible for the managed fused path.
+    is_adamw_shaped = _is_adamw_shaped(optimizer_cfg)
+    if is_adamw_shaped:
         # Same kwargs configure_optimizers passes to the real AdamW (module_model.py); forwarding
         # them here matters because some (e.g. amsgrad=True) add a third per-parameter state buffer
         # that the shadow optimizer would otherwise silently miss.
@@ -474,7 +530,7 @@ def resolve_auto_batch_config(
     else:
         shadow_optimizer_kwargs = None
         logger.warning(
-            "[auto-batch] optimizer=%r is not the built-in 'adamw'; the probe only models AdamW's "
+            "[auto-batch] optimizer=%r does not allocate AdamW-shaped state; the probe only models AdamW's "
             "exp_avg/exp_avg_sq optimizer-state memory (see _build_shadow_optimizer), so this "
             "batch-size estimate may be too conservative or too permissive for the optimizer "
             "actually configured for training.",
@@ -498,13 +554,15 @@ def resolve_auto_batch_config(
     # Mirrors RFDETRModelModule._use_fused_optimizer (module_model.py), which build_trainer's
     # real AdamW reads at construction time -- but that Lightning module doesn't exist yet at
     # probe time, so re-derive its two conditions instead of calling it directly: (1) the
-    # built-in "adamw" path (already computed above as is_builtin_adamw), and (2) the resolved
-    # precision is a bf16 variant, which for this function's CUDA-only autocast resolution above
-    # is exactly the case where probe_autocast_dtype came out to torch.bfloat16 (see
-    # trainer.py's _resolve_precision: bf16-mixed iff CUDA + bf16-capable + amp_dtype in
-    # {"auto", "bf16"}, the same inputs probe_autocast_dtype was derived from).
+    # built-in "adamw" path, which is _is_builtin_fused_adamw's own narrow question and stays on
+    # that predicate rather than the broader state-shape one above -- only the short name reaches
+    # the managed fused kernel, so a dotted-path config must not be silently upgraded to fused --
+    # and (2) the resolved precision is a bf16 variant, which for this function's CUDA-only
+    # autocast resolution above is exactly the case where probe_autocast_dtype came out to
+    # torch.bfloat16 (see trainer.py's _resolve_precision: bf16-mixed iff CUDA + bf16-capable +
+    # amp_dtype in {"auto", "bf16"}, the same inputs probe_autocast_dtype was derived from).
     use_fused_optimizer = (
-        is_builtin_adamw
+        _is_builtin_fused_adamw(optimizer_cfg)
         and bool(getattr(model_config, "fused_optimizer", True))
         and probe_autocast_dtype is torch.bfloat16
     )
@@ -522,8 +580,6 @@ def resolve_auto_batch_config(
         max_micro_batch=max_micro_batch,
         num_channels=getattr(model_config, "num_channels", 3),
         autocast_dtype=probe_autocast_dtype,
-        optimizer_lr=train_config.lr,
-        optimizer_weight_decay=train_config.weight_decay,
         optimizer_kwargs=shadow_optimizer_kwargs,
         optimizer_fused=use_fused_optimizer,
     )
