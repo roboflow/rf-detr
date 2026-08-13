@@ -188,7 +188,9 @@ def _build_shadow_optimizer(
     Raises:
         TypeError: If ``optimizer_kwargs`` carries an argument ``torch.optim.AdamW`` does not accept.
     """
-    shadow_params = [torch.zeros_like(p, requires_grad=True) for p in trainable_params]
+    # No requires_grad: nothing here is ever backpropagated through. torch.optim only asks its params to be
+    # leaves (zeros_like already returns one) and step() runs under no_grad, so the flag would buy nothing.
+    shadow_params = [torch.zeros_like(p) for p in trainable_params]
     # Merge rather than splat both sets side by side: a dotted-path config keeps its lr/weight_decay/fused inside
     # optimizer_kwargs (see the Args note above), so passing them separately would raise "got multiple values for
     # keyword argument". The caller's dict wins, since that is what the real optimizer will be built with.
@@ -405,6 +407,11 @@ def probe_max_micro_batch(
         criterion.train()
 
         trainable_params = [p for p in model.parameters() if p.requires_grad]
+        if not trainable_params:
+            raise RuntimeError(
+                "auto-batch probing requires at least one trainable parameter; every model parameter has "
+                "requires_grad=False."
+            )
         try:
             shadow_optimizer, shadow_params = _build_shadow_optimizer(
                 trainable_params, optimizer_lr, optimizer_weight_decay, optimizer_kwargs, optimizer_fused
@@ -500,9 +507,13 @@ def probe_max_micro_batch(
         criterion.train(criterion_training)
         model.zero_grad(set_to_none=True)
         criterion.zero_grad(set_to_none=True)
-        # shadow_optimizer/shadow_params may still be None if _build_shadow_optimizer itself OOM'd
-        # (e.g. allocating the shadow parameter tensors for a very large model) -- guard so this
-        # cleanup still restores train-mode and clears the CUDA cache on that path.
+        # Drop the shadow state's last references before empty_cache(), while this frame is still alive
+        # and would otherwise keep both names bound: only already-unreferenced memory can be returned to
+        # the driver, so releasing them after the call would free nothing this call gets to see.
+        # The guards are not about `del` legality -- deleting a None-bound name is fine -- but about the
+        # closure: `_probe` captures both names, so an unconditional `del` reads as an undefined
+        # reference to it (ruff F821), and rebinding to None instead costs mypy's narrowing at the same
+        # spot. Conditional deletes are the one form both accept; keep them conditional.
         if shadow_optimizer is not None:
             del shadow_optimizer
         if shadow_params is not None:
