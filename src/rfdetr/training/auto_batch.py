@@ -150,6 +150,16 @@ def _build_shadow_optimizer(
     optimizer state they accumulate costs the same memory as the real optimizer eventually would,
     without the update ever touching a real parameter.
 
+    That separateness is also what this design costs: the shadow copies are allocated alongside the
+    model's own already-resident parameters, so the probe holds one extra copy of the trainable
+    parameters that real training never holds. On the non-fused path (amp off, fp16, or
+    ``fused_optimizer=False``) there is a second, transient divergence: the shadow optimizer steps a
+    single parameter group, so ``_foreach_sqrt`` builds one whole-model-sized temporary, where real
+    training's per-layer-group parameter dicts (``get_param_dict``, ``module_model.py``) keep that
+    temporary per-group. Both make the probe stricter than the run it sizes rather than more
+    permissive, and the transient one does not arise at all whenever the probe runs fused -- the
+    common bf16-on-CUDA default.
+
     Args:
         trainable_params: The real model parameters being probed for (only used for shape/dtype/device).
         lr: Learning rate for the shadow optimizer (does not affect state tensor size).
@@ -205,6 +215,7 @@ def _probe_step(
     max_targets_per_image: int = 1,
     num_channels: int = 3,
     autocast_dtype: torch.dtype | None = None,
+    warn_missing_grads: bool = False,
 ) -> bool:
     """Run one forward + loss + backward + shadow optimizer step; return True if successful, False on OOM.
 
@@ -215,6 +226,11 @@ def _probe_step(
     first call is the only one that pays the allocation; every later iteration (larger candidate batch sizes) competes
     for GPU memory against that already-resident state, the same way a real second-and-later training step would. The
     shadow tensors, not the real model parameters, receive the update, so this never mutates the model being probed.
+
+    ``warn_missing_grads`` asks this step to report parameters the synthetic batch never reached: AdamW allocates state
+    only for parameters that carry a gradient, so those are absent from the estimate. The caller sets it for the first
+    step only (every later iteration would recount the same parameters), and the report is emitted only if that step
+    goes on to succeed.
     """
     try:
         model.zero_grad(set_to_none=True)
@@ -253,6 +269,7 @@ def _probe_step(
         # without allocating a second copy of every gradient.
         for shadow_p, real_p in zip(shadow_params, trainable_params, strict=True):
             shadow_p.grad = real_p.grad
+        missing_grads = sum(1 for real_p in trainable_params if real_p.grad is None) if warn_missing_grads else 0
         try:
             shadow_optimizer.step()
         finally:
@@ -265,6 +282,13 @@ def _probe_step(
                 shadow_p.grad = None
         model.zero_grad(set_to_none=True)
         criterion.zero_grad(set_to_none=True)
+        if missing_grads:
+            logger.warning(
+                "[auto-batch] %d/%d trainable params received no gradient from the synthetic probe batch; their "
+                "optimizer state is not modeled, so the returned batch size may be too permissive.",
+                missing_grads,
+                len(trainable_params),
+            )
         return True
     except RuntimeError as exc:
         if _is_cuda_oom(exc):
@@ -352,12 +376,28 @@ def probe_max_micro_batch(
         criterion.train()
 
         trainable_params = [p for p in model.parameters() if p.requires_grad]
-        shadow_optimizer, shadow_params = _build_shadow_optimizer(
-            trainable_params, optimizer_lr, optimizer_weight_decay, optimizer_kwargs, optimizer_fused
-        )
+        try:
+            shadow_optimizer, shadow_params = _build_shadow_optimizer(
+                trainable_params, optimizer_lr, optimizer_weight_decay, optimizer_kwargs, optimizer_fused
+            )
+        except RuntimeError as exc:
+            if not _is_cuda_oom(exc):
+                raise
+            # Without this the first thing a user sees is a bare CUDA OOM from inside torch.zeros_like,
+            # with nothing tying it to auto-batch probing or naming a lever to pull.
+            raise RuntimeError(
+                "auto-batch probe ran out of memory allocating the shadow optimizer's parameter copies, before "
+                "any micro_batch_size was tried; that allocation needs one extra copy of the trainable "
+                "parameters. Try freeing GPU memory, lowering resolution, or enabling gradient_checkpointing."
+            ) from exc
+
+        # Armed until one step actually completes: only a successful step proves its gradients were the
+        # real ones, and every step after it would recount the same parameters.
+        warn_missing_grads = True
 
         def _probe(candidate_size: int) -> bool:
-            return _probe_step(
+            nonlocal warn_missing_grads
+            ok = _probe_step(
                 model,
                 criterion,
                 candidate_size,
@@ -372,7 +412,11 @@ def probe_max_micro_batch(
                 max_targets_per_image=max_targets_per_image,
                 num_channels=num_channels,
                 autocast_dtype=autocast_dtype,
+                warn_missing_grads=warn_missing_grads,
             )
+            if ok:
+                warn_missing_grads = False
+            return ok
 
         # shadow_optimizer.step() allocates AdamW's exp_avg/exp_avg_sq state lazily, on its first-ever
         # call. That first call is necessarily made without the state resident yet -- unlike every real
