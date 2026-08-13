@@ -22,7 +22,12 @@ def sweep_confidence_thresholds(
     Args:
         per_class_data: Per-class matching data list indexed by class id.
             Each entry is a dict with keys ``"scores"``, ``"matches"``, ``"ignore"``, and ``"total_gt"``.
-        conf_thresholds: Iterable of float confidence thresholds to evaluate.
+        conf_thresholds: Iterable of float confidence thresholds to evaluate. Comparisons against
+            detection scores always happen in float64, regardless of the dtype of
+            ``per_class_data`` scores or of the threshold values themselves. This is deliberate,
+            version-stable semantics and intentionally differs from the legacy
+            ``scores >= conf_thresh`` comparison this function replaced, whose effective dtype
+            depended on NumPy's (pre-2.0) value-based casting rules.
         classes_with_gt: List of class indices that have at least one GT instance — used for macro-averaging.
 
     Returns:

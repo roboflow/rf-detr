@@ -276,3 +276,26 @@ class TestSweepConfidenceThresholdsBasicCorrectness:
         assert low_thresh["macro_precision"] == pytest.approx(0.5)  # 1 TP, 1 FP
         assert high_thresh["macro_precision"] == pytest.approx(1.0)  # FP dropped below threshold
         assert high_thresh["macro_recall"] == pytest.approx(1.0)  # the TP is still above threshold
+
+    def test_float32_scores_compare_in_float64_at_threshold_boundary(self) -> None:
+        """Threshold comparison always happens in float64 regardless of score dtype (deliberate, documented semantics --
+        see the ``conf_thresholds`` docstring).
+
+        This deliberately diverges from ``_reference_sweep``'s ``scores >= conf_thresh`` comparison for a float32 score
+        of ``0.7`` against a plain-float threshold of ``0.7``: ``np.float32(0.7)`` rounds down to ``0.699999988...``,
+        which is below ``float64(0.7)`` once promoted, so the detection is excluded here even though the legacy value-
+        based comparison would have included it.
+        """
+        per_class_data = [
+            {
+                "scores": np.array([0.7], dtype=np.float32),
+                "matches": np.array([1]),
+                "ignore": np.array([False]),
+                "total_gt": 1,
+            }
+        ]
+
+        result = sweep_confidence_thresholds(per_class_data, [0.7], classes_with_gt=[0])[0]
+
+        assert result["macro_precision"] == pytest.approx(0.0)  # tp+fp == 0: nothing above threshold
+        assert result["macro_recall"] == pytest.approx(0.0)  # the TP is excluded by the float64 comparison
