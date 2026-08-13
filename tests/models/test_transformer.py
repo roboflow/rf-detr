@@ -1223,7 +1223,13 @@ def test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_t
     The bbox MLP has no cross-token mixing (no LayerNorm/attention across the token dimension), so
     ``d(mlp(x)_i)/dx_j`` is zero for every ``j != i`` -- backward is as row-independent as forward,
     and gathering before or after the MLP must produce identical gradients w.r.t. the shared input,
-    not just identical box values.
+    not just identical box values. Compared with a tolerance, not ``torch.equal``: three chained
+    matmuls (this MLP has 3 layers, unlike the single-``nn.Linear`` sibling tests) is enough for the
+    CPU BLAS backend's reduction order to differ across platforms (confirmed bit-inexact on
+    macOS/Accelerate CI, in the 1e-7-to-1e-5 range for the value; bit-exact on Linux/OpenBLAS) --
+    this is the same floating-point non-associativity documented for the full model scale in the PR
+    body, reproduced here at a much smaller size than expected because the platform's BLAS choice
+    matters more than tensor size for how many layers it takes to diverge.
     """
     torch.manual_seed(0)
     bs, sum_hw, d, num_queries = 2, 20, 16, 3
@@ -1246,8 +1252,8 @@ def test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_t
     box_new.sum().backward()
     grad_new = output_memory.grad.clone()
 
-    assert torch.equal(box_old, box_new)
-    assert torch.equal(grad_old, grad_new)
+    torch.testing.assert_close(box_old, box_new, atol=1e-5, rtol=1e-4)
+    torch.testing.assert_close(grad_old, grad_new, atol=1e-5, rtol=1e-4)
 
 
 @pytest.mark.gpu
