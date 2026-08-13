@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
@@ -81,7 +82,7 @@ def _per_class_counts(
 
 def sweep_confidence_thresholds(
     per_class_data: list[dict[str, Any]],
-    conf_thresholds: Any,
+    conf_thresholds: Iterable[float],
     classes_with_gt: list[int],
 ) -> list[dict[str, Any]]:
     """Sweep confidence thresholds and compute precision/recall/F1 at each.

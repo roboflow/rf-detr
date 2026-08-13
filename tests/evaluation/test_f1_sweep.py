@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
@@ -14,7 +15,7 @@ from rfdetr.evaluation.f1_sweep import sweep_confidence_thresholds
 
 def _reference_sweep(
     per_class_data: list[dict[str, Any]],
-    conf_thresholds: Any,
+    conf_thresholds: Iterable[float],
     classes_with_gt: list[int],
 ) -> list[dict[str, Any]]:
     """O(T*N) reference implementation: the exact algorithm sweep_confidence_thresholds used before
