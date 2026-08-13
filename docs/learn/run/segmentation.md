@@ -66,9 +66,7 @@ This operation is irreversible — to restore the original model, create a new `
 model.inference(compile=False, inplace=True, dtype="float16")
 ```
 
-Pass `return_embeddings=True` to `predict()` to also get a per-detection embedding vector attached as
-`detections.data["embeddings"]`. See [Extract Embeddings](detection.md#extract-embeddings) for details, including the
-constraints that apply to optimized models.
+Pass `return_embeddings=True` to `predict()` to also get a per-detection embedding vector attached as `detections.data["embeddings"]`. See [Extract Embeddings](detection.md#extract-embeddings) for details, including the constraints that apply to optimized models.
 
 ## Run on video, webcam, or RTSP stream
 

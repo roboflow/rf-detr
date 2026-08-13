@@ -68,9 +68,7 @@ Keypoints with `visible=False` are skipped by supervision annotators. To hide lo
 
 For fine-tuning on a custom keypoint dataset, see [Keypoint preview custom datasets](../train/index.md#keypoint-preview-custom-datasets).
 
-Pass `return_embeddings=True` to `predict()` to also get a per-instance embedding vector attached as
-`key_points.data["embeddings"]`. See [Extract Embeddings](detection.md#extract-embeddings) for details, including the
-constraints that apply to optimized models.
+Pass `return_embeddings=True` to `predict()` to also get a per-instance embedding vector attached as `key_points.data["embeddings"]`. See [Extract Embeddings](detection.md#extract-embeddings) for details, including the constraints that apply to optimized models.
 
 ## Run on video, webcam, or RTSP stream
 

@@ -76,10 +76,7 @@ model.inference(compile=False, inplace=True, dtype="float16")
 
 ## Extract Embeddings
 
-Pass `return_embeddings=True` to `predict()` to also get a per-detection embedding vector, gathered with the same
-indices used for boxes (and masks/keypoints, where applicable). This is useful for downstream tasks like similarity
-search, clustering, or re-identification. Embeddings are attached as `detections.data["embeddings"]` with shape
-`(K, H)` — one row per detection.
+Pass `return_embeddings=True` to `predict()` to also get a per-detection embedding vector, gathered with the same indices used for boxes (and masks/keypoints, where applicable). This is useful for downstream tasks like similarity search, clustering, or re-identification. Embeddings are attached as `detections.data["embeddings"]` with shape `(K, H)` — one row per detection.
 
 ```python
 from rfdetr import RFDETRMedium
@@ -93,9 +90,7 @@ embeddings = detections.data["embeddings"]  # shape (K, H)
 
 !!! note "Optimized models decide this at `inference()` time"
 
-    On a model optimized with `model.inference(...)`, the exported/traced forward pass has fixed control flow, so
-    whether embeddings are computed can't be toggled per `predict()` call — it must match the `return_embeddings`
-    value passed to `inference()`:
+    On a model optimized with `model.inference(...)`, the exported/traced forward pass has fixed control flow, so whether embeddings are computed can't be toggled per `predict()` call — it must match the `return_embeddings` value passed to `inference()`:
 
     ```python
     model.inference(compile=False, return_embeddings=True)
