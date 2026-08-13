@@ -496,7 +496,6 @@ class TestAttachEmbeddings:
 
     def test_attach_embeddings_batch_of_two_images(self) -> None:
         """Embeddings are gathered independently per image in the batch."""
-        hidden_dim = 2
         out_embeddings = torch.tensor(
             [
                 [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]],  # image 0

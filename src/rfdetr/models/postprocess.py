@@ -76,7 +76,7 @@ class PostProcess(nn.Module):
         boxes = self._gather_and_scale_boxes(out_bbox, topk_boxes, target_sizes)
 
         if out_masks is not None:
-            return self._postprocess_masks(
+            results = self._postprocess_masks(
                 out_masks,
                 scores,
                 labels,

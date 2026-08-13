@@ -695,7 +695,7 @@ class LWDETR(nn.Module):
 
         outputs_masks = None
         outputs_keypoints = None
-        outputs_embeddings = None
+        outputs_embeddings: Tensor | None = None
 
         if hs is not None:
             if self.bbox_reparam:
@@ -772,6 +772,7 @@ class LWDETR(nn.Module):
             base_predictions = (outputs_coord, outputs_class)
 
         if self._export_return_embeddings:
+            assert outputs_embeddings is not None, "outputs_embeddings must be set when _export_return_embeddings."
             return base_predictions + (outputs_embeddings,)
         return base_predictions
 
