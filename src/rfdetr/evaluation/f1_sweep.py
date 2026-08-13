@@ -10,6 +10,73 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
+
+
+def _per_class_counts(
+    per_class_data: list[dict[str, Any]],
+    conf_thresholds_arr: NDArray[np.float64],
+) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]:
+    """Tabulate per-class TP/FP counts at every threshold in a single O(N log N) pass per class.
+
+    Sorts each class's detections by score once, then reads off TP/FP counts for every threshold
+    via a `np.searchsorted` binary search into precomputed suffix sums, instead of rescanning all
+    of a class's detections at every threshold.
+
+    Args:
+        per_class_data: Per-class matching data list indexed by class id. Each entry is a dict with
+            keys ``"scores"``, ``"matches"``, ``"ignore"``, and ``"total_gt"``.
+        conf_thresholds_arr: Confidence thresholds to evaluate, as a float64 array.
+
+    Returns:
+        Tuple of ``(per_class_tp, per_class_fp, total_gt_per_class)``, where ``per_class_tp`` and
+        ``per_class_fp`` are ``(num_classes, num_thresholds)`` int64 arrays and
+        ``total_gt_per_class`` is a ``(num_classes,)`` int64 array.
+
+    Examples:
+        >>> data = [{"scores": np.array([0.9, 0.4]), "matches": np.array([1, 0]),
+        ...          "ignore": np.array([False, False]), "total_gt": 1}]
+        >>> tp, fp, total_gt = _per_class_counts(data, np.array([0.0, 0.5]))
+        >>> tp.tolist(), fp.tolist(), total_gt.tolist()
+        ([[1, 1]], [[1, 0]], [1])
+    """
+    num_classes = len(per_class_data)
+    num_thresholds = len(conf_thresholds_arr)
+
+    per_class_tp = np.empty((num_classes, num_thresholds), dtype=np.int64)
+    per_class_fp = np.empty((num_classes, num_thresholds), dtype=np.int64)
+    total_gt_per_class = np.empty(num_classes, dtype=np.int64)
+
+    for k in range(num_classes):
+        data = per_class_data[k]
+        scores = data["scores"]
+        matches = data["matches"]
+        ignore = data["ignore"]
+        total_gt_per_class[k] = data["total_gt"]
+
+        # Ascending sort: `np.searchsorted(..., side="left")` then gives, for a threshold, the index
+        # of the first detection with score >= threshold -- everything from that index to the end is
+        # the "above_thresh" set a per-threshold boolean mask would pick out. NumPy sorts NaN scores
+        # to the end of an ascending sort, which would put them in the "above every threshold" suffix
+        # -- but a NaN score must never compare as "above" a real threshold, so it is masked out here
+        # the same way `ignore` is.
+        order = np.argsort(scores, kind="stable")
+        sorted_scores = scores[order]
+        valid = ~ignore[order] & ~np.isnan(sorted_scores)
+        is_tp = valid & (matches[order] != 0)
+        is_fp = valid & (matches[order] == 0)
+
+        # Suffix sums: `suffix_tp[i]` = count of TPs among detections with score >= sorted_scores[i].
+        # `np.cumsum(...)` is a prefix sum; reversing the input and output turns it into a suffix sum
+        # without a second full pass.
+        suffix_tp = np.concatenate((np.cumsum(is_tp[::-1])[::-1], [0]))
+        suffix_fp = np.concatenate((np.cumsum(is_fp[::-1])[::-1], [0]))
+
+        insertion_idx = np.searchsorted(sorted_scores, conf_thresholds_arr, side="left")
+        per_class_tp[k] = suffix_tp[insertion_idx]
+        per_class_fp[k] = suffix_fp[insertion_idx]
+
+    return per_class_tp, per_class_fp, total_gt_per_class
 
 
 def sweep_confidence_thresholds(
@@ -46,47 +113,14 @@ def sweep_confidence_thresholds(
     # return wrong-length or empty results from the second pass onward.
     conf_thresholds_arr = np.asarray(list(conf_thresholds), dtype=np.float64)
     num_classes = len(per_class_data)
-    num_thresholds = len(conf_thresholds_arr)
 
     # Per-class TP/FP counts at every threshold, computed once per class instead of rescanning every
-    # detection at every threshold (the loop below used to do exactly that: for each of T thresholds,
+    # detection at every threshold (the pre-rewrite loop did exactly that: for each of T thresholds,
     # `scores >= conf_thresh` scans all of that class's N detections -- O(T*N) total). Sorting each
-    # class's detections by score once (O(N log N)) and taking prefix sums over the sorted order lets
+    # class's detections by score once (O(N log N)) and taking suffix sums over the sorted order lets
     # every threshold's TP/FP be a single `np.searchsorted` binary search plus an array lookup instead
     # of a full rescan, so the whole function becomes O(N log N + T log N) per class.
-    per_class_tp = np.empty((num_classes, num_thresholds), dtype=np.int64)
-    per_class_fp = np.empty((num_classes, num_thresholds), dtype=np.int64)
-    total_gt_per_class = np.empty(num_classes, dtype=np.int64)
-
-    for k in range(num_classes):
-        data = per_class_data[k]
-        scores = data["scores"]
-        matches = data["matches"]
-        ignore = data["ignore"]
-        total_gt_per_class[k] = data["total_gt"]
-
-        # Ascending sort: `np.searchsorted(..., side="left")` then gives, for a threshold, the index
-        # of the first detection with score >= threshold -- everything from that index to the end is
-        # the "above_thresh" set the original per-threshold boolean mask picked out. NumPy sorts NaN
-        # scores to the end of an ascending sort, which would put them in the "above every threshold"
-        # suffix -- but `scores >= conf_thresh` is False for a NaN score against any real threshold,
-        # so the original loop always excluded them. Mask them out here the same way `ignore` is, or
-        # a NaN score would flip from silently ignored to silently counted as TP/FP at every threshold.
-        order = np.argsort(scores, kind="stable")
-        sorted_scores = scores[order]
-        valid = ~ignore[order] & ~np.isnan(sorted_scores)
-        is_tp = valid & (matches[order] != 0)
-        is_fp = valid & (matches[order] == 0)
-
-        # Suffix sums: `suffix_tp[i]` = count of TPs among detections with score >= sorted_scores[i].
-        # `np.cumsum(...)` is a prefix sum; reversing the input and output turns it into a suffix sum
-        # without a second full pass.
-        suffix_tp = np.concatenate((np.cumsum(is_tp[::-1])[::-1], [0]))
-        suffix_fp = np.concatenate((np.cumsum(is_fp[::-1])[::-1], [0]))
-
-        insertion_idx = np.searchsorted(sorted_scores, conf_thresholds_arr, side="left")
-        per_class_tp[k] = suffix_tp[insertion_idx]
-        per_class_fp[k] = suffix_fp[insertion_idx]
+    per_class_tp, per_class_fp, total_gt_per_class = _per_class_counts(per_class_data, conf_thresholds_arr)
 
     results: list[dict[str, Any]] = []
 
