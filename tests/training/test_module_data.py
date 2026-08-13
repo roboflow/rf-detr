@@ -13,10 +13,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 import torch.utils.data
+from PIL import Image
 from torch.utils.data import DataLoader
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
-from rfdetr.datasets.yolo import YoloSplitUnavailableError
+from rfdetr.datasets.yolo import YoloDetection, YoloSplitUnavailableError
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.utilities.tensors import NestedTensor
 
@@ -176,15 +177,6 @@ def fixture_training_setup():
     train_config = _base_train_config()
     datamodule = _build_datamodule(model_config, train_config)
     return model_config, train_config, datamodule
-
-
-@pytest.fixture
-def yolo_datamodule(tmp_path):
-    """Return an RFDETRDataModule configured for a YOLO dataset."""
-    return _build_datamodule(
-        train_config=_base_train_config(tmp_path, dataset_file="yolo"),
-        tmp_path=tmp_path,
-    )
 
 
 @pytest.fixture
@@ -474,18 +466,24 @@ class TestSetup:
         assert dm._dataset_val is fake_val
         assert dm._dataset_test is None
 
-    def test_test_stage_roboflow_uses_test_split(self, tmp_path):
-        """Setup('test') requests 'test' split when dataset_file=='roboflow'."""
-        dm, _, _, fake_test = self._setup_with_mock(tmp_path, "test", dataset_file="roboflow")
+    @pytest.mark.parametrize("dataset_file", [pytest.param("roboflow", id="roboflow"), pytest.param("yolo", id="yolo")])
+    def test_test_stage_uses_test_split(self, tmp_path, dataset_file):
+        """Setup('test') requests the 'test' split for both Roboflow and YOLO datasets."""
+        dm, _, _, fake_test = self._setup_with_mock(tmp_path, "test", dataset_file=dataset_file)
         assert dm._dataset_test is fake_test
 
-    def test_test_stage_yolo_uses_test_split(self, tmp_path):
-        """Setup('test') requests 'test' split when dataset_file=='yolo'."""
-        dm, _, _, fake_test = self._setup_with_mock(tmp_path, "test", dataset_file="yolo")
-        assert dm._dataset_test is fake_test
+    @pytest.mark.parametrize("dataset_file", [pytest.param("roboflow", id="roboflow"), pytest.param("yolo", id="yolo")])
+    def test_test_stage_falls_back_to_val_without_test_split(self, tmp_path, dataset_file):
+        """Setup('test') falls back to 'val' when the dataset declares no test split.
 
-    def test_test_stage_yolo_falls_back_to_val_without_test_split(self, tmp_path, yolo_datamodule):
-        """Setup('test') falls back to 'val' when a YOLO dataset declares no test split."""
+        A ``dataset_file="roboflow"`` dataset whose detected format is YOLO-style
+        (``build_roboflow`` -> ``build_roboflow_from_yolo``, a common Roboflow export format)
+        routes through the exact same builder as ``dataset_file="yolo"`` and can raise the same
+        ``YoloSplitUnavailableError`` -- Roboflow's export UI does not require a test split.
+        """
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path, dataset_file=dataset_file)
+        dm = RFDETRDataModule(mc, tc)
         fake_val = _fake_dataset(20)
 
         def _build(image_set, args, resolution):
@@ -494,24 +492,58 @@ class TestSetup:
             return fake_val
 
         with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
-            yolo_datamodule.setup("test")
+            dm.setup("test")
 
-        assert yolo_datamodule._dataset_test is fake_val
+        assert dm._dataset_test is fake_val
 
-    def test_test_stage_yolo_propagates_broken_test_split(self, yolo_datamodule):
+    def test_test_stage_roboflow_yolo_format_falls_back_to_val_end_to_end(self, tmp_path):
+        """A real, unmocked Roboflow-YOLO export without a ``test/`` split falls back to ``valid/``.
+
+        Exercises ``detect_roboflow_format`` -> ``build_roboflow_from_yolo`` end to end, not just the
+        ``_build_test_dataset`` control flow around a mocked ``build_dataset``.
+        """
+        dataset_dir = tmp_path / "dataset"
+        for split in ("train", "valid"):
+            (dataset_dir / split / "images").mkdir(parents=True)
+            (dataset_dir / split / "labels").mkdir(parents=True)
+            Image.new("RGB", (8, 6), color=(255, 255, 255)).save(dataset_dir / split / "images" / "sample.png")
+            (dataset_dir / split / "labels" / "sample.txt").write_text("0 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+        (dataset_dir / "data.yaml").write_text("names:\n  - person\n", encoding="utf-8")
+
+        mc = _base_model_config(num_classes=1)
+        tc = _base_train_config(tmp_path, dataset_file="roboflow", dataset_dir=str(dataset_dir))
+        dm = RFDETRDataModule(mc, tc)
+
+        dm.setup("test")
+
+        assert isinstance(dm._dataset_test, YoloDetection)
+        assert len(dm._dataset_test) == 1
+
+    @pytest.mark.parametrize("dataset_file", [pytest.param("roboflow", id="roboflow"), pytest.param("yolo", id="yolo")])
+    def test_test_stage_propagates_broken_test_split(self, tmp_path, dataset_file):
         """Setup('test') propagates builder failures after a test split is resolved."""
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path, dataset_file=dataset_file)
+        dm = RFDETRDataModule(mc, tc)
 
         def _build(image_set, args, resolution):
             if image_set == "test":
-                raise FileNotFoundError("declared test label file is broken")
+                raise FileNotFoundError("declared test annotation file is broken")
             return _fake_dataset(20)
 
         with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
-            with pytest.raises(FileNotFoundError, match="declared test label file is broken"):
-                yolo_datamodule.setup("test")
+            with pytest.raises(FileNotFoundError, match="declared test annotation file is broken"):
+                dm.setup("test")
 
-    def test_test_stage_yolo_warns_when_falling_back_to_val(self, tmp_path, yolo_datamodule):
-        """The YOLO test-to-val fallback is logged at WARNING rather than applied silently."""
+    @pytest.mark.parametrize(
+        "dataset_file, dataset_label",
+        [pytest.param("roboflow", "Roboflow", id="roboflow"), pytest.param("yolo", "YOLO", id="yolo")],
+    )
+    def test_test_stage_warns_when_falling_back_to_val(self, tmp_path, dataset_file, dataset_label):
+        """The test-to-val fallback is logged at WARNING rather than applied silently."""
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path, dataset_file=dataset_file)
+        dm = RFDETRDataModule(mc, tc)
 
         def _build(image_set, args, resolution):
             if image_set == "test":
@@ -522,10 +554,11 @@ class TestSetup:
             patch("rfdetr.training.module_data.build_dataset", side_effect=_build),
             patch("rfdetr.training.module_data.logger") as mock_logger,
         ):
-            yolo_datamodule.setup("test")
+            dm.setup("test")
 
         mock_logger.warning.assert_called_once_with(
-            "No resolvable 'test' split for this YOLO dataset (%s); evaluating the 'val' split instead.",
+            "No resolvable 'test' split for this %s dataset (%s); evaluating the 'val' split instead.",
+            dataset_label,
             str(tmp_path / "test" / "images"),
         )
 

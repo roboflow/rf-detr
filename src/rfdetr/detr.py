@@ -1071,9 +1071,10 @@ class RFDETR:
         call is unaffected by an ``evaluate(resolution=...)`` call.
 
         Args:
-            split: Which split to evaluate. ``"test"`` evaluates the ``test/`` folder (Roboflow datasets; falls back to
-                the validation split otherwise) via ``trainer.test``; ``"val"`` evaluates the ``valid/`` folder via
-                ``trainer.validate``.
+            split: Which split to evaluate. ``"test"`` evaluates the ``test/`` folder (Roboflow and YOLO datasets:
+                falls back to the ``valid/`` split, with a logged warning, when no ``test`` split can be resolved;
+                COCO/Objects365 always evaluate ``valid/``) via ``trainer.test``; ``"val"`` evaluates the ``valid/``
+                folder via ``trainer.validate``.
             **kwargs: The same keyword arguments accepted by :meth:`train` — ``dataset_dir`` is required (here or
                 already on the config), and the rest are forwarded to :func:`_prepare_run_config` /
                 :meth:`get_train_config`.
