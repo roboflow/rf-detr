@@ -62,6 +62,18 @@ def _ratio_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [record.getMessage() for record in caplog.records if "cannot hold" in record.getMessage()]
 
 
+def _layout_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the emitted num_replicas=1-hides-a-live-process-group warnings.
+
+    Examples:
+        Needs pytest's ``caplog`` fixture, so the live call is covered by tests rather than doctest.
+
+        >>> callable(_layout_warnings)  # doctest: +SKIP
+        True
+    """
+    return [record.getMessage() for record in caplog.records if "world size of" in record.getMessage()]
+
+
 def _source_of(index: int, source_sizes: list[int]) -> int:
     """Return the source a concatenated-dataset index belongs to.
 
@@ -414,6 +426,50 @@ class TestShufflingDeterminism:
         sampler = WeightedMultiSourceBatchSampler([100, 100], [0.5, 0.5], batch_size=8, shuffle=False)
         first_batch = next(iter(sampler))
         assert sorted(first_batch) == [0, 1, 2, 3, 100, 101, 102, 103]
+
+
+class TestDistributedLayoutAutoDetect:
+    """``num_replicas``/``rank`` default to the live ``torch.distributed`` process group.
+
+    Mocks ``get_world_size``/``get_rank`` at the ``multi_source`` module boundary rather than starting a real process
+    group, mirroring how ``_resolve_distributed_layout`` consumes them.
+    """
+
+    def test_auto_detects_world_size_and_rank_from_the_process_group(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Omitting num_replicas/rank reads them from a live process group instead of defaulting to (1, 0)."""
+        monkeypatch.setattr("rfdetr.datasets.multi_source.get_world_size", lambda: 4)
+        monkeypatch.setattr("rfdetr.datasets.multi_source.get_rank", lambda: 2)
+        sampler = WeightedMultiSourceBatchSampler([500, 200, 40], [0.6, 0.3, 0.1], batch_size=16)
+        assert (sampler.num_replicas, sampler.rank) == (4, 2)
+
+    def test_explicit_values_override_the_process_group(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Explicit num_replicas/rank win even when a live process group reports a different layout."""
+        monkeypatch.setattr("rfdetr.datasets.multi_source.get_world_size", lambda: 4)
+        monkeypatch.setattr("rfdetr.datasets.multi_source.get_rank", lambda: 2)
+        sampler = WeightedMultiSourceBatchSampler(
+            [500, 200, 40], [0.6, 0.3, 0.1], batch_size=16, num_replicas=1, rank=0
+        )
+        assert (sampler.num_replicas, sampler.rank) == (1, 0)
+
+    def test_warns_when_explicit_num_replicas_of_one_hides_a_live_process_group(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Passing num_replicas=1 under a world_size=4 process group would silently duplicate every rank's data."""
+        monkeypatch.setattr("rfdetr.datasets.multi_source.get_world_size", lambda: 4)
+        monkeypatch.setattr("rfdetr.datasets.multi_source.get_rank", lambda: 0)
+        with _capture_warnings(caplog):
+            WeightedMultiSourceBatchSampler([500, 200, 40], [0.6, 0.3, 0.1], batch_size=16, num_replicas=1, rank=0)
+        assert "world size of 4" in "".join(_layout_warnings(caplog))
+
+    def test_no_warning_when_auto_detected_layout_matches_the_process_group(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A single-process group (world_size=1) never triggers the mismatch warning."""
+        monkeypatch.setattr("rfdetr.datasets.multi_source.get_world_size", lambda: 1)
+        monkeypatch.setattr("rfdetr.datasets.multi_source.get_rank", lambda: 0)
+        with _capture_warnings(caplog):
+            WeightedMultiSourceBatchSampler([500, 200, 40], [0.6, 0.3, 0.1], batch_size=16)
+        assert _layout_warnings(caplog) == []
 
 
 class TestDistributedSharding:

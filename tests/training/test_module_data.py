@@ -799,6 +799,66 @@ class TestTrainDataloader:
 
         assert loader.dataset is original_dataset
 
+    def test_check_custom_sampler_owns_ddp_noop_when_trainer_is_unset(self, tmp_path):
+        """No Trainer attached (e.g. the guard called standalone) never raises."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm._check_custom_sampler_owns_ddp(custom_sampler)
+
+    def test_check_custom_sampler_owns_ddp_noop_for_single_device(self, tmp_path):
+        """A non-distributed Trainer (distributed_sampler_kwargs is None) never raises."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+        dm.trainer = MagicMock(distributed_sampler_kwargs=None)
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm._check_custom_sampler_owns_ddp(custom_sampler)
+
+    def test_check_custom_sampler_owns_ddp_noop_when_use_distributed_sampler_is_false(self, tmp_path):
+        """The correct configuration (use_distributed_sampler=False) never raises."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+        trainer = MagicMock()
+        trainer.distributed_sampler_kwargs = {"num_replicas": 2, "rank": 0}
+        trainer._accelerator_connector.use_distributed_sampler = False
+        dm.trainer = trainer
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm._check_custom_sampler_owns_ddp(custom_sampler)
+
+    def test_check_custom_sampler_owns_ddp_raises_when_lightning_would_rewrap_the_sampler(self, tmp_path):
+        """A distributed Trainer still set to use_distributed_sampler=True raises before Lightning's TypeError."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+        trainer = MagicMock()
+        trainer.distributed_sampler_kwargs = {"num_replicas": 2, "rank": 0}
+        trainer._accelerator_connector.use_distributed_sampler = True
+        trainer._accelerator_connector.is_distributed = True
+        dm.trainer = trainer
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+
+        with pytest.raises(RuntimeError, match="use_distributed_sampler=False"):
+            dm._check_custom_sampler_owns_ddp(custom_sampler)
+
+    def test_train_dataloader_raises_for_custom_sampler_under_misconfigured_ddp(self, tmp_path):
+        """train_dataloader() surfaces the DDP guard's RuntimeError before constructing the DataLoader."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+        trainer = MagicMock()
+        trainer.distributed_sampler_kwargs = {"num_replicas": 2, "rank": 0}
+        trainer._accelerator_connector.use_distributed_sampler = True
+        trainer._accelerator_connector.is_distributed = True
+        dm.trainer = trainer
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm.build_train_sampler = MagicMock(return_value=custom_sampler)
+
+        with pytest.raises(RuntimeError, match="use_distributed_sampler=False"):
+            dm.train_dataloader()
+
 
 class TestGradAccumAlignedDataset:
     """Unit tests for the GradAccumAlignedDataset wrapper."""
