@@ -7,11 +7,14 @@
 
 from unittest.mock import MagicMock
 
+import pytest
 import torch
 from torch import nn
 
+from rfdetr.models.criterion import SetCriterion
 from rfdetr.models.heads import ConditionalQueryInitializer
 from rfdetr.models.lwdetr import LWDETR
+from rfdetr.models.transformer import Transformer
 from rfdetr.utilities.tensors import NestedTensor
 
 
@@ -177,6 +180,119 @@ def test_lwdetr_keypoint_nan_delta_does_not_poison_ref_wh_gradient() -> None:
         f"a single non-finite keypoint-embed output must not poison ref_unsigmoid's gradient, "
         f"got grad={ref_unsigmoid.grad}"
     )
+
+
+@pytest.mark.parametrize(
+    ("bbox_reparam", "nonfinite_channel", "nonfinite_delta"),
+    [
+        pytest.param(False, 0, float("nan"), id="sigmoid_box_nan_xy"),
+        pytest.param(False, 0, float("inf"), id="sigmoid_box_positive_infinity_xy"),
+        pytest.param(False, 0, float("-inf"), id="sigmoid_box_negative_infinity_xy"),
+        pytest.param(True, 0, float("nan"), id="reparam_box_nan_xy"),
+        pytest.param(True, 2, float("nan"), id="reparam_box_nan_findable"),
+    ],
+)
+def test_two_stage_encoder_keypoint_nonfinite_delta_preserves_finite_predictions_and_box_gradients(
+    bbox_reparam: bool,
+    nonfinite_channel: int,
+    nonfinite_delta: float,
+) -> None:
+    """Encoder keypoint deltas must be sanitized before sharing the box reference composition.
+
+    The default two-stage encoder combines a raw keypoint delta with the shared
+    reference box before passing it to the criterion. A non-finite delta must become zero at that model
+    boundary: finite delta channels remain unchanged, the corresponding coordinate stays at the reference
+    center, and backward through the real keypoint criterion keeps both encoder-head gradients finite. The
+    full prediction is sanitized here because encoder outputs also feed outer classification and matching
+    consumers.
+    """
+    torch.manual_seed(0)
+    hidden_dim = 8
+    transformer = Transformer(
+        d_model=hidden_dim,
+        sa_nhead=2,
+        ca_nhead=2,
+        num_queries=2,
+        num_decoder_layers=0,
+        dim_feedforward=16,
+        num_feature_levels=1,
+        dec_n_points=1,
+        two_stage=True,
+        bbox_reparam=bbox_reparam,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=[2],
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 1)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    finite_delta = torch.tensor(
+        [
+            [
+                [
+                    [0.25, -0.50, 0.10, -0.20, 0.30, -0.40, 0.50, -0.60],
+                    [0.75, 0.25, -0.10, 0.20, -0.30, 0.40, -0.50, 0.60],
+                ],
+                [
+                    [-0.25, 0.50, 0.20, -0.10, 0.40, -0.30, 0.60, -0.50],
+                    [0.50, -0.75, -0.20, 0.10, -0.40, 0.30, -0.60, 0.50],
+                ],
+            ]
+        ]
+    )
+
+    def inject_nonfinite_delta(_module: nn.Module, _inputs: tuple, output: torch.Tensor) -> torch.Tensor:
+        """Return known encoder deltas with one non-finite channel."""
+        delta = output + (finite_delta.to(device=output.device, dtype=output.dtype) - output).detach()
+        nonfinite_mask = torch.zeros_like(delta, dtype=torch.bool)
+        nonfinite_mask[0, 0, 0, nonfinite_channel] = True
+        return torch.where(nonfinite_mask, torch.full_like(delta, nonfinite_delta), delta)
+
+    transformer.enc_out_keypoint_embed[0].register_forward_hook(inject_nonfinite_delta)
+    outputs = transformer(
+        [torch.randn(1, hidden_dim, 2, 2)],
+        [torch.zeros(1, 2, 2, dtype=torch.bool)],
+        [torch.zeros(1, hidden_dim, 2, 2)],
+        torch.rand(2, 4),
+        torch.randn(2, hidden_dim),
+    )
+    _, _, _, ref_enc, _, enc_keypoints, _ = outputs
+    assert enc_keypoints is not None
+
+    expected_delta = finite_delta.clone()
+    expected_delta[0, 0, 0, nonfinite_channel] = 0.0
+    expected_xy = expected_delta[..., :2] * ref_enc[..., 2:].unsqueeze(-2) + ref_enc[..., :2].unsqueeze(-2)
+    expected_keypoints = torch.cat([expected_xy, expected_delta[..., 2:]], dim=-1)
+    torch.testing.assert_close(enc_keypoints, expected_keypoints)
+
+    criterion = SetCriterion(
+        num_classes=1,
+        matcher=MagicMock(return_value=[(torch.tensor([0]), torch.tensor([0]))]),
+        weight_dict={},
+        focal_alpha=0.25,
+        losses=["keypoints"],
+        num_keypoints_per_class=[2],
+    )
+    losses = criterion(
+        {"pred_keypoints": enc_keypoints},
+        [
+            {
+                "labels": torch.tensor([0]),
+                "boxes": torch.tensor([[0.5, 0.5, 0.4, 0.4]]),
+                "keypoints": torch.tensor([[[0.2, 0.3, 2.0], [0.4, 0.5, 2.0]]]),
+            }
+        ],
+    )
+    assert all(torch.isfinite(loss) for loss in losses.values())
+    sum(losses.values()).backward()
+
+    box_head_grad = transformer.enc_out_bbox_embed[0].weight.grad
+    assert box_head_grad is not None
+    assert torch.isfinite(box_head_grad).all()
+
+    keypoint_head_grad = transformer.enc_out_keypoint_embed[0].layers[-1].weight.grad
+    assert keypoint_head_grad is not None
+    assert torch.isfinite(keypoint_head_grad).all()
+    assert torch.count_nonzero(keypoint_head_grad) > 0
 
 
 def test_lwdetr_reinitialize_keypoint_head_updates_schema_dependent_state() -> None:

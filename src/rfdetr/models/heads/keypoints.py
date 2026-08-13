@@ -141,10 +141,10 @@ def compute_l1_keypoint_loss(
     A non-finite value in any single prediction channel for a given keypoint (e.g. from an AMP
     overflow upstream) is excluded from both the forward value and the backward gradient of every
     loss term it would otherwise contribute to, without poisoning the other, still-finite keypoints
-    in the same target. This guarantee holds only *inside* this function: a non-finite value that
-    later re-enters an outer op sharing a tensor with other predictions (e.g. multiplying a raw
-    keypoint delta with a reference box before calling this function) can still poison that outer
-    op's own local gradient, since this function cannot see or guard ops outside its own call frame.
+    in the same target. This guarantee holds only *inside* this function: model boundaries that
+    combine the prediction with shared tensors sanitize the full prediction before those outer ops,
+    while a non-finite value that later re-enters an unguarded outer op can still poison that op's
+    local gradient, since this function cannot see or guard operations outside its call frame.
     ``compute_keypoint_matching_cost``'s ``_cdist_bce_with_logits`` (the sibling used by the matcher)
     does not yet have equivalent protection — a non-finite prediction there still poisons the whole
     matching-cost row for that query, tracked separately since it needs a different fix shape.
