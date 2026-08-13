@@ -20,7 +20,14 @@ from rfdetr.utilities.logger import get_logger
 
 @contextmanager
 def _capture_warnings(caplog: pytest.LogCaptureFixture) -> Iterator[None]:
-    """Capture ``rf-detr`` warnings, which the shared logger does not propagate by default."""
+    """Capture ``rf-detr`` warnings, which the shared logger does not propagate by default.
+
+    Examples:
+        Needs pytest's ``caplog`` fixture, so the live call is covered by tests rather than doctest.
+
+        >>> callable(_capture_warnings)  # doctest: +SKIP
+        True
+    """
     rf_logger = get_logger()
     previous = rf_logger.propagate
     rf_logger.propagate = True
@@ -32,17 +39,36 @@ def _capture_warnings(caplog: pytest.LogCaptureFixture) -> Iterator[None]:
 
 
 def _recycling_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
-    """Return the emitted over-recycling warnings."""
+    """Return the emitted over-recycling warnings.
+
+    Examples:
+        Needs pytest's ``caplog`` fixture, so the live call is covered by tests rather than doctest.
+
+        >>> callable(_recycling_warnings)  # doctest: +SKIP
+        True
+    """
     return [record.getMessage() for record in caplog.records if "is repeated" in record.getMessage()]
 
 
 def _ratio_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
-    """Return the emitted requested-versus-realised ratio warnings."""
+    """Return the emitted requested-versus-realised ratio warnings.
+
+    Examples:
+        Needs pytest's ``caplog`` fixture, so the live call is covered by tests rather than doctest.
+
+        >>> callable(_ratio_warnings)  # doctest: +SKIP
+        True
+    """
     return [record.getMessage() for record in caplog.records if "cannot hold" in record.getMessage()]
 
 
 def _source_of(index: int, source_sizes: list[int]) -> int:
-    """Return the source a concatenated-dataset index belongs to."""
+    """Return the source a concatenated-dataset index belongs to.
+
+    Examples:
+        >>> _source_of(7, [5, 3])
+        1
+    """
     for source, size in enumerate(source_sizes):
         if index < size:
             return source
@@ -51,7 +77,12 @@ def _source_of(index: int, source_sizes: list[int]) -> int:
 
 
 def _batch_composition(batch: list[int], source_sizes: list[int]) -> list[int]:
-    """Return the number of samples drawn from each source in a batch."""
+    """Return the number of samples drawn from each source in a batch.
+
+    Examples:
+        >>> _batch_composition([0, 1, 6], [5, 3])
+        [2, 1]
+    """
     counts = Counter(_source_of(index, source_sizes) for index in batch)
     return [counts[source] for source in range(len(source_sizes))]
 
@@ -70,6 +101,14 @@ _SUM_INVARIANT_CASES = [
     pytest.param(batch_size, weights, id=f"{name}-batch{batch_size}")
     for name, weights in _SKEWED_WEIGHT_SETS.items()
     for batch_size in _SUM_INVARIANT_BATCH_SIZES
+]
+# Below batch_size >= len(weights), a source is legitimately starved (zero slots; see TestRecyclingWarning), so
+# min(counts) >= 1 only holds once every source is guaranteed a slot.
+_MIN_COUNT_CASES = [
+    pytest.param(batch_size, weights, id=f"{name}-batch{batch_size}")
+    for name, weights in _SKEWED_WEIGHT_SETS.items()
+    for batch_size in _SUM_INVARIANT_BATCH_SIZES
+    if batch_size >= len(weights)
 ]
 
 
@@ -101,6 +140,11 @@ class TestComputeSourceBatchSizes:
         """Skewed weights across many batch sizes never allocate more or fewer slots than the batch holds."""
         assert sum(compute_source_batch_sizes(batch_size, weights)) == batch_size
 
+    @pytest.mark.parametrize(("batch_size", "weights"), _MIN_COUNT_CASES)
+    def test_min_count_at_least_one_when_batch_covers_every_source(self, batch_size: int, weights: list[float]) -> None:
+        """Every source keeps at least one slot across skewed weights once batch_size >= the number of sources."""
+        assert min(compute_source_batch_sizes(batch_size, weights)) >= 1
+
     def test_weights_need_not_be_normalised(self) -> None:
         assert compute_source_batch_sizes(16, [6, 3, 1]) == compute_source_batch_sizes(16, [0.6, 0.3, 0.1])
 
@@ -111,9 +155,18 @@ class TestComputeSourceBatchSizes:
         assert sum(counts) == 5
         assert min(counts) >= 1
 
-    def test_rejects_zero_weight(self) -> None:
+    @pytest.mark.parametrize(
+        "weights",
+        [
+            pytest.param([0.5, 0.5, 0.0], id="zero_weight"),
+            pytest.param([0.5, 0.5, -0.1], id="negative_weight"),
+            pytest.param([0.5, 0.5, float("nan")], id="nan_weight"),
+            pytest.param([0.5, 0.5, float("inf")], id="infinite_weight"),
+        ],
+    )
+    def test_rejects_non_positive_weight(self, weights: list[float]) -> None:
         with pytest.raises(ValueError, match="strictly positive"):
-            compute_source_batch_sizes(8, [0.5, 0.5, 0.0])
+            compute_source_batch_sizes(8, weights)
 
     def test_rejects_empty_weights(self) -> None:
         with pytest.raises(ValueError, match="at least one source"):
@@ -151,9 +204,18 @@ class TestSamplerValidation:
         with pytest.raises(ValueError, match="rank must be in"):
             WeightedMultiSourceBatchSampler([100, 50], [0.5, 0.5], batch_size=8, num_replicas=2, rank=2)
 
-    def test_rejects_unknown_epoch_length(self) -> None:
+    @pytest.mark.parametrize(
+        "epoch_length",
+        [
+            pytest.param("biggest", id="unknown_keyword"),
+            # bool is an int subclass; without an explicit exclusion True/False would silently alias source 1/0.
+            pytest.param(True, id="bool_true"),
+            pytest.param(False, id="bool_false"),
+        ],
+    )
+    def test_rejects_unknown_epoch_length(self, epoch_length: object) -> None:
         with pytest.raises(ValueError, match="epoch_length"):
-            WeightedMultiSourceBatchSampler([100, 50], [0.5, 0.5], batch_size=8, epoch_length="biggest")
+            WeightedMultiSourceBatchSampler([100, 50], [0.5, 0.5], batch_size=8, epoch_length=epoch_length)
 
     def test_rejects_out_of_range_source_index(self) -> None:
         with pytest.raises(ValueError, match="epoch_length"):
@@ -387,6 +449,59 @@ class TestDistributedSharding:
         single = batches_for(1, 0)
         interleaved = [batch for pair in zip(batches_for(2, 0), batches_for(2, 1), strict=True) for batch in pair]
         assert interleaved == single[: len(interleaved)]
+
+    def test_clamped_length_still_shards_disjoint_batches(self) -> None:
+        # The driving source (size 3) can't fill even one rank's 16-slot allocation, so len(sampler) clamps to 1 per
+        # rank on both sides of the num_replicas=2 split, not just in the single-process case.
+        def batches_for(rank: int) -> list[list[int]]:
+            sampler = WeightedMultiSourceBatchSampler(
+                [3, 2], [0.5, 0.5], batch_size=16, num_replicas=2, rank=rank, seed=11
+            )
+            sampler.set_epoch(0)
+            return list(sampler)
+
+        rank0_batches = batches_for(0)
+        rank1_batches = batches_for(1)
+        assert len(rank0_batches) == 1
+        assert len(rank1_batches) == 1
+        rank0 = {tuple(batch) for batch in rank0_batches}
+        rank1 = {tuple(batch) for batch in rank1_batches}
+        assert rank0.isdisjoint(rank1)
+
+    def test_truncates_to_a_whole_multiple_of_num_replicas(self) -> None:
+        # epoch_length=1 drives the epoch off source 1 (17 samples, 5 slots/batch): floor(17/5)=3 global batches
+        # single-process, which is not a multiple of num_replicas=2 and must truncate to 2 rather than round up to 4.
+        single_process = WeightedMultiSourceBatchSampler(
+            [500, 17], [0.5, 0.5], batch_size=10, num_replicas=1, rank=0, epoch_length=1
+        )
+        assert len(single_process) == 3
+
+        rank0 = WeightedMultiSourceBatchSampler(
+            [500, 17], [0.5, 0.5], batch_size=10, num_replicas=2, rank=0, epoch_length=1
+        )
+        rank1 = WeightedMultiSourceBatchSampler(
+            [500, 17], [0.5, 0.5], batch_size=10, num_replicas=2, rank=1, epoch_length=1
+        )
+        assert len(rank0) == len(rank1) == 1
+        assert len(list(rank0)) + len(list(rank1)) == 2
+
+
+class TestPublicReExports:
+    """Import-path parity between ``rfdetr.datasets`` and the internal ``multi_source`` module."""
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            pytest.param("WeightedMultiSourceBatchSampler", id="sampler_class"),
+            pytest.param("compute_source_batch_sizes", id="allocation_function"),
+        ],
+    )
+    def test_public_import_resolves_to_the_same_object(self, name: str) -> None:
+        """The documented ``rfdetr.datasets`` import path returns the identical object as the internal module."""
+        import rfdetr.datasets as public_module
+        import rfdetr.datasets.multi_source as internal_module
+
+        assert getattr(public_module, name) is getattr(internal_module, name)
 
 
 class TestDataLoaderIntegration:
