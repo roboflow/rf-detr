@@ -161,6 +161,31 @@ class TestSweepConfidenceThresholdsMatchesReference:
 
         _assert_results_equal(actual, expected)
 
+    def test_matches_reference_with_empty_per_class_data(self) -> None:
+        """Zero classes -- degrades to an empty result list, one entry per threshold, with no per-class loop body ever
+        executing."""
+        per_class_data: list[dict[str, Any]] = []
+        conf_thresholds = [0.0, 0.5, 1.0]
+
+        actual = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt=[])
+        expected = _reference_sweep(per_class_data, conf_thresholds, classes_with_gt=[])
+
+        _assert_results_equal(actual, expected)
+        assert [r["per_class_prec"].tolist() for r in actual] == [[], [], []]
+
+    def test_matches_reference_with_empty_conf_thresholds(self) -> None:
+        """Zero thresholds -- degrades to an empty result list regardless of how much detection data is present."""
+        per_class_data = [
+            {"scores": np.array([0.9]), "matches": np.array([1]), "ignore": np.array([False]), "total_gt": 1}
+        ]
+        conf_thresholds: list[float] = []
+
+        actual = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt=[0])
+        expected = _reference_sweep(per_class_data, conf_thresholds, classes_with_gt=[0])
+
+        _assert_results_equal(actual, expected)
+        assert actual == []
+
     def test_matches_reference_when_every_detection_is_ignored(self) -> None:
         per_class_data = [
             {
@@ -219,6 +244,42 @@ class TestSweepConfidenceThresholdsMatchesReference:
         _assert_results_equal(actual, expected)
         assert actual[0]["macro_f1"] == 0.0
 
+    def test_matches_reference_with_mixed_nan_and_real_scores(self) -> None:
+        """A class with both real and NaN scores together -- the case that actually stresses `searchsorted` against
+        `argsort`'s (numpy-unspecified) placement of NaN at the sort tail, unlike the all-NaN case above."""
+        per_class_data = [
+            {
+                "scores": np.array([0.9, np.nan, 0.4, np.nan, 0.6]),
+                "matches": np.array([1, 1, 0, 0, 1]),
+                "ignore": np.array([False, False, False, False, False]),
+                "total_gt": 2,
+            }
+        ]
+        conf_thresholds = np.linspace(0, 1, 11)
+
+        actual = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt=[0])
+        expected = _reference_sweep(per_class_data, conf_thresholds, classes_with_gt=[0])
+
+        _assert_results_equal(actual, expected)
+
+    def test_matches_reference_with_infinite_scores(self) -> None:
+        """`inf >= threshold` is True for every finite threshold; `-inf >= threshold` is True only at `-inf` itself --
+        both must be reachable through the same sort + searchsorted path as finite scores."""
+        per_class_data = [
+            {
+                "scores": np.array([np.inf, -np.inf, 0.5]),
+                "matches": np.array([1, 0, 1]),
+                "ignore": np.array([False, False, False]),
+                "total_gt": 2,
+            }
+        ]
+        conf_thresholds = [-1.0, 0.0, 0.5, 1.0]
+
+        actual = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt=[0])
+        expected = _reference_sweep(per_class_data, conf_thresholds, classes_with_gt=[0])
+
+        _assert_results_equal(actual, expected)
+
     def test_matches_reference_with_generator_conf_thresholds(self) -> None:
         """conf_thresholds is documented as any iterable, including a one-shot generator -- pins that
         sweep_confidence_thresholds materializes it exactly once instead of consuming it partway through (e.g. once to
@@ -238,6 +299,25 @@ class TestSweepConfidenceThresholdsMatchesReference:
 
         assert len(actual) == len(thresholds_list)
         assert [r["confidence_threshold"] for r in actual] == pytest.approx(thresholds_list)
+
+    def test_matches_reference_with_unsorted_conf_thresholds(self) -> None:
+        """Each threshold's searchsorted lookup is independent of the others -- pins that an unsorted, descending
+        conf_thresholds input is handled correctly and that output order follows input order."""
+        per_class_data = [
+            {
+                "scores": np.array([0.9, 0.4, 0.2]),
+                "matches": np.array([1, 0, 1]),
+                "ignore": np.array([False, False, False]),
+                "total_gt": 2,
+            }
+        ]
+        conf_thresholds = [0.3, 1.2, -0.1, 0.31]
+
+        actual = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt=[0])
+        expected = _reference_sweep(per_class_data, conf_thresholds, classes_with_gt=[0])
+
+        _assert_results_equal(actual, expected)
+        assert [r["confidence_threshold"] for r in actual] == pytest.approx(conf_thresholds)
 
 
 class TestSweepConfidenceThresholdsBasicCorrectness:
@@ -276,6 +356,25 @@ class TestSweepConfidenceThresholdsBasicCorrectness:
         assert low_thresh["macro_precision"] == pytest.approx(0.5)  # 1 TP, 1 FP
         assert high_thresh["macro_precision"] == pytest.approx(1.0)  # FP dropped below threshold
         assert high_thresh["macro_recall"] == pytest.approx(1.0)  # the TP is still above threshold
+
+    def test_all_false_positives_gives_zero_precision_and_recall(self) -> None:
+        """The three zero-denominator guards are textually identical between sweep_confidence_thresholds and
+        _reference_sweep, so the equivalence tests above are structurally blind to a bug shared by both -- this pins the
+        tp=0, fp>0 case against its actual, hand-computed expected value."""
+        per_class_data = [
+            {
+                "scores": np.array([0.9]),
+                "matches": np.array([0]),
+                "ignore": np.array([False]),
+                "total_gt": 1,
+            }
+        ]
+
+        result = sweep_confidence_thresholds(per_class_data, [0.5], classes_with_gt=[0])[0]
+
+        assert result["macro_precision"] == pytest.approx(0.0)
+        assert result["macro_recall"] == pytest.approx(0.0)
+        assert result["macro_f1"] == pytest.approx(0.0)
 
     def test_float32_scores_compare_in_float64_at_threshold_boundary(self) -> None:
         """Threshold comparison always happens in float64 regardless of score dtype (deliberate, documented semantics --
