@@ -21,7 +21,7 @@ from rfdetr.utilities.tensors import NestedTensor
 class _MatcherStub:
     """Minimal matcher that returns identity indices for every target in the batch."""
 
-    def __call__(self, outputs, targets, group_detr=1):
+    def __call__(self, outputs, targets, group_detr=1, target_side_safety=None):
         return [(torch.arange(len(t["labels"])), torch.arange(len(t["labels"]))) for t in targets]
 
 

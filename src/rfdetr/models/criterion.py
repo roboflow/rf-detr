@@ -710,8 +710,32 @@ class SetCriterion(nn.Module):
         group_detr = self.group_detr if self.training else 1
         outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
 
+        # The compact-path safety gate's target-side sweep (dtype/device consistency, label range,
+        # target-box finiteness/bounds) depends only on `targets` plus pred_boxes dtype/device and
+        # num_classes -- all identical across every one of the up to len(aux_outputs)+2 matcher()
+        # calls below, since they all share the same `targets`. Precompute it once and reuse it,
+        # instead of HungarianMatcher.forward() recomputing it from scratch on every call (measured:
+        # ~47% of the gate's cost is this target-side work). Skipped when the compact path can never
+        # apply regardless (bs<=1, masks, or keypoints present), matching the same short-circuit
+        # HungarianMatcher.forward() already applies, so this never does work the gate wouldn't have
+        # done anyway -- and also skipped when this step makes only one matcher() call (no
+        # aux_outputs and no enc_outputs, e.g. aux_loss=False with two_stage=False), since
+        # precomputing there is pure overhead: an extra device sync plus the object/NamedTuple
+        # construction for a value used exactly once, with none of the redundant-call cost it exists
+        # to amortize.
+        target_side_safety = None
+        if (
+            outputs_without_aux["pred_logits"].shape[0] > 1
+            and "masks" not in targets[0]
+            and not ("pred_keypoints" in outputs_without_aux and "keypoints" in targets[0])
+            and ("aux_outputs" in outputs or "enc_outputs" in outputs)
+        ):
+            target_side_safety = self.matcher.precompute_target_side_safety(outputs_without_aux, targets)
+
         # Retrieve the matching between the outputs of the last layer and the targets
-        indices = self.matcher(outputs_without_aux, targets, group_detr=group_detr)
+        indices = self.matcher(
+            outputs_without_aux, targets, group_detr=group_detr, target_side_safety=target_side_safety
+        )
 
         if num_boxes is None:
             num_boxes = self.num_boxes_for_targets(outputs, targets)
@@ -728,7 +752,9 @@ class SetCriterion(nn.Module):
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
-                indices = self.matcher(aux_outputs, targets, group_detr=group_detr)
+                indices = self.matcher(
+                    aux_outputs, targets, group_detr=group_detr, target_side_safety=target_side_safety
+                )
                 for loss in self.losses:
                     kwargs = {}
                     if loss == "labels":
@@ -740,7 +766,7 @@ class SetCriterion(nn.Module):
 
         if "enc_outputs" in outputs:
             enc_outputs = outputs["enc_outputs"]
-            indices = self.matcher(enc_outputs, targets, group_detr=group_detr)
+            indices = self.matcher(enc_outputs, targets, group_detr=group_detr, target_side_safety=target_side_safety)
             for loss in self.losses:
                 kwargs = {}
                 if loss == "labels":

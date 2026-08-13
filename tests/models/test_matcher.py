@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import pytest
@@ -12,7 +13,7 @@ import torch
 
 from rfdetr.models import matcher as matcher_module
 from rfdetr.models.heads.segmentation import SegmentationHead
-from rfdetr.models.matcher import HungarianMatcher
+from rfdetr.models.matcher import HungarianMatcher, TargetSideSafety
 
 
 @pytest.fixture()
@@ -937,7 +938,7 @@ def _full_path_indices(
         [([1], [0]), ([3], [0])]
     """
     with pytest.MonkeyPatch.context() as patched:
-        patched.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t: False))
+        patched.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t, s=None: False))
         return matcher(outputs, targets)
 
 
@@ -1419,7 +1420,7 @@ class TestCompactPathRouting:
         assert calls == [1], "compact path must still be attempted once before falling through"
         assert extreme_matcher._warned_non_finite_costs, "overflow must be detected and warned about once"
 
-        monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t: False))
+        monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t, s=None: False))
         expected = extreme_matcher(outputs, targets)
 
         for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
@@ -1639,7 +1640,7 @@ class TestCompactPathOnCUDA:
         assert all(query.device.type == "cpu" for query, _ in actual), "assignment indices must return on CPU"
         _assert_assignment_lengths(actual, num_queries=6, sizes=[2, 4, 1])
 
-        monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t: False))
+        monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t, s=None: False))
         expected = matcher(outputs, targets)
 
         assert _total_assignment_cost(matcher, outputs, targets, actual) == pytest.approx(
@@ -1736,7 +1737,7 @@ class TestCompactPathCriterionEquivalence:
         for layer in all_layer_outputs:
             layer["pred_logits"].grad = None
             layer["pred_boxes"].grad = None
-        monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t: False))
+        monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t, s=None: False))
         fallback_losses = criterion(outputs, targets, num_boxes=1.0)
         sum(fallback_losses.values()).backward()
 
@@ -1746,6 +1747,323 @@ class TestCompactPathCriterionEquivalence:
         for layer, (compact_grad_logits, compact_grad_boxes) in zip(all_layer_outputs, compact_grads):
             assert torch.equal(compact_grad_logits, layer["pred_logits"].grad)
             assert torch.equal(compact_grad_boxes, layer["pred_boxes"].grad)
+
+
+def _spy_on_target_side_precheck(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Wrap ``_target_side_precheck`` to record how many times it actually recomputes the target-side compact-path
+    safety sweep, without changing its behavior — lets a test assert ``SetCriterion.forward`` reuses one precomputed
+    result across its several ``matcher()`` calls instead of recomputing it from scratch on each one.
+
+    Examples:
+        >>> _spy_on_target_side_precheck(pytest.MonkeyPatch())  # doctest: +SKIP
+
+        # Needs a live pytest.MonkeyPatch fixture torn down by a running test, not standalone.
+    """
+    calls: list[int] = []
+    original = HungarianMatcher._target_side_precheck
+
+    def spy(
+        pred_boxes_dtype: torch.dtype,
+        pred_boxes_device: torch.device,
+        num_classes: int,
+        targets: list[dict[str, Any]],
+    ) -> bool:
+        calls.append(1)
+        return original(pred_boxes_dtype, pred_boxes_device, num_classes, targets)
+
+    monkeypatch.setattr(HungarianMatcher, "_target_side_precheck", staticmethod(spy))
+    return calls
+
+
+class TestTargetSideSafetyCaching:
+    """``HungarianMatcher.forward()``'s compact-path safety gate has a target-side half (dtype/device consistency, label
+    range, target-box finiteness/bounds) that depends only on ``targets`` plus ``pred_boxes`` dtype/device and
+    ``num_classes`` -- all identical across the up to ``len(aux_outputs)+2`` ``matcher()`` calls
+    ``SetCriterion.forward`` makes with the same ``targets`` in one training step.
+
+    ``SetCriterion.forward`` precomputes it once via ``HungarianMatcher.precompute_target_side_safety`` and reuses it,
+    instead of every call recomputing it from scratch.
+    """
+
+    def _step_outputs_and_targets(
+        self, bs: int = 3, num_queries: int = 8, num_classes: int = 5, sizes: list[int] | None = None
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Build a main+2aux+enc outputs dict and matching targets, for a criterion.forward() step that makes 4
+        matcher() calls with the same targets.
+
+        Examples:
+            >>> outputs, targets = TestTargetSideSafetyCaching()._step_outputs_and_targets(bs=2, sizes=[2, 3])
+            >>> outputs["pred_logits"].shape, len(outputs["aux_outputs"]), "enc_outputs" in outputs
+            (torch.Size([2, 8, 5]), 2, True)
+            >>> [len(target["labels"]) for target in targets]
+            [2, 3]
+        """
+        sizes = sizes if sizes is not None else [2, 0, 3]
+        torch.manual_seed(402)
+
+        def make_layer_outputs() -> dict[str, torch.Tensor]:
+            return {
+                "pred_logits": torch.randn(bs, num_queries, num_classes),
+                "pred_boxes": torch.rand(bs, num_queries, 4) * 0.4 + 0.3,
+            }
+
+        main_outputs = make_layer_outputs()
+        aux_outputs = [make_layer_outputs(), make_layer_outputs()]
+        enc_outputs = make_layer_outputs()
+        outputs = {**main_outputs, "aux_outputs": aux_outputs, "enc_outputs": enc_outputs}
+        targets = [
+            {
+                "labels": torch.randint(0, num_classes, (size,), dtype=torch.int64),
+                "boxes": torch.rand(size, 4) * 0.4 + 0.3,
+            }
+            for size in sizes
+        ]
+        return outputs, targets
+
+    def _criterion(self, num_classes: int) -> Any:
+        """Build a SetCriterion wired to a fresh HungarianMatcher with the labels/boxes/cardinality losses this
+        test class exercises.
+
+        Examples:
+            >>> criterion = TestTargetSideSafetyCaching()._criterion(num_classes=5)
+            >>> criterion.num_classes, sorted(criterion.losses)
+            (5, ['boxes', 'cardinality', 'labels'])
+        """
+        from rfdetr.models.criterion import SetCriterion
+
+        return SetCriterion(
+            num_classes=num_classes,
+            matcher=HungarianMatcher(),
+            weight_dict={"loss_ce": 1.0, "loss_bbox": 1.0, "loss_giou": 1.0},
+            focal_alpha=0.25,
+            losses=["labels", "boxes", "cardinality"],
+        )
+
+    def test_target_side_precheck_computed_once_per_criterion_step(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression: prior to precomputing/reusing this, ``_target_side_precheck`` (the expensive
+        target-side sweep) recomputed on every one of the 4 matcher() calls a main+2aux+enc step
+        makes -- this pins it to exactly 1."""
+        outputs, targets = self._step_outputs_and_targets()
+        criterion = self._criterion(num_classes=5)
+
+        calls = _spy_on_target_side_precheck(monkeypatch)
+        criterion(outputs, targets, num_boxes=1.0)
+
+        assert calls == [1], (
+            f"expected _target_side_precheck to run exactly once for the whole step (precomputed and "
+            f"reused across all 4 matcher() calls), got {len(calls)} calls"
+        )
+
+    def test_precompute_skipped_when_masks_present(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No wasted work: precompute_target_side_safety must not run for a step whose compact path can never apply
+        regardless (masks present), since HungarianMatcher.forward() would never reach the safety gate for such a step
+        anyway.
+
+        Uses ``bs`` matching its two targets and a real ``pred_masks`` tensor on every layer (main/aux/enc) so the full
+        ``criterion()`` call actually completes end to end -- a prior version of this test used the default ``bs=3``
+        with only 2 targets and no ``pred_masks``, silently swallowing the resulting ``KeyError`` with a bare ``except
+        Exception: pass``, so it would have kept passing even if the step crashed before ever reaching the precompute
+        short-circuit this test means to exercise.
+        """
+        bs, num_queries, num_classes, mask_size = 2, 8, 5, 4
+        outputs, targets = self._step_outputs_and_targets(
+            bs=bs, num_queries=num_queries, num_classes=num_classes, sizes=[2, 3]
+        )
+        for layer_outputs in (outputs, *outputs["aux_outputs"], outputs["enc_outputs"]):
+            layer_outputs["pred_masks"] = torch.rand(bs, num_queries, mask_size, mask_size)
+        for target in targets:
+            target["masks"] = torch.zeros(len(target["labels"]), mask_size, mask_size, dtype=torch.bool)
+        criterion = self._criterion(num_classes=num_classes)
+
+        calls: list[int] = []
+        original = HungarianMatcher.precompute_target_side_safety
+
+        def spy(self: HungarianMatcher, outputs: dict[str, Any], targets: list[dict[str, Any]]) -> Any:
+            calls.append(1)
+            return original(self, outputs, targets)
+
+        monkeypatch.setattr(HungarianMatcher, "precompute_target_side_safety", spy)
+        criterion(outputs, targets, num_boxes=1.0)
+
+        assert calls == [], "precompute_target_side_safety must not run when masks are present"
+
+    def test_precompute_skipped_when_batch_size_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No wasted work: precompute_target_side_safety must not run for bs==1, since the compact path requires bs>1
+        regardless of safety."""
+        outputs, targets = self._step_outputs_and_targets(bs=1, sizes=[2])
+        criterion = self._criterion(num_classes=5)
+
+        calls: list[int] = []
+        original = HungarianMatcher.precompute_target_side_safety
+
+        def spy(self: HungarianMatcher, outputs: dict[str, Any], targets: list[dict[str, Any]]) -> Any:
+            calls.append(1)
+            return original(self, outputs, targets)
+
+        monkeypatch.setattr(HungarianMatcher, "precompute_target_side_safety", spy)
+        criterion(outputs, targets, num_boxes=1.0)
+
+        assert calls == [], "precompute_target_side_safety must not run for bs==1"
+
+    def test_precompute_skipped_when_only_one_matcher_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No wasted work: precompute_target_side_safety must not run for a step with no aux_outputs and no enc_outputs
+        (e.g. aux_loss=False with two_stage=False), since that step makes exactly one matcher() call -- precomputing
+        there adds an extra device sync with no repeated call to amortize it over."""
+        torch.manual_seed(402)
+        bs, num_queries, num_classes = 3, 8, 5
+        outputs = {
+            "pred_logits": torch.randn(bs, num_queries, num_classes),
+            "pred_boxes": torch.rand(bs, num_queries, 4) * 0.4 + 0.3,
+        }
+        targets = [
+            {
+                "labels": torch.randint(0, num_classes, (size,), dtype=torch.int64),
+                "boxes": torch.rand(size, 4) * 0.4 + 0.3,
+            }
+            for size in [2, 0, 3]
+        ]
+        criterion = self._criterion(num_classes=num_classes)
+
+        calls: list[int] = []
+        original = HungarianMatcher.precompute_target_side_safety
+
+        def spy(self: HungarianMatcher, outputs: dict[str, Any], targets: list[dict[str, Any]]) -> Any:
+            calls.append(1)
+            return original(self, outputs, targets)
+
+        monkeypatch.setattr(HungarianMatcher, "precompute_target_side_safety", spy)
+        criterion(outputs, targets, num_boxes=1.0)
+
+        assert calls == [], "precompute_target_side_safety must not run when the step makes only one matcher() call"
+
+    def test_stale_target_side_safety_falls_back_to_a_correct_fresh_check(self) -> None:
+        """A TargetSideSafety computed against a different pred_boxes dtype/device/num_classes must
+        never be trusted blindly: _detection_inputs_are_safe must detect the mismatch and recompute
+        fresh, returning the actually-correct answer -- not the stale cached one -- even when the
+        stale cached value is wrong in the direction that would silently break safety (claims safe
+        when the real check is unsafe)."""
+        outputs, targets = _random_detection_batch(seed=303, sizes=[2, 3])
+        targets[1]["labels"][0] = -1  # actually unsafe: negative label
+
+        stale_safety = TargetSideSafety(
+            safe=True,  # wrong on purpose: a real precompute for this batch would be False
+            targets=targets,
+            pred_boxes_dtype=torch.float64,  # deliberately mismatched (real dtype is float32)
+            pred_boxes_device=outputs["pred_boxes"].device,
+            num_classes=outputs["pred_logits"].shape[-1],
+        )
+
+        assert HungarianMatcher._detection_inputs_are_safe(outputs, targets, stale_safety) is False
+
+    def test_caching_does_not_change_losses_or_gradients_versus_recomputing_every_call(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The equivalence this PR actually depends on -- reusing one precomputed TargetSideSafety across a step's
+        several matcher() calls returns the same safety verdict, and therefore the same indices/losses/gradients, as
+        recomputing the target-side sweep fresh on every call (the pre-caching behavior) -- was previously untested: the
+        existing TestCompactPathCriterionEquivalence test forces _detection_inputs_are_safe to always return False,
+        which checks compact-vs-full-path equivalence (a pre-existing invariant), not cache-vs-fresh-recompute
+        equivalence for the compact path this PR actually changed.
+
+        Runs a real main+2aux+enc step once with caching active, and once with
+        HungarianMatcher.precompute_target_side_safety forced to return None -- which makes _detection_inputs_are_safe's
+        ``target_side_safety is not None`` check fail on every one of the 4 matcher() calls, so each independently
+        recomputes _target_side_precheck from scratch, exactly the behavior before this PR introduced caching. Both must
+        take the compact path (this batch is safe) and must produce identical losses and gradients.
+        """
+        torch.manual_seed(403)
+        bs, num_queries, num_classes = 3, 8, 5
+        sizes = [2, 0, 3]
+
+        def make_layer_outputs() -> dict[str, torch.Tensor]:
+            return {
+                "pred_logits": torch.randn(bs, num_queries, num_classes, requires_grad=True),
+                "pred_boxes": (torch.rand(bs, num_queries, 4) * 0.4 + 0.3).clone().requires_grad_(True),
+            }
+
+        main_outputs = make_layer_outputs()
+        aux_outputs = [make_layer_outputs(), make_layer_outputs()]
+        enc_outputs = make_layer_outputs()
+        outputs = {**main_outputs, "aux_outputs": aux_outputs, "enc_outputs": enc_outputs}
+        all_layer_outputs = [main_outputs, *aux_outputs, enc_outputs]
+
+        targets = [
+            {
+                "labels": torch.randint(0, num_classes, (size,), dtype=torch.int64),
+                "boxes": torch.rand(size, 4) * 0.4 + 0.3,
+            }
+            for size in sizes
+        ]
+        criterion = self._criterion(num_classes=num_classes)
+
+        cached_calls = _spy_on_target_side_precheck(monkeypatch)
+        cached_losses = criterion(outputs, targets, num_boxes=1.0)
+        assert cached_calls == [1], "caching must recompute the target-side sweep exactly once for the whole step"
+        sum(cached_losses.values()).backward()
+        cached_grads = [
+            (layer["pred_logits"].grad.clone(), layer["pred_boxes"].grad.clone()) for layer in all_layer_outputs
+        ]
+        for layer in all_layer_outputs:
+            layer["pred_logits"].grad = None
+            layer["pred_boxes"].grad = None
+
+        monkeypatch.undo()
+        monkeypatch.setattr(
+            HungarianMatcher,
+            "precompute_target_side_safety",
+            lambda self, outputs, targets: None,
+        )
+        fresh_calls = _spy_on_target_side_precheck(monkeypatch)
+        fresh_losses = criterion(outputs, targets, num_boxes=1.0)
+        assert fresh_calls == [1, 1, 1, 1], "without caching, all 4 matcher() calls must recompute independently"
+        sum(fresh_losses.values()).backward()
+
+        assert cached_losses.keys() == fresh_losses.keys()
+        for key in cached_losses:
+            assert torch.equal(cached_losses[key], fresh_losses[key]), f"{key} diverged"
+        for layer, (cached_logits_grad, cached_boxes_grad) in zip(all_layer_outputs, cached_grads):
+            assert torch.equal(cached_logits_grad, layer["pred_logits"].grad)
+            assert torch.equal(cached_boxes_grad, layer["pred_boxes"].grad)
+
+    def test_target_side_safety_from_a_different_batch_falls_back_to_a_correct_fresh_check(self) -> None:
+        """Regression for a real cross-batch staleness bug: dtype/device/num_classes are essentially constant for an
+        entire training run (same model, same precision, same class count), so a TargetSideSafety legitimately
+        precomputed for one batch and then reused for a *different* batch would pass the dtype/device/num_classes check
+        even though its cached `safe` no longer reflects the current targets at all.
+
+        Precompute a safety value against a genuinely safe batch A, then call _detection_inputs_are_safe for an
+        unrelated batch B that shares dtype/device/num_classes but has an out-of-range label (actually unsafe). Reusing
+        A's cached `safe=True` for B would route an unsafe batch into the compact path via forward(), which crashes with
+        an out-of-bounds RuntimeError instead of the full path's documented IndexError -- confirmed by reverting the
+        identity check and re-running this test, which then fails on this method's own assertion (the gate wrongly
+        reports the batch safe).
+        """
+        matcher = HungarianMatcher()
+        outputs_a, targets_a = _random_detection_batch(seed=305, sizes=[2, 3])
+        safety_from_batch_a = matcher.precompute_target_side_safety(outputs_a, targets_a)
+        assert safety_from_batch_a.safe is True
+
+        outputs_b, targets_b = _random_detection_batch(seed=306, sizes=[2, 3])
+        assert outputs_b["pred_boxes"].dtype == safety_from_batch_a.pred_boxes_dtype
+        assert outputs_b["pred_boxes"].device == safety_from_batch_a.pred_boxes_device
+        assert outputs_b["pred_logits"].shape[-1] == safety_from_batch_a.num_classes
+        targets_b[1]["labels"][0] = outputs_b["pred_logits"].shape[-1] + 5  # actually unsafe: out-of-range label
+
+        assert HungarianMatcher._detection_inputs_are_safe(outputs_b, targets_b, safety_from_batch_a) is False
+
+    def test_matching_target_side_safety_is_reused_without_recomputing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The mirror case: when the precomputed TargetSideSafety's dtype/device/num_classes DO match the current call,
+        _detection_inputs_are_safe must reuse it (skip _target_side_precheck) rather than recomputing -- otherwise the
+        dtype/device/num_classes match check would be pointless overhead with no actual caching benefit."""
+        outputs, targets = _random_detection_batch(seed=304, sizes=[2, 3])
+        matcher = HungarianMatcher()
+        safety = matcher.precompute_target_side_safety(outputs, targets)
+
+        calls = _spy_on_target_side_precheck(monkeypatch)
+        result = HungarianMatcher._detection_inputs_are_safe(outputs, targets, safety)
+
+        assert result is True
+        assert calls == [], "a matching TargetSideSafety must be reused, not recomputed"
 
 
 def _spy_on_assign(monkeypatch: pytest.MonkeyPatch) -> list[torch.Tensor]:
