@@ -408,7 +408,6 @@ overrides = [
     "rfdetr",
     "rfdetr._namespace",
     "rfdetr.config",
-    "rfdetr.datasets._develop",
     "rfdetr.datasets.coco",
     "rfdetr.datasets.synthetic",
     "rfdetr.datasets.transforms",
