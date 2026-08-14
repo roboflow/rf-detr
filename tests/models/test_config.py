@@ -278,6 +278,19 @@ class TestTrainConfigT42PromotedFields:
         """lr_scheduler defaults to 'step'."""
         assert self._tc(tmp_path).lr_scheduler == "step"
 
+    def test_best_model_metric_default_is_map(self, tmp_path):
+        """best_model_metric defaults to 'map' for backward compatibility."""
+        assert self._tc(tmp_path).best_model_metric == "map"
+
+    def test_best_model_metric_accepts_mar(self, tmp_path):
+        """best_model_metric accepts 'mar' to rank checkpoints/early-stop by recall instead of mAP."""
+        assert self._tc(tmp_path, best_model_metric="mar").best_model_metric == "mar"
+
+    def test_best_model_metric_rejects_invalid_value(self, tmp_path):
+        """best_model_metric rejects any value outside the 'map'/'mar' literal."""
+        with pytest.raises(ValidationError):
+            self._tc(tmp_path, best_model_metric="f1")
+
     def test_optimizer_default_is_adamw(self, tmp_path):
         """Optimizer defaults to AdamW for backward compatibility."""
         assert self._tc(tmp_path).optimizer == "adamw"
