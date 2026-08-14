@@ -640,6 +640,135 @@ class TestPredictImagePinning:
         assert not any(captured), "CUDA tensor -> CPU-model transfer must not set non_blocking=True"
 
 
+class TestPredictPixelRangeValidation:
+    """``predict()`` must still reject out-of-[0, 1]-range tensor inputs, now that the range check is deferred (see the
+    ``pending_checks`` comment in ``detr.py``) instead of raised inline, per image, inside the conversion loop."""
+
+    def test_raises_for_pixel_value_above_one(self) -> None:
+        """A tensor with any pixel above 1 still raises after the range check moved off the hot path."""
+        model = _DummyRFDETR()
+        img = torch.zeros(3, 8, 8)
+        img[0, 0, 0] = 1.5
+
+        with pytest.raises(ValueError, match="pixel values above 1"):
+            model.predict(img)
+
+    def test_valid_images_do_not_raise(self) -> None:
+        """A batch of in-range tensors must not raise, deferred check included."""
+        model = _DummyRFDETR()
+        img = torch.full((3, 8, 8), 0.5)
+
+        model.predict([img, img])  # must not raise
+
+    @pytest.mark.parametrize(
+        ("first_image_violation", "second_image_violation", "expected_message"),
+        [
+            pytest.param(1.5, -0.5, "pixel values above 1", id="first_image_above_wins"),
+            pytest.param(-0.5, 1.5, "pixel values below 0", id="first_image_below_wins"),
+        ],
+    )
+    def test_first_offending_image_in_input_order_determines_which_message_raises(
+        self, first_image_violation: float, second_image_violation: float, expected_message: str
+    ) -> None:
+        """Matches the original inline check's per-image precedence: image 0 is fully checked (both conditions) before
+        image 1 is considered at all, so image 0's own violation always raises first -- distinguishing this from a buggy
+        "condition-first" implementation that would scan every image's "above" violations before any "below" ones, which
+        would raise "above 1" from image 1 in the second case below instead of "below 0" from image 0."""
+        first_image = torch.zeros(3, 8, 8)
+        first_image[0, 0, 0] = first_image_violation
+        second_image = torch.zeros(3, 8, 8)
+        second_image[0, 0, 0] = second_image_violation
+        model = _DummyRFDETR()
+
+        with pytest.raises(ValueError, match=expected_message):
+            model.predict([first_image, second_image])
+
+    def test_all_images_are_processed_before_a_later_raise(self) -> None:
+        """Regression pin for the deferred-check design: unlike the original per-image inline raise, which stopped
+        converting/transferring images the moment an earlier one failed, every image now has its conversion and transfer
+        queued before any range-check result is forced to a Python bool -- so a later, valid image is still fully
+        processed even though an earlier image ultimately makes the whole call raise."""
+        invalid_first = torch.zeros(3, 8, 8)
+        invalid_first[0, 0, 0] = 1.5
+        valid_second = torch.full((3, 8, 8), 0.5)
+        model = _DummyRFDETR()
+
+        real_to = torch.Tensor.to
+        transferred: list[bool] = []
+
+        def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            """Record whether ``valid_second`` reached its ``.to()`` transfer.
+
+            Examples:
+                This test-local closure requires its enclosing tensors.
+                >>> to_spy(valid_second, torch.device("cuda"))  # doctest: +SKIP
+            """
+            if self is valid_second:
+                transferred.append(True)
+            return real_to(self, *args, **kwargs)
+
+        with patch.object(torch.Tensor, "to", to_spy), pytest.raises(ValueError, match="pixel values above 1"):
+            model.predict([invalid_first, valid_second])
+
+        assert transferred, "the later, valid image must still be transferred before the earlier image's error raises"
+
+    @pytest.mark.gpu
+    def test_mixed_cpu_and_cuda_tensor_images_are_each_checked_on_their_own_device(self) -> None:
+        """Pins the reason ``pending_checks`` keeps one check per image instead of ``torch.stack``-ing them:
+
+        images in a single ``predict()`` call are not guaranteed to share a device, and stacking a CPU-resident and a
+        CUDA-resident check result would raise ``RuntimeError`` instead of validating each on its own device.
+        """
+        model = _DummyRFDETR()
+        model.model.device = torch.device("cuda", 0)
+        cpu_valid = torch.full((3, 8, 8), 0.5)
+        cuda_invalid = torch.full((3, 8, 8), 0.5, device="cuda")
+        cuda_invalid[0, 0, 0] = 1.5
+
+        with pytest.raises(ValueError, match="pixel values above 1"):
+            model.predict([cpu_valid, cuda_invalid])
+
+        # And the same mix with no violation must not raise.
+        cuda_valid = torch.full((3, 8, 8), 0.5, device="cuda")
+        model.predict([cpu_valid, cuda_valid])
+
+    def test_range_violation_raises_before_shape_violation_on_the_same_image(self) -> None:
+        """Matches the original inline check's within-image precedence: the original code raised the range error before
+        ever reaching the shape check for that same image.
+
+        Both checks are now deferred past the conversion loop, so this pins that the deferred range check still runs
+        first in the post-loop raise order -- a tensor that is invalid on both axes at once must not surface the shape
+        message instead.
+        """
+        model = _DummyRFDETR()
+        wrong_channels_and_out_of_range = torch.zeros(4, 8, 8)
+        wrong_channels_and_out_of_range[0, 0, 0] = 1.5
+
+        with pytest.raises(ValueError, match="pixel values above 1"):
+            model.predict(wrong_channels_and_out_of_range)
+
+    def test_non_3d_tensor_raises_shape_error_not_an_unpacking_crash(self) -> None:
+        """A 2D tensor (no channel dimension at all, not just the wrong channel count) must still raise
+        the clear "Invalid tensor image shape" ``ValueError`` -- not an internal ``ValueError: not
+        enough values to unpack`` from ``h, w = img_tensor.shape[1:]`` unconditionally unpacking a
+        shape that was never checked to have 3 dims in the first place, now that the shape-check raise
+        is deferred past that unpacking instead of happening inline before it.
+        """
+        model = _DummyRFDETR()
+        no_channel_dim = torch.zeros(4, 8)  # (H, W)-shaped, not (C, H, W)
+
+        with pytest.raises(ValueError, match="Invalid tensor image shape"):
+            model.predict(no_channel_dim, include_source_image=False)
+
+    def test_non_3d_tensor_raises_shape_error_with_default_source_image(self) -> None:
+        """Malformed tensor ranks must validate before default source-image conversion."""
+        model = _DummyRFDETR()
+        no_channel_dim = torch.zeros(4, 8)
+
+        with pytest.raises(ValueError, match="Invalid tensor image shape"):
+            model.predict(no_channel_dim)
+
+
 class TestPredictShape:
     """Verify that ``predict(shape=...)`` controls the resize target.
 
