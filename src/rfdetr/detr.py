@@ -2319,10 +2319,9 @@ class RFDETR:
             input alone does not make the call fully round-trip-free. Pass ``include_source_image=False`` to avoid
             that copy as well.
 
-            The pixel-range and tensor-shape checks below are validated for every image, but any resulting
-            ``ValueError`` is raised only after every image has already been converted and transferred — so, unlike
-            a single-image call, a multi-image call does not stop converting/transferring later images the moment an
-            earlier one is found invalid.
+            Tensor range and shape checks are evaluated for every input. Any resulting ``ValueError`` is raised only
+            after all inputs have been inspected, so valid-shaped images later in a multi-image call still have their
+            conversion and transfer queued before an earlier validation failure raises.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -2402,7 +2401,9 @@ class RFDETR:
                         src = (src * 255).clip(0, 255).astype(np.uint8)
                     source_images.append(src)  # type: ignore[union-attr]
                 img = F.to_tensor(img)
-            elif include_source_image:
+            elif include_source_image and img.dim() == 3:
+                # Source extraction requires a (C, H, W) tensor for permute(). Skip malformed ranks so the deferred
+                # validation below raises the public shape error instead of an internal RuntimeError.
                 source_images.append(  # type: ignore[union-attr]
                     (img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
                 )

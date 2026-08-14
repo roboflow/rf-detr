@@ -768,6 +768,14 @@ class TestPredictPixelRangeValidation:
         with pytest.raises(ValueError, match="Invalid tensor image shape"):
             model.predict(no_channel_dim, include_source_image=False)
 
+    def test_non_3d_tensor_raises_shape_error_with_default_source_image(self) -> None:
+        """Malformed tensor ranks must validate before default source-image conversion."""
+        model = _DummyRFDETR()
+        no_channel_dim = torch.zeros(4, 8)
+
+        with pytest.raises(ValueError, match="Invalid tensor image shape"):
+            model.predict(no_channel_dim)
+
 
 class TestPredictShape:
     """Verify that ``predict(shape=...)`` controls the resize target.
