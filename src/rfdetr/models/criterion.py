@@ -714,28 +714,25 @@ class SetCriterion(nn.Module):
         # target-box finiteness/bounds) depends only on `targets` plus pred_boxes dtype/device and
         # num_classes -- all identical across every one of the up to len(aux_outputs)+2 matcher()
         # calls below, since they all share the same `targets`. Precompute it once and reuse it,
-        # instead of HungarianMatcher.forward() recomputing it from scratch on every call (measured:
-        # ~47% of the gate's cost is this target-side work). Skipped when the compact path can never
-        # apply regardless (bs<=1, masks, or keypoints present), matching the same short-circuit
-        # HungarianMatcher.forward() already applies, so this never does work the gate wouldn't have
-        # done anyway -- and also skipped when this step makes only one matcher() call (no
-        # aux_outputs and no enc_outputs, e.g. aux_loss=False with two_stage=False), since
-        # precomputing there is pure overhead: an extra device sync plus the object/NamedTuple
-        # construction for a value used exactly once, with none of the redundant-call cost it exists
-        # to amortize.
-        target_side_safety = None
-        if (
-            outputs_without_aux["pred_logits"].shape[0] > 1
-            and "masks" not in targets[0]
-            and not ("pred_keypoints" in outputs_without_aux and "keypoints" in targets[0])
-            and ("aux_outputs" in outputs or "enc_outputs" in outputs)
-        ):
-            target_side_safety = self.matcher.precompute_target_side_safety(outputs_without_aux, targets)
+        # instead of the matcher recomputing it from scratch on every call (measured: ~47% of the
+        # gate's cost is this target-side work). Whether the compact path could apply at all is the
+        # matcher's own routing rule, so the matcher decides that (returning None when it cannot);
+        # the only part that belongs here is whether this step makes more than one matcher() call.
+        # A step with no aux_outputs and no enc_outputs (e.g. aux_loss=False with two_stage=False)
+        # makes exactly one, where precomputing is pure overhead with no redundant call to amortize
+        # it over. `outputs.get("aux_outputs")` is falsy for both an absent key and a present-but-
+        # empty list, so a dec_layers=1 config whose aux_outputs is [] is treated as the single-call
+        # step it is. Guarded by getattr so a matcher that predates this optimization still works:
+        # `target_side_safety` is not part of the matcher contract SetCriterion requires, so the
+        # kwarg is withheld entirely from a matcher that does not advertise the precompute method,
+        # rather than passed as None and raising TypeError on its two-argument signature.
+        precompute = getattr(self.matcher, "_precompute_target_side_safety", None)
+        matcher_kwargs: dict[str, Any] = {"group_detr": group_detr}
+        if precompute is not None and (outputs.get("aux_outputs") or "enc_outputs" in outputs):
+            matcher_kwargs["target_side_safety"] = precompute(outputs_without_aux, targets)
 
         # Retrieve the matching between the outputs of the last layer and the targets
-        indices = self.matcher(
-            outputs_without_aux, targets, group_detr=group_detr, target_side_safety=target_side_safety
-        )
+        indices = self.matcher(outputs_without_aux, targets, **matcher_kwargs)
 
         if num_boxes is None:
             num_boxes = self.num_boxes_for_targets(outputs, targets)
@@ -752,9 +749,7 @@ class SetCriterion(nn.Module):
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
-                indices = self.matcher(
-                    aux_outputs, targets, group_detr=group_detr, target_side_safety=target_side_safety
-                )
+                indices = self.matcher(aux_outputs, targets, **matcher_kwargs)
                 for loss in self.losses:
                     kwargs = {}
                     if loss == "labels":
@@ -766,7 +761,7 @@ class SetCriterion(nn.Module):
 
         if "enc_outputs" in outputs:
             enc_outputs = outputs["enc_outputs"]
-            indices = self.matcher(enc_outputs, targets, group_detr=group_detr, target_side_safety=target_side_safety)
+            indices = self.matcher(enc_outputs, targets, **matcher_kwargs)
             for loss in self.losses:
                 kwargs = {}
                 if loss == "labels":

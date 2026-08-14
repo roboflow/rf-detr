@@ -25,6 +25,17 @@ class _MatcherStub:
         return [(torch.arange(len(t["labels"])), torch.arange(len(t["labels"]))) for t in targets]
 
 
+class _LegacyMatcherStub:
+    """Matcher predating the target-side-safety cache: two-argument signature, no precompute method.
+
+    Deliberately has neither a ``target_side_safety`` parameter nor a ``_precompute_target_side_safety`` attribute, so
+    it raises TypeError if ``SetCriterion.forward`` passes the kwarg unconditionally.
+    """
+
+    def __call__(self, outputs, targets, group_detr=1):
+        return [(torch.arange(len(t["labels"])), torch.arange(len(t["labels"]))) for t in targets]
+
+
 def _bare_criterion() -> SetCriterion:
     """Return a SetCriterion with no losses so forward() is a no-op.
 
@@ -277,3 +288,31 @@ class TestEncOutputsMaskLossThroughRealForwardPath:
         proj_grad = model.segmentation_head.spatial_features_proj.weight.grad
         assert proj_grad is not None
         assert torch.isfinite(proj_grad).all()
+
+
+class TestMatcherContract:
+    """``target_side_safety`` is an optimization SetCriterion offers, not part of the matcher contract it requires."""
+
+    def test_forward_supports_matcher_without_target_side_safety_kwarg(self) -> None:
+        """A duck-typed matcher with a two-argument signature drives a full multi-call step without TypeError.
+
+        The step deliberately carries a non-empty ``aux_outputs`` plus ``enc_outputs`` -- the shape that makes
+        ``SetCriterion.forward`` want a precomputed safety value in the first place. A step without them short-circuits
+        before any precompute and would pass even against an unguarded call site, proving nothing.
+        """
+        batch_size, num_queries, num_classes = 2, 4, 3
+        layers = [
+            {
+                "pred_logits": torch.zeros(batch_size, num_queries, num_classes),
+                "pred_boxes": torch.full((batch_size, num_queries, 4), 0.5),
+            }
+            for _ in range(3)
+        ]
+        outputs = {**layers[0], "aux_outputs": [layers[1]], "enc_outputs": layers[2]}
+        targets = [
+            {"labels": torch.zeros(2, dtype=torch.int64), "boxes": torch.full((2, 4), 0.5)} for _ in range(batch_size)
+        ]
+        criterion = _bare_criterion()
+        criterion.matcher = _LegacyMatcherStub()
+
+        assert criterion.forward(outputs, targets, num_boxes=1.0) == {}
