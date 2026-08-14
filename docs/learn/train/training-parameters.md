@@ -27,14 +27,17 @@ model.train(
 
 These are the essential parameters for training:
 
-| Parameter          | Type            | Default    | Description                                                                                                                                                                             |
-| ------------------ | --------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dataset_dir`      | `str`           | Required   | Path to your dataset directory. RF-DETR auto-detects if it's in COCO or YOLO format. See [Dataset Formats](dataset-formats.md).                                                         |
-| `output_dir`       | `str`           | `"output"` | Directory where training artifacts (checkpoints, logs) are saved.                                                                                                                       |
-| `epochs`           | `int`           | `100`      | Number of full passes over the training dataset.                                                                                                                                        |
-| `batch_size`       | `int or "auto"` | `4`        | Number of samples processed per iteration. Higher values require more GPU memory. Set to `"auto"` to probe the GPU for the largest safe batch size automatically.                       |
-| `grad_accum_steps` | `int`           | `4`        | Accumulates gradients over multiple mini-batches. Use with `batch_size` to achieve effective batch size.                                                                                |
-| `resume`           | `str`           | `None`     | Path to a saved checkpoint to continue training. Full `.ckpt` files restore model, optimizer, and scheduler state; lightweight best `.pth` files restart optimizer and scheduler state. |
+| Parameter                          | Type            | Default    | Description                                                                                                                                                                             |
+| ---------------------------------- | --------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dataset_dir`                      | `str`           | Required   | Path to your dataset directory. RF-DETR auto-detects if it's in COCO or YOLO format. See [Dataset Formats](dataset-formats.md).                                                         |
+| `output_dir`                       | `str`           | `"output"` | Directory where training artifacts (checkpoints, logs) are saved.                                                                                                                       |
+| `epochs`                           | `int`           | `100`      | Number of full passes over the training dataset.                                                                                                                                        |
+| `batch_size`                       | `int or "auto"` | `4`        | Number of samples processed per iteration. Higher values require more GPU memory. Set to `"auto"` to probe the GPU for the largest safe batch size automatically.                       |
+| `grad_accum_steps`                 | `int`           | `4`        | Accumulates gradients over multiple mini-batches. Use with `batch_size` to achieve effective batch size.                                                                                |
+| `auto_batch_target_effective`      | `int`           | `16`       | Only used when `batch_size="auto"`. Per-device effective batch size the probe search targets (before scaling by `devices * num_nodes`).                                                 |
+| `auto_batch_max_targets_per_image` | `int`           | `100`      | Only used when `batch_size="auto"`. Synthetic target count per image the probe uses to simulate worst-case matcher/loss memory.                                                         |
+| `auto_batch_ema_headroom`          | `float`         | `0.7`      | Only used when `batch_size="auto"` and `use_ema=True`. Fraction of the probed batch size reserved as headroom for the EMA model's extra memory use. Must be in `(0, 1]`.                |
+| `resume`                           | `str`           | `None`     | Path to a saved checkpoint to continue training. Full `.ckpt` files restore model, optimizer, and scheduler state; lightweight best `.pth` files restart optimizer and scheduler state. |
 
 ### Understanding Batch Size
 
