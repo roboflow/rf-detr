@@ -19,6 +19,7 @@ from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import AugmentationBackend, ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
 from rfdetr.datasets.aug_configs import AUG_CONFIG
+from rfdetr.datasets.yolo import YoloSplitUnavailableError
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import make_collate_fn
@@ -269,11 +270,45 @@ class RFDETRDataModule(LightningDataModule):
                 self._dataset_val = build_dataset("val", ns, resolution)
         elif stage == "test":
             if self._dataset_test is None:
-                split = "test" if self.train_config.dataset_file == "roboflow" else "val"
-                self._dataset_test = build_dataset(split, ns, resolution)
+                self._dataset_test = self._build_test_dataset(ns, resolution)
         elif stage == "predict":
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
+
+    def _build_test_dataset(self, ns: Any, resolution: int) -> torch.utils.data.Dataset[Any]:
+        """Build the dataset backing ``setup("test")``, preferring a real test split.
+
+        ``roboflow`` and ``yolo`` datasets carry a labelled ``test`` split, so it is used directly.  A YOLO-format
+        dataset is not required to declare one: a ``roboflow`` dataset whose detected format is YOLO-style routes
+        through the same builder as ``dataset_file="yolo"`` (:func:`rfdetr.datasets.build_roboflow` ->
+        ``build_roboflow_from_yolo``), and Roboflow's export UI does not require a test split any more than a
+        hand-built YOLO dataset does. When that YOLO-style split cannot be resolved, the ``val`` split is used
+        instead and the substitution is logged, because falling back silently reports validation numbers under
+        the name "test".  A ``roboflow`` export in COCO format still has to ship ``test/_annotations.coco.json``:
+        its absence raises a plain ``FileNotFoundError`` from the COCO builder, which this fallback does not catch.
+
+        ``coco`` falls back to ``val`` because its ``test`` split is unlabelled COCO test-dev and cannot be scored
+        locally.  ``o365`` also falls back because its dataset builder exposes only ``train`` and ``val`` splits.
+
+        Args:
+            ns: Merged model/train config namespace forwarded to :func:`build_dataset`.
+            resolution: Target square resolution in pixels.
+
+        Returns:
+            The dataset to evaluate during the ``test`` stage.
+        """
+        dataset_file = self.train_config.dataset_file
+        if dataset_file in ("roboflow", "yolo"):
+            try:
+                return build_dataset("test", ns, resolution)
+            except YoloSplitUnavailableError as exc:
+                dataset_label = {"roboflow": "Roboflow", "yolo": "YOLO"}[dataset_file]
+                logger.warning(
+                    "No resolvable 'test' split for this %s dataset (%s); evaluating the 'val' split instead.",
+                    dataset_label,
+                    str(exc),
+                )
+        return build_dataset("val", ns, resolution)
 
     def _resolve_batch_size(self) -> int:
         """Return the concrete training batch size.

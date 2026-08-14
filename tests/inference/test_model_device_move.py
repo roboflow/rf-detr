@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
 import torch
 from torch import nn
@@ -66,3 +67,75 @@ class TestMoveModelContextUnderInferenceMode:
             _move_model_context_to_device(ctx)
 
         assert module.inference_mode_at_move is False
+
+
+class _FakeParam:
+    """Duck-typed stand-in for a parameter: only ``.device`` is read by the guard."""
+
+    def __init__(self, device: torch.device) -> None:
+        self.device = device
+
+
+class _CountingDeviceModule:
+    """Duck-typed module stand-in that counts real ``.to()`` calls without touching any accelerator.
+
+    ``_move_model_context_to_device`` only calls ``next(inner.parameters(), None)`` and ``inner.to(target)`` on the
+    model context's inner module, so a minimal stand-in exercises the guard logic without requiring a CUDA device to be
+    present (this repo's CPU-only CI has none).
+    """
+
+    def __init__(self, initial_device: torch.device) -> None:
+        self._device = initial_device
+        self.to_call_count = 0
+
+    def parameters(self) -> Any:
+        """Yield the single fake parameter tracking the module's current device.
+
+        Examples:
+            >>> module = _CountingDeviceModule(torch.device("cpu"))
+            >>> next(module.parameters()).device
+            device(type='cpu')
+        """
+        yield _FakeParam(self._device)
+
+    def to(self, device: torch.device) -> "_CountingDeviceModule":
+        """Record the call and move the fake parameter to *device*."""
+        self.to_call_count += 1
+        self._device = device
+        return self
+
+
+class TestMoveModelContextIndexNormalization:
+    """``torch.device('cuda')`` (no index) must compare equal to the indexed device it resolves to.
+
+    ``model_ctx.device`` is built from a plain ``"cuda"`` string (see ``_build_model_context``), which
+    ``torch.device()`` converts to an index-less device. A real parameter's ``.device`` always carries an explicit index
+    once placed. Comparing the two with ``!=`` is ``True`` even when they name the same physical GPU, so without index
+    normalization the guard below would move the whole model on every single call instead of only the first one that
+    actually changes device.
+    """
+
+    def test_second_call_skips_redundant_move_when_target_has_no_index(self) -> None:
+        """A second call with an index-less target must not re-trigger ``.to()`` once already placed."""
+        module = _CountingDeviceModule(initial_device=torch.device("cpu"))
+        ctx = SimpleNamespace(device=torch.device("cuda"), model=module)
+
+        with mock.patch("torch.cuda.current_device", return_value=0):
+            _move_model_context_to_device(ctx)
+            assert module.to_call_count == 1
+            assert next(module.parameters()).device == torch.device("cuda", 0)
+
+            _move_model_context_to_device(ctx)
+
+        assert module.to_call_count == 1
+
+    def test_explicit_index_mismatch_still_triggers_move(self) -> None:
+        """An explicit different cuda index (multi-GPU) must still trigger a real move."""
+        module = _CountingDeviceModule(initial_device=torch.device("cuda", 0))
+        ctx = SimpleNamespace(device=torch.device("cuda", 1), model=module)
+
+        with mock.patch("torch.cuda.current_device", return_value=0):
+            _move_model_context_to_device(ctx)
+
+        assert module.to_call_count == 1
+        assert next(module.parameters()).device == torch.device("cuda", 1)
