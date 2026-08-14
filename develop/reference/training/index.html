@@ -6693,7 +6693,7 @@ weights there would make the reported <code>test/*</code> metrics reflect the wr
               Bases: <code><span title="pytorch_lightning.callbacks.ModelCheckpoint">ModelCheckpoint</span></code></p>
 
 
-        <p>Track best validation mAP and save best checkpoints during training.</p>
+        <p>Track the best validation metric and save best checkpoints during training.</p>
 <p>Extends :class:<code>pytorch_lightning.callbacks.ModelCheckpoint</code> to save stripped <code>{model, args, epoch}</code> <code>.pth</code>
 files (instead of full <code>.ckpt</code> files) and to track a separate EMA checkpoint in parallel.</p>
 <p>At the end of training the overall winner (regular vs EMA, strict <code>&gt;</code> for EMA) is copied to
@@ -6747,7 +6747,7 @@ ensuring that <code>trainer.fit(ckpt_path=...)</code> resumes EMA high-water-mar
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Metric key for the regular model mAP.</p>
+                <p>Metric key for the regular model (mAP or mAR, per <code>TrainConfig.best_model_metric</code>).</p>
               </div>
             </td>
             <td>
@@ -6763,7 +6763,7 @@ ensuring that <code>trainer.fit(ckpt_path=...)</code> resumes EMA high-water-mar
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Metric key for the EMA model mAP.  <code>None</code> disables EMA tracking.</p>
+                <p>Metric key for the EMA model (mAP or mAR).  <code>None</code> disables EMA tracking.</p>
               </div>
             </td>
             <td>
@@ -6898,10 +6898,12 @@ is pre-warmed by the first eligible comparison.</p>
               Bases: <code><span title="pytorch_lightning.callbacks.EarlyStopping">EarlyStopping</span></code></p>
 
 
-        <p>Early stopping callback monitoring validation mAP for RF-DETR.</p>
+        <p>Early stopping callback monitoring a validation metric for RF-DETR.</p>
 <p>Extends :class:<code>pytorch_lightning.callbacks.EarlyStopping</code> with dual-metric
-monitoring: by default it monitors <code>max(regular_mAP, ema_mAP)</code> (legacy
-behaviour); set <code>use_ema=True</code> to monitor the EMA metric exclusively.</p>
+monitoring: by default it monitors <code>max(regular, ema)</code> (legacy
+behaviour); set <code>use_ema=True</code> to monitor the EMA metric exclusively. The
+metric itself (mAP or mAR) is chosen by the caller via <code>monitor_regular</code>/
+<code>monitor_ema</code>, see <code>TrainConfig.best_model_metric</code>.</p>
 <p>The effective metric is injected into <code>trainer.callback_metrics</code> under a synthetic key before delegating to the
 parent's stopping logic, so all parent features are available for free: <code>state_dict</code>/<code>load_state_dict</code> for
 checkpoint resumption, NaN/inf guard via <code>check_finite</code>, and <code>stopping_threshold</code>/<code>divergence_threshold</code>.</p>
@@ -6945,7 +6947,7 @@ checkpoint resumption, NaN/inf guard via <code>check_finite</code>, and <code>st
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Minimum mAP improvement to reset the patience counter.</p>
+                <p>Minimum improvement (in the monitored metric) to reset the patience counter.</p>
               </div>
             </td>
             <td>
@@ -6978,7 +6980,7 @@ monitor only the EMA metric.  When <code>False</code>, monitor <code>max(regular
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Metric key for the regular model mAP.</p>
+                <p>Metric key for the regular model (mAP or mAR, per <code>TrainConfig.best_model_metric</code>).</p>
               </div>
             </td>
             <td>
@@ -6994,7 +6996,7 @@ monitor only the EMA metric.  When <code>False</code>, monitor <code>max(regular
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Metric key for the EMA model mAP.</p>
+                <p>Metric key for the EMA model (mAP or mAR).</p>
               </div>
             </td>
             <td>

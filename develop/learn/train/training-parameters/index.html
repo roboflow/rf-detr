@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-08-13T20:09:27">
+  <meta property="article:modified_time" content="2026-08-14T19:17:02">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-08-13T20:09:27",
+    "dateModified": "2026-08-14T19:17:02",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3270,7 +3270,7 @@
 </tr>
 </tbody>
 </table>
-<p>Best validation performance uses the task metric for the model family: box mAP for detection/segmentation and COCO keypoint AP for keypoint preview.</p>
+<p>Best validation performance uses the task metric for the model family (<code>best_model_metric="map"</code>, the default): box mAP for detection, mask mAP for segmentation, and COCO keypoint AP for keypoint models. Set <code>best_model_metric="mar"</code> to rank checkpoints by mAR instead: detection and segmentation use box mAR, while keypoint models use keypoint mAR. mAR for detection and segmentation is evaluated using the configured <code>eval_max_dets</code> limit; keypoint mAR uses fixed COCO <code>maxDets=20</code>.</p>
 <h2 id="early-stopping-parameters">Early Stopping Parameters<a class="headerlink" href="#early-stopping-parameters" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3305,6 +3305,12 @@
 <td><code>bool</code></td>
 <td><code>False</code></td>
 <td>Whether to track improvements using EMA model metrics.</td>
+</tr>
+<tr>
+<td><code>best_model_metric</code></td>
+<td><code>Literal["map","mar"]</code></td>
+<td><code>"map"</code></td>
+<td>Metric family for best-checkpoint selection and early stopping — mAP or mAR.</td>
 </tr>
 <tr>
 <td><code>skip_best_epochs</code></td>
@@ -3397,7 +3403,7 @@
 <td><code>eval_max_dets</code></td>
 <td><code>int</code></td>
 <td><code>500</code></td>
-<td>Maximum number of detections per image considered during COCO evaluation. Lower values speed up evaluation.</td>
+<td>Maximum detections per image for detection/segmentation COCO AP and AR evaluation. Keypoint AP/AR uses fixed COCO <code>maxDets=20</code>; lower values speed up detection/segmentation evaluation.</td>
 </tr>
 <tr>
 <td><code>eval_interval</code></td>
@@ -3795,10 +3801,16 @@
 <td>Use EMA model for early stopping metrics.</td>
 </tr>
 <tr>
+<td><code>best_model_metric</code></td>
+<td><code>Literal["map","mar"]</code></td>
+<td>"map"</td>
+<td>Metric family for best-checkpoint selection and early stopping — mAP or mAR.</td>
+</tr>
+<tr>
 <td><code>eval_max_dets</code></td>
 <td>int</td>
 <td>500</td>
-<td>Maximum detections per image considered during COCO evaluation.</td>
+<td>Maximum detections per image for detection/segmentation COCO AP and AR evaluation. Keypoint AP/AR uses fixed COCO <code>maxDets=20</code>.</td>
 </tr>
 <tr>
 <td><code>eval_interval</code></td>
@@ -3828,7 +3840,7 @@
 <td><code>progress_bar</code></td>
 <td>str | bool | None</td>
 <td>None</td>
-<td>Progress bar style: <code>"tqdm"</code>, <code>"rich"</code>, or <code>None</code>. Legacy booleans are still accepted. <code>"rich"</code> leaves each completed epoch's bar in the terminal history instead of overwriting it.</td>
+<td>Progress bar style: <code>"tqdm"</code>, <code>"rich"</code>, or <code>None</code>. Legacy booleans are still accepted.</td>
 </tr>
 <tr>
 <td><code>accelerator</code></td>
@@ -3948,7 +3960,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 13, 2026 20:09:27 UTC">2026-08-13 20:09:27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 14, 2026 19:17:02 UTC">2026-08-14 19:17:02</span>
   </span>
 
     
