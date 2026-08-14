@@ -297,6 +297,20 @@ class HungarianMatcher(nn.Module):
         aux/enc outputs). Recomputing the target-side sweep on every one of those calls wastes ~47% of the gate's total
         cost on work that never changes within a step (measured on an RTX 4060: ~300-700us/step saved by caching it).
 
+        Examples:
+            >>> matcher = HungarianMatcher()
+            >>> outputs = {
+            ...     "pred_logits": torch.zeros(2, 3, 4),
+            ...     "pred_boxes": torch.rand(2, 3, 4),
+            ... }
+            >>> targets = [
+            ...     {"boxes": torch.rand(1, 4), "labels": torch.tensor([0])},
+            ...     {"boxes": torch.rand(1, 4), "labels": torch.tensor([1])},
+            ... ]
+            >>> result = matcher._precompute_target_side_safety(outputs, targets)
+            >>> bool(result.safe)  # .safe is an unsynced Tensor, so compare via bool() to sync it
+            True
+
         Args:
             outputs: Any one of the step's outputs dicts (``pred_boxes``/``pred_logits`` share the
                 same dtype/device/``num_classes`` across every layer of one forward pass, by

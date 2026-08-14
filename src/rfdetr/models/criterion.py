@@ -710,22 +710,19 @@ class SetCriterion(nn.Module):
         group_detr = self.group_detr if self.training else 1
         outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
 
-        # The compact-path safety gate's target-side sweep (dtype/device consistency, label range,
-        # target-box finiteness/bounds) depends only on `targets` plus pred_boxes dtype/device and
-        # num_classes -- all identical across every one of the up to len(aux_outputs)+2 matcher()
-        # calls below, since they all share the same `targets`. Precompute it once and reuse it,
-        # instead of the matcher recomputing it from scratch on every call (measured: ~47% of the
-        # gate's cost is this target-side work). Whether the compact path could apply at all is the
-        # matcher's own routing rule, so the matcher decides that (returning None when it cannot);
-        # the only part that belongs here is whether this step makes more than one matcher() call.
-        # A step with no aux_outputs and no enc_outputs (e.g. aux_loss=False with two_stage=False)
-        # makes exactly one, where precomputing is pure overhead with no redundant call to amortize
-        # it over. `outputs.get("aux_outputs")` is falsy for both an absent key and a present-but-
-        # empty list, so a dec_layers=1 config whose aux_outputs is [] is treated as the single-call
-        # step it is. Guarded by getattr so a matcher that predates this optimization still works:
-        # `target_side_safety` is not part of the matcher contract SetCriterion requires, so the
-        # kwarg is withheld entirely from a matcher that does not advertise the precompute method,
-        # rather than passed as None and raising TypeError on its two-argument signature.
+        # Caches the compact-path safety gate's target-side sweep once per step instead of once per
+        # matcher() call below, since every call shares the same `targets`. See
+        # :meth:`HungarianMatcher._precompute_target_side_safety` (and its `_TargetSideSafety`
+        # return type) for why this is cached and when reuse vs. a fresh computation is chosen --
+        # the only thing decided here is whether this step makes more than one matcher() call at
+        # all, since a step with no aux_outputs and no enc_outputs makes exactly one, where
+        # precomputing would be pure overhead. `outputs.get("aux_outputs")` is falsy for both an
+        # absent key and a present-but-empty list, so a dec_layers=1 config whose aux_outputs is []
+        # is treated as the single-call step it is. Guarded by getattr so a matcher that predates
+        # this optimization still works: `target_side_safety` is not part of the matcher contract
+        # SetCriterion requires, so the kwarg is withheld entirely from a matcher that does not
+        # advertise the precompute method, rather than passed as None and raising TypeError on its
+        # two-argument signature.
         precompute = getattr(self.matcher, "_precompute_target_side_safety", None)
         matcher_kwargs: dict[str, Any] = {"group_detr": group_detr}
         if precompute is not None and (outputs.get("aux_outputs") or "enc_outputs" in outputs):
