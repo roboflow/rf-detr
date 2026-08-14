@@ -1093,9 +1093,9 @@ class TrainConfig(BaseConfig):
         description=(
             "Validation metric that selects the best checkpoint, and (when early_stopping=True) "
             "that early stopping monitors. 'map' (default) uses the task's mAP@50:95 (keypoint OKS "
-            "AP, segmentation mask AP, or box AP). 'mar' uses mAR@max_dets instead (OKS-based for "
-            "keypoints; box-level for detection and segmentation, since torchmetrics does not expose "
-            "a separate mask mAR)."
+            "AP, segmentation mask AP, or box AP). 'mar' uses box mAR at the configured eval_max_dets "
+            "for detection and segmentation, and keypoint mAR (OKS-based) at fixed COCO maxDets=20. "
+            "Segmentation mAR is box-level because torchmetrics does not expose a separate mask mAR."
         ),
     )
     early_stopping: bool = False

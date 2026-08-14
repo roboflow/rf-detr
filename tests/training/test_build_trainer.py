@@ -177,6 +177,13 @@ class TestBuildTrainerCallbacks:
         assert best_cb.monitor == "val/mAR"
         assert best_cb._monitor_ema == "val/ema_mAR"
 
+    def test_best_model_metric_mar_without_ema_monitors_only_regular_bbox_mar(self, tmp_path):
+        """Detection mAR ranking must not configure an EMA monitor when EMA is disabled."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, best_model_metric="mar"), _mc())
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/mAR"
+        assert best_cb._monitor_ema is None
+
     def test_keypoint_best_model_metric_mar_monitors_keypoint_mar(self, tmp_path):
         """best_model_metric='mar' should rank keypoint checkpoints by the OKS-based keypoint mAR."""
         trainer = build_trainer(
@@ -342,6 +349,22 @@ class TestBuildTrainerCallbacks:
         early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
         assert early_stop_cb._monitor_regular == "val/keypoint_mAR"
         assert early_stop_cb._monitor_ema == "val/ema_keypoint_mAR"
+
+    def test_segmentation_best_model_metric_mar_early_stopping_monitors_bbox_mar(self, tmp_path):
+        """Segmentation mAR early stopping must use the bbox mAR keys when EMA is enabled."""
+        trainer = build_trainer(
+            _tc(
+                tmp_path,
+                use_ema=True,
+                early_stopping=True,
+                early_stopping_use_ema=True,
+                best_model_metric="mar",
+            ),
+            _mc(segmentation_head=True),
+        )
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._monitor_regular == "val/mAR"
+        assert early_stop_cb._monitor_ema == "val/ema_mAR"
 
     def test_no_early_stopping_when_disabled(self, tmp_path):
         """RFDETREarlyStopping is absent when early_stopping=False."""

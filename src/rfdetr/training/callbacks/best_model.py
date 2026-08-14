@@ -33,7 +33,7 @@ ptl_version = get_version("pytorch-lightning") or "unknown"
 
 
 class BestModelCallback(ModelCheckpoint):
-    """Track best validation mAP and save best checkpoints during training.
+    """Track the best validation metric and save best checkpoints during training.
 
     Extends :class:`pytorch_lightning.callbacks.ModelCheckpoint` to save stripped ``{model, args, epoch}`` ``.pth``
     files (instead of full ``.ckpt`` files) and to track a separate EMA checkpoint in parallel.
@@ -489,7 +489,7 @@ class BestModelCallback(ModelCheckpoint):
         )
 
     def on_validation_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        """Save best regular/EMA checkpoints when validation mAP improves.
+        """Save best regular/EMA checkpoints when the selected validation metric improves.
 
         Delegates regular-model checkpoint management to the :class:`~pytorch_lightning.callbacks.ModelCheckpoint`
         parent (handles improvement detection, fast_dev_run/sanity guards, ``best_model_path`` and ``best_model_score``
@@ -554,7 +554,7 @@ class BestModelCallback(ModelCheckpoint):
             ema_state_dict = self._get_ema_model_state_dict(trainer, pl_module)
             self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, self._output_dir / "checkpoint_best_ema.pth")
             logger.info(
-                "Best EMA mAP improved to %.4f (epoch %d)",
+                "Best EMA metric improved to %.4f (epoch %d)",
                 ema_val,
                 trainer.current_epoch,
             )
@@ -730,10 +730,11 @@ class RFDETREarlyStopping(EarlyStopping):
         self._skip_best_epochs = skip_best_epochs
 
     def on_validation_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        """Compute effective mAP and delegate to parent stopping logic.
+        """Compute the effective validation metric and delegate to parent stopping logic.
 
-        Computes ``ema_mAP`` or ``max(regular_mAP, ema_mAP)`` depending on ``use_ema``, injects the result under the
-        synthetic monitor key, then calls :meth:`EarlyStopping.on_validation_end` which handles patience,
+        Computes the EMA metric or ``max(regular metric, EMA metric)`` depending on ``use_ema``,
+        injects the result under the synthetic monitor key, then calls
+        :meth:`EarlyStopping.on_validation_end`, which handles patience,
         ``trainer.should_stop``, logging, and ``state_dict`` persistence.
 
         Args:

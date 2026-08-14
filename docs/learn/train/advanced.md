@@ -70,7 +70,7 @@ The training loop will automatically load:
 
 ## Early Stopping
 
-Early stopping monitors the validation task metric and halts training if improvements remain below a threshold for a set number of epochs. Detection and segmentation models use box mAP; keypoint preview models use COCO keypoint AP.
+Early stopping monitors the validation task metric selected by `best_model_metric` and halts training if improvements remain below a threshold for a set number of epochs. With the default `best_model_metric="map"`, detection models use box mAP, segmentation models use mask mAP, and keypoint models use COCO keypoint AP. With `best_model_metric="mar"`, detection and segmentation models use box mAR and keypoint models use keypoint mAR; mAR for detection and segmentation is evaluated using the configured `eval_max_dets` limit, while keypoint mAR uses fixed COCO `maxDets=20`.
 
 ### Basic Usage
 
@@ -141,12 +141,12 @@ model.train(
 5. The best checkpoint is already saved as `checkpoint_best_total.pth`
 
 ```
-Epoch 10: mAP = 0.450 (best: 0.450) - counter: 0
-Epoch 11: mAP = 0.455 (best: 0.455) - counter: 0 (improved)
-Epoch 12: mAP = 0.454 (best: 0.455) - counter: 1 (no improvement)
-Epoch 13: mAP = 0.453 (best: 0.455) - counter: 2
+Epoch 10: <selected-metric> = 0.450 (best: 0.450) - counter: 0
+Epoch 11: <selected-metric> = 0.455 (best: 0.455) - counter: 0 (improved)
+Epoch 12: <selected-metric> = 0.454 (best: 0.455) - counter: 1 (no improvement)
+Epoch 13: <selected-metric> = 0.453 (best: 0.455) - counter: 2
 ...
-Epoch 22: mAP = 0.452 (best: 0.455) - counter: 10 → STOP
+Epoch 22: <selected-metric> = 0.452 (best: 0.455) - counter: 10 → STOP
 ```
 
 ---

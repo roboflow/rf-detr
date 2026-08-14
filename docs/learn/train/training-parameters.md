@@ -141,7 +141,7 @@ During training, multiple checkpoints are saved:
 | `checkpoint_best_total.pth`   | Final best model; lightweight callback state when available  |
 | `last_ema.pth`                | Final EMA weights; lightweight callback state when available |
 
-Best validation performance uses the task metric for the model family (`best_model_metric="map"`, the default): box mAP for detection/segmentation and COCO keypoint AP for keypoint preview. Set `best_model_metric="mar"` to rank checkpoints by mAR instead — box-level mAR for detection/segmentation (torchmetrics does not expose a separate mask mAR), OKS-based mAR for keypoint preview.
+Best validation performance uses the task metric for the model family (`best_model_metric="map"`, the default): box mAP for detection, mask mAP for segmentation, and COCO keypoint AP for keypoint models. Set `best_model_metric="mar"` to rank checkpoints by mAR instead: detection and segmentation use box mAR, while keypoint models use keypoint mAR. mAR for detection and segmentation is evaluated using the configured `eval_max_dets` limit; keypoint mAR uses fixed COCO `maxDets=20`.
 
 ## Early Stopping Parameters
 
@@ -204,7 +204,7 @@ model.train(
 
 | Parameter                    | Type                | Default | Description                                                                                                                                                                                                                                                          |
 | ---------------------------- | ------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `eval_max_dets`              | `int`               | `500`   | Maximum number of detections per image considered during COCO evaluation. Lower values speed up evaluation.                                                                                                                                                          |
+| `eval_max_dets`              | `int`               | `500`   | Maximum detections per image for detection/segmentation COCO AP and AR evaluation. Keypoint AP/AR uses fixed COCO `maxDets=20`; lower values speed up detection/segmentation evaluation.                                                                             |
 | `eval_interval`              | `int`               | `1`     | Skip the whole COCO validation loop (forward pass, metric compute, EMA forward) on epochs that aren't a multiple of N, to reduce evaluation overhead during long training runs. The final epoch always validates regardless of this setting.                         |
 | `log_per_class_metrics`      | `bool`              | `True`  | Log per-class AP metrics to the console and loggers. Disable to also skip the underlying per-class `torchmetrics` computation (not just its display), reducing per-epoch compute when there are many classes.                                                        |
 | `eval_ema_only`              | `bool`              | `False` | Forward through the EMA model only during validation, skipping the duplicate base-model pass. Requires `use_ema=True`. See [EMA](#ema-exponential-moving-average).                                                                                                   |
@@ -305,7 +305,7 @@ Below is a summary table of all training parameters:
 | `early_stopping_min_delta`   | float                  | 0.001          | Minimum validation metric change to qualify as improvement.                                                                           |
 | `early_stopping_use_ema`     | bool                   | False          | Use EMA model for early stopping metrics.                                                                                             |
 | `best_model_metric`          | `Literal["map","mar"]` | "map"          | Metric family for best-checkpoint selection and early stopping — mAP or mAR.                                                          |
-| `eval_max_dets`              | int                    | 500            | Maximum detections per image considered during COCO evaluation.                                                                       |
+| `eval_max_dets`              | int                    | 500            | Maximum detections per image for detection/segmentation COCO AP and AR evaluation. Keypoint AP/AR uses fixed COCO `maxDets=20`.       |
 | `eval_interval`              | int                    | 1              | Skip the whole validation loop on epochs not a multiple of N; final epoch always validates.                                           |
 | `log_per_class_metrics`      | bool                   | True           | Log per-class AP metrics; disable to also skip the underlying per-class compute.                                                      |
 | `eval_ema_only`              | bool                   | False          | Forward through the EMA model only during validation. Requires use_ema=True.                                                          |
