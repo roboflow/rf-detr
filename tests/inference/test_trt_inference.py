@@ -4,12 +4,15 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import sys
+from types import ModuleType
 from unittest.mock import Mock
 
 import pytest
 import torch
 from PIL import Image
 
+import rfdetr.export.benchmark as benchmark
 from rfdetr.export.benchmark import TRTInference, infer_transforms
 
 
@@ -53,6 +56,43 @@ class TestTRTInference:
         assert image_tensor.shape == (3, 640, 640)
         assert image_tensor.dtype == torch.float32
         assert target is None
+
+
+class TestBenchmarkMain:
+    @pytest.mark.parametrize(
+        ("device", "expected_torch_device"),
+        [
+            pytest.param(0, "cuda:0", id="default-device"),
+            pytest.param(7, "cuda:7", id="non-default-device"),
+        ],
+    )
+    def test_onnx_benchmark_uses_requested_cuda_device(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        device: int,
+        expected_torch_device: str,
+    ) -> None:
+        """ONNX Runtime and PyTorch should use the requested CUDA device."""
+        session = Mock()
+        inference_session = Mock(return_value=session)
+        onnxruntime = ModuleType("onnxruntime")
+        onnxruntime.InferenceSession = inference_session  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "onnxruntime", onnxruntime)
+
+        monkeypatch.setattr(benchmark, "get_image_list", Mock(return_value=[]))
+        infer_onnx = Mock()
+        monkeypatch.setattr(benchmark, "infer_onnx", infer_onnx)
+
+        benchmark.main("model.onnx", device=device, disable_eval=True)
+
+        inference_session.assert_called_once_with(
+            "model.onnx",
+            providers=[("CUDAExecutionProvider", {"device_id": device})],
+        )
+        infer_onnx.assert_called_once()
+        assert infer_onnx.call_args.args[0] is session
+        assert infer_onnx.call_args.kwargs["device"] == expected_torch_device
+        assert infer_onnx.call_args.kwargs["repeats"] == 1
 
 
 class TestBenchmarkShapeParameterization:
