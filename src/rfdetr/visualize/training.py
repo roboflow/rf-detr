@@ -314,8 +314,7 @@ def _plot_metric_groups(
                 )
             else:
                 ax.set_yscale("log")
-        if subplot_title == "Loss":
-            _place_legend_below_axes(ax)
+        _place_legend_below_axes(ax)
 
     for idx in range(n_groups, len(axes_flat)):
         axes_flat[idx].set_visible(False)
