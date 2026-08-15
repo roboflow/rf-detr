@@ -7441,7 +7441,7 @@ skipped.</p>
               Bases: <code><span title="rfdetr.training.callbacks.gpu_memory_progress_bar._GpuMemoryMetricsMixin">_GpuMemoryMetricsMixin</span></code>, <code><span title="pytorch_lightning.callbacks.TQDMProgressBar">TQDMProgressBar</span></code></p>
 
 
-        <p><code>TQDMProgressBar</code> with peak CUDA memory usage in the postfix.</p>
+        <p><code>TQDMProgressBar</code> with peak and free/total CUDA memory usage in the postfix.</p>
 
 
 
@@ -7473,10 +7473,18 @@ skipped.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Return the progress bar metrics, with <code>max_mem</code> appended on CUDA.</p>
-<p>An explicitly logged <code>max_mem</code> wins: if the base metrics already carry that key with a different value (a
-user's own <code>self.log("max_mem", ..., prog_bar=True)</code>), the logged value is kept and a rank-zero warning is
-emitted, mirroring how <code>ProgressBar.get_metrics</code> reports name collisions.</p>
+        <p>Return the progress bar metrics, with <code>max_mem</code>/<code>free_mem</code> appended on CUDA.</p>
+<p>The two metrics answer different questions and are not interchangeable. <code>max_mem</code> is this <strong>process's own
+peak</strong> allocation on <code>trainer.strategy.root_device</code> since the last <code>trainer.fit()</code> call, reset at the
+start of every fit. <code>free_mem</code> is a <strong>live, whole-device</strong> <code>torch.cuda.mem_get_info(device)</code> reading with
+no reset step: it includes every allocator on that device, not just this process, and it only reflects memory
+actually handed back to the CUDA driver — freeing a tensor in this process typically does not raise it on
+its own, since PyTorch's caching allocator keeps that block reserved for its own reuse. Explicit cache
+release, allocator reclamation under configured thresholds or allocation pressure, sibling-process release,
+or process exit can change the reading. See the module docstring for the full semantics.</p>
+<p>An explicitly logged <code>max_mem</code>/<code>free_mem</code> wins: if the base metrics already carry that key with a
+different value (a user's own <code>self.log("max_mem", ..., prog_bar=True)</code>), the logged value is kept and a
+rank-zero warning is emitted, mirroring how <code>ProgressBar.get_metrics</code> reports name collisions.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -7541,7 +7549,7 @@ emitted, mirroring how <code>ProgressBar.get_metrics</code> reports name collisi
             </td>
             <td>
               <div class="doc-md-description">
-                <p>The metrics dict produced by the base progress bar, plus <code>max_mem</code> when</p>
+                <p>The metrics dict produced by the base progress bar, plus <code>max_mem</code> and <code>free_mem</code> when</p>
               </div>
             </td>
           </tr>
@@ -7582,7 +7590,7 @@ emitted, mirroring how <code>ProgressBar.get_metrics</code> reports name collisi
               Bases: <code><span title="rfdetr.training.callbacks.gpu_memory_progress_bar._GpuMemoryMetricsMixin">_GpuMemoryMetricsMixin</span></code>, <code><span title="pytorch_lightning.callbacks.RichProgressBar">RichProgressBar</span></code></p>
 
 
-        <p><code>RichProgressBar</code> with peak CUDA memory usage in the metrics column.</p>
+        <p><code>RichProgressBar</code> with peak and free/total CUDA memory usage in the metrics column.</p>
 
 
 
@@ -7614,10 +7622,18 @@ emitted, mirroring how <code>ProgressBar.get_metrics</code> reports name collisi
 
     <div class="doc doc-contents ">
 
-        <p>Return the progress bar metrics, with <code>max_mem</code> appended on CUDA.</p>
-<p>An explicitly logged <code>max_mem</code> wins: if the base metrics already carry that key with a different value (a
-user's own <code>self.log("max_mem", ..., prog_bar=True)</code>), the logged value is kept and a rank-zero warning is
-emitted, mirroring how <code>ProgressBar.get_metrics</code> reports name collisions.</p>
+        <p>Return the progress bar metrics, with <code>max_mem</code>/<code>free_mem</code> appended on CUDA.</p>
+<p>The two metrics answer different questions and are not interchangeable. <code>max_mem</code> is this <strong>process's own
+peak</strong> allocation on <code>trainer.strategy.root_device</code> since the last <code>trainer.fit()</code> call, reset at the
+start of every fit. <code>free_mem</code> is a <strong>live, whole-device</strong> <code>torch.cuda.mem_get_info(device)</code> reading with
+no reset step: it includes every allocator on that device, not just this process, and it only reflects memory
+actually handed back to the CUDA driver — freeing a tensor in this process typically does not raise it on
+its own, since PyTorch's caching allocator keeps that block reserved for its own reuse. Explicit cache
+release, allocator reclamation under configured thresholds or allocation pressure, sibling-process release,
+or process exit can change the reading. See the module docstring for the full semantics.</p>
+<p>An explicitly logged <code>max_mem</code>/<code>free_mem</code> wins: if the base metrics already carry that key with a
+different value (a user's own <code>self.log("max_mem", ..., prog_bar=True)</code>), the logged value is kept and a
+rank-zero warning is emitted, mirroring how <code>ProgressBar.get_metrics</code> reports name collisions.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -7682,7 +7698,7 @@ emitted, mirroring how <code>ProgressBar.get_metrics</code> reports name collisi
             </td>
             <td>
               <div class="doc-md-description">
-                <p>The metrics dict produced by the base progress bar, plus <code>max_mem</code> when</p>
+                <p>The metrics dict produced by the base progress bar, plus <code>max_mem</code> and <code>free_mem</code> when</p>
               </div>
             </td>
           </tr>
