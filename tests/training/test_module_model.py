@@ -1018,17 +1018,47 @@ class TestTrainingStep:
         live_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "loss"]
         assert len(live_loss_calls) == expected_live_loss_calls
 
-    def test_logs_learning_rate_without_progress_bar(self, tmp_path):
-        """Current learning rate should be logged without occupying progress-bar metric slots."""
+    def test_logs_learning_rate_to_progress_bar(self, tmp_path):
+        """Current learning rate must be logged every step as a progress-bar metric."""
         module, samples, targets, _, _ = self._run_step(tmp_path)
 
         module.training_step((samples, targets), batch_idx=0)
 
         lr_calls = [c for c in module.log.call_args_list if c[0][0] == "train/lr"]
         assert len(lr_calls) == 1
-        assert lr_calls[0].kwargs.get("prog_bar") is False
+        assert lr_calls[0].kwargs.get("prog_bar") is True
         assert lr_calls[0].kwargs.get("on_step") is True
         assert lr_calls[0].kwargs.get("on_epoch") is False
+
+    def test_logs_learning_rate_range_for_multiple_param_groups(self, tmp_path):
+        """Multiple optimizer groups log first, minimum, and maximum rates with distinct visibility flags."""
+        module, samples, targets, _, _ = self._run_step(tmp_path)
+        first_param = nn.Parameter(torch.randn(4))
+        second_param = nn.Parameter(torch.randn(4))
+        third_param = nn.Parameter(torch.randn(4))
+        module.optimizers.return_value = torch.optim.SGD(
+            [
+                {"params": [first_param], "lr": 0.1},
+                {"params": [second_param], "lr": 0.05},
+                {"params": [third_param], "lr": 0.2},
+            ],
+            lr=0.1,
+        )
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        expected_metrics = {
+            "train/lr": (0.1, True),
+            "train/lr_min": (0.05, False),
+            "train/lr_max": (0.2, False),
+        }
+        for metric_name, (expected_value, expected_prog_bar) in expected_metrics.items():
+            metric_calls = [call for call in module.log.call_args_list if call.args[0] == metric_name]
+            assert len(metric_calls) == 1
+            assert metric_calls[0].args[1] == pytest.approx(expected_value)
+            assert metric_calls[0].kwargs.get("prog_bar") is expected_prog_bar
+            assert metric_calls[0].kwargs.get("on_step") is True
+            assert metric_calls[0].kwargs.get("on_epoch") is False
 
     def test_logs_convergence_components_to_progress_bar(self, tmp_path):
         """Selected detection and keypoint losses should appear as compact progress-only metrics."""
