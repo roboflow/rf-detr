@@ -20,11 +20,12 @@ kept unchanged; it is documented here only because the rank-local scope is not o
 ``free_mem`` is ``torch.cuda.mem_get_info(device)``'s ``free``/``total`` pair for the **whole device**, formatted as
 ``"{free}/{total} MB"``. Unlike ``max_mem`` it is **not process-local and not a peak**: it reflects every allocator on
 that device — this process, any sibling process sharing the GPU, the CUDA driver's own reserved memory — at the instant
-it is read. It only reflects memory PyTorch's own caching allocator has actually handed back to the CUDA driver:
-freeing a tensor in this process (``del``, going out of scope, the end of a batch) returns that block to PyTorch's
-*own* cache for reuse, not to the driver, so in the common case ``free_mem`` does **not** rise just because this
-process freed something — only ``torch.cuda.empty_cache()``, a sibling process releasing its own memory, or this
-process exiting moves the number. It is therefore closer to "how much room is left for a genuinely new allocation
+it is read. Under the default caching-allocator behavior, it reflects memory PyTorch's own caching allocator has
+actually handed back to the CUDA driver. Freeing a tensor in this process (``del``, going out of scope, the end of a
+batch) returns that block to PyTorch's *own* cache for reuse, not to the driver, so in the common case ``free_mem``
+does **not** rise just because this process freed something. ``torch.cuda.empty_cache()``, allocator reclamation
+triggered by configured thresholds or allocation pressure, a sibling process releasing its own memory, or this
+process exiting can move the number. It is therefore closer to "how much room is left for a genuinely new allocation
 beyond what every process on the device has already claimed" than to "how much headroom this run has for a bigger
 batch": some of that batch headroom is memory this process already reserved but is currently idle in its own cache
 (``torch.cuda.memory_reserved() - torch.cuda.memory_allocated()``), which ``free_mem`` cannot see because the driver
@@ -109,9 +110,10 @@ class _GpuMemoryMetricsMixin(ProgressBar):
         peak** allocation on ``trainer.strategy.root_device`` since the last ``trainer.fit()`` call, reset at the
         start of every fit. ``free_mem`` is a **live, whole-device** ``torch.cuda.mem_get_info(device)`` reading with
         no reset step: it includes every allocator on that device, not just this process, and it only reflects memory
-        actually handed back to the CUDA driver — freeing a tensor in this process does not raise it on its own,
-        since PyTorch's caching allocator keeps that block reserved for its own reuse until
-        ``torch.cuda.empty_cache()`` runs. See the module docstring for the full semantics.
+        actually handed back to the CUDA driver — freeing a tensor in this process typically does not raise it on
+        its own, since PyTorch's caching allocator keeps that block reserved for its own reuse. Explicit cache
+        release, allocator reclamation under configured thresholds or allocation pressure, sibling-process release,
+        or process exit can change the reading. See the module docstring for the full semantics.
 
         An explicitly logged ``max_mem``/``free_mem`` wins: if the base metrics already carry that key with a
         different value (a user's own ``self.log("max_mem", ..., prog_bar=True)``), the logged value is kept and a

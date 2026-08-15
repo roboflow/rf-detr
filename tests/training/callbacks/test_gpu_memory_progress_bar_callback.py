@@ -97,6 +97,7 @@ class TestGPUMemoryTQDMProgressBar:
         metrics = bar.get_metrics(trainer, pl_module)
 
         assert "max_mem" not in metrics
+        assert "free_mem" not in metrics
 
     def test_no_max_mem_when_cuda_not_initialized(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A cuda: device with no active CUDA context reports no max_mem."""
@@ -378,7 +379,15 @@ class _PeakMemorySpy:
 
 
 def _install_peak_spy(monkeypatch: pytest.MonkeyPatch, cuda_active: bool = True) -> _PeakMemorySpy:
-    """Patch torch.cuda's availability predicates and peak-memory API with a scriptable spy."""
+    """Patch torch.cuda's availability predicates and memory APIs with a scriptable spy.
+
+    Examples:
+        >>> monkeypatch = pytest.MonkeyPatch()
+        >>> spy = _install_peak_spy(monkeypatch, cuda_active=False)
+        >>> spy.peak_bytes
+        0
+        >>> monkeypatch.undo()
+    """
     spy = _PeakMemorySpy()
     monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda_active)
     monkeypatch.setattr(torch.cuda, "is_initialized", lambda: cuda_active)
@@ -462,11 +471,18 @@ def _build_and_fit(
     mc: RFDETRBaseConfig,
     tc: TrainConfig,
     monkeypatch: pytest.MonkeyPatch,
-    postprocess_fn=_fake_postprocess,
-    **build_trainer_kwargs,
+    postprocess_fn: Callable[..., list[dict]] = _fake_postprocess,
+    **build_trainer_kwargs: object,
 ) -> list[dict]:
-    """Run a real ``trainer.fit()`` (mirrors ``TestBuildTrainerSmoke`` in test_trainer_smoke.py) and return every
-    metrics dict that reached ``Tqdm.set_postfix`` — the actual rendering sink, not a mocked trainer."""
+    """Run a real ``trainer.fit()`` and return metrics reaching ``Tqdm.set_postfix``.
+
+    Mirrors ``TestBuildTrainerSmoke`` while using fake model/data boundaries, so the result observes the actual
+    progress-bar rendering sink rather than a mocked trainer.
+
+    Examples:
+        >>> _build_and_fit(None, None, None)  # doctest: +SKIP
+        # Requires pytest fixtures, model configs, and a configured trainer.
+    """
     captured: list[dict] = []
     original_set_postfix = Tqdm.set_postfix
 
