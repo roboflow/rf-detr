@@ -507,7 +507,10 @@ def main(
     if path.endswith(".onnx"):
         import onnxruntime as nxrun
 
-        sess = nxrun.InferenceSession(path, providers=["CUDAExecutionProvider"])
+        sess = nxrun.InferenceSession(
+            path,
+            providers=[("CUDAExecutionProvider", {"device_id": device})],
+        )
         infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats)
     elif path.endswith((".trt", ".engine")):
         model = TRTInference(path, sync_mode=True, device=f"cuda:{device}")
