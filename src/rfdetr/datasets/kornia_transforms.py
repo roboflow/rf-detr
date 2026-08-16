@@ -635,9 +635,9 @@ def _make_perspective(params: dict[str, Any]) -> Any:
     if params.get("keep_size") is False:
         raise ValueError(
             "Perspective(keep_size=False) is not supported on the Kornia GPU backend: it changes the output "
-            "resolution, and the GPU augmentation path reuses the batch's padding mask, which assumes the "
-            "image keeps its height and width. Use keep_size=True (the Albumentations default), or run this "
-            "augmentation on the CPU (albumentations) backend."
+            "resolution, but the GPU augmentation path requires a fixed batch height and width. Use "
+            "keep_size=True (the Albumentations default), or run this augmentation on the CPU "
+            "(albumentations) backend."
         )
 
     ignored = [k for k in _PERSPECTIVE_IGNORED_KEYS if k in params]
@@ -709,9 +709,10 @@ def build_kornia_pipeline(
         resolution: Target image resolution in pixels (currently reserved for
             future resolution-aware augmentations).
         with_masks: When ``True``, include ``"mask"`` in ``data_keys`` so
-            instance segmentation masks are augmented in sync with images and boxes.  The pipeline then expects three
-            inputs ``(img, boxes, masks)`` and returns three outputs.  Defaults to ``False`` (detection-only, two
-            inputs/outputs).
+            auxiliary masks are augmented in sync with images and boxes. The training DataModule always enables this
+            to transport its padding mask; segmentation batches concatenate instance-mask channels before the final
+            padding channel. The pipeline then expects three inputs ``(img, boxes, masks)`` and returns three outputs.
+            Defaults to ``False`` for direct detection-only callers.
         include_keypoints: When ``True``, keypoint-unsafe horizontal-flip
             transforms are dropped with a warning before the Kornia pipeline is built.
 

@@ -1207,10 +1207,8 @@ class TestResolveBackendForBuild:
 class TestPerspectiveFactory:
     """`Perspective` on the Kornia backend (issue #1252).
 
-    Perspective is the one geometric name from that issue that can be mapped without changing the output resolution,
-    which is what makes it safe here: the GPU augmentation path in ``module_data.on_after_batch_transfer`` rebuilds the
-    batch as ``NestedTensor(img_aug, samples.mask)``, reusing the *pre-augmentation* padding mask. A transform that
-    resizes the image would leave the mask describing a different shape, so the crop names in #1252 stay unsupported.
+    Perspective preserves output resolution, and the DataModule carries the batch padding mask through the same Kornia
+    sequence. Transforms that resize output remain unsupported because this path only transports fixed-size batches.
     """
 
     @pytest.mark.parametrize("scale", [(0.05, 0.2), 0.2], ids=["range", "scalar"])
@@ -1283,6 +1281,34 @@ class TestPerspectiveFactory:
         _, boxes_out = pipeline(img, boxes)
 
         assert not torch.allclose(boxes_out, boxes), "boxes must be warped with the image"
+
+    def test_padding_mask_follows_the_perspective_warp(self) -> None:
+        """Batch padding stays an auxiliary mask under the same Perspective parameters as image and boxes."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        torch.manual_seed(7)
+        image = torch.zeros(1, 3, 64, 64)
+        image[:, :, :48, :48] = 1.0
+        boxes = torch.tensor([[[4.0, 4.0, 44.0, 44.0]]])
+        instance_mask = torch.zeros(1, 1, 64, 64)
+        instance_mask[:, :, 12:36, 12:36] = 1.0
+        padding_mask = torch.ones(1, 1, 64, 64)
+        padding_mask[:, :, :48, :48] = 0.0
+        auxiliary_masks = torch.cat((instance_mask, padding_mask), dim=1)
+
+        pipeline = build_kornia_pipeline({"Perspective": {"scale": 0.4, "p": 1.0}}, 560, with_masks=True)
+        image_aug, boxes_aug, auxiliary_masks_aug = pipeline(image, boxes, auxiliary_masks)
+        instance_mask_aug = auxiliary_masks_aug[:, :1]
+        padding_mask_aug = auxiliary_masks_aug[:, 1:]
+
+        assert image_aug.shape == image.shape
+        assert boxes_aug.shape == boxes.shape
+        assert padding_mask_aug.shape == padding_mask.shape
+        assert instance_mask_aug.shape == instance_mask.shape
+        assert not torch.equal(padding_mask_aug, padding_mask)
+        assert not torch.equal(instance_mask_aug, instance_mask)
+        bright_pixels = image_aug[:, 0] > 0.99
+        assert not padding_mask_aug[:, 0].to(torch.bool)[bright_pixels].any()
 
     @pytest.mark.parametrize("name", ["RandomCrop", "CenterCrop", "RandomResizedCrop"])
     def test_crop_names_from_1252_remain_unsupported(self, name) -> None:

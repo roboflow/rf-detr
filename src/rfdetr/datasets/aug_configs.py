@@ -101,10 +101,11 @@ backend when the exact Albumentations semantics matter.
 Not yet supported on Kornia: ``HueSaturationValue`` (Albumentations shifts hue/saturation/value additively,
 Kornia's ``ColorJiggle`` scales them multiplicatively, so there is no faithful mapping), and the geometric
 group ``ShiftScaleRotate``, ``RandomCrop``, ``CenterCrop``, ``RandomResizedCrop``,
-``ElasticTransform`` and ``GridDistortion``, which move boxes and masks and need the auxiliary-target
-handling settled first. These still work on the Albumentations backend.
+``ElasticTransform`` and ``GridDistortion``, whose CPU behavior is not faithfully mapped by the current
+Kornia pipeline. These still work on the Albumentations backend.
 
-Segmentation models are supported by the GPU augmentation path; masks are augmented in sync with images and boxes.
+The GPU augmentation path transports the padded-batch mask with every geometric transform. Segmentation models also
+carry instance-mask channels in the same synchronized mask tensor.
 """
 
 # ---------------------------------------------------------------------------
