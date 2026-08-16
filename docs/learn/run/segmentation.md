@@ -58,9 +58,7 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
     ```
 
-For memory-constrained inference-only deployments with the `rfdetr` package, optimize the loaded model in place before
-calling `predict()`. Pass `dtype="float16"` to halve weight memory in addition to clearing the base model reference.
-This operation is irreversible — to restore the original model, create a new `RFDETR` instance:
+For memory-constrained inference-only deployments with the `rfdetr` package, optimize the loaded model in place before calling `predict()`. Pass `dtype="float16"` to halve weight memory in addition to clearing the base model reference. This operation is irreversible — to restore the original model, create a new `RFDETR` instance:
 
 ```python
 model.inference(compile=False, inplace=True, dtype="float16")

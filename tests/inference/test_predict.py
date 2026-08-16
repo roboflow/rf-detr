@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 import io
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import PIL.Image
@@ -462,6 +463,318 @@ class TestPredictSourceData:
         assert isinstance(detections.data["source_shape"], np.ndarray)
         assert detections.data["source_shape"].shape == (2, 2)
         assert np.all(detections.data["source_shape"] == np.array([48, 64]))
+
+
+class TestPredictImagePinning:
+    """``predict()`` should pin CPU-resident image tensors before an accelerator transfer.
+
+    A pageable-memory ``.to(device)`` copy onto CUDA is meaningfully slower than a pinned-memory one because the CUDA
+    driver has to pin the source buffer itself first. But ``Tensor.pin_memory()`` only accepts CPU tensors: a caller who
+    already placed the input tensor on the model's own accelerator (a legitimate use of the tensor-input path, e.g. to
+    skip a host round-trip) must never have that tensor routed through ``pin_memory()``, and a CPU-only target device
+    gets no benefit from pinning at all.
+    """
+
+    def test_cpu_tensor_inputs_transfer_pinned_buffers_to_cuda_non_blocking(self) -> None:
+        """Every CPU input transfers its own pinned buffer to CUDA and reaches the model boundary.
+
+        The pinning call returns a different tensor, so this catches the regression where ``predict()`` pins an input
+        but transfers the original pageable tensor instead. CUDA allocation is intercepted so this dispatch contract
+        also runs in CPU-only CI; the separate value-parity test exercises the real CUDA transfer.
+        """
+        model = _DummyRFDETR()
+        model.model.device = torch.device("cuda", 0)
+        source_tensors = [torch.zeros(3, 48, 64), torch.ones(3, 48, 64)]
+        pinned_tensors = [
+            torch.full_like(source_tensors[0], 0.25),
+            torch.full_like(source_tensors[1], 0.75),
+        ]
+        transferred_tensors = [
+            torch.full_like(source_tensors[0], 0.125),
+            torch.full_like(source_tensors[1], 0.875),
+        ]
+        real_to = torch.Tensor.to
+        real_tensor = torch.tensor
+        pinned_inputs: list[torch.Tensor] = []
+        cuda_transfer_sources: list[torch.Tensor] = []
+        model_inputs: list[torch.Tensor] = []
+
+        def pin_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            """Return the distinct pseudo-pinned buffer paired with a source tensor.
+
+            Examples:
+                This test-local closure requires its enclosing tensors.
+                >>> pin_spy(source_tensors[0])  # doctest: +SKIP
+            """
+            source_index = next(
+                (index for index, source_tensor in enumerate(source_tensors) if self is source_tensor),
+                None,
+            )
+            assert source_index is not None, "pin_memory() must be called on an original input tensor"
+            pinned_inputs.append(self)
+            return pinned_tensors[source_index]
+
+        def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            """Return a distinct pseudo-CUDA buffer for each pinned transfer source.
+
+            Examples:
+                This test-local closure requires its enclosing tensors.
+                >>> to_spy(pinned_tensors[0], torch.device("cuda"), non_blocking=True)  # doctest: +SKIP
+            """
+            if args and isinstance(args[0], torch.device) and args[0].type == "cuda":
+                cuda_transfer_sources.append(self)
+                transfer_index = next(
+                    (index for index, pinned_tensor in enumerate(pinned_tensors) if self is pinned_tensor),
+                    None,
+                )
+                if transfer_index is not None:
+                    assert kwargs.get("non_blocking") is True
+                    return transferred_tensors[transfer_index]
+                return self
+            return real_to(self, *args, **kwargs)
+
+        def tensor_spy(data: object, **kwargs: object) -> torch.Tensor:
+            """Redirect CUDA target-size construction to CPU for the simulated transfer.
+
+            Examples:
+                This test-local closure requires the captured real tensor constructor.
+                >>> tensor_spy([[48, 64]], device=torch.device("cuda"))  # doctest: +SKIP
+            """
+            device = kwargs.get("device")
+            if isinstance(device, torch.device) and device.type == "cuda":
+                kwargs["device"] = torch.device("cpu")
+            return real_tensor(data, **kwargs)
+
+        def capture_model_input(_module: torch.nn.Module, args: tuple[torch.Tensor, ...]) -> None:
+            """Capture the normalized batch delivered to the model boundary.
+
+            Examples:
+                This test-local closure requires the enclosing capture list.
+                >>> capture_model_input(torch.nn.Identity(), (torch.zeros(1, 3, 28, 28),))  # doctest: +SKIP
+            """
+            model_inputs.append(args[0].detach().clone())
+
+        model_module = model.model.model
+        assert model_module is not None
+        with model_module.register_forward_pre_hook(capture_model_input):
+            with (
+                patch.object(torch.Tensor, "pin_memory", pin_spy),
+                patch.object(torch.Tensor, "to", to_spy),
+                patch.object(torch, "tensor", tensor_spy),
+            ):
+                model.predict(source_tensors)
+
+        assert len(pinned_inputs) == len(source_tensors)
+        assert all(pinned_input is source_tensor for pinned_input, source_tensor in zip(pinned_inputs, source_tensors))
+        assert len(cuda_transfer_sources) == len(pinned_tensors)
+        assert all(
+            cuda_transfer_source is pinned_tensor
+            for cuda_transfer_source, pinned_tensor in zip(cuda_transfer_sources, pinned_tensors)
+        )
+        assert len(model_inputs) == 1
+        captured_batch = model_inputs[0].cpu()
+        expected_batch = torch.stack(
+            [
+                (
+                    torch.full((3, model.model.resolution, model.model.resolution), value)
+                    - torch.tensor(model.means)[:, None, None]
+                )
+                / torch.tensor(model.stds)[:, None, None]
+                for value in (0.125, 0.875)
+            ]
+        )
+        torch.testing.assert_close(captured_batch, expected_batch)
+
+    @pytest.mark.gpu
+    def test_pinned_non_blocking_transfer_preserves_values(self) -> None:
+        """Pinning + non_blocking must not change the transferred values versus a plain, blocking .to()."""
+        torch.manual_seed(0)
+        source = torch.rand(3, 48, 64)
+        device = torch.device("cuda", 0)
+
+        plain = source.to(device)
+        pinned = source.pin_memory().to(device, non_blocking=True)
+        torch.cuda.synchronize()
+
+        assert torch.equal(plain, pinned)
+
+    @pytest.mark.gpu
+    def test_already_cuda_tensor_input_is_not_pinned(self) -> None:
+        """A tensor the caller already placed on the accelerator must never be routed through pin_memory()."""
+        model = _DummyRFDETR()
+        model.model.device = torch.device("cuda", 0)
+        tensor = torch.rand(3, 48, 64, device="cuda")
+        pin_spy = MagicMock(side_effect=AssertionError("pin_memory() must not be called on a CUDA tensor"))
+
+        with patch.object(torch.Tensor, "pin_memory", pin_spy):
+            model.predict(tensor)  # must not raise: pin_memory() on a CUDA tensor would itself raise RuntimeError
+
+        pin_spy.assert_not_called()
+
+    def test_cpu_target_device_does_not_pin(self) -> None:
+        """A CPU-only target device gets no benefit from pinning, so it must be skipped entirely."""
+        model = _DummyRFDETR()  # _DummyModel defaults to a CPU device
+        tensor = torch.rand(3, 48, 64)
+        pin_spy = MagicMock(side_effect=AssertionError("pin_memory() must not be called for a CPU target device"))
+
+        with patch.object(torch.Tensor, "pin_memory", pin_spy):
+            model.predict(tensor)
+
+        pin_spy.assert_not_called()
+
+    @pytest.mark.gpu
+    def test_cuda_tensor_input_to_cpu_model_is_not_non_blocking(self) -> None:
+        """A tensor already on CUDA moving to a CPU-device model must use a blocking transfer.
+
+        ``non_blocking=True`` only pays off, and is only safe without an explicit sync, when the destination is CUDA —
+        matching ``transfer_batch_to_device()`` in ``training/module_data.py``. Here the ``.to()`` call allocates a
+        fresh, unpinned CPU tensor as its destination, so an async D2H copy could leave that tensor holding an in-flight
+        (partially written) result if read before the copy stream drains.
+        """
+        model = _DummyRFDETR()  # _DummyModel defaults to a CPU device
+        tensor = torch.rand(3, 48, 64, device="cuda")
+        real_to = torch.Tensor.to
+        captured: list[bool] = []
+
+        def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            if self is tensor:
+                captured.append(bool(kwargs.get("non_blocking", False)))
+            return real_to(self, *args, **kwargs)
+
+        with patch.object(torch.Tensor, "to", to_spy):
+            model.predict(tensor)
+
+        assert captured, "expected predict() to move the image tensor with .to()"
+        assert not any(captured), "CUDA tensor -> CPU-model transfer must not set non_blocking=True"
+
+
+class TestPredictPixelRangeValidation:
+    """``predict()`` must still reject out-of-[0, 1]-range tensor inputs, now that the range check is deferred (see the
+    ``pending_checks`` comment in ``detr.py``) instead of raised inline, per image, inside the conversion loop."""
+
+    def test_raises_for_pixel_value_above_one(self) -> None:
+        """A tensor with any pixel above 1 still raises after the range check moved off the hot path."""
+        model = _DummyRFDETR()
+        img = torch.zeros(3, 8, 8)
+        img[0, 0, 0] = 1.5
+
+        with pytest.raises(ValueError, match="pixel values above 1"):
+            model.predict(img)
+
+    def test_valid_images_do_not_raise(self) -> None:
+        """A batch of in-range tensors must not raise, deferred check included."""
+        model = _DummyRFDETR()
+        img = torch.full((3, 8, 8), 0.5)
+
+        model.predict([img, img])  # must not raise
+
+    @pytest.mark.parametrize(
+        ("first_image_violation", "second_image_violation", "expected_message"),
+        [
+            pytest.param(1.5, -0.5, "pixel values above 1", id="first_image_above_wins"),
+            pytest.param(-0.5, 1.5, "pixel values below 0", id="first_image_below_wins"),
+        ],
+    )
+    def test_first_offending_image_in_input_order_determines_which_message_raises(
+        self, first_image_violation: float, second_image_violation: float, expected_message: str
+    ) -> None:
+        """Matches the original inline check's per-image precedence: image 0 is fully checked (both conditions) before
+        image 1 is considered at all, so image 0's own violation always raises first -- distinguishing this from a buggy
+        "condition-first" implementation that would scan every image's "above" violations before any "below" ones, which
+        would raise "above 1" from image 1 in the second case below instead of "below 0" from image 0."""
+        first_image = torch.zeros(3, 8, 8)
+        first_image[0, 0, 0] = first_image_violation
+        second_image = torch.zeros(3, 8, 8)
+        second_image[0, 0, 0] = second_image_violation
+        model = _DummyRFDETR()
+
+        with pytest.raises(ValueError, match=expected_message):
+            model.predict([first_image, second_image])
+
+    def test_all_images_are_processed_before_a_later_raise(self) -> None:
+        """Regression pin for the deferred-check design: unlike the original per-image inline raise, which stopped
+        converting/transferring images the moment an earlier one failed, every image now has its conversion and transfer
+        queued before any range-check result is forced to a Python bool -- so a later, valid image is still fully
+        processed even though an earlier image ultimately makes the whole call raise."""
+        invalid_first = torch.zeros(3, 8, 8)
+        invalid_first[0, 0, 0] = 1.5
+        valid_second = torch.full((3, 8, 8), 0.5)
+        model = _DummyRFDETR()
+
+        real_to = torch.Tensor.to
+        transferred: list[bool] = []
+
+        def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            """Record whether ``valid_second`` reached its ``.to()`` transfer.
+
+            Examples:
+                This test-local closure requires its enclosing tensors.
+                >>> to_spy(valid_second, torch.device("cuda"))  # doctest: +SKIP
+            """
+            if self is valid_second:
+                transferred.append(True)
+            return real_to(self, *args, **kwargs)
+
+        with patch.object(torch.Tensor, "to", to_spy), pytest.raises(ValueError, match="pixel values above 1"):
+            model.predict([invalid_first, valid_second])
+
+        assert transferred, "the later, valid image must still be transferred before the earlier image's error raises"
+
+    @pytest.mark.gpu
+    def test_mixed_cpu_and_cuda_tensor_images_are_each_checked_on_their_own_device(self) -> None:
+        """Pins the reason ``pending_checks`` keeps one check per image instead of ``torch.stack``-ing them:
+
+        images in a single ``predict()`` call are not guaranteed to share a device, and stacking a CPU-resident and a
+        CUDA-resident check result would raise ``RuntimeError`` instead of validating each on its own device.
+        """
+        model = _DummyRFDETR()
+        model.model.device = torch.device("cuda", 0)
+        cpu_valid = torch.full((3, 8, 8), 0.5)
+        cuda_invalid = torch.full((3, 8, 8), 0.5, device="cuda")
+        cuda_invalid[0, 0, 0] = 1.5
+
+        with pytest.raises(ValueError, match="pixel values above 1"):
+            model.predict([cpu_valid, cuda_invalid])
+
+        # And the same mix with no violation must not raise.
+        cuda_valid = torch.full((3, 8, 8), 0.5, device="cuda")
+        model.predict([cpu_valid, cuda_valid])
+
+    def test_range_violation_raises_before_shape_violation_on_the_same_image(self) -> None:
+        """Matches the original inline check's within-image precedence: the original code raised the range error before
+        ever reaching the shape check for that same image.
+
+        Both checks are now deferred past the conversion loop, so this pins that the deferred range check still runs
+        first in the post-loop raise order -- a tensor that is invalid on both axes at once must not surface the shape
+        message instead.
+        """
+        model = _DummyRFDETR()
+        wrong_channels_and_out_of_range = torch.zeros(4, 8, 8)
+        wrong_channels_and_out_of_range[0, 0, 0] = 1.5
+
+        with pytest.raises(ValueError, match="pixel values above 1"):
+            model.predict(wrong_channels_and_out_of_range)
+
+    def test_non_3d_tensor_raises_shape_error_not_an_unpacking_crash(self) -> None:
+        """A 2D tensor (no channel dimension at all, not just the wrong channel count) must still raise
+        the clear "Invalid tensor image shape" ``ValueError`` -- not an internal ``ValueError: not
+        enough values to unpack`` from ``h, w = img_tensor.shape[1:]`` unconditionally unpacking a
+        shape that was never checked to have 3 dims in the first place, now that the shape-check raise
+        is deferred past that unpacking instead of happening inline before it.
+        """
+        model = _DummyRFDETR()
+        no_channel_dim = torch.zeros(4, 8)  # (H, W)-shaped, not (C, H, W)
+
+        with pytest.raises(ValueError, match="Invalid tensor image shape"):
+            model.predict(no_channel_dim, include_source_image=False)
+
+    def test_non_3d_tensor_raises_shape_error_with_default_source_image(self) -> None:
+        """Malformed tensor ranks must validate before default source-image conversion."""
+        model = _DummyRFDETR()
+        no_channel_dim = torch.zeros(4, 8)
+
+        with pytest.raises(ValueError, match="Invalid tensor image shape"):
+            model.predict(no_channel_dim)
 
 
 class TestPredictShape:

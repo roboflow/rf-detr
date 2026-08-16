@@ -1,15 +1,16 @@
 # RF-DETR Copilot Instructions
 
 > [!NOTE]
+>
 > This document is GitHub Copilot-specific guidance. For canonical contribution guidelines (test-driven development, code quality, docstrings, etc.), see [CONTRIBUTING.md](CONTRIBUTING.md). For detailed agent-specific context, see [AGENTS.md](../AGENTS.md).
 
 ## Repository Overview
 
 RF-DETR is a real-time transformer architecture for object detection and instance segmentation. Built on DINOv2 vision transformer backbone with PyTorch.
 
-**Project Type:** Python ML library (computer vision)
-**Python:** >=3.10 (3.10, 3.11, 3.12, 3.13)
-**License:** Apache 2.0 (Plus models under PML 1.0)
+- **Project Type:** Python ML library (computer vision)
+- **Python:** >=3.10 (3.10, 3.11, 3.12, 3.13)
+- **License:** Apache 2.0 (Plus models under PML 1.0)
 
 > [!TIP]
 >
@@ -32,6 +33,7 @@ uv build
 ```
 
 > [!IMPORTANT]
+>
 > Run `uv sync` after pulling changes to update dependencies.
 
 **Dependency extras:** `rfdetr[train]` is intentionally minimal and uses torchvision-native default augmentations. Custom Albumentations CPU configs and Kornia GPU augmentation both require `rfdetr[augment]`.
@@ -49,6 +51,7 @@ pre-commit run --all-files
 ## Key Conventions
 
 > [!NOTE]
+>
 > Internal package organization (`src/rfdetr/`) is subject to change as this is an active research project. Explore the codebase to understand current module organization.
 
 **Imports:**

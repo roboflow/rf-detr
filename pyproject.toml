@@ -406,11 +406,8 @@ overrides = [
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [
     "rfdetr",
-    "rfdetr._namespace",
     "rfdetr.config",
-    "rfdetr.datasets._develop",
     "rfdetr.datasets.coco",
-    "rfdetr.datasets.save_grids",
     "rfdetr.datasets.synthetic",
     "rfdetr.datasets.transforms",
   ], ignore_errors = true },
