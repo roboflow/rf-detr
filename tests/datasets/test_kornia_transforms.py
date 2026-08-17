@@ -415,6 +415,47 @@ class TestBuildKorniaPipeline:
         # `clip_limit` attribute (set directly from the constructor arg), so no private access needed.
         assert tuple(transform.clip_limit) == pytest.approx((2.0, 6.0))
 
+    @pytest.mark.parametrize(
+        "configured,expected",
+        [
+            (None, (1.0, 4.0)),
+            (4.0, (1.0, 4.0)),
+            (2.0, (1.0, 2.0)),
+            ((1.0, 4.0), (1.0, 4.0)),
+            ((2.0, 6.0), (2.0, 6.0)),
+        ],
+        ids=["default", "scalar-default-value", "scalar", "pair", "pair-non-default"],
+    )
+    def test_clahe_scalar_clip_limit_is_a_range_not_a_fixed_value(self, configured, expected) -> None:
+        """Albumentations reads a scalar clip_limit as (1, v), so the GPU path must too.
+
+        Passing it through `_as_range` produced the degenerate (v, v), which pins every
+        sample to maximum contrast enhancement while the CPU path varies it. 4.0 is the
+        default on both sides, so that divergence applied with no user config at all.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        params = {} if configured is None else {"clip_limit": configured}
+        pipeline = build_kornia_pipeline({"CLAHE": params}, 560)
+        transform = next(iter(pipeline.children()))
+
+        assert tuple(transform.clip_limit) == pytest.approx(expected)
+
+    def test_clahe_clip_limit_matches_albumentations(self) -> None:
+        """The contract stated directly: same config, same range on both backends."""
+        albumentations = pytest.importorskip("albumentations")
+
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        for configured in (4.0, 2.0, (2.0, 6.0)):
+            pipeline = build_kornia_pipeline({"CLAHE": {"clip_limit": configured}}, 560)
+            transform = next(iter(pipeline.children()))
+            cpu = albumentations.CLAHE(clip_limit=configured)
+
+            assert tuple(transform.clip_limit) == pytest.approx(tuple(cpu.clip_limit)), (
+                f"backends disagree for clip_limit={configured!r}"
+            )
+
     def test_hue_saturation_value_still_unsupported(self):
         """Deliberately out of scope: albumentations shifts additively, Kornia scales multiplicatively."""
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline

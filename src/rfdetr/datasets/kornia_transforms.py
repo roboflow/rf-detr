@@ -594,18 +594,47 @@ def _make_equalize(params: dict[str, Any]) -> Any:
     return RandomEqualize(p=params.get("p", 0.5))
 
 
+def _as_clahe_clip_limit(value: Any) -> tuple[float, float]:
+    """Normalise ``CLAHE``'s ``clip_limit`` the way Albumentations does.
+
+    Albumentations applies ``to_tuple(clip_limit, low=1)``, so a scalar ``v`` means the range ``(1, v)``. This differs
+    from :func:`_as_range`, which expands a scalar to the degenerate ``(v, v)``; using that here would change the
+    distribution rather than the units.
+
+    Args:
+        value: A scalar, a 1-element sequence, or a 2-element ``(min, max)`` pair.
+
+    Returns:
+        The ``(min, max)`` pair Albumentations would sample from for the same config.
+
+    Examples:
+        >>> _as_clahe_clip_limit(4.0)
+        (1.0, 4.0)
+        >>> _as_clahe_clip_limit((2.0, 6.0))
+        (2.0, 6.0)
+    """
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        return (float(value[0]), float(value[1]))
+    low, high = _as_range(value)
+    # A scalar (or 1-element sequence) arrives here as the degenerate (v, v).
+    return (1.0, high) if low == high else (low, high)
+
+
 def _make_clahe(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomClahe`` from aug_config ``CLAHE`` params.
 
-    Both parameters map directly: Albumentations' ``clip_limit`` (a scalar or a pair) becomes Kornia's ``clip_limit``
-    range, and ``tile_grid_size`` becomes ``grid_size``.
+    ``tile_grid_size`` becomes ``grid_size`` directly. ``clip_limit`` needs care: Albumentations reads a scalar ``v``
+    as the range ``(1, v)`` and samples from it, not as the fixed value ``v``. Passing it through :func:`_as_range`
+    would produce the degenerate ``(v, v)`` and pin the GPU path to maximum contrast enhancement on every sample while
+    the CPU path varied it — and since ``4.0`` is the default on both sides, that divergence applied to the default
+    configuration rather than only to unusual ones. A pair is already a range and is used as given.
     """
     import kornia.augmentation as kornia_augmentation
 
     random_clahe = cast(Any, kornia_augmentation).RandomClahe
     grid = params.get("tile_grid_size", (8, 8))
     return random_clahe(
-        clip_limit=_as_range(params.get("clip_limit", 4.0)),
+        clip_limit=_as_clahe_clip_limit(params.get("clip_limit", 4.0)),
         grid_size=(int(grid[0]), int(grid[1])),
         p=params.get("p", 0.5),
     )
