@@ -167,6 +167,8 @@ Returns sorted category names from the COCO annotation file of the first availab
 
 Concatenating datasets samples each one in proportion to its size, so a large public dataset dominates every batch and a small hand-labelled set contributes almost nothing. `WeightedMultiSourceBatchSampler` fixes the composition of every batch instead: with `batch_size=16` and weights `[0.6, 0.3, 0.1]`, each batch holds 10 samples from the first source, 5 from the second, and 1 from the third — regardless of how the source sizes compare.
 
+A runnable walkthrough that downloads three [Roboflow Universe](https://universe.roboflow.com) datasets and trains with this sampler is in the [multi-source batch sampler cookbook](../../cookbooks/multi-source-batch-sampler/).
+
 ```python
 from torch.utils.data import ConcatDataset
 

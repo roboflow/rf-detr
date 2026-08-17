@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `WeightedMultiSourceBatchSampler` (`rfdetr.datasets.multi_source`) fixes the per-source composition of every training batch when training on a `ConcatDataset` of several datasets, so a small hand-labelled set is not drowned out by a large public one. Sources are recycled with reshuffling when they run out mid-epoch, epoch length can be driven by the largest or smallest source, and batches are sharded across DDP ranks. Opt-in: no existing training path changes. ([#1287](https://github.com/roboflow/rf-detr/pull/1287))
 
+### Documentation
+
+- Cookbook for mixing Roboflow Universe datasets with `WeightedMultiSourceBatchSampler` (`docs/cookbooks/multi-source-batch-sampler.ipynb`).
+
 ### Changed
 
 ### Fixed
