@@ -348,8 +348,7 @@ class TestMetricStateInputs:
     """CPU mAP state conversion at the TorchMetrics boundary."""
 
     def test_move_metric_inputs_to_cpu_preserves_metric_fields(self) -> None:
-        """CPU conversion preserves every prediction and target field, including masks, and detaches state that still
-        requires grad.
+        """CPU conversion retains only mAP fields, including masks, and detaches state that still requires grad.
 
         Feeds ``_move_metric_inputs_to_cpu`` the same shape it receives in production — ``_convert_preds``/
         ``_convert_targets`` output (``boxes``/``labels``/``masks``, no ``orig_size``) — instead of the raw pre-
@@ -362,6 +361,8 @@ class TestMetricStateInputs:
         raw_preds = _detection_preds(1)
         raw_preds[0]["boxes"].requires_grad_(True)
         raw_preds[0]["masks"] = torch.zeros(1, 4, 4, dtype=torch.bool)
+        raw_preds[0]["keypoints"] = torch.zeros(1, 1, 3)
+        raw_preds[0]["keypoint_precision_cholesky"] = torch.zeros(1, 1, 3, 3)
         raw_targets = _detection_targets()
         raw_targets[0]["masks"] = torch.zeros(1, 4, 4, dtype=torch.bool)
 
@@ -369,11 +370,13 @@ class TestMetricStateInputs:
         targets = cb._convert_targets(raw_targets, preds)
         metric_preds, metric_targets = cb._move_metric_inputs_to_cpu(preds, targets)
 
-        assert metric_preds[0].keys() == preds[0].keys()
+        assert metric_preds[0].keys() == {"boxes", "scores", "labels", "masks"}
         assert metric_targets[0].keys() == targets[0].keys()
         assert metric_preds[0] is not preds[0]
         assert metric_targets[0] is not targets[0]
         assert "orig_size" not in metric_targets[0]
+        assert "keypoints" not in metric_preds[0]
+        assert "keypoint_precision_cholesky" not in metric_preds[0]
         torch.testing.assert_close(metric_preds[0]["boxes"], preds[0]["boxes"].detach())
         torch.testing.assert_close(metric_targets[0]["boxes"], targets[0]["boxes"])
         torch.testing.assert_close(metric_preds[0]["masks"], preds[0]["masks"])

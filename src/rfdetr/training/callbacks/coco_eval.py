@@ -48,6 +48,9 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+# torchmetrics 1.8.2 MeanAveragePrecision.update() reads only these fields. Re-verify this read set on upgrade.
+_METRIC_INPUT_FIELDS = frozenset({"boxes", "scores", "labels", "masks", "iscrowd", "area"})
+
 
 def _warn_missing_rich_once(warning_emitted: bool) -> bool:
     """Warn once when metric table rendering is skipped because Rich is unavailable.
@@ -1401,12 +1404,14 @@ class COCOEvalCallback(Callback):
             targets: Per-image target dicts normalized for ``MeanAveragePrecision``.
 
         Returns:
-            CPU copies of the prediction and target dicts, preserving every metric field and per-image order.
+            CPU copies of the supported mAP fields, preserving their per-image order.
         """
 
         def move_items(items: list[dict[str, Tensor]]) -> list[dict[str, Tensor]]:
-            # Do not pass accelerator tensors directly to `metric.update()`: TorchMetrics later calls `.cpu()` per
-            # annotation during `compute()`. Copying each field once per batch keeps its stored state on CPU instead.
-            return [{name: value.detach().cpu() for name, value in item.items()} for item in items]
+            # Excluding PostProcess-only fields avoids D2H copies that torchmetrics never consumes, such as keypoints.
+            return [
+                {name: value.detach().cpu() for name, value in item.items() if name in _METRIC_INPUT_FIELDS}
+                for item in items
+            ]
 
         return move_items(preds), move_items(targets)
