@@ -13,14 +13,18 @@ notebook reports success, Roboflow UI shows "Model Upload Failed"). Every other 
 ``tests/training/test_detr_shim.py``) mocks ``roboflow.Roboflow`` entirely, so none of them can catch a real server-side
 rejection.
 
-This module instead deploys against a real Roboflow workspace/project and independently polls
-``roboflow.adapters.rfapi.get_version`` for ``response["version"]["train"]["model"]`` — the exact field the ``roboflow``
-SDK itself uses to decide whether a version has a trained model (see ``roboflow.core.version.Version.__init__``) —
-rather than trusting ``deploy_to_roboflow``'s silent-success return.
+This module instead generates a **fresh dataset version per run** (``Project.generate_version`` — the server assigns the
+next number itself), deploys with ``version=None`` to exercise the auto-latest resolution in ``deploy_to_roboflow``, and
+independently polls ``roboflow.adapters.rfapi.get_version`` for ``response["version"]["train"]["model"]`` — the exact
+field the ``roboflow`` SDK itself uses to decide whether a version has a trained model (see
+``roboflow.core.version.Version.__init__``) — rather than trusting ``deploy_to_roboflow``'s silent-success return. A
+fresh version can never carry a trained model before the deploy, so a re-run can never go green on a previous run's
+leftover model state.
 
 Opt-in only (``-m e2e_roboflow``, see ``.github/workflows/ci-integrations.yml``): requires ``ROBOFLOW_API_KEY``,
-``ROBOFLOW_TEST_WORKSPACE``, ``ROBOFLOW_TEST_PROJECT``, and ``ROBOFLOW_TEST_VERSION`` pointing at a dedicated throwaway
-Roboflow project reserved for this test; skips cleanly when any are unset (local runs, fork PRs).
+``ROBOFLOW_TEST_WORKSPACE``, and ``ROBOFLOW_TEST_PROJECT`` pointing at a dedicated throwaway Roboflow project (with at
+least one annotated image, so version generation succeeds) reserved for this test; skips cleanly when any are unset
+(local runs, fork PRs). Maintenance note: every run appends one dataset version to the throwaway project.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ import time
 from typing import Any
 
 import pytest
+from roboflow import Roboflow
 from roboflow.adapters.rfapi import RoboflowError, get_version
 
 from rfdetr import RFDETRNano
@@ -37,18 +42,52 @@ from rfdetr import RFDETRNano
 _API_KEY = os.getenv("ROBOFLOW_API_KEY")
 _WORKSPACE = os.getenv("ROBOFLOW_TEST_WORKSPACE")
 _PROJECT = os.getenv("ROBOFLOW_TEST_PROJECT")
-_VERSION = os.getenv("ROBOFLOW_TEST_VERSION")
 
 _MISSING_ENV_REASON = (
-    "requires ROBOFLOW_API_KEY, ROBOFLOW_TEST_WORKSPACE, ROBOFLOW_TEST_PROJECT, and "
-    "ROBOFLOW_TEST_VERSION pointing at a dedicated Roboflow test project (live deploy "
-    "validation for issue #1116)"
+    "requires ROBOFLOW_API_KEY, ROBOFLOW_TEST_WORKSPACE, and ROBOFLOW_TEST_PROJECT pointing at a "
+    "dedicated Roboflow test project (live deploy validation for issue #1116)"
 )
+
+# Server-side version generation is asynchronous; the new version must be visible in the project's
+# version list before deploy(version=None) runs, or auto-latest would resolve to the previous
+# version — which already carries a trained model from the last CI run (silent false-green).
+_GENERATE_POLL_INTERVAL_SECONDS = 5
+_GENERATE_TIMEOUT_SECONDS = 120
 
 # Roboflow's server-side model processing after upload is asynchronous; give it a generous
 # window before treating "no trained model yet" as a genuine failure rather than in-progress.
 _POLL_INTERVAL_SECONDS = 15
 _POLL_TIMEOUT_SECONDS = 300
+
+
+def _generate_fresh_version(project: Any) -> int:
+    """Generate a new dataset version (no preprocessing/augmentation) and wait until it is listed.
+
+    Args:
+        project: A ``roboflow.core.project.Project`` for the dedicated test project.
+
+    Returns:
+        The freshly generated version number, guaranteed visible in ``get_version_information()``.
+
+    Raises:
+        pytest.fail.Exception: If the generated version does not appear within the timeout — deploying
+            at that point would silently target the previous version, defeating the test.
+
+    Examples:
+        >>> _generate_fresh_version  # doctest: +SKIP
+        (needs a live Roboflow project with at least one annotated image)
+    """
+    new_version = project.generate_version(settings={"preprocessing": {}, "augmentation": {}})
+    deadline = time.monotonic() + _GENERATE_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        listed = {os.path.basename(info["id"]) for info in project.get_version_information()}
+        if str(new_version) in listed:
+            return int(new_version)
+        time.sleep(_GENERATE_POLL_INTERVAL_SECONDS)
+    pytest.fail(
+        f"generated version {new_version} did not appear in the project's version list within "
+        f"{_GENERATE_TIMEOUT_SECONDS}s — aborting instead of deploying to a stale version"
+    )
 
 
 def _poll_until_trained(workspace: str, project: str, version: str, api_key: str) -> dict[str, Any]:
@@ -81,30 +120,32 @@ def _poll_until_trained(workspace: str, project: str, version: str, api_key: str
     return response
 
 
-@pytest.mark.skipif(not all([_API_KEY, _WORKSPACE, _PROJECT, _VERSION]), reason=_MISSING_ENV_REASON)
+@pytest.mark.skipif(not all([_API_KEY, _WORKSPACE, _PROJECT]), reason=_MISSING_ENV_REASON)
 @pytest.mark.e2e_roboflow
 class TestDeployToRoboflowEndToEnd:
     """``deploy_to_roboflow`` must land a genuinely trained model server-side (``-m e2e_roboflow``)."""
 
-    def test_deploy_lands_trained_model(self) -> None:
-        """After deploy_to_roboflow(), the live Roboflow version must show a trained model.
+    def test_deploy_lands_trained_model_on_fresh_version(self) -> None:
+        """After deploy_to_roboflow(version=None), the freshly generated version must show a trained model.
 
-        Asserts on the polled server-side status, not on deploy_to_roboflow()'s return value — the whole point of this
-        test is that the return value alone cannot be trusted (issue #1116).
+        Generates a new dataset version first (so no previous run's model can satisfy the check), deploys with version
+        omitted (exercising auto-latest resolution), then asserts on the polled server-side status of that specific
+        version — the return value alone cannot be trusted (issue #1116).
         """
-        model = RFDETRNano(pretrain_weights=None)
+        rf_project = Roboflow(api_key=_API_KEY).workspace(_WORKSPACE).project(_PROJECT)
+        fresh_version = _generate_fresh_version(rf_project)
 
+        model = RFDETRNano(pretrain_weights=None)
         model.deploy_to_roboflow(
             workspace=_WORKSPACE,
             project_id=_PROJECT,
-            version=_VERSION,
             api_key=_API_KEY,
         )
 
-        status = _poll_until_trained(_WORKSPACE, _PROJECT, _VERSION, _API_KEY)
+        status = _poll_until_trained(_WORKSPACE, _PROJECT, str(fresh_version), _API_KEY)
 
         assert status.get("version", {}).get("train", {}).get("model"), (
-            "deploy_to_roboflow() returned without error, but the Roboflow version has no "
+            f"deploy_to_roboflow() returned without error, but Roboflow version {fresh_version} has no "
             f"trained model after {_POLL_TIMEOUT_SECONDS}s — server-side upload silently failed "
             f"(issue #1116). Raw status response: {status!r}"
         )

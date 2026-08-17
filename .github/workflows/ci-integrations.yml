@@ -268,15 +268,20 @@ jobs:
     runs-on: ubuntu-latest
     # deploy_to_roboflow() delegates the actual upload to a swallow-and-print try/except deep in
     # the roboflow SDK (see tests/export/test_roboflow_deploy_e2e.py module docstring), so a failed
-    # server-side upload is otherwise indistinguishable from success. This job deploys against a
-    # real Roboflow workspace/project and independently polls the version's trained-model status.
+    # server-side upload is otherwise indistinguishable from success. This job generates a fresh
+    # dataset version, deploys against a real Roboflow workspace/project (version auto-resolved to
+    # that fresh latest), and independently polls that version's trained-model status.
     # Live external service + real account state: advisory only, not a required check (mirrors
     # ci-legacy-checkpoints.yml). Restricted to the upstream repo — forks never have the secret, so
     # running there would just burn CI minutes on a guaranteed skip.
     if: github.repository == 'roboflow/rf-detr'
     concurrency:
-      group: roboflow-deploy-e2e-${{ github.ref }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+      # Repo-wide group, not per-ref: two parallel runs against the same Roboflow project race —
+      # each generates its own fresh version, so run A's auto-latest deploy can land on run B's
+      # newer version while A polls its own, guaranteeing a 300s timeout false-negative. Queue
+      # instead (and never cancel mid-upload, which would strand a half-deployed version).
+      group: roboflow-deploy-e2e
+      cancel-in-progress: false
     timeout-minutes: 20
     steps:
       - name: 📥 Checkout the repository
@@ -298,7 +303,6 @@ jobs:
           ROBOFLOW_API_KEY: ${{ secrets.ROBOFLOW_API_KEY }}
           ROBOFLOW_TEST_WORKSPACE: ${{ secrets.ROBOFLOW_TEST_WORKSPACE }}
           ROBOFLOW_TEST_PROJECT: ${{ secrets.ROBOFLOW_TEST_PROJECT }}
-          ROBOFLOW_TEST_VERSION: ${{ secrets.ROBOFLOW_TEST_VERSION }}
         run: |
           uv run --no-sync pytest tests/export/test_roboflow_deploy_e2e.py \
             -m e2e_roboflow -n 1 \
