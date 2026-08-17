@@ -48,7 +48,7 @@ def _make_trainer(
             sanity-check pass (see #1348).
 
     Returns:
-        A ``MagicMock`` standing in for a :class:`~pytorch_lightning.Trainer`.
+        A mock standing in for a :class:`~pytorch_lightning.Trainer`.
 
     Examples:
         >>> trainer = _make_trainer({"val/mAP_50_95": 0.5}, current_epoch=2, sanity_checking=True)
@@ -343,7 +343,7 @@ class _SanityCheckEndProbe(Callback):
         """Store the checkpoint path to check for at sanity-check end.
 
         Args:
-            checkpoint_path: Path whose existence is snapshotted in ``on_sanity_check_end``.
+            checkpoint_path: File whose existence is snapshotted in ``on_sanity_check_end``.
         """
         super().__init__()
         self._checkpoint_path = checkpoint_path
