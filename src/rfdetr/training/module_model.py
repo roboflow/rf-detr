@@ -584,14 +584,14 @@ class RFDETRModelModule(LightningModule):
         if isinstance(optimizer, list):
             optimizer = optimizer[0]
         # Optimizer may have multiple param groups with different LRs (e.g., backbone/decoder).
-        # Preserve the first group's LR for backward compatibility, but also log the
-        # min/max across all groups so the progress bar reflects the full schedule.
+        # Preserve the first group's LR for backward compatibility and progress-bar visibility.
+        # Keep min/max in the logs without taking extra progress-bar metric slots.
         group_lrs = [pg["lr"] for pg in optimizer.param_groups if "lr" in pg]
         if group_lrs:
             base_lr = group_lrs[0]
             min_lr = min(group_lrs)
             max_lr = max(group_lrs)
-            self.log("train/lr", base_lr, prog_bar=False, on_step=True, on_epoch=False)
+            self.log("train/lr", base_lr, prog_bar=True, on_step=True, on_epoch=False)
             self.log("train/lr_min", min_lr, prog_bar=False, on_step=True, on_epoch=False)
             self.log("train/lr_max", max_lr, prog_bar=False, on_step=True, on_epoch=False)
         if self._use_manual_optimization:

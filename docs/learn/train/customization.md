@@ -103,6 +103,8 @@ See [Training parameters — optimizer](training-parameters.md) for the full par
 
     If you need SAM or Lookahead, override `configure_optimizers` and set `self.automatic_optimization = False` in `RFDETRModelModule.__init__`. For standard use, pick a `torch.optim` optimizer by name or a drop-in `pytorch-optimizer` optimizer by import path (e.g. `"pytorch_optimizer.Lion"`).
 
+`batch_size="auto"` models the built-in AdamW optimizer's state memory only; with a different optimizer (as configured above) the probe's batch-size estimate may be too conservative or too permissive — see the runtime warning for details.
+
 ### Custom LR scheduler
 
 `TrainConfig.lr_scheduler` accepts either a **preset name / import path** (a string) or a **callable** (a class or `functools.partial`), mirroring `optimizer`, and selects the scheduler built in `configure_optimizers`.

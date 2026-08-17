@@ -6,6 +6,7 @@
 """Comprehensive unit tests for RFDETRDataModule (LightningDataModule wrapper)."""
 
 import builtins
+import logging
 import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -13,10 +14,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 import torch.utils.data
+from PIL import Image
 from torch.utils.data import DataLoader
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
-from rfdetr.datasets.yolo import YoloSplitUnavailableError
+from rfdetr.datasets.yolo import YoloDetection, YoloSplitUnavailableError
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.utilities.tensors import NestedTensor
 
@@ -176,15 +178,6 @@ def fixture_training_setup():
     train_config = _base_train_config()
     datamodule = _build_datamodule(model_config, train_config)
     return model_config, train_config, datamodule
-
-
-@pytest.fixture
-def yolo_datamodule(tmp_path):
-    """Return an RFDETRDataModule configured for a YOLO dataset."""
-    return _build_datamodule(
-        train_config=_base_train_config(tmp_path, dataset_file="yolo"),
-        tmp_path=tmp_path,
-    )
 
 
 @pytest.fixture
@@ -474,18 +467,22 @@ class TestSetup:
         assert dm._dataset_val is fake_val
         assert dm._dataset_test is None
 
-    def test_test_stage_roboflow_uses_test_split(self, tmp_path):
-        """Setup('test') requests 'test' split when dataset_file=='roboflow'."""
-        dm, _, _, fake_test = self._setup_with_mock(tmp_path, "test", dataset_file="roboflow")
+    @pytest.mark.parametrize("dataset_file", [pytest.param("roboflow", id="roboflow"), pytest.param("yolo", id="yolo")])
+    def test_test_stage_uses_test_split(self, tmp_path, dataset_file):
+        """Setup('test') requests the 'test' split for both Roboflow and YOLO datasets."""
+        dm, _, _, fake_test = self._setup_with_mock(tmp_path, "test", dataset_file=dataset_file)
         assert dm._dataset_test is fake_test
 
-    def test_test_stage_yolo_uses_test_split(self, tmp_path):
-        """Setup('test') requests 'test' split when dataset_file=='yolo'."""
-        dm, _, _, fake_test = self._setup_with_mock(tmp_path, "test", dataset_file="yolo")
-        assert dm._dataset_test is fake_test
+    @pytest.mark.parametrize("dataset_file", [pytest.param("roboflow", id="roboflow"), pytest.param("yolo", id="yolo")])
+    def test_test_stage_falls_back_to_val_without_test_split(self, tmp_path, dataset_file):
+        """Setup('test') falls back to 'val' when the dataset declares no test split.
 
-    def test_test_stage_yolo_falls_back_to_val_without_test_split(self, tmp_path, yolo_datamodule):
-        """Setup('test') falls back to 'val' when a YOLO dataset declares no test split."""
+        A ``dataset_file="roboflow"`` dataset whose detected format is YOLO-style
+        (``build_roboflow`` -> ``build_roboflow_from_yolo``, a common Roboflow export format)
+        routes through the exact same builder as ``dataset_file="yolo"`` and can raise the same
+        ``YoloSplitUnavailableError`` -- Roboflow's export UI does not require a test split.
+        """
+        dm = _build_datamodule(train_config=_base_train_config(tmp_path, dataset_file=dataset_file))
         fake_val = _fake_dataset(20)
 
         def _build(image_set, args, resolution):
@@ -494,24 +491,89 @@ class TestSetup:
             return fake_val
 
         with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
-            yolo_datamodule.setup("test")
+            dm.setup("test")
 
-        assert yolo_datamodule._dataset_test is fake_val
+        assert dm._dataset_test is fake_val
 
-    def test_test_stage_yolo_propagates_broken_test_split(self, yolo_datamodule):
+    def _write_yolo_dataset_without_test_split(self, dataset_dir: Path) -> None:
+        """Write an on-disk YOLO dataset with one ``train/`` image and two ``valid/`` images, no ``test/`` split.
+
+        The split sizes differ so that a length assertion on the dataset built for the ``test`` stage distinguishes the
+        ``valid`` fallback from an accidental ``train`` one.
+        """
+        for split, image_count in (("train", 1), ("valid", 2)):
+            (dataset_dir / split / "images").mkdir(parents=True)
+            (dataset_dir / split / "labels").mkdir(parents=True)
+            for idx in range(image_count):
+                image_path = dataset_dir / split / "images" / f"sample{idx}.png"
+                Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_path)
+                (dataset_dir / split / "labels" / f"sample{idx}.txt").write_text(
+                    "0 0.5 0.5 0.5 0.5\n", encoding="utf-8"
+                )
+        (dataset_dir / "data.yaml").write_text("names:\n  - person\n", encoding="utf-8")
+
+    def test_test_stage_roboflow_yolo_format_falls_back_to_val_end_to_end(self, tmp_path, caplog, monkeypatch):
+        """A real, unmocked Roboflow-YOLO export without a ``test/`` split falls back to ``valid/``.
+
+        Exercises ``detect_roboflow_format`` -> ``build_roboflow_from_yolo`` end to end, not just the
+        ``_build_test_dataset`` control flow around a mocked ``build_dataset``.
+        """
+        dataset_dir = tmp_path / "dataset"
+        self._write_yolo_dataset_without_test_split(dataset_dir)
+        dm = _build_datamodule(
+            model_config=_base_model_config(num_classes=1),
+            train_config=_base_train_config(tmp_path, dataset_file="roboflow", dataset_dir=str(dataset_dir)),
+        )
+        # get_logger() sets propagate=False on the "rf-detr" logger, so caplog's root-level
+        # handler only sees its records while propagation is re-enabled.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            dm.setup("test")
+
+        assert isinstance(dm._dataset_test, YoloDetection)
+        assert len(dm._dataset_test) == 2
+        assert any("No resolvable 'test' split" in record.getMessage() for record in caplog.records)
+
+    def test_test_stage_plain_yolo_falls_back_to_val_end_to_end(self, tmp_path):
+        """A real, unmocked ``dataset_file="yolo"`` dataset without a ``test/`` split falls back to ``valid/``.
+
+        Unlike the ``roboflow`` route, this one never runs ``detect_roboflow_format``: ``build_dataset`` dispatches
+        straight to ``build_roboflow_from_yolo``.
+        """
+        dataset_dir = tmp_path / "dataset"
+        self._write_yolo_dataset_without_test_split(dataset_dir)
+        dm = _build_datamodule(
+            model_config=_base_model_config(num_classes=1),
+            train_config=_base_train_config(tmp_path, dataset_file="yolo", dataset_dir=str(dataset_dir)),
+        )
+
+        dm.setup("test")
+
+        assert isinstance(dm._dataset_test, YoloDetection)
+        assert len(dm._dataset_test) == 2
+
+    @pytest.mark.parametrize("dataset_file", [pytest.param("roboflow", id="roboflow"), pytest.param("yolo", id="yolo")])
+    def test_test_stage_propagates_broken_test_split(self, tmp_path, dataset_file):
         """Setup('test') propagates builder failures after a test split is resolved."""
+        dm = _build_datamodule(train_config=_base_train_config(tmp_path, dataset_file=dataset_file))
 
         def _build(image_set, args, resolution):
             if image_set == "test":
-                raise FileNotFoundError("declared test label file is broken")
+                raise FileNotFoundError("declared test annotation file is broken")
             return _fake_dataset(20)
 
         with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
-            with pytest.raises(FileNotFoundError, match="declared test label file is broken"):
-                yolo_datamodule.setup("test")
+            with pytest.raises(FileNotFoundError, match="declared test annotation file is broken"):
+                dm.setup("test")
 
-    def test_test_stage_yolo_warns_when_falling_back_to_val(self, tmp_path, yolo_datamodule):
-        """The YOLO test-to-val fallback is logged at WARNING rather than applied silently."""
+    @pytest.mark.parametrize(
+        "dataset_file, dataset_label",
+        [pytest.param("roboflow", "Roboflow", id="roboflow"), pytest.param("yolo", "YOLO", id="yolo")],
+    )
+    def test_test_stage_warns_when_falling_back_to_val(self, tmp_path, dataset_file, dataset_label):
+        """The test-to-val fallback is logged at WARNING rather than applied silently."""
+        dm = _build_datamodule(train_config=_base_train_config(tmp_path, dataset_file=dataset_file))
 
         def _build(image_set, args, resolution):
             if image_set == "test":
@@ -522,10 +584,11 @@ class TestSetup:
             patch("rfdetr.training.module_data.build_dataset", side_effect=_build),
             patch("rfdetr.training.module_data.logger") as mock_logger,
         ):
-            yolo_datamodule.setup("test")
+            dm.setup("test")
 
         mock_logger.warning.assert_called_once_with(
-            "No resolvable 'test' split for this YOLO dataset (%s); evaluating the 'val' split instead.",
+            "No resolvable 'test' split for this %s dataset (%s); evaluating the 'val' split instead.",
+            dataset_label,
             str(tmp_path / "test" / "images"),
         )
 
@@ -542,6 +605,24 @@ class TestSetup:
 
         assert "val" in requested_splits
         assert "test" not in requested_splits
+
+    def test_test_stage_does_not_rebuild_after_val_fallback(self, tmp_path):
+        """A second setup('test') reuses the val dataset resolved by the first fallback."""
+        dm = _build_datamodule(train_config=_base_train_config(tmp_path, dataset_file="yolo"))
+        fake_val = _fake_dataset(20)
+
+        def _build(image_set, args, resolution):
+            if image_set == "test":
+                raise YoloSplitUnavailableError(str(tmp_path / "test" / "images"))
+            return fake_val
+
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
+            dm.setup("test")
+        with patch("rfdetr.training.module_data.build_dataset") as mock_build:
+            dm.setup("test")
+            mock_build.assert_not_called()
+
+        assert dm._dataset_test is fake_val
 
     def test_fit_does_not_rebuild_if_already_set(self, tmp_path):
         """Setup('fit') skips building if datasets are already populated."""
@@ -1294,6 +1375,7 @@ class TestBackendResolution:
 
         def _fake_build_kornia(aug_cfg, resolution, with_masks=False):
             captured["aug_config"] = aug_cfg
+            captured["with_masks"] = with_masks
             return MagicMock()
 
         with (
@@ -1308,6 +1390,7 @@ class TestBackendResolution:
         assert captured.get("aug_config") is AUG_CONFIG, (
             "GPU path must fall back to AUG_CONFIG when train_config.aug_config is None"
         )
+        assert captured.get("with_masks") is True, "GPU path must transport the padding mask for detection batches"
 
     def test_auto_no_cuda_does_not_strip_cpu_normalize(self, tmp_path):
         """Auto + no CUDA: gpu_postprocess must be False so CPU Normalize is retained."""
@@ -1406,9 +1489,10 @@ class TestOnAfterBatchTransfer:
 
         samples, targets = self._make_kornia_batch()
         img_aug = samples.tensors.clone()
-        # Mock pipeline returns (augmented_images, augmented_boxes)
+        # Mock pipeline returns the image, boxes, and transported padding mask.
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
         dm._kornia_pipeline = mock_pipeline
 
         # Normalize adds +1 so we can assert the normalization step is applied.
@@ -1428,6 +1512,74 @@ class TestOnAfterBatchTransfer:
             torch.testing.assert_close(
                 boxes[0], torch.tensor([0.375, 0.375, 0.5, 0.5], dtype=torch.float32), rtol=1e-4, atol=1e-6
             )
+
+    def test_training_uses_transformed_padding_mask(self, tmp_path) -> None:
+        """The returned NestedTensor mask comes from the same Kornia geometry as the image."""
+        dm = self._build_dm(tmp_path)
+        dm = self._attach_mock_trainer(dm, training=True)
+
+        samples, targets = self._make_kornia_batch()
+        assert samples.mask is not None
+        samples.mask[0, 8:, :] = True
+        samples.mask[1, :, 12:] = True
+        img_aug = samples.tensors.clone()
+        boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        padding_masks_aug[0, :, 5:, :] = 1.0
+        padding_masks_aug[1, :, :, 3:] = 1.0
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+
+        result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        call_args, call_kwargs = dm._kornia_pipeline.call_args
+        assert len(call_args) == 3
+        assert not call_kwargs
+        torch.testing.assert_close(call_args[2], samples.mask.unsqueeze(1).to(torch.float32), rtol=0, atol=0)
+        assert result_samples.mask is not None
+        assert result_samples.mask.dtype == torch.bool
+        assert torch.equal(result_samples.mask, padding_masks_aug[:, 0].to(torch.bool))
+
+    def test_perspective_warps_padding_mask_with_real_pipeline(self, tmp_path) -> None:
+        """Perspective transports unequal-size batch padding through the real Kornia sequence."""
+        pytest.importorskip("kornia")
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, collate_boxes
+        from rfdetr.utilities.tensors import nested_tensor_from_tensor_list
+
+        dm = self._build_dm(tmp_path)
+        dm = self._attach_mock_trainer(dm, training=True)
+        samples = nested_tensor_from_tensor_list([torch.ones(3, 48, 48), torch.ones(3, 64, 64)])
+        assert samples.mask is not None
+        targets = [
+            {
+                "boxes": torch.tensor([[4.0, 4.0, 36.0, 36.0]]),
+                "labels": torch.tensor([1]),
+                "area": torch.tensor([1024.0]),
+                "iscrowd": torch.tensor([0]),
+                "image_id": torch.tensor(index),
+                "orig_size": torch.tensor([size, size]),
+            }
+            for index, size in enumerate((48, 64))
+        ]
+        config = {"Perspective": {"scale": 0.4, "p": 1.0}}
+        dm._kornia_pipeline = build_kornia_pipeline(config, 64, with_masks=True)
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+        boxes_padded, _ = collate_boxes(targets, samples.tensors.device)
+        reference_pipeline = build_kornia_pipeline(config, 64, with_masks=True)
+
+        torch.manual_seed(7)
+        _, _, expected_padding = reference_pipeline(
+            samples.tensors,
+            boxes_padded,
+            samples.mask.unsqueeze(1).to(torch.float32),
+        )
+        torch.manual_seed(7)
+        result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        assert result_samples.mask is not None
+        assert result_samples.mask.dtype == torch.bool
+        assert torch.equal(result_samples.mask, expected_padding[:, 0].to(torch.bool))
+        assert not torch.equal(result_samples.mask, samples.mask)
 
     def test_training_false_skips_augmentation(self, tmp_path):
         """When training=False, batch is returned unchanged."""
@@ -1455,7 +1607,8 @@ class TestOnAfterBatchTransfer:
         samples, targets = self._make_kornia_batch_with_masks()
         img_aug = samples.tensors.clone()
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        masks_aug = torch.ones(2, 1, 16, 16, dtype=torch.float32)
+        masks_aug = torch.ones(2, 2, 16, 16, dtype=torch.float32)
+        masks_aug[:, 1] = 0.0
 
         mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded, masks_aug))
         dm._kornia_pipeline = mock_pipeline
@@ -1471,8 +1624,10 @@ class TestOnAfterBatchTransfer:
         masks_arg = call_args[2]
         assert isinstance(masks_arg, torch.Tensor), "third pipeline argument must be a masks tensor"
         assert masks_arg.dtype == torch.float32, "masks passed to pipeline must be float32"
-        assert masks_arg.shape == (2, 1, 16, 16), "masks passed to pipeline must have shape [B, N_max, H, W]"
+        assert masks_arg.shape == (2, 2, 16, 16), "masks passed to pipeline must include instance and padding channels"
         assert "masks" in result_targets[0], "masks key must be present in output targets for segmentation"
+        assert result_samples.mask is not None
+        assert not result_samples.mask.any()
 
     def test_segmentation_masks_stay_in_sync_with_boxes(self, tmp_path):
         """Masks are filtered in sync with boxes: one instance removed → one mask removed."""
@@ -1498,7 +1653,8 @@ class TestOnAfterBatchTransfer:
         ]
         # Augmented: box 0 survives, box 1 becomes zero-area
         boxes_aug_out = torch.tensor([[[2.0, 2.0, 8.0, 8.0], [5.0, 5.0, 5.0, 5.0]]])
-        masks_aug_out = torch.ones(1, 2, h, w, dtype=torch.float32)
+        masks_aug_out = torch.ones(1, 3, h, w, dtype=torch.float32)
+        masks_aug_out[:, 2] = 0.0
         mock_pipeline = MagicMock(return_value=(tensors, boxes_aug_out, masks_aug_out))
         dm._kornia_pipeline = mock_pipeline
         dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
@@ -1517,7 +1673,8 @@ class TestOnAfterBatchTransfer:
         samples, targets = self._make_kornia_batch()
         img_aug = samples.tensors.clone()
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
         dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
 
         result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
@@ -1537,7 +1694,8 @@ class TestOnAfterBatchTransfer:
 
         img_aug = samples.tensors.clone()
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
         dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
 
         _, result_targets = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
