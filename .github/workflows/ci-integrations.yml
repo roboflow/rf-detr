@@ -274,7 +274,10 @@ jobs:
     # Live external service + real account state: advisory only, not a required check (mirrors
     # ci-legacy-checkpoints.yml). Restricted to the upstream repo — forks never have the secret, so
     # running there would just burn CI minutes on a guaranteed skip.
-    if: github.repository == 'roboflow/rf-detr'
+    if: >-
+      github.repository == 'roboflow/rf-detr' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     concurrency:
       # Repo-wide group, not per-ref: two parallel runs against the same Roboflow project race —
       # each generates its own fresh version, so run A's auto-latest deploy can land on run B's
