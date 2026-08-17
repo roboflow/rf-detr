@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- The default (torchvision-native) training pipeline no longer silently corrupts keypoint annotations when `keypoint_flip_pairs` is empty on a schema that has genuine left/right pairs. `RandomHorizontalFlip` on this backend always mirrored keypoint x-coordinates when a flip was drawn, but only relabeled left/right joints `if self.keypoint_flip_pairs:` — with an empty list (the pydantic default, and one possible outcome when automatic flip-pair inference from dataset metadata doesn't match an asymmetric schema), affected training samples got their keypoints mirrored in position while keeping their original left/right label, with no warning. `_build_torchvision_pipeline` now drops the flip entirely for an empty-but-not-`None` `keypoint_flip_pairs`, logging the same warning the Albumentations backend already emits via `filter_keypoint_hflip_augmentations` (worded for this backend's lack of an editable `aug_config`), matching the annotation-safety behavior that backend has had since #1122. An empty list can also legitimately mean the schema has no left/right pairs at all (e.g. a single midline keypoint) — the unpatched flip was already harmless there since nothing needed relabeling; this fix disables it there too, for consistency with the Albumentations backend's existing contract, at the cost of a now-unavailable-by-default augmentation for that narrower case. Detection-only pipelines (`keypoint_flip_pairs=None`) and keypoint pipelines with real pairs are unaffected.
+
 ## [1.9.3] — 2026-08-17
 
 ### Added
