@@ -164,6 +164,19 @@ class TestSetup:
         assert cb.map_metric_ema is not None
         assert cb.map_metric_ema.class_metrics is False
 
+    def test_ema_metric_stays_on_cpu_when_module_uses_an_accelerator(self) -> None:
+        """The EMA metric itself remains on CPU because its accumulated state is CPU-only."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        module = _make_pl_module()
+        module.device = torch.device("meta")
+
+        with patch.object(cb, "_get_ema_callback", return_value=MagicMock()):
+            cb._prepare_ema_metric(_make_trainer(), module)
+
+        assert cb.map_metric_ema is not None
+        assert cb.map_metric_ema.device.type == "cpu"
+
     def test_keypoint_mode_does_not_enable_torchmetrics_keypoint_iou(self) -> None:
         """Keypoint mode must keep torchmetrics on bbox-only iou_type."""
         cb = COCOEvalCallback(segmentation=True)
@@ -260,6 +273,21 @@ class TestBatchEndCommon:
 
         assert cb.map_metric.update.call_count == 1
 
+    def test_map_metric_update_receives_cpu_state_inputs(self, hook, stage) -> None:
+        """Metric updates must receive the CPU copies that avoid per-annotation device synchronizations."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage=stage)
+        cb.map_metric = MagicMock(name="map_metric")
+        cpu_preds = _detection_preds(0)
+        cpu_targets = _detection_targets()
+        outputs = {"results": _detection_preds(0), "targets": _detection_targets()}
+
+        with patch.object(cb, "_move_metric_inputs_to_cpu", return_value=(cpu_preds, cpu_targets)) as move_to_cpu:
+            getattr(cb, hook)(_make_trainer(), _make_pl_module(), outputs, None, 0)
+
+        move_to_cpu.assert_called_once()
+        cb.map_metric.update.assert_called_once_with(cpu_preds, cpu_targets)
+
     def test_f1_accumulator_grows_across_batches(self, hook, stage) -> None:
         """Calling the batch-end hook twice accumulates more GT in F1 state."""
         cb = COCOEvalCallback()
@@ -314,6 +342,26 @@ class TestOnTestBatchEnd:
 
         # Must not raise with explicit dataloader_idx=0
         cb.on_test_batch_end(_make_trainer(), _make_pl_module(), outputs, None, 0, dataloader_idx=0)
+
+
+class TestMetricStateInputs:
+    """CPU mAP state conversion at the TorchMetrics boundary."""
+
+    def test_move_metric_inputs_to_cpu_preserves_metric_fields(self) -> None:
+        """CPU conversion preserves every prediction and target field while detaching metric state."""
+        cb = COCOEvalCallback()
+        preds = _detection_preds(1)
+        targets = _detection_targets()
+
+        metric_preds, metric_targets = cb._move_metric_inputs_to_cpu(preds, targets)
+
+        assert metric_preds[0].keys() == preds[0].keys()
+        assert metric_targets[0].keys() == targets[0].keys()
+        assert metric_preds[0] is not preds[0]
+        assert metric_targets[0] is not targets[0]
+        assert all(value.device.type == "cpu" for item in metric_preds + metric_targets for value in item.values())
+        torch.testing.assert_close(metric_preds[0]["boxes"], preds[0]["boxes"])
+        torch.testing.assert_close(metric_targets[0]["boxes"], targets[0]["boxes"])
 
 
 class TestOnTrainBatchEnd:
