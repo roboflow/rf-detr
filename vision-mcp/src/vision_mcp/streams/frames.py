@@ -6,9 +6,9 @@
 
 """The bounded hand-off between a capture thread and its inference worker.
 
-The queue is deliberately tiny (config `queue_size`, default 2). A live camera produces frames whether or not anyone is
-ready for them, so the only two honest options are to drop frames or to grow latency without limit. This drops, and
-counts every drop.
+The queue is deliberately tiny (config `queue_size`, default 2). A live camera produces frames whether or not
+anyone is ready for them, so the only two honest options are to drop frames or to grow latency without limit.
+This drops, and counts every drop.
 """
 
 from __future__ import annotations
@@ -38,9 +38,9 @@ class Frame:
 class LatestFrameQueue:
     """A drop-oldest queue sized in frames, safe to push to from a plain thread.
 
-    `push` is called from the capture thread and never blocks or raises. `get` is awaited by the stream worker on the
-    event loop. The two are bridged with a mutex plus an `asyncio.Event` scheduled onto the loop, because
-    `asyncio.Queue` is not thread-safe.
+    `push` is called from the capture thread and never blocks or raises. `get` is awaited by the stream worker
+    on the event loop. The two are bridged with a mutex plus an `asyncio.Event` scheduled onto the loop,
+    because `asyncio.Queue` is not thread-safe.
     """
 
     def __init__(self, capacity: int, loop: asyncio.AbstractEventLoop) -> None:

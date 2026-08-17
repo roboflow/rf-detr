@@ -6,8 +6,9 @@
 
 """SQLite access: one writer task, one reader connection, WAL mode.
 
-Every write in the process goes through `Database.write`, which hands the statement to a single writer task consuming a
-bounded queue. Reads use a separate connection and run in a worker thread so no coroutine ever blocks on disk.
+Every write in the process goes through `Database.write`, which hands the statement to a single writer task
+consuming a bounded queue. Reads use a separate connection and run in a worker thread so no coroutine ever
+blocks on disk.
 """
 
 from __future__ import annotations

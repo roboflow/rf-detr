@@ -6,8 +6,8 @@
 
 """Detection-count and performance metric payloads.
 
-The five metric definitions are kept in separate models on purpose: frame detections and unique objects must never be
-interchangeable.
+The five metric definitions are kept in separate models on purpose: frame detections and unique objects must
+never be interchangeable.
 """
 
 from __future__ import annotations

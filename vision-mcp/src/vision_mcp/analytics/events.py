@@ -6,12 +6,12 @@
 
 """Business-level events: persistence, optional snapshots and change notifications.
 
-Events are the fifth metric family in the README's list, and the only one that is not a count of something. They are
-rare by construction — an entry, an exit, a crossing, a limit breach, a stream failing or recovering — so each one is
-worth a durable row.
+Events are the fifth metric family in the README's list, and the only one that is not a count of something.
+They are rare by construction — an entry, an exit, a crossing, a limit breach, a stream failing or recovering
+— so each one is worth a durable row.
 
-Snapshots are deliberately stingy. Only violations and failures are worth an image, and even then the frame is stored
-once, as an artifact reference, never as bytes in a payload.
+Snapshots are deliberately stingy. Only violations and failures are worth an image, and even then the frame is
+stored once, as an artifact reference, never as bytes in a payload.
 """
 
 from __future__ import annotations

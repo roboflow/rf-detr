@@ -6,13 +6,13 @@
 
 """The background task that turns live counters into SQLite rows.
 
-One task serves every stream. It wakes on a fixed interval, closes the current bucket for each stream and hands the
-statements to the database writer thread. Nothing here awaits a disk write: a slow disk must never slow down capture or
-inference.
+One task serves every stream. It wakes on a fixed interval, closes the current bucket for each stream and
+hands the statements to the database writer thread. Nothing here awaits a disk write: a slow disk must never
+slow down capture or inference.
 
-Frame counters on the capture side are cumulative for the life of a stream, so the aggregator keeps the previous reading
-and stores the delta. Counters reset when a stream restarts, which shows up as a smaller reading and is treated as a
-fresh baseline rather than a negative delta.
+Frame counters on the capture side are cumulative for the life of a stream, so the aggregator keeps the
+previous reading and stores the delta. Counters reset when a stream restarts, which shows up as a smaller
+reading and is treated as a fresh baseline rather than a negative delta.
 """
 
 from __future__ import annotations

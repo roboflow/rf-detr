@@ -6,12 +6,13 @@
 
 """Zone occupancy and line crossings.
 
-Zones and lines are configured in normalised coordinates and resolved to pixels the first time a frame arrives, so a
-stream whose resolution changes mid-run re-resolves cleanly.
+Zones and lines are configured in normalised coordinates and resolved to pixels the first time a frame
+arrives, so a stream whose resolution changes mid-run re-resolves cleanly.
 
-Everything here is edge-triggered: an entry is emitted when a track first appears inside a zone, an exit when it has
-been absent for a short grace period (boxes flicker across a boundary far more often than objects do), and an occupancy
-violation only on the frame the limit is first exceeded — never once per frame while it stays exceeded.
+Everything here is edge-triggered: an entry is emitted when a track first appears inside a zone, an exit when
+it has been absent for a short grace period (boxes flicker across a boundary far more often than objects do),
+and an occupancy violation only on the frame the limit is first exceeded — never once per frame while it stays
+exceeded.
 """
 
 from __future__ import annotations
@@ -27,8 +28,9 @@ from vision_mcp.analytics.lines import CountingLine, build_lines
 from vision_mcp.config import StreamEntry
 from vision_mcp.streams.preview import resolve_lines, resolve_zones
 
+#: Consecutive frames a track must be absent from a zone before it counts as an exit.
 _EXIT_GRACE_FRAMES = 2
-"""Consecutive frames a track must be absent from a zone before it counts as an exit."""
+
 
 @dataclass(slots=True)
 class ZoneVisit:

@@ -6,8 +6,8 @@
 
 """Artifact store: generated IDs, metadata in SQLite, bytes on disk.
 
-Callers never supply a filename and never receive a filesystem path — only an opaque ID and a `vision://artifacts/<id>`
-URI.
+Callers never supply a filename and never receive a filesystem path — only an opaque ID and a
+`vision://artifacts/<id>` URI.
 """
 
 from __future__ import annotations

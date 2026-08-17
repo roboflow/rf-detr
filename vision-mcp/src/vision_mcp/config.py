@@ -6,8 +6,8 @@
 
 """Engine configuration: YAML in, validated Pydantic models out.
 
-Config is the only place the engine accepts operator input, so every field is checked here rather than at the point of
-use. Nothing in this module imports torch.
+Config is the only place the engine accepts operator input, so every field is checked here rather than at the
+point of use. Nothing in this module imports torch.
 """
 
 from __future__ import annotations

@@ -6,12 +6,12 @@
 
 """ByteTrack wrapper producing stable per-stream track records.
 
-Track IDs are temporary motion-consistency handles. They are not identities: nothing here recognises faces, matches a
-person across streams, or survives a stream restart. A track that disappears for longer than the configured lost-track
-window is retired for good.
+Track IDs are temporary motion-consistency handles. They are not identities: nothing here recognises faces,
+matches a person across streams, or survives a stream restart. A track that disappears for longer than the
+configured lost-track window is retired for good.
 
-`supervision`'s ByteTrack does the association work. This module owns the bookkeeping the tools need on top of it:
-first/last seen wall-clock times, frame counts, mean confidence and lifecycle records worth persisting.
+`supervision`'s ByteTrack does the association work. This module owns the bookkeeping the tools need on top of
+it: first/last seen wall-clock times, frame counts, mean confidence and lifecycle records worth persisting.
 """
 
 from __future__ import annotations
@@ -25,8 +25,9 @@ import supervision as sv
 from vision_mcp.api_contract import BoundingBox, Detection
 from vision_mcp.config import TrackingConfig
 
+#: Data column used to map tracked rows back to their source detection index.
 _INDEX_KEY = "vision_index"
-"""Data column used to map tracked rows back to their source detection index."""
+
 
 @dataclass(slots=True)
 class TrackRecord:
@@ -180,7 +181,8 @@ def _ids_by_index(tracked: sv.Detections) -> dict[int, int]:
 def _tracker_ids(count: int, by_index: dict[int, int]) -> np.ndarray[Any, Any] | None:
     """Tracker ID column for annotation; untracked rows get distinct negative IDs.
 
-    Distinct negatives keep `supervision`'s trace annotator from stitching unrelated untracked boxes into one path.
+    Distinct negatives keep `supervision`'s trace annotator from stitching unrelated untracked boxes into one
+    path.
     """
     if not by_index:
         return None

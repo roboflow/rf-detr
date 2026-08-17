@@ -6,9 +6,9 @@
 
 """Ownership of every configured stream.
 
-The manager is the only thing that starts and stops `StreamRuntime` objects. Sources are never accepted from a caller: a
-stream can only be started by the id it was given in the config file, so no tool call can point the engine at a new URL
-or path.
+The manager is the only thing that starts and stops `StreamRuntime` objects. Sources are never accepted from a
+caller: a stream can only be started by the id it was given in the config file, so no tool call can point the
+engine at a new URL or path.
 """
 
 from __future__ import annotations

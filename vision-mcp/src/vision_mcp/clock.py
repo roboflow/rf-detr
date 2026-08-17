@@ -6,8 +6,8 @@
 
 """Time helpers.
 
-Wall clock (`time.time`) is only ever used for timestamps that leave the process; every duration and latency measurement
-uses the monotonic clock.
+Wall clock (`time.time`) is only ever used for timestamps that leave the process; every duration and latency
+measurement uses the monotonic clock.
 """
 
 from __future__ import annotations

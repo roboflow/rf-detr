@@ -6,9 +6,10 @@
 
 """The per-stream inference worker.
 
-One async task per stream pulls frames off the bounded queue, runs the model on the model's own thread, and publishes
-live state. Because the queue drops the oldest frame under pressure, the worker always sees recent frames rather than a
-growing backlog. It holds the latest frame in memory for the debug preview and writes nothing to disk.
+One async task per stream pulls frames off the bounded queue, runs the model on the model's own thread, and
+publishes live state. Because the queue drops the oldest frame under pressure, the worker always sees recent
+frames rather than a growing backlog. It holds the latest frame in memory for the debug preview and writes
+nothing to disk.
 """
 
 from __future__ import annotations

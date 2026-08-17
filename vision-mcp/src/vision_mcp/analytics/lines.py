@@ -6,16 +6,18 @@
 
 """Directional counting lines.
 
-`supervision` ships `LineZone`, but its 0.29 implementation calls `np.cross` on two-dimensional vectors, which NumPy
-removed in 2.x — it raises on every frame. The maths is four lines long, so this module owns it rather than pinning
-NumPy backwards.
+`supervision` ships `LineZone`, but its 0.29 implementation calls `np.cross` on two-dimensional vectors, which
+NumPy removed in 2.x — it raises on every frame. The maths is four lines long, so this module owns it rather
+than pinning NumPy backwards.
 
-A crossing is edge-triggered per track: the anchor's side of the line is remembered between frames and a crossing is
-reported only when that side flips. Tracks are anchored at the bottom centre of their box, which is where an object
-meets the ground plane and is far steadier than the centroid when a box grows or shrinks near the camera.
+A crossing is edge-triggered per track: the anchor's side of the line is remembered between frames and a
+crossing is reported only when that side flips. Tracks are anchored at the bottom centre of their box, which
+is where an object meets the ground plane and is far steadier than the centroid when a box grows or shrinks
+near the camera.
 
-Direction is defined by the line's orientation: walking from `start` to `end`, a track crossing right to left counts as
-`in`, and left to right as `out`. Swapping the endpoints in configuration therefore swaps the two counts.
+Direction is defined by the line's orientation: walking from `start` to `end`, a track crossing right to left
+counts as `in`, and left to right as `out`. Swapping the endpoints in configuration therefore swaps the two
+counts.
 """
 
 from __future__ import annotations

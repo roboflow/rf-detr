@@ -6,12 +6,14 @@
 
 """The analytics observer: everything one stream computes per processed frame.
 
-`StreamRuntime` knows how to capture frames and run a model. It knows nothing about tracks, zones or events. This
-observer is the piece that plugs into it, and it is the only place where per-frame work becomes durable state.
+`StreamRuntime` knows how to capture frames and run a model. It knows nothing about tracks, zones or events.
+This observer is the piece that plugs into it, and it is the only place where per-frame work becomes durable
+state.
 
-Ordering matters and is fixed here: associate tracks, resolve spatial membership against the tracked subset, retire
-tracks that have aged out (closing their open zone visits), then persist. Live counts returned to the runtime come from
-the same pass, so the preview, `get_stream_status` and `get_zone_occupancy` can never disagree about a frame.
+Ordering matters and is fixed here: associate tracks, resolve spatial membership against the tracked subset,
+retire tracks that have aged out (closing their open zone visits), then persist. Live counts returned to the
+runtime come from the same pass, so the preview, `get_stream_status` and `get_zone_occupancy` can never
+disagree about a frame.
 """
 
 from __future__ import annotations

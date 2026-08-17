@@ -6,8 +6,8 @@
 
 """Turning model output into contract detections.
 
-This module owns the only place where `supervision` result objects are read, so the rest of the engine deals in
-`Detection` payloads and never in raw arrays.
+This module owns the only place where `supervision` result objects are read, so the rest of the engine deals
+in `Detection` payloads and never in raw arrays.
 """
 
 from __future__ import annotations

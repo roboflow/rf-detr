@@ -6,9 +6,10 @@
 
 """One blocking capture thread per stream.
 
-`cv2.VideoCapture.read()` blocks, so it cannot live on the event loop. Each stream owns exactly one thread which opens
-its source, paces itself to `processing_fps`, downscales once, and pushes into the bounded queue. Everything the rest of
-the engine needs to know about connection state is published through `CaptureState`, read under a lock.
+`cv2.VideoCapture.read()` blocks, so it cannot live on the event loop. Each stream owns exactly one thread
+which opens its source, paces itself to `processing_fps`, downscales once, and pushes into the bounded queue.
+Everything the rest of the engine needs to know about connection state is published through `CaptureState`,
+read under a lock.
 """
 
 from __future__ import annotations
@@ -40,8 +41,9 @@ _READ_FAILURE_LIMIT = 5
 _LIVE_GRAB_INTERVAL = 0.01
 """How often a live source is drained between processed frames, in seconds."""
 
+#: Stable AVFoundation webcam mode requested before the first read.
 _MACOS_CAMERA_FPS = 30.0
-"""Stable AVFoundation webcam mode requested before the first read."""
+
 
 @dataclass
 class CaptureState:

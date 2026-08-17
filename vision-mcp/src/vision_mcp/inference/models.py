@@ -6,8 +6,8 @@
 
 """Model lifecycle: lazy load once, keep warm, run every inference on the model's own thread.
 
-RF-DETR modules are not thread-safe and MPS dislikes concurrent submission from many threads, so each model owns a
-single-thread executor and all of its work is serialised through that thread.
+RF-DETR modules are not thread-safe and MPS dislikes concurrent submission from many threads, so each model
+owns a single-thread executor and all of its work is serialised through that thread.
 """
 
 from __future__ import annotations

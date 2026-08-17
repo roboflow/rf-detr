@@ -34,6 +34,27 @@ repos:
         # https://prettier.io/docs/en/options.html#print-width
         args: ["--print-width=120"]
 
+  - repo: https://github.com/PyCQA/docformatter
+    rev: v1.7.8
+    hooks:
+      - id: docformatter
+        language_version: python3.10
+        additional_dependencies: [tomli]
+        args: ["--in-place"]
+        exclude: ^vision-mcp/
+      - id: docformatter
+        name: docformatter (vision-mcp)
+        language_version: python3.10
+        additional_dependencies: [tomli]
+        # vision-mcp/pyproject.toml sets ruff line-length=110 (narrower than the
+        # repo root's 120); match docformatter's wrap width so the two hooks
+        # don't fight over docstring line length.
+        args: ["--in-place", "--wrap-summaries=110", "--wrap-descriptions=110"]
+        files: ^vision-mcp/
+
+  # Runs after docformatter: docformatter can collapse blank lines around the
+  # docstrings it rewraps, so ruff-format needs the last word on blank-line/
+  # whitespace formatting or the two hooks fight every pre-commit.ci pass.
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.1
     hooks:
@@ -42,14 +63,6 @@ repos:
         exclude: ^notebooks/.*\.py$
       - id: ruff-format
         exclude: ^notebooks/.*\.py$
-
-  - repo: https://github.com/PyCQA/docformatter
-    rev: v1.7.8
-    hooks:
-      - id: docformatter
-        language_version: python3.10
-        additional_dependencies: [tomli]
-        args: ["--in-place"]
 
   - repo: local
     hooks:

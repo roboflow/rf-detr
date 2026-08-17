@@ -6,9 +6,9 @@
 
 """The single definition of every payload crossing the engine HTTP boundary.
 
-The engine returns these models and the MCP server parses the same classes; neither side defines its own copy of a
-shape. Definitions live in `vision_mcp.contract.*` only because one module would exceed the project's size limit — this
-module is the import surface.
+The engine returns these models and the MCP server parses the same classes; neither side defines its own copy
+of a shape. Definitions live in `vision_mcp.contract.*` only because one module would exceed the project's
+size limit — this module is the import surface.
 """
 
 from __future__ import annotations
