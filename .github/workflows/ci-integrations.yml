@@ -301,6 +301,17 @@ jobs:
         timeout-minutes: 5
         run: uv pip install -e ".[train]" --group tests
 
+      - name: 🔑 Verify required secrets are present
+        run: |
+          missing=()
+          [[ -z "${{ secrets.ROBOFLOW_API_KEY }}" ]]        && missing+=(ROBOFLOW_API_KEY)
+          [[ -z "${{ secrets.ROBOFLOW_TEST_WORKSPACE }}" ]] && missing+=(ROBOFLOW_TEST_WORKSPACE)
+          [[ -z "${{ secrets.ROBOFLOW_TEST_PROJECT }}" ]]   && missing+=(ROBOFLOW_TEST_PROJECT)
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Required secrets are not set: ${missing[*]}"
+            exit 1
+          fi
+
       - name: 🔎 Deploy a real model and poll for trained status
         env:
           ROBOFLOW_API_KEY: ${{ secrets.ROBOFLOW_API_KEY }}
