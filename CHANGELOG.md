@@ -8,7 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `deploy_to_roboflow()`'s `version` argument is now optional: when omitted, the highest existing dataset version of the target project is resolved automatically via the Roboflow API (falling back to version `1` for a project with no generated versions, where the Roboflow SDK then raises its usual "Version number 1 is not found."). Passing an explicit `version` behaves exactly as before, with no extra API call. ([#1116](https://github.com/roboflow/rf-detr/issues/1116))
+
+- Added a live opt-in end-to-end CI job (`roboflow-deploy-e2e`, `-m e2e_roboflow`) that generates a fresh dataset version in a dedicated Roboflow test project, deploys a real model with `version` omitted, and independently polls the server-side trained-model status — catching silent server-side upload failures that `deploy_to_roboflow()`'s return value cannot surface. ([#1116](https://github.com/roboflow/rf-detr/issues/1116))
+
 - Added live free/total GPU memory (`free_mem`, `torch.cuda.mem_get_info()` in MB) next to `max_mem` in the training progress bar. Unlike `max_mem`, `free_mem` is not process-local and not a peak — it reflects the whole device, including other workloads sharing the GPU, at the instant it is read. It typically does not rise when this process frees a tensor while the caching allocator retains that block; explicit cache release or allocator reclamation can return it to the driver. It is closer to "room left for a new allocation beyond what every process already claimed" than to the full headroom this run has for a bigger `batch_size`. Same `trainer.fit()`-only scope as `max_mem`. ([#1314](https://github.com/roboflow/rf-detr/issues/1314))
+
 - Restored peak GPU memory (`max_mem` in MB) in the training progress bar, dropped during the PyTorch Lightning migration (PR #794) along with `rfdetr.engine`. Only covers `trainer.fit()` (training and its periodic in-training validation) — PTL's own progress-bar classes never call `get_metrics()` outside `trainer.state.fn == "fit"`, so a standalone `RFDETR.evaluate()` progress bar shows no metrics at all, not just `max_mem`, same as before this change. ([#974](https://github.com/roboflow/rf-detr/issues/974))
 
 ### Changed

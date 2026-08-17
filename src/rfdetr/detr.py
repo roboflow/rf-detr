@@ -2683,7 +2683,7 @@ class RFDETR:
         self,
         workspace: str,
         project_id: str,
-        version: int | str,
+        version: int | str | None = None,
         api_key: str | None = None,
         size: str | None = None,
     ) -> None:
@@ -2697,7 +2697,10 @@ class RFDETR:
         Args:
             workspace: The name of the Roboflow workspace to deploy to.
             project_id: The project ID to which the model will be deployed.
-            version: The project version to which the model will be deployed.
+            version: The project version to which the model will be deployed. If not provided, the highest
+                existing dataset version is resolved automatically via the Roboflow API; for a project with
+                no generated versions yet the lookup falls back to version ``1``, and the Roboflow SDK then
+                raises its own ``RuntimeError`` ("Version number 1 is not found.").
             api_key: Your Roboflow API key. If not provided,
                 it will be read from the environment variable `ROBOFLOW_API_KEY`.
             size: The size of the model to deploy. If not provided,
@@ -2744,6 +2747,15 @@ class RFDETR:
         with tempfile.TemporaryDirectory(prefix="roboflow_upload_") as tmp_out_dir:
             self.export_for_roboflow(tmp_out_dir)
             project = rf_workspace.project(project_id)
+            if version is None:
+                # Version ids come back as "<workspace>/<project>/<number>"; the highest number is the
+                # newest dataset version. default=1 keeps the SDK's own "Version number 1 is not found."
+                # as the error surface for a project with no generated versions.
+                version = max(
+                    (int(os.path.basename(info["id"])) for info in project.get_version_information()),
+                    default=1,
+                )
+                logger.info(f"deploy_to_roboflow: no version given, resolved latest version {version}")
             project_version = project.version(version)
             project_version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")
 

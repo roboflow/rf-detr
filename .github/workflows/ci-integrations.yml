@@ -263,6 +263,69 @@ jobs:
         continue-on-error: true
         run: uv cache prune --ci
 
+  roboflow-deploy-e2e:
+    name: Roboflow deploy e2e
+    runs-on: ubuntu-latest
+    # deploy_to_roboflow() delegates the actual upload to a swallow-and-print try/except deep in
+    # the roboflow SDK (see tests/export/test_roboflow_deploy_e2e.py module docstring), so a failed
+    # server-side upload is otherwise indistinguishable from success. This job generates a fresh
+    # dataset version, deploys against a real Roboflow workspace/project (version auto-resolved to
+    # that fresh latest), and independently polls that version's trained-model status.
+    # Live external service + real account state: advisory only, not a required check (mirrors
+    # ci-legacy-checkpoints.yml). Restricted to the upstream repo — forks never have the secret, so
+    # running there would just burn CI minutes on a guaranteed skip.
+    if: >-
+      github.repository == 'roboflow/rf-detr' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    concurrency:
+      # Repo-wide group, not per-ref: two parallel runs against the same Roboflow project race —
+      # each generates its own fresh version, so run A's auto-latest deploy can land on run B's
+      # newer version while A polls its own, guaranteeing a 300s timeout false-negative. Queue
+      # instead (and never cancel mid-upload, which would strand a half-deployed version).
+      group: roboflow-deploy-e2e
+      cancel-in-progress: false
+    timeout-minutes: 20
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: "3.13"
+          activate-environment: true
+
+      - name: 🚀 Install Packages (train extra, for the roboflow SDK)
+        timeout-minutes: 5
+        run: uv pip install -e ".[train]" --group tests
+
+      - name: 🔑 Verify required secrets are present
+        run: |
+          missing=()
+          [[ -z "${{ secrets.ROBOFLOW_API_KEY }}" ]]        && missing+=(ROBOFLOW_API_KEY)
+          [[ -z "${{ secrets.ROBOFLOW_TEST_WORKSPACE }}" ]] && missing+=(ROBOFLOW_TEST_WORKSPACE)
+          [[ -z "${{ secrets.ROBOFLOW_TEST_PROJECT }}" ]]   && missing+=(ROBOFLOW_TEST_PROJECT)
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Required secrets are not set: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: 🔎 Deploy a real model and poll for trained status
+        env:
+          ROBOFLOW_API_KEY: ${{ secrets.ROBOFLOW_API_KEY }}
+          ROBOFLOW_TEST_WORKSPACE: ${{ secrets.ROBOFLOW_TEST_WORKSPACE }}
+          ROBOFLOW_TEST_PROJECT: ${{ secrets.ROBOFLOW_TEST_PROJECT }}
+        run: |
+          uv run --no-sync pytest . -m e2e_roboflow -n 1 \
+            --timeout=600 \
+            --durations=20
+
+      - name: Minimize uv cache
+        continue-on-error: true
+        run: uv cache prune --ci
+
   export-priority-guardian:
     runs-on: ubuntu-latest
     needs: [executorch-parity, coreml-parity, tensorrt-parity]
