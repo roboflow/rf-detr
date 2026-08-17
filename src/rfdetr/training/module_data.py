@@ -362,11 +362,18 @@ class RFDETRDataModule(LightningDataModule):
             A batch sampler yielding lists of dataset indices, or ``None`` to use the default strategy.
 
         Example:
-            >>> # class MyDataModule(RFDETRDataModule):
-            >>> #     def build_train_sampler(self, dataset):
-            >>> #         return WeightedMultiSourceBatchSampler.from_concat_dataset(
-            >>> #             dataset, weights=[0.6, 0.3, 0.1], batch_size=self.train_config.batch_size,
-            >>> #         )
+            Return a :class:`~rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler` from a subclass
+            without reimplementing :meth:`train_dataloader`:
+
+            .. code-block:: python
+
+                class MultiSourceDataModule(RFDETRDataModule):
+                    def build_train_sampler(self, dataset):
+                        return WeightedMultiSourceBatchSampler.from_concat_dataset(
+                            dataset,
+                            weights=[0.6, 0.3, 0.1],
+                            batch_size=self.train_config.batch_size,
+                        )
         """
         return None
 
