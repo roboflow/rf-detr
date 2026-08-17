@@ -84,6 +84,12 @@ class TestProgressBarCallbacks:
         assert not any(isinstance(cb, RichProgressBar) for cb in trainer.callbacks)
         assert not any(isinstance(cb, TQDMProgressBar) for cb in trainer.callbacks)
 
+    def test_disables_pre_training_sanity_validation(self, base_model_config, base_train_config):
+        """RF-DETR training should start directly with the first training epoch."""
+        trainer = build_trainer(base_train_config(), base_model_config(), accelerator="cpu")
+
+        assert trainer.num_sanity_val_steps == 0
+
 
 # ---------------------------------------------------------------------------
 # TestRichProgressBarLoggerIntegration — the real regression _RedirectAwareStreamHandler

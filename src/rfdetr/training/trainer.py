@@ -766,6 +766,7 @@ def build_trainer(
         "log_every_n_steps": 50,
         "deterministic": False,
         "check_val_every_n_epoch": tc.eval_interval,
+        "num_sanity_val_steps": 0,
     }
     if not xla_accelerator:
         trainer_config["precision"] = _resolve_precision()

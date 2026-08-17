@@ -563,9 +563,20 @@ class RFDETRModelModule(LightningModule):
         loss_for_return = loss if self._use_manual_optimization else loss / accumulate_grad_batches
         train_log_sync_dist = bool(self.train_config.train_log_sync_dist)
         train_log_on_step = bool(self.train_config.train_log_on_step)
+        train_loss_metrics: dict[str, Tensor] = {}
+        for loss_name, value in loss_dict.items():
+            base_name, separator, suffix = loss_name.rpartition("_")
+            if separator and (suffix.isdigit() or suffix == "enc"):
+                # Decoder and encoder auxiliary terms repeat the same loss across layers;
+                # one per-base aggregate keeps their epoch signal without per-layer state.
+                aggregate_name = f"train/{base_name}_aux"
+                previous = train_loss_metrics.get(aggregate_name)
+                train_loss_metrics[aggregate_name] = value if previous is None else previous + value
+                continue
+            train_loss_metrics[f"train/{loss_name}"] = value
         self.log_dict(
-            {f"train/{k}": v for k, v in loss_dict.items()},
-            on_step=train_log_on_step,
+            train_loss_metrics,
+            on_step=False,
             on_epoch=True,
             sync_dist=train_log_sync_dist,
             batch_size=batch_size,
@@ -583,17 +594,6 @@ class RFDETRModelModule(LightningModule):
         optimizer = self.optimizers()
         if isinstance(optimizer, list):
             optimizer = optimizer[0]
-        # Optimizer may have multiple param groups with different LRs (e.g., backbone/decoder).
-        # Preserve the first group's LR for backward compatibility and progress-bar visibility.
-        # Keep min/max in the logs without taking extra progress-bar metric slots.
-        group_lrs = [pg["lr"] for pg in optimizer.param_groups if "lr" in pg]
-        if group_lrs:
-            base_lr = group_lrs[0]
-            min_lr = min(group_lrs)
-            max_lr = max(group_lrs)
-            self.log("train/lr", base_lr, prog_bar=True, on_step=True, on_epoch=False)
-            self.log("train/lr_min", min_lr, prog_bar=False, on_step=True, on_epoch=False)
-            self.log("train/lr_max", max_lr, prog_bar=False, on_step=True, on_epoch=False)
         if self._use_manual_optimization:
             # loss_for_backward is only None in the automatic-optimization branch above,
             # which is mutually exclusive with _use_manual_optimization.
@@ -725,6 +725,27 @@ class RFDETRModelModule(LightningModule):
             and batch_idx + 1 >= num_training_batches
         )
 
+    def on_before_optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
+        """Log rates immediately before each Lightning-managed optimizer step.
+
+        Args:
+            optimizer: Optimizer about to update model parameters.
+        """
+        self._log_learning_rates(optimizer)
+
+    def _log_learning_rates(self, optimizer: torch.optim.Optimizer | LightningOptimizer) -> None:
+        """Log the learning-rate range used by an optimizer update.
+
+        Args:
+            optimizer: Optimizer about to update model parameters.
+        """
+        group_lrs = [param_group["lr"] for param_group in optimizer.param_groups if "lr" in param_group]
+        if not group_lrs:
+            return
+        self.log("train/lr", group_lrs[0], prog_bar=True, on_step=True, on_epoch=False)
+        self.log("train/lr_min", min(group_lrs), prog_bar=False, on_step=True, on_epoch=False)
+        self.log("train/lr_max", max(group_lrs), prog_bar=False, on_step=True, on_epoch=False)
+
     def _step_optimizer(self, optimizer: torch.optim.Optimizer | LightningOptimizer) -> None:
         """Clip gradients, step optimizer and scheduler, then reset accumulation state.
 
@@ -747,6 +768,7 @@ class RFDETRModelModule(LightningModule):
                 gradient_clip_val=gradient_clip_val,
                 gradient_clip_algorithm=gradient_clip_algorithm,
             )
+        self._log_learning_rates(optimizer)
         optimizer.step()
         optimizer.zero_grad()
         self._step_lr_scheduler()

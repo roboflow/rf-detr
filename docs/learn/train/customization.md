@@ -416,25 +416,31 @@ All logged keys (`train/loss`, `val/mAP_50_95`, `val/keypoint_map_50_95`, `val/F
 
 ## Logged metrics reference
 
-| Key                      | When logged            | Description                                               |
-| ------------------------ | ---------------------- | --------------------------------------------------------- |
-| `train/loss`             | Every step / epoch     | Total weighted training loss                              |
-| `train/<term>`           | Every step / epoch     | Individual loss terms (e.g. `train/loss_bbox`)            |
-| `val/loss`               | Each epoch             | Validation loss (if `train_config.compute_val_loss=True`) |
-| `val/mAP_50_95`          | Each eval epoch        | COCO box mAP@[.50:.05:.95]                                |
-| `val/mAP_50`             | Each eval epoch        | COCO box mAP@.50                                          |
-| `val/mAP_75`             | Each eval epoch        | COCO box mAP@.75                                          |
-| `val/mAR`                | Each eval epoch        | COCO mean average recall                                  |
-| `val/ema_mAP_50_95`      | Each eval epoch        | EMA-model mAP@[.50:.05:.95] (if EMA active)               |
-| `val/F1`                 | Each eval epoch        | Macro F1 at best confidence threshold                     |
-| `val/precision`          | Each eval epoch        | Precision at best F1 threshold                            |
-| `val/recall`             | Each eval epoch        | Recall at best F1 threshold                               |
-| `val/AP/<class>`         | Each eval epoch        | Per-class AP (if `log_per_class_metrics=True`)            |
-| `val/segm_mAP_50_95`     | Each eval epoch        | Segmentation mAP (segmentation models only)               |
-| `val/segm_mAP_50`        | Each eval epoch        | Segmentation mAP@.50 (segmentation models only)           |
-| `val/keypoint_map_50_95` | Each eval epoch        | COCO keypoint AP@[.50:.05:.95] (keypoint preview only)    |
-| `val/keypoint_map_50`    | Each eval epoch        | COCO keypoint AP@.50 (keypoint preview only)              |
-| `test/*`                 | After `trainer.test()` | Mirror of `val/*` keys                                    |
+| Key                      | When logged                                         | Description                                               |
+| ------------------------ | --------------------------------------------------- | --------------------------------------------------------- |
+| `train/loss`             | Epoch; also each step when `train_log_on_step=True` | Total weighted training loss                              |
+| `train/<term>`           | Each epoch                                          | Base-loss metric (e.g. `train/loss_bbox`)                 |
+| `train/<term>_aux`       | Each epoch                                          | Sum of decoder and encoder auxiliary terms for that loss  |
+| `train/lr`               | Each optimizer step                                 | First optimizer parameter group's learning rate           |
+| `train/lr_min`           | Each optimizer step                                 | Minimum learning rate across optimizer parameter groups   |
+| `train/lr_max`           | Each optimizer step                                 | Maximum learning rate across optimizer parameter groups   |
+| `val/loss`               | Each epoch                                          | Validation loss (if `train_config.compute_val_loss=True`) |
+| `val/mAP_50_95`          | Each eval epoch                                     | COCO box mAP@[.50:.05:.95]                                |
+| `val/mAP_50`             | Each eval epoch                                     | COCO box mAP@.50                                          |
+| `val/mAP_75`             | Each eval epoch                                     | COCO box mAP@.75                                          |
+| `val/mAR`                | Each eval epoch                                     | COCO mean average recall                                  |
+| `val/ema_mAP_50_95`      | Each eval epoch                                     | EMA-model mAP@[.50:.05:.95] (if EMA active)               |
+| `val/F1`                 | Each eval epoch                                     | Macro F1 at best confidence threshold                     |
+| `val/precision`          | Each eval epoch                                     | Precision at best F1 threshold                            |
+| `val/recall`             | Each eval epoch                                     | Recall at best F1 threshold                               |
+| `val/AP/<class>`         | Each eval epoch                                     | Per-class AP (if `log_per_class_metrics=True`)            |
+| `val/segm_mAP_50_95`     | Each eval epoch                                     | Segmentation mAP (segmentation models only)               |
+| `val/segm_mAP_50`        | Each eval epoch                                     | Segmentation mAP@.50 (segmentation models only)           |
+| `val/keypoint_map_50_95` | Each eval epoch                                     | COCO keypoint AP@[.50:.05:.95] (keypoint preview only)    |
+| `val/keypoint_map_50`    | Each eval epoch                                     | COCO keypoint AP@.50 (keypoint preview only)              |
+| `test/*`                 | After `trainer.test()`                              | Mirror of `val/*` keys                                    |
+
+With gradient accumulation, learning-rate metrics are emitted only when an optimizer update occurs, including a partial final accumulation window. Layer-specific auxiliary loss keys (such as `train/loss_bbox_0` and `train/loss_bbox_enc`) are replaced by their compact `train/loss_bbox_aux` aggregate.
 
 ---
 

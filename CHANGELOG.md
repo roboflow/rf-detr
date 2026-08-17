@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Training now skips PyTorch Lightning's pre-training sanity validation batches. Training loss component metrics are emitted once per epoch, with decoder and encoder auxiliary terms compacted into `train/<term>_aux`; `train/loss` preserves its `train_log_on_step` behavior. Learning-rate metrics now emit only for optimizer updates, including a final partial gradient-accumulation window. Update dashboard queries that consume layer-specific auxiliary keys or assume one learning-rate point per microbatch.
+
 ### Fixed
 
 ## [1.9.3] — 2026-08-17

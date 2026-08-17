@@ -1018,20 +1018,17 @@ class TestTrainingStep:
         live_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "loss"]
         assert len(live_loss_calls) == expected_live_loss_calls
 
-    def test_logs_learning_rate_to_progress_bar(self, tmp_path):
-        """Current learning rate must be logged every step as a progress-bar metric."""
+    def test_training_step_does_not_log_learning_rate(self, tmp_path):
+        """Learning-rate metrics must wait for the optimizer-step boundary."""
         module, samples, targets, _, _ = self._run_step(tmp_path)
 
         module.training_step((samples, targets), batch_idx=0)
 
         lr_calls = [c for c in module.log.call_args_list if c[0][0] == "train/lr"]
-        assert len(lr_calls) == 1
-        assert lr_calls[0].kwargs.get("prog_bar") is True
-        assert lr_calls[0].kwargs.get("on_step") is True
-        assert lr_calls[0].kwargs.get("on_epoch") is False
+        assert not lr_calls
 
     def test_logs_learning_rate_range_for_multiple_param_groups(self, tmp_path):
-        """Multiple optimizer groups log first, minimum, and maximum rates with distinct visibility flags."""
+        """An automatic optimizer step logs first, minimum, and maximum rates with distinct visibility flags."""
         module, samples, targets, _, _ = self._run_step(tmp_path)
         first_param = nn.Parameter(torch.randn(4))
         second_param = nn.Parameter(torch.randn(4))
@@ -1045,7 +1042,7 @@ class TestTrainingStep:
             lr=0.1,
         )
 
-        module.training_step((samples, targets), batch_idx=0)
+        module.on_before_optimizer_step(module.optimizers.return_value)
 
         expected_metrics = {
             "train/lr": (0.1, True),
@@ -1059,6 +1056,59 @@ class TestTrainingStep:
             assert metric_calls[0].kwargs.get("prog_bar") is expected_prog_bar
             assert metric_calls[0].kwargs.get("on_step") is True
             assert metric_calls[0].kwargs.get("on_epoch") is False
+
+    def test_compacts_auxiliary_loss_metrics(self, tmp_path):
+        """Layer-suffixed loss metrics should be reduced to one aggregate per base loss term."""
+        loss_dict = {
+            "loss_ce": torch.tensor(1.0),
+            "loss_bbox": torch.tensor(2.0),
+            "loss_ce_0": torch.tensor(3.0),
+            "loss_bbox_0": torch.tensor(4.0),
+            "loss_ce_enc": torch.tensor(5.0),
+        }
+        module, samples, targets, _, _ = self._run_step(
+            tmp_path,
+            loss_dict=loss_dict,
+            weight_dict={key: 1.0 for key in loss_dict},
+        )
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        logged = module.log_dict.call_args.args[0]
+        assert set(logged) == {"train/loss_ce", "train/loss_bbox", "train/loss_ce_aux", "train/loss_bbox_aux"}
+        assert logged["train/loss_ce_aux"].item() == pytest.approx(8.0)
+        assert logged["train/loss_bbox_aux"].item() == pytest.approx(4.0)
+
+    def test_logs_loss_components_on_epoch_when_step_logging_is_enabled(self, tmp_path):
+        """Per-step total loss logging must not re-enable per-step component metrics."""
+        module, samples, targets, _, _ = self._run_step(tmp_path, train_log_on_step=True)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        assert module.log_dict.call_args.kwargs.get("on_step") is False
+        assert module.log_dict.call_args.kwargs.get("on_epoch") is True
+
+    def test_logs_learning_rates_for_manual_optimizer_steps_including_tail(self, tmp_path):
+        """Manual accumulation logs rates for completed and partial optimizer windows only."""
+        module, *_ = _build_module(
+            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+            train_config=_base_train_config(tmp_path, grad_accum_steps=2),
+            tmp_path=tmp_path,
+        )
+        parameter = nn.Parameter(torch.randn(4))
+        optimizer = torch.optim.SGD([parameter], lr=0.1)
+        trainer = MagicMock(num_training_batches=3, gradient_clip_val=0.0, gradient_clip_algorithm="norm")
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        module.log = MagicMock()
+
+        for batch_idx in range(3):
+            if module._should_step_optimizer(batch_idx):
+                module._step_optimizer(optimizer)
+
+        for metric_name in ("train/lr", "train/lr_min", "train/lr_max"):
+            metric_calls = [call for call in module.log.call_args_list if call.args[0] == metric_name]
+            assert len(metric_calls) == 2
 
     def test_logs_convergence_components_to_progress_bar(self, tmp_path):
         """Selected detection and keypoint losses should appear as compact progress-only metrics."""
@@ -1076,8 +1126,8 @@ class TestTrainingStep:
         progress_names = {c[0][0] for c in module.log.call_args_list if c.kwargs.get("prog_bar") is True}
         assert {"loss_cls", "loss_box", "kp_l1", "kp_nll"}.issubset(progress_names)
 
-    def test_logs_individual_losses_as_dict(self, tmp_path):
-        """Each component loss must be logged separately under train/ prefix."""
+    def test_logs_individual_main_losses_as_dict(self, tmp_path):
+        """Each main decoder loss must be logged separately under the train/ prefix."""
         loss_dict = {"loss_ce": torch.tensor(0.5), "loss_bbox": torch.tensor(0.3)}
         weight_dict = {"loss_ce": 1.0, "loss_bbox": 5.0}
         module, samples, targets, _, _ = self._run_step(tmp_path, loss_dict, weight_dict)
