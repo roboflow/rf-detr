@@ -1590,7 +1590,11 @@ class TestDeployToRoboflow:
         assert not conflict_warnings
 
     @staticmethod
-    def _deploy_with_versions(mock_self, version_info, **deploy_kwargs):
+    def _deploy_with_versions(
+        mock_self: MagicMock,
+        version_info: list[dict[str, Any]],
+        **deploy_kwargs: Any,
+    ) -> MagicMock:
         """Call deploy_to_roboflow against a mocked project preloaded with version_info; return the project mock.
 
         Examples:
