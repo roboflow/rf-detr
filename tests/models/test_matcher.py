@@ -835,10 +835,14 @@ def _spy_on_compact_path(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     original = HungarianMatcher._compute_compact_detection_cost_matrix
 
     def spy(
-        self: HungarianMatcher, outputs: dict[str, torch.Tensor], targets: list[dict[str, torch.Tensor]]
+        self: HungarianMatcher,
+        outputs: dict[str, torch.Tensor],
+        targets: list[dict[str, torch.Tensor]],
+        *args: object,
+        **kwargs: object,
     ) -> torch.Tensor:
         calls.append(1)
-        return original(self, outputs, targets)
+        return original(self, outputs, targets, *args, **kwargs)
 
     monkeypatch.setattr(HungarianMatcher, "_compute_compact_detection_cost_matrix", spy)
     return calls
@@ -2190,6 +2194,9 @@ class TestTargetSideSafetyCaching:
             "_precompute_target_side_safety",
             lambda self, outputs, targets: None,
         )
+        # Isolate the pre-existing sequential matcher path: PR3's batched matcher intentionally
+        # computes this shared predicate once even without a precomputed cache.
+        monkeypatch.setattr(HungarianMatcher, "_match_many", lambda self, outputs_list, targets, **kwargs: None)
         fresh_calls = _spy_on_target_side_precheck(monkeypatch)
         fresh_losses = criterion(outputs, targets, num_boxes=1.0)
         assert fresh_calls == [1, 1, 1, 1], "without caching, all 4 matcher() calls must recompute independently"
@@ -2313,3 +2320,38 @@ class TestMatcherDictMaskCostUsesProjectedFeatures:
         corrupted_cost = captured[-1]
 
         assert not torch.allclose(real_cost, corrupted_cost)
+
+
+class TestBatchedDetectionMatching:
+    """Batching final, auxiliary, and encoder detection matchers must preserve every assignment."""
+
+    def test_match_many_matches_individual_detection_assignments(self) -> None:
+        """Three decoder/encoder-like outputs must produce their usual per-image assignments.
+
+        This prevents a batched host transfer from mixing a layer's cost matrix with a neighboring layer. It fails
+        before the batched matching API exists.
+        """
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=401, sizes=[2, 3])
+        layers = [outputs]
+        for seed in (402, 403):
+            layer, _ = _random_detection_batch(seed=seed, sizes=[2, 3])
+            layers.append(layer)
+        safety = matcher._precompute_target_side_safety(outputs, targets)
+
+        actual = matcher._match_many(layers, targets, target_side_safety=safety)
+        expected = [matcher(layer, targets, target_side_safety=safety) for layer in layers]
+
+        assert actual is not None
+        for actual_indices, expected_indices in zip(actual, expected):
+            _assert_same_indices(actual_indices, expected_indices)
+
+    def test_match_many_declines_out_of_range_labels_for_full_path_fallback(self) -> None:
+        """An invalid label must bypass batching so the legacy full path keeps its IndexError contract."""
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=404, sizes=[2, 3])
+        targets[1]["labels"][0] = outputs["pred_logits"].shape[-1]
+
+        assert matcher._match_many([outputs, outputs], targets) is None
+        with pytest.raises(IndexError):
+            matcher(outputs, targets)

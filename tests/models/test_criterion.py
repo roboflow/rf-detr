@@ -316,3 +316,33 @@ class TestMatcherContract:
         criterion.matcher = _LegacyMatcherStub()
 
         assert criterion.forward(outputs, targets, num_boxes=1.0) == {}
+
+
+class TestMatchedTargetCache:
+    """Matched labels and boxes are shared by all detection losses for one output layer."""
+
+    def test_matched_targets_collects_each_target_field_once(self) -> None:
+        """The cache preserves target ordering while providing one shared loss context.
+
+        This prevents the criterion from reconstructing the same labels and boxes for classification and box losses
+        independently. It fails before the cache exists.
+        """
+        criterion = _bare_criterion()
+        targets = [
+            {
+                "labels": torch.tensor([2, 1], dtype=torch.int64),
+                "boxes": torch.tensor([[0.2, 0.3, 0.4, 0.5], [0.4, 0.5, 0.2, 0.3]]),
+            },
+            {
+                "labels": torch.tensor([0], dtype=torch.int64),
+                "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.2]]),
+            },
+        ]
+        indices = [(torch.tensor([1]), torch.tensor([0])), (torch.tensor([0]), torch.tensor([0]))]
+
+        matched = criterion._get_matched_targets(targets, indices)
+
+        assert torch.equal(matched.source_indices[0], torch.tensor([0, 1]))
+        assert torch.equal(matched.source_indices[1], torch.tensor([1, 0]))
+        assert torch.equal(matched.labels, torch.tensor([2, 0]))
+        assert torch.equal(matched.boxes, torch.tensor([[0.2, 0.3, 0.4, 0.5], [0.5, 0.5, 0.1, 0.2]]))

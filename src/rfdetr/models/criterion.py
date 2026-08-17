@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -30,6 +30,18 @@ from rfdetr.utilities import box_ops
 from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
 
 _LossFunction = Callable[..., dict[str, Tensor]]
+
+
+class _MatchedTargets(NamedTuple):
+    """Indices and target tensors shared by detection losses for one output layer.
+
+    ``loss_labels`` and ``loss_boxes`` consume the same matched labels, boxes, and source indices. Keeping them together
+    avoids rebuilding those tensors for each loss without changing their per-layer lifetime or ordering.
+    """
+
+    source_indices: tuple[Tensor, Tensor]
+    labels: Tensor
+    boxes: Tensor
 
 
 def sigmoid_focal_loss(
@@ -287,21 +299,28 @@ class SetCriterion(nn.Module):
         indices: list[tuple[Tensor, Tensor]],
         num_boxes: Tensor,
         log: bool = True,
+        matched_targets: _MatchedTargets | None = None,
     ) -> dict[str, Tensor]:
         """Classification loss (Binary focal loss) targets dicts must contain the key "labels" containing a tensor of
         dim [nb_target_boxes]"""
         assert "pred_logits" in outputs
         src_logits = outputs["pred_logits"]
 
-        idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+        if matched_targets is None:
+            idx = self._get_src_permutation_idx(indices)
+            target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+            target_boxes = None
+        else:
+            idx = matched_targets.source_indices
+            target_classes_o = matched_targets.labels
+            target_boxes = matched_targets.boxes
 
         if self.ia_bce_loss:
+            if target_boxes is None:
+                target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
             alpha = self.focal_alpha
             gamma = 2
             src_boxes = outputs["pred_boxes"][idx]
-            target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
-
             iou_targets, _ = box_ops.elementwise_box_iou(
                 box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
                 box_ops.box_cxcywh_to_xyxy(target_boxes),
@@ -326,9 +345,9 @@ class SetCriterion(nn.Module):
             loss_ce = loss_ce.sum() / num_boxes
 
         elif self.use_position_supervised_loss:
+            if target_boxes is None:
+                target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
             src_boxes = outputs["pred_boxes"][idx]
-            target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
-
             iou_targets, _ = box_ops.elementwise_box_iou(
                 box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
                 box_ops.box_cxcywh_to_xyxy(target_boxes),
@@ -453,14 +472,19 @@ class SetCriterion(nn.Module):
         targets: list[dict[str, Tensor]],
         indices: list[tuple[Tensor, Tensor]],
         num_boxes: Tensor,
+        matched_targets: _MatchedTargets | None = None,
     ) -> dict[str, Tensor]:
         """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss targets dicts must
         contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4] The target boxes are expected in format
         (center_x, center_y, w, h), normalized by the image size."""
         assert "pred_boxes" in outputs
-        idx = self._get_src_permutation_idx(indices)
+        idx = self._get_src_permutation_idx(indices) if matched_targets is None else matched_targets.source_indices
         src_boxes = outputs["pred_boxes"][idx]
-        target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_boxes = (
+            torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            if matched_targets is None
+            else matched_targets.boxes
+        )
 
         loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
 
@@ -626,6 +650,18 @@ class SetCriterion(nn.Module):
         src_idx = torch.cat([src for (src, _) in indices])
         return batch_idx, src_idx
 
+    def _get_matched_targets(
+        self, targets: list[dict[str, Tensor]], indices: list[tuple[Tensor, Tensor]]
+    ) -> _MatchedTargets:
+        """Collect the matched detection targets once for loss functions sharing one layer's indices."""
+        return _MatchedTargets(
+            source_indices=self._get_src_permutation_idx(indices),
+            labels=torch.cat(
+                [target["labels"][target_indices] for target, (_, target_indices) in zip(targets, indices)]
+            ),
+            boxes=torch.cat([target["boxes"][target_indices] for target, (_, target_indices) in zip(targets, indices)]),
+        )
+
     def _get_tgt_permutation_idx(self, indices: list[tuple[Tensor, Tensor]]) -> tuple[Tensor, Tensor]:
         # permute targets following indices
         batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
@@ -639,6 +675,7 @@ class SetCriterion(nn.Module):
         targets: list[dict[str, Tensor]],
         indices: list[tuple[Tensor, Tensor]],
         num_boxes: Tensor,
+        matched_targets: _MatchedTargets | None = None,
         **kwargs: Any,
     ) -> dict[str, Tensor]:
         loss_map: dict[str, _LossFunction] = {
@@ -649,6 +686,8 @@ class SetCriterion(nn.Module):
             "keypoints": self.loss_keypoints,
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
+        if matched_targets is not None and loss in {"labels", "boxes"}:
+            kwargs["matched_targets"] = matched_targets
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
 
     def forward(
@@ -659,9 +698,9 @@ class SetCriterion(nn.Module):
     ) -> dict[str, Tensor]:
         """Compute every configured loss for one (outputs, targets) pair.
 
-        The Hungarian matcher is invoked on the last layer's outputs and reused for the auxiliary intermediate layers
-        and the optional encoder outputs; each loss is then evaluated on the matched indices and normalized by
-        ``num_boxes``.
+        Each output layer is matched against the targets. Compatible detection layers are batched through the
+        matcher's private fast path; every other matcher and input shape uses the established per-layer calls. Each
+        loss is then evaluated on that layer's matched indices and normalized by ``num_boxes``.
 
         Args:
             outputs: Model output dictionary. Must contain the tensors required by
@@ -728,8 +767,18 @@ class SetCriterion(nn.Module):
         if precompute is not None and (outputs.get("aux_outputs") or "enc_outputs" in outputs):
             matcher_kwargs["target_side_safety"] = precompute(outputs_without_aux, targets)
 
-        # Retrieve the matching between the outputs of the last layer and the targets
-        indices = self.matcher(outputs_without_aux, targets, **matcher_kwargs)
+        matched_outputs = [outputs_without_aux]
+        if "aux_outputs" in outputs:
+            matched_outputs.extend(outputs["aux_outputs"])
+        if "enc_outputs" in outputs:
+            matched_outputs.append(outputs["enc_outputs"])
+
+        match_many = getattr(type(self.matcher), "_match_many", None)
+        all_indices = (
+            None if match_many is None else match_many(self.matcher, matched_outputs, targets, **matcher_kwargs)
+        )
+        if all_indices is None:
+            all_indices = [self.matcher(layer_outputs, targets, **matcher_kwargs) for layer_outputs in matched_outputs]
 
         if num_boxes is None:
             num_boxes = self.num_boxes_for_targets(outputs, targets)
@@ -738,34 +787,20 @@ class SetCriterion(nn.Module):
         else:
             num_boxes = num_boxes.to(device=self._output_device(outputs), dtype=torch.float)
 
-        # Compute all the requested losses
         losses = {}
-        for loss in self.losses:
-            losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes))
-
-        # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
-        if "aux_outputs" in outputs:
-            for i, aux_outputs in enumerate(outputs["aux_outputs"]):
-                indices = self.matcher(aux_outputs, targets, **matcher_kwargs)
-                for loss in self.losses:
-                    kwargs = {}
-                    if loss == "labels":
-                        # Logging is enabled only for the last layer
-                        kwargs = {"log": False}
-                    l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
-                    l_dict = {k + f"_{i}": v for k, v in l_dict.items()}
-                    losses.update(l_dict)
-
-        if "enc_outputs" in outputs:
-            enc_outputs = outputs["enc_outputs"]
-            indices = self.matcher(enc_outputs, targets, **matcher_kwargs)
+        aux_count = len(outputs.get("aux_outputs", []))
+        for layer_index, (layer_outputs, indices) in enumerate(zip(matched_outputs, all_indices)):
+            suffix = "" if layer_index == 0 else f"_{layer_index - 1}" if layer_index <= aux_count else "_enc"
+            # Labels and boxes are both requested by every detection configuration, so build their
+            # shared matched tensors once per output layer before either loss consumes them.
+            matched_targets = (
+                self._get_matched_targets(targets, indices) if {"labels", "boxes"} <= set(self.losses) else None
+            )
             for loss in self.losses:
-                kwargs = {}
-                if loss == "labels":
-                    # Logging is enabled only for the last layer
-                    kwargs["log"] = False
-                l_dict = self.get_loss(loss, enc_outputs, targets, indices, num_boxes, **kwargs)
-                l_dict = {k + "_enc": v for k, v in l_dict.items()}
-                losses.update(l_dict)
+                kwargs = {"log": False} if layer_index > 0 and loss == "labels" else {}
+                layer_losses = self.get_loss(
+                    loss, layer_outputs, targets, indices, num_boxes, matched_targets=matched_targets, **kwargs
+                )
+                losses.update({key + suffix: value for key, value in layer_losses.items()})
 
         return losses

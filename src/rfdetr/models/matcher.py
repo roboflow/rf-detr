@@ -397,6 +397,7 @@ class HungarianMatcher(nn.Module):
         self,
         outputs: dict[str, Any],
         targets: list[dict[str, Any]],
+        clamp_target_labels: bool = False,
     ) -> Tensor:
         """Compute same-image detection costs with targets padded only to the batch maximum.
 
@@ -417,6 +418,11 @@ class HungarianMatcher(nn.Module):
         padded_target_boxes = pad_sequence([target["boxes"] for target in targets], batch_first=True)
         max_targets = padded_target_ids.shape[1]
 
+        if clamp_target_labels:
+            # The batched path checks label safety only after its single host transfer. Clamp solely
+            # to let `gather` construct a disposable matrix for unsafe batches; it is never assigned.
+            padded_target_ids = padded_target_ids.clamp(0, outputs["pred_logits"].shape[-1] - 1)
+
         gather_index = padded_target_ids[:, None, :].expand(batch_size, num_queries, max_targets)
         target_logits = torch.gather(outputs["pred_logits"], 2, gather_index)
         class_cost = self._focal_classification_cost(target_logits)
@@ -431,6 +437,96 @@ class HungarianMatcher(nn.Module):
             [padded_cost_matrix[index, :, :size] for index, size in enumerate(sizes)],
             dim=-1,
         )
+
+    @torch.no_grad()
+    def _match_many(
+        self,
+        outputs_list: list[dict[str, Any]],
+        targets: list[dict[str, Any]],
+        group_detr: int = 1,
+        target_side_safety: _TargetSideSafety | None = None,
+    ) -> list[list[tuple[Tensor, Tensor]]] | None:
+        """Batch compatible detection matchers into one host transfer, or decline to preserve fallback behavior.
+
+        This private fast path is used only by ``SetCriterion`` for final, auxiliary, and encoder outputs from one
+        training step. It leaves unusual input shapes and unsafe values to :meth:`forward`, whose full-cartesian
+        fallback carries the established error and non-finite-cost behavior.
+        """
+        if len(outputs_list) < 2 or not all(
+            self._compact_path_applicable(outputs, targets) for outputs in outputs_list
+        ):
+            return None
+
+        reference_boxes = outputs_list[0]["pred_boxes"]
+        reference_classes = outputs_list[0]["pred_logits"].shape[-1]
+        if any(
+            outputs["pred_boxes"].dtype != reference_boxes.dtype
+            or outputs["pred_boxes"].device != reference_boxes.device
+            or outputs["pred_logits"].shape[-1] != reference_classes
+            for outputs in outputs_list[1:]
+        ):
+            return None
+        if any(
+            target["boxes"].dtype != reference_boxes.dtype
+            or target["boxes"].device != reference_boxes.device
+            or target["labels"].device != reference_boxes.device
+            or target["labels"].dtype != targets[0]["labels"].dtype
+            for target in targets
+        ):
+            return None
+
+        if (
+            target_side_safety is not None
+            and target_side_safety.targets is targets
+            and target_side_safety.pred_boxes_dtype == reference_boxes.dtype
+            and target_side_safety.pred_boxes_device == reference_boxes.device
+            and target_side_safety.num_classes == reference_classes
+        ):
+            target_safe = target_side_safety.safe
+        else:
+            target_safe = self._target_side_precheck(
+                reference_boxes.dtype, reference_boxes.device, reference_classes, targets
+            )
+
+        sizes = [len(target["boxes"]) for target in targets]
+        total_targets = sum(sizes)
+        if total_targets == 0:
+            return None
+
+        coordinate_limit = torch.finfo(reference_boxes.dtype).max ** 0.5 / 16
+        payloads: list[Tensor] = []
+        matrix_shapes: list[tuple[int, int]] = []
+        for outputs in outputs_list:
+            pred_boxes = outputs["pred_boxes"]
+            pred_safe = torch.isfinite(pred_boxes).all() & (pred_boxes.abs() <= coordinate_limit).all()
+            cost_matrix = self._compute_compact_detection_cost_matrix(
+                outputs, targets, clamp_target_labels=True
+            ).float()
+            # The final row carries the unsynced safety predicate with its layer's cost matrix,
+            # ensuring CUDA needs one copy and one synchronization for the complete matcher batch.
+            payload = torch.cat([cost_matrix, (target_safe & pred_safe).to(cost_matrix.dtype).expand(1, total_targets)])
+            payloads.append(payload.flatten())
+            matrix_shapes.append((payload.shape[0], payload.shape[1]))
+
+        gpu_payload = torch.cat(payloads)
+        if gpu_payload.is_cuda:
+            cpu_payload = torch.empty_like(gpu_payload, device="cpu", pin_memory=True)
+            cpu_payload.copy_(gpu_payload, non_blocking=True)
+            torch.cuda.current_stream(gpu_payload.device).synchronize()
+        else:
+            cpu_payload = gpu_payload.cpu()
+
+        all_indices: list[list[tuple[Tensor, Tensor]]] = []
+        offset = 0
+        for matrix_shape in matrix_shapes:
+            matrix_size = matrix_shape[0] * matrix_shape[1]
+            payload = cpu_payload[offset : offset + matrix_size].view(matrix_shape)
+            offset += matrix_size
+            cost_matrix = payload[:-1]
+            if not bool(payload[-1, 0]) or not bool(torch.isfinite(cost_matrix).all()):
+                return None
+            all_indices.append(self._assign_compact_cost_matrix(cost_matrix, sizes, group_detr))
+        return all_indices
 
     @staticmethod
     def _assign_compact_cost_matrix(
