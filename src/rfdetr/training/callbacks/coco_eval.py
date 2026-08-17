@@ -313,7 +313,7 @@ class COCOEvalCallback(Callback):
         self._f1_local = init_matching_accumulator()
         self._reset_keypoint_split("val")
         self._reset_keypoint_split("val_ema")
-        self._prepare_ema_metric(trainer, pl_module)
+        self._prepare_ema_metric(trainer)
 
     def on_test_epoch_start(self, trainer: Any, pl_module: Any) -> None:
         """Reset ``_ema_has_updates`` before test to prevent stale validation state from triggering EMA compute.
@@ -331,7 +331,7 @@ class COCOEvalCallback(Callback):
         self.map_metric.reset()
         self._f1_local = init_matching_accumulator()
         self._reset_keypoint_split("test")
-        self._prepare_ema_metric(trainer, pl_module)
+        self._prepare_ema_metric(trainer)
 
     def on_train_batch_end(
         self,
@@ -351,6 +351,8 @@ class COCOEvalCallback(Callback):
             batch_idx: Batch index within the training epoch.
         """
         if getattr(getattr(pl_module, "train_config", None), "compute_train_metrics", False) is not True:
+            return
+        if self._eval_interval > 1 and not self._is_metric_epoch(trainer):
             return
         if not isinstance(outputs, dict) or "results" not in outputs or "targets" not in outputs:
             return
@@ -388,16 +390,29 @@ class COCOEvalCallback(Callback):
             self._f1_train_local = init_matching_accumulator()
             self._reset_keypoint_split("train")
             return
-        if self._eval_interval > 1:
-            current_epoch = int(getattr(trainer, "current_epoch", 0)) + 1
-            max_epochs = getattr(trainer, "max_epochs", None)
-            is_last_epoch = isinstance(max_epochs, int) and max_epochs > 0 and current_epoch >= max_epochs
-            if current_epoch % self._eval_interval != 0 and not is_last_epoch:
-                self.map_metric_train.reset()
-                self._f1_train_local = init_matching_accumulator()
-                self._reset_keypoint_split("train")
-                return
+        if self._eval_interval > 1 and not self._is_metric_epoch(trainer):
+            self.map_metric_train.reset()
+            self._f1_train_local = init_matching_accumulator()
+            self._reset_keypoint_split("train")
+            return
         self._compute_and_log(trainer, pl_module, "train", metric=self.map_metric_train)
+
+    def _is_metric_epoch(self, trainer: Any) -> bool:
+        """Decide whether the current epoch falls on an ``_eval_interval`` boundary (or is the final epoch).
+
+        Shared by :meth:`on_train_batch_end` (skip accumulation on non-eval epochs) and
+        :meth:`on_train_epoch_end` (skip compute/log and reset accumulators instead).
+
+        Args:
+            trainer: The PTL Trainer.
+
+        Returns:
+            ``True`` when this epoch should accumulate and log train metrics.
+        """
+        current_epoch = int(getattr(trainer, "current_epoch", 0)) + 1
+        max_epochs = getattr(trainer, "max_epochs", None)
+        is_last_epoch = isinstance(max_epochs, int) and max_epochs > 0 and current_epoch >= max_epochs
+        return current_epoch % self._eval_interval == 0 or is_last_epoch
 
     def on_validation_batch_end(
         self,
@@ -851,7 +866,7 @@ class COCOEvalCallback(Callback):
             for metric_logger, previous_level in previous_levels:
                 metric_logger.setLevel(previous_level)
 
-    def _prepare_ema_metric(self, trainer: Any, pl_module: Any) -> None:
+    def _prepare_ema_metric(self, trainer: Any) -> None:
         """Ensure ``map_metric_ema`` exists (and is reset) on EVERY rank when EMA is active.
 
         Driven by the rank-invariant presence of the EMA callback rather than by per-batch state, so any cross-rank
@@ -861,7 +876,6 @@ class COCOEvalCallback(Callback):
 
         Args:
             trainer: The PTL Trainer.
-            pl_module: The LightningModule passed by the callback lifecycle hook (unused).
         """
         self._ema_has_updates = False
         if self._get_ema_callback(trainer) is None:

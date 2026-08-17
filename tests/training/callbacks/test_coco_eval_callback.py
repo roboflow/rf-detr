@@ -157,10 +157,8 @@ class TestSetup:
         """The EMA metric mirrors the per-class computation flag."""
         cb = COCOEvalCallback(log_per_class_metrics=False)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
-        module = _make_pl_module()
-        module.device = torch.device("cpu")
         with patch.object(cb, "_get_ema_callback", return_value=MagicMock()):
-            cb._prepare_ema_metric(_make_trainer(), module)
+            cb._prepare_ema_metric(_make_trainer())
         assert cb.map_metric_ema is not None
         assert cb.map_metric_ema.class_metrics is False
 
@@ -168,11 +166,9 @@ class TestSetup:
         """The EMA metric itself remains on CPU because its accumulated state is CPU-only."""
         cb = COCOEvalCallback()
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
-        module = _make_pl_module()
-        module.device = torch.device("meta")
 
         with patch.object(cb, "_get_ema_callback", return_value=MagicMock()):
-            cb._prepare_ema_metric(_make_trainer(), module)
+            cb._prepare_ema_metric(_make_trainer())
 
         assert cb.map_metric_ema is not None
         assert cb.map_metric_ema.device.type == "cpu"
@@ -558,6 +554,43 @@ class TestOnTrainBatchEnd:
         outputs = {"results": [], "targets": _detection_targets()}
 
         cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
+
+        cb.map_metric_train.update.assert_called_once()
+
+    def test_train_batch_end_skips_accumulation_on_non_matching_epoch(self) -> None:
+        """With eval_interval>1, batches on non-interval epochs must not pay accumulation cost.
+
+        Regression guard: previously every train batch ran the CPU-syncing accumulation block even
+        on epochs whose accumulated state on_train_epoch_end discards unread, wasting a blocking
+        .cpu() sync (and matching-data work) on every skipped epoch.
+        """
+        cb = COCOEvalCallback(eval_interval=3)
+        trainer = _make_trainer()
+        trainer.current_epoch = 0  # epoch 1 (1-based) is not divisible by 3
+        trainer.max_epochs = 10
+        cb.setup(trainer, _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        outputs = {"results": _detection_preds(1), "targets": _detection_targets()}
+
+        cb.on_train_batch_end(trainer, module, outputs, None, 0)
+
+        cb.map_metric_train.update.assert_not_called()
+
+    def test_train_batch_end_accumulates_on_matching_epoch(self) -> None:
+        """With eval_interval>1, batches on interval-aligned epochs still accumulate normally."""
+        cb = COCOEvalCallback(eval_interval=3)
+        trainer = _make_trainer()
+        trainer.current_epoch = 2  # epoch 3 (1-based) is divisible by 3
+        trainer.max_epochs = 10
+        cb.setup(trainer, _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        outputs = {"results": _detection_preds(1), "targets": _detection_targets()}
+
+        cb.on_train_batch_end(trainer, module, outputs, None, 0)
 
         cb.map_metric_train.update.assert_called_once()
 
