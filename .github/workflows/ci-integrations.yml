@@ -304,8 +304,7 @@ jobs:
           ROBOFLOW_TEST_WORKSPACE: ${{ secrets.ROBOFLOW_TEST_WORKSPACE }}
           ROBOFLOW_TEST_PROJECT: ${{ secrets.ROBOFLOW_TEST_PROJECT }}
         run: |
-          uv run --no-sync pytest tests/export/test_roboflow_deploy_e2e.py \
-            -m e2e_roboflow -n 1 \
+          uv run --no-sync pytest . -m e2e_roboflow -n 1 \
             --timeout=600 \
             --durations=20
 
