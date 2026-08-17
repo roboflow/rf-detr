@@ -1270,6 +1270,7 @@ class TestBackendResolution:
 
         def _fake_build_kornia(aug_cfg, resolution, with_masks=False):
             captured["aug_config"] = aug_cfg
+            captured["with_masks"] = with_masks
             return MagicMock()
 
         with (
@@ -1284,6 +1285,7 @@ class TestBackendResolution:
         assert captured.get("aug_config") is AUG_CONFIG, (
             "GPU path must fall back to AUG_CONFIG when train_config.aug_config is None"
         )
+        assert captured.get("with_masks") is True, "GPU path must transport the padding mask for detection batches"
 
     def test_auto_no_cuda_does_not_strip_cpu_normalize(self, tmp_path):
         """Auto + no CUDA: gpu_postprocess must be False so CPU Normalize is retained."""
@@ -1382,9 +1384,10 @@ class TestOnAfterBatchTransfer:
 
         samples, targets = self._make_kornia_batch()
         img_aug = samples.tensors.clone()
-        # Mock pipeline returns (augmented_images, augmented_boxes)
+        # Mock pipeline returns the image, boxes, and transported padding mask.
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
         dm._kornia_pipeline = mock_pipeline
 
         # Normalize adds +1 so we can assert the normalization step is applied.
@@ -1404,6 +1407,74 @@ class TestOnAfterBatchTransfer:
             torch.testing.assert_close(
                 boxes[0], torch.tensor([0.375, 0.375, 0.5, 0.5], dtype=torch.float32), rtol=1e-4, atol=1e-6
             )
+
+    def test_training_uses_transformed_padding_mask(self, tmp_path) -> None:
+        """The returned NestedTensor mask comes from the same Kornia geometry as the image."""
+        dm = self._build_dm(tmp_path)
+        dm = self._attach_mock_trainer(dm, training=True)
+
+        samples, targets = self._make_kornia_batch()
+        assert samples.mask is not None
+        samples.mask[0, 8:, :] = True
+        samples.mask[1, :, 12:] = True
+        img_aug = samples.tensors.clone()
+        boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        padding_masks_aug[0, :, 5:, :] = 1.0
+        padding_masks_aug[1, :, :, 3:] = 1.0
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+
+        result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        call_args, call_kwargs = dm._kornia_pipeline.call_args
+        assert len(call_args) == 3
+        assert not call_kwargs
+        torch.testing.assert_close(call_args[2], samples.mask.unsqueeze(1).to(torch.float32), rtol=0, atol=0)
+        assert result_samples.mask is not None
+        assert result_samples.mask.dtype == torch.bool
+        assert torch.equal(result_samples.mask, padding_masks_aug[:, 0].to(torch.bool))
+
+    def test_perspective_warps_padding_mask_with_real_pipeline(self, tmp_path) -> None:
+        """Perspective transports unequal-size batch padding through the real Kornia sequence."""
+        pytest.importorskip("kornia")
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, collate_boxes
+        from rfdetr.utilities.tensors import nested_tensor_from_tensor_list
+
+        dm = self._build_dm(tmp_path)
+        dm = self._attach_mock_trainer(dm, training=True)
+        samples = nested_tensor_from_tensor_list([torch.ones(3, 48, 48), torch.ones(3, 64, 64)])
+        assert samples.mask is not None
+        targets = [
+            {
+                "boxes": torch.tensor([[4.0, 4.0, 36.0, 36.0]]),
+                "labels": torch.tensor([1]),
+                "area": torch.tensor([1024.0]),
+                "iscrowd": torch.tensor([0]),
+                "image_id": torch.tensor(index),
+                "orig_size": torch.tensor([size, size]),
+            }
+            for index, size in enumerate((48, 64))
+        ]
+        config = {"Perspective": {"scale": 0.4, "p": 1.0}}
+        dm._kornia_pipeline = build_kornia_pipeline(config, 64, with_masks=True)
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+        boxes_padded, _ = collate_boxes(targets, samples.tensors.device)
+        reference_pipeline = build_kornia_pipeline(config, 64, with_masks=True)
+
+        torch.manual_seed(7)
+        _, _, expected_padding = reference_pipeline(
+            samples.tensors,
+            boxes_padded,
+            samples.mask.unsqueeze(1).to(torch.float32),
+        )
+        torch.manual_seed(7)
+        result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        assert result_samples.mask is not None
+        assert result_samples.mask.dtype == torch.bool
+        assert torch.equal(result_samples.mask, expected_padding[:, 0].to(torch.bool))
+        assert not torch.equal(result_samples.mask, samples.mask)
 
     def test_training_false_skips_augmentation(self, tmp_path):
         """When training=False, batch is returned unchanged."""
@@ -1431,7 +1502,8 @@ class TestOnAfterBatchTransfer:
         samples, targets = self._make_kornia_batch_with_masks()
         img_aug = samples.tensors.clone()
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        masks_aug = torch.ones(2, 1, 16, 16, dtype=torch.float32)
+        masks_aug = torch.ones(2, 2, 16, 16, dtype=torch.float32)
+        masks_aug[:, 1] = 0.0
 
         mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded, masks_aug))
         dm._kornia_pipeline = mock_pipeline
@@ -1447,8 +1519,10 @@ class TestOnAfterBatchTransfer:
         masks_arg = call_args[2]
         assert isinstance(masks_arg, torch.Tensor), "third pipeline argument must be a masks tensor"
         assert masks_arg.dtype == torch.float32, "masks passed to pipeline must be float32"
-        assert masks_arg.shape == (2, 1, 16, 16), "masks passed to pipeline must have shape [B, N_max, H, W]"
+        assert masks_arg.shape == (2, 2, 16, 16), "masks passed to pipeline must include instance and padding channels"
         assert "masks" in result_targets[0], "masks key must be present in output targets for segmentation"
+        assert result_samples.mask is not None
+        assert not result_samples.mask.any()
 
     def test_segmentation_masks_stay_in_sync_with_boxes(self, tmp_path):
         """Masks are filtered in sync with boxes: one instance removed → one mask removed."""
@@ -1474,7 +1548,8 @@ class TestOnAfterBatchTransfer:
         ]
         # Augmented: box 0 survives, box 1 becomes zero-area
         boxes_aug_out = torch.tensor([[[2.0, 2.0, 8.0, 8.0], [5.0, 5.0, 5.0, 5.0]]])
-        masks_aug_out = torch.ones(1, 2, h, w, dtype=torch.float32)
+        masks_aug_out = torch.ones(1, 3, h, w, dtype=torch.float32)
+        masks_aug_out[:, 2] = 0.0
         mock_pipeline = MagicMock(return_value=(tensors, boxes_aug_out, masks_aug_out))
         dm._kornia_pipeline = mock_pipeline
         dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
@@ -1493,7 +1568,8 @@ class TestOnAfterBatchTransfer:
         samples, targets = self._make_kornia_batch()
         img_aug = samples.tensors.clone()
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
         dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
 
         result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
@@ -1513,7 +1589,8 @@ class TestOnAfterBatchTransfer:
 
         img_aug = samples.tensors.clone()
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
         dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
 
         _, result_targets = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
