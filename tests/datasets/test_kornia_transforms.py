@@ -429,9 +429,9 @@ class TestBuildKorniaPipeline:
     def test_clahe_scalar_clip_limit_is_a_range_not_a_fixed_value(self, configured, expected) -> None:
         """Albumentations reads a scalar clip_limit as (1, v), so the GPU path must too.
 
-        Passing it through `_as_range` produced the degenerate (v, v), which pins every
-        sample to maximum contrast enhancement while the CPU path varies it. 4.0 is the
-        default on both sides, so that divergence applied with no user config at all.
+        Passing it through `_as_range` produced the degenerate (v, v), which pins every sample to maximum contrast
+        enhancement while the CPU path varies it. 4.0 is the default on both sides, so that divergence applied with no
+        user config at all.
         """
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
 

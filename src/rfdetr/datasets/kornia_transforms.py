@@ -623,10 +623,10 @@ def _as_clahe_clip_limit(value: Any) -> tuple[float, float]:
 def _make_clahe(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomClahe`` from aug_config ``CLAHE`` params.
 
-    ``tile_grid_size`` becomes ``grid_size`` directly. ``clip_limit`` needs care: Albumentations reads a scalar ``v``
-    as the range ``(1, v)`` and samples from it, not as the fixed value ``v``. Passing it through :func:`_as_range`
-    would produce the degenerate ``(v, v)`` and pin the GPU path to maximum contrast enhancement on every sample while
-    the CPU path varied it — and since ``4.0`` is the default on both sides, that divergence applied to the default
+    ``tile_grid_size`` becomes ``grid_size`` directly. ``clip_limit`` needs care: Albumentations reads a scalar ``v`` as
+    the range ``(1, v)`` and samples from it, not as the fixed value ``v``. Passing it through :func:`_as_range` would
+    produce the degenerate ``(v, v)`` and pin the GPU path to maximum contrast enhancement on every sample while the CPU
+    path varied it — and since ``4.0`` is the default on both sides, that divergence applied to the default
     configuration rather than only to unusual ones. A pair is already a range and is used as given.
     """
     import kornia.augmentation as kornia_augmentation
