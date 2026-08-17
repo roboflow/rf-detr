@@ -48,6 +48,9 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+# torchmetrics 1.8.2 MeanAveragePrecision.update() reads only these fields. Re-verify this read set on upgrade.
+_METRIC_INPUT_FIELDS = frozenset({"boxes", "scores", "labels", "masks", "iscrowd", "area"})
+
 
 def _warn_missing_rich_once(warning_emitted: bool) -> bool:
     """Warn once when metric table rendering is skipped because Rich is unavailable.
@@ -310,7 +313,7 @@ class COCOEvalCallback(Callback):
         self._f1_local = init_matching_accumulator()
         self._reset_keypoint_split("val")
         self._reset_keypoint_split("val_ema")
-        self._prepare_ema_metric(trainer, pl_module)
+        self._prepare_ema_metric(trainer)
 
     def on_test_epoch_start(self, trainer: Any, pl_module: Any) -> None:
         """Reset ``_ema_has_updates`` before test to prevent stale validation state from triggering EMA compute.
@@ -328,7 +331,7 @@ class COCOEvalCallback(Callback):
         self.map_metric.reset()
         self._f1_local = init_matching_accumulator()
         self._reset_keypoint_split("test")
-        self._prepare_ema_metric(trainer, pl_module)
+        self._prepare_ema_metric(trainer)
 
     def on_train_batch_end(
         self,
@@ -349,6 +352,8 @@ class COCOEvalCallback(Callback):
         """
         if getattr(getattr(pl_module, "train_config", None), "compute_train_metrics", False) is not True:
             return
+        if self._eval_interval > 1 and not self._is_metric_epoch(trainer):
+            return
         if not isinstance(outputs, dict) or "results" not in outputs or "targets" not in outputs:
             return
 
@@ -365,7 +370,8 @@ class COCOEvalCallback(Callback):
                 )
                 self._train_segm_skip_warned = True
             return
-        self.map_metric_train.update(preds, targets)
+        metric_preds, metric_targets = self._move_metric_inputs_to_cpu(preds, targets)
+        self.map_metric_train.update(metric_preds, metric_targets)
 
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
@@ -384,16 +390,29 @@ class COCOEvalCallback(Callback):
             self._f1_train_local = init_matching_accumulator()
             self._reset_keypoint_split("train")
             return
-        if self._eval_interval > 1:
-            current_epoch = int(getattr(trainer, "current_epoch", 0)) + 1
-            max_epochs = getattr(trainer, "max_epochs", None)
-            is_last_epoch = isinstance(max_epochs, int) and max_epochs > 0 and current_epoch >= max_epochs
-            if current_epoch % self._eval_interval != 0 and not is_last_epoch:
-                self.map_metric_train.reset()
-                self._f1_train_local = init_matching_accumulator()
-                self._reset_keypoint_split("train")
-                return
+        if self._eval_interval > 1 and not self._is_metric_epoch(trainer):
+            self.map_metric_train.reset()
+            self._f1_train_local = init_matching_accumulator()
+            self._reset_keypoint_split("train")
+            return
         self._compute_and_log(trainer, pl_module, "train", metric=self.map_metric_train)
+
+    def _is_metric_epoch(self, trainer: Any) -> bool:
+        """Decide whether the current epoch falls on an ``_eval_interval`` boundary (or is the final epoch).
+
+        Shared by :meth:`on_train_batch_end` (skip accumulation on non-eval epochs) and
+        :meth:`on_train_epoch_end` (skip compute/log and reset accumulators instead).
+
+        Args:
+            trainer: The PTL Trainer.
+
+        Returns:
+            ``True`` when this epoch should accumulate and log train metrics.
+        """
+        current_epoch = int(getattr(trainer, "current_epoch", 0)) + 1
+        max_epochs = getattr(trainer, "max_epochs", None)
+        is_last_epoch = isinstance(max_epochs, int) and max_epochs > 0 and current_epoch >= max_epochs
+        return current_epoch % self._eval_interval == 0 or is_last_epoch
 
     def on_validation_batch_end(
         self,
@@ -433,6 +452,7 @@ class COCOEvalCallback(Callback):
             return
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
         targets = self._convert_targets(outputs["targets"], preds if self._use_segm_metrics else None)
+        metric_preds, metric_targets = self._move_metric_inputs_to_cpu(preds, targets)
 
         # ema_cb._average_model availability is rank-invariant (EMA updates fire on the same
         # global step on every rank), so per-rank EMA-forward decisions stay consistent.
@@ -441,10 +461,10 @@ class COCOEvalCallback(Callback):
         used_ema_forward = self._eval_ema_only and ema_inner is not None
         if used_ema_forward:
             if self.map_metric_ema is not None:
-                self.map_metric_ema.update(preds, targets)
+                self.map_metric_ema.update(metric_preds, metric_targets)
                 self._ema_has_updates = True
         else:
-            self.map_metric.update(preds, targets)
+            self.map_metric.update(metric_preds, metric_targets)
 
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
@@ -470,7 +490,8 @@ class COCOEvalCallback(Callback):
                 ema_results = pl_module.postprocess(ema_outputs, orig_sizes)
             ema_preds = self._convert_preds(ema_results)
             ema_targets = self._convert_targets(outputs["targets"], ema_preds if self._use_segm_metrics else None)
-            self.map_metric_ema.update(ema_preds, ema_targets)
+            ema_metric_preds, ema_metric_targets = self._move_metric_inputs_to_cpu(ema_preds, ema_targets)
+            self.map_metric_ema.update(ema_metric_preds, ema_metric_targets)
             self._update_keypoint_oks_metric(
                 trainer,
                 {"results": ema_results, "targets": outputs["targets"]},
@@ -526,7 +547,8 @@ class COCOEvalCallback(Callback):
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
         targets = self._convert_targets(outputs["targets"], preds if self._use_segm_metrics else None)
 
-        self.map_metric.update(preds, targets)
+        metric_preds, metric_targets = self._move_metric_inputs_to_cpu(preds, targets)
+        self.map_metric.update(metric_preds, metric_targets)
 
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
@@ -844,7 +866,7 @@ class COCOEvalCallback(Callback):
             for metric_logger, previous_level in previous_levels:
                 metric_logger.setLevel(previous_level)
 
-    def _prepare_ema_metric(self, trainer: Any, pl_module: Any) -> None:
+    def _prepare_ema_metric(self, trainer: Any) -> None:
         """Ensure ``map_metric_ema`` exists (and is reset) on EVERY rank when EMA is active.
 
         Driven by the rank-invariant presence of the EMA callback rather than by per-batch state, so any cross-rank
@@ -854,7 +876,6 @@ class COCOEvalCallback(Callback):
 
         Args:
             trainer: The PTL Trainer.
-            pl_module: The LightningModule (provides the device for metric placement).
         """
         self._ema_has_updates = False
         if self._get_ema_callback(trainer) is None:
@@ -868,7 +889,7 @@ class COCOEvalCallback(Callback):
                 max_detection_thresholds=[1, 10, self._max_dets],
                 backend="faster_coco_eval",
                 sync_on_compute=False,  # we merge state across ranks ourselves (see map_metric in setup)
-            ).to(pl_module.device)
+            )
         else:
             self.map_metric_ema.reset()
 
@@ -1381,3 +1402,30 @@ class COCOEvalCallback(Callback):
                 entry["iscrowd"] = t["iscrowd"]
             out.append(entry)
         return out
+
+    @staticmethod
+    def _move_metric_inputs_to_cpu(
+        preds: list[dict[str, Tensor]], targets: list[dict[str, Tensor]]
+    ) -> tuple[list[dict[str, Tensor]], list[dict[str, Tensor]]]:
+        """Return detached CPU copies of mAP inputs so TorchMetrics stores CPU metric state.
+
+        TorchMetrics converts every stored annotation to a Python COCO record during ``compute()``. Keeping this state
+        on CPU makes those internal ``.cpu()`` calls no-ops while leaving the original GPU tensors available to the
+        F1 and keypoint paths that run in the validation batch hook.
+
+        Args:
+            preds: Per-image prediction dicts normalized for ``MeanAveragePrecision``.
+            targets: Per-image target dicts normalized for ``MeanAveragePrecision``.
+
+        Returns:
+            CPU copies of the supported mAP fields, preserving their per-image order.
+        """
+
+        def move_items(items: list[dict[str, Tensor]]) -> list[dict[str, Tensor]]:
+            # Excluding PostProcess-only fields avoids D2H copies that torchmetrics never consumes, such as keypoints.
+            return [
+                {name: value.detach().cpu() for name, value in item.items() if name in _METRIC_INPUT_FIELDS}
+                for item in items
+            ]
+
+        return move_items(preds), move_items(targets)
