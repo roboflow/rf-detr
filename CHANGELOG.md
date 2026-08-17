@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- `BestModelCallback` no longer treats PyTorch Lightning's pre-training sanity-check validation pass as a real epoch's result. Its EMA-checkpoint tracking and the `smooth_alpha` smoothing accumulator are custom bookkeeping that sit outside `ModelCheckpoint`'s own `trainer.sanity_checking` guard (the guard the regular-checkpoint path already inherits), so a positive sanity-check score — common when starting a new training run initialized with `pretrain_weights` from a checkpoint pretrained on a different dataset — could get written out as the permanent "best" `checkpoint_best_ema.pth` before a single real epoch ran, and real training could then never surpass it. Note this is distinct from PTL's own `resume`/`ckpt_path` restart, which PTL itself skips the sanity check for (`not val_loop.restarting`). ([#1348](https://github.com/roboflow/rf-detr/issues/1348))
+
 ## [1.9.3] — 2026-08-17
 
 ### Added
