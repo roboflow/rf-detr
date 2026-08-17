@@ -330,6 +330,7 @@ markers = [
     "e2e_executorch: ExecuTorch end-to-end export + numerical parity (opt-in)",
     "e2e_coreml: CoreML end-to-end convert + numerical parity (structured and photo inputs; opt-in)",
     "e2e_tensorrt: TensorRT end-to-end ONNX->engine build + parity (GPU, opt-in)",
+    "e2e_roboflow: live deploy_to_roboflow() upload + train-status validation (issue #1116); requires ROBOFLOW_API_KEY (opt-in)",
 ]
 filterwarnings = [
     # pytest-xdist workers close their channel before teardown completes;
