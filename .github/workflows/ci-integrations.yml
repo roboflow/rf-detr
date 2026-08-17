@@ -264,7 +264,7 @@ jobs:
         run: uv cache prune --ci
 
   roboflow-deploy-e2e:
-    name: Roboflow deploy e2e (issue #1116)
+    name: Roboflow deploy e2e
     runs-on: ubuntu-latest
     # deploy_to_roboflow() delegates the actual upload to a swallow-and-print try/except deep in
     # the roboflow SDK (see tests/export/test_roboflow_deploy_e2e.py module docstring), so a failed
