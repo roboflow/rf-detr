@@ -40,7 +40,15 @@ _REGISTRY_KEYS_MUTATED_IN_TESTS: frozenset[str] = frozenset({"alias", "__and__",
 
 
 def _export_decomposed(model: nn.Module, example: torch.Tensor) -> ExportedProgram:
-    """Match ``export_coreml`` graph prep: ``torch.export`` then ``run_decompositions``."""
+    """Match ``export_coreml`` graph prep: ``torch.export`` then ``run_decompositions``.
+
+    Examples:
+        Requires a full RF-DETR model export (heavy) — not runnable standalone.
+        See ``_nano_decomposed_ep`` fixture for real usage.
+
+        >>> callable(_export_decomposed)
+        True
+    """
     with torch.no_grad():
         return torch.export.export(model, (example,), strict=False).run_decompositions({})
 
@@ -64,7 +72,14 @@ def _nano_decomposed_ep() -> ExportedProgram:
 
 
 def _reset_patches_for_test() -> None:
-    """Clear package patch flag so the next ``ensure_*`` call re-applies handlers."""
+    """Clear package patch flag so the next ``ensure_*`` call re-applies handlers.
+
+    Examples:
+        >>> _reset_patches_for_test()
+        >>> from rfdetr.export._coreml import torch_ops
+        >>> torch_ops._PATCHED
+        False
+    """
     from rfdetr.export._coreml import torch_ops
 
     torch_ops._PATCHED = False

@@ -15,7 +15,14 @@ from rfdetr.utilities.tensors import NestedTensor
 
 
 class _FakeBackbone(nn.Module):
-    """Backbone shim used to validate Joiner contract changes."""
+    """Backbone shim used to validate Joiner contract changes.
+
+    Examples:
+        >>> features = [_feature((8, 4, 4), batch_size=1)]
+        >>> backbone = _FakeBackbone(features, None)
+        >>> len(backbone(torch.ones(1, 3, 8, 8))[0])
+        1
+    """
 
     def __init__(
         self,
@@ -48,6 +55,13 @@ class _FakePositionEncoding(nn.Module):
 
 
 def _feature(shape: tuple[int, ...], batch_size: int = 2) -> NestedTensor:
+    """Build a NestedTensor feature map with an all-false mask.
+
+    Examples:
+        >>> feat = _feature((8, 4, 4), batch_size=1)
+        >>> feat.tensors.shape
+        torch.Size([1, 8, 4, 4])
+    """
     channels, height, width = shape
     return NestedTensor(
         tensors=torch.ones((batch_size, channels, height, width), dtype=torch.float32),
@@ -56,6 +70,13 @@ def _feature(shape: tuple[int, ...], batch_size: int = 2) -> NestedTensor:
 
 
 def _input_tensor(batch_size: int = 2) -> tuple[NestedTensor, torch.Tensor]:
+    """Return matching NestedTensor and raw image inputs.
+
+    Examples:
+        >>> nested, image = _input_tensor(batch_size=1)
+        >>> nested.tensors.shape, image.shape
+        (torch.Size([1, 3, 16, 16]), torch.Size([1, 3, 16, 16]))
+    """
     return (
         NestedTensor(
             tensors=torch.ones((batch_size, 3, 16, 16), dtype=torch.float32),

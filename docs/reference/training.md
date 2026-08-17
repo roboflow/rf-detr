@@ -92,6 +92,26 @@ This page documents the training primitives that power RF-DETR. For a narrative 
       members:
         - __init__
 
+### GPUMemoryTQDMProgressBar
+
+::: rfdetr.training.callbacks.gpu_memory_progress_bar.GPUMemoryTQDMProgressBar
+    options:
+      show_source: false
+      members:
+        - get_metrics
+      inherited_members:
+        - get_metrics
+
+### GPUMemoryRichProgressBar
+
+::: rfdetr.training.callbacks.gpu_memory_progress_bar.GPUMemoryRichProgressBar
+    options:
+      show_source: false
+      members:
+        - get_metrics
+      inherited_members:
+        - get_metrics
+
 ---
 
 ## RFDETRCli

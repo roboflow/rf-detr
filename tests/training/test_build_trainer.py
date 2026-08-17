@@ -28,14 +28,28 @@ from rfdetr.training.trainer import _ForceLastEpochValidationCallback
 
 
 def _mc(**kwargs):
-    """Minimal RFDETRBaseConfig for tests."""
+    """Minimal RFDETRBaseConfig for tests.
+
+    Examples:
+        >>> config = _mc(num_classes=7)
+        >>> config.device, config.num_classes
+        ('cpu', 7)
+    """
     defaults = dict(pretrain_weights=None, device="cpu", num_classes=3)
     defaults.update(kwargs)
     return RFDETRBaseConfig(**defaults)
 
 
 def _find_resume_checkpoints(trainer):
-    """Return ModelCheckpoint callbacks that are NOT BestModelCallback."""
+    """Return ModelCheckpoint callbacks that are NOT BestModelCallback.
+
+    Examples:
+        >>> resume_cb = ModelCheckpoint(dirpath='.')
+        >>> best_cb = BestModelCallback(output_dir='.')
+        >>> trainer = MagicMock(callbacks=[resume_cb, best_cb])
+        >>> _find_resume_checkpoints(trainer) == [resume_cb]
+        True
+    """
     return [cb for cb in trainer.callbacks if isinstance(cb, ModelCheckpoint) and not isinstance(cb, BestModelCallback)]
 
 
@@ -44,6 +58,12 @@ def _tc(tmp_path, **kwargs):
 
     Loggers are disabled by default to avoid requiring optional deps (tensorboard, wandb, mlflow) in the CPU test
     environment.  Logger-specific tests override these explicitly via kwargs or mocking.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> config = _tc(Path("/tmp/example"), epochs=3)
+        >>> config.epochs, Path(config.dataset_dir).name, Path(config.output_dir).name
+        (3, 'ds', 'out')
     """
     defaults = dict(
         dataset_dir=str(tmp_path / "ds"),
@@ -61,7 +81,14 @@ def _tc(tmp_path, **kwargs):
 
 
 def _kp_tc(tmp_path, **kwargs):
-    """Minimal KeypointTrainConfig for tests that exercise keypoint model paths."""
+    """Minimal KeypointTrainConfig for tests that exercise keypoint model paths.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> config = _kp_tc(Path('/tmp/example'), batch_size=4)
+        >>> config.batch_size, Path(config.dataset_dir).name
+        (4, 'ds')
+    """
     defaults = dict(
         dataset_dir=str(tmp_path / "ds"),
         output_dir=str(tmp_path / "out"),
@@ -142,6 +169,37 @@ class TestBuildTrainerCallbacks:
         best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
         assert best_cb.monitor == "val/segm_mAP_50_95"
         assert best_cb._monitor_ema == "val/ema_segm_mAP_50_95"
+
+    def test_best_model_metric_mar_monitors_bbox_mar(self, tmp_path):
+        """best_model_metric='mar' should rank detection checkpoints by mAR, not mAP."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=True, best_model_metric="mar"), _mc())
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/mAR"
+        assert best_cb._monitor_ema == "val/ema_mAR"
+
+    def test_best_model_metric_mar_without_ema_monitors_only_regular_bbox_mar(self, tmp_path):
+        """Detection mAR ranking must not configure an EMA monitor when EMA is disabled."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, best_model_metric="mar"), _mc())
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/mAR"
+        assert best_cb._monitor_ema is None
+
+    def test_keypoint_best_model_metric_mar_monitors_keypoint_mar(self, tmp_path):
+        """best_model_metric='mar' should rank keypoint checkpoints by the OKS-based keypoint mAR."""
+        trainer = build_trainer(
+            _kp_tc(tmp_path, use_ema=True, best_model_metric="mar"),
+            RFDETRKeypointPreviewConfig(pretrain_weights=None),
+        )
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/keypoint_mAR"
+        assert best_cb._monitor_ema == "val/ema_keypoint_mAR"
+
+    def test_segmentation_best_model_metric_mar_falls_back_to_bbox_mar(self, tmp_path):
+        """best_model_metric='mar' has no dedicated mask mAR, so segmentation falls back to bbox mAR."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=True, best_model_metric="mar"), _mc(segmentation_head=True))
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/mAR"
+        assert best_cb._monitor_ema == "val/ema_mAR"
 
     def test_latest_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==1 is included when checkpoint_interval > 1."""
@@ -271,6 +329,42 @@ class TestBuildTrainerCallbacks:
         early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
         assert early_stop_cb._monitor_regular == "val/segm_mAP_50_95"
         assert early_stop_cb._monitor_ema == "val/ema_segm_mAP_50_95"
+
+    def test_best_model_metric_mar_early_stopping_monitors_bbox_mar(self, tmp_path):
+        """best_model_metric='mar' should make detection early stopping watch mAR, not mAP."""
+        trainer = build_trainer(
+            _tc(tmp_path, early_stopping=True, early_stopping_use_ema=True, best_model_metric="mar"),
+            _mc(),
+        )
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._monitor_regular == "val/mAR"
+        assert early_stop_cb._monitor_ema == "val/ema_mAR"
+
+    def test_keypoint_best_model_metric_mar_early_stopping_monitors_keypoint_mar(self, tmp_path):
+        """best_model_metric='mar' should make keypoint early stopping watch the OKS-based keypoint mAR."""
+        trainer = build_trainer(
+            _kp_tc(tmp_path, early_stopping=True, early_stopping_use_ema=True, best_model_metric="mar"),
+            RFDETRKeypointPreviewConfig(pretrain_weights=None),
+        )
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._monitor_regular == "val/keypoint_mAR"
+        assert early_stop_cb._monitor_ema == "val/ema_keypoint_mAR"
+
+    def test_segmentation_best_model_metric_mar_early_stopping_monitors_bbox_mar(self, tmp_path):
+        """Segmentation mAR early stopping must use the bbox mAR keys when EMA is enabled."""
+        trainer = build_trainer(
+            _tc(
+                tmp_path,
+                use_ema=True,
+                early_stopping=True,
+                early_stopping_use_ema=True,
+                best_model_metric="mar",
+            ),
+            _mc(segmentation_head=True),
+        )
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._monitor_regular == "val/mAR"
+        assert early_stop_cb._monitor_ema == "val/ema_mAR"
 
     def test_no_early_stopping_when_disabled(self, tmp_path):
         """RFDETREarlyStopping is absent when early_stopping=False."""

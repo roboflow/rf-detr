@@ -361,33 +361,40 @@ class Transformer(nn.Module):
                 output_memory_gidx = self.enc_output_norm[g_idx](self.enc_output[g_idx](output_memory))
 
                 enc_outputs_class_unselected_gidx = self.enc_out_class_embed[g_idx](output_memory_gidx)
-                if self.bbox_reparam:
-                    enc_outputs_coord_delta_gidx = self.enc_out_bbox_embed[g_idx](output_memory_gidx)
-                    enc_outputs_coord_cxcy_gidx = (
-                        enc_outputs_coord_delta_gidx[..., :2] * output_proposals[..., 2:] + output_proposals[..., :2]
-                    )
-                    enc_outputs_coord_wh_gidx = enc_outputs_coord_delta_gidx[..., 2:].exp() * output_proposals[..., 2:]
-                    enc_outputs_coord_unselected_gidx = torch.concat(
-                        [enc_outputs_coord_cxcy_gidx, enc_outputs_coord_wh_gidx], dim=-1
-                    )
-                else:
-                    enc_outputs_coord_unselected_gidx = (
-                        self.enc_out_bbox_embed[g_idx](output_memory_gidx) + output_proposals
-                    )
-
                 topk = min(self.num_queries, enc_outputs_class_unselected_gidx.shape[-2])
                 topk_proposals_gidx = torch.topk(enc_outputs_class_unselected_gidx.max(-1)[0], topk, dim=1)[1]  # bs, nq
 
-                refpoint_embed_gidx_undetach = torch.gather(
-                    enc_outputs_coord_unselected_gidx, 1, topk_proposals_gidx.unsqueeze(-1).repeat(1, 1, 4)
-                )  # unsigmoid
-                # for decoder layer, detached as initial ones, (bs, nq, 4)
-                refpoint_embed_gidx = refpoint_embed_gidx_undetach.detach()
-
                 # get memory tgt
                 tgt_undetach_gidx = torch.gather(
-                    output_memory_gidx, 1, topk_proposals_gidx.unsqueeze(-1).repeat(1, 1, self.d_model)
+                    output_memory_gidx, 1, topk_proposals_gidx.unsqueeze(-1).expand(-1, -1, self.d_model)
                 )
+                # Ranking needs every position's class score, but the box MLP is a pointwise (no
+                # cross-token mixing) transform of a single token's features -- gather the selected
+                # tokens first and run the MLP only on those, instead of on every encoder position and
+                # discarding all but ``topk`` of the results. This is equivalent only while
+                # ``enc_out_bbox_embed`` remains token-pointwise; a future stateful or cross-token head
+                # must move the MLP back before this gather.
+                output_proposals_gidx = torch.gather(
+                    output_proposals, 1, topk_proposals_gidx.unsqueeze(-1).expand(-1, -1, 4)
+                )
+                if self.bbox_reparam:
+                    enc_outputs_coord_delta_gidx = self.enc_out_bbox_embed[g_idx](tgt_undetach_gidx)
+                    enc_outputs_coord_cxcy_gidx = (
+                        enc_outputs_coord_delta_gidx[..., :2] * output_proposals_gidx[..., 2:]
+                        + output_proposals_gidx[..., :2]
+                    )
+                    enc_outputs_coord_wh_gidx = (
+                        enc_outputs_coord_delta_gidx[..., 2:].exp() * output_proposals_gidx[..., 2:]
+                    )
+                    refpoint_embed_gidx_undetach = torch.concat(
+                        [enc_outputs_coord_cxcy_gidx, enc_outputs_coord_wh_gidx], dim=-1
+                    )
+                else:
+                    refpoint_embed_gidx_undetach = (
+                        self.enc_out_bbox_embed[g_idx](tgt_undetach_gidx) + output_proposals_gidx
+                    )  # unsigmoid
+                # for decoder layer, detached as initial ones, (bs, nq, 4)
+                refpoint_embed_gidx = refpoint_embed_gidx_undetach.detach()
 
                 refpoint_embed_ts_parts.append(refpoint_embed_gidx)
                 memory_ts_parts.append(tgt_undetach_gidx)
@@ -413,6 +420,9 @@ class Transformer(nn.Module):
             kp_pred_chunks = []
             for g_idx in range(group_detr):
                 kp_delta = self.enc_out_keypoint_embed[g_idx](kp_mem_chunks[g_idx])
+                # Sanitize the full encoder prediction at this model boundary: its channels feed both the
+                # shared box-reference multiply and outer classification/matching consumers.
+                kp_delta = torch.nan_to_num(kp_delta, nan=0.0, posinf=0.0, neginf=0.0)
                 ref_wh = boxes_chunks[g_idx][..., 2:].unsqueeze(-2)
                 ref_xy = boxes_chunks[g_idx][..., :2].unsqueeze(-2)
                 kp_xy = kp_delta[..., :2] * ref_wh + ref_xy

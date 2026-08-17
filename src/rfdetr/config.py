@@ -1065,12 +1065,16 @@ class TrainConfig(BaseConfig):
     # Validation-only: forward through the EMA model instead of the base model, and skip the
     # duplicate base-model forward pass COCOEvalCallback would otherwise also run — halves
     # per-batch validation compute when EMA is enabled. Requires use_ema=True.
-    # Metric-key remap: when active, val/mAP_50_95 (and val/segm_mAP_*) report EMA-model
-    # quality, not base-model quality — the base model is never evaluated this epoch. Best-
-    # checkpoint tracking follows: the "regular" checkpoint track sees no data (safely no-ops)
-    # while the EMA checkpoint track receives the real per-epoch EMA score. val/F1 is not
-    # remapped (no parallel EMA-tracked accumulator) and still reflects EMA-quality predictions
-    # under the regular key.
+    # Metric-key routing: when active, val/mAP_50_95 (and val/segm_mAP_*) stay unpopulated —
+    # the base model is never evaluated this epoch, so there is nothing real to report under
+    # that key. The real per-epoch score is logged under val/ema_mAP_50_95 (and
+    # val/ema_segm_mAP_*) instead (see COCOEvalCallback._compute_and_log_ema_metrics). Best-
+    # checkpoint tracking follows: the "regular" checkpoint track sees no data this epoch
+    # (safely no-ops, see BestModelCallback) while the EMA checkpoint track (monitor_ema) can
+    # be pointed at val/ema_mAP_50_95 to receive it. val/F1 is not remapped (no parallel
+    # EMA-tracked accumulator) and still reflects EMA-quality predictions under the regular key.
+    # Per-class AP follows the mAP routing: logged under val/ema_AP/<class> instead of
+    # val/AP/<class>, and the printed per-epoch summary table is titled "val (ema)".
     eval_ema_only: bool = False
     num_workers: int = 2
     weight_decay: float = 1e-4
@@ -1082,6 +1086,16 @@ class TrainConfig(BaseConfig):
             "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported). "
             "'fp16' forces fp16. "
             "Has no effect when model_config.amp=False or when training on CPU."
+        ),
+    )
+    best_model_metric: Literal["map", "mar"] = Field(
+        default="map",
+        description=(
+            "Validation metric that selects the best checkpoint, and (when early_stopping=True) "
+            "that early stopping monitors. 'map' (default) uses the task's mAP@50:95 (keypoint OKS "
+            "AP, segmentation mask AP, or box AP). 'mar' uses box mAR at the configured eval_max_dets "
+            "for detection and segmentation, and keypoint mAR (OKS-based) at fixed COCO maxDets=20. "
+            "Segmentation mAR is box-level because torchmetrics does not expose a separate mask mAR."
         ),
     )
     early_stopping: bool = False

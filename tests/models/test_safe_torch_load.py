@@ -25,13 +25,32 @@ from rfdetr.utilities.io import _safe_torch_load
 
 
 def _write_tensor_only_checkpoint(path: Path) -> None:
-    """Save a checkpoint containing only tensors and plain dicts to *path*."""
+    """Save a checkpoint containing only tensors and plain dicts to *path*.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as tmp:
+        ...     path = Path(tmp) / "ckpt.pth"
+        ...     _write_tensor_only_checkpoint(path)
+        ...     path.exists()
+        True
+    """
     ckpt = {"model": {"weight": torch.tensor([1.0, 2.0]), "bias": torch.tensor([0.0])}}
     torch.save(ckpt, path)
 
 
 def _write_namespace_checkpoint(path: Path) -> None:
     """Save a checkpoint with an ``argparse.Namespace`` args value to *path*.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as tmp:
+        ...     path = Path(tmp) / "ckpt.pth"
+        ...     _write_namespace_checkpoint(path)
+        ...     path.exists()
+        True
+
+
 
     Legacy RF-DETR engine.py checkpoints embed a Namespace; strict ``weights_only=True`` (without safe globals) would
     reject these.
@@ -44,7 +63,16 @@ def _write_namespace_checkpoint(path: Path) -> None:
 
 
 def _write_simple_namespace_checkpoint(path: Path) -> None:
-    """Save a checkpoint with a ``types.SimpleNamespace`` to *path*."""
+    """Save a checkpoint with a ``types.SimpleNamespace`` to *path*.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as tmp:
+        ...     path = Path(tmp) / "ckpt.pth"
+        ...     _write_simple_namespace_checkpoint(path)
+        ...     path.exists()
+        True
+    """
     ckpt = {
         "model": {"weight": torch.tensor([1.0])},
         "args": SimpleNamespace(pretrain_weights="rf-detr-small.pth"),
@@ -63,7 +91,16 @@ class _ArbitraryObject:
 
 
 def _write_arbitrary_pickle_checkpoint(path: Path) -> None:
-    """Save a checkpoint that embeds an arbitrary class (requires pickle)."""
+    """Save a checkpoint that embeds an arbitrary class (requires pickle).
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as tmp:
+        ...     path = Path(tmp) / "ckpt.pth"
+        ...     _write_arbitrary_pickle_checkpoint(path)
+        ...     path.exists()
+        True
+    """
     ckpt = {"model": {"weight": torch.tensor([1.0])}, "extra": _ArbitraryObject()}
     torch.save(ckpt, path)
 

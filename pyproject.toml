@@ -312,13 +312,12 @@ addopts = [
     "--color=yes",          # colored output
     "--doctest-plus",       # run doctests from all modules (pytest-doctestplus)
 ]
-# Skip doctest COLLECTION for test modules (they are not doc sources; src/ doctests unaffected).
-# Without this, doctestplus walks every test module's attributes; when the TF/ai_edge_litert
-# stack has been imported by the tflite export tests, scanning a module that exposes
-# `unittest.mock.call` (a `_Call` that auto-creates and caches child mocks on attribute access)
-# grows the object graph unboundedly — observed 38 GB RSS and a silent SIGKILL during
-# collection. The value must be a glob ("tests/*"): matching is per-file via fnmatch.
-doctest_norecursedirs = ["tests/*"]
+# Doctest collection is intentionally enabled across tests/ (no doctest_norecursedirs exclusion) so
+# helper-function doctests in test modules run. This previously blanket-excluded tests/* because
+# doctestplus walking every test module's attributes after the TF/ai_edge_litert stack is imported by
+# the tflite export tests grows unittest.mock.call's cached child-mock graph unboundedly — observed
+# 38 GB RSS and a silent SIGKILL during collection. If that recurs, reintroduce
+# `doctest_norecursedirs = ["tests/*"]` or scope it to `tests/export/test_tflite_inference.py`.
 pythonpath = ["src", "."]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
@@ -398,6 +397,7 @@ overrides = [
     "tensorflow", "tensorflow.*",
     "executorch", "executorch.*",
     "coremltools", "coremltools.*",
+    "roboflow", "roboflow.*",
     "rfdetr_plus", "rfdetr_plus.*",
   ], ignore_missing_imports = true },
   # Optional-import None assignments in console.py: type: ignore[assignment, misc] is needed when
@@ -406,15 +406,9 @@ overrides = [
   { module = ["rfdetr.utilities.console"], warn_unused_ignores = false },
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [
-    "rfdetr",
-    "rfdetr._namespace",
     "rfdetr.config",
-    "rfdetr.datasets._develop",
     "rfdetr.datasets.coco",
-    "rfdetr.datasets.save_grids",
     "rfdetr.datasets.synthetic",
     "rfdetr.datasets.transforms",
-    "rfdetr.datasets.yolo",
-    "rfdetr.detr",
   ], ignore_errors = true },
 ]

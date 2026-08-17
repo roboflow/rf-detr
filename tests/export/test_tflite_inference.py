@@ -40,7 +40,15 @@ _LABEL_OUTPUT = {"shape": [1, 10, 82], "name": "serving_default_labels:0", "inde
 
 
 def _make_boxes() -> np.ndarray:
-    """Return (1, 10, 4) array of normalised cxcywh boxes all centred at 0.5."""
+    """Return (1, 10, 4) array of normalised cxcywh boxes all centred at 0.5.
+
+    Examples:
+        >>> boxes = _make_boxes()
+        >>> boxes.shape
+        (1, 10, 4)
+        >>> float(boxes[0, 0, 0])
+        0.5
+    """
     return np.array([[[0.5, 0.5, 0.1, 0.1]] * 10], dtype=np.float32)
 
 
@@ -49,6 +57,17 @@ def _make_logits(high_conf_idx: int | None = 0) -> np.ndarray:
 
     Background fill is -10.0 so sigmoid scores are near zero (~0.0001) for all entries except the explicitly boosted one
     (logit=+10.0, sigmoid≈0.9999). This ensures the helper works correctly under per-class sigmoid scoring.
+
+    Examples:
+        >>> logits = _make_logits()
+        >>> logits.shape
+        (1, 10, 82)
+        >>> float(logits[0, 0, 0])
+        10.0
+        >>> float(logits[0, 1, 0])
+        -10.0
+        >>> float(_make_logits(high_conf_idx=None)[0, 0, 0])
+        -10.0
     """
     logits = np.full((1, 10, 82), -10.0, dtype=np.float32)
     if high_conf_idx is not None:
@@ -62,7 +81,15 @@ def _make_interp(
     boxes: np.ndarray | None = None,
     logits: np.ndarray | None = None,
 ) -> mock.MagicMock:
-    """Build a mock TFLite interpreter with configurable I/O details."""
+    """Build a mock TFLite interpreter with configurable I/O details.
+
+    Examples:
+        >>> interp = _make_interp()
+        >>> len(interp.get_input_details())
+        1
+        >>> len(interp.get_output_details())
+        2
+    """
     if input_shape is None:
         input_shape = _INPUT_SHAPE
     out_dets = out_dets if out_dets is not None else [_DET_OUTPUT, _LABEL_OUTPUT]
@@ -86,12 +113,32 @@ def _make_interp(
 
 
 def _save_rgb_image(path: Path, size: tuple[int, int] = (64, 64)) -> None:
-    """Write a small solid-colour RGB JPEG to *path*."""
+    """Write a small solid-colour RGB JPEG to *path*.
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     p = Path(d) / "img.jpg"
+        ...     _save_rgb_image(p)
+        ...     p.exists()
+        True
+    """
     PILImage.new("RGB", size, color=(100, 150, 200)).save(path)
 
 
 def _save_grayscale_image(path: Path, size: tuple[int, int] = (64, 64)) -> None:
-    """Write a small solid-colour grayscale PNG to *path*."""
+    """Write a small solid-colour grayscale PNG to *path*.
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     p = Path(d) / "img.png"
+        ...     _save_grayscale_image(p)
+        ...     p.exists()
+        True
+    """
     PILImage.new("L", size, color=128).save(path)
 
 
@@ -317,10 +364,30 @@ class TestRunInference:
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
         assert len(dets) >= 1
 
+    def test_explicit_num_select_caps_export_decode(self, rgb_image: Path) -> None:
+        """An explicit exported-model cap limits query/class pairs before thresholding."""
+        logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
+        logits[0, :, 0] = 10.0
+        interp = _make_interp(logits=logits)
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3, num_select=3)
+
+        assert len(dets) == 3
+
     def test_detections_below_threshold_filtered(self, rgb_image: Path) -> None:
         """No detections survive when all logits are zero (uniform probs < 0.3)."""
         interp = _make_interp(logits=_make_logits(high_conf_idx=None))
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert len(dets) == 0
+
+    def test_empty_class_dimension_returns_no_detections(self, rgb_image: Path) -> None:
+        """A backend output with only the no-object logit decodes to an empty result."""
+        logits = np.empty((1, 10, 1), dtype=np.float32)
+        label_out = {"shape": [1, 10, 1], "name": "serving_default_labels:0", "index": 2}
+        interp = _make_interp(logits=logits, out_dets=[_DET_OUTPUT, label_out])
+
+        dets, _ = _run_inference(interp, rgb_image)
+
         assert len(dets) == 0
 
     def test_boxes_in_pixel_space(self, rgb_image: Path) -> None:
@@ -421,8 +488,19 @@ class TestSigmoidScoring:
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
         assert len(dets) == 0
 
-    def test_multiclass_class_id_is_argmax_of_logits(self, rgb_image: Path) -> None:
-        """Argmax of sigmoid equals argmax of logits; query with [5,2,1,...] gets class_id==0."""
+    def test_multiclass_query_reports_every_class_above_threshold(self, rgb_image: Path) -> None:
+        """A query scoring above threshold on more than one class must produce one detection per class, not just the
+        argmax class.
+
+        History: this test used to be ``test_multiclass_class_id_is_argmax_of_logits`` and asserted
+        the *opposite* — that only the single highest-scoring class (argmax) survived — codifying a
+        real bug as the expected contract. RF-DETR uses independent per-class sigmoids (not a
+        mutually exclusive softmax): a query with logits [5, 2, 1, ...] has three classes
+        (sigmoid ≈ 0.993, 0.881, 0.731) all above threshold=0.3, and `PostProcess._select_topk`
+        (postprocess.py) — the real predict() selection this decode must mirror — ranks Q*C
+        query/class pairs together, so all three are legitimate separate detections of the same
+        box. See rfdetr/export/_topk.py for the shared selection helper this now uses.
+        """
         # Shape (1, 10, 82): first query has logits [5, 2, 1, 0, ...], rest are -100
         logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
         logits[0, 0, 0] = 5.0
@@ -430,8 +508,14 @@ class TestSigmoidScoring:
         logits[0, 0, 2] = 1.0
         interp = _make_interp(logits=logits)
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
-        # argmax of sigmoid == argmax of logits because sigmoid is monotone increasing
-        assert dets.class_id[0] == 0
+
+        assert len(dets) == 3, "query 0 clears threshold=0.3 on 3 classes; all 3 must be reported"
+        assert sorted(dets.class_id.tolist()) == [0, 1, 2]
+        # All 3 detections share query 0's box (see _make_boxes: identical box per query).
+        np.testing.assert_allclose(dets.xyxy, np.tile(dets.xyxy[0], (3, 1)))
+        # Sorted by descending confidence, matching PostProcess._select_topk order.
+        assert list(dets.confidence) == sorted(dets.confidence, reverse=True)
+        assert dets.class_id[0] == 0  # highest logit (5.0) still ranks first
 
 
 # ---------------------------------------------------------------------------
@@ -602,6 +686,42 @@ class TestMaskDecoding:
         assert dets.mask.shape == (len(dets), img.height, img.width)
         assert dets.mask.dtype == bool
         assert dets.mask[0].all()  # query 0's all-positive logits decode to a full mask
+
+    def test_run_inference_multilabel_query_repeats_its_mask(self, rgb_image: Path) -> None:
+        """A query contributing more than one detection (multi-label) must gather its mask once per detection, repeats
+        included -- not a boolean mask over unique queries.
+
+        Before the fix, mask gathering was ``raw_masks[keep]`` with ``keep`` a boolean vector over queries (at most one
+        True per query, matching the old argmax-per-query decode). With the fix, more than one detection can share a
+        query index, so gathering must be by (possibly repeating) integer index, not a boolean mask -- see
+        _tflite/inference.py's comment on this.
+        """
+        boxes = _make_boxes()
+        logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
+        logits[0, 0, 0] = 5.0  # sigmoid ~0.993, above threshold
+        logits[0, 0, 1] = 2.0  # sigmoid ~0.881, also above threshold -> query 0 yields 2 detections
+        masks = np.full((1, 10, 28, 28), -10.0, dtype=np.float32)
+        masks[0, 0] = 10.0  # query 0's mask: all-positive
+
+        def _get_tensor(index: int) -> np.ndarray:
+            return {1: boxes, 2: logits, 3: masks}[index]
+
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+        interp.get_output_details.return_value = [
+            {"shape": [1, 10, 4], "name": "Identity_0", "index": 1},
+            {"shape": [1, 10, 82], "name": "Identity_1", "index": 2},
+            {"shape": [1, 10, 28, 28], "name": "Identity_2", "index": 3},
+        ]
+        interp.get_tensor.side_effect = _get_tensor
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert len(dets) == 2
+        assert sorted(dets.class_id.tolist()) == [0, 1]
+        # Both detections came from query 0, so both must carry query 0's (all-positive) mask.
+        assert dets.mask.shape[0] == 2
+        assert dets.mask[0].all()
+        assert dets.mask[1].all()
 
     def test_run_inference_no_mask_for_detection_model(self, rgb_image: Path) -> None:
         """A 2-output detection export leaves Detections.mask as None."""

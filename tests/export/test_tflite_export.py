@@ -17,6 +17,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import logging
 import sys
 import types
 from pathlib import Path
@@ -67,6 +68,13 @@ def _install_fake_onnx2tf() -> tuple[_FakeOnnx2tfModule, mock.MagicMock, dict[st
 
     Returns:
         Tuple of (fake_module, convert_mock, saved_originals).
+
+    Examples:
+        >>> fake, convert_mock, saved = _install_fake_onnx2tf()
+        >>> import sys
+        >>> "onnx2tf" in sys.modules
+        True
+        >>> _remove_fake_onnx2tf(saved)
     """
     # Snapshot originals before overwriting (None means the key was absent).
     saved: dict[str, object] = {k: sys.modules.get(k) for k in _ONNX2TF_KEYS}
@@ -108,6 +116,15 @@ def _remove_fake_onnx2tf(saved: dict[str, object] | None = None) -> None:
         saved: Snapshot returned by ``_install_fake_onnx2tf``.  If a key was
             present before installation its original value is restored; if it was absent it is deleted.  When *saved* is
             ``None`` all ``onnx2tf*`` keys are simply deleted (legacy behaviour).
+
+    Examples:
+        >>> _, _, saved = _install_fake_onnx2tf()
+        >>> import sys
+        >>> "onnx2tf" in sys.modules
+        True
+        >>> _remove_fake_onnx2tf(saved)
+        >>> "onnx2tf" in sys.modules
+        False
     """
     if saved is not None:
         for key in _ONNX2TF_KEYS:
@@ -227,7 +244,7 @@ class TestExportTfliteConverter:
         assert kwargs["output_signaturedefs"] is True
         assert kwargs["non_verbose"] is True
         assert "output_integer_quantized_tflite" not in kwargs
-        assert result == tflite_output / "model_float32.tflite"
+        assert result == tflite_output / "model_fp32.tflite"
 
     def test_custom_input_not_passed_to_convert(
         self,
@@ -563,6 +580,56 @@ class TestExportFormatParameter:
         obj = self._make_rfdetr()
         obj.export(format="onnx", output_dir=str(self._tmp_path / "out"))
         self._mock_export_tflite.assert_not_called()
+
+    def test_tflite_format_preloads_tensorflow_before_first_onnx_package_import(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TensorFlow is preloaded before importing the module that first loads ONNX.
+
+        The usual ``main.export_onnx`` patch imports ``rfdetr.export.main`` while arranging the test, which masks a
+        regression that moves the preload below that import.  Intercepting the first ``onnx`` import instead keeps it
+        inside the action under test.
+        """
+        obj = self._make_rfdetr()
+        calls: list[str] = []
+        original_import = __import__
+
+        def import_with_exporter_probe(
+            name: str,
+            globals: dict[str, object] | None = None,
+            locals: dict[str, object] | None = None,
+            fromlist: tuple[str, ...] = (),
+            level: int = 0,
+        ) -> object:
+            """Stop at and record the first ONNX package import."""
+            if name == "onnx":
+                calls.append("first_onnx_package_import")
+                raise RuntimeError("onnx import probe")
+            return original_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.delitem(sys.modules, "rfdetr.export.main", raising=False)
+        monkeypatch.delitem(sys.modules, "rfdetr.export._onnx.exporter", raising=False)
+        with (
+            mock.patch(
+                "rfdetr.export._backend.preload_tensorflow_before_onnx",
+                side_effect=lambda: calls.append("preload"),
+            ),
+            mock.patch("builtins.__import__", side_effect=import_with_exporter_probe),
+        ):
+            with pytest.raises(RuntimeError, match="onnx import probe"):
+                obj.export(format="tflite", output_dir=str(self._tmp_path / "out"))
+
+        assert calls == ["preload", "first_onnx_package_import"], (
+            f"Expected preload before the first ONNX package import, got {calls}"
+        )
+
+    def test_onnx_format_does_not_preload_tensorflow(self) -> None:
+        """Non-TFLite formats never import TensorFlow."""
+        obj = self._make_rfdetr()
+        with mock.patch("rfdetr.export._backend.preload_tensorflow_before_onnx") as preload_mock:
+            obj.export(format="onnx", output_dir=str(self._tmp_path / "out"))
+
+        preload_mock.assert_not_called()
 
     def test_quantization_forwarded(self) -> None:
         obj = self._make_rfdetr()
@@ -1079,7 +1146,14 @@ def _build_gridsample_onnx(
     h_out: int = 4,
     w_out: int = 4,
 ) -> None:
-    """Write a minimal ONNX model with one GridSample node to *path*."""
+    """Write a minimal ONNX model with one GridSample node to *path*.
+
+    Examples:
+        Requires ``onnx`` and ``onnx_graphsurgeon`` which are optional — skipped in the doctest runner.
+
+        >>> callable(_build_gridsample_onnx)  # doctest: +SKIP
+        True
+    """
     import onnx
     from onnx import TensorProto, helper
 
@@ -1172,3 +1246,173 @@ class TestGridSampleOnnxRewrite:
         np.testing.assert_allclose(
             result, ref, atol=1e-5, rtol=0, err_msg="Gather(axis=0) rewrite output diverges from F.grid_sample"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestPreloadTensorflowBeforeOnnx
+# ---------------------------------------------------------------------------
+
+
+def _drop_from_sys_modules(monkeypatch: pytest.MonkeyPatch, top_level: str) -> None:
+    """Remove *top_level* and every already-imported submodule of it from ``sys.modules`` for one test.
+
+    Import state leaks across tests — other tests in this suite import ``onnx``, and an environment with the ``tflite``
+    extra installed may have TensorFlow loaded — which would otherwise make the import-order assertions below depend on
+    test ordering. Submodules matter as much as the top-level name: a leftover ``tensorflow.python`` entry means
+    TensorFlow is loaded, and it sits ahead of any freshly inserted key. ``monkeypatch.delitem`` restores every entry at
+    teardown.
+
+    Args:
+        monkeypatch: Fixture used to delete and later restore the entries.
+        top_level: Top-level package name, e.g. ``"onnx"`` or ``"tensorflow"``.
+
+    Examples:
+        >>> import sys, types
+        >>> mp = pytest.MonkeyPatch()
+        >>> mp.setitem(sys.modules, "onnx", types.ModuleType("onnx"))
+        >>> mp.setitem(sys.modules, "onnx.helper", types.ModuleType("onnx.helper"))
+        >>> _drop_from_sys_modules(mp, "onnx")
+        >>> any(n == "onnx" or n.startswith("onnx.") for n in sys.modules)
+        False
+        >>> mp.undo()
+    """
+    for name in [n for n in list(sys.modules) if n == top_level or n.startswith(f"{top_level}.")]:
+        monkeypatch.delitem(sys.modules, name)
+
+
+class TestPreloadTensorflowBeforeOnnx:
+    """Tests for ``preload_tensorflow_before_onnx()`` — the TFLite Abseil-deadlock guard."""
+
+    @staticmethod
+    def _call_with_fake_tf(monkeypatch: pytest.MonkeyPatch) -> mock.MagicMock:
+        """Run the preload with a stubbed ``importlib.import_module`` and return the stub.
+
+        Args:
+            monkeypatch: Fixture used to stub the import and undo it afterwards.
+
+        Returns:
+            The stubbed ``import_module``, for asserting whether TensorFlow was imported.
+
+        Examples:
+            Needs pytest's ``monkeypatch`` fixture, so the live call is covered by tests rather than doctest.
+
+            >>> callable(TestPreloadTensorflowBeforeOnnx._call_with_fake_tf)  # doctest: +SKIP
+            True
+        """
+        import_mock = mock.MagicMock(return_value=types.ModuleType("tensorflow"))
+        monkeypatch.setattr("rfdetr.export._backend.importlib.import_module", import_mock)
+        from rfdetr.export._backend import preload_tensorflow_before_onnx
+
+        preload_tensorflow_before_onnx()
+        return import_mock
+
+    def test_imports_tensorflow_when_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """TensorFlow is imported when it is not yet in sys.modules."""
+        _drop_from_sys_modules(monkeypatch, "tensorflow")
+
+        import_mock = self._call_with_fake_tf(monkeypatch)
+
+        import_mock.assert_called_once_with("tensorflow")
+
+    def test_noop_when_tensorflow_already_imported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Already-imported TensorFlow short-circuits the import (the load order is already fixed)."""
+        monkeypatch.setitem(sys.modules, "tensorflow", types.ModuleType("tensorflow"))
+
+        import_mock = self._call_with_fake_tf(monkeypatch)
+
+        import_mock.assert_not_called()
+
+    def test_silent_when_tensorflow_not_installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A missing TensorFlow is swallowed — ``_check_onnx2tf_available`` reports it with install instructions."""
+        _drop_from_sys_modules(monkeypatch, "tensorflow")
+        monkeypatch.setattr(
+            "rfdetr.export._backend.importlib.import_module",
+            mock.MagicMock(side_effect=ModuleNotFoundError("No module named 'tensorflow'", name="tensorflow")),
+        )
+        from rfdetr.export._backend import preload_tensorflow_before_onnx
+
+        preload_tensorflow_before_onnx()  # must not raise
+
+    def test_surfaces_transitive_tensorflow_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A missing dependency imported by TensorFlow is not mistaken for TensorFlow being absent."""
+        _drop_from_sys_modules(monkeypatch, "tensorflow")
+        missing_absl = ModuleNotFoundError("No module named 'absl'", name="absl")
+        monkeypatch.setattr(
+            "rfdetr.export._backend.importlib.import_module",
+            mock.MagicMock(side_effect=missing_absl),
+        )
+        from rfdetr.export._backend import preload_tensorflow_before_onnx
+
+        with pytest.raises(ModuleNotFoundError, match="No module named 'absl'") as caught:
+            preload_tensorflow_before_onnx()
+
+        assert caught.value.name == "absl"
+
+    @pytest.mark.parametrize(
+        ("preloaded", "expect_warning"),
+        [
+            pytest.param(("onnx",), True, id="onnx-only"),
+            pytest.param((), False, id="neither"),
+            pytest.param(("onnx", "tensorflow"), True, id="onnx-then-tensorflow"),
+            pytest.param(("tensorflow", "onnx"), False, id="tensorflow-then-onnx"),
+        ],
+    )
+    def test_warning_tracks_import_order(
+        self,
+        preloaded: tuple[str, ...],
+        expect_warning: bool,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: Any,
+    ) -> None:
+        """Warn only when ``onnx`` entered ``sys.modules`` ahead of ``tensorflow``.
+
+        ``onnx`` first is unrecoverable in-process, so the deadlock risk is logged.  ``tensorflow`` first — the safe
+        order — must stay quiet, otherwise the warning trains callers who did the right thing to ignore it.
+        """
+        for package in ("onnx", "tensorflow"):
+            _drop_from_sys_modules(monkeypatch, package)
+        for package in preloaded:
+            monkeypatch.setitem(sys.modules, package, types.ModuleType(package))
+        rf_detr_logger = logging.getLogger("rf-detr")
+        monkeypatch.setattr(rf_detr_logger, "propagate", True)
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            self._call_with_fake_tf(monkeypatch)
+
+        messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        warned = any("onnx was imported before TensorFlow" in msg for msg in messages)
+        assert warned is expect_warning, (
+            f"Preloaded {preloaded or '()'}: expected warning={expect_warning}, got messages: {messages}"
+        )
+
+
+class TestExportTflitePreloadOrder:
+    """``export_tflite()`` preloads TensorFlow before it touches onnx.
+
+    Deliberately **not** gated on ``onnx2tf_available``: the ``fake_onnx2tf`` fixture injects a stub module and the
+    availability check is patched out, so this runs — and covers the preload call inside ``export_tflite()`` — in CI,
+    which never installs the ``tflite`` extra.
+    """
+
+    def test_preload_runs_before_onnx2tf_check(
+        self,
+        onnx_model: Path,
+        tflite_output: Path,
+        fake_onnx2tf: Any,
+        mock_prepare_calib: Any,
+    ) -> None:
+        """The preload is the first thing ``export_tflite`` does, ahead of the onnx2tf availability check."""
+        calls: list[str] = []
+        with (
+            mock.patch(
+                "rfdetr.export._backend.preload_tensorflow_before_onnx",
+                side_effect=lambda: calls.append("preload"),
+            ),
+            mock.patch(
+                "rfdetr.export._tflite.converter._check_onnx2tf_available",
+                side_effect=lambda: calls.append("check"),
+            ),
+        ):
+            export_tflite(onnx_path=onnx_model, output_dir=tflite_output)
+
+        assert calls == ["preload", "check"], f"Expected preload before the onnx2tf check, got {calls}"

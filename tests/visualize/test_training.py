@@ -27,7 +27,12 @@ class _FakeSeries:
     """Minimal series object for metric grouping tests."""
 
     def __init__(self, values: list[float | None]) -> None:
-        """Store values for ``notna().any()`` checks."""
+        """Store values for ``notna().any()`` checks.
+
+        Examples:
+            >>> _FakeSeries([1.0, None])._values
+            [1.0, None]
+        """
         self._values = values
 
     def notna(self) -> "_FakeSeries":
@@ -43,7 +48,13 @@ class _FakeDataFrame:
     """Minimal DataFrame object for metric grouping tests."""
 
     def __init__(self, data: dict[str, list[float | None]]) -> None:
-        """Store column data for ``_build_metric_groups``."""
+        """Store column data for ``_build_metric_groups``.
+
+        Examples:
+            >>> frame = _FakeDataFrame({'metric': [1.0, None]})
+            >>> frame.columns
+            ['metric']
+        """
         self._data = data
         self.columns = list(data)
 
@@ -397,3 +408,36 @@ class TestSeabornErrorBands:
         poly_collections = [c for c in loss_ax.collections if isinstance(c, PolyCollection)]
         assert len(poly_collections) >= 1, "Expected error-band patch for multi-step train/loss"
         plt.close(figure)
+
+
+def test_plot_metrics_adds_legends_to_all_populated_subplots(tmp_path: Path) -> None:
+    """Ensure that every populated metric has a legend."""
+    pytest.importorskip("matplotlib")
+    from matplotlib import pyplot as plt
+
+    pd = pytest.importorskip("pandas")
+    metrics_csv = tmp_path / "metrics.csv"
+
+    pd.DataFrame(
+        {
+            "epoch": [0, 1],
+            "train/loss": [2.0, 1.5],
+            "val/mAP_50": [0.10, 0.20],
+        }
+    ).to_csv(metrics_csv, index=False)
+
+    figure = plot_metrics(str(metrics_csv))
+
+    visible_axes = [ax for ax in figure.axes if ax.get_visible()]
+
+    axes_by_title = {ax.get_title(): ax for ax in visible_axes}
+
+    assert set(axes_by_title) == {"Loss", "Detection AP@0.50"}
+
+    loss_ax = axes_by_title["Loss"]
+    detection_ax = axes_by_title["Detection AP@0.50"]
+
+    assert loss_ax.get_legend() is not None, "Loss subplot should have legend"
+    assert detection_ax.get_legend() is not None, "Detection AP@0.50 subplot should have legend"
+
+    plt.close(figure)

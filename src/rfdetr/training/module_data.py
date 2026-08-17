@@ -19,6 +19,7 @@ from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import AugmentationBackend, ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
 from rfdetr.datasets.aug_configs import AUG_CONFIG
+from rfdetr.datasets.yolo import YoloSplitUnavailableError
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import make_collate_fn
@@ -269,11 +270,45 @@ class RFDETRDataModule(LightningDataModule):
                 self._dataset_val = build_dataset("val", ns, resolution)
         elif stage == "test":
             if self._dataset_test is None:
-                split = "test" if self.train_config.dataset_file == "roboflow" else "val"
-                self._dataset_test = build_dataset(split, ns, resolution)
+                self._dataset_test = self._build_test_dataset(ns, resolution)
         elif stage == "predict":
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
+
+    def _build_test_dataset(self, ns: Any, resolution: int) -> torch.utils.data.Dataset[Any]:
+        """Build the dataset backing ``setup("test")``, preferring a real test split.
+
+        ``roboflow`` and ``yolo`` datasets carry a labelled ``test`` split, so it is used directly.  A YOLO-format
+        dataset is not required to declare one: a ``roboflow`` dataset whose detected format is YOLO-style routes
+        through the same builder as ``dataset_file="yolo"`` (:func:`rfdetr.datasets.build_roboflow` ->
+        ``build_roboflow_from_yolo``), and Roboflow's export UI does not require a test split any more than a
+        hand-built YOLO dataset does. When that YOLO-style split cannot be resolved, the ``val`` split is used
+        instead and the substitution is logged, because falling back silently reports validation numbers under
+        the name "test".  A ``roboflow`` export in COCO format still has to ship ``test/_annotations.coco.json``:
+        its absence raises a plain ``FileNotFoundError`` from the COCO builder, which this fallback does not catch.
+
+        ``coco`` falls back to ``val`` because its ``test`` split is unlabelled COCO test-dev and cannot be scored
+        locally.  ``o365`` also falls back because its dataset builder exposes only ``train`` and ``val`` splits.
+
+        Args:
+            ns: Merged model/train config namespace forwarded to :func:`build_dataset`.
+            resolution: Target square resolution in pixels.
+
+        Returns:
+            The dataset to evaluate during the ``test`` stage.
+        """
+        dataset_file = self.train_config.dataset_file
+        if dataset_file in ("roboflow", "yolo"):
+            try:
+                return build_dataset("test", ns, resolution)
+            except YoloSplitUnavailableError as exc:
+                dataset_label = {"roboflow": "Roboflow", "yolo": "YOLO"}[dataset_file]
+                logger.warning(
+                    "No resolvable 'test' split for this %s dataset (%s); evaluating the 'val' split instead.",
+                    dataset_label,
+                    str(exc),
+                )
+        return build_dataset("val", ns, resolution)
 
     def _resolve_batch_size(self) -> int:
         """Return the concrete training batch size.
@@ -630,7 +665,8 @@ class RFDETRDataModule(LightningDataModule):
         self._kornia_pipeline = build_kornia_pipeline(
             self.train_config.aug_config if self.train_config.aug_config is not None else AUG_CONFIG,
             self.model_config.resolution,
-            with_masks=self.model_config.segmentation_head,
+            # The padding mask must receive every geometric warp, even for detection-only batches.
+            with_masks=True,
         )
         self._kornia_normalize = build_normalize()
         logger.info("Kornia augmentation pipeline built (resolved=%s)", resolved)
@@ -641,8 +677,9 @@ class RFDETRDataModule(LightningDataModule):
         When ``_kornia_pipeline`` is set and the trainer is in training mode, augmentation and normalization are applied
         on the GPU.  Validation and test batches pass through unchanged.
 
-        Segmentation models use a mask-aware pipeline (``with_masks=True``) so images, boxes, and per-instance masks are
-        augmented in sync.
+        The pipeline carries the ``NestedTensor`` padding mask with every batch, so geometric transforms keep valid
+        image regions and padding aligned. Segmentation batches concatenate their instance masks before that final
+        padding-mask channel, then split it back out before target unpacking.
 
         Args:
             batch: Tuple of ``(NestedTensor, list[dict])`` already on device.
@@ -666,18 +703,26 @@ class RFDETRDataModule(LightningDataModule):
         kornia_pipeline.to(img.device)
         kornia_normalize.to(img.device)
         boxes_padded, valid = collate_boxes(targets, img.device)
+        padding_mask = samples.mask
+        if padding_mask is None:
+            padding_mask = torch.zeros(img.shape[0], *img.shape[-2:], dtype=torch.bool, device=img.device)
+        padding_masks = padding_mask.unsqueeze(1).to(torch.float32)
 
         if self.model_config.segmentation_head:
             image_height, image_width = img.shape[-2:]
             masks_padded = collate_masks(
                 targets, img.device, n_max=valid.shape[1], image_height=image_height, image_width=image_width
             )
-            img_aug, boxes_aug, masks_aug = kornia_pipeline(img, boxes_padded, masks_padded)
+            auxiliary_masks = torch.cat((masks_padded, padding_masks), dim=1)
+            img_aug, boxes_aug, auxiliary_masks_aug = kornia_pipeline(img, boxes_padded, auxiliary_masks)
+            masks_aug = auxiliary_masks_aug[:, : valid.shape[1]]
+            padding_mask_aug = auxiliary_masks_aug[:, valid.shape[1]] > 0.5
             img_aug = kornia_normalize(img_aug)
             aug_height, aug_width = img_aug.shape[-2:]
             targets = unpack_boxes(boxes_aug, valid, targets, aug_height, aug_width, masks_aug=masks_aug)
         else:
-            img_aug, boxes_aug = kornia_pipeline(img, boxes_padded)
+            img_aug, boxes_aug, padding_masks_aug = kornia_pipeline(img, boxes_padded, padding_masks)
+            padding_mask_aug = padding_masks_aug[:, 0] > 0.5
             img_aug = kornia_normalize(img_aug)
             aug_height, aug_width = img_aug.shape[-2:]
             targets = unpack_boxes(boxes_aug, valid, targets, aug_height, aug_width)
@@ -689,7 +734,7 @@ class RFDETRDataModule(LightningDataModule):
                 continue
             scale = boxes.new_tensor([width, height, width, height])
             target["boxes"] = box_xyxy_to_cxcywh(boxes) / scale
-        batch = (NestedTensor(img_aug, samples.mask), targets)
+        batch = (NestedTensor(img_aug, padding_mask_aug), targets)
         return batch
 
     # ------------------------------------------------------------------

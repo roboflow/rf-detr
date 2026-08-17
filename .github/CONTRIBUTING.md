@@ -106,6 +106,7 @@ rf-detr/
 - **`mkdocs.yaml`** - Documentation site configuration
 
 > [!TIP]
+>
 > When contributing, focus on the relevant directory for your change:
 >
 > - Bug fixes/features → `src/rfdetr/` and `tests/`
@@ -275,6 +276,7 @@ Tests marked with `@pytest.mark.gpu` are excluded from CPU CI workflows and run 
 ### CI Testing
 
 > [!NOTE]
+>
 > **CI Workflows (Source of Truth):** See `.github/workflows/ci-tests-cpu.yml` and `.github/workflows/ci-tests-gpu.yml` for exact commands.
 
 Our continuous integration tests run on:
@@ -317,6 +319,7 @@ uv run --no-sync pytest tests/models/test_model.py::test_model_loading
 All code must pass linting and formatting checks before being merged. We use **pre-commit hooks** to automate this process.
 
 > [!TIP]
+>
 > Pre-commit hooks will auto-format many issues. If pre-commit fails, review the changes it made and re-stage the files.
 
 ### Setting Up Pre-commit
@@ -365,6 +368,7 @@ def old_fn(*args, **kwargs): ...
 RF-DETR's documentation is built with [MkDocs](https://www.mkdocs.org/) and the [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) theme. API reference pages are auto-generated from docstrings using [mkdocstrings](https://mkdocstrings.github.io/).
 
 > [!NOTE]
+>
 > Building the full documentation locally requires the `plus` extra (`rfdetr[plus]`), which provides the XLarge and 2XLarge model pages. Without it, the build will fail on those reference pages.
 
 ### Install Documentation Dependencies
@@ -410,6 +414,7 @@ mkdocs.yaml               # MkDocs configuration and navigation
 ```
 
 > [!TIP]
+>
 > When adding a new documentation page, add it to the `nav` section in `mkdocs.yaml` so it appears in the site navigation. Pages that exist in `docs/` but are not listed in `nav` will not be included in the site.
 
 ## CLA Signing
@@ -427,6 +432,7 @@ This step is essential before any merge can occur.
 For clarity and maintainability, any new functions or classes must include [Google-style docstrings](https://google.github.io/styleguide/pyguide.html) and use Python type hints. Type hints are mandatory in all function definitions, ensuring explicit parameter and return type declarations.
 
 > [!IMPORTANT]
+>
 > Type hints are in the function signature. **Do not duplicate types in docstrings** - describe the parameter's purpose instead.
 
 For example:
@@ -452,6 +458,10 @@ def sample_function(param1: int, param2: int = 10) -> bool:
 
 Following this pattern helps ensure consistency throughout the codebase.
 
+> [!IMPORTANT]
+>
+> This applies to helper functions inside `tests/` too, not just `src/`. Any non-`test_*` function used as a test fixture/builder (e.g. `_make_checkpoint`, `_random_xyxy_boxes`) needs a docstring with an `Examples` doctest that exercises it directly — a small, fast check that the helper still does what its callers assume. `pyproject.toml`'s `--doctest-plus` runs doctests across `tests/` for exactly this reason (see the comment above `[tool.pytest.ini_options]`). Skip the live doctest (`# doctest: +SKIP` with a one-line reason) only when the helper cannot run standalone — e.g. it is a `@pytest.fixture` (pytest now hard-fails on direct fixture calls) or needs real GPU/XLA/network hardware.
+
 ## Reporting Bugs
 
 Bug reports are vital for continued improvement. When reporting an issue, please include a clear, minimal reproducible example that demonstrates the problem. Detailed bug reports assist us in swiftly diagnosing and addressing issues.
@@ -459,6 +469,7 @@ Bug reports are vital for continued improvement. When reporting an issue, please
 ## Adding a New Model
 
 > [!IMPORTANT]
+>
 > Before implementing a new model, **discuss with maintainers first**. Project structure and patterns are subject to change.
 
 **General workflow:**

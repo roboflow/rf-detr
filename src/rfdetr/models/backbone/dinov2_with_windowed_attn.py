@@ -1118,13 +1118,14 @@ class WindowedDinov2WithRegistersForImageClassification(
     def __init__(self, config: WindowedDinov2WithRegistersConfig) -> None:
         super().__init__(config)
 
-        self.num_labels = config.num_labels
+        num_labels = config.num_labels
+        if num_labels is None:
+            raise ValueError("config.num_labels must be an integer for image classification")
+        self.num_labels = num_labels
         self.dinov2_with_registers = WindowedDinov2WithRegistersModel(config)
 
         # Classifier head
-        self.classifier = (
-            nn.Linear(config.hidden_size * 2, config.num_labels) if config.num_labels > 0 else nn.Identity()
-        )
+        self.classifier = nn.Linear(config.hidden_size * 2, num_labels) if num_labels > 0 else nn.Identity()
 
         # Initialize weights and apply final processing
         self.post_init()  # type: ignore[no-untyped-call]
