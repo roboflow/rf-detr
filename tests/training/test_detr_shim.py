@@ -1622,9 +1622,9 @@ class TestDeployToRoboflow:
         """
         monkeypatch.chdir(tmp_path)
 
-        project_mock = self._deploy_with_versions(mock_self, [{"id": "ws/proj/3"}, {"id": "ws/proj/1"}])
+        project_mock = self._deploy_with_versions(mock_self, [{"id": "ws/proj/9"}, {"id": "ws/proj/10"}])
 
-        project_mock.version.assert_called_once_with(3)
+        project_mock.version.assert_called_once_with(10)
 
     def test_omitted_version_falls_back_to_one_for_empty_project(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """Omitting version on a project with no versions falls back to version 1.
