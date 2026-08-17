@@ -2835,12 +2835,12 @@
 </tbody>
 </table>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Before</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;rfdetr[train]&#39;</span><span class="w">    </span><span class="c1"># bundled albumentations</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;rfdetr[kornia]&#39;</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'rfdetr[train]'</span><span class="w">    </span><span class="c1"># bundled albumentations</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'rfdetr[kornia]'</span>
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1"># After</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;rfdetr[train,augment]&#39;</span><span class="w">   </span><span class="c1"># custom aug_config or GPU backend</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;rfdetr[augment]&#39;</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'rfdetr[train,augment]'</span><span class="w">   </span><span class="c1"># custom aug_config or GPU backend</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'rfdetr[augment]'</span>
 </span></code></pre></div>
 </div>
 <div class="admonition note">
@@ -2851,14 +2851,14 @@
 <p class="admonition-title">Breaking: default resize interpolation changed — pixel values and mAP may shift</p>
 <p>The default resize backend changed from Albumentations (cv2 <code>INTER_LINEAR</code>, no antialias) to torchvision (<code>BILINEAR</code> + <code>antialias=True</code>). Resized pixel values differ slightly from previous versions, and mAP may drift on existing benchmarks. <strong>This affects training as well as validation and test preprocessing</strong> — not just the training split.</p>
 <p>To restore the previous pixel-exact behaviour:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;rfdetr[augment]&#39;</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'rfdetr[augment]'</span>
 </span></code></pre></div>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.datasets.aug_configs</span><span class="w"> </span><span class="kn">import</span> <span class="n">AUG_CONFIG</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span><span class="n">aug_config</span><span class="o">=</span><span class="n">AUG_CONFIG</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Installing <code>rfdetr[augment]</code> alone is <strong>not</strong> sufficient to pin this behaviour — with Albumentations installed, <code>augmentation_backend="auto"</code>/<code>"cpu"</code> (the default) auto-selects Albumentations for you, but identical code on a machine without <code>[augment]</code> installed silently falls back to torchvision instead. The only setting that pins resize behaviour regardless of what is installed is:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span><span class="n">augmentation_backend</span><span class="o">=</span><span class="s2">&quot;torchvision&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span><span class="n">augmentation_backend</span><span class="o">=</span><span class="s2">"torchvision"</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
@@ -2936,12 +2936,12 @@
 <p class="admonition-title">Removed: <code>RFDETRLarge</code> silent fallback to deprecated Large config</p>
 <p><code>RFDETRLarge()</code> no longer catches checkpoint/config incompatibility errors and silently retries with <code>RFDETRLargeDeprecatedConfig</code>. Loading legacy deprecated-Large weights through <code>RFDETRLarge</code> now raises the original <code>ValueError</code>/<code>RuntimeError</code> instead of falling back. <code>RFDETRLargeDeprecated</code> itself is unaffected — use it directly to load those checkpoints.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Before (silently retried with the deprecated config and logged a warning)</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRLarge</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">&quot;old_large_checkpoint.pth&quot;</span><span class="p">)</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRLarge</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"old_large_checkpoint.pth"</span><span class="p">)</span>
 </span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
 </span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># After</span>
 </span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRLargeDeprecated</span>
 </span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRLargeDeprecated</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">&quot;old_large_checkpoint.pth&quot;</span><span class="p">)</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRLargeDeprecated</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"old_large_checkpoint.pth"</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <h3 id="deprecated-in-v19-remove-in-v111">Deprecated in v1.9 → Remove in v1.11<a class="headerlink" href="#deprecated-in-v19-remove-in-v111" title="Permanent link">&para;</a></h3>
@@ -2959,10 +2959,10 @@
 <p class="admonition-title">Deprecated: <code>TrainConfig.lr_drop</code> and <code>TrainConfig.lr_min_factor</code></p>
 <p><strong><code>lr_drop</code> / <code>lr_min_factor</code></strong> — pass them through <code>lr_scheduler_kwargs</code> instead. For the managed <code>"step"</code> / <code>"cosine"</code> presets the fields are still folded into <code>lr_scheduler_kwargs</code> (with a <code>FutureWarning</code>); set with an explicit scheduler they are inert and warn.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Before (deprecated)</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">TrainConfig</span><span class="p">(</span><span class="n">lr_scheduler</span><span class="o">=</span><span class="s2">&quot;step&quot;</span><span class="p">,</span> <span class="n">lr_drop</span><span class="o">=</span><span class="mi">80</span><span class="p">,</span> <span class="n">lr_min_factor</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">TrainConfig</span><span class="p">(</span><span class="n">lr_scheduler</span><span class="o">=</span><span class="s2">"step"</span><span class="p">,</span> <span class="n">lr_drop</span><span class="o">=</span><span class="mi">80</span><span class="p">,</span> <span class="n">lr_min_factor</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
 </span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
 </span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># After</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">TrainConfig</span><span class="p">(</span><span class="n">lr_scheduler</span><span class="o">=</span><span class="s2">&quot;step&quot;</span><span class="p">,</span> <span class="n">lr_scheduler_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;lr_drop&quot;</span><span class="p">:</span> <span class="mi">80</span><span class="p">,</span> <span class="s2">&quot;min_factor&quot;</span><span class="p">:</span> <span class="mf">0.1</span><span class="p">})</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">TrainConfig</span><span class="p">(</span><span class="n">lr_scheduler</span><span class="o">=</span><span class="s2">"step"</span><span class="p">,</span> <span class="n">lr_scheduler_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">"lr_drop"</span><span class="p">:</span> <span class="mi">80</span><span class="p">,</span> <span class="s2">"min_factor"</span><span class="p">:</span> <span class="mf">0.1</span><span class="p">})</span>
 </span></code></pre></div>
 </div>
 <hr />
@@ -2973,10 +2973,10 @@
 <p>New checkpoints created from v1.8.2 onwards use <code>class_id=0</code> for person. Legacy <code>[0, 17]</code> checkpoints are still supported — RF-DETR auto-detects the schema from the checkpoint at load time.</p>
 <p>If your post-processing code offsets class IDs by 1 (common for background-first models), update it:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># Before (background-first [0, 17]: person was at class_id=1)</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">class_name</span> <span class="o">=</span> <span class="s2">&quot;person&quot;</span> <span class="k">if</span> <span class="n">detection</span><span class="o">.</span><span class="n">class_id</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="s2">&quot;other&quot;</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">class_name</span> <span class="o">=</span> <span class="s2">"person"</span> <span class="k">if</span> <span class="n">detection</span><span class="o">.</span><span class="n">class_id</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="s2">"other"</span>
 </span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
 </span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="c1"># After (active-first [17]: person is at class_id=0)</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="n">class_name</span> <span class="o">=</span> <span class="s2">&quot;person&quot;</span> <span class="k">if</span> <span class="n">detection</span><span class="o">.</span><span class="n">class_id</span> <span class="o">==</span> <span class="mi">0</span> <span class="k">else</span> <span class="s2">&quot;other&quot;</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="n">class_name</span> <span class="o">=</span> <span class="s2">"person"</span> <span class="k">if</span> <span class="n">detection</span><span class="o">.</span><span class="n">class_id</span> <span class="o">==</span> <span class="mi">0</span> <span class="k">else</span> <span class="s2">"other"</span>
 </span></code></pre></div>
 <p>Use <code>detection.data["class_name"]</code> for schema-agnostic name resolution.</p>
 </div>
@@ -2998,7 +2998,7 @@
 <div class="admonition warning">
 <p class="admonition-title">Breaking: <code>pyDeprecate</code> constraint narrowed to <code>&gt;=0.9,&lt;0.10</code></p>
 <p>Was <code>&gt;=0.6,&lt;0.8</code>. If another package pins an older version, resolve with:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;rfdetr==1.8.0&quot;</span><span class="w"> </span><span class="s2">&quot;pyDeprecate&gt;=0.9,&lt;0.10&quot;</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr==1.8.0"</span><span class="w"> </span><span class="s2">"pyDeprecate&gt;=0.9,&lt;0.10"</span>
 </span></code></pre></div>
 </div>
 <hr />
@@ -3011,23 +3011,23 @@
 </span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>pip<span class="w"> </span>install<span class="w"> </span>rfdetr
 </span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
 </span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="c1"># After</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;rfdetr[lora]&#39;</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'rfdetr[lora]'</span>
 </span></code></pre></div>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">Breaking: <code>predict()</code> stores source image in <code>detections.metadata</code></p>
 <p><strong><code>predict()</code> stores the source image in <code>detections.metadata</code>, not <code>detections.data</code>.</strong></p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Before (1.6.4 and earlier)</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">source</span> <span class="o">=</span> <span class="n">detections</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;source_image&quot;</span><span class="p">]</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">source</span> <span class="o">=</span> <span class="n">detections</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="s2">"source_image"</span><span class="p">]</span>
 </span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>
 </span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="c1"># After</span>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="n">source</span> <span class="o">=</span> <span class="n">detections</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;source_image&quot;</span><span class="p">]</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="n">source</span> <span class="o">=</span> <span class="n">detections</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">"source_image"</span><span class="p">]</span>
 </span></code></pre></div>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">Breaking: <code>pyDeprecate</code> constraint changed to <code>&gt;=0.6,&lt;0.8</code></p>
 <p>Was <code>&gt;=0.3,&lt;0.6</code>. If another package pins an older version, resolve with:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;rfdetr==1.7.0&quot;</span><span class="w"> </span><span class="s2">&quot;pyDeprecate&gt;=0.6,&lt;0.8&quot;</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr==1.7.0"</span><span class="w"> </span><span class="s2">"pyDeprecate&gt;=0.6,&lt;0.8"</span>
 </span></code></pre></div>
 </div>
 <h3 id="deprecated-in-v17-remove-in-v19">Deprecated in v1.7 → Remove in v1.9<a class="headerlink" href="#deprecated-in-v17-remove-in-v19" title="Permanent link">&para;</a></h3>
@@ -3143,7 +3143,7 @@
 <p class="admonition-title">Breaking: <code>transformers</code> minimum version raised to <code>&gt;=5.1.0</code></p>
 <p><strong><code>transformers</code> minimum version raised to <code>&gt;=5.1.0,&lt;6.0.0</code>.</strong></p>
 <p>Projects pinned to <code>transformers&lt;5.0.0</code> must upgrade. If upgrading is not possible, pin <code>rfdetr&lt;1.6.0</code>.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;transformers&gt;=5.1.0,&lt;6.0.0&#39;</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'transformers&gt;=5.1.0,&lt;6.0.0'</span>
 </span></code></pre></div>
 </div>
 <div class="admonition warning">
@@ -3169,12 +3169,12 @@
 </tbody>
 </table>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="c1"># Before</span>
-</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;rfdetr[metrics]&#39;</span>
-</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;rfdetr[onnxexport]&#39;</span>
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'rfdetr[metrics]'</span>
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'rfdetr[onnxexport]'</span>
 </span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>
 </span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="c1"># After</span>
-</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;rfdetr[loggers]&#39;</span>
-</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;rfdetr[onnx]&#39;</span>
+</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'rfdetr[loggers]'</span>
+</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'rfdetr[onnx]'</span>
 </span></code></pre></div>
 </div>
 <div class="admonition warning">
@@ -3193,10 +3193,10 @@
 <p class="admonition-title">Deprecated: <code>simplify</code> and <code>force</code> arguments in <code>RFDETR.export()</code></p>
 <p><strong><code>RFDETR.export(..., simplify=..., force=...)</code></strong> — both arguments are no-ops. Remove them from your calls.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="c1"># Before (deprecated)</span>
-</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">&quot;model.onnx&quot;</span><span class="p">,</span> <span class="n">simplify</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">force</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">"model.onnx"</span><span class="p">,</span> <span class="n">simplify</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">force</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>
 </span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="c1"># After</span>
-</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">&quot;model.onnx&quot;</span><span class="p">)</span>
+</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">"model.onnx"</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <h3 id="deprecated-in-v16-remove-in-v19">Deprecated in v1.6 → Remove in v1.9<a class="headerlink" href="#deprecated-in-v16-remove-in-v19" title="Permanent link">&para;</a></h3>
