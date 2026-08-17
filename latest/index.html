@@ -2696,10 +2696,7 @@
 <p>You can install and use <code>rfdetr</code> in a <a href="https://www.python.org/"><strong>Python&gt;=3.10</strong></a> environment. For detailed installation instructions, including installing from source, and setting up a local development environment, check out our <a href="getting-started/install/">install</a> page.</p>
 <div class="admonition example">
 <p class="admonition-title">Installation</p>
-<p><a href="https://badge.fury.io/py/rfdetr"><img alt="version" src="https://badge.fury.io/py/rfdetr.svg" width="125" height="20" /></a>
-<a href="https://badge.fury.io/py/rfdetr"><img alt="python-version" src="https://img.shields.io/pypi/pyversions/rfdetr" width="198" height="20" /></a>
-<a href="https://github.com/roboflow/rf-detr/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/pypi/l/rfdetr" width="164" height="20" /></a>
-<a href="https://pypistats.org/packages/rfdetr"><img alt="downloads" src="https://img.shields.io/pypi/dm/rfdetr" width="258" height="20" /></a></p>
+<p><a href="https://badge.fury.io/py/rfdetr"><img alt="version" src="https://badge.fury.io/py/rfdetr.svg" width="125" height="20" /></a> <a href="https://badge.fury.io/py/rfdetr"><img alt="python-version" src="https://img.shields.io/pypi/pyversions/rfdetr" width="198" height="20" /></a> <a href="https://github.com/roboflow/rf-detr/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/pypi/l/rfdetr" width="164" height="20" /></a> <a href="https://pypistats.org/packages/rfdetr"><img alt="downloads" src="https://img.shields.io/pypi/dm/rfdetr" width="258" height="20" /></a></p>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">pip</label><label for="__tabbed_1_2">uv</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
@@ -2932,32 +2929,20 @@
 </tbody>
 </table>
 <blockquote>
-<p>Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric.
-For the full competitor comparison (YOLO11-pose, YOLO26-pose), see the <a href="learn/benchmarks/#keypoints">Benchmarks</a> page.</p>
+<p>Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric. For the full competitor comparison (YOLO11-pose, YOLO26-pose), see the <a href="learn/benchmarks/#keypoints">Benchmarks</a> page.</p>
 </blockquote>
 <h2 id="frequently-asked-questions">Frequently Asked Questions<a class="headerlink" href="#frequently-asked-questions" title="Permanent link">&para;</a></h2>
-<p><strong>What is RF-DETR?</strong>
-RF-DETR (Roboflow Detection Transformer) is a real-time object detection and instance segmentation model from Roboflow, accepted at ICLR 2026. It uses a DINOv2 vision transformer backbone and achieves state-of-the-art accuracy–latency trade-offs on COCO (60.1 AP50:95 for RF-DETR-2XL) and RF100-VL.</p>
-<p><strong>How does RF-DETR compare to YOLOv11?</strong>
-RF-DETR-L achieves 56.5 AP50:95 on COCO at 6.8 ms latency on an NVIDIA T4, outperforming YOLOv11x (50.9 AP) at lower latency. The DINOv2 backbone gives RF-DETR stronger performance on domain-shift benchmarks such as RF100-VL.</p>
-<p><strong>What GPU is required to train RF-DETR?</strong>
-A CUDA-capable GPU with at least 8 GB VRAM (e.g., NVIDIA RTX 3060, T4, A10) is recommended for fine-tuning. Smaller models (RF-DETR-N and RF-DETR-S) can fit in 6 GB VRAM with reduced batch size. CPU inference is supported for evaluation.</p>
-<p><strong>Which dataset formats does RF-DETR support?</strong>
-RF-DETR supports COCO JSON and YOLO-format datasets (with <code>dataset_file: "yolo"</code>). Roboflow datasets export directly to both formats. Detection and segmentation datasets use the same format — the model variant determines the task.</p>
-<p><strong>Can RF-DETR run in real time?</strong>
-Yes. RF-DETR-N runs at 2.3 ms per frame on a T4 GPU (TensorRT FP16, batch 1), and RF-DETR-L at 6.8 ms — both well within real-time thresholds. ONNX and TFLite exports are available for edge deployment.</p>
-<p><strong>What is the difference between RF-DETR detection and segmentation models?</strong>
-Detection models (e.g., <code>RFDETRLarge</code>) output bounding boxes. Segmentation models (e.g., <code>RFDETRSegLarge</code>) additionally output instance masks. Both share the same backbone and training API; segmentation adds a mask head and requires COCO-format segmentation annotations.</p>
-<p><strong>Does RF-DETR support keypoint detection?</strong>
-RF-DETR Keypoint (Preview) detects 17 body keypoints per person on COCO, achieving 71.8 AP50:95 at 9.7 ms on NVIDIA T4. It is available in the <code>rfdetr</code> package as <code>RFDETRKeypointPreview</code>. See <a href="learn/run/keypoints/">Run Keypoint Models</a> for usage.</p>
-<p><strong>Is RF-DETR open source?</strong>
-Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. XLarge and 2XLarge models require the <code>rfdetr[plus]</code> package (PML 1.0 license).</p>
-<p><strong>How do I fine-tune RF-DETR on a custom dataset?</strong>
-Instantiate a model and call <code>model.train(...)</code> with your dataset directory in COCO JSON or YOLO format. Example: <code>model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4)</code>. The model downloads pretrained weights automatically and saves best checkpoints automatically (use <code>resume=</code> to continue from one).</p>
-<p><strong>How do I export RF-DETR to ONNX or TensorRT?</strong>
-Call <code>model.export(format="onnx")</code> after training or loading a checkpoint. ONNX export works on CPU and produces a single <code>.onnx</code> file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, use <code>model.export(format="tensorrt")</code>, which exports ONNX and then builds a <code>.trt</code> engine in-process via the TensorRT Python API; this requires <code>pip install rfdetr[tensorrt]</code> and a CUDA GPU.</p>
-<p><strong>Which RF-DETR model size should I use?</strong>
-RF-DETR-Nano (2.3 ms, 67.6 AP50 on COCO) is best for edge and real-time applications. RF-DETR-Large (6.8 ms, 56.5 AP50:95) offers the best accuracy–latency trade-off for server deployment. RF-DETR-2XLarge (17.2 ms, 60.1 AP50:95) maximizes accuracy when latency allows.</p>
+<p><strong>What is RF-DETR?</strong> RF-DETR (Roboflow Detection Transformer) is a real-time object detection and instance segmentation model from Roboflow, accepted at ICLR 2026. It uses a DINOv2 vision transformer backbone and achieves state-of-the-art accuracy–latency trade-offs on COCO (60.1 AP50:95 for RF-DETR-2XL) and RF100-VL.</p>
+<p><strong>How does RF-DETR compare to YOLOv11?</strong> RF-DETR-L achieves 56.5 AP50:95 on COCO at 6.8 ms latency on an NVIDIA T4, outperforming YOLOv11x (50.9 AP) at lower latency. The DINOv2 backbone gives RF-DETR stronger performance on domain-shift benchmarks such as RF100-VL.</p>
+<p><strong>What GPU is required to train RF-DETR?</strong> A CUDA-capable GPU with at least 8 GB VRAM (e.g., NVIDIA RTX 3060, T4, A10) is recommended for fine-tuning. Smaller models (RF-DETR-N and RF-DETR-S) can fit in 6 GB VRAM with reduced batch size. CPU inference is supported for evaluation.</p>
+<p><strong>Which dataset formats does RF-DETR support?</strong> RF-DETR supports COCO JSON and YOLO-format datasets (with <code>dataset_file: "yolo"</code>). Roboflow datasets export directly to both formats. Detection and segmentation datasets use the same format — the model variant determines the task.</p>
+<p><strong>Can RF-DETR run in real time?</strong> Yes. RF-DETR-N runs at 2.3 ms per frame on a T4 GPU (TensorRT FP16, batch 1), and RF-DETR-L at 6.8 ms — both well within real-time thresholds. ONNX and TFLite exports are available for edge deployment.</p>
+<p><strong>What is the difference between RF-DETR detection and segmentation models?</strong> Detection models (e.g., <code>RFDETRLarge</code>) output bounding boxes. Segmentation models (e.g., <code>RFDETRSegLarge</code>) additionally output instance masks. Both share the same backbone and training API; segmentation adds a mask head and requires COCO-format segmentation annotations.</p>
+<p><strong>Does RF-DETR support keypoint detection?</strong> RF-DETR Keypoint (Preview) detects 17 body keypoints per person on COCO, achieving 71.8 AP50:95 at 9.7 ms on NVIDIA T4. It is available in the <code>rfdetr</code> package as <code>RFDETRKeypointPreview</code>. See <a href="learn/run/keypoints/">Run Keypoint Models</a> for usage.</p>
+<p><strong>Is RF-DETR open source?</strong> Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. XLarge and 2XLarge models require the <code>rfdetr[plus]</code> package (PML 1.0 license).</p>
+<p><strong>How do I fine-tune RF-DETR on a custom dataset?</strong> Instantiate a model and call <code>model.train(...)</code> with your dataset directory in COCO JSON or YOLO format. Example: <code>model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4)</code>. The model downloads pretrained weights automatically and saves best checkpoints automatically (use <code>resume=</code> to continue from one).</p>
+<p><strong>How do I export RF-DETR to ONNX or TensorRT?</strong> Call <code>model.export(format="onnx")</code> after training or loading a checkpoint. ONNX export works on CPU and produces a single <code>.onnx</code> file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, use <code>model.export(format="tensorrt")</code>, which exports ONNX and then builds a <code>.trt</code> engine in-process via the TensorRT Python API; this requires <code>pip install rfdetr[tensorrt]</code> and a CUDA GPU.</p>
+<p><strong>Which RF-DETR model size should I use?</strong> RF-DETR-Nano (2.3 ms, 67.6 AP50 on COCO) is best for edge and real-time applications. RF-DETR-Large (6.8 ms, 56.5 AP50:95) offers the best accuracy–latency trade-off for server deployment. RF-DETR-2XLarge (17.2 ms, 60.1 AP50:95) maximizes accuracy when latency allows.</p>
 <blockquote>
 <p><strong>Checkpoint note:</strong> Current <code>RFDETRLarge</code> defaults to <code>rf-detr-large-2026.pth</code>. The older <code>rf-detr-large.pth</code> checkpoint is a legacy Large release kept for backward compatibility and has been superseded by the current release.</p>
 </blockquote>
@@ -2981,7 +2966,7 @@ RF-DETR-Nano (2.3 ms, 67.6 AP50 on COCO) is best for edge and real-time applic
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 31, 2026 08:36:15 UTC">2026-07-31 08:36:15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 12, 2026 14:13:29 UTC">2026-08-12 14:13:29</span>
   </span>
 
     

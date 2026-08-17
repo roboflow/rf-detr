@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-08-10T23:25:30">
+  <meta property="article:modified_time" content="2026-08-13T23:35:31">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-08-10T23:25:30",
+    "dateModified": "2026-08-13T23:35:31",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2674,7 +2674,7 @@
 <div class="admonition info">
 <p class="admonition-title">Training requires the <code>train</code> extra</p>
 <p>Training dependencies are not included in the base install. Install them with:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;rfdetr[train]&quot;</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[train]"</span>
 </span></code></pre></div>
 <p>For experiment tracking, also add <code>pip install "rfdetr[train,loggers]"</code>.</p>
 </div>
@@ -2687,12 +2687,12 @@
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">()</span>
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;&lt;DATASET_PATH&gt;&quot;</span><span class="p">,</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"&lt;DATASET_PATH&gt;"</span><span class="p">,</span>
 </span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
 </span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
 </span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
 </span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;&lt;OUTPUT_PATH&gt;&quot;</span><span class="p">,</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">"&lt;OUTPUT_PATH&gt;"</span><span class="p">,</span>
 </span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="p">)</span>
 </span></code></pre></div>
 </div>
@@ -2702,12 +2702,12 @@
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegMedium</span><span class="p">()</span>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;&lt;DATASET_PATH&gt;&quot;</span><span class="p">,</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"&lt;DATASET_PATH&gt;"</span><span class="p">,</span>
 </span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
 </span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
 </span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
 </span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;&lt;OUTPUT_PATH&gt;&quot;</span><span class="p">,</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">"&lt;OUTPUT_PATH&gt;"</span><span class="p">,</span>
 </span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="p">)</span>
 </span></code></pre></div>
 </div>
@@ -2717,12 +2717,12 @@
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRKeypointPreview</span><span class="p">()</span>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
 </span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;&lt;KEYPOINT_DATASET_PATH&gt;&quot;</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"&lt;KEYPOINT_DATASET_PATH&gt;"</span><span class="p">,</span>
 </span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
 </span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
 </span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
 </span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">,</span>
-</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;&lt;OUTPUT_PATH&gt;&quot;</span><span class="p">,</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">"&lt;OUTPUT_PATH&gt;"</span><span class="p">,</span>
 </span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="p">)</span>
 </span></code></pre></div>
 </div>
@@ -2739,8 +2739,8 @@
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRKeypointPreview</span>
 </span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.datasets._keypoint_schema</span><span class="w"> </span><span class="kn">import</span> <span class="n">infer_coco_keypoint_schema</span>
 </span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">DATASET_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;/path/to/coco-keypoint-dataset&quot;</span><span class="p">)</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">schema</span> <span class="o">=</span> <span class="n">infer_coco_keypoint_schema</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">&quot;train&quot;</span> <span class="o">/</span> <span class="s2">&quot;_annotations.coco.json&quot;</span><span class="p">)</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">DATASET_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"/path/to/coco-keypoint-dataset"</span><span class="p">)</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">schema</span> <span class="o">=</span> <span class="n">infer_coco_keypoint_schema</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"train"</span> <span class="o">/</span> <span class="s2">"_annotations.coco.json"</span><span class="p">)</span>
 </span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>
 </span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRKeypointPreview</span><span class="p">(</span>
 </span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="n">num_classes</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">schema</span><span class="o">.</span><span class="n">class_names</span><span class="p">),</span>
@@ -2748,7 +2748,7 @@
 </span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="p">)</span>
 </span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>
 </span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>    <span class="n">dataset_file</span><span class="o">=</span><span class="s2">&quot;roboflow&quot;</span><span class="p">,</span>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>    <span class="n">dataset_file</span><span class="o">=</span><span class="s2">"roboflow"</span><span class="p">,</span>
 </span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">DATASET_DIR</span><span class="p">),</span>
 </span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>    <span class="n">class_names</span><span class="o">=</span><span class="n">schema</span><span class="o">.</span><span class="n">class_names</span><span class="p">,</span>
 </span><span id="__span-4-18"><a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>    <span class="n">keypoint_oks_sigmas</span><span class="o">=</span><span class="n">schema</span><span class="o">.</span><span class="n">keypoint_oks_sigmas</span><span class="p">,</span>
@@ -2757,7 +2757,7 @@
 </span><span id="__span-4-21"><a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
 </span><span id="__span-4-22"><a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">2e-5</span><span class="p">,</span>
 </span><span id="__span-4-23"><a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a>    <span class="n">lr_encoder</span><span class="o">=</span><span class="mf">2e-5</span><span class="p">,</span>
-</span><span id="__span-4-24"><a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;output/keypoint_custom&quot;</span><span class="p">,</span>
+</span><span id="__span-4-24"><a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output/keypoint_custom"</span><span class="p">,</span>
 </span><span id="__span-4-25"><a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a>    <span class="n">use_ema</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 </span><span id="__span-4-26"><a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a>    <span class="n">run_test</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 </span><span id="__span-4-27"><a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a><span class="p">)</span>
@@ -2787,9 +2787,7 @@
 </tr>
 </tbody>
 </table>
-<p>For keypoint preview training, use COCO keypoint JSON or YOLO pose labels. YOLO pose datasets must declare
-<code>kpt_shape</code> in <code>data.yaml</code>; detection-only YOLO datasets still fail clearly in keypoint mode instead of being treated as
-pose labels.</p>
+<p>For keypoint preview training, use COCO keypoint JSON or YOLO pose labels. YOLO pose datasets must declare <code>kpt_shape</code> in <code>data.yaml</code>; detection-only YOLO datasets still fail clearly in keypoint mode instead of being treated as pose labels.</p>
 <p><a href="https://roboflow.com/annotate">Roboflow</a> allows you to create object detection datasets from scratch and export them in either COCO JSON or YOLO format for training. You can also explore <a href="https://universe.roboflow.com/">Roboflow Universe</a> to find pre-labeled datasets for a range of use cases.</p>
 <p>→ <strong><a href="dataset-formats/">Learn more about dataset formats</a></strong></p>
 <h2 id="training-configuration">Training Configuration<a class="headerlink" href="#training-configuration" title="Permanent link">&para;</a></h2>
@@ -2832,14 +2830,10 @@ pose labels.</p>
 <p><code>checkpoint_best_regular.pth</code> – best checkpoint based on validation score, using the raw (non-EMA) model weights.</p>
 </li>
 <li>
-<p><code>checkpoint_best_total.pth</code> – final checkpoint selected for inference and benchmarking. It contains model weights,
-    epoch/PTL metadata, and callback state when available, but no optimizer or scheduler state. It is chosen as the
-    better of the EMA and non-EMA models based on validation performance.</p>
+<p><code>checkpoint_best_total.pth</code> – final checkpoint selected for inference and benchmarking. It contains model weights, epoch/PTL metadata, and callback state when available, but no optimizer or scheduler state. It is chosen as the better of the EMA and non-EMA models based on validation performance.</p>
 </li>
 </ul>
-<p>For detection and segmentation models, the validation score is box mAP (<code>val/mAP_50_95</code>). For keypoint preview models,
-best-checkpoint selection uses COCO keypoint AP (<code>val/keypoint_map_50_95</code>) and checkpoints persist the model keypoint
-schema so <code>RFDETR.from_checkpoint()</code> can reconstruct the same label/keypoint slots.</p>
+<p>For detection and segmentation models, the validation score is box mAP (<code>val/mAP_50_95</code>). For keypoint preview models, best-checkpoint selection uses COCO keypoint AP (<code>val/keypoint_map_50_95</code>) and checkpoints persist the model keypoint schema so <code>RFDETR.from_checkpoint()</code> can reconstruct the same label/keypoint slots.</p>
 <details class="note">
 <summary>Checkpoint file sizes</summary>
 <p>Checkpoint sizes vary based on what they contain:</p>
@@ -2861,44 +2855,35 @@ schema so <code>RFDETR.from_checkpoint()</code> can reconstruct the same label/k
 <div class="tabbed-block">
 <div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">&quot;&lt;CHECKPOINT_PATH&gt;&quot;</span><span class="p">)</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;CHECKPOINT_PATH&gt;"</span><span class="p">)</span>
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">&quot;&lt;IMAGE_PATH&gt;&quot;</span><span class="p">)</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"&lt;IMAGE_PATH&gt;"</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
 <div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegMedium</span>
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">&quot;&lt;CHECKPOINT_PATH&gt;&quot;</span><span class="p">)</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;CHECKPOINT_PATH&gt;"</span><span class="p">)</span>
 </span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">&quot;&lt;IMAGE_PATH&gt;&quot;</span><span class="p">)</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"&lt;IMAGE_PATH&gt;"</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 </div>
 </div>
 <h2 id="evaluate-a-fine-tuned-model">Evaluate a Fine-Tuned Model<a class="headerlink" href="#evaluate-a-fine-tuned-model" title="Permanent link">&para;</a></h2>
-<p><code>model.evaluate()</code> runs a single evaluation pass over a dataset split and returns (and prints) the COCO metrics — mAP,
-mAR, and the macro-F1 sweep. It works both right after <code>model.train()</code> and on a model loaded from a checkpoint; the
-weights already in memory are evaluated, so no checkpoint file is re-loaded.</p>
+<p><code>model.evaluate()</code> runs a single evaluation pass over a dataset split and returns (and prints) the COCO metrics — mAP, mAR, and the macro-F1 sweep. It works both right after <code>model.train()</code> and on a model loaded from a checkpoint; the weights already in memory are evaluated, so no checkpoint file is re-loaded.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
 </span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">&quot;&lt;CHECKPOINT_PATH&gt;&quot;</span><span class="p">)</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;CHECKPOINT_PATH&gt;"</span><span class="p">)</span>
 </span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">metrics</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;&lt;DATASET_PATH&gt;&quot;</span><span class="p">,</span> <span class="n">split</span><span class="o">=</span><span class="s2">&quot;test&quot;</span><span class="p">)</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">metrics</span><span class="p">[</span><span class="s2">&quot;test/mAP_50_95&quot;</span><span class="p">])</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">metrics</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"&lt;DATASET_PATH&gt;"</span><span class="p">,</span> <span class="n">split</span><span class="o">=</span><span class="s2">"test"</span><span class="p">)</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">metrics</span><span class="p">[</span><span class="s2">"test/mAP_50_95"</span><span class="p">])</span>
 </span></code></pre></div>
 <ul>
-<li><code>split="test"</code> evaluates the <code>test/</code> folder on Roboflow-exported datasets (<code>dataset_file="roboflow"</code>, the default).
-    For other dataset formats (COCO, YOLO, Objects365) there is no dedicated test split, so <code>split="test"</code> silently
-    evaluates the <code>valid/</code> folder instead — the returned metric keys are still prefixed <code>test/*</code>, so double-check
-    <code>dataset_file</code> before treating <code>test/mAP_50_95</code> as held-out-test performance on a non-Roboflow dataset.
-    <code>split="val"</code> always evaluates <code>valid/</code> directly.</li>
-<li>The detection head is never adapted to the dataset — the model is evaluated exactly as configured. If the dataset's
-    class count differs from the model's <code>num_classes</code>, a warning is emitted and evaluation proceeds unchanged.</li>
+<li><code>split="test"</code> evaluates the <code>test/</code> folder on Roboflow-exported (<code>dataset_file="roboflow"</code>, the default) and YOLO (<code>dataset_file="yolo"</code>) datasets. YOLO-format datasets — plain YOLO plus Roboflow exports detected as YOLO — are not required to declare a <code>test</code> split; when it can't be resolved, <code>split="test"</code> falls back to the <code>valid/</code> folder instead and logs a warning — the returned metric keys are still prefixed <code>test/*</code>, so double-check the logs before treating <code>test/mAP_50_95</code> as held-out-test performance. A Roboflow export detected as COCO format has to ship <code>test/_annotations.coco.json</code>; without it <code>split="test"</code> raises <code>FileNotFoundError</code> rather than falling back. For COCO and Objects365 there is no dedicated test split at all, so <code>split="test"</code> silently evaluates the <code>valid/</code> folder instead. <code>split="val"</code> always evaluates <code>valid/</code> directly.</li>
+<li>The detection head is never adapted to the dataset — the model is evaluated exactly as configured. If the dataset's class count differs from the model's <code>num_classes</code>, a warning is emitted and evaluation proceeds unchanged.</li>
 <li>Evaluation writes no checkpoints or logs to <code>output_dir</code>.</li>
-<li><code>evaluate()</code> accepts the same keyword arguments as <code>train()</code> for convenience, but training-only fields (<code>epochs</code>,
-    <code>lr</code>, <code>ema</code>, <code>early_stopping</code>, logger flags, etc.) have no effect — evaluation runs through an eval-only trainer
-    that never builds those callbacks.</li>
+<li><code>evaluate()</code> accepts the same keyword arguments as <code>train()</code> for convenience, but training-only fields (<code>epochs</code>, <code>lr</code>, <code>ema</code>, <code>early_stopping</code>, logger flags, etc.) have no effect — evaluation runs through an eval-only trainer that never builds those callbacks.</li>
 </ul>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <p>After training your model, you can:</p>
@@ -2926,7 +2911,7 @@ weights already in memory are evaluated, so no checkpoint file is re-loaded.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 10, 2026 23:25:30 UTC">2026-08-10 23:25:30</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 13, 2026 23:35:31 UTC">2026-08-13 23:35:31</span>
   </span>
 
     

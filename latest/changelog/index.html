@@ -99,7 +99,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-05-18T15:03:45">
+  <meta property="article:modified_time" content="2026-08-12T14:13:29">
   
   <script type="application/ld+json">
   {
@@ -114,7 +114,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-05-18T15:03:45",
+    "dateModified": "2026-08-12T14:13:29",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2320,8 +2320,7 @@
 
 
 <h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h1>
-<p>RF-DETR release notes are maintained on <a href="https://github.com/roboflow/rf-detr/releases">GitHub Releases</a>.
-Use the release feed to review versioned package changes, migration notes, and model updates.</p>
+<p>RF-DETR release notes are maintained on <a href="https://github.com/roboflow/rf-detr/releases">GitHub Releases</a>. Use the release feed to review versioned package changes, migration notes, and model updates.</p>
 <ul>
 <li><a href="https://pypi.org/project/rfdetr/">Install the latest PyPI package</a></li>
 <li><a href="../getting-started/migration/">Migration guide</a> — upgrade steps between major versions</li>
@@ -2330,12 +2329,17 @@ Use the release feed to review versioned package changes, migration notes, and m
 <hr />
 <h1 id="changelog_1">Changelog<a class="headerlink" href="#changelog_1" title="Permanent link">&para;</a></h1>
 <p>All notable changes to RF-DETR are documented here.</p>
-<p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
-and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
+<p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>Transformer.forward</code>'s two-stage query selection now gathers the <code>torch.topk</code>-selected rows <em>before</em> running the bbox-delta MLP (<code>enc_out_bbox_embed</code>), not after — the MLP is pointwise with no cross-token mixing, so it only ever needs at most <code>num_queries</code> rows that survive selection, not every one of the <code>sum(H*W)</code> encoder positions.</li>
+</ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>model.export(format="tflite")</code> no longer hangs forever at the ONNX → TFLite conversion step. <code>onnx</code>'s C extension and TensorFlow both statically link Abseil and export its symbols as <em>weak</em> definitions, which the dynamic loader coalesces onto whichever library loads first. Because the TFLite route runs a full ONNX export before reaching <code>onnx2tf</code>, ONNX won that race and supplied Abseil's synchronization primitives to TensorFlow, whose executor then blocked forever in <code>absl::Notification::WaitForNotification()</code> while restoring the SavedModel bundle — no traceback, no error, 0% CPU, no <code>.tflite</code>. TensorFlow is now imported before the ONNX export (<code>rfdetr.export._backend.preload_tensorflow_before_onnx</code>), and a warning is logged when the calling process had already imported <code>onnx</code> before TensorFlow (e.g. a direct <code>export_tflite()</code> call), since that order cannot be repaired in-process. Importing <code>onnx</code> <em>after</em> TensorFlow is safe and does not warn. (<a href="https://github.com/roboflow/rf-detr/issues/1322">#1322</a>)</li>
+</ul>
 <h2 id="192-2026-08-11">[1.9.2] — 2026-08-11<a class="headerlink" href="#192-2026-08-11" title="Permanent link">&para;</a></h2>
 <h3 id="changed_1">Changed<a class="headerlink" href="#changed_1" title="Permanent link">&para;</a></h3>
 <ul>
@@ -2348,6 +2352,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed_1">Fixed<a class="headerlink" href="#fixed_1" title="Permanent link">&para;</a></h3>
 <ul>
+<li>EMA training no longer performs an extra averaged-model update at epoch boundaries after the final optimizer step, preventing one update per epoch from bypassing <code>ema_update_interval</code> and changing the EMA trajectory. (<a href="https://github.com/roboflow/rf-detr/pull/1319">#1319</a>)</li>
 <li>Loading a detection checkpoint published before keypoint support no longer warns that <code>_kp_active_mask</code> is a "model parameter not in checkpoint (left at random init)". The key is a deterministic schema buffer the model always rebuilds from the configured keypoint schema — empty for detection-only variants — not a learned parameter, so its absence never affected the loaded weights. Affects <code>Nano</code>, <code>Small</code>, <code>Large</code> (2026) and <code>SegSmall</code>. The filter matches the exact terminal key, so a similarly-named real parameter still warns, and an <em>unexpected</em> <code>_kp_active_mask</code> in a checkpoint still warns; the filtered key is now recorded at debug level. (<a href="https://github.com/roboflow/rf-detr/pull/1302">#1302</a>)</li>
 <li>Resuming training from one of <code>BestModelCallback</code>'s four lightweight checkpoints (<code>checkpoint_best_regular.pth</code>, <code>checkpoint_best_ema.pth</code>, <code>checkpoint_best_total.pth</code>, <code>last_ema.pth</code>) now restores per-callback state instead of silently restarting it cold. Those files intentionally omit optimizer/LR-scheduler state, and a warning now says so explicitly, distinguishing them from checkpoints that predate callback-state persistence entirely (where best-score tracking, EMA, and early-stopping all restart cold too). Best-score restore additionally requires the original <code>output_dir</code> to match. (<a href="https://github.com/roboflow/rf-detr/pull/1318">#1318</a>)</li>
 <li>Training-time log calls no longer corrupt or duplicate the completed Rich epoch progress bar when <code>RichProgressBar(leave=True)</code> is active. A new stream handler tracks the log target by name and re-resolves <code>stdout</code>/<code>stderr</code> on every emit, following Rich's redirect proxies instead of capturing the pre-redirect stream once at import time. (<a href="https://github.com/roboflow/rf-detr/pull/1316">#1316</a>)</li>
@@ -2856,7 +2861,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="May 18, 2026 15:03:45 UTC">2026-05-18 15:03:45</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 12, 2026 14:13:29 UTC">2026-08-12 14:13:29</span>
   </span>
 
     
