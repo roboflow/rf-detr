@@ -406,7 +406,6 @@ overrides = [
   { module = ["rfdetr.utilities.console"], warn_unused_ignores = false },
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [
-    "rfdetr.config",
     "rfdetr.datasets.coco",
     "rfdetr.datasets.synthetic",
     "rfdetr.datasets.transforms",
