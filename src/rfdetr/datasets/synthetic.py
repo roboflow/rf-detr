@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
+from numpy.typing import NDArray
 from PIL import Image
 from supervision import Color, Detections, box_iou_batch, draw_filled_polygon
 from tqdm.auto import tqdm
@@ -42,7 +43,7 @@ class DatasetSplitRatios:
     val: float = 0.2
     test: float = 0.1
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate that ratios sum to approximately 1.0 and are non-negative."""
         total = self.train + self.val + self.test
         if any(r < 0 for r in [self.train, self.val, self.test]):
@@ -223,8 +224,8 @@ def generate_synthetic_sample(
     color_names = list(SYNTHETIC_COLORS.keys())
     num_objects = random.randint(min_objects, max_objects)
 
-    xyxys = []
-    class_ids = []
+    xyxys: list[NDArray[np.float64]] = []
+    class_ids: list[int] = []
     polygons: list[list[float]] = []
     failed_attempts = 0
     max_failed_attempts = 3  # Allow some failures before reducing target count
@@ -374,10 +375,22 @@ def _write_coco_json(
                 )
         else:
             polygon_data = np.empty(0, dtype=object)
+        # Detections.class_id is Optional. Every detection written here needs one, so a
+        # missing array with detections present is a caller error rather than something to
+        # default silently; with no detections the loop below never runs and an empty array
+        # keeps the type non-optional without a narrowing assert.
+        detection_class_ids = detections.class_id
+        if detection_class_ids is None:
+            if len(detections):
+                raise ValueError(
+                    f"Detections for image index {img_id} (file: {file_path}) have no class_id, "
+                    "which is required to write COCO annotations"
+                )
+            detection_class_ids = np.empty((0,), dtype=int)
         for det_idx in range(len(detections)):
             x1, y1, x2, y2 = (float(v) for v in detections.xyxy[det_idx])
             w, h_box = x2 - x1, y2 - y1
-            class_id = int(detections.class_id[det_idx])
+            class_id = int(detection_class_ids[det_idx])
             if class_id < 0 or class_id >= len(classes):
                 raise ValueError(
                     f"Invalid class_id {class_id} for detection index {det_idx} "
