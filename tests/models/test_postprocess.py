@@ -296,6 +296,41 @@ class TestPostProcessMasks:
 
         assert calls == expected_calls
 
+    def test_upsampled_batch_pairs_non_square_target_sizes_with_their_mask_rows(self) -> None:
+        """Each image keeps its own non-square target size and mask geometry after batched size conversion.
+
+        This prevents a regression where ``target_sizes.tolist()`` is batched but the resulting rows are swapped or
+        height/width are transposed before per-image interpolation.
+        """
+        out_masks = torch.tensor(
+            [
+                [[[5.0, -5.0, -5.0], [5.0, -5.0, -5.0]]],
+                [[[-5.0, -5.0, 5.0], [-5.0, -5.0, 5.0]]],
+            ]
+        )
+        scores = torch.tensor([[0.9], [0.8]])
+        labels = torch.tensor([[1], [2]])
+        boxes = torch.zeros(2, 1, 4)
+        topk_boxes = torch.zeros(2, 1, dtype=torch.long)
+        target_sizes = torch.tensor([[4, 9], [9, 4]])  # (H, W): landscape, then portrait
+
+        results = PostProcess._postprocess_masks(out_masks, scores, labels, boxes, topk_boxes, target_sizes)
+
+        expected_masks = [
+            torch.nn.functional.interpolate(
+                out_masks[0, 0][None, None], size=(4, 9), mode="bilinear", align_corners=False
+            )
+            > 0.0,
+            torch.nn.functional.interpolate(
+                out_masks[1, 0][None, None], size=(9, 4), mode="bilinear", align_corners=False
+            )
+            > 0.0,
+        ]
+        assert results[0]["masks"].shape == (1, 1, 4, 9)
+        assert results[1]["masks"].shape == (1, 1, 9, 4)
+        assert torch.equal(results[0]["masks"], expected_masks[0])
+        assert torch.equal(results[1]["masks"], expected_masks[1])
+
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_target_sizes_are_read_once_per_upsampled_batch_cuda(self) -> None:

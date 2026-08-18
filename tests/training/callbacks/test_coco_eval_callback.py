@@ -1990,6 +1990,35 @@ class TestConvertTargets:
 
         assert calls == expected_calls
 
+    def test_batch_pairs_non_square_orig_sizes_with_their_target_rows(self) -> None:
+        """Each target's box uses its own non-square orig_size after batched size conversion.
+
+        This prevents swapped ``orig_size.tolist()`` rows and height/width transposition from assigning a sibling
+        image's scale to the wrong target.
+        """
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.tensor([[0.25, 0.5, 0.2, 0.4]]),
+                "labels": torch.tensor([3]),
+                "orig_size": torch.tensor([100, 300]),  # H=100, W=300
+            },
+            {
+                "boxes": torch.tensor([[0.5, 0.25, 0.4, 0.2]]),
+                "labels": torch.tensor([7]),
+                "orig_size": torch.tensor([240, 80]),  # H=240, W=80
+            },
+        ]
+
+        out = cb._convert_targets(targets)
+
+        assert out[0]["boxes"].shape == (1, 4)
+        assert out[1]["boxes"].shape == (1, 4)
+        assert out[0]["labels"].item() == 3
+        assert out[1]["labels"].item() == 7
+        torch.testing.assert_close(out[0]["boxes"], torch.tensor([[45.0, 30.0, 105.0, 70.0]]))
+        torch.testing.assert_close(out[1]["boxes"], torch.tensor([[24.0, 36.0, 56.0, 84.0]]))
+
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_orig_size_is_read_once_per_batch_cuda(self) -> None:
