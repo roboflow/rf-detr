@@ -159,8 +159,8 @@ class TestLossMasksEmptyMatch:
 
 class TestLossMasksNonEmptyMatchUsesRealSegmentationHeadOutput:
     """The non-empty-match branch of the dict path (``criterion.py``'s einsum over
-    ``outputs["pred_masks"]["spatial_features"]``) reads that key straight off the dict with no projection of its own
-    — it trusts whatever produced it.
+    ``outputs["pred_masks"]["spatial_features"]``) reads that key straight off the dict with no projection of its own —
+    it trusts whatever produced it.
 
     ``SegmentationHead``-only tests can't catch a regression here, since they never call ``loss_masks``. This builds the
     dict with a real ``SegmentationHead`` (``sparse_forward(skip_blocks=True)``, non-identity ``spatial_features_proj``)
