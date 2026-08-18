@@ -30,8 +30,16 @@ from rfdetr.utilities import box_ops
 from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
 
 _LossFunction = Callable[..., dict[str, Tensor]]
-_MIN_DIRECT_MASK_ELEMENTS = 1 << 16
+# The CPU benchmark first crossed over at 256x256 masks (1,048,576 elements):
+# 96x96, 128x128, and 192x192 direct gathers were 1.4x slower than point_sample,
+# while 256x256 was 1.06x faster and the 312x312 workload was 2.48x faster.
+_MIN_DIRECT_MASK_ELEMENTS = 1 << 20
+# Require enough mask work per sampled value to amortize direct indexing's fixed
+# bookkeeping.  Sixteen is a conservative workload-ratio heuristic, not a
+# standalone crossover measurement; the benchmarked production workload clears it.
 _MIN_DIRECT_MASK_ELEMENTS_PER_POINT = 16
+# One-match groups were 1.25x-1.5x slower in repeated measurements because the
+# per-image slicing, index transfer, and gather overhead was not amortized.
 _MIN_DIRECT_MATCHES_PER_GROUP = 2
 
 
@@ -42,9 +50,9 @@ def _sample_target_masks_at_points(
 ) -> Tensor:
     """Sample matched ground-truth masks at normalized point coordinates.
 
-    Large contiguous masks on CPU and CUDA are indexed directly, avoiding the
+    Large contiguous masks on CPU are indexed directly, avoiding the
     full matched-mask copies created by advanced indexing and concatenation.
-    Small masks and inputs outside that narrow contract retain the existing
+    CUDA and other inputs outside that narrow contract retain the existing
     nearest-neighbor ``point_sample`` path.
 
     Args:
@@ -64,7 +72,7 @@ def _sample_target_masks_at_points(
     """
     use_direct = (
         len(targets) == len(indices)
-        and point_coords.device.type in {"cpu", "cuda"}
+        and point_coords.device.type == "cpu"
         and point_coords.dtype == torch.float32
         and point_coords.ndim == 3
         and point_coords.shape[-1] == 2
