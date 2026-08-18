@@ -260,13 +260,14 @@ The parameters below are available for fine-grained control over training behavi
 
 ### Runtime and Accelerator
 
-| Parameter           | Type   | Default  | Description                                                                                      |
-| ------------------- | ------ | -------- | ------------------------------------------------------------------------------------------------ |
-| `accelerator`       | `str`  | `"auto"` | PyTorch Lightning accelerator selection. `"auto"` picks GPU if available, then MPS, then CPU.    |
-| `seed`              | `int`  | `None`   | Global random seed for reproducibility. `None` means no fixed seed is set.                       |
-| `fp16_eval`         | `bool` | `False`  | Run evaluation passes in FP16 precision. Reduces memory usage but may lower numerical precision. |
-| `compute_val_loss`  | `bool` | `True`   | Compute and log the detection loss on the validation set each epoch.                             |
-| `compute_test_loss` | `bool` | `True`   | Compute and log the detection loss during the final test run.                                    |
+| Parameter              | Type   | Default  | Description                                                                                                                                                              |
+| ---------------------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `accelerator`          | `str`  | `"auto"` | PyTorch Lightning accelerator selection. `"auto"` picks GPU if available, then MPS, then CPU.                                                                            |
+| `seed`                 | `int`  | `None`   | Global random seed for reproducibility. `None` means no fixed seed is set.                                                                                               |
+| `fp16_eval`            | `bool` | `False`  | Run evaluation passes in FP16 precision. Reduces memory usage but may lower numerical precision.                                                                         |
+| `compute_val_loss`     | `bool` | `True`   | Compute and log the detection loss on the validation set each epoch.                                                                                                     |
+| `compute_test_loss`    | `bool` | `True`   | Compute and log the detection loss during the final test run.                                                                                                            |
+| `num_sanity_val_steps` | `int`  | `0`      | PyTorch Lightning sanity-check validation batches run before training starts. `0` disables it (the default); increase to catch val-path errors before a full epoch runs. |
 
 ### DataLoader Tuning
 
@@ -323,6 +324,7 @@ Below is a summary table of all training parameters:
 | `drop_path`                  | float                  | 0.0            | Stochastic depth drop-path rate for the backbone.                                                                                     |
 | `compute_val_loss`           | bool                   | True           | Compute and log loss during validation.                                                                                               |
 | `compute_test_loss`          | bool                   | True           | Compute and log loss during the test run.                                                                                             |
+| `num_sanity_val_steps`       | int                    | 0              | PTL sanity-check validation batches run before training starts. 0 disables it; increase to catch val-path errors early.               |
 | `fp16_eval`                  | bool                   | False          | Run evaluation in FP16 precision to reduce memory usage.                                                                              |
 | `pin_memory`                 | bool                   | None           | Pin DataLoader memory. None defers to PyTorch Lightning's default.                                                                    |
 | `persistent_workers`         | bool                   | None           | Keep DataLoader workers alive between epochs. None uses PTL default.                                                                  |

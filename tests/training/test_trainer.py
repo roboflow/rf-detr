@@ -90,6 +90,13 @@ class TestProgressBarCallbacks:
 
         assert trainer.num_sanity_val_steps == 0
 
+    def test_num_sanity_val_steps_is_configurable(self, base_model_config, base_train_config):
+        """TrainConfig.num_sanity_val_steps should reach the underlying Trainer unchanged."""
+        tc = base_train_config(num_sanity_val_steps=2)
+        trainer = build_trainer(tc, base_model_config(), accelerator="cpu")
+
+        assert trainer.num_sanity_val_steps == 2
+
 
 # ---------------------------------------------------------------------------
 # TestRichProgressBarLoggerIntegration — the real regression _RedirectAwareStreamHandler
