@@ -624,7 +624,7 @@ class RFDETRModelModule(LightningModule):
             }
         return loss_for_return.detach() if self._use_manual_optimization else loss_for_return
 
-    def _aux_aggregate_map(self, loss_dict: dict[str, Tensor], weight_dict: dict[str, Tensor]) -> dict[str, str | None]:
+    def _aux_aggregate_map(self, loss_dict: dict[str, Tensor], weight_dict: dict[str, float]) -> dict[str, str | None]:
         """Return the memoized ``loss_name -> aggregate train/ key`` map for the current loss_dict keys.
 
         The classification only depends on ``loss_dict``'s key set and ``weight_dict`` membership, both
@@ -655,7 +655,7 @@ class RFDETRModelModule(LightningModule):
         return self._aux_aggregate_cache
 
     def _compact_train_loss_metrics(
-        self, loss_dict: dict[str, Tensor], weight_dict: dict[str, Tensor]
+        self, loss_dict: dict[str, Tensor], weight_dict: dict[str, float]
     ) -> dict[str, Tensor]:
         """Aggregate per-layer auxiliary loss terms into one ``train/<term>_aux`` tensor per base loss.
 

@@ -11,12 +11,18 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 import torch
+from pytorch_lightning import Callback, Trainer
 from torch import nn
 
-from rfdetr.config import RFDETRBaseConfig, TrainConfig
+from rfdetr.config import RFDETRBaseConfig, RFDETRSmallConfig, TrainConfig
+from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
+from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.tensors import NestedTensor
+
+from .helpers import _fake_postprocess as _helpers_fake_postprocess
+from .helpers import _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 
 # ---------------------------------------------------------------------------
 # Private helpers — used by both module-level fixtures and class-level _setup_*
@@ -1160,6 +1166,81 @@ class TestTrainingStep:
         assert set(logged) == {"train/loss_ce", "train/loss_ce_0", "train/loss_ce_enc"}
         assert module.log_dict.call_args.kwargs.get("on_step") is True
 
+    def test_compacts_real_criterion_output_gated_by_weight_dict(self, tmp_path):
+        """Aggregation of a real SetCriterion's key inventory must fold only weighted per-layer losses.
+
+        ``test_compacts_auxiliary_loss_metrics`` above only exercises synthetic ``loss_ce``/``loss_bbox`` keys, whose
+        weight_dict membership and layer-suffix pattern happen to coincide. RF-DETR's real criterion also emits
+        ``cardinality_error`` with the same ``_<i>``/``_enc`` suffix pattern (see ``SetCriterion.forward``) despite
+        never appearing in ``weight_dict`` (it is a logging-only diagnostic, not a backpropagated loss term).
+        Suffix-only aggregation folds it into a spurious ``cardinality_error_aux`` key; correct aggregation must gate
+        on ``weight_dict`` membership and leave it out. This uses the real ``RFDETRSmall`` model/criterion (this
+        repo's default size) with a tiny synthetic batch so the assertion is checked against RF-DETR's actual key
+        inventory instead of a hand-picked synthetic one.
+
+        This may legitimately fail in this worktree: the weight_dict-gating fix lands from a sibling worktree not
+        yet merged here, so the code under test still aggregates by suffix pattern alone.
+        """
+        mc = RFDETRSmallConfig(pretrain_weights=None, num_classes=3, device="cpu")
+        tc = _base_train_config(tmp_path)
+        real_model = build_model_from_config(mc, tc)
+        real_criterion, real_postprocess = build_criterion_from_config(mc, tc)
+        real_model.train()
+
+        with (
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=real_model),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(real_criterion, real_postprocess),
+            ),
+        ):
+            module = RFDETRModelModule(mc, tc)
+
+        samples, targets = _make_batch(batch_size=1, h=mc.resolution, w=mc.resolution)
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        real_param = nn.Parameter(torch.randn(4))
+        module.optimizers = MagicMock(return_value=torch.optim.SGD([real_param], lr=1e-3))
+        trainer = MagicMock()
+        trainer.accumulate_grad_batches = 1
+        trainer.num_training_batches = 1
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+
+        # Spy on the criterion to capture its raw (pre-aggregation) per-key loss dict, so the expected
+        # aggregate is derived from the same real forward pass training_step() uses internally rather
+        # than a second, independently-random forward pass.
+        raw_loss_dicts: list[dict[str, torch.Tensor]] = []
+        original_forward = module.criterion.forward
+
+        def _spy_forward(*args, **kwargs):
+            result = original_forward(*args, **kwargs)
+            raw_loss_dicts.append(result)
+            return result
+
+        module.criterion.forward = _spy_forward
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        raw_loss_dict = raw_loss_dicts[0]
+        weight_dict = module.criterion.weight_dict
+        expected_aux_sums: dict[str, torch.Tensor] = {}
+        expected_base_keys: set[str] = set()
+        for key, value in raw_loss_dict.items():
+            base_name, separator, suffix = key.rpartition("_")
+            is_layer_suffixed = bool(separator) and (suffix.isdigit() or suffix == "enc")
+            if is_layer_suffixed and base_name in weight_dict:
+                aggregate_name = f"train/{base_name}_aux"
+                expected_aux_sums[aggregate_name] = expected_aux_sums.get(aggregate_name, torch.zeros(())) + value
+            elif not is_layer_suffixed:
+                expected_base_keys.add(f"train/{key}")
+
+        logged = module.log_dict.call_args.args[0]
+        assert set(logged) == expected_base_keys | set(expected_aux_sums)
+        assert "train/cardinality_error_aux" not in logged
+        for aggregate_name, expected_value in expected_aux_sums.items():
+            assert logged[aggregate_name].item() == pytest.approx(expected_value.item())
+
     def test_logs_loss_components_on_epoch_when_step_logging_is_enabled(self, tmp_path):
         """Per-step total loss logging must not re-enable per-step component metrics."""
         module, samples, targets, _, _ = self._run_step(tmp_path, train_log_on_step=True)
@@ -1195,6 +1276,66 @@ class TestTrainingStep:
         for metric_name in ("train/lr", "train/lr_min", "train/lr_max"):
             metric_calls = [call for call in module.log.call_args_list if call.args[0] == metric_name]
             assert len(metric_calls) == 2
+
+    def test_logs_learning_rates_at_grad_accum_steps_one(self, tmp_path):
+        """With no accumulation (``grad_accum_steps=1``), every batch closes its own window and logs rates.
+
+        ``grad_accum_steps=1`` is this repo's own recommended setting for multi-GPU keypoint training (see
+        docs/learn/train/advanced.md's "Prefer grad_accum_steps=1 on multi-GPU for keypoints" note) — the
+        ``grad_accum_steps=2`` case above never exercises the no-accumulation path where the modulo check in
+        ``_should_step_optimizer`` is trivially true for every batch and the end-of-epoch tail fallback never engages
+        (there is never a partial window to flush).
+        """
+        module, *_ = _build_module(
+            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+            train_config=_base_train_config(tmp_path, grad_accum_steps=1),
+            tmp_path=tmp_path,
+        )
+        parameter = nn.Parameter(torch.randn(4))
+        optimizer = torch.optim.SGD([parameter], lr=0.1)
+        trainer = MagicMock(num_training_batches=3, gradient_clip_val=0.0, gradient_clip_algorithm="norm")
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        module.log = MagicMock()
+
+        for batch_idx in range(3):
+            if module._should_step_optimizer(batch_idx):
+                module._step_optimizer(optimizer)
+
+        for metric_name in ("train/lr", "train/lr_min", "train/lr_max"):
+            metric_calls = [call for call in module.log.call_args_list if call.args[0] == metric_name]
+            assert len(metric_calls) == 3
+
+    def test_logs_learning_rates_for_infinite_dataset_skips_tail_fallback(self, tmp_path):
+        """On an infinite/streaming dataset only modulo-boundary batches log rates; no spurious tail fallback fires.
+
+        ``test_logs_learning_rates_for_manual_optimizer_steps_including_tail`` above only covers a finite
+        ``num_training_batches=3``, where the third batch triggers ``_should_step_optimizer``'s end-of-epoch tail
+        fallback and logs a second time. ``TestShouldStepOptimizer.test_infinite_dataset_uses_modulo_only`` covers
+        the boolean return of ``_should_step_optimizer`` in isolation for ``num_training_batches=float("inf")``, but
+        not that the LR-logging path downstream reflects it: with the same ``grad_accum_steps=2`` and 3 batches, an
+        infinite dataset must log exactly once (only the modulo-boundary step at batch_idx=1), not twice, because
+        ``batch_idx + 1 >= num_training_batches`` can never hold against infinity.
+        """
+        module, *_ = _build_module(
+            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
+            train_config=_base_train_config(tmp_path, grad_accum_steps=2),
+            tmp_path=tmp_path,
+        )
+        parameter = nn.Parameter(torch.randn(4))
+        optimizer = torch.optim.SGD([parameter], lr=0.1)
+        trainer = MagicMock(num_training_batches=float("inf"), gradient_clip_val=0.0, gradient_clip_algorithm="norm")
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+        module.log = MagicMock()
+
+        for batch_idx in range(3):
+            if module._should_step_optimizer(batch_idx):
+                module._step_optimizer(optimizer)
+
+        for metric_name in ("train/lr", "train/lr_min", "train/lr_max"):
+            metric_calls = [call for call in module.log.call_args_list if call.args[0] == metric_name]
+            assert len(metric_calls) == 1
 
     def test_logs_convergence_components_to_progress_bar(self, tmp_path):
         """Selected detection and keypoint losses should appear as compact progress-only metrics."""
@@ -1359,6 +1500,68 @@ class TestTrainingStep:
         module.training_step((samples, targets), batch_idx=0)
 
         assert "pred_masks" not in received
+
+
+class TestOnBeforeOptimizerStepFiresOncePerAccumulationWindow:
+    """``on_before_optimizer_step`` must fire once per optimizer update on the automatic-optimization path.
+
+    ``TestTrainingStep.test_logs_learning_rate_range_for_multiple_param_groups`` above calls
+    ``on_before_optimizer_step`` directly with a hand-built optimizer, which only verifies the payload it logs — it
+    never drives Lightning's own automatic-optimization gradient-accumulation loop, so it cannot catch a regression
+    where the hook fired once per microbatch instead of once per completed accumulation window. Detection/segmentation
+    models use PTL's automatic optimization (unlike keypoint models' manual ``_should_step_optimizer`` path tested
+    elsewhere in this file), so accumulation gating here is entirely internal to Lightning; the only way to exercise
+    it faithfully is a real ``Trainer.fit()`` run with ``accumulate_grad_batches > 1``.
+    """
+
+    def test_fires_once_per_window_not_once_per_microbatch(self, tmp_path):
+        """4 training batches at accumulate_grad_batches=2 must trigger exactly 2 optimizer-step hook calls."""
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path, num_workers=0)
+
+        tiny_model = _TinyModel()
+        fake_criterion = _FakeCriterion()
+        fake_postprocess = MagicMock(side_effect=_helpers_fake_postprocess)
+        fake_dataset = _FakeDataset(length=20)
+
+        class _CountOptimizerSteps(Callback):
+            """Count how many times Lightning invokes the pre-optimizer-step hook."""
+
+            def __init__(self) -> None:
+                self.count = 0
+
+            def on_before_optimizer_step(self, trainer, pl_module, optimizer) -> None:
+                """Increment the call count for every hook invocation."""
+                self.count += 1
+
+        counter = _CountOptimizerSteps()
+
+        with (
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=tiny_model),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(fake_criterion, fake_postprocess),
+            ),
+            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
+            patch(
+                "rfdetr.training.module_model.get_param_dict",
+                side_effect=lambda args, model: _make_param_dicts(model),
+            ),
+        ):
+            module = RFDETRModelModule(mc, tc)
+            datamodule = RFDETRDataModule(mc, tc)
+            trainer = Trainer(
+                fast_dev_run=4,
+                accelerator="cpu",
+                enable_progress_bar=False,
+                enable_model_summary=False,
+                logger=False,
+                accumulate_grad_batches=2,
+                callbacks=[counter],
+            )
+            trainer.fit(module, datamodule)
+
+        assert counter.count == 2
 
 
 class TestShouldStepOptimizer:
