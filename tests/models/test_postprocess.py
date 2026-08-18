@@ -257,6 +257,78 @@ class TestPostProcessMasks:
         expected = torch.tensor([[True, False], [False, True]])
         assert torch.equal(results[0]["masks"].squeeze(1)[0], expected)
 
+    @pytest.mark.parametrize(
+        ("batch", "upsample", "expected_calls"),
+        [
+            pytest.param(4, True, [(4, 2)], id="upsampled-batch"),
+            pytest.param(4, False, [], id="native-resolution"),
+            pytest.param(0, True, [], id="empty-upsampled-batch"),
+        ],
+    )
+    def test_target_sizes_are_read_once_per_upsampled_batch(
+        self, batch: int, upsample: bool, expected_calls: list[tuple[int, ...]]
+    ) -> None:
+        """A non-empty upsampled batch reads all target sizes together; other paths do not read them."""
+        out_masks = torch.randn(batch, 1, 2, 2)
+        scores = torch.ones(batch, 1)
+        labels = torch.zeros(batch, 1, dtype=torch.long)
+        boxes = torch.zeros(batch, 1, 4)
+        topk_boxes = torch.zeros(batch, 1, dtype=torch.long)
+        target_sizes = torch.full((batch, 2), 8, dtype=torch.long)
+        calls: list[tuple[int, ...]] = []
+        original_tolist = torch.Tensor.tolist
+
+        def tracked_tolist(tensor: torch.Tensor) -> object:
+            """Record the tensor shape passed to ``tolist`` before delegating to PyTorch."""
+            calls.append(tuple(tensor.shape))
+            return original_tolist(tensor)
+
+        with patch.object(torch.Tensor, "tolist", tracked_tolist):
+            PostProcess._postprocess_masks(
+                out_masks,
+                scores,
+                labels,
+                boxes,
+                topk_boxes,
+                target_sizes,
+                upsample_masks_to_image_size=upsample,
+            )
+
+        assert calls == expected_calls
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_target_sizes_are_read_once_per_upsampled_batch_cuda(self) -> None:
+        """Same call-count guarantee as ``test_target_sizes_are_read_once_per_upsampled_batch`` above, with every input
+        tensor on CUDA — the actual site of the device-to-host synchronization this PR collapses from one per image to
+        one per batch."""
+        out_masks = torch.randn(4, 1, 2, 2, device="cuda")
+        scores = torch.ones(4, 1, device="cuda")
+        labels = torch.zeros(4, 1, dtype=torch.long, device="cuda")
+        boxes = torch.zeros(4, 1, 4, device="cuda")
+        topk_boxes = torch.zeros(4, 1, dtype=torch.long, device="cuda")
+        target_sizes = torch.full((4, 2), 8, dtype=torch.long, device="cuda")
+        calls: list[tuple[int, ...]] = []
+        original_tolist = torch.Tensor.tolist
+
+        def tracked_tolist(tensor: torch.Tensor) -> object:
+            """Record the tensor shape passed to ``tolist`` before delegating to PyTorch."""
+            calls.append(tuple(tensor.shape))
+            return original_tolist(tensor)
+
+        with patch.object(torch.Tensor, "tolist", tracked_tolist):
+            PostProcess._postprocess_masks(
+                out_masks,
+                scores,
+                labels,
+                boxes,
+                topk_boxes,
+                target_sizes,
+                upsample_masks_to_image_size=True,
+            )
+
+        assert calls == [(4, 2)]
+
     def test_duplicate_query_selection_repeats_the_same_mask_rows(self):
         """Top-k can pick the same query under two classes; each pick must yield that query's exact mask.
 

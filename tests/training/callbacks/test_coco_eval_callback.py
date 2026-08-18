@@ -1958,6 +1958,66 @@ class TestConvertTargets:
         out = cb._convert_targets(targets)
         assert set(out[0].keys()) == {"boxes", "labels"}
 
+    @pytest.mark.parametrize(
+        ("num_targets", "expected_calls"),
+        [
+            pytest.param(3, [(3, 2)], id="multi-target-batch"),
+            pytest.param(0, [], id="empty-targets"),
+        ],
+    )
+    def test_orig_size_is_read_once_per_batch(self, num_targets: int, expected_calls: list[tuple[int, ...]]) -> None:
+        """A non-empty target batch reads every orig_size together in one device-to-host synchronization instead of one
+        ``tolist()`` call per target inside the loop."""
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.zeros(1, 4),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([10, 10]),
+            }
+            for _ in range(num_targets)
+        ]
+        calls: list[tuple[int, ...]] = []
+        original_tolist = torch.Tensor.tolist
+
+        def tracked_tolist(tensor: torch.Tensor) -> object:
+            """Record the tensor shape passed to ``tolist`` before delegating to PyTorch."""
+            calls.append(tuple(tensor.shape))
+            return original_tolist(tensor)
+
+        with patch.object(torch.Tensor, "tolist", tracked_tolist):
+            cb._convert_targets(targets)
+
+        assert calls == expected_calls
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_orig_size_is_read_once_per_batch_cuda(self) -> None:
+        """Same call-count guarantee as ``test_orig_size_is_read_once_per_batch`` above, with every target tensor on
+        CUDA — the actual site of the device-to-host synchronization this PR collapses from one per target to one per
+        batch."""
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.zeros(1, 4, device="cuda"),
+                "labels": torch.tensor([0], device="cuda"),
+                "orig_size": torch.tensor([10, 10], device="cuda"),
+            }
+            for _ in range(3)
+        ]
+        calls: list[tuple[int, ...]] = []
+        original_tolist = torch.Tensor.tolist
+
+        def tracked_tolist(tensor: torch.Tensor) -> object:
+            """Record the tensor shape passed to ``tolist`` before delegating to PyTorch."""
+            calls.append(tuple(tensor.shape))
+            return original_tolist(tensor)
+
+        with patch.object(torch.Tensor, "tolist", tracked_tolist):
+            cb._convert_targets(targets)
+
+        assert calls == [(3, 2)]
+
 
 class TestConvertTargetsWithPreds:
     """_convert_targets(targets, preds) resizes each target's masks to its own paired prediction's grid (preds[index]),
