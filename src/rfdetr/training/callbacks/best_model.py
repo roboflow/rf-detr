@@ -493,12 +493,21 @@ class BestModelCallback(ModelCheckpoint):
 
         Delegates regular-model checkpoint management to the :class:`~pytorch_lightning.callbacks.ModelCheckpoint`
         parent (handles improvement detection, fast_dev_run/sanity guards, ``best_model_path`` and ``best_model_score``
-        bookkeeping).  EMA is tracked independently.
+        bookkeeping).  EMA is tracked independently, so the pre-training sanity-check guard below applies to both:
+        neither should treat the sanity-check validation pass as a real epoch's result.
 
         Args:
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
         """
+        # PTL's pre-training sanity check runs this hook before any real epoch. The
+        # regular-checkpoint path below already no-ops during it via ModelCheckpoint's own
+        # trainer.sanity_checking guard (_should_skip_saving_checkpoint), but the EMA
+        # tracking and the smoothing accumulator are custom bookkeeping that don't inherit
+        # that guard, so a positive sanity-check score would otherwise get treated as a real
+        # improvement — see #1348.
+        if trainer.sanity_checking:
+            return
         # Stash before the skip guard — eligible epochs still need this reference
         # inside _save_checkpoint (which receives no pl_module param).
         self._current_pl_module = pl_module
