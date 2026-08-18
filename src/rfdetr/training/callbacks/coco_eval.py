@@ -1371,8 +1371,11 @@ class COCOEvalCallback(Callback):
                 f"preds and targets must be positionally paired 1:1; got {len(preds)} preds vs {len(targets)} targets"
             )
         out = []
+        # Stack every target's orig_size into one device-to-host synchronization instead of
+        # one per target inside the loop (same fix as PostProcess._postprocess_masks).
+        orig_sizes_list = torch.stack([t["orig_size"] for t in targets]).tolist() if targets else []
         for index, t in enumerate(targets):
-            h, w = t["orig_size"].tolist()
+            h, w = orig_sizes_list[index]
             scale = t["boxes"].new_tensor([w, h, w, h])
             boxes = box_cxcywh_to_xyxy(t["boxes"]) * scale
             entry: dict[str, Tensor] = {"boxes": boxes, "labels": t["labels"]}
