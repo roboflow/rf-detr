@@ -1838,7 +1838,9 @@ class TestCompactPathCriterionEquivalence:
 
         calls = _spy_on_compact_path(monkeypatch)
         compact_losses = criterion(outputs, targets, num_boxes=1.0)
-        assert calls == [1, 1, 1, 1], "main + 2 aux layers + enc must each take the compact path once"
+        # This small batch is far under _STACKED_COST_ELEMENT_LIMIT, so _match_many serves main +
+        # 2 aux layers + enc from one stacked compact-cost pass instead of four per-layer ones.
+        assert calls == [1], "one stacked compact pass must serve main + 2 aux layers + enc"
         assert len(compact_losses) == 17, "main + 2 aux + enc, each with cardinality/class_error/bbox/giou"
         sum(compact_losses.values()).backward()
         compact_grads = [
@@ -2477,3 +2479,102 @@ class TestBatchedDetectionMatching:
         layer3, _ = _random_detection_batch(seed=414, sizes=[2, 3])
 
         assert matcher._match_many([layer1, layer2, layer3], targets) is None
+
+
+class TestStackedCostConstruction:
+    """``_match_many`` folds compatible layers into one stacked cost-construction pass when the padded per-layer matrix
+    is small enough; the stacked pass must be bitwise-identical to the per-layer loop, and oversized batches must keep
+    the per-layer loop (stacking regresses compute-bound dense-crowd shapes — plan M2, L4)."""
+
+    def test_stacked_matrices_match_per_layer_bitwise(self) -> None:
+        """The stacked pass reproduces every layer's compact cost matrix bitwise.
+
+        Stacking only folds the layer dimension into the batch dimension of the same padded gather/cdist/GIoU ops, so
+        any numeric difference means the stacked path computed different math, not a harmless reordering.
+        """
+        matcher = HungarianMatcher()
+        layers = []
+        for seed in (601, 602, 603):
+            layer, _ = _random_detection_batch(seed=seed, sizes=[2, 0, 3])
+            layers.append(layer)
+        _, targets = _random_detection_batch(seed=601, sizes=[2, 0, 3])
+
+        stacked = matcher._compute_stacked_compact_cost_matrices(layers, targets)
+        expected = [
+            matcher._compute_compact_detection_cost_matrix(layer, targets, clamp_target_labels=True) for layer in layers
+        ]
+
+        assert len(stacked) == len(expected)
+        for stacked_matrix, expected_matrix in zip(stacked, expected):
+            assert torch.equal(stacked_matrix, expected_matrix)
+
+    def test_match_many_results_unchanged_by_stacking(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``_match_many`` returns identical assignments whether the stacked pass is enabled or disabled.
+
+        Forces both routes on the same inputs by toggling the element limit, so a routing bug cannot hide behind the
+        shared solver.
+        """
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=611, sizes=[2, 3])
+        layer2, _ = _random_detection_batch(seed=612, sizes=[2, 3])
+        layers = [outputs, layer2]
+
+        stacked_result = matcher._match_many(layers, targets)
+        monkeypatch.setattr(matcher_module, "_STACKED_COST_ELEMENT_LIMIT", 0)
+        loop_result = matcher._match_many(layers, targets)
+
+        assert stacked_result is not None and loop_result is not None
+        for stacked_indices, loop_indices in zip(stacked_result, loop_result):
+            _assert_same_indices(stacked_indices, loop_indices)
+
+    @pytest.mark.parametrize(
+        ("limit", "expected_cdist_calls"),
+        [
+            pytest.param(10_000_000, 1, id="under-limit-stacks-once"),
+            pytest.param(0, 2, id="over-limit-per-layer-loop"),
+        ],
+    )
+    def test_element_limit_routes_between_stacked_and_per_layer(
+        self, monkeypatch: pytest.MonkeyPatch, limit: int, expected_cdist_calls: int
+    ) -> None:
+        """The element limit decides between one stacked ``cdist`` and one ``cdist`` per layer.
+
+        Counts 3-D ``torch.cdist`` calls inside ``_match_many``: the stacked pass issues exactly one for all layers, the
+        per-layer loop one per layer. Oversized batches must take the loop because stacking measured 0.79-1.03x on dense
+        compute-bound shapes (plan M2).
+        """
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=613, sizes=[2, 3])
+        layer2, _ = _random_detection_batch(seed=614, sizes=[2, 3])
+        monkeypatch.setattr(matcher_module, "_STACKED_COST_ELEMENT_LIMIT", limit)
+        calls: list[int] = []
+        original = torch.cdist
+
+        def spy(x1: torch.Tensor, x2: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
+            calls.append(1)
+            return original(x1, x2, *args, **kwargs)
+
+        monkeypatch.setattr(torch, "cdist", spy)
+
+        result = matcher._match_many([outputs, layer2], targets)
+
+        assert result is not None
+        assert len(calls) == expected_cdist_calls
+
+    def test_mismatched_query_counts_fall_back_to_per_layer(self) -> None:
+        """Layers with different query counts cannot stack and must keep the per-layer loop.
+
+        ``_match_many`` never required equal query counts across layers, so the stacked pass must not introduce that
+        requirement as a crash or a wrong-shaped matrix.
+        """
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=615, sizes=[2, 3], num_queries=6)
+        layer2, _ = _random_detection_batch(seed=616, sizes=[2, 3], num_queries=12)
+        layers = [outputs, layer2]
+
+        actual = matcher._match_many(layers, targets)
+        expected = [matcher(layer, targets) for layer in layers]
+
+        assert actual is not None
+        for actual_indices, expected_indices in zip(actual, expected):
+            _assert_same_indices(actual_indices, expected_indices)

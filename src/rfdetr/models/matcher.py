@@ -38,6 +38,11 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 _SANITIZED_COST_MARGIN = 1.0
 _FOCAL_LOSS_GAMMA = 2.0
+#: Per-layer padded cost-matrix element budget (``batch * queries * max_targets``) under which
+#: ``_match_many`` folds all layers into one stacked cost-construction pass. Calibrated on an
+#: NVIDIA L4 (plan-native-linear-assignment.md, M2 results): stacking wins 1.45-5.8x up to ~312K
+#: elements but regresses to 0.79-1.03x from ~468K, so the budget sits between those points.
+_STACKED_COST_ELEMENT_LIMIT = 350_000
 _LinearSumAssignment = Callable[[Any], tuple[NDArray[np.int64], NDArray[np.int64]]]
 linear_sum_assignment = cast(_LinearSumAssignment, _linear_sum_assignment)
 
@@ -447,6 +452,55 @@ class HungarianMatcher(nn.Module):
             dim=-1,
         )
 
+    def _compute_stacked_compact_cost_matrices(
+        self, outputs_list: list[dict[str, Any]], targets: list[dict[str, Any]]
+    ) -> list[Tensor]:
+        """Compute every layer's compact detection cost matrix in one stacked pass.
+
+        Folds the layer dimension into the batch dimension and reuses
+        :meth:`_compute_compact_detection_cost_matrix` on the concatenation, so target padding, the
+        class gather, ``cdist``, and the vmapped GIoU each launch once for all layers instead of
+        once per layer. The concatenated call sees ``len(outputs_list) * len(targets)`` images
+        whose per-image target counts repeat layer-major, so its output columns are each layer's
+        compact matrix laid side by side — slicing them apart reproduces the per-layer results
+        bitwise; only the kernel-launch count changes.
+
+        Callers must guarantee every layer shares the prediction query count (dtype, device, and
+        class count are already enforced by :meth:`_match_many`). Target labels are clamped exactly
+        as :meth:`_match_many`'s per-layer calls do.
+
+        Examples:
+            >>> matcher = HungarianMatcher()
+            >>> outputs = {"pred_logits": torch.zeros(2, 4, 5), "pred_boxes": torch.rand(2, 4, 4)}
+            >>> targets = [
+            ...     {"boxes": torch.rand(1, 4), "labels": torch.tensor([0])},
+            ...     {"boxes": torch.rand(2, 4), "labels": torch.tensor([1, 2])},
+            ... ]
+            >>> [m.shape for m in matcher._compute_stacked_compact_cost_matrices([outputs, outputs], targets)]
+            [torch.Size([4, 3]), torch.Size([4, 3])]
+
+        Args:
+            outputs_list: Per-layer detection outputs with identical ``pred_logits``/``pred_boxes``
+                shapes.
+            targets: Per-image target dicts shared by every layer.
+
+        Returns:
+            One ``[num_queries, sum(sizes)]`` cost matrix per layer, in ``outputs_list`` order,
+            each a column slice of the single stacked computation.
+        """
+        stacked_outputs = {
+            "pred_logits": torch.cat([outputs["pred_logits"] for outputs in outputs_list]),
+            "pred_boxes": torch.cat([outputs["pred_boxes"] for outputs in outputs_list]),
+        }
+        stacked_matrix = self._compute_compact_detection_cost_matrix(
+            stacked_outputs, targets * len(outputs_list), clamp_target_labels=True
+        )
+        total_targets = sum(len(target["boxes"]) for target in targets)
+        return [
+            stacked_matrix[:, offset : offset + total_targets]
+            for offset in range(0, stacked_matrix.shape[1], total_targets)
+        ]
+
     @torch.no_grad()
     def _match_many(
         self,
@@ -539,13 +593,29 @@ class HungarianMatcher(nn.Module):
             device="cpu",
             pin_memory=on_cuda,
         )
+        # Stacked cost construction holds every layer's padded matrix at once — the opposite of the
+        # per-layer staging below, which keeps only one layer resident — so it is gated to small
+        # padded shapes where the L4 calibration measured launch-bound wins; dense compute-bound
+        # batches measured 0.79-1.03x stacked and keep the per-layer loop. Layers with differing
+        # query counts cannot fold into one batch dimension and also keep the loop.
+        query_counts = {outputs["pred_logits"].shape[1] for outputs in outputs_list}
+        stacked_cost_matrices = None
+        if (
+            len(query_counts) == 1
+            and len(targets) * next(iter(query_counts)) * max(sizes) <= _STACKED_COST_ELEMENT_LIMIT
+        ):
+            stacked_cost_matrices = self._compute_stacked_compact_cost_matrices(outputs_list, targets)
+
         offset = 0
-        for outputs, matrix_shape in zip(outputs_list, matrix_shapes):
+        for layer_index, (outputs, matrix_shape) in enumerate(zip(outputs_list, matrix_shapes)):
             pred_boxes = outputs["pred_boxes"]
             pred_safe = torch.isfinite(pred_boxes).all() & (pred_boxes.abs() <= coordinate_limit).all()
-            cost_matrix = self._compute_compact_detection_cost_matrix(
-                outputs, targets, clamp_target_labels=True
-            ).float()
+            if stacked_cost_matrices is None:
+                cost_matrix = self._compute_compact_detection_cost_matrix(
+                    outputs, targets, clamp_target_labels=True
+                ).float()
+            else:
+                cost_matrix = stacked_cost_matrices[layer_index].float()
             # The final row carries the unsynced safety predicate with its layer's cost matrix, so the
             # complete matcher batch still needs only one synchronization however many layers it holds.
             payload = torch.cat([cost_matrix, (target_safe & pred_safe).to(cost_matrix.dtype).expand(1, total_targets)])
