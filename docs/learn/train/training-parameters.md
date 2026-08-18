@@ -227,13 +227,13 @@ These parameters apply when training `RFDETRKeypointPreview` on COCO keypoint an
 
 !!! warning "`keypoint_flip_pairs`: `None` vs `[]` vs a populated list"
 
-    This value is tri-state, and the state — not just the value — controls whether horizontal-flip augmentations run at all when a custom `aug_config` is supplied:
+    This value is tri-state, and the state — not just the value — controls whether horizontal-flip augmentations run at all, on both the default torchvision-native pipeline (`aug_config=None`) and a custom Albumentations `aug_config`:
 
-    - `None` marks a detection-only pipeline. Horizontal-flip augmentations (`HorizontalFlip`, `Flip`, `D4`) in your `aug_config` are always kept, since there are no keypoint annotations that a flip could invalidate.
-    - `[]` on a keypoint pipeline means no flip pairs are defined. RF-DETR then drops horizontal-flip augmentations from your `aug_config` rather than flip an image without knowing which keypoints to swap — this is intentional annotation-safety behavior, not a bug, but easy to trip over if you set `keypoint_flip_pairs=[]` yourself without expecting the augmentation to disappear.
+    - `None` marks a detection-only pipeline. Horizontal-flip augmentations (torchvision's default flip, or `HorizontalFlip`/`Flip`/`D4` in your `aug_config`) are always kept, since there are no keypoint annotations that a flip could invalidate.
+    - `[]` on a keypoint pipeline means no flip pairs are defined. RF-DETR then drops horizontal-flip augmentations rather than flip an image without knowing which keypoints to swap — this is intentional annotation-safety behavior, not a bug, but easy to trip over if you set `keypoint_flip_pairs=[]` yourself without expecting the augmentation to disappear.
     - A populated list on a keypoint pipeline supplies the actual left/right index pairs, so horizontal-flip augmentations run and swap the paired keypoints.
 
-    The current pydantic default for `keypoint_flip_pairs` is `[]`, matching the field definition in `src/rfdetr/config.py`. See `AlbumentationsWrapper.from_config` in `src/rfdetr/datasets/transforms.py` for the exact gating check (`keypoint_flip_pairs is not None and not keypoint_flip_pairs`).
+    The current pydantic default for `keypoint_flip_pairs` is `[]`, matching the field definition in `src/rfdetr/config.py`. See `_build_torchvision_pipeline` in `src/rfdetr/datasets/coco.py` for the default-backend gating check, and `AlbumentationsWrapper.from_config` in `src/rfdetr/datasets/transforms.py` for the Albumentations-backend equivalent — both use the same `keypoint_flip_pairs is not None and not keypoint_flip_pairs` check.
 
 !!! note "OKS sigma values: flat vs per-keypoint"
 
@@ -260,13 +260,14 @@ The parameters below are available for fine-grained control over training behavi
 
 ### Runtime and Accelerator
 
-| Parameter           | Type   | Default  | Description                                                                                      |
-| ------------------- | ------ | -------- | ------------------------------------------------------------------------------------------------ |
-| `accelerator`       | `str`  | `"auto"` | PyTorch Lightning accelerator selection. `"auto"` picks GPU if available, then MPS, then CPU.    |
-| `seed`              | `int`  | `None`   | Global random seed for reproducibility. `None` means no fixed seed is set.                       |
-| `fp16_eval`         | `bool` | `False`  | Run evaluation passes in FP16 precision. Reduces memory usage but may lower numerical precision. |
-| `compute_val_loss`  | `bool` | `True`   | Compute and log the detection loss on the validation set each epoch.                             |
-| `compute_test_loss` | `bool` | `True`   | Compute and log the detection loss during the final test run.                                    |
+| Parameter              | Type   | Default  | Description                                                                                                                                                              |
+| ---------------------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `accelerator`          | `str`  | `"auto"` | PyTorch Lightning accelerator selection. `"auto"` picks GPU if available, then MPS, then CPU.                                                                            |
+| `seed`                 | `int`  | `None`   | Global random seed for reproducibility. `None` means no fixed seed is set.                                                                                               |
+| `fp16_eval`            | `bool` | `False`  | Run evaluation passes in FP16 precision. Reduces memory usage but may lower numerical precision.                                                                         |
+| `compute_val_loss`     | `bool` | `True`   | Compute and log the detection loss on the validation set each epoch.                                                                                                     |
+| `compute_test_loss`    | `bool` | `True`   | Compute and log the detection loss during the final test run.                                                                                                            |
+| `num_sanity_val_steps` | `int`  | `0`      | PyTorch Lightning sanity-check validation batches run before training starts. `0` disables it (the default); increase to catch val-path errors before a full epoch runs. |
 
 ### DataLoader Tuning
 
@@ -323,6 +324,7 @@ Below is a summary table of all training parameters:
 | `drop_path`                  | float                  | 0.0            | Stochastic depth drop-path rate for the backbone.                                                                                     |
 | `compute_val_loss`           | bool                   | True           | Compute and log loss during validation.                                                                                               |
 | `compute_test_loss`          | bool                   | True           | Compute and log loss during the test run.                                                                                             |
+| `num_sanity_val_steps`       | int                    | 0              | PTL sanity-check validation batches run before training starts. 0 disables it; increase to catch val-path errors early.               |
 | `fp16_eval`                  | bool                   | False          | Run evaluation in FP16 precision to reduce memory usage.                                                                              |
 | `pin_memory`                 | bool                   | None           | Pin DataLoader memory. None defers to PyTorch Lightning's default.                                                                    |
 | `persistent_workers`         | bool                   | None           | Keep DataLoader workers alive between epochs. None uses PTL default.                                                                  |

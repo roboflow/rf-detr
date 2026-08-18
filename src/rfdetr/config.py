@@ -209,7 +209,7 @@ def _detect_device() -> str:
                 accel = current_accelerator(check_available=True)
             except TypeError:
                 accel = current_accelerator()
-                if accel is not None and not accelerator.is_available():
+                if accel is not None and accelerator is not None and not accelerator.is_available():
                     accel = None
             if accel is not None:
                 return str(accel)
@@ -854,7 +854,7 @@ class RFDETRLargeConfig(ModelConfig):
     dec_n_points: int = 2
     num_windows: int = 2
     patch_size: int = 16
-    projector_scale: list[Literal["P4",]] = ["P4"]
+    projector_scale: list[Literal["P3", "P4", "P5"]] = ["P4"]
     out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_classes: int = 90
     positional_encoding_size: int = 704 // 16
@@ -1166,7 +1166,7 @@ class TrainConfig(BaseConfig):
             'torchvision'
         """
         if isinstance(value, AugmentationBackend):
-            return value.value
+            return str(value.value)
         return value
 
     notes: Optional[Any] = Field(
@@ -1234,8 +1234,17 @@ class TrainConfig(BaseConfig):
     dont_save_weights: bool = False
     # PTL runtime/perf tuning knobs.
     train_log_sync_dist: bool = False
+    # Component-level train/ metrics honor train_log_on_step for on_step visibility only when
+    # compact_train_metrics=False; when True, components are aggregated and logged on_epoch-only regardless.
     train_log_on_step: bool = False
+    # When True (default), per-decoder/encoder auxiliary loss keys (e.g. loss_ce_0, loss_bbox_enc) are
+    # aggregated into train/<term>_aux and always logged on_epoch-only. When False, every per-layer key is
+    # logged individually, honoring train_log_on_step for those component logs too.
+    compact_train_metrics: bool = True
     compute_train_metrics: bool = False
+    # Restores PTL's pre-training sanity-validation pass (0 = disabled, current default;
+    # increase to re-enable and catch val-path errors before a full epoch runs).
+    num_sanity_val_steps: int = 0
     compute_val_loss: bool = True
     compute_test_loss: bool = True
     pin_memory: bool | None = None

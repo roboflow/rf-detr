@@ -835,10 +835,14 @@ def _spy_on_compact_path(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     original = HungarianMatcher._compute_compact_detection_cost_matrix
 
     def spy(
-        self: HungarianMatcher, outputs: dict[str, torch.Tensor], targets: list[dict[str, torch.Tensor]]
+        self: HungarianMatcher,
+        outputs: dict[str, torch.Tensor],
+        targets: list[dict[str, torch.Tensor]],
+        *args: object,
+        **kwargs: object,
     ) -> torch.Tensor:
         calls.append(1)
-        return original(self, outputs, targets)
+        return original(self, outputs, targets, *args, **kwargs)
 
     monkeypatch.setattr(HungarianMatcher, "_compute_compact_detection_cost_matrix", spy)
     return calls
@@ -1733,6 +1737,55 @@ class TestCompactPathOnCUDA:
         assert sweep_calls == [1], "the device mismatch must fall back to recomputing the sweep on CUDA"
 
 
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+class TestBatchedDetectionMatchingOnCUDA:
+    """``_match_many``'s entire reason for existing -- one pinned-memory host transfer plus a single
+    ``non_blocking``/stream-synchronize copy shared by every layer -- had zero test coverage under real CUDA kernels;
+    every ``TestBatchedDetectionMatching`` case above uses CPU tensors, which never exercises that transfer at all."""
+
+    def test_match_many_matches_individual_detection_assignments_on_cuda(self) -> None:
+        """Batched CUDA matching must reach the same per-image assignments as matching each layer individually.
+
+        Mirrors ``TestBatchedDetectionMatching.test_match_many_matches_individual_detection_assignments`` but with
+        CUDA tensors, so the pinned host transfer and stream sync are exercised under real CUDA kernels rather than
+        assumed to behave like the CPU path.
+        """
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=401, sizes=[2, 3])
+        outputs = {key: value.cuda() for key, value in outputs.items()}
+        targets = [{key: value.cuda() for key, value in target.items()} for target in targets]
+        layers = [outputs]
+        for seed in (402, 403):
+            layer, _ = _random_detection_batch(seed=seed, sizes=[2, 3])
+            layers.append({key: value.cuda() for key, value in layer.items()})
+        safety = matcher._precompute_target_side_safety(outputs, targets)
+
+        actual = matcher._match_many(layers, targets, target_side_safety=safety)
+        expected = [matcher(layer, targets, target_side_safety=safety) for layer in layers]
+
+        assert actual is not None
+        for actual_indices, expected_indices in zip(actual, expected):
+            _assert_same_indices(actual_indices, expected_indices)
+
+    def test_match_many_declines_non_finite_pred_boxes_on_cuda(self) -> None:
+        """A CUDA layer with non-finite ``pred_boxes`` must still decline correctly after the pinned host transfer.
+
+        Proves the per-layer safety-flag row (``(target_safe & pred_safe)``, appended to each layer's cost matrix before
+        the single batched D2H copy) actually survives that copy on CUDA -- not just on CPU, where no pinned memory
+        transfer or stream synchronization is involved at all.
+        """
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=408, sizes=[2, 3])
+        outputs = {key: value.cuda() for key, value in outputs.items()}
+        targets = [{key: value.cuda() for key, value in target.items()} for target in targets]
+        outputs["pred_boxes"][0, 0, 0] = float("nan")
+        layer2, _ = _random_detection_batch(seed=409, sizes=[2, 3])
+        layer2 = {key: value.cuda() for key, value in layer2.items()}
+
+        assert matcher._match_many([outputs, layer2], targets) is None
+
+
 class TestCompactPathCriterionEquivalence:
     """The exploration behind this PR claims the 17 criterion losses (main + 2 aux decoder layers + encoder, each with
     ``labels``/``boxes``/``cardinality``) and their gradients are byte-identical between the compact and fallback paths,
@@ -2190,6 +2243,9 @@ class TestTargetSideSafetyCaching:
             "_precompute_target_side_safety",
             lambda self, outputs, targets: None,
         )
+        # Isolate the pre-existing sequential matcher path: PR3's batched matcher intentionally
+        # computes this shared predicate once even without a precomputed cache.
+        monkeypatch.setattr(HungarianMatcher, "_match_many", lambda self, outputs_list, targets, **kwargs: None)
         fresh_calls = _spy_on_target_side_precheck(monkeypatch)
         fresh_losses = criterion(outputs, targets, num_boxes=1.0)
         assert fresh_calls == [1, 1, 1, 1], "without caching, all 4 matcher() calls must recompute independently"
@@ -2313,3 +2369,111 @@ class TestMatcherDictMaskCostUsesProjectedFeatures:
         corrupted_cost = captured[-1]
 
         assert not torch.allclose(real_cost, corrupted_cost)
+
+
+class TestBatchedDetectionMatching:
+    """Batching final, auxiliary, and encoder detection matchers must preserve every assignment."""
+
+    def test_match_many_matches_individual_detection_assignments(self) -> None:
+        """Three decoder/encoder-like outputs must produce their usual per-image assignments.
+
+        This prevents a batched host transfer from mixing a layer's cost matrix with a neighboring layer. It fails
+        before the batched matching API exists.
+        """
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=401, sizes=[2, 3])
+        layers = [outputs]
+        for seed in (402, 403):
+            layer, _ = _random_detection_batch(seed=seed, sizes=[2, 3])
+            layers.append(layer)
+        safety = matcher._precompute_target_side_safety(outputs, targets)
+
+        actual = matcher._match_many(layers, targets, target_side_safety=safety)
+        expected = [matcher(layer, targets, target_side_safety=safety) for layer in layers]
+
+        assert actual is not None
+        for actual_indices, expected_indices in zip(actual, expected):
+            _assert_same_indices(actual_indices, expected_indices)
+
+    def test_match_many_declines_out_of_range_labels_for_full_path_fallback(self) -> None:
+        """An invalid label must bypass batching so the legacy full path keeps its IndexError contract."""
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=404, sizes=[2, 3])
+        targets[1]["labels"][0] = outputs["pred_logits"].shape[-1]
+
+        assert matcher._match_many([outputs, outputs], targets) is None
+        with pytest.raises(IndexError):
+            matcher(outputs, targets)
+
+    def test_match_many_declines_single_layer(self) -> None:
+        """A single layer must use the per-layer matching path."""
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=405, sizes=[2, 3])
+
+        assert matcher._match_many([outputs], targets) is None
+
+    def test_match_many_declines_zero_targets(self) -> None:
+        """A batch without targets must use the per-layer matching path."""
+        matcher = HungarianMatcher()
+        layer1, targets = _random_detection_batch(seed=406, sizes=[0, 0])
+        layer2, _ = _random_detection_batch(seed=407, sizes=[0, 0])
+
+        assert matcher._match_many([layer1, layer2], targets) is None
+
+    def test_match_many_declines_cross_layer_num_classes_mismatch(self) -> None:
+        """Two otherwise-compatible layers with different ``pred_logits`` class counts must decline batching.
+
+        Every other ``TestBatchedDetectionMatching`` case uses homogeneous layer shapes, never exercising the cross-
+        layer ``pred_logits.shape[-1] != reference_classes`` compatibility gate that guards the clamp used to build each
+        layer's compact cost matrix.
+        """
+        matcher = HungarianMatcher()
+        layer1, targets = _random_detection_batch(seed=410, sizes=[2, 3], num_classes=5)
+        layer2, _ = _random_detection_batch(seed=411, sizes=[2, 3], num_classes=6)
+
+        assert matcher._match_many([layer1, layer2], targets) is None
+
+    def test_match_many_declines_cross_layer_pred_boxes_dtype_mismatch(self) -> None:
+        """Two otherwise-compatible layers with different ``pred_boxes`` dtypes must decline batching.
+
+        The compatibility gate checks ``pred_boxes.dtype`` equality across layers alongside ``pred_boxes.device``,
+        ``pred_logits.device``, and ``pred_logits.shape[-1]`` -- only the ``num_classes`` branch had a dedicated test,
+        leaving this branch unverified.
+        """
+        matcher = HungarianMatcher()
+        layer1, targets = _random_detection_batch(seed=415, sizes=[2, 3])
+        layer2, _ = _random_detection_batch(seed=416, sizes=[2, 3])
+        layer2["pred_boxes"] = layer2["pred_boxes"].double()
+
+        assert matcher._match_many([layer1, layer2], targets) is None
+
+    def test_match_many_declines_cross_layer_pred_logits_device_mismatch(self) -> None:
+        """Two otherwise-compatible layers with different ``pred_logits`` devices must decline batching.
+
+        The compatibility gate's ``pred_logits.device`` check is what item A5 (from the /oss:resolve PR #1361 review)
+        added alongside the pre-existing ``pred_boxes`` dtype/device check -- it had no dedicated test. A ``meta``
+        device is used only to make the device comparison itself differ; no tensor math runs on it, since the mismatch
+        short-circuits ``_match_many`` before any compute.
+        """
+        matcher = HungarianMatcher()
+        layer1, targets = _random_detection_batch(seed=417, sizes=[2, 3])
+        layer2, _ = _random_detection_batch(seed=418, sizes=[2, 3])
+        layer2["pred_logits"] = layer2["pred_logits"].to("meta")
+
+        assert matcher._match_many([layer1, layer2], targets) is None
+
+    def test_match_many_declines_whole_batch_on_one_unsafe_layer(self) -> None:
+        """One layer's non-finite ``pred_boxes`` must decline the entire batch, not just that layer.
+
+        The only other unsafety test makes every layer unsafe simultaneously via a shared corrupted target, so it cannot
+        distinguish a whole-batch decline from a partial one. Here the outer two layers stay safe and only the middle
+        layer carries a non-finite box, pinning that the per-layer safety check inside the transferred-payload loop
+        returns ``None`` for the whole call on its first failure rather than assigning the safe layers.
+        """
+        matcher = HungarianMatcher()
+        layer1, targets = _random_detection_batch(seed=412, sizes=[2, 3])
+        layer2, _ = _random_detection_batch(seed=413, sizes=[2, 3])
+        layer2["pred_boxes"][0, 0, 0] = float("nan")
+        layer3, _ = _random_detection_batch(seed=414, sizes=[2, 3])
+
+        assert matcher._match_many([layer1, layer2, layer3], targets) is None

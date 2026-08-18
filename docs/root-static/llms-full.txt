@@ -252,7 +252,6 @@ model.export(format="tensorrt")
 model.deploy_to_roboflow(
     workspace="your-workspace",
     project_id="your-project-id",
-    version=1,
     api_key="YOUR_API_KEY"
 )
 ```
@@ -350,7 +349,7 @@ All model classes inherit from `RFDETR` and share these methods:
 - `predict(image, threshold=0.5)` — run inference on a single image (path, URL, numpy array, or PIL Image)
 - `train(dataset_dir, epochs, batch_size, ...)` — fine-tune on custom dataset
 - `export(format)` — export to ONNX, TFLite, or TensorRT
-- `deploy_to_roboflow(workspace, project_id, version)` — deploy model to Roboflow hosted inference
+- `deploy_to_roboflow(workspace, project_id, version=None)` — deploy model to Roboflow hosted inference (latest dataset version when `version` omitted; an empty project falls back to version `1`, then the SDK raises its usual error)
 
 ### TrainConfig
 
