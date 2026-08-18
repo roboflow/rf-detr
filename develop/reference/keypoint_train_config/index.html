@@ -2809,16 +2809,7 @@ fine-tuning and can lock checkpoint selection to a transient peak.</p>
 
               <details class="quote">
                 <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-                <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1550">1550</a></span>
-<span class="normal"><a href="#__codelineno-0-1551">1551</a></span>
-<span class="normal"><a href="#__codelineno-0-1552">1552</a></span>
-<span class="normal"><a href="#__codelineno-0-1553">1553</a></span>
-<span class="normal"><a href="#__codelineno-0-1554">1554</a></span>
-<span class="normal"><a href="#__codelineno-0-1555">1555</a></span>
-<span class="normal"><a href="#__codelineno-0-1556">1556</a></span>
-<span class="normal"><a href="#__codelineno-0-1557">1557</a></span>
-<span class="normal"><a href="#__codelineno-0-1558">1558</a></span>
-<span class="normal"><a href="#__codelineno-0-1559">1559</a></span>
+                <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1559">1559</a></span>
 <span class="normal"><a href="#__codelineno-0-1560">1560</a></span>
 <span class="normal"><a href="#__codelineno-0-1561">1561</a></span>
 <span class="normal"><a href="#__codelineno-0-1562">1562</a></span>
@@ -2842,40 +2833,49 @@ fine-tuning and can lock checkpoint selection to a transient peak.</p>
 <span class="normal"><a href="#__codelineno-0-1580">1580</a></span>
 <span class="normal"><a href="#__codelineno-0-1581">1581</a></span>
 <span class="normal"><a href="#__codelineno-0-1582">1582</a></span>
-<span class="normal"><a href="#__codelineno-0-1583">1583</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1550"><a id="__codelineno-0-1550" name="__codelineno-0-1550"></a><span class="k">class</span><span class="w"> </span><span class="nc">KeypointTrainConfig</span><span class="p">(</span><span class="n">TrainConfig</span><span class="p">):</span>
-</span><span id="__span-0-1551"><a id="__codelineno-0-1551" name="__codelineno-0-1551"></a><span class="w">    </span><span class="sd">"""Training configuration for keypoint detection models.</span>
-</span><span id="__span-0-1552"><a id="__codelineno-0-1552" name="__codelineno-0-1552"></a>
-</span><span id="__span-0-1553"><a id="__codelineno-0-1553" name="__codelineno-0-1553"></a><span class="sd">    Extends :class:`TrainConfig` with keypoint-specific loss coefficients and</span>
-</span><span id="__span-0-1554"><a id="__codelineno-0-1554" name="__codelineno-0-1554"></a><span class="sd">    metric-smoothing defaults tuned for the NLL-Cholesky keypoint head, which</span>
-</span><span id="__span-0-1555"><a id="__codelineno-0-1555" name="__codelineno-0-1555"></a><span class="sd">    produces noisy per-epoch OKS metrics during early fine-tuning.</span>
-</span><span id="__span-0-1556"><a id="__codelineno-0-1556" name="__codelineno-0-1556"></a>
-</span><span id="__span-0-1557"><a id="__codelineno-0-1557" name="__codelineno-0-1557"></a><span class="sd">    Attributes:</span>
-</span><span id="__span-0-1558"><a id="__codelineno-0-1558" name="__codelineno-0-1558"></a><span class="sd">        cls_loss_coef: Classification loss weight.</span>
-</span><span id="__span-0-1559"><a id="__codelineno-0-1559" name="__codelineno-0-1559"></a><span class="sd">        keypoint_l1_loss_coef: L1 regression loss weight for keypoint coordinates.</span>
-</span><span id="__span-0-1560"><a id="__codelineno-0-1560" name="__codelineno-0-1560"></a><span class="sd">        keypoint_findable_loss_coef: Loss weight for the keypoint visibility head.</span>
-</span><span id="__span-0-1561"><a id="__codelineno-0-1561" name="__codelineno-0-1561"></a><span class="sd">        keypoint_visible_loss_coef: Loss weight for the keypoint visibility score.</span>
-</span><span id="__span-0-1562"><a id="__codelineno-0-1562" name="__codelineno-0-1562"></a><span class="sd">        keypoint_nll_loss_coef: NLL-Cholesky loss weight. Restored to ``1.0`` to</span>
-</span><span id="__span-0-1563"><a id="__codelineno-0-1563" name="__codelineno-0-1563"></a><span class="sd">            align with the other keypoint loss terms (``keypoint_l1_loss_coef``,</span>
-</span><span id="__span-0-1564"><a id="__codelineno-0-1564" name="__codelineno-0-1564"></a><span class="sd">            ``keypoint_findable_loss_coef``, ``keypoint_visible_loss_coef``).</span>
-</span><span id="__span-0-1565"><a id="__codelineno-0-1565" name="__codelineno-0-1565"></a><span class="sd">            Previously set to ``0.5`` to dampen OKS@75 oscillation; reverted as</span>
-</span><span id="__span-0-1566"><a id="__codelineno-0-1566" name="__codelineno-0-1566"></a><span class="sd">            the under-weighting was not beneficial in practice.</span>
-</span><span id="__span-0-1567"><a id="__codelineno-0-1567" name="__codelineno-0-1567"></a><span class="sd">        smooth_alpha: EMA smoothing factor for :class:`BestModelCallback` metric</span>
-</span><span id="__span-0-1568"><a id="__codelineno-0-1568" name="__codelineno-0-1568"></a><span class="sd">            comparison. Overrides the :class:`TrainConfig` default of ``0.0``</span>
-</span><span id="__span-0-1569"><a id="__codelineno-0-1569" name="__codelineno-0-1569"></a><span class="sd">            (disabled) to ``0.5``, which balances responsiveness and noise</span>
-</span><span id="__span-0-1570"><a id="__codelineno-0-1570" name="__codelineno-0-1570"></a><span class="sd">            suppression for noisy keypoint mAP curves.</span>
-</span><span id="__span-0-1571"><a id="__codelineno-0-1571" name="__codelineno-0-1571"></a><span class="sd">        skip_best_epochs: Number of epochs to skip before checkpoint selection begins.</span>
-</span><span id="__span-0-1572"><a id="__codelineno-0-1572" name="__codelineno-0-1572"></a><span class="sd">            Overrides the :class:`TrainConfig` default of ``0`` to ``10`` because</span>
-</span><span id="__span-0-1573"><a id="__codelineno-0-1573" name="__codelineno-0-1573"></a><span class="sd">            ``val/keypoint_map_50_95`` under the NLL-Cholesky loss is noisy in early</span>
-</span><span id="__span-0-1574"><a id="__codelineno-0-1574" name="__codelineno-0-1574"></a><span class="sd">            fine-tuning and can lock checkpoint selection to a transient peak.</span>
-</span><span id="__span-0-1575"><a id="__codelineno-0-1575" name="__codelineno-0-1575"></a><span class="sd">    """</span>
-</span><span id="__span-0-1576"><a id="__codelineno-0-1576" name="__codelineno-0-1576"></a>
-</span><span id="__span-0-1577"><a id="__codelineno-0-1577" name="__codelineno-0-1577"></a>    <span class="n">cls_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.0</span>  <span class="c1"># TODO: verify empirically before final release; ported as-is from internal recipe.</span>
-</span><span id="__span-0-1578"><a id="__codelineno-0-1578" name="__codelineno-0-1578"></a>    <span class="n">keypoint_l1_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">1</span>
-</span><span id="__span-0-1579"><a id="__codelineno-0-1579" name="__codelineno-0-1579"></a>    <span class="n">keypoint_findable_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">1</span>
-</span><span id="__span-0-1580"><a id="__codelineno-0-1580" name="__codelineno-0-1580"></a>    <span class="n">keypoint_visible_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">1</span>
-</span><span id="__span-0-1581"><a id="__codelineno-0-1581" name="__codelineno-0-1581"></a>    <span class="n">keypoint_nll_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>
-</span><span id="__span-0-1582"><a id="__codelineno-0-1582" name="__codelineno-0-1582"></a>    <span class="n">smooth_alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span>
-</span><span id="__span-0-1583"><a id="__codelineno-0-1583" name="__codelineno-0-1583"></a>    <span class="n">skip_best_epochs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-1583">1583</a></span>
+<span class="normal"><a href="#__codelineno-0-1584">1584</a></span>
+<span class="normal"><a href="#__codelineno-0-1585">1585</a></span>
+<span class="normal"><a href="#__codelineno-0-1586">1586</a></span>
+<span class="normal"><a href="#__codelineno-0-1587">1587</a></span>
+<span class="normal"><a href="#__codelineno-0-1588">1588</a></span>
+<span class="normal"><a href="#__codelineno-0-1589">1589</a></span>
+<span class="normal"><a href="#__codelineno-0-1590">1590</a></span>
+<span class="normal"><a href="#__codelineno-0-1591">1591</a></span>
+<span class="normal"><a href="#__codelineno-0-1592">1592</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1559"><a id="__codelineno-0-1559" name="__codelineno-0-1559"></a><span class="k">class</span><span class="w"> </span><span class="nc">KeypointTrainConfig</span><span class="p">(</span><span class="n">TrainConfig</span><span class="p">):</span>
+</span><span id="__span-0-1560"><a id="__codelineno-0-1560" name="__codelineno-0-1560"></a><span class="w">    </span><span class="sd">"""Training configuration for keypoint detection models.</span>
+</span><span id="__span-0-1561"><a id="__codelineno-0-1561" name="__codelineno-0-1561"></a>
+</span><span id="__span-0-1562"><a id="__codelineno-0-1562" name="__codelineno-0-1562"></a><span class="sd">    Extends :class:`TrainConfig` with keypoint-specific loss coefficients and</span>
+</span><span id="__span-0-1563"><a id="__codelineno-0-1563" name="__codelineno-0-1563"></a><span class="sd">    metric-smoothing defaults tuned for the NLL-Cholesky keypoint head, which</span>
+</span><span id="__span-0-1564"><a id="__codelineno-0-1564" name="__codelineno-0-1564"></a><span class="sd">    produces noisy per-epoch OKS metrics during early fine-tuning.</span>
+</span><span id="__span-0-1565"><a id="__codelineno-0-1565" name="__codelineno-0-1565"></a>
+</span><span id="__span-0-1566"><a id="__codelineno-0-1566" name="__codelineno-0-1566"></a><span class="sd">    Attributes:</span>
+</span><span id="__span-0-1567"><a id="__codelineno-0-1567" name="__codelineno-0-1567"></a><span class="sd">        cls_loss_coef: Classification loss weight.</span>
+</span><span id="__span-0-1568"><a id="__codelineno-0-1568" name="__codelineno-0-1568"></a><span class="sd">        keypoint_l1_loss_coef: L1 regression loss weight for keypoint coordinates.</span>
+</span><span id="__span-0-1569"><a id="__codelineno-0-1569" name="__codelineno-0-1569"></a><span class="sd">        keypoint_findable_loss_coef: Loss weight for the keypoint visibility head.</span>
+</span><span id="__span-0-1570"><a id="__codelineno-0-1570" name="__codelineno-0-1570"></a><span class="sd">        keypoint_visible_loss_coef: Loss weight for the keypoint visibility score.</span>
+</span><span id="__span-0-1571"><a id="__codelineno-0-1571" name="__codelineno-0-1571"></a><span class="sd">        keypoint_nll_loss_coef: NLL-Cholesky loss weight. Restored to ``1.0`` to</span>
+</span><span id="__span-0-1572"><a id="__codelineno-0-1572" name="__codelineno-0-1572"></a><span class="sd">            align with the other keypoint loss terms (``keypoint_l1_loss_coef``,</span>
+</span><span id="__span-0-1573"><a id="__codelineno-0-1573" name="__codelineno-0-1573"></a><span class="sd">            ``keypoint_findable_loss_coef``, ``keypoint_visible_loss_coef``).</span>
+</span><span id="__span-0-1574"><a id="__codelineno-0-1574" name="__codelineno-0-1574"></a><span class="sd">            Previously set to ``0.5`` to dampen OKS@75 oscillation; reverted as</span>
+</span><span id="__span-0-1575"><a id="__codelineno-0-1575" name="__codelineno-0-1575"></a><span class="sd">            the under-weighting was not beneficial in practice.</span>
+</span><span id="__span-0-1576"><a id="__codelineno-0-1576" name="__codelineno-0-1576"></a><span class="sd">        smooth_alpha: EMA smoothing factor for :class:`BestModelCallback` metric</span>
+</span><span id="__span-0-1577"><a id="__codelineno-0-1577" name="__codelineno-0-1577"></a><span class="sd">            comparison. Overrides the :class:`TrainConfig` default of ``0.0``</span>
+</span><span id="__span-0-1578"><a id="__codelineno-0-1578" name="__codelineno-0-1578"></a><span class="sd">            (disabled) to ``0.5``, which balances responsiveness and noise</span>
+</span><span id="__span-0-1579"><a id="__codelineno-0-1579" name="__codelineno-0-1579"></a><span class="sd">            suppression for noisy keypoint mAP curves.</span>
+</span><span id="__span-0-1580"><a id="__codelineno-0-1580" name="__codelineno-0-1580"></a><span class="sd">        skip_best_epochs: Number of epochs to skip before checkpoint selection begins.</span>
+</span><span id="__span-0-1581"><a id="__codelineno-0-1581" name="__codelineno-0-1581"></a><span class="sd">            Overrides the :class:`TrainConfig` default of ``0`` to ``10`` because</span>
+</span><span id="__span-0-1582"><a id="__codelineno-0-1582" name="__codelineno-0-1582"></a><span class="sd">            ``val/keypoint_map_50_95`` under the NLL-Cholesky loss is noisy in early</span>
+</span><span id="__span-0-1583"><a id="__codelineno-0-1583" name="__codelineno-0-1583"></a><span class="sd">            fine-tuning and can lock checkpoint selection to a transient peak.</span>
+</span><span id="__span-0-1584"><a id="__codelineno-0-1584" name="__codelineno-0-1584"></a><span class="sd">    """</span>
+</span><span id="__span-0-1585"><a id="__codelineno-0-1585" name="__codelineno-0-1585"></a>
+</span><span id="__span-0-1586"><a id="__codelineno-0-1586" name="__codelineno-0-1586"></a>    <span class="n">cls_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.0</span>  <span class="c1"># TODO: verify empirically before final release; ported as-is from internal recipe.</span>
+</span><span id="__span-0-1587"><a id="__codelineno-0-1587" name="__codelineno-0-1587"></a>    <span class="n">keypoint_l1_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">1</span>
+</span><span id="__span-0-1588"><a id="__codelineno-0-1588" name="__codelineno-0-1588"></a>    <span class="n">keypoint_findable_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">1</span>
+</span><span id="__span-0-1589"><a id="__codelineno-0-1589" name="__codelineno-0-1589"></a>    <span class="n">keypoint_visible_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">1</span>
+</span><span id="__span-0-1590"><a id="__codelineno-0-1590" name="__codelineno-0-1590"></a>    <span class="n">keypoint_nll_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>
+</span><span id="__span-0-1591"><a id="__codelineno-0-1591" name="__codelineno-0-1591"></a>    <span class="n">smooth_alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span>
+</span><span id="__span-0-1592"><a id="__codelineno-0-1592" name="__codelineno-0-1592"></a>    <span class="n">skip_best_epochs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
               </details>
 
@@ -2911,19 +2911,19 @@ fine-tuning and can lock checkpoint selection to a transient peak.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1504">1504</a></span>
-<span class="normal"><a href="#__codelineno-0-1505">1505</a></span>
-<span class="normal"><a href="#__codelineno-0-1506">1506</a></span>
-<span class="normal"><a href="#__codelineno-0-1507">1507</a></span>
-<span class="normal"><a href="#__codelineno-0-1508">1508</a></span>
-<span class="normal"><a href="#__codelineno-0-1509">1509</a></span>
-<span class="normal"><a href="#__codelineno-0-1510">1510</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1504"><a id="__codelineno-0-1504" name="__codelineno-0-1504"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"dataset_dir"</span><span class="p">,</span> <span class="s2">"output_dir"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"before"</span><span class="p">)</span>
-</span><span id="__span-0-1505"><a id="__codelineno-0-1505" name="__codelineno-0-1505"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1506"><a id="__codelineno-0-1506" name="__codelineno-0-1506"></a><span class="k">def</span><span class="w"> </span><span class="nf">expand_paths</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="n">PathLikeStr</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1507"><a id="__codelineno-0-1507" name="__codelineno-0-1507"></a><span class="w">    </span><span class="sd">"""Expand and normalize dataset/output directory paths via ``os.fspath`` → ``expanduser`` → ``realpath``."""</span>
-</span><span id="__span-0-1508"><a id="__codelineno-0-1508" name="__codelineno-0-1508"></a>    <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1509"><a id="__codelineno-0-1509" name="__codelineno-0-1509"></a>        <span class="k">return</span> <span class="n">v</span>
-</span><span id="__span-0-1510"><a id="__codelineno-0-1510" name="__codelineno-0-1510"></a>    <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">realpath</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">fspath</span><span class="p">(</span><span class="n">v</span><span class="p">)))</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1513">1513</a></span>
+<span class="normal"><a href="#__codelineno-0-1514">1514</a></span>
+<span class="normal"><a href="#__codelineno-0-1515">1515</a></span>
+<span class="normal"><a href="#__codelineno-0-1516">1516</a></span>
+<span class="normal"><a href="#__codelineno-0-1517">1517</a></span>
+<span class="normal"><a href="#__codelineno-0-1518">1518</a></span>
+<span class="normal"><a href="#__codelineno-0-1519">1519</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1513"><a id="__codelineno-0-1513" name="__codelineno-0-1513"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"dataset_dir"</span><span class="p">,</span> <span class="s2">"output_dir"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"before"</span><span class="p">)</span>
+</span><span id="__span-0-1514"><a id="__codelineno-0-1514" name="__codelineno-0-1514"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1515"><a id="__codelineno-0-1515" name="__codelineno-0-1515"></a><span class="k">def</span><span class="w"> </span><span class="nf">expand_paths</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="n">PathLikeStr</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1516"><a id="__codelineno-0-1516" name="__codelineno-0-1516"></a><span class="w">    </span><span class="sd">"""Expand and normalize dataset/output directory paths via ``os.fspath`` → ``expanduser`` → ``realpath``."""</span>
+</span><span id="__span-0-1517"><a id="__codelineno-0-1517" name="__codelineno-0-1517"></a>    <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1518"><a id="__codelineno-0-1518" name="__codelineno-0-1518"></a>        <span class="k">return</span> <span class="n">v</span>
+</span><span id="__span-0-1519"><a id="__codelineno-0-1519" name="__codelineno-0-1519"></a>    <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">realpath</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">fspath</span><span class="p">(</span><span class="n">v</span><span class="p">)))</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -2950,23 +2950,23 @@ fine-tuning and can lock checkpoint selection to a transient peak.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1245">1245</a></span>
-<span class="normal"><a href="#__codelineno-0-1246">1246</a></span>
-<span class="normal"><a href="#__codelineno-0-1247">1247</a></span>
-<span class="normal"><a href="#__codelineno-0-1248">1248</a></span>
-<span class="normal"><a href="#__codelineno-0-1249">1249</a></span>
-<span class="normal"><a href="#__codelineno-0-1250">1250</a></span>
-<span class="normal"><a href="#__codelineno-0-1251">1251</a></span>
-<span class="normal"><a href="#__codelineno-0-1252">1252</a></span>
-<span class="normal"><a href="#__codelineno-0-1253">1253</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1245"><a id="__codelineno-0-1245" name="__codelineno-0-1245"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"batch_size"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
-</span><span id="__span-0-1246"><a id="__codelineno-0-1246" name="__codelineno-0-1246"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1247"><a id="__codelineno-0-1247" name="__codelineno-0-1247"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_batch_size</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"auto"</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"auto"</span><span class="p">]:</span>
-</span><span id="__span-0-1248"><a id="__codelineno-0-1248" name="__codelineno-0-1248"></a><span class="w">    </span><span class="sd">"""Validate batch_size is a positive integer or the literal 'auto'."""</span>
-</span><span id="__span-0-1249"><a id="__codelineno-0-1249" name="__codelineno-0-1249"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">==</span> <span class="s2">"auto"</span><span class="p">:</span>
-</span><span id="__span-0-1250"><a id="__codelineno-0-1250" name="__codelineno-0-1250"></a>        <span class="k">return</span> <span class="n">v</span>
-</span><span id="__span-0-1251"><a id="__codelineno-0-1251" name="__codelineno-0-1251"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
-</span><span id="__span-0-1252"><a id="__codelineno-0-1252" name="__codelineno-0-1252"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"batch_size must be &gt;= 1, or 'auto'."</span><span class="p">)</span>
-</span><span id="__span-0-1253"><a id="__codelineno-0-1253" name="__codelineno-0-1253"></a>    <span class="k">return</span> <span class="n">v</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1254">1254</a></span>
+<span class="normal"><a href="#__codelineno-0-1255">1255</a></span>
+<span class="normal"><a href="#__codelineno-0-1256">1256</a></span>
+<span class="normal"><a href="#__codelineno-0-1257">1257</a></span>
+<span class="normal"><a href="#__codelineno-0-1258">1258</a></span>
+<span class="normal"><a href="#__codelineno-0-1259">1259</a></span>
+<span class="normal"><a href="#__codelineno-0-1260">1260</a></span>
+<span class="normal"><a href="#__codelineno-0-1261">1261</a></span>
+<span class="normal"><a href="#__codelineno-0-1262">1262</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1254"><a id="__codelineno-0-1254" name="__codelineno-0-1254"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"batch_size"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
+</span><span id="__span-0-1255"><a id="__codelineno-0-1255" name="__codelineno-0-1255"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1256"><a id="__codelineno-0-1256" name="__codelineno-0-1256"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_batch_size</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"auto"</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"auto"</span><span class="p">]:</span>
+</span><span id="__span-0-1257"><a id="__codelineno-0-1257" name="__codelineno-0-1257"></a><span class="w">    </span><span class="sd">"""Validate batch_size is a positive integer or the literal 'auto'."""</span>
+</span><span id="__span-0-1258"><a id="__codelineno-0-1258" name="__codelineno-0-1258"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">==</span> <span class="s2">"auto"</span><span class="p">:</span>
+</span><span id="__span-0-1259"><a id="__codelineno-0-1259" name="__codelineno-0-1259"></a>        <span class="k">return</span> <span class="n">v</span>
+</span><span id="__span-0-1260"><a id="__codelineno-0-1260" name="__codelineno-0-1260"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+</span><span id="__span-0-1261"><a id="__codelineno-0-1261" name="__codelineno-0-1261"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"batch_size must be &gt;= 1, or 'auto'."</span><span class="p">)</span>
+</span><span id="__span-0-1262"><a id="__codelineno-0-1262" name="__codelineno-0-1262"></a>    <span class="k">return</span> <span class="n">v</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -2993,19 +2993,19 @@ fine-tuning and can lock checkpoint selection to a transient peak.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1267">1267</a></span>
-<span class="normal"><a href="#__codelineno-0-1268">1268</a></span>
-<span class="normal"><a href="#__codelineno-0-1269">1269</a></span>
-<span class="normal"><a href="#__codelineno-0-1270">1270</a></span>
-<span class="normal"><a href="#__codelineno-0-1271">1271</a></span>
-<span class="normal"><a href="#__codelineno-0-1272">1272</a></span>
-<span class="normal"><a href="#__codelineno-0-1273">1273</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1267"><a id="__codelineno-0-1267" name="__codelineno-0-1267"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"auto_batch_ema_headroom"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
-</span><span id="__span-0-1268"><a id="__codelineno-0-1268" name="__codelineno-0-1268"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1269"><a id="__codelineno-0-1269" name="__codelineno-0-1269"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_ema_headroom</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-</span><span id="__span-0-1270"><a id="__codelineno-0-1270" name="__codelineno-0-1270"></a><span class="w">    </span><span class="sd">"""Validate auto_batch_ema_headroom is in (0, 1]."""</span>
-</span><span id="__span-0-1271"><a id="__codelineno-0-1271" name="__codelineno-0-1271"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="mi">0</span> <span class="o">&lt;</span> <span class="n">v</span> <span class="o">&lt;=</span> <span class="mf">1.0</span><span class="p">):</span>
-</span><span id="__span-0-1272"><a id="__codelineno-0-1272" name="__codelineno-0-1272"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"auto_batch_ema_headroom must be in (0, 1]."</span><span class="p">)</span>
-</span><span id="__span-0-1273"><a id="__codelineno-0-1273" name="__codelineno-0-1273"></a>    <span class="k">return</span> <span class="n">v</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1276">1276</a></span>
+<span class="normal"><a href="#__codelineno-0-1277">1277</a></span>
+<span class="normal"><a href="#__codelineno-0-1278">1278</a></span>
+<span class="normal"><a href="#__codelineno-0-1279">1279</a></span>
+<span class="normal"><a href="#__codelineno-0-1280">1280</a></span>
+<span class="normal"><a href="#__codelineno-0-1281">1281</a></span>
+<span class="normal"><a href="#__codelineno-0-1282">1282</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1276"><a id="__codelineno-0-1276" name="__codelineno-0-1276"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"auto_batch_ema_headroom"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
+</span><span id="__span-0-1277"><a id="__codelineno-0-1277" name="__codelineno-0-1277"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1278"><a id="__codelineno-0-1278" name="__codelineno-0-1278"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_ema_headroom</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+</span><span id="__span-0-1279"><a id="__codelineno-0-1279" name="__codelineno-0-1279"></a><span class="w">    </span><span class="sd">"""Validate auto_batch_ema_headroom is in (0, 1]."""</span>
+</span><span id="__span-0-1280"><a id="__codelineno-0-1280" name="__codelineno-0-1280"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="mi">0</span> <span class="o">&lt;</span> <span class="n">v</span> <span class="o">&lt;=</span> <span class="mf">1.0</span><span class="p">):</span>
+</span><span id="__span-0-1281"><a id="__codelineno-0-1281" name="__codelineno-0-1281"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"auto_batch_ema_headroom must be in (0, 1]."</span><span class="p">)</span>
+</span><span id="__span-0-1282"><a id="__codelineno-0-1282" name="__codelineno-0-1282"></a>    <span class="k">return</span> <span class="n">v</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3028,17 +3028,17 @@ fine-tuning and can lock checkpoint selection to a transient peak.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1344">1344</a></span>
-<span class="normal"><a href="#__codelineno-0-1345">1345</a></span>
-<span class="normal"><a href="#__codelineno-0-1346">1346</a></span>
-<span class="normal"><a href="#__codelineno-0-1347">1347</a></span>
-<span class="normal"><a href="#__codelineno-0-1348">1348</a></span>
-<span class="normal"><a href="#__codelineno-0-1349">1349</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1344"><a id="__codelineno-0-1344" name="__codelineno-0-1344"></a><span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
-</span><span id="__span-0-1345"><a id="__codelineno-0-1345" name="__codelineno-0-1345"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_eval_ema_only</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"TrainConfig"</span><span class="p">:</span>
-</span><span id="__span-0-1346"><a id="__codelineno-0-1346" name="__codelineno-0-1346"></a><span class="w">    </span><span class="sd">"""``eval_ema_only`` has no EMA model to evaluate without ``use_ema=True``."""</span>
-</span><span id="__span-0-1347"><a id="__codelineno-0-1347" name="__codelineno-0-1347"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">eval_ema_only</span> <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_ema</span><span class="p">:</span>
-</span><span id="__span-0-1348"><a id="__codelineno-0-1348" name="__codelineno-0-1348"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"eval_ema_only=True requires use_ema=True."</span><span class="p">)</span>
-</span><span id="__span-0-1349"><a id="__codelineno-0-1349" name="__codelineno-0-1349"></a>    <span class="k">return</span> <span class="bp">self</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1353">1353</a></span>
+<span class="normal"><a href="#__codelineno-0-1354">1354</a></span>
+<span class="normal"><a href="#__codelineno-0-1355">1355</a></span>
+<span class="normal"><a href="#__codelineno-0-1356">1356</a></span>
+<span class="normal"><a href="#__codelineno-0-1357">1357</a></span>
+<span class="normal"><a href="#__codelineno-0-1358">1358</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1353"><a id="__codelineno-0-1353" name="__codelineno-0-1353"></a><span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
+</span><span id="__span-0-1354"><a id="__codelineno-0-1354" name="__codelineno-0-1354"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_eval_ema_only</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"TrainConfig"</span><span class="p">:</span>
+</span><span id="__span-0-1355"><a id="__codelineno-0-1355" name="__codelineno-0-1355"></a><span class="w">    </span><span class="sd">"""``eval_ema_only`` has no EMA model to evaluate without ``use_ema=True``."""</span>
+</span><span id="__span-0-1356"><a id="__codelineno-0-1356" name="__codelineno-0-1356"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">eval_ema_only</span> <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_ema</span><span class="p">:</span>
+</span><span id="__span-0-1357"><a id="__codelineno-0-1357" name="__codelineno-0-1357"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"eval_ema_only=True requires use_ema=True."</span><span class="p">)</span>
+</span><span id="__span-0-1358"><a id="__codelineno-0-1358" name="__codelineno-0-1358"></a>    <span class="k">return</span> <span class="bp">self</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3064,16 +3064,7 @@ the constructor and are left unchecked here.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1361">1361</a></span>
-<span class="normal"><a href="#__codelineno-0-1362">1362</a></span>
-<span class="normal"><a href="#__codelineno-0-1363">1363</a></span>
-<span class="normal"><a href="#__codelineno-0-1364">1364</a></span>
-<span class="normal"><a href="#__codelineno-0-1365">1365</a></span>
-<span class="normal"><a href="#__codelineno-0-1366">1366</a></span>
-<span class="normal"><a href="#__codelineno-0-1367">1367</a></span>
-<span class="normal"><a href="#__codelineno-0-1368">1368</a></span>
-<span class="normal"><a href="#__codelineno-0-1369">1369</a></span>
-<span class="normal"><a href="#__codelineno-0-1370">1370</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1370">1370</a></span>
 <span class="normal"><a href="#__codelineno-0-1371">1371</a></span>
 <span class="normal"><a href="#__codelineno-0-1372">1372</a></span>
 <span class="normal"><a href="#__codelineno-0-1373">1373</a></span>
@@ -3081,24 +3072,33 @@ the constructor and are left unchecked here.</p>
 <span class="normal"><a href="#__codelineno-0-1375">1375</a></span>
 <span class="normal"><a href="#__codelineno-0-1376">1376</a></span>
 <span class="normal"><a href="#__codelineno-0-1377">1377</a></span>
-<span class="normal"><a href="#__codelineno-0-1378">1378</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1361"><a id="__codelineno-0-1361" name="__codelineno-0-1361"></a><span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
-</span><span id="__span-0-1362"><a id="__codelineno-0-1362" name="__codelineno-0-1362"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_lr_scheduler_kwargs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"TrainConfig"</span><span class="p">:</span>
-</span><span id="__span-0-1363"><a id="__codelineno-0-1363" name="__codelineno-0-1363"></a><span class="w">    </span><span class="sd">"""Reject unknown ``lr_scheduler_kwargs`` keys for the managed ``"step"`` / ``"cosine"`` presets.</span>
-</span><span id="__span-0-1364"><a id="__codelineno-0-1364" name="__codelineno-0-1364"></a>
-</span><span id="__span-0-1365"><a id="__codelineno-0-1365" name="__codelineno-0-1365"></a><span class="sd">    Managed presets consume only ``min_factor`` and ``lr_drop``; any other key would be silently ignored, so surface</span>
-</span><span id="__span-0-1366"><a id="__codelineno-0-1366" name="__codelineno-0-1366"></a><span class="sd">    it as an error (mirroring ``validate_optimizer_kwargs``). Explicit schedulers forward their kwargs verbatim to</span>
-</span><span id="__span-0-1367"><a id="__codelineno-0-1367" name="__codelineno-0-1367"></a><span class="sd">    the constructor and are left unchecked here.</span>
-</span><span id="__span-0-1368"><a id="__codelineno-0-1368" name="__codelineno-0-1368"></a><span class="sd">    """</span>
-</span><span id="__span-0-1369"><a id="__codelineno-0-1369" name="__codelineno-0-1369"></a>    <span class="k">if</span> <span class="n">_is_managed_scheduler_name</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lr_scheduler</span><span class="p">):</span>
-</span><span id="__span-0-1370"><a id="__codelineno-0-1370" name="__codelineno-0-1370"></a>        <span class="n">unknown</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lr_scheduler_kwargs</span><span class="p">)</span> <span class="o">-</span> <span class="n">_MANAGED_SCHEDULER_KWARGS</span>
-</span><span id="__span-0-1371"><a id="__codelineno-0-1371" name="__codelineno-0-1371"></a>        <span class="k">if</span> <span class="n">unknown</span><span class="p">:</span>
-</span><span id="__span-0-1372"><a id="__codelineno-0-1372" name="__codelineno-0-1372"></a>            <span class="n">allowed</span> <span class="o">=</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_MANAGED_SCHEDULER_KWARGS</span><span class="p">))</span>
-</span><span id="__span-0-1373"><a id="__codelineno-0-1373" name="__codelineno-0-1373"></a>            <span class="n">unknown_keys</span> <span class="o">=</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">unknown</span><span class="p">))</span>
-</span><span id="__span-0-1374"><a id="__codelineno-0-1374" name="__codelineno-0-1374"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-</span><span id="__span-0-1375"><a id="__codelineno-0-1375" name="__codelineno-0-1375"></a>                <span class="sa">f</span><span class="s2">"lr_scheduler_kwargs for a managed preset (</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">lr_scheduler</span><span class="si">!r}</span><span class="s2">) accepts only "</span>
-</span><span id="__span-0-1376"><a id="__codelineno-0-1376" name="__codelineno-0-1376"></a>                <span class="sa">f</span><span class="s2">"</span><span class="se">{{</span><span class="si">{</span><span class="n">allowed</span><span class="si">}</span><span class="se">}}</span><span class="s2">; unknown key(s): </span><span class="si">{</span><span class="n">unknown_keys</span><span class="si">}</span><span class="s2">."</span>
-</span><span id="__span-0-1377"><a id="__codelineno-0-1377" name="__codelineno-0-1377"></a>            <span class="p">)</span>
-</span><span id="__span-0-1378"><a id="__codelineno-0-1378" name="__codelineno-0-1378"></a>    <span class="k">return</span> <span class="bp">self</span>
+<span class="normal"><a href="#__codelineno-0-1378">1378</a></span>
+<span class="normal"><a href="#__codelineno-0-1379">1379</a></span>
+<span class="normal"><a href="#__codelineno-0-1380">1380</a></span>
+<span class="normal"><a href="#__codelineno-0-1381">1381</a></span>
+<span class="normal"><a href="#__codelineno-0-1382">1382</a></span>
+<span class="normal"><a href="#__codelineno-0-1383">1383</a></span>
+<span class="normal"><a href="#__codelineno-0-1384">1384</a></span>
+<span class="normal"><a href="#__codelineno-0-1385">1385</a></span>
+<span class="normal"><a href="#__codelineno-0-1386">1386</a></span>
+<span class="normal"><a href="#__codelineno-0-1387">1387</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1370"><a id="__codelineno-0-1370" name="__codelineno-0-1370"></a><span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
+</span><span id="__span-0-1371"><a id="__codelineno-0-1371" name="__codelineno-0-1371"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_lr_scheduler_kwargs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"TrainConfig"</span><span class="p">:</span>
+</span><span id="__span-0-1372"><a id="__codelineno-0-1372" name="__codelineno-0-1372"></a><span class="w">    </span><span class="sd">"""Reject unknown ``lr_scheduler_kwargs`` keys for the managed ``"step"`` / ``"cosine"`` presets.</span>
+</span><span id="__span-0-1373"><a id="__codelineno-0-1373" name="__codelineno-0-1373"></a>
+</span><span id="__span-0-1374"><a id="__codelineno-0-1374" name="__codelineno-0-1374"></a><span class="sd">    Managed presets consume only ``min_factor`` and ``lr_drop``; any other key would be silently ignored, so surface</span>
+</span><span id="__span-0-1375"><a id="__codelineno-0-1375" name="__codelineno-0-1375"></a><span class="sd">    it as an error (mirroring ``validate_optimizer_kwargs``). Explicit schedulers forward their kwargs verbatim to</span>
+</span><span id="__span-0-1376"><a id="__codelineno-0-1376" name="__codelineno-0-1376"></a><span class="sd">    the constructor and are left unchecked here.</span>
+</span><span id="__span-0-1377"><a id="__codelineno-0-1377" name="__codelineno-0-1377"></a><span class="sd">    """</span>
+</span><span id="__span-0-1378"><a id="__codelineno-0-1378" name="__codelineno-0-1378"></a>    <span class="k">if</span> <span class="n">_is_managed_scheduler_name</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lr_scheduler</span><span class="p">):</span>
+</span><span id="__span-0-1379"><a id="__codelineno-0-1379" name="__codelineno-0-1379"></a>        <span class="n">unknown</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lr_scheduler_kwargs</span><span class="p">)</span> <span class="o">-</span> <span class="n">_MANAGED_SCHEDULER_KWARGS</span>
+</span><span id="__span-0-1380"><a id="__codelineno-0-1380" name="__codelineno-0-1380"></a>        <span class="k">if</span> <span class="n">unknown</span><span class="p">:</span>
+</span><span id="__span-0-1381"><a id="__codelineno-0-1381" name="__codelineno-0-1381"></a>            <span class="n">allowed</span> <span class="o">=</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_MANAGED_SCHEDULER_KWARGS</span><span class="p">))</span>
+</span><span id="__span-0-1382"><a id="__codelineno-0-1382" name="__codelineno-0-1382"></a>            <span class="n">unknown_keys</span> <span class="o">=</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">unknown</span><span class="p">))</span>
+</span><span id="__span-0-1383"><a id="__codelineno-0-1383" name="__codelineno-0-1383"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+</span><span id="__span-0-1384"><a id="__codelineno-0-1384" name="__codelineno-0-1384"></a>                <span class="sa">f</span><span class="s2">"lr_scheduler_kwargs for a managed preset (</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">lr_scheduler</span><span class="si">!r}</span><span class="s2">) accepts only "</span>
+</span><span id="__span-0-1385"><a id="__codelineno-0-1385" name="__codelineno-0-1385"></a>                <span class="sa">f</span><span class="s2">"</span><span class="se">{{</span><span class="si">{</span><span class="n">allowed</span><span class="si">}</span><span class="se">}}</span><span class="s2">; unknown key(s): </span><span class="si">{</span><span class="n">unknown_keys</span><span class="si">}</span><span class="s2">."</span>
+</span><span id="__span-0-1386"><a id="__codelineno-0-1386" name="__codelineno-0-1386"></a>            <span class="p">)</span>
+</span><span id="__span-0-1387"><a id="__codelineno-0-1387" name="__codelineno-0-1387"></a>    <span class="k">return</span> <span class="bp">self</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3125,16 +3125,7 @@ the constructor and are left unchecked here.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1477">1477</a></span>
-<span class="normal"><a href="#__codelineno-0-1478">1478</a></span>
-<span class="normal"><a href="#__codelineno-0-1479">1479</a></span>
-<span class="normal"><a href="#__codelineno-0-1480">1480</a></span>
-<span class="normal"><a href="#__codelineno-0-1481">1481</a></span>
-<span class="normal"><a href="#__codelineno-0-1482">1482</a></span>
-<span class="normal"><a href="#__codelineno-0-1483">1483</a></span>
-<span class="normal"><a href="#__codelineno-0-1484">1484</a></span>
-<span class="normal"><a href="#__codelineno-0-1485">1485</a></span>
-<span class="normal"><a href="#__codelineno-0-1486">1486</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1486">1486</a></span>
 <span class="normal"><a href="#__codelineno-0-1487">1487</a></span>
 <span class="normal"><a href="#__codelineno-0-1488">1488</a></span>
 <span class="normal"><a href="#__codelineno-0-1489">1489</a></span>
@@ -3142,24 +3133,33 @@ the constructor and are left unchecked here.</p>
 <span class="normal"><a href="#__codelineno-0-1491">1491</a></span>
 <span class="normal"><a href="#__codelineno-0-1492">1492</a></span>
 <span class="normal"><a href="#__codelineno-0-1493">1493</a></span>
-<span class="normal"><a href="#__codelineno-0-1494">1494</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1477"><a id="__codelineno-0-1477" name="__codelineno-0-1477"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"lr_scheduler"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
-</span><span id="__span-0-1478"><a id="__codelineno-0-1478" name="__codelineno-0-1478"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1479"><a id="__codelineno-0-1479" name="__codelineno-0-1479"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_lr_scheduler_name</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">SchedulerType</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">SchedulerType</span><span class="p">]:</span>
-</span><span id="__span-0-1480"><a id="__codelineno-0-1480" name="__codelineno-0-1480"></a><span class="w">    </span><span class="sd">"""Validate a string lr_scheduler: a bare name must be a managed preset, else use a dotted path."""</span>
-</span><span id="__span-0-1481"><a id="__codelineno-0-1481" name="__codelineno-0-1481"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-</span><span id="__span-0-1482"><a id="__codelineno-0-1482" name="__codelineno-0-1482"></a>        <span class="k">return</span> <span class="n">v</span>
-</span><span id="__span-0-1483"><a id="__codelineno-0-1483" name="__codelineno-0-1483"></a>    <span class="n">lr_scheduler</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-</span><span id="__span-0-1484"><a id="__codelineno-0-1484" name="__codelineno-0-1484"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">lr_scheduler</span><span class="p">:</span>
-</span><span id="__span-0-1485"><a id="__codelineno-0-1485" name="__codelineno-0-1485"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"lr_scheduler must be a non-empty string."</span><span class="p">)</span>
-</span><span id="__span-0-1486"><a id="__codelineno-0-1486" name="__codelineno-0-1486"></a>    <span class="c1"># Bare names must be a managed preset; dotted import paths are validated lazily at train start.</span>
-</span><span id="__span-0-1487"><a id="__codelineno-0-1487" name="__codelineno-0-1487"></a>    <span class="k">if</span> <span class="s2">"."</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">lr_scheduler</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">_is_managed_scheduler_name</span><span class="p">(</span><span class="n">lr_scheduler</span><span class="p">):</span>
-</span><span id="__span-0-1488"><a id="__codelineno-0-1488" name="__codelineno-0-1488"></a>        <span class="n">presets</span> <span class="o">=</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_MANAGED_SCHEDULER_PRESETS</span><span class="p">))</span>
-</span><span id="__span-0-1489"><a id="__codelineno-0-1489" name="__codelineno-0-1489"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-</span><span id="__span-0-1490"><a id="__codelineno-0-1490" name="__codelineno-0-1490"></a>            <span class="sa">f</span><span class="s2">"Unknown lr_scheduler </span><span class="si">{</span><span class="n">v</span><span class="si">!r}</span><span class="s2">. Bare names must be a managed preset (</span><span class="si">{</span><span class="n">presets</span><span class="si">}</span><span class="s2">); "</span>
-</span><span id="__span-0-1491"><a id="__codelineno-0-1491" name="__codelineno-0-1491"></a>            <span class="s2">"use a full dotted import path (e.g. 'torch.optim.lr_scheduler.StepLR') or a callable "</span>
-</span><span id="__span-0-1492"><a id="__codelineno-0-1492" name="__codelineno-0-1492"></a>            <span class="s2">"for anything else."</span>
-</span><span id="__span-0-1493"><a id="__codelineno-0-1493" name="__codelineno-0-1493"></a>        <span class="p">)</span>
-</span><span id="__span-0-1494"><a id="__codelineno-0-1494" name="__codelineno-0-1494"></a>    <span class="k">return</span> <span class="n">lr_scheduler</span>
+<span class="normal"><a href="#__codelineno-0-1494">1494</a></span>
+<span class="normal"><a href="#__codelineno-0-1495">1495</a></span>
+<span class="normal"><a href="#__codelineno-0-1496">1496</a></span>
+<span class="normal"><a href="#__codelineno-0-1497">1497</a></span>
+<span class="normal"><a href="#__codelineno-0-1498">1498</a></span>
+<span class="normal"><a href="#__codelineno-0-1499">1499</a></span>
+<span class="normal"><a href="#__codelineno-0-1500">1500</a></span>
+<span class="normal"><a href="#__codelineno-0-1501">1501</a></span>
+<span class="normal"><a href="#__codelineno-0-1502">1502</a></span>
+<span class="normal"><a href="#__codelineno-0-1503">1503</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1486"><a id="__codelineno-0-1486" name="__codelineno-0-1486"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"lr_scheduler"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
+</span><span id="__span-0-1487"><a id="__codelineno-0-1487" name="__codelineno-0-1487"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1488"><a id="__codelineno-0-1488" name="__codelineno-0-1488"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_lr_scheduler_name</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">SchedulerType</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">SchedulerType</span><span class="p">]:</span>
+</span><span id="__span-0-1489"><a id="__codelineno-0-1489" name="__codelineno-0-1489"></a><span class="w">    </span><span class="sd">"""Validate a string lr_scheduler: a bare name must be a managed preset, else use a dotted path."""</span>
+</span><span id="__span-0-1490"><a id="__codelineno-0-1490" name="__codelineno-0-1490"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+</span><span id="__span-0-1491"><a id="__codelineno-0-1491" name="__codelineno-0-1491"></a>        <span class="k">return</span> <span class="n">v</span>
+</span><span id="__span-0-1492"><a id="__codelineno-0-1492" name="__codelineno-0-1492"></a>    <span class="n">lr_scheduler</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+</span><span id="__span-0-1493"><a id="__codelineno-0-1493" name="__codelineno-0-1493"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">lr_scheduler</span><span class="p">:</span>
+</span><span id="__span-0-1494"><a id="__codelineno-0-1494" name="__codelineno-0-1494"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"lr_scheduler must be a non-empty string."</span><span class="p">)</span>
+</span><span id="__span-0-1495"><a id="__codelineno-0-1495" name="__codelineno-0-1495"></a>    <span class="c1"># Bare names must be a managed preset; dotted import paths are validated lazily at train start.</span>
+</span><span id="__span-0-1496"><a id="__codelineno-0-1496" name="__codelineno-0-1496"></a>    <span class="k">if</span> <span class="s2">"."</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">lr_scheduler</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">_is_managed_scheduler_name</span><span class="p">(</span><span class="n">lr_scheduler</span><span class="p">):</span>
+</span><span id="__span-0-1497"><a id="__codelineno-0-1497" name="__codelineno-0-1497"></a>        <span class="n">presets</span> <span class="o">=</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_MANAGED_SCHEDULER_PRESETS</span><span class="p">))</span>
+</span><span id="__span-0-1498"><a id="__codelineno-0-1498" name="__codelineno-0-1498"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+</span><span id="__span-0-1499"><a id="__codelineno-0-1499" name="__codelineno-0-1499"></a>            <span class="sa">f</span><span class="s2">"Unknown lr_scheduler </span><span class="si">{</span><span class="n">v</span><span class="si">!r}</span><span class="s2">. Bare names must be a managed preset (</span><span class="si">{</span><span class="n">presets</span><span class="si">}</span><span class="s2">); "</span>
+</span><span id="__span-0-1500"><a id="__codelineno-0-1500" name="__codelineno-0-1500"></a>            <span class="s2">"use a full dotted import path (e.g. 'torch.optim.lr_scheduler.StepLR') or a callable "</span>
+</span><span id="__span-0-1501"><a id="__codelineno-0-1501" name="__codelineno-0-1501"></a>            <span class="s2">"for anything else."</span>
+</span><span id="__span-0-1502"><a id="__codelineno-0-1502" name="__codelineno-0-1502"></a>        <span class="p">)</span>
+</span><span id="__span-0-1503"><a id="__codelineno-0-1503" name="__codelineno-0-1503"></a>    <span class="k">return</span> <span class="n">lr_scheduler</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3182,23 +3182,23 @@ the constructor and are left unchecked here.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1351">1351</a></span>
-<span class="normal"><a href="#__codelineno-0-1352">1352</a></span>
-<span class="normal"><a href="#__codelineno-0-1353">1353</a></span>
-<span class="normal"><a href="#__codelineno-0-1354">1354</a></span>
-<span class="normal"><a href="#__codelineno-0-1355">1355</a></span>
-<span class="normal"><a href="#__codelineno-0-1356">1356</a></span>
-<span class="normal"><a href="#__codelineno-0-1357">1357</a></span>
-<span class="normal"><a href="#__codelineno-0-1358">1358</a></span>
-<span class="normal"><a href="#__codelineno-0-1359">1359</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1351"><a id="__codelineno-0-1351" name="__codelineno-0-1351"></a><span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
-</span><span id="__span-0-1352"><a id="__codelineno-0-1352" name="__codelineno-0-1352"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_optimizer_kwargs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"TrainConfig"</span><span class="p">:</span>
-</span><span id="__span-0-1353"><a id="__codelineno-0-1353" name="__codelineno-0-1353"></a><span class="w">    </span><span class="sd">"""Reserved optimizer kwargs are only rejected for managed (short-name) optimizers."""</span>
-</span><span id="__span-0-1354"><a id="__codelineno-0-1354" name="__codelineno-0-1354"></a>    <span class="k">if</span> <span class="n">_is_managed_optimizer_name</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="p">):</span>
-</span><span id="__span-0-1355"><a id="__codelineno-0-1355" name="__codelineno-0-1355"></a>        <span class="n">reserved_present</span> <span class="o">=</span> <span class="n">_OPTIMIZER_MANAGED_KWARGS</span><span class="o">.</span><span class="n">intersection</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">optimizer_kwargs</span><span class="p">)</span>
-</span><span id="__span-0-1356"><a id="__codelineno-0-1356" name="__codelineno-0-1356"></a>        <span class="k">if</span> <span class="n">reserved_present</span><span class="p">:</span>
-</span><span id="__span-0-1357"><a id="__codelineno-0-1357" name="__codelineno-0-1357"></a>            <span class="n">reserved</span> <span class="o">=</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">reserved_present</span><span class="p">))</span>
-</span><span id="__span-0-1358"><a id="__codelineno-0-1358" name="__codelineno-0-1358"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"optimizer_kwargs cannot include RF-DETR-managed key(s): </span><span class="si">{</span><span class="n">reserved</span><span class="si">}</span><span class="s2">."</span><span class="p">)</span>
-</span><span id="__span-0-1359"><a id="__codelineno-0-1359" name="__codelineno-0-1359"></a>    <span class="k">return</span> <span class="bp">self</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1360">1360</a></span>
+<span class="normal"><a href="#__codelineno-0-1361">1361</a></span>
+<span class="normal"><a href="#__codelineno-0-1362">1362</a></span>
+<span class="normal"><a href="#__codelineno-0-1363">1363</a></span>
+<span class="normal"><a href="#__codelineno-0-1364">1364</a></span>
+<span class="normal"><a href="#__codelineno-0-1365">1365</a></span>
+<span class="normal"><a href="#__codelineno-0-1366">1366</a></span>
+<span class="normal"><a href="#__codelineno-0-1367">1367</a></span>
+<span class="normal"><a href="#__codelineno-0-1368">1368</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1360"><a id="__codelineno-0-1360" name="__codelineno-0-1360"></a><span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
+</span><span id="__span-0-1361"><a id="__codelineno-0-1361" name="__codelineno-0-1361"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_optimizer_kwargs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"TrainConfig"</span><span class="p">:</span>
+</span><span id="__span-0-1362"><a id="__codelineno-0-1362" name="__codelineno-0-1362"></a><span class="w">    </span><span class="sd">"""Reserved optimizer kwargs are only rejected for managed (short-name) optimizers."""</span>
+</span><span id="__span-0-1363"><a id="__codelineno-0-1363" name="__codelineno-0-1363"></a>    <span class="k">if</span> <span class="n">_is_managed_optimizer_name</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="p">):</span>
+</span><span id="__span-0-1364"><a id="__codelineno-0-1364" name="__codelineno-0-1364"></a>        <span class="n">reserved_present</span> <span class="o">=</span> <span class="n">_OPTIMIZER_MANAGED_KWARGS</span><span class="o">.</span><span class="n">intersection</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">optimizer_kwargs</span><span class="p">)</span>
+</span><span id="__span-0-1365"><a id="__codelineno-0-1365" name="__codelineno-0-1365"></a>        <span class="k">if</span> <span class="n">reserved_present</span><span class="p">:</span>
+</span><span id="__span-0-1366"><a id="__codelineno-0-1366" name="__codelineno-0-1366"></a>            <span class="n">reserved</span> <span class="o">=</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">reserved_present</span><span class="p">))</span>
+</span><span id="__span-0-1367"><a id="__codelineno-0-1367" name="__codelineno-0-1367"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"optimizer_kwargs cannot include RF-DETR-managed key(s): </span><span class="si">{</span><span class="n">reserved</span><span class="si">}</span><span class="s2">."</span><span class="p">)</span>
+</span><span id="__span-0-1368"><a id="__codelineno-0-1368" name="__codelineno-0-1368"></a>    <span class="k">return</span> <span class="bp">self</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3225,33 +3225,33 @@ the constructor and are left unchecked here.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1329">1329</a></span>
-<span class="normal"><a href="#__codelineno-0-1330">1330</a></span>
-<span class="normal"><a href="#__codelineno-0-1331">1331</a></span>
-<span class="normal"><a href="#__codelineno-0-1332">1332</a></span>
-<span class="normal"><a href="#__codelineno-0-1333">1333</a></span>
-<span class="normal"><a href="#__codelineno-0-1334">1334</a></span>
-<span class="normal"><a href="#__codelineno-0-1335">1335</a></span>
-<span class="normal"><a href="#__codelineno-0-1336">1336</a></span>
-<span class="normal"><a href="#__codelineno-0-1337">1337</a></span>
-<span class="normal"><a href="#__codelineno-0-1338">1338</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1338">1338</a></span>
 <span class="normal"><a href="#__codelineno-0-1339">1339</a></span>
 <span class="normal"><a href="#__codelineno-0-1340">1340</a></span>
 <span class="normal"><a href="#__codelineno-0-1341">1341</a></span>
-<span class="normal"><a href="#__codelineno-0-1342">1342</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1329"><a id="__codelineno-0-1329" name="__codelineno-0-1329"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"optimizer"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
-</span><span id="__span-0-1330"><a id="__codelineno-0-1330" name="__codelineno-0-1330"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1331"><a id="__codelineno-0-1331" name="__codelineno-0-1331"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_optimizer_name</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Optimizer</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Optimizer</span><span class="p">]:</span>
-</span><span id="__span-0-1332"><a id="__codelineno-0-1332" name="__codelineno-0-1332"></a><span class="w">    </span><span class="sd">"""Validate a string optimizer: a bare name must be a native torch.optim optimizer."""</span>
-</span><span id="__span-0-1333"><a id="__codelineno-0-1333" name="__codelineno-0-1333"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-</span><span id="__span-0-1334"><a id="__codelineno-0-1334" name="__codelineno-0-1334"></a>        <span class="k">return</span> <span class="n">v</span>
-</span><span id="__span-0-1335"><a id="__codelineno-0-1335" name="__codelineno-0-1335"></a>    <span class="n">optimizer</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-</span><span id="__span-0-1336"><a id="__codelineno-0-1336" name="__codelineno-0-1336"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">optimizer</span><span class="p">:</span>
-</span><span id="__span-0-1337"><a id="__codelineno-0-1337" name="__codelineno-0-1337"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"optimizer must be a non-empty string."</span><span class="p">)</span>
-</span><span id="__span-0-1338"><a id="__codelineno-0-1338" name="__codelineno-0-1338"></a>    <span class="c1"># Bare short names must resolve to a torch.optim optimizer (checked eagerly).</span>
-</span><span id="__span-0-1339"><a id="__codelineno-0-1339" name="__codelineno-0-1339"></a>    <span class="c1"># Dotted import paths are validated lazily at train start (the module may be optional).</span>
-</span><span id="__span-0-1340"><a id="__codelineno-0-1340" name="__codelineno-0-1340"></a>    <span class="k">if</span> <span class="s2">"."</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">optimizer</span><span class="p">:</span>
-</span><span id="__span-0-1341"><a id="__codelineno-0-1341" name="__codelineno-0-1341"></a>        <span class="n">_resolve_native_optimizer</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
-</span><span id="__span-0-1342"><a id="__codelineno-0-1342" name="__codelineno-0-1342"></a>    <span class="k">return</span> <span class="n">optimizer</span>
+<span class="normal"><a href="#__codelineno-0-1342">1342</a></span>
+<span class="normal"><a href="#__codelineno-0-1343">1343</a></span>
+<span class="normal"><a href="#__codelineno-0-1344">1344</a></span>
+<span class="normal"><a href="#__codelineno-0-1345">1345</a></span>
+<span class="normal"><a href="#__codelineno-0-1346">1346</a></span>
+<span class="normal"><a href="#__codelineno-0-1347">1347</a></span>
+<span class="normal"><a href="#__codelineno-0-1348">1348</a></span>
+<span class="normal"><a href="#__codelineno-0-1349">1349</a></span>
+<span class="normal"><a href="#__codelineno-0-1350">1350</a></span>
+<span class="normal"><a href="#__codelineno-0-1351">1351</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1338"><a id="__codelineno-0-1338" name="__codelineno-0-1338"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"optimizer"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
+</span><span id="__span-0-1339"><a id="__codelineno-0-1339" name="__codelineno-0-1339"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1340"><a id="__codelineno-0-1340" name="__codelineno-0-1340"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_optimizer_name</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Optimizer</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Optimizer</span><span class="p">]:</span>
+</span><span id="__span-0-1341"><a id="__codelineno-0-1341" name="__codelineno-0-1341"></a><span class="w">    </span><span class="sd">"""Validate a string optimizer: a bare name must be a native torch.optim optimizer."""</span>
+</span><span id="__span-0-1342"><a id="__codelineno-0-1342" name="__codelineno-0-1342"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+</span><span id="__span-0-1343"><a id="__codelineno-0-1343" name="__codelineno-0-1343"></a>        <span class="k">return</span> <span class="n">v</span>
+</span><span id="__span-0-1344"><a id="__codelineno-0-1344" name="__codelineno-0-1344"></a>    <span class="n">optimizer</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+</span><span id="__span-0-1345"><a id="__codelineno-0-1345" name="__codelineno-0-1345"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">optimizer</span><span class="p">:</span>
+</span><span id="__span-0-1346"><a id="__codelineno-0-1346" name="__codelineno-0-1346"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"optimizer must be a non-empty string."</span><span class="p">)</span>
+</span><span id="__span-0-1347"><a id="__codelineno-0-1347" name="__codelineno-0-1347"></a>    <span class="c1"># Bare short names must resolve to a torch.optim optimizer (checked eagerly).</span>
+</span><span id="__span-0-1348"><a id="__codelineno-0-1348" name="__codelineno-0-1348"></a>    <span class="c1"># Dotted import paths are validated lazily at train start (the module may be optional).</span>
+</span><span id="__span-0-1349"><a id="__codelineno-0-1349" name="__codelineno-0-1349"></a>    <span class="k">if</span> <span class="s2">"."</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">optimizer</span><span class="p">:</span>
+</span><span id="__span-0-1350"><a id="__codelineno-0-1350" name="__codelineno-0-1350"></a>        <span class="n">_resolve_native_optimizer</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
+</span><span id="__span-0-1351"><a id="__codelineno-0-1351" name="__codelineno-0-1351"></a>    <span class="k">return</span> <span class="n">optimizer</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3278,19 +3278,19 @@ the constructor and are left unchecked here.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1283">1283</a></span>
-<span class="normal"><a href="#__codelineno-0-1284">1284</a></span>
-<span class="normal"><a href="#__codelineno-0-1285">1285</a></span>
-<span class="normal"><a href="#__codelineno-0-1286">1286</a></span>
-<span class="normal"><a href="#__codelineno-0-1287">1287</a></span>
-<span class="normal"><a href="#__codelineno-0-1288">1288</a></span>
-<span class="normal"><a href="#__codelineno-0-1289">1289</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1283"><a id="__codelineno-0-1283" name="__codelineno-0-1283"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"ema_update_interval"</span><span class="p">,</span> <span class="s2">"eval_interval"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
-</span><span id="__span-0-1284"><a id="__codelineno-0-1284" name="__codelineno-0-1284"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1285"><a id="__codelineno-0-1285" name="__codelineno-0-1285"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_positive_intervals</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-</span><span id="__span-0-1286"><a id="__codelineno-0-1286" name="__codelineno-0-1286"></a><span class="w">    </span><span class="sd">"""Validate interval fields are &gt;= 1."""</span>
-</span><span id="__span-0-1287"><a id="__codelineno-0-1287" name="__codelineno-0-1287"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
-</span><span id="__span-0-1288"><a id="__codelineno-0-1288" name="__codelineno-0-1288"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"Interval fields must be &gt;= 1."</span><span class="p">)</span>
-</span><span id="__span-0-1289"><a id="__codelineno-0-1289" name="__codelineno-0-1289"></a>    <span class="k">return</span> <span class="n">v</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1292">1292</a></span>
+<span class="normal"><a href="#__codelineno-0-1293">1293</a></span>
+<span class="normal"><a href="#__codelineno-0-1294">1294</a></span>
+<span class="normal"><a href="#__codelineno-0-1295">1295</a></span>
+<span class="normal"><a href="#__codelineno-0-1296">1296</a></span>
+<span class="normal"><a href="#__codelineno-0-1297">1297</a></span>
+<span class="normal"><a href="#__codelineno-0-1298">1298</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1292"><a id="__codelineno-0-1292" name="__codelineno-0-1292"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"ema_update_interval"</span><span class="p">,</span> <span class="s2">"eval_interval"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
+</span><span id="__span-0-1293"><a id="__codelineno-0-1293" name="__codelineno-0-1293"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1294"><a id="__codelineno-0-1294" name="__codelineno-0-1294"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_positive_intervals</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+</span><span id="__span-0-1295"><a id="__codelineno-0-1295" name="__codelineno-0-1295"></a><span class="w">    </span><span class="sd">"""Validate interval fields are &gt;= 1."""</span>
+</span><span id="__span-0-1296"><a id="__codelineno-0-1296" name="__codelineno-0-1296"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+</span><span id="__span-0-1297"><a id="__codelineno-0-1297" name="__codelineno-0-1297"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"Interval fields must be &gt;= 1."</span><span class="p">)</span>
+</span><span id="__span-0-1298"><a id="__codelineno-0-1298" name="__codelineno-0-1298"></a>    <span class="k">return</span> <span class="n">v</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3317,27 +3317,27 @@ the constructor and are left unchecked here.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1255">1255</a></span>
-<span class="normal"><a href="#__codelineno-0-1256">1256</a></span>
-<span class="normal"><a href="#__codelineno-0-1257">1257</a></span>
-<span class="normal"><a href="#__codelineno-0-1258">1258</a></span>
-<span class="normal"><a href="#__codelineno-0-1259">1259</a></span>
-<span class="normal"><a href="#__codelineno-0-1260">1260</a></span>
-<span class="normal"><a href="#__codelineno-0-1261">1261</a></span>
-<span class="normal"><a href="#__codelineno-0-1262">1262</a></span>
-<span class="normal"><a href="#__codelineno-0-1263">1263</a></span>
-<span class="normal"><a href="#__codelineno-0-1264">1264</a></span>
-<span class="normal"><a href="#__codelineno-0-1265">1265</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1255"><a id="__codelineno-0-1255" name="__codelineno-0-1255"></a><span class="nd">@field_validator</span><span class="p">(</span>
-</span><span id="__span-0-1256"><a id="__codelineno-0-1256" name="__codelineno-0-1256"></a>    <span class="s2">"grad_accum_steps"</span><span class="p">,</span> <span class="s2">"auto_batch_target_effective"</span><span class="p">,</span> <span class="s2">"auto_batch_max_targets_per_image"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span>
-</span><span id="__span-0-1257"><a id="__codelineno-0-1257" name="__codelineno-0-1257"></a><span class="p">)</span>
-</span><span id="__span-0-1258"><a id="__codelineno-0-1258" name="__codelineno-0-1258"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1259"><a id="__codelineno-0-1259" name="__codelineno-0-1259"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_positive_train_steps</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-</span><span id="__span-0-1260"><a id="__codelineno-0-1260" name="__codelineno-0-1260"></a><span class="w">    </span><span class="sd">"""Validate accumulation, target-effective batch, and max targets are &gt;= 1."""</span>
-</span><span id="__span-0-1261"><a id="__codelineno-0-1261" name="__codelineno-0-1261"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
-</span><span id="__span-0-1262"><a id="__codelineno-0-1262" name="__codelineno-0-1262"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-</span><span id="__span-0-1263"><a id="__codelineno-0-1263" name="__codelineno-0-1263"></a>            <span class="s2">"grad_accum_steps, auto_batch_target_effective, and auto_batch_max_targets_per_image must be &gt;= 1."</span>
-</span><span id="__span-0-1264"><a id="__codelineno-0-1264" name="__codelineno-0-1264"></a>        <span class="p">)</span>
-</span><span id="__span-0-1265"><a id="__codelineno-0-1265" name="__codelineno-0-1265"></a>    <span class="k">return</span> <span class="n">v</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1264">1264</a></span>
+<span class="normal"><a href="#__codelineno-0-1265">1265</a></span>
+<span class="normal"><a href="#__codelineno-0-1266">1266</a></span>
+<span class="normal"><a href="#__codelineno-0-1267">1267</a></span>
+<span class="normal"><a href="#__codelineno-0-1268">1268</a></span>
+<span class="normal"><a href="#__codelineno-0-1269">1269</a></span>
+<span class="normal"><a href="#__codelineno-0-1270">1270</a></span>
+<span class="normal"><a href="#__codelineno-0-1271">1271</a></span>
+<span class="normal"><a href="#__codelineno-0-1272">1272</a></span>
+<span class="normal"><a href="#__codelineno-0-1273">1273</a></span>
+<span class="normal"><a href="#__codelineno-0-1274">1274</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1264"><a id="__codelineno-0-1264" name="__codelineno-0-1264"></a><span class="nd">@field_validator</span><span class="p">(</span>
+</span><span id="__span-0-1265"><a id="__codelineno-0-1265" name="__codelineno-0-1265"></a>    <span class="s2">"grad_accum_steps"</span><span class="p">,</span> <span class="s2">"auto_batch_target_effective"</span><span class="p">,</span> <span class="s2">"auto_batch_max_targets_per_image"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span>
+</span><span id="__span-0-1266"><a id="__codelineno-0-1266" name="__codelineno-0-1266"></a><span class="p">)</span>
+</span><span id="__span-0-1267"><a id="__codelineno-0-1267" name="__codelineno-0-1267"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1268"><a id="__codelineno-0-1268" name="__codelineno-0-1268"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_positive_train_steps</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+</span><span id="__span-0-1269"><a id="__codelineno-0-1269" name="__codelineno-0-1269"></a><span class="w">    </span><span class="sd">"""Validate accumulation, target-effective batch, and max targets are &gt;= 1."""</span>
+</span><span id="__span-0-1270"><a id="__codelineno-0-1270" name="__codelineno-0-1270"></a>    <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+</span><span id="__span-0-1271"><a id="__codelineno-0-1271" name="__codelineno-0-1271"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+</span><span id="__span-0-1272"><a id="__codelineno-0-1272" name="__codelineno-0-1272"></a>            <span class="s2">"grad_accum_steps, auto_batch_target_effective, and auto_batch_max_targets_per_image must be &gt;= 1."</span>
+</span><span id="__span-0-1273"><a id="__codelineno-0-1273" name="__codelineno-0-1273"></a>        <span class="p">)</span>
+</span><span id="__span-0-1274"><a id="__codelineno-0-1274" name="__codelineno-0-1274"></a>    <span class="k">return</span> <span class="n">v</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3364,19 +3364,19 @@ the constructor and are left unchecked here.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1496">1496</a></span>
-<span class="normal"><a href="#__codelineno-0-1497">1497</a></span>
-<span class="normal"><a href="#__codelineno-0-1498">1498</a></span>
-<span class="normal"><a href="#__codelineno-0-1499">1499</a></span>
-<span class="normal"><a href="#__codelineno-0-1500">1500</a></span>
-<span class="normal"><a href="#__codelineno-0-1501">1501</a></span>
-<span class="normal"><a href="#__codelineno-0-1502">1502</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1496"><a id="__codelineno-0-1496" name="__codelineno-0-1496"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"prefetch_factor"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
-</span><span id="__span-0-1497"><a id="__codelineno-0-1497" name="__codelineno-0-1497"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1498"><a id="__codelineno-0-1498" name="__codelineno-0-1498"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_prefetch_factor</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1499"><a id="__codelineno-0-1499" name="__codelineno-0-1499"></a><span class="w">    </span><span class="sd">"""Validate prefetch_factor is None or &gt;= 1."""</span>
-</span><span id="__span-0-1500"><a id="__codelineno-0-1500" name="__codelineno-0-1500"></a>    <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
-</span><span id="__span-0-1501"><a id="__codelineno-0-1501" name="__codelineno-0-1501"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"prefetch_factor must be &gt;= 1 when provided."</span><span class="p">)</span>
-</span><span id="__span-0-1502"><a id="__codelineno-0-1502" name="__codelineno-0-1502"></a>    <span class="k">return</span> <span class="n">v</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1505">1505</a></span>
+<span class="normal"><a href="#__codelineno-0-1506">1506</a></span>
+<span class="normal"><a href="#__codelineno-0-1507">1507</a></span>
+<span class="normal"><a href="#__codelineno-0-1508">1508</a></span>
+<span class="normal"><a href="#__codelineno-0-1509">1509</a></span>
+<span class="normal"><a href="#__codelineno-0-1510">1510</a></span>
+<span class="normal"><a href="#__codelineno-0-1511">1511</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1505"><a id="__codelineno-0-1505" name="__codelineno-0-1505"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"prefetch_factor"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
+</span><span id="__span-0-1506"><a id="__codelineno-0-1506" name="__codelineno-0-1506"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1507"><a id="__codelineno-0-1507" name="__codelineno-0-1507"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_prefetch_factor</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1508"><a id="__codelineno-0-1508" name="__codelineno-0-1508"></a><span class="w">    </span><span class="sd">"""Validate prefetch_factor is None or &gt;= 1."""</span>
+</span><span id="__span-0-1509"><a id="__codelineno-0-1509" name="__codelineno-0-1509"></a>    <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+</span><span id="__span-0-1510"><a id="__codelineno-0-1510" name="__codelineno-0-1510"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"prefetch_factor must be &gt;= 1 when provided."</span><span class="p">)</span>
+</span><span id="__span-0-1511"><a id="__codelineno-0-1511" name="__codelineno-0-1511"></a>    <span class="k">return</span> <span class="n">v</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3403,19 +3403,19 @@ the constructor and are left unchecked here.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/config.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1275">1275</a></span>
-<span class="normal"><a href="#__codelineno-0-1276">1276</a></span>
-<span class="normal"><a href="#__codelineno-0-1277">1277</a></span>
-<span class="normal"><a href="#__codelineno-0-1278">1278</a></span>
-<span class="normal"><a href="#__codelineno-0-1279">1279</a></span>
-<span class="normal"><a href="#__codelineno-0-1280">1280</a></span>
-<span class="normal"><a href="#__codelineno-0-1281">1281</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1275"><a id="__codelineno-0-1275" name="__codelineno-0-1275"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"smooth_alpha"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
-</span><span id="__span-0-1276"><a id="__codelineno-0-1276" name="__codelineno-0-1276"></a><span class="nd">@classmethod</span>
-</span><span id="__span-0-1277"><a id="__codelineno-0-1277" name="__codelineno-0-1277"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_smooth_alpha</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-</span><span id="__span-0-1278"><a id="__codelineno-0-1278" name="__codelineno-0-1278"></a><span class="w">    </span><span class="sd">"""Validate smooth_alpha is in [0.0, 1.0)."""</span>
-</span><span id="__span-0-1279"><a id="__codelineno-0-1279" name="__codelineno-0-1279"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="mf">0.0</span> <span class="o">&lt;=</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mf">1.0</span><span class="p">):</span>
-</span><span id="__span-0-1280"><a id="__codelineno-0-1280" name="__codelineno-0-1280"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"smooth_alpha must be in [0.0, 1.0)."</span><span class="p">)</span>
-</span><span id="__span-0-1281"><a id="__codelineno-0-1281" name="__codelineno-0-1281"></a>    <span class="k">return</span> <span class="n">v</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1284">1284</a></span>
+<span class="normal"><a href="#__codelineno-0-1285">1285</a></span>
+<span class="normal"><a href="#__codelineno-0-1286">1286</a></span>
+<span class="normal"><a href="#__codelineno-0-1287">1287</a></span>
+<span class="normal"><a href="#__codelineno-0-1288">1288</a></span>
+<span class="normal"><a href="#__codelineno-0-1289">1289</a></span>
+<span class="normal"><a href="#__codelineno-0-1290">1290</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1284"><a id="__codelineno-0-1284" name="__codelineno-0-1284"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">"smooth_alpha"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"after"</span><span class="p">)</span>
+</span><span id="__span-0-1285"><a id="__codelineno-0-1285" name="__codelineno-0-1285"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-1286"><a id="__codelineno-0-1286" name="__codelineno-0-1286"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_smooth_alpha</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+</span><span id="__span-0-1287"><a id="__codelineno-0-1287" name="__codelineno-0-1287"></a><span class="w">    </span><span class="sd">"""Validate smooth_alpha is in [0.0, 1.0)."""</span>
+</span><span id="__span-0-1288"><a id="__codelineno-0-1288" name="__codelineno-0-1288"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="mf">0.0</span> <span class="o">&lt;=</span> <span class="n">v</span> <span class="o">&lt;</span> <span class="mf">1.0</span><span class="p">):</span>
+</span><span id="__span-0-1289"><a id="__codelineno-0-1289" name="__codelineno-0-1289"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"smooth_alpha must be in [0.0, 1.0)."</span><span class="p">)</span>
+</span><span id="__span-0-1290"><a id="__codelineno-0-1290" name="__codelineno-0-1290"></a>    <span class="k">return</span> <span class="n">v</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
