@@ -404,6 +404,10 @@ class HungarianMatcher(nn.Module):
         Args:
             outputs: Model outputs containing ``pred_boxes`` and ``pred_logits``.
             targets: Per-image target dicts containing ``boxes`` and ``labels``.
+            clamp_target_labels: If True, clamp target label ids into ``[0, num_classes)`` before
+                the gather so an out-of-range label cannot raise; used only by the batched fast
+                path, which defers the safety decision until after the single host transfer (see
+                the ``clamp_target_labels`` block below).
 
         Returns:
             Cost matrix of shape ``[num_queries, sum(sizes)]``, where ``sizes`` is each image's real
@@ -451,6 +455,24 @@ class HungarianMatcher(nn.Module):
         This private fast path is used only by ``SetCriterion`` for final, auxiliary, and encoder outputs from one
         training step. It leaves unusual input shapes and unsafe values to :meth:`forward`, whose full-cartesian
         fallback carries the established error and non-finite-cost behavior.
+
+        Args:
+            outputs_list: Detection outputs for the final, auxiliary, and encoder layers to match
+                together.
+            targets: Per-image target dicts shared by every layer in ``outputs_list``.
+            group_detr: Number of query groups to solve independently within each layer.
+            target_side_safety: Optional precomputed target-side safety result for these exact
+                ``targets`` and the reference layer's box dtype, device, and class count.
+
+        Returns:
+            ``list[list[tuple[Tensor, Tensor]]] | None`` containing per-image assignments for each
+            layer, or ``None``. ``None`` is the decline contract: the caller MUST execute the
+            per-layer fallback. A decline can occur after all L compact matrices are built,
+            staged into one host buffer, and transferred when the final loop finds a layer with
+            non-finite ``pred_boxes`` or a bad safety flag. This post-transfer decline costs
+            approximately 1.8x the pre-batching per-layer cost: a measured NaN in one of 7 layers
+            took 182% of the pre-PR matcher time (6.97 ms of wasted ``_match_many`` work plus
+            8.51 ms of sequential redo).
         """
         if len(outputs_list) < 2 or not all(
             self._compact_path_applicable(outputs, targets) for outputs in outputs_list

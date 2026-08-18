@@ -653,7 +653,20 @@ class SetCriterion(nn.Module):
     def _get_matched_targets(
         self, targets: list[dict[str, Tensor]], indices: list[tuple[Tensor, Tensor]]
     ) -> _MatchedTargets:
-        """Collect the matched detection targets once for loss functions sharing one layer's indices."""
+        """Collect matched detection targets for losses sharing one layer's indices.
+
+        Args:
+            targets: Per-image target dictionaries in batch order.
+            indices: Per-image matcher results, where each pair contains source
+                query indices and their corresponding target indices.
+
+        Returns:
+            Matched targets containing ``source_indices``, ``labels``, and
+            ``boxes``. The tensors are concatenated across images in the same
+            order as ``indices`` and ``targets``, so all three fields use the
+            same flattened batch-of-matches ordering. Callers must not reorder
+            one field without applying the same reordering to the others.
+        """
         return _MatchedTargets(
             source_indices=self._get_src_permutation_idx(indices),
             labels=torch.cat(
