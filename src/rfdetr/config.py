@@ -1242,6 +1242,9 @@ class TrainConfig(BaseConfig):
     # logged individually, honoring train_log_on_step for those component logs too.
     compact_train_metrics: bool = True
     compute_train_metrics: bool = False
+    # Restores PTL's pre-training sanity-validation pass (0 = disabled, current default;
+    # increase to re-enable and catch val-path errors before a full epoch runs).
+    num_sanity_val_steps: int = 0
     compute_val_loss: bool = True
     compute_test_loss: bool = True
     pin_memory: bool | None = None
