@@ -561,7 +561,9 @@ def _interpreter_scripts_on_path() -> Generator[None, None, None]:
     off ``PATH`` even though ``onnxsim`` is installed there.
 
     Prepending the interpreter's own script directory makes the subprocess lookup resolve to the ``onnxsim``
-    installed by the ``rfdetr[tflite]`` extra, matching the interpreter that is driving the export.
+    installed by the ``rfdetr[tflite]`` extra, matching the interpreter that is driving the export. Candidate
+    directories already present in ``PATH`` are moved to the front and duplicate preferred-directory entries are
+    removed.
 
     Yields:
         ``None``.  ``PATH`` is restored to its previous value on exit, including on exception.
@@ -571,21 +573,33 @@ def _interpreter_scripts_on_path() -> Generator[None, None, None]:
         threads.  Restore is unconditional rather than merged, so a concurrent ``PATH`` edit made inside the context
         is lost.
     """
-    scripts_dirs = [str(Path(sys.executable).parent), sysconfig.get_path("scripts")]
-    original_path = os.environ.get("PATH", "")
-    entries = original_path.split(os.pathsep) if original_path else []
-    missing = [d for d in dict.fromkeys(scripts_dirs) if d and d not in entries]
+    scripts_dirs: list[str] = []
+    if sys.executable:
+        executable_path = Path(sys.executable)
+        if executable_path.is_absolute():
+            scripts_dirs.append(str(executable_path.parent))
 
-    if not missing:
+    sysconfig_scripts = sysconfig.get_path("scripts")
+    if sysconfig_scripts and Path(sysconfig_scripts).is_absolute():
+        scripts_dirs.append(sysconfig_scripts)
+
+    scripts_dirs = list(dict.fromkeys(scripts_dirs))
+    original_path = os.environ.get("PATH", "")
+    path_was_set = "PATH" in os.environ
+    entries = original_path.split(os.pathsep) if original_path else []
+    remaining = [entry for entry in entries if entry not in scripts_dirs]
+    updated_path = os.pathsep.join(scripts_dirs + remaining)
+
+    if not scripts_dirs or updated_path == original_path:
         yield
         return
 
-    logger.debug(f"Prepending {missing} to PATH so onnx2tf's onnxsim subprocess resolves.")
-    os.environ["PATH"] = os.pathsep.join(missing + entries)
+    logger.debug(f"Prepending {scripts_dirs} to PATH so onnx2tf's onnxsim subprocess resolves.")
+    os.environ["PATH"] = updated_path
     try:
         yield
     finally:
-        if original_path:
+        if path_was_set:
             os.environ["PATH"] = original_path
         else:
             os.environ.pop("PATH", None)
