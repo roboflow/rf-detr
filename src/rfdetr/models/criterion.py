@@ -382,7 +382,8 @@ class SetCriterion(nn.Module):
 
         elif self.use_varifocal_loss:
             src_boxes = outputs["pred_boxes"][idx]
-            target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            if target_boxes is None:
+                target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
             iou_targets, _ = box_ops.elementwise_box_iou(
                 box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
@@ -780,13 +781,33 @@ class SetCriterion(nn.Module):
         if precompute is not None and (outputs.get("aux_outputs") or "enc_outputs" in outputs):
             matcher_kwargs["target_side_safety"] = precompute(outputs_without_aux, targets)
 
+        # Every layer's loss-key suffix is appended in the same statement as the layer itself, so the
+        # final/aux/enc keying cannot drift from the layers it keys when either side gains an entry.
+        # `matched_outputs` stays a plain list of output dicts: it is what the matcher consumes.
         matched_outputs = [outputs_without_aux]
+        layer_suffixes = [""]
         if "aux_outputs" in outputs:
             matched_outputs.extend(outputs["aux_outputs"])
+            layer_suffixes.extend(f"_{aux_index}" for aux_index in range(len(outputs["aux_outputs"])))
         if "enc_outputs" in outputs:
             matched_outputs.append(outputs["enc_outputs"])
+            layer_suffixes.append("_enc")
 
-        match_many = getattr(type(self.matcher), "_match_many", None)
+        # The batched fast path calls `_match_many` unbound off the matcher's class, so it skips
+        # `nn.Module.__call__` entirely. Anything that legitimately hangs off that call path must
+        # therefore veto it: a subclass overriding `forward` -- the sanctioned nn.Module extension
+        # point -- would otherwise have the base matching logic silently answer in its place, and
+        # registered forward hooks would never fire. Both cases decline to the per-layer fallback
+        # below, which still routes through `nn.Module.__call__`. The `forward` lookup stays on the
+        # class (never the instance) and tolerates its absence, so a duck-typed non-Module matcher
+        # keeps declining the fast path exactly as it does for a missing `_match_many`.
+        matcher_type = type(self.matcher)
+        fast_path_safe = (
+            getattr(matcher_type, "forward", None) is HungarianMatcher.forward
+            and not self.matcher._forward_pre_hooks
+            and not self.matcher._forward_hooks
+        )
+        match_many = getattr(matcher_type, "_match_many", None) if fast_path_safe else None
         all_indices = (
             None if match_many is None else match_many(self.matcher, matched_outputs, targets, **matcher_kwargs)
         )
@@ -801,19 +822,19 @@ class SetCriterion(nn.Module):
             num_boxes = num_boxes.to(device=self._output_device(outputs), dtype=torch.float)
 
         losses = {}
-        aux_count = len(outputs.get("aux_outputs", []))
-        for layer_index, (layer_outputs, indices) in enumerate(zip(matched_outputs, all_indices)):
-            suffix = "" if layer_index == 0 else f"_{layer_index - 1}" if layer_index <= aux_count else "_enc"
+        for suffix, layer_outputs, indices in zip(layer_suffixes, matched_outputs, all_indices, strict=True):
             # Labels and boxes are both requested by every detection configuration, so build their
             # shared matched tensors once per output layer before either loss consumes them.
             matched_targets = (
                 self._get_matched_targets(targets, indices) if {"labels", "boxes"} <= set(self.losses) else None
             )
             for loss in self.losses:
-                kwargs = {"log": False} if layer_index > 0 and loss == "labels" else {}
-                layer_losses = self.get_loss(
-                    loss, layer_outputs, targets, indices, num_boxes, matched_targets=matched_targets, **kwargs
-                )
+                # Only the final layer carries an empty suffix, so a non-empty one marks the
+                # auxiliary and encoder layers whose classification stats are not logged.
+                kwargs: dict[str, Any] = {"log": False} if suffix and loss == "labels" else {}
+                if matched_targets is not None:
+                    kwargs["matched_targets"] = matched_targets
+                layer_losses = self.get_loss(loss, layer_outputs, targets, indices, num_boxes, **kwargs)
                 losses.update({key + suffix: value for key, value in layer_losses.items()})
 
         return losses

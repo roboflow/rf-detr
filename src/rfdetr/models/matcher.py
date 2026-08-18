@@ -397,6 +397,7 @@ class HungarianMatcher(nn.Module):
         self,
         outputs: dict[str, Any],
         targets: list[dict[str, Any]],
+        *,
         clamp_target_labels: bool = False,
     ) -> Tensor:
         """Compute same-image detection costs with targets padded only to the batch maximum.
@@ -425,6 +426,10 @@ class HungarianMatcher(nn.Module):
         if clamp_target_labels:
             # The batched path checks label safety only after its single host transfer. Clamp solely
             # to let `gather` construct a disposable matrix for unsafe batches; it is never assigned.
+            # This is a no-op on every batch the method serves: `pad_sequence` pads with in-range 0,
+            # `_target_side_precheck` gates labels to `[0, num_classes)`, and `_match_many` checks
+            # equal class counts across layers; weakening any invariant would silently match wrong
+            # class columns here instead of raising.
             padded_target_ids = padded_target_ids.clamp(0, outputs["pred_logits"].shape[-1] - 1)
 
         gather_index = padded_target_ids[:, None, :].expand(batch_size, num_queries, max_targets)
@@ -484,6 +489,7 @@ class HungarianMatcher(nn.Module):
         if any(
             outputs["pred_boxes"].dtype != reference_boxes.dtype
             or outputs["pred_boxes"].device != reference_boxes.device
+            or outputs["pred_logits"].device != reference_boxes.device
             or outputs["pred_logits"].shape[-1] != reference_classes
             for outputs in outputs_list[1:]
         ):
