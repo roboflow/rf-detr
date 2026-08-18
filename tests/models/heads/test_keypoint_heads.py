@@ -54,6 +54,129 @@ def test_compute_l1_keypoint_loss_smoke() -> None:
         assert torch.isfinite(loss).all()
 
 
+@pytest.mark.parametrize(
+    ("channel", "loss_index"),
+    [
+        pytest.param(0, 0, id="x_coord_corrupts_location_loss"),
+        pytest.param(2, 1, id="findable_logit_corrupts_findable_loss"),
+        pytest.param(3, 2, id="visible_logit_corrupts_visible_loss"),
+    ],
+)
+def test_compute_l1_keypoint_loss_ignores_single_nonfinite_prediction_channel(channel: int, loss_index: int) -> None:
+    """A single non-finite prediction channel for one of several keypoints must not poison its loss term.
+
+    Regression: location_loss/findable_loss/visible_loss each excluded non-finite positions by
+    multiplying the per-keypoint loss by a float mask (0.0/1.0). ``0.0 * nan == nan`` under IEEE 754, so
+    a masked-out NaN still propagated through the following ``.sum(-1)`` and poisoned the whole target's
+    loss, defeating the ``isfinite`` check that built the mask in the first place. Fixed by swapping in
+    a safe placeholder before the loss op (``torch.where``) as well as ``masked_fill`` on the result --
+    see ``test_compute_l1_keypoint_loss_gradient_ignores_single_nonfinite_prediction_channel`` for why
+    ``masked_fill`` on the output alone is not enough for the *gradient*.
+    """
+    torch.manual_seed(0)
+    pred_keypoints = torch.randn(1, 17, 7)
+    pred_keypoints[0, 5, channel] = float("nan")  # one of 17 keypoints goes non-finite on this channel
+    target_keypoints = torch.rand(1, 17, 3)
+    target_keypoints[:, :, 2] = 2.0
+
+    losses = compute_l1_keypoint_loss(
+        all_pred_keypoints=pred_keypoints,
+        target_keypoints=target_keypoints,
+        target_classes=torch.tensor([0], dtype=torch.int64),
+        target_areas=torch.tensor([1.0], dtype=torch.float32),
+        num_keypoints_per_class=[17],
+    )
+
+    assert torch.isfinite(losses[loss_index]).all(), (
+        f"a single non-finite prediction on channel {channel} for 1 of 17 keypoints must not poison "
+        f"losses[{loss_index}]"
+    )
+
+
+@pytest.mark.parametrize(
+    "channel",
+    [
+        pytest.param(0, id="x_coord"),
+        pytest.param(1, id="y_coord"),
+        pytest.param(2, id="findable_logit"),
+        pytest.param(3, id="visible_logit"),
+        pytest.param(4, id="log_l11"),
+        pytest.param(5, id="l21"),
+        pytest.param(6, id="log_l22"),
+    ],
+)
+def test_compute_l1_keypoint_loss_gradient_ignores_single_nonfinite_prediction_channel(channel: int) -> None:
+    """A single non-finite prediction must not poison the *gradient* of any loss term, not just its value.
+
+    Regression: masking a non-finite position by ``masked_fill``-ing the per-keypoint loss (the fix for
+    ``test_compute_l1_keypoint_loss_ignores_single_nonfinite_prediction_channel`` above) makes the
+    forward *value* finite, but not the gradient. Every loss op's own backward formula still evaluates
+    its *original* input locally -- ``binary_cross_entropy_with_logits``'s gradient is
+    ``sigmoid(x) - y``, so a non-finite ``x`` gives a non-finite local gradient there regardless of the
+    output mask, and ``0.0`` (the correctly zeroed upstream gradient) ``* nan == nan`` propagates it into
+    ``x.grad`` anyway -- the same IEEE 754 trap one level down. This also affects the Gaussian NLL term
+    (through ``dx``/``dy``/the Cholesky params, several ops before its own ``nan_to_num`` call, which
+    only cleans the exact node it is applied to). Fixed by swapping in a safe placeholder value
+    (``torch.where``) before each loss op, so its local gradient formula never sees the non-finite input.
+    """
+    torch.manual_seed(0)
+    pred_keypoints = torch.randn(1, 17, 7, requires_grad=True)
+    with torch.no_grad():
+        pred_keypoints[0, 5, channel] = float("nan")  # one of 17 keypoints goes non-finite on this channel
+    target_keypoints = torch.rand(1, 17, 3)
+    target_keypoints[:, :, 2] = 2.0
+
+    losses = compute_l1_keypoint_loss(
+        all_pred_keypoints=pred_keypoints,
+        target_keypoints=target_keypoints,
+        target_classes=torch.tensor([0], dtype=torch.int64),
+        target_areas=torch.tensor([1.0], dtype=torch.float32),
+        num_keypoints_per_class=[17],
+    )
+    sum(loss.sum() for loss in losses).backward()
+
+    grad = pred_keypoints.grad
+    assert grad is not None
+    assert torch.isfinite(grad).all(), (
+        f"a single non-finite prediction on channel {channel} for 1 of 17 keypoints must not poison "
+        f"the gradient of any loss term; got grad={grad}"
+    )
+
+
+def test_compute_l1_keypoint_loss_gradient_ignores_log_precision_exp_overflow() -> None:
+    """A finite log-precision input whose ``exp()`` overflows must not poison the NLL gradient.
+
+    Regression: ``finite_uncertainty`` only checks the *raw* (pre-``exp``) Cholesky log-precision
+    inputs, so a large-but-finite value like ``100.0`` passes it -- ``exp(100)`` then overflows to
+    ``inf`` internally, several ops before the existing ``isfinite(u0)``/``isfinite(maha2)`` check that
+    catches it and excludes it from the *forward* sum. By the time that check runs, ``u0``/``maha2``
+    have already been computed from the overflowed ``l11``, so their own backward formula (e.g.
+    ``d(u0**2)/d(u0) == 2*u0 == inf``) still poisons x/y/Cholesky gradients via ``0.0 * inf == nan``,
+    the same IEEE 754 trap as the other three loss terms, just one exp() later. Fixed by refining the
+    mask with this later-stage overflow and redoing the ``u0``/``u1``/``maha2`` chain with
+    ``torch.where``-sanitized inputs before ``exp``/multiply/square see them.
+    """
+    pred_keypoints = torch.zeros(1, 1, 7, requires_grad=True)
+    with torch.no_grad():
+        pred_keypoints[0, 0, 4] = 100.0  # raw_log_l11 is finite; exp(100) overflows to inf
+    target_keypoints = torch.tensor([[[0.3, -0.2, 2.0]]], dtype=torch.float32)
+
+    losses = compute_l1_keypoint_loss(
+        all_pred_keypoints=pred_keypoints,
+        target_keypoints=target_keypoints,
+        target_classes=torch.tensor([0], dtype=torch.int64),
+        target_areas=torch.tensor([1.0], dtype=torch.float32),
+        num_keypoints_per_class=[1],
+    )
+    for loss in losses:
+        assert torch.isfinite(loss).all()
+    sum(loss.sum() for loss in losses).backward()
+
+    grad = pred_keypoints.grad
+    assert grad is not None
+    assert torch.isfinite(grad).all(), f"exp() overflow of a finite log-precision input must not poison grad={grad}"
+
+
 def test_compute_l1_keypoint_loss_skips_visible_zero_area_nll_residuals() -> None:
     """Visible keypoints on zero-area targets should not produce non-finite Gaussian NLL."""
     pred_keypoints = torch.zeros(1, 17, 7)
@@ -69,6 +192,37 @@ def test_compute_l1_keypoint_loss_skips_visible_zero_area_nll_residuals() -> Non
 
     for loss in losses:
         assert torch.isfinite(loss).all()
+
+
+def test_compute_l1_keypoint_loss_skips_nonfinite_target_area() -> None:
+    """A non-finite target area must not poison ``location_loss``/``nll_loss`` despite ``valid_area``.
+
+    Regression: ``valid_area`` correctly excludes a non-finite area's keypoints from
+    ``location_loss_mask``, and ``masked_fill`` correctly zeroes their numerator -- but
+    ``location_loss``/``nll_raw`` still divide that (already-zeroed) numerator by
+    ``area.clamp_min(area_eps)`` directly. ``torch.clamp_min(nan, eps)`` leaves ``nan`` unchanged
+    (comparisons against ``nan`` are always false), so the division is ``0.0 / nan == nan``
+    regardless of the mask. Fixed by sanitizing ``area`` itself (``torch.where`` on ``valid_area``)
+    before either division.
+    """
+    pred_keypoints = torch.zeros(1, 17, 7, requires_grad=True)
+    target_keypoints = torch.rand(1, 17, 3)
+    target_keypoints[:, :, 2] = 2.0
+
+    losses = compute_l1_keypoint_loss(
+        all_pred_keypoints=pred_keypoints,
+        target_keypoints=target_keypoints,
+        target_classes=torch.tensor([0], dtype=torch.int64),
+        target_areas=torch.tensor([float("nan")], dtype=torch.float32),
+        num_keypoints_per_class=[17],
+    )
+    for loss in losses:
+        assert torch.isfinite(loss).all(), f"a non-finite target area must not poison loss={loss}"
+    sum(loss.sum() for loss in losses).backward()
+
+    grad = pred_keypoints.grad
+    assert grad is not None
+    assert torch.isfinite(grad).all(), f"a non-finite target area must not poison grad={grad}"
 
 
 def test_compute_l1_keypoint_loss_uses_raw_rflow_gaussian_nll() -> None:

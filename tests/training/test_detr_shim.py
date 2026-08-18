@@ -1589,6 +1589,68 @@ class TestDeployToRoboflow:
         conflict_warnings = [w for w in caught if "deploy_to_roboflow" in str(w.message)]
         assert not conflict_warnings
 
+    @staticmethod
+    def _deploy_with_versions(
+        mock_self: MagicMock,
+        version_info: list[dict[str, Any]],
+        **deploy_kwargs: Any,
+    ) -> MagicMock:
+        """Call deploy_to_roboflow against a mocked project preloaded with version_info; return the project mock.
+
+        Examples:
+            >>> TestDeployToRoboflow._deploy_with_versions(model, [{"id": "ws/proj/1"}])  # doctest: +SKIP
+            (needs the mocked RFDETR instance built by the ``mock_self`` fixture)
+        """
+        mock_rf = MagicMock()
+        project_mock = mock_rf.workspace.return_value.project.return_value
+        project_mock.get_version_information.return_value = version_info
+        with patch("roboflow.Roboflow", return_value=mock_rf):
+            RFDETR.deploy_to_roboflow(
+                mock_self,
+                workspace="test-workspace",
+                project_id="test-project",
+                api_key="dummy-key",
+                **deploy_kwargs,
+            )
+        return project_mock
+
+    def test_omitted_version_resolves_to_latest(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """Omitting version deploys to the highest existing dataset version.
+
+        Project has versions 1 and 3 (server list order not guaranteed); auto-resolution must pick 3 so the model lands
+        on the newest dataset snapshot without the caller tracking version numbers.
+        """
+        monkeypatch.chdir(tmp_path)
+
+        project_mock = self._deploy_with_versions(mock_self, [{"id": "ws/proj/9"}, {"id": "ws/proj/10"}])
+
+        project_mock.version.assert_called_once_with(10)
+
+    def test_omitted_version_falls_back_to_one_for_empty_project(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """Omitting version on a project with no versions falls back to version 1.
+
+        The SDK's Version lookup then raises its own "Version number 1 is not found." for a genuinely empty project, so
+        the fallback never silently deploys anywhere unexpected.
+        """
+        monkeypatch.chdir(tmp_path)
+
+        project_mock = self._deploy_with_versions(mock_self, [])
+
+        project_mock.version.assert_called_once_with(1)
+
+    def test_explicit_version_skips_lookup(self, tmp_path, monkeypatch, mock_self, patch_lit):
+        """An explicitly passed version is used verbatim without any version-list lookup.
+
+        Guards the no-surprise contract: existing callers pinning a version must not trigger the extra
+        get_version_information network round-trip nor have their choice overridden by a newer version.
+        """
+        monkeypatch.chdir(tmp_path)
+
+        project_mock = self._deploy_with_versions(mock_self, [{"id": "ws/proj/9"}], version=2)
+
+        project_mock.get_version_information.assert_not_called()
+        project_mock.version.assert_called_once_with(2)
+
 
 # ---------------------------------------------------------------------------
 # TestSaveTrainingConfig
