@@ -370,6 +370,10 @@ class RFDETRModelModule(LightningModule):
         self._lr_scheduler_interval: str = "step"
         self._lr_scheduler_monitor: str | None = None
         self._accumulated_box_normalizer: Tensor | None = None
+        # Memoized loss_name -> aggregate train/ key (or None for a standalone key), built lazily by
+        # _aux_aggregate_map() and recomputed only when loss_dict's key set changes between calls.
+        self._aux_aggregate_cache: dict[str, str | None] | None = None
+        self._aux_aggregate_cache_keys: frozenset[str] | None = None
         # Allow partial state-dict loading when resuming from a .pth checkpoint
         # (which contains only model weights, not criterion/postprocess state).
         self.strict_loading = False
@@ -563,9 +567,15 @@ class RFDETRModelModule(LightningModule):
         loss_for_return = loss if self._use_manual_optimization else loss / accumulate_grad_batches
         train_log_sync_dist = bool(self.train_config.train_log_sync_dist)
         train_log_on_step = bool(self.train_config.train_log_on_step)
+        if self.train_config.compact_train_metrics:
+            train_loss_metrics = self._compact_train_loss_metrics(loss_dict, weight_dict)
+            component_on_step = False
+        else:
+            train_loss_metrics = {f"train/{loss_name}": value for loss_name, value in loss_dict.items()}
+            component_on_step = train_log_on_step
         self.log_dict(
-            {f"train/{k}": v for k, v in loss_dict.items()},
-            on_step=train_log_on_step,
+            train_loss_metrics,
+            on_step=component_on_step,
             on_epoch=True,
             sync_dist=train_log_sync_dist,
             batch_size=batch_size,
@@ -583,17 +593,6 @@ class RFDETRModelModule(LightningModule):
         optimizer = self.optimizers()
         if isinstance(optimizer, list):
             optimizer = optimizer[0]
-        # Optimizer may have multiple param groups with different LRs (e.g., backbone/decoder).
-        # Preserve the first group's LR for backward compatibility and progress-bar visibility.
-        # Keep min/max in the logs without taking extra progress-bar metric slots.
-        group_lrs = [pg["lr"] for pg in optimizer.param_groups if "lr" in pg]
-        if group_lrs:
-            base_lr = group_lrs[0]
-            min_lr = min(group_lrs)
-            max_lr = max(group_lrs)
-            self.log("train/lr", base_lr, prog_bar=True, on_step=True, on_epoch=False)
-            self.log("train/lr_min", min_lr, prog_bar=False, on_step=True, on_epoch=False)
-            self.log("train/lr_max", max_lr, prog_bar=False, on_step=True, on_epoch=False)
         if self._use_manual_optimization:
             # loss_for_backward is only None in the automatic-optimization branch above,
             # which is mutually exclusive with _use_manual_optimization.
@@ -624,6 +623,61 @@ class RFDETRModelModule(LightningModule):
                 "targets": targets,
             }
         return loss_for_return.detach() if self._use_manual_optimization else loss_for_return
+
+    def _aux_aggregate_map(self, loss_dict: dict[str, Tensor], weight_dict: dict[str, float]) -> dict[str, str | None]:
+        """Return the memoized ``loss_name -> aggregate train/ key`` map for the current loss_dict keys.
+
+        The classification only depends on ``loss_dict``'s key set and ``weight_dict`` membership, both
+        fixed by model architecture, so it is safe to compute once and cache across microbatches; it is
+        recomputed only if the observed key set changes.
+
+        Args:
+            loss_dict: Per-term loss values for the current microbatch.
+            weight_dict: Criterion-defined mapping of weighted loss-term names to their weights.
+
+        Returns:
+            Mapping from each ``loss_dict`` key to its ``train/<base>_aux`` aggregate key, or ``None``
+            when the key should be logged individually.
+        """
+        keys = frozenset(loss_dict)
+        if self._aux_aggregate_cache is None or self._aux_aggregate_cache_keys != keys:
+            aggregate_map: dict[str, str | None] = {}
+            for loss_name in loss_dict:
+                base_name, separator, suffix = loss_name.rpartition("_")
+                is_layer_suffixed = separator and (suffix.isdigit() or suffix == "enc")
+                # Only weight_dict members are genuine per-layer loss terms; diagnostics such as
+                # cardinality_error are never weighted, so they always fall through to individual logging.
+                aggregate_map[loss_name] = (
+                    f"train/{base_name}_aux" if is_layer_suffixed and loss_name in weight_dict else None
+                )
+            self._aux_aggregate_cache = aggregate_map
+            self._aux_aggregate_cache_keys = keys
+        return self._aux_aggregate_cache
+
+    def _compact_train_loss_metrics(
+        self, loss_dict: dict[str, Tensor], weight_dict: dict[str, float]
+    ) -> dict[str, Tensor]:
+        """Aggregate per-layer auxiliary loss terms into one ``train/<term>_aux`` tensor per base loss.
+
+        Args:
+            loss_dict: Per-term loss values for the current microbatch.
+            weight_dict: Criterion-defined mapping of weighted loss-term names to their weights.
+
+        Returns:
+            Mapping of ``train/`` metric names to tensors, ready for ``self.log_dict``.
+        """
+        aggregate_map = self._aux_aggregate_map(loss_dict, weight_dict)
+        grouped: dict[str, list[Tensor]] = {}
+        train_loss_metrics: dict[str, Tensor] = {}
+        for loss_name, value in loss_dict.items():
+            aggregate_name = aggregate_map[loss_name]
+            if aggregate_name is None:
+                train_loss_metrics[f"train/{loss_name}"] = value
+            else:
+                grouped.setdefault(aggregate_name, []).append(value)
+        for aggregate_name, values in grouped.items():
+            train_loss_metrics[aggregate_name] = torch.stack(values).sum()
+        return train_loss_metrics
 
     def _compute_train_losses(
         self,
@@ -725,6 +779,19 @@ class RFDETRModelModule(LightningModule):
             and batch_idx + 1 >= num_training_batches
         )
 
+    def _log_learning_rates(self, optimizer: torch.optim.Optimizer | LightningOptimizer) -> None:
+        """Log the learning-rate range used by an optimizer update.
+
+        Args:
+            optimizer: Optimizer about to update model parameters.
+        """
+        group_lrs = [param_group["lr"] for param_group in optimizer.param_groups if "lr" in param_group]
+        if not group_lrs:
+            return
+        self.log("train/lr", group_lrs[0], prog_bar=True, on_step=True, on_epoch=False)
+        self.log("train/lr_min", min(group_lrs), prog_bar=False, on_step=True, on_epoch=False)
+        self.log("train/lr_max", max(group_lrs), prog_bar=False, on_step=True, on_epoch=False)
+
     def _step_optimizer(self, optimizer: torch.optim.Optimizer | LightningOptimizer) -> None:
         """Clip gradients, step optimizer and scheduler, then reset accumulation state.
 
@@ -780,6 +847,18 @@ class RFDETRModelModule(LightningModule):
             return
         scheduler.step()
 
+    def on_before_optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
+        """Log rates immediately before each Lightning-managed optimizer step.
+
+        Lightning invokes this hook for both automatic-optimization and
+        manual-optimization (keypoint) training paths, so it is the sole
+        emission site for learning-rate logging on either path.
+
+        Args:
+            optimizer: Optimizer about to update model parameters.
+        """
+        self._log_learning_rates(optimizer)
+
     def on_train_epoch_end(self) -> None:
         """Step epoch-interval (non-plateau) schedulers on the manual-optimization path.
 
@@ -800,6 +879,9 @@ class RFDETRModelModule(LightningModule):
         from ``trainer.callback_metrics`` and step the scheduler itself. The pre-training sanity-check validation is
         skipped so plateau patience/cooldown bookkeeping is not seeded from the untrained model.
         """
+        # build_trainer() defaults num_sanity_val_steps=0, so trainer.sanity_checking is False for
+        # RFDETR.train() users by default; this half of the guard stays live only for direct
+        # build_trainer() callers who explicitly re-enable sanity validation.
         if self.automatic_optimization or self.trainer.sanity_checking:
             return
         scheduler = self._current_lr_scheduler()
