@@ -1172,14 +1172,11 @@ class TestTrainingStep:
         ``test_compacts_auxiliary_loss_metrics`` above only exercises synthetic ``loss_ce``/``loss_bbox`` keys, whose
         weight_dict membership and layer-suffix pattern happen to coincide. RF-DETR's real criterion also emits
         ``cardinality_error`` with the same ``_<i>``/``_enc`` suffix pattern (see ``SetCriterion.forward``) despite
-        never appearing in ``weight_dict`` (it is a logging-only diagnostic, not a backpropagated loss term).
-        Suffix-only aggregation folds it into a spurious ``cardinality_error_aux`` key; correct aggregation must gate
-        on ``weight_dict`` membership and leave it out. This uses the real ``RFDETRSmall`` model/criterion (this
-        repo's default size) with a tiny synthetic batch so the assertion is checked against RF-DETR's actual key
-        inventory instead of a hand-picked synthetic one.
-
-        This may legitimately fail in this worktree: the weight_dict-gating fix lands from a sibling worktree not
-        yet merged here, so the code under test still aggregates by suffix pattern alone.
+        never appearing in ``weight_dict`` (it is a logging-only diagnostic, not a backpropagated loss term). Suffix-
+        only aggregation folds it into a spurious ``cardinality_error_aux`` key; correct aggregation must gate on
+        ``weight_dict`` membership and leave it out. This uses the real ``RFDETRSmall`` model/criterion (this repo's
+        default size) with a tiny synthetic batch so the assertion is checked against RF-DETR's actual key inventory
+        instead of a hand-picked synthetic one.
         """
         mc = RFDETRSmallConfig(pretrain_weights=None, num_classes=3, device="cpu")
         tc = _base_train_config(tmp_path)
@@ -1229,10 +1226,13 @@ class TestTrainingStep:
         for key, value in raw_loss_dict.items():
             base_name, separator, suffix = key.rpartition("_")
             is_layer_suffixed = bool(separator) and (suffix.isdigit() or suffix == "enc")
-            if is_layer_suffixed and base_name in weight_dict:
+            if is_layer_suffixed and key in weight_dict:
                 aggregate_name = f"train/{base_name}_aux"
                 expected_aux_sums[aggregate_name] = expected_aux_sums.get(aggregate_name, torch.zeros(())) + value
-            elif not is_layer_suffixed:
+            else:
+                # Not layer-suffixed, or layer-suffixed but absent from weight_dict (e.g.
+                # cardinality_error_0/_1/_enc — a diagnostic count, never a weighted loss term):
+                # both cases fall through to individual logging, matching production's else branch.
                 expected_base_keys.add(f"train/{key}")
 
         logged = module.log_dict.call_args.args[0]
@@ -1292,7 +1292,7 @@ class TestTrainingStep:
             tmp_path=tmp_path,
         )
         parameter = nn.Parameter(torch.randn(4))
-        optimizer = torch.optim.SGD([parameter], lr=0.1)
+        optimizer = _StepHookOptimizer(module, torch.optim.SGD([parameter], lr=0.1))
         trainer = MagicMock(num_training_batches=3, gradient_clip_val=0.0, gradient_clip_algorithm="norm")
         module._trainer = trainer
         type(module).trainer = property(lambda self: self._trainer)
@@ -1323,7 +1323,7 @@ class TestTrainingStep:
             tmp_path=tmp_path,
         )
         parameter = nn.Parameter(torch.randn(4))
-        optimizer = torch.optim.SGD([parameter], lr=0.1)
+        optimizer = _StepHookOptimizer(module, torch.optim.SGD([parameter], lr=0.1))
         trainer = MagicMock(num_training_batches=float("inf"), gradient_clip_val=0.0, gradient_clip_algorithm="norm")
         module._trainer = trainer
         type(module).trainer = property(lambda self: self._trainer)
