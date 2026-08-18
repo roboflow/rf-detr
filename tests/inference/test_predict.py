@@ -210,7 +210,15 @@ class _TupleOutputEmbeddingsModelContext:
 
 
 def _make_optimized_embeddings_model(embedding_dim: int = 4) -> tuple[RFDETR, _TupleOutputEmbeddingsModelContext]:
-    """Build a ``_DummyRFDETR`` wired to look like it ran ``inference(return_embeddings=True)``."""
+    """Build a ``_DummyRFDETR`` wired to look like it ran ``inference(return_embeddings=True)``.
+
+    Examples:
+        >>> model, stub = _make_optimized_embeddings_model(embedding_dim=6)
+        >>> model._optimized_return_embeddings
+        True
+        >>> isinstance(stub, _TupleOutputEmbeddingsModelContext)
+        True
+    """
     model = _DummyRFDETR()
     stub = _TupleOutputEmbeddingsModelContext(embedding_dim=embedding_dim)
     model.model = stub
