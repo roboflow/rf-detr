@@ -15,6 +15,15 @@ from rfdetr.utilities.tensors import NestedTensor
 
 
 def _build_feature_batch(batch_size: int, hidden_dim: int) -> list[NestedTensor]:
+    """Build a single-level backbone feature map wrapped in a ``NestedTensor``, batched.
+
+    Examples:
+        >>> features = _build_feature_batch(batch_size=2, hidden_dim=8)
+        >>> len(features)
+        1
+        >>> features[0].tensors.shape
+        torch.Size([2, 8, 4, 4])
+    """
     return [
         NestedTensor(
             torch.zeros(batch_size, hidden_dim, 4, 4),
@@ -38,6 +47,14 @@ def _make_detection_model(
     The mock backbone's ``return_value`` is a plain 3-tuple ``(features, poss, cross_attn_features)``, matching the
     eager forward's unpacking (``forward``). For the exported/traced path (``forward_export``), which unpacks a 4-tuple
     ``(feats, masks, poss, cross_attn_feats)``, tests reconfigure ``backbone.return_value`` before calling ``export()``.
+
+    Examples:
+        >>> model, transformer = _make_detection_model(batch_size=1, num_queries=2, hidden_dim=4, num_classes=3)
+        >>> transformer.d_model
+        4
+        >>> outputs = model(torch.ones(1, 3, 8, 8))
+        >>> outputs["pred_logits"].shape
+        torch.Size([1, 2, 3])
     """
     features = _build_feature_batch(batch_size=batch_size, hidden_dim=hidden_dim)
     poss = [torch.zeros(batch_size, hidden_dim, 4, 4)]
@@ -83,6 +100,13 @@ def _make_export_ready_model(
     Unlike :func:`_make_detection_model`, the mock backbone here returns the export-time 4-tuple ``(feats, masks, poss,
     cross_attn_feats)`` expected by ``forward_export``, and the mock transformer returns the export-time last-decoder-
     layer-only shapes ``[B, Q, H]`` (not ``[L, B, Q, H]``).
+
+    Examples:
+        >>> model = _make_export_ready_model(batch_size=1, num_queries=2, hidden_dim=4, num_classes=3)
+        >>> model.export()
+        >>> predictions = model(torch.ones(1, 3, 8, 8))
+        >>> len(predictions)
+        2
     """
     features = _build_feature_batch(batch_size=batch_size, hidden_dim=hidden_dim)
     masks = [torch.zeros(batch_size, 4, 4, dtype=torch.bool)]
