@@ -31,7 +31,7 @@ from torch import Tensor
 from torchvision.transforms.v2 import ToDtype, ToImage
 
 from rfdetr.config import AugmentationBackend
-from rfdetr.datasets._aug_utils import resolve_keypoint_flip_pairs
+from rfdetr.datasets._aug_utils import _warn_keypoint_hflip_disabled, resolve_keypoint_flip_pairs
 from rfdetr.datasets._torchvision import (
     Compose,
     RandomChoice,
@@ -885,7 +885,15 @@ def _build_torchvision_pipeline(
             )
         ]
         if aug_config is None and not gpu_postprocess:
-            pipeline.append(RandomHorizontalFlip(p=0.5, keypoint_flip_pairs=keypoint_flip_pairs))
+            if keypoint_flip_pairs is not None and not keypoint_flip_pairs:
+                # Keypoint pipeline with no flip pairs defined: mirror the Albumentations path's
+                # filter_keypoint_hflip_augmentations and drop the flip entirely instead of
+                # applying it, since RandomHorizontalFlip.__call__ has no way to relabel
+                # left/right joints without the pairs (see #1122 for the Albumentations-side fix
+                # this mirrors).
+                _warn_keypoint_hflip_disabled("RandomHorizontalFlip", logger.warning, editable_config=False)
+            else:
+                pipeline.append(RandomHorizontalFlip(p=0.5, keypoint_flip_pairs=keypoint_flip_pairs))
         pipeline += [to_image, to_float]
         if not gpu_postprocess:
             pipeline += [normalize]
@@ -994,8 +1002,9 @@ def make_coco_transforms(
             recognised:
 
             * ``None`` (default) — use the torchvision-native default augmentation
-              (``RandomHorizontalFlip(p=0.5)``).  See the ``UserWarning`` emitted
-              at runtime for details of this behaviour change.
+              (``RandomHorizontalFlip(p=0.5)``, gated by ``keypoint_flip_pairs`` —
+              see below).  See the ``UserWarning`` emitted at runtime for details
+              of this behaviour change.
             * ``{}`` (empty dict) — disable all optional training augmentation
               including the default horizontal flip.
             * non-empty dict — pass to the optional Albumentations backend;
@@ -1011,6 +1020,12 @@ def make_coco_transforms(
         gpu_postprocess: When ``True``, skip CPU augmentation and
             ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
             normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
+        keypoint_flip_pairs: Keypoint left/right swap pairs, or ``None`` for a
+            detection-only pipeline.  On the torchvision-native default backend
+            (``aug_config=None``), an empty list disables ``RandomHorizontalFlip``
+            entirely instead of applying it without relabelling — mirroring
+            ``AlbumentationsWrapper.from_config``'s existing gating for the same
+            sentinel.
 
     Returns:
         A transform pipeline ready to be passed to :class:`CocoDetection`.
@@ -1090,7 +1105,8 @@ def make_coco_transforms_square_div_64(
         num_windows: Number of windows used by ``compute_multi_scale_scales`` to
             derive the list of candidate square resolutions.
         aug_config: ``None`` for default torchvision augmentation, ``{}`` to disable augmentation, or a non-empty
-            Albumentations augmentation config dictionary.
+            Albumentations augmentation config dictionary.  On the ``None`` default, ``RandomHorizontalFlip`` is
+            further gated by ``keypoint_flip_pairs`` (see below).
 
             Note:
                 ``aug_config`` has no effect on ``"val"``, ``"test"``, or ``"val_speed"``
@@ -1102,6 +1118,12 @@ def make_coco_transforms_square_div_64(
         gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
             ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
             normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
+        keypoint_flip_pairs: Keypoint left/right swap pairs, or ``None`` for a
+            detection-only pipeline.  On the torchvision-native default backend
+            (``aug_config=None``), an empty list disables ``RandomHorizontalFlip``
+            entirely instead of applying it without relabelling — mirroring
+            ``AlbumentationsWrapper.from_config``'s existing gating for the same
+            sentinel.
 
     Returns:
         A ``Compose`` object containing the composed image transforms appropriate for the specified ``image_set``.
