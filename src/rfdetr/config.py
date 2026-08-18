@@ -1241,7 +1241,6 @@ class TrainConfig(BaseConfig):
     # aggregated into train/<term>_aux and always logged on_epoch-only. When False, every per-layer key is
     # logged individually, honoring train_log_on_step for those component logs too.
     compact_train_metrics: bool = True
-    compute_train_metrics: bool = False
     # Restores PTL's pre-training sanity-validation pass (0 = disabled, current default;
     # increase to re-enable and catch val-path errors before a full epoch runs).
     num_sanity_val_steps: int = 0
