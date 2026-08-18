@@ -3402,7 +3402,7 @@
 </span><span id="__span-0-1166"><a id="__codelineno-0-1166" name="__codelineno-0-1166"></a><span class="sd">            'torchvision'</span>
 </span><span id="__span-0-1167"><a id="__codelineno-0-1167" name="__codelineno-0-1167"></a><span class="sd">        """</span>
 </span><span id="__span-0-1168"><a id="__codelineno-0-1168" name="__codelineno-0-1168"></a>        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">AugmentationBackend</span><span class="p">):</span>
-</span><span id="__span-0-1169"><a id="__codelineno-0-1169" name="__codelineno-0-1169"></a>            <span class="k">return</span> <span class="n">value</span><span class="o">.</span><span class="n">value</span>
+</span><span id="__span-0-1169"><a id="__codelineno-0-1169" name="__codelineno-0-1169"></a>            <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
 </span><span id="__span-0-1170"><a id="__codelineno-0-1170" name="__codelineno-0-1170"></a>        <span class="k">return</span> <span class="n">value</span>
 </span><span id="__span-0-1171"><a id="__codelineno-0-1171" name="__codelineno-0-1171"></a>
 </span><span id="__span-0-1172"><a id="__codelineno-0-1172" name="__codelineno-0-1172"></a>    <span class="n">notes</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
