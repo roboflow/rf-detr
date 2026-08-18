@@ -209,7 +209,7 @@ def _detect_device() -> str:
                 accel = current_accelerator(check_available=True)
             except TypeError:
                 accel = current_accelerator()
-                if accel is not None and not accelerator.is_available():
+                if accel is not None and accelerator is not None and not accelerator.is_available():
                     accel = None
             if accel is not None:
                 return str(accel)
@@ -854,7 +854,7 @@ class RFDETRLargeConfig(ModelConfig):
     dec_n_points: int = 2
     num_windows: int = 2
     patch_size: int = 16
-    projector_scale: list[Literal["P4",]] = ["P4"]
+    projector_scale: list[Literal["P3", "P4", "P5"]] = ["P4"]
     out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_classes: int = 90
     positional_encoding_size: int = 704 // 16
@@ -1166,7 +1166,7 @@ class TrainConfig(BaseConfig):
             'torchvision'
         """
         if isinstance(value, AugmentationBackend):
-            return value.value
+            return str(value.value)
         return value
 
     notes: Optional[Any] = Field(
