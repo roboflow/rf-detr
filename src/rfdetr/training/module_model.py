@@ -728,6 +728,10 @@ class RFDETRModelModule(LightningModule):
     def on_before_optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
         """Log rates immediately before each Lightning-managed optimizer step.
 
+        Lightning invokes this hook for both automatic-optimization and
+        manual-optimization (keypoint) training paths, so it is the sole
+        emission site for learning-rate logging on either path.
+
         Args:
             optimizer: Optimizer about to update model parameters.
         """
@@ -768,7 +772,6 @@ class RFDETRModelModule(LightningModule):
                 gradient_clip_val=gradient_clip_val,
                 gradient_clip_algorithm=gradient_clip_algorithm,
             )
-        self._log_learning_rates(optimizer)
         optimizer.step()
         optimizer.zero_grad()
         self._step_lr_scheduler()

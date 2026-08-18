@@ -147,6 +147,34 @@ class _RaisingOptimizer:
         raise TypeError("simulated optimizer construction failure")
 
 
+class _StepHookOptimizer:
+    """Optimizer double that fires ``on_before_optimizer_step`` from ``step()``, like ``LightningOptimizer``.
+
+    Real ``LightningOptimizer.step()`` routes through ``Precision.optimizer_step``, which invokes the
+    ``on_before_optimizer_step`` hook before running the wrapped optimizer's own ``step()``. This double reproduces just
+    that ordering so tests can exercise the module's hook wiring without standing up the full Lightning
+    precision/strategy stack.
+    """
+
+    def __init__(self, module, optimizer):
+        self._module = module
+        self._optimizer = optimizer
+
+    @property
+    def param_groups(self):
+        """Proxy the wrapped optimizer's parameter groups."""
+        return self._optimizer.param_groups
+
+    def step(self, *args, **kwargs):
+        """Fire the before-step hook, then delegate to the wrapped optimizer's ``step()``."""
+        self._module.on_before_optimizer_step(self)
+        self._optimizer.step(*args, **kwargs)
+
+    def zero_grad(self, *args, **kwargs):
+        """Delegate to the wrapped optimizer's ``zero_grad()``."""
+        self._optimizer.zero_grad(*args, **kwargs)
+
+
 def _build_module(model_config=None, train_config=None, tmp_path=None):
     """Construct RFDETRModelModule with build_model_from_config and build_criterion_from_config mocked.
 
@@ -1089,14 +1117,19 @@ class TestTrainingStep:
         assert module.log_dict.call_args.kwargs.get("on_epoch") is True
 
     def test_logs_learning_rates_for_manual_optimizer_steps_including_tail(self, tmp_path):
-        """Manual accumulation logs rates for completed and partial optimizer windows only."""
+        """Manual accumulation logs rates once per completed or partial optimizer window, never twice.
+
+        ``_step_optimizer`` must not log learning rates itself — the single emission site is the
+        ``on_before_optimizer_step`` hook, which ``_StepHookOptimizer`` fires from ``step()`` the same way Lightning's
+        real ``LightningOptimizer.step()`` does on both automatic and manual paths.
+        """
         module, *_ = _build_module(
             model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
             train_config=_base_train_config(tmp_path, grad_accum_steps=2),
             tmp_path=tmp_path,
         )
         parameter = nn.Parameter(torch.randn(4))
-        optimizer = torch.optim.SGD([parameter], lr=0.1)
+        optimizer = _StepHookOptimizer(module, torch.optim.SGD([parameter], lr=0.1))
         trainer = MagicMock(num_training_batches=3, gradient_clip_val=0.0, gradient_clip_algorithm="norm")
         module._trainer = trainer
         type(module).trainer = property(lambda self: self._trainer)
