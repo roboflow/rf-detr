@@ -516,27 +516,42 @@ class HungarianMatcher(nn.Module):
             return None
 
         coordinate_limit = torch.finfo(reference_boxes.dtype).max ** 0.5 / 16
-        payloads: list[Tensor] = []
-        matrix_shapes: list[tuple[int, int]] = []
-        for outputs in outputs_list:
+        # Every layer's payload is its queries plus one safety row, so all shapes — and therefore the
+        # whole flattened size and each layer's offset within it — are known before a single cost
+        # matrix exists. That lets the host buffer be allocated once and each layer be staged straight
+        # into its own slice, so only the layer being built is resident on the device. Accumulating the
+        # payloads for a closing `torch.cat` instead held all L matrices at once and then allocated a
+        # second full copy of them before the first was freed, roughly doubling peak device memory
+        # along the same group_detr/batch/crowd-density axes that push this batch toward OOM.
+        matrix_shapes = [(outputs["pred_logits"].shape[1] + 1, total_targets) for outputs in outputs_list]
+        # `_compute_compact_detection_cost_matrix` results are cast to float32 below, so the shared
+        # buffer is allocated for that dtype rather than the (possibly half) prediction dtype.
+        on_cuda = reference_boxes.is_cuda
+        cpu_payload = torch.empty(
+            sum(rows * columns for rows, columns in matrix_shapes),
+            dtype=torch.float32,
+            device="cpu",
+            pin_memory=on_cuda,
+        )
+        offset = 0
+        for outputs, matrix_shape in zip(outputs_list, matrix_shapes):
             pred_boxes = outputs["pred_boxes"]
             pred_safe = torch.isfinite(pred_boxes).all() & (pred_boxes.abs() <= coordinate_limit).all()
             cost_matrix = self._compute_compact_detection_cost_matrix(
                 outputs, targets, clamp_target_labels=True
             ).float()
-            # The final row carries the unsynced safety predicate with its layer's cost matrix,
-            # ensuring CUDA needs one copy and one synchronization for the complete matcher batch.
+            # The final row carries the unsynced safety predicate with its layer's cost matrix, so the
+            # complete matcher batch still needs only one synchronization however many layers it holds.
             payload = torch.cat([cost_matrix, (target_safe & pred_safe).to(cost_matrix.dtype).expand(1, total_targets)])
-            payloads.append(payload.flatten())
-            matrix_shapes.append((payload.shape[0], payload.shape[1]))
-
-        gpu_payload = torch.cat(payloads)
-        if gpu_payload.is_cuda:
-            cpu_payload = torch.empty_like(gpu_payload, device="cpu", pin_memory=True)
-            cpu_payload.copy_(gpu_payload, non_blocking=True)
-            torch.cuda.current_stream(gpu_payload.device).synchronize()
-        else:
-            cpu_payload = gpu_payload.cpu()
+            matrix_size = matrix_shape[0] * matrix_shape[1]
+            # A slice of a pinned buffer is itself pinned, so this copy stays asynchronous; the layer's
+            # device payload is released as the next iteration rebinds it, while the copy remains in
+            # flight under the stream-ordered caching allocator.
+            cpu_payload[offset : offset + matrix_size].copy_(payload.flatten(), non_blocking=on_cuda)
+            offset += matrix_size
+        if on_cuda:
+            # One synchronization for the whole batch, after every layer's copy has been issued.
+            torch.cuda.current_stream(reference_boxes.device).synchronize()
 
         all_indices: list[list[tuple[Tensor, Tensor]]] = []
         offset = 0
