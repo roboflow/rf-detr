@@ -527,3 +527,31 @@ class TestAttachEmbeddings:
         assert "masks" in results[0]
         assert "embeddings" in results[0]
         assert results[0]["embeddings"].shape == (4, hidden_dim)
+
+    def test_forward_filters_embeddings_by_score_threshold_with_masks(self) -> None:
+        """When masks are filtered by score_threshold, embeddings must be filtered the same way.
+
+        ``_postprocess_masks`` drops rows scoring at or below ``score_threshold`` before returning results, so
+        ``scores``/``labels``/``boxes``/``masks`` all end up with fewer rows than the raw top-k selection. Embeddings
+        must be filtered with the same per-image predicate, or the row counts diverge and callers indexing the
+        embeddings tensor with a boolean mask sized to the filtered scores hit a shape mismatch.
+        """
+        hidden_dim = 4
+        pp = PostProcess(num_select=3)
+        # Deterministic sigmoid scores: query 0 -> ~1.0 (kept), query 1 -> ~0.0 (dropped), query 2 -> ~0.99 (kept).
+        logits = torch.tensor([[[10.0], [-10.0], [5.0]]])
+        outputs = {
+            "pred_logits": logits,
+            "pred_boxes": torch.rand(1, 3, 4),
+            "pred_masks": torch.randn(1, 3, 8, 8),
+            "embeddings": torch.arange(3 * hidden_dim, dtype=torch.float32).reshape(1, 3, hidden_dim),
+        }
+        target_sizes = torch.tensor([[256, 256]])
+
+        results = pp(outputs, target_sizes, score_threshold=0.5)
+
+        assert results[0]["embeddings"].shape[0] == results[0]["scores"].shape[0] == 2
+        assert results[0]["masks"].shape[0] == 2
+        # Query 1 (logit -10) is below threshold and must be dropped from embeddings too.
+        kept_first_values = {row[0].item() for row in results[0]["embeddings"]}
+        assert kept_first_values == {0.0, 2 * hidden_dim}
