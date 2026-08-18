@@ -779,18 +779,6 @@ class RFDETRModelModule(LightningModule):
             and batch_idx + 1 >= num_training_batches
         )
 
-    def on_before_optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
-        """Log rates immediately before each Lightning-managed optimizer step.
-
-        Lightning invokes this hook for both automatic-optimization and
-        manual-optimization (keypoint) training paths, so it is the sole
-        emission site for learning-rate logging on either path.
-
-        Args:
-            optimizer: Optimizer about to update model parameters.
-        """
-        self._log_learning_rates(optimizer)
-
     def _log_learning_rates(self, optimizer: torch.optim.Optimizer | LightningOptimizer) -> None:
         """Log the learning-rate range used by an optimizer update.
 
@@ -859,6 +847,18 @@ class RFDETRModelModule(LightningModule):
             return
         scheduler.step()
 
+    def on_before_optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
+        """Log rates immediately before each Lightning-managed optimizer step.
+
+        Lightning invokes this hook for both automatic-optimization and
+        manual-optimization (keypoint) training paths, so it is the sole
+        emission site for learning-rate logging on either path.
+
+        Args:
+            optimizer: Optimizer about to update model parameters.
+        """
+        self._log_learning_rates(optimizer)
+
     def on_train_epoch_end(self) -> None:
         """Step epoch-interval (non-plateau) schedulers on the manual-optimization path.
 
@@ -879,6 +879,9 @@ class RFDETRModelModule(LightningModule):
         from ``trainer.callback_metrics`` and step the scheduler itself. The pre-training sanity-check validation is
         skipped so plateau patience/cooldown bookkeeping is not seeded from the untrained model.
         """
+        # build_trainer() defaults num_sanity_val_steps=0, so trainer.sanity_checking is False for
+        # RFDETR.train() users by default; this half of the guard stays live only for direct
+        # build_trainer() callers who explicitly re-enable sanity validation.
         if self.automatic_optimization or self.trainer.sanity_checking:
             return
         scheduler = self._current_lr_scheduler()
