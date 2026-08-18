@@ -5,7 +5,7 @@
 # ------------------------------------------------------------------------
 """Unit tests for SetCriterion edge paths: _output_device and num_boxes_for_targets."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -316,3 +316,170 @@ class TestMatcherContract:
         criterion.matcher = _LegacyMatcherStub()
 
         assert criterion.forward(outputs, targets, num_boxes=1.0) == {}
+
+
+class TestMatchedTargetCache:
+    """Matched labels and boxes are shared by all detection losses for one output layer."""
+
+    def test_matched_targets_collects_each_target_field_once(self) -> None:
+        """The cache preserves target ordering while providing one shared loss context.
+
+        This prevents the criterion from reconstructing the same labels and boxes for classification and box losses
+        independently. It fails before the cache exists.
+        """
+        criterion = _bare_criterion()
+        targets = [
+            {
+                "labels": torch.tensor([2, 1], dtype=torch.int64),
+                "boxes": torch.tensor([[0.2, 0.3, 0.4, 0.5], [0.4, 0.5, 0.2, 0.3]]),
+            },
+            {
+                "labels": torch.tensor([0], dtype=torch.int64),
+                "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.2]]),
+            },
+        ]
+        indices = [(torch.tensor([1]), torch.tensor([0])), (torch.tensor([0]), torch.tensor([0]))]
+
+        matched = criterion._get_matched_targets(targets, indices)
+
+        assert torch.equal(matched.source_indices[0], torch.tensor([0, 1]))
+        assert torch.equal(matched.source_indices[1], torch.tensor([1, 0]))
+        assert torch.equal(matched.labels, torch.tensor([2, 0]))
+        assert torch.equal(matched.boxes, torch.tensor([[0.2, 0.3, 0.4, 0.5], [0.5, 0.5, 0.1, 0.2]]))
+
+    def test_forward_reuses_one_cached_call_per_layer_for_labels_and_boxes(self) -> None:
+        """``forward()`` must call ``_get_matched_targets`` exactly once per output layer, not once per loss.
+
+        The other test in this class only checks ``_get_matched_targets``'s own return values in isolation -- it would
+        still pass if ``forward()`` stopped supplying the cache and ``loss_labels``/``loss_boxes`` rebuilt their matched
+        tensors independently. This drives a real ``forward()`` call with ``losses=["labels", "boxes"]`` across three
+        output layers (final, one aux, one enc) and spies on ``_get_matched_targets`` to prove one cached call serves
+        both losses for each layer.
+        """
+        batch_size, num_queries, num_classes = 2, 4, 3
+        criterion = SetCriterion(
+            num_classes=num_classes,
+            matcher=_MatcherStub(),
+            weight_dict={},
+            focal_alpha=0.25,
+            losses=["labels", "boxes"],
+            group_detr=1,
+        )
+        targets = [
+            {"labels": torch.tensor([1, 2]), "boxes": torch.rand(2, 4) * 0.4 + 0.3},
+            {"labels": torch.tensor([0]), "boxes": torch.rand(1, 4) * 0.4 + 0.3},
+        ]
+
+        def _layer() -> dict[str, torch.Tensor]:
+            return {
+                "pred_logits": torch.randn(batch_size, num_queries, num_classes),
+                "pred_boxes": torch.rand(batch_size, num_queries, 4) * 0.4 + 0.3,
+            }
+
+        outputs = {**_layer(), "aux_outputs": [_layer()], "enc_outputs": _layer()}
+
+        with patch.object(criterion, "_get_matched_targets", wraps=criterion._get_matched_targets) as spy:
+            losses = criterion(outputs, targets, num_boxes=1.0)
+
+        assert spy.call_count == 3, "one cached call per output layer (final + aux + enc), not per loss"
+        for suffix in ("", "_0", "_enc"):
+            assert f"loss_ce{suffix}" in losses
+            assert f"loss_bbox{suffix}" in losses
+            assert f"loss_giou{suffix}" in losses
+
+    @pytest.mark.parametrize(
+        "loss_flag",
+        [
+            pytest.param("ia_bce_loss", id="ia_bce_loss"),
+            pytest.param("use_position_supervised_loss", id="use_position_supervised_loss"),
+        ],
+    )
+    def test_loss_labels_matches_cached_and_recomputed_matched_targets(self, loss_flag: str) -> None:
+        """``loss_labels`` must return the same ``loss_ce`` whether it recomputes ``idx``/``target_classes_o`` (and, for
+        these two flags, ``target_boxes``) from ``targets``+``indices`` itself (``matched_targets=None``) or consumes a
+        ``_MatchedTargets`` cache built from those same ``indices``.
+
+        ``ia_bce_loss`` and ``use_position_supervised_loss`` are the only two ``loss_labels`` branches that read
+        ``matched_targets.boxes``, and are mutually exclusive (``if``/``elif``). Elsewhere they were only ever checked
+        for flag *forwarding* onto the criterion, never for loss correctness against a populated cache -- this pins that
+        the cache is a pure optimization, not a behavior change.
+        """
+        batch_size, num_queries, num_classes = 2, 4, 3
+        criterion = SetCriterion(
+            num_classes=num_classes,
+            matcher=_MatcherStub(),
+            weight_dict={},
+            focal_alpha=0.25,
+            losses=["labels"],
+            group_detr=1,
+            **{loss_flag: True},
+        )
+        torch.manual_seed(7)
+        outputs = {
+            "pred_logits": torch.randn(batch_size, num_queries, num_classes),
+            "pred_boxes": torch.rand(batch_size, num_queries, 4) * 0.4 + 0.3,
+        }
+        targets = [
+            {"labels": torch.tensor([1, 2]), "boxes": torch.rand(2, 4) * 0.4 + 0.3},
+            {"labels": torch.tensor([0]), "boxes": torch.rand(1, 4) * 0.4 + 0.3},
+        ]
+        indices = [(torch.tensor([1, 3]), torch.tensor([0, 1])), (torch.tensor([2]), torch.tensor([0]))]
+        num_boxes = torch.tensor(3.0)
+        matched_targets = criterion._get_matched_targets(targets, indices)
+
+        recomputed = criterion.loss_labels(outputs, targets, indices, num_boxes, log=False)
+        cached = criterion.loss_labels(outputs, targets, indices, num_boxes, log=False, matched_targets=matched_targets)
+
+        assert torch.allclose(recomputed["loss_ce"], cached["loss_ce"]), (
+            f"{loss_flag}=True must compute the same loss_ce from a cached matched_targets as it does recomputing "
+            "target_classes_o/idx/target_boxes from targets+indices directly"
+        )
+
+
+class TestBatchedFastPathRespectsMatcherOverrides:
+    """The batched matcher fast path must decline whenever the matcher customizes matching."""
+
+    def test_forward_uses_subclass_override_instead_of_batched_fast_path(self) -> None:
+        """A ``HungarianMatcher`` subclass overriding ``forward`` must be called for every layer.
+
+        The batched fast path reads ``_match_many`` off the matcher's class and calls it unbound, bypassing
+        ``nn.Module.__call__``. Without the forward-identity veto, a subclass overriding ``forward`` (the sanctioned
+        extension point) would have the base ``_match_many`` silently answer in its place instead, with no error.
+        Driving a real multi-layer ``forward()`` call (final + aux + enc) through a logging subclass proves the override
+        actually runs once per layer rather than being silently skipped.
+        """
+        call_log: list[int] = []
+
+        class _LoggingMatcher(HungarianMatcher):
+            def forward(self, outputs, targets, group_detr=1, target_side_safety=None):
+                call_log.append(len(call_log))
+                return super().forward(outputs, targets, group_detr=group_detr, target_side_safety=target_side_safety)
+
+        batch_size, num_queries, num_classes = 2, 4, 3
+        criterion = SetCriterion(
+            num_classes=num_classes,
+            matcher=_LoggingMatcher(),
+            weight_dict={},
+            focal_alpha=0.25,
+            losses=["labels", "boxes"],
+            group_detr=1,
+        )
+        targets = [
+            {"labels": torch.tensor([1, 2]), "boxes": torch.rand(2, 4) * 0.4 + 0.3},
+            {"labels": torch.tensor([0]), "boxes": torch.rand(1, 4) * 0.4 + 0.3},
+        ]
+
+        def _layer() -> dict[str, torch.Tensor]:
+            return {
+                "pred_logits": torch.randn(batch_size, num_queries, num_classes),
+                "pred_boxes": torch.rand(batch_size, num_queries, 4) * 0.4 + 0.3,
+            }
+
+        outputs = {**_layer(), "aux_outputs": [_layer()], "enc_outputs": _layer()}
+
+        criterion(outputs, targets, num_boxes=1.0)
+
+        assert len(call_log) == 3, (
+            "the overridden forward() must run once per output layer (final + aux + enc); a call count below 3 "
+            "means the batched fast path silently bypassed the subclass override"
+        )

@@ -397,12 +397,18 @@ class HungarianMatcher(nn.Module):
         self,
         outputs: dict[str, Any],
         targets: list[dict[str, Any]],
+        *,
+        clamp_target_labels: bool = False,
     ) -> Tensor:
         """Compute same-image detection costs with targets padded only to the batch maximum.
 
         Args:
             outputs: Model outputs containing ``pred_boxes`` and ``pred_logits``.
             targets: Per-image target dicts containing ``boxes`` and ``labels``.
+            clamp_target_labels: If True, clamp target label ids into ``[0, num_classes)`` before
+                the gather so an out-of-range label cannot raise; used only by the batched fast
+                path, which defers the safety decision until after the single host transfer (see
+                the ``clamp_target_labels`` block below).
 
         Returns:
             Cost matrix of shape ``[num_queries, sum(sizes)]``, where ``sizes`` is each image's real
@@ -416,6 +422,15 @@ class HungarianMatcher(nn.Module):
         padded_target_ids = pad_sequence([target["labels"] for target in targets], batch_first=True)
         padded_target_boxes = pad_sequence([target["boxes"] for target in targets], batch_first=True)
         max_targets = padded_target_ids.shape[1]
+
+        if clamp_target_labels:
+            # The batched path checks label safety only after its single host transfer. Clamp solely
+            # to let `gather` construct a disposable matrix for unsafe batches; it is never assigned.
+            # This is a no-op on every batch the method serves: `pad_sequence` pads with in-range 0,
+            # `_target_side_precheck` gates labels to `[0, num_classes)`, and `_match_many` checks
+            # equal class counts across layers; weakening any invariant would silently match wrong
+            # class columns here instead of raising.
+            padded_target_ids = padded_target_ids.clamp(0, outputs["pred_logits"].shape[-1] - 1)
 
         gather_index = padded_target_ids[:, None, :].expand(batch_size, num_queries, max_targets)
         target_logits = torch.gather(outputs["pred_logits"], 2, gather_index)
@@ -431,6 +446,130 @@ class HungarianMatcher(nn.Module):
             [padded_cost_matrix[index, :, :size] for index, size in enumerate(sizes)],
             dim=-1,
         )
+
+    @torch.no_grad()
+    def _match_many(
+        self,
+        outputs_list: list[dict[str, Any]],
+        targets: list[dict[str, Any]],
+        group_detr: int = 1,
+        target_side_safety: _TargetSideSafety | None = None,
+    ) -> list[list[tuple[Tensor, Tensor]]] | None:
+        """Batch compatible detection matchers into one host transfer, or decline to preserve fallback behavior.
+
+        This private fast path is used only by ``SetCriterion`` for final, auxiliary, and encoder outputs from one
+        training step. It leaves unusual input shapes and unsafe values to :meth:`forward`, whose full-cartesian
+        fallback carries the established error and non-finite-cost behavior.
+
+        Args:
+            outputs_list: Detection outputs for the final, auxiliary, and encoder layers to match
+                together.
+            targets: Per-image target dicts shared by every layer in ``outputs_list``.
+            group_detr: Number of query groups to solve independently within each layer.
+            target_side_safety: Optional precomputed target-side safety result for these exact
+                ``targets`` and the reference layer's box dtype, device, and class count.
+
+        Returns:
+            ``list[list[tuple[Tensor, Tensor]]] | None`` containing per-image assignments for each
+            layer, or ``None``. ``None`` is the decline contract: the caller MUST execute the
+            per-layer fallback. A decline can occur after all L compact matrices are built,
+            staged into one host buffer, and transferred when the final loop finds a layer with
+            non-finite ``pred_boxes`` or a bad safety flag. This post-transfer decline costs
+            approximately 1.8x the pre-batching per-layer cost: a measured NaN in one of 7 layers
+            took 182% of the pre-PR matcher time (6.97 ms of wasted ``_match_many`` work plus
+            8.51 ms of sequential redo).
+        """
+        if len(outputs_list) < 2 or not all(
+            self._compact_path_applicable(outputs, targets) for outputs in outputs_list
+        ):
+            return None
+
+        reference_boxes = outputs_list[0]["pred_boxes"]
+        reference_classes = outputs_list[0]["pred_logits"].shape[-1]
+        if any(
+            outputs["pred_boxes"].dtype != reference_boxes.dtype
+            or outputs["pred_boxes"].device != reference_boxes.device
+            or outputs["pred_logits"].device != reference_boxes.device
+            or outputs["pred_logits"].shape[-1] != reference_classes
+            for outputs in outputs_list[1:]
+        ):
+            return None
+        if any(
+            target["boxes"].dtype != reference_boxes.dtype
+            or target["boxes"].device != reference_boxes.device
+            or target["labels"].device != reference_boxes.device
+            or target["labels"].dtype != targets[0]["labels"].dtype
+            for target in targets
+        ):
+            return None
+
+        if (
+            target_side_safety is not None
+            and target_side_safety.targets is targets
+            and target_side_safety.pred_boxes_dtype == reference_boxes.dtype
+            and target_side_safety.pred_boxes_device == reference_boxes.device
+            and target_side_safety.num_classes == reference_classes
+        ):
+            target_safe = target_side_safety.safe
+        else:
+            target_safe = self._target_side_precheck(
+                reference_boxes.dtype, reference_boxes.device, reference_classes, targets
+            )
+
+        sizes = [len(target["boxes"]) for target in targets]
+        total_targets = sum(sizes)
+        if total_targets == 0:
+            return None
+
+        coordinate_limit = torch.finfo(reference_boxes.dtype).max ** 0.5 / 16
+        # Every layer's payload is its queries plus one safety row, so all shapes — and therefore the
+        # whole flattened size and each layer's offset within it — are known before a single cost
+        # matrix exists. That lets the host buffer be allocated once and each layer be staged straight
+        # into its own slice, so only the layer being built is resident on the device. Accumulating the
+        # payloads for a closing `torch.cat` instead held all L matrices at once and then allocated a
+        # second full copy of them before the first was freed, roughly doubling peak device memory
+        # along the same group_detr/batch/crowd-density axes that push this batch toward OOM.
+        matrix_shapes = [(outputs["pred_logits"].shape[1] + 1, total_targets) for outputs in outputs_list]
+        # `_compute_compact_detection_cost_matrix` results are cast to float32 below, so the shared
+        # buffer is allocated for that dtype rather than the (possibly half) prediction dtype.
+        on_cuda = reference_boxes.is_cuda
+        cpu_payload = torch.empty(
+            sum(rows * columns for rows, columns in matrix_shapes),
+            dtype=torch.float32,
+            device="cpu",
+            pin_memory=on_cuda,
+        )
+        offset = 0
+        for outputs, matrix_shape in zip(outputs_list, matrix_shapes):
+            pred_boxes = outputs["pred_boxes"]
+            pred_safe = torch.isfinite(pred_boxes).all() & (pred_boxes.abs() <= coordinate_limit).all()
+            cost_matrix = self._compute_compact_detection_cost_matrix(
+                outputs, targets, clamp_target_labels=True
+            ).float()
+            # The final row carries the unsynced safety predicate with its layer's cost matrix, so the
+            # complete matcher batch still needs only one synchronization however many layers it holds.
+            payload = torch.cat([cost_matrix, (target_safe & pred_safe).to(cost_matrix.dtype).expand(1, total_targets)])
+            matrix_size = matrix_shape[0] * matrix_shape[1]
+            # A slice of a pinned buffer is itself pinned, so this copy stays asynchronous; the layer's
+            # device payload is released as the next iteration rebinds it, while the copy remains in
+            # flight under the stream-ordered caching allocator.
+            cpu_payload[offset : offset + matrix_size].copy_(payload.flatten(), non_blocking=on_cuda)
+            offset += matrix_size
+        if on_cuda:
+            # One synchronization for the whole batch, after every layer's copy has been issued.
+            torch.cuda.current_stream(reference_boxes.device).synchronize()
+
+        all_indices: list[list[tuple[Tensor, Tensor]]] = []
+        offset = 0
+        for matrix_shape in matrix_shapes:
+            matrix_size = matrix_shape[0] * matrix_shape[1]
+            payload = cpu_payload[offset : offset + matrix_size].view(matrix_shape)
+            offset += matrix_size
+            cost_matrix = payload[:-1]
+            if not bool(payload[-1, 0]) or not bool(torch.isfinite(cost_matrix).all()):
+                return None
+            all_indices.append(self._assign_compact_cost_matrix(cost_matrix, sizes, group_detr))
+        return all_indices
 
     @staticmethod
     def _assign_compact_cost_matrix(
