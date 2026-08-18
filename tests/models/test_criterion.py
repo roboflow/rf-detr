@@ -5,7 +5,7 @@
 # ------------------------------------------------------------------------
 """Unit tests for SetCriterion edge paths: _output_device and num_boxes_for_targets."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -346,3 +346,91 @@ class TestMatchedTargetCache:
         assert torch.equal(matched.source_indices[1], torch.tensor([1, 0]))
         assert torch.equal(matched.labels, torch.tensor([2, 0]))
         assert torch.equal(matched.boxes, torch.tensor([[0.2, 0.3, 0.4, 0.5], [0.5, 0.5, 0.1, 0.2]]))
+
+    def test_forward_reuses_one_cached_call_per_layer_for_labels_and_boxes(self) -> None:
+        """``forward()`` must call ``_get_matched_targets`` exactly once per output layer, not once per loss.
+
+        The other test in this class only checks ``_get_matched_targets``'s own return values in isolation -- it would
+        still pass if ``forward()`` stopped supplying the cache and ``loss_labels``/``loss_boxes`` rebuilt their matched
+        tensors independently. This drives a real ``forward()`` call with ``losses=["labels", "boxes"]`` across three
+        output layers (final, one aux, one enc) and spies on ``_get_matched_targets`` to prove one cached call serves
+        both losses for each layer.
+        """
+        batch_size, num_queries, num_classes = 2, 4, 3
+        criterion = SetCriterion(
+            num_classes=num_classes,
+            matcher=_MatcherStub(),
+            weight_dict={},
+            focal_alpha=0.25,
+            losses=["labels", "boxes"],
+            group_detr=1,
+        )
+        targets = [
+            {"labels": torch.tensor([1, 2]), "boxes": torch.rand(2, 4) * 0.4 + 0.3},
+            {"labels": torch.tensor([0]), "boxes": torch.rand(1, 4) * 0.4 + 0.3},
+        ]
+
+        def _layer() -> dict[str, torch.Tensor]:
+            return {
+                "pred_logits": torch.randn(batch_size, num_queries, num_classes),
+                "pred_boxes": torch.rand(batch_size, num_queries, 4) * 0.4 + 0.3,
+            }
+
+        outputs = {**_layer(), "aux_outputs": [_layer()], "enc_outputs": _layer()}
+
+        with patch.object(criterion, "_get_matched_targets", wraps=criterion._get_matched_targets) as spy:
+            losses = criterion(outputs, targets, num_boxes=1.0)
+
+        assert spy.call_count == 3, "one cached call per output layer (final + aux + enc), not per loss"
+        for suffix in ("", "_0", "_enc"):
+            assert f"loss_ce{suffix}" in losses
+            assert f"loss_bbox{suffix}" in losses
+            assert f"loss_giou{suffix}" in losses
+
+    @pytest.mark.parametrize(
+        "loss_flag",
+        [
+            pytest.param("ia_bce_loss", id="ia_bce_loss"),
+            pytest.param("use_position_supervised_loss", id="use_position_supervised_loss"),
+        ],
+    )
+    def test_loss_labels_matches_cached_and_recomputed_matched_targets(self, loss_flag: str) -> None:
+        """``loss_labels`` must return the same ``loss_ce`` whether it recomputes ``idx``/``target_classes_o`` (and, for
+        these two flags, ``target_boxes``) from ``targets``+``indices`` itself (``matched_targets=None``) or consumes a
+        ``_MatchedTargets`` cache built from those same ``indices``.
+
+        ``ia_bce_loss`` and ``use_position_supervised_loss`` are the only two ``loss_labels`` branches that read
+        ``matched_targets.boxes``, and are mutually exclusive (``if``/``elif``). Elsewhere they were only ever checked
+        for flag *forwarding* onto the criterion, never for loss correctness against a populated cache -- this pins that
+        the cache is a pure optimization, not a behavior change.
+        """
+        batch_size, num_queries, num_classes = 2, 4, 3
+        criterion = SetCriterion(
+            num_classes=num_classes,
+            matcher=_MatcherStub(),
+            weight_dict={},
+            focal_alpha=0.25,
+            losses=["labels"],
+            group_detr=1,
+            **{loss_flag: True},
+        )
+        torch.manual_seed(7)
+        outputs = {
+            "pred_logits": torch.randn(batch_size, num_queries, num_classes),
+            "pred_boxes": torch.rand(batch_size, num_queries, 4) * 0.4 + 0.3,
+        }
+        targets = [
+            {"labels": torch.tensor([1, 2]), "boxes": torch.rand(2, 4) * 0.4 + 0.3},
+            {"labels": torch.tensor([0]), "boxes": torch.rand(1, 4) * 0.4 + 0.3},
+        ]
+        indices = [(torch.tensor([1, 3]), torch.tensor([0, 1])), (torch.tensor([2]), torch.tensor([0]))]
+        num_boxes = torch.tensor(3.0)
+        matched_targets = criterion._get_matched_targets(targets, indices)
+
+        recomputed = criterion.loss_labels(outputs, targets, indices, num_boxes, log=False)
+        cached = criterion.loss_labels(outputs, targets, indices, num_boxes, log=False, matched_targets=matched_targets)
+
+        assert torch.allclose(recomputed["loss_ce"], cached["loss_ce"]), (
+            f"{loss_flag}=True must compute the same loss_ce from a cached matched_targets as it does recomputing "
+            "target_classes_o/idx/target_boxes from targets+indices directly"
+        )
