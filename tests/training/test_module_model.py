@@ -850,6 +850,7 @@ class TestTrainingStep:
         accumulate_grad_batches=1,
         model_config=None,
         train_log_on_step=False,
+        compact_train_metrics=True,
     ):
         module, fake_model, fake_criterion, _ = _build_module(
             model_config=model_config,
@@ -857,6 +858,7 @@ class TestTrainingStep:
                 tmp_path,
                 grad_accum_steps=accumulate_grad_batches,
                 train_log_on_step=train_log_on_step,
+                compact_train_metrics=compact_train_metrics,
             ),
             tmp_path=tmp_path,
         )
@@ -1106,6 +1108,57 @@ class TestTrainingStep:
         assert set(logged) == {"train/loss_ce", "train/loss_bbox", "train/loss_ce_aux", "train/loss_bbox_aux"}
         assert logged["train/loss_ce_aux"].item() == pytest.approx(8.0)
         assert logged["train/loss_bbox_aux"].item() == pytest.approx(4.0)
+
+    def test_excludes_non_weighted_layer_suffixed_keys_from_aggregation(self, tmp_path):
+        """A digit/enc-suffixed key absent from weight_dict must be logged individually, not aggregated.
+
+        ``cardinality_error_0`` is a diagnostic count, never a weighted loss term, so weight_dict never contains it even
+        though its name matches the layer-suffix pattern used for real auxiliary terms.
+        """
+        loss_dict = {
+            "loss_ce": torch.tensor(1.0),
+            "loss_ce_0": torch.tensor(2.0),
+            "cardinality_error": torch.tensor(3.0),
+            "cardinality_error_0": torch.tensor(4.0),
+        }
+        module, samples, targets, _, _ = self._run_step(
+            tmp_path,
+            loss_dict=loss_dict,
+            weight_dict={"loss_ce": 1.0, "loss_ce_0": 1.0},
+        )
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        logged = module.log_dict.call_args.args[0]
+        assert set(logged) == {
+            "train/loss_ce",
+            "train/loss_ce_aux",
+            "train/cardinality_error",
+            "train/cardinality_error_0",
+        }
+        assert logged["train/cardinality_error"].item() == pytest.approx(3.0)
+        assert logged["train/cardinality_error_0"].item() == pytest.approx(4.0)
+
+    def test_logs_layer_suffixed_keys_individually_when_compact_metrics_disabled(self, tmp_path):
+        """With compact_train_metrics=False, every per-layer key is logged individually, honoring on_step."""
+        loss_dict = {
+            "loss_ce": torch.tensor(1.0),
+            "loss_ce_0": torch.tensor(2.0),
+            "loss_ce_enc": torch.tensor(3.0),
+        }
+        module, samples, targets, _, _ = self._run_step(
+            tmp_path,
+            loss_dict=loss_dict,
+            weight_dict={key: 1.0 for key in loss_dict},
+            train_log_on_step=True,
+            compact_train_metrics=False,
+        )
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        logged = module.log_dict.call_args.args[0]
+        assert set(logged) == {"train/loss_ce", "train/loss_ce_0", "train/loss_ce_enc"}
+        assert module.log_dict.call_args.kwargs.get("on_step") is True
 
     def test_logs_loss_components_on_epoch_when_step_logging_is_enabled(self, tmp_path):
         """Per-step total loss logging must not re-enable per-step component metrics."""

@@ -1234,7 +1234,13 @@ class TrainConfig(BaseConfig):
     dont_save_weights: bool = False
     # PTL runtime/perf tuning knobs.
     train_log_sync_dist: bool = False
+    # Component-level train/ metrics honor train_log_on_step for on_step visibility only when
+    # compact_train_metrics=False; when True, components are aggregated and logged on_epoch-only regardless.
     train_log_on_step: bool = False
+    # When True (default), per-decoder/encoder auxiliary loss keys (e.g. loss_ce_0, loss_bbox_enc) are
+    # aggregated into train/<term>_aux and always logged on_epoch-only. When False, every per-layer key is
+    # logged individually, honoring train_log_on_step for those component logs too.
+    compact_train_metrics: bool = True
     compute_train_metrics: bool = False
     compute_val_loss: bool = True
     compute_test_loss: bool = True

@@ -370,6 +370,10 @@ class RFDETRModelModule(LightningModule):
         self._lr_scheduler_interval: str = "step"
         self._lr_scheduler_monitor: str | None = None
         self._accumulated_box_normalizer: Tensor | None = None
+        # Memoized loss_name -> aggregate train/ key (or None for a standalone key), built lazily by
+        # _aux_aggregate_map() and recomputed only when loss_dict's key set changes between calls.
+        self._aux_aggregate_cache: dict[str, str | None] | None = None
+        self._aux_aggregate_cache_keys: frozenset[str] | None = None
         # Allow partial state-dict loading when resuming from a .pth checkpoint
         # (which contains only model weights, not criterion/postprocess state).
         self.strict_loading = False
@@ -563,20 +567,15 @@ class RFDETRModelModule(LightningModule):
         loss_for_return = loss if self._use_manual_optimization else loss / accumulate_grad_batches
         train_log_sync_dist = bool(self.train_config.train_log_sync_dist)
         train_log_on_step = bool(self.train_config.train_log_on_step)
-        train_loss_metrics: dict[str, Tensor] = {}
-        for loss_name, value in loss_dict.items():
-            base_name, separator, suffix = loss_name.rpartition("_")
-            if separator and (suffix.isdigit() or suffix == "enc"):
-                # Decoder and encoder auxiliary terms repeat the same loss across layers;
-                # one per-base aggregate keeps their epoch signal without per-layer state.
-                aggregate_name = f"train/{base_name}_aux"
-                previous = train_loss_metrics.get(aggregate_name)
-                train_loss_metrics[aggregate_name] = value if previous is None else previous + value
-                continue
-            train_loss_metrics[f"train/{loss_name}"] = value
+        if self.train_config.compact_train_metrics:
+            train_loss_metrics = self._compact_train_loss_metrics(loss_dict, weight_dict)
+            component_on_step = False
+        else:
+            train_loss_metrics = {f"train/{loss_name}": value for loss_name, value in loss_dict.items()}
+            component_on_step = train_log_on_step
         self.log_dict(
             train_loss_metrics,
-            on_step=False,
+            on_step=component_on_step,
             on_epoch=True,
             sync_dist=train_log_sync_dist,
             batch_size=batch_size,
@@ -624,6 +623,61 @@ class RFDETRModelModule(LightningModule):
                 "targets": targets,
             }
         return loss_for_return.detach() if self._use_manual_optimization else loss_for_return
+
+    def _aux_aggregate_map(self, loss_dict: dict[str, Tensor], weight_dict: dict[str, Tensor]) -> dict[str, str | None]:
+        """Return the memoized ``loss_name -> aggregate train/ key`` map for the current loss_dict keys.
+
+        The classification only depends on ``loss_dict``'s key set and ``weight_dict`` membership, both
+        fixed by model architecture, so it is safe to compute once and cache across microbatches; it is
+        recomputed only if the observed key set changes.
+
+        Args:
+            loss_dict: Per-term loss values for the current microbatch.
+            weight_dict: Criterion-defined mapping of weighted loss-term names to their weights.
+
+        Returns:
+            Mapping from each ``loss_dict`` key to its ``train/<base>_aux`` aggregate key, or ``None``
+            when the key should be logged individually.
+        """
+        keys = frozenset(loss_dict)
+        if self._aux_aggregate_cache is None or self._aux_aggregate_cache_keys != keys:
+            aggregate_map: dict[str, str | None] = {}
+            for loss_name in loss_dict:
+                base_name, separator, suffix = loss_name.rpartition("_")
+                is_layer_suffixed = separator and (suffix.isdigit() or suffix == "enc")
+                # Only weight_dict members are genuine per-layer loss terms; diagnostics such as
+                # cardinality_error are never weighted, so they always fall through to individual logging.
+                aggregate_map[loss_name] = (
+                    f"train/{base_name}_aux" if is_layer_suffixed and loss_name in weight_dict else None
+                )
+            self._aux_aggregate_cache = aggregate_map
+            self._aux_aggregate_cache_keys = keys
+        return self._aux_aggregate_cache
+
+    def _compact_train_loss_metrics(
+        self, loss_dict: dict[str, Tensor], weight_dict: dict[str, Tensor]
+    ) -> dict[str, Tensor]:
+        """Aggregate per-layer auxiliary loss terms into one ``train/<term>_aux`` tensor per base loss.
+
+        Args:
+            loss_dict: Per-term loss values for the current microbatch.
+            weight_dict: Criterion-defined mapping of weighted loss-term names to their weights.
+
+        Returns:
+            Mapping of ``train/`` metric names to tensors, ready for ``self.log_dict``.
+        """
+        aggregate_map = self._aux_aggregate_map(loss_dict, weight_dict)
+        grouped: dict[str, list[Tensor]] = {}
+        train_loss_metrics: dict[str, Tensor] = {}
+        for loss_name, value in loss_dict.items():
+            aggregate_name = aggregate_map[loss_name]
+            if aggregate_name is None:
+                train_loss_metrics[f"train/{loss_name}"] = value
+            else:
+                grouped.setdefault(aggregate_name, []).append(value)
+        for aggregate_name, values in grouped.items():
+            train_loss_metrics[aggregate_name] = torch.stack(values).sum()
+        return train_loss_metrics
 
     def _compute_train_losses(
         self,
