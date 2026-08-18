@@ -260,8 +260,7 @@ class TestExportTfliteConverter:
     ) -> None:
         """custom_input_op_name_np_data_path must NOT be passed to convert().
 
-        The onnx2tf custom_input code path triggers a tf.tile rank mismatch with DINOv2-style backbones when N > 1.  We
-        rely on patching download_test_image_data() instead.
+        The onnx2tf custom_input code path triggers a tf.tile rank mismatch with DINOv2-style backbones when N > 1.
         """
         _, convert_mock = fake_onnx2tf
         export_tflite(onnx_model, tflite_output)
@@ -905,7 +904,7 @@ class TestPrepareCalibrationData:
         onnx_path = tmp_path / "model.onnx"
         onnx_path.write_bytes(b"\x00")
 
-        npy_path = _prepare_calibration_data(onnx_path, None, tmp_path, "fp32")
+        npy_path = _prepare_calibration_data(onnx_path, None, tmp_path)
 
         assert isinstance(npy_path, Path)
         assert npy_path.is_file()
@@ -914,21 +913,23 @@ class TestPrepareCalibrationData:
         assert data.shape == (_DEFAULT_CALIB_SAMPLES, 256, 256, 3)
         assert data.dtype == np.float32
 
-    def test_none_int8_emits_warning(self, tmp_path: Path, _mock_onnx_info: None) -> None:
+    def test_generated_data_is_not_reported_as_an_accuracy_problem(self, tmp_path: Path, _mock_onnx_info: None) -> None:
+        """Auto-generated data must not trigger the removed quantization-accuracy warning."""
         onnx_path = tmp_path / "model.onnx"
         onnx_path.write_bytes(b"\x00")
 
         with mock.patch("rfdetr.export._tflite.converter.logger") as mock_logger:
-            _prepare_calibration_data(onnx_path, None, tmp_path, "int8")
-            mock_logger.warning.assert_called_once()
-            assert "INT8" in mock_logger.warning.call_args[0][0]
+            _prepare_calibration_data(onnx_path, None, tmp_path)
+
+        warnings = [str(call.args[0]) for call in mock_logger.warning.call_args_list]
+        assert not any("poor quantization accuracy" in warning.lower() for warning in warnings)
 
     def test_ndarray_saves_to_npy(self, tmp_path: Path, _mock_onnx_info: None) -> None:
         onnx_path = tmp_path / "model.onnx"
         onnx_path.write_bytes(b"\x00")
         calib = np.random.rand(10, 256, 256, 3).astype(np.float32)
 
-        npy_path = _prepare_calibration_data(onnx_path, calib, tmp_path, "fp32")
+        npy_path = _prepare_calibration_data(onnx_path, calib, tmp_path)
 
         loaded = np.load(str(npy_path))
         np.testing.assert_array_equal(loaded, calib)
@@ -939,7 +940,7 @@ class TestPrepareCalibrationData:
         npy_file = tmp_path / "my_calib.npy"
         np.save(str(npy_file), np.zeros((5, 256, 256, 3), dtype=np.float32))
 
-        npy_path = _prepare_calibration_data(onnx_path, str(npy_file), tmp_path, "fp32")
+        npy_path = _prepare_calibration_data(onnx_path, str(npy_file), tmp_path)
 
         assert npy_path == npy_file
 
@@ -955,7 +956,7 @@ class TestPrepareCalibrationData:
             img = Image.new("RGB", (100, 80), color=(i * 50, 0, 0))
             img.save(img_dir / f"img_{i:03d}.jpg")
 
-        npy_path = _prepare_calibration_data(onnx_path, str(img_dir), tmp_path, "int8")
+        npy_path = _prepare_calibration_data(onnx_path, str(img_dir), tmp_path)
 
         assert npy_path.is_file()
         data = np.load(str(npy_path))
@@ -975,7 +976,7 @@ class TestPrepareCalibrationData:
             img = Image.new("RGB", (100, 80), color=(i * 25, 0, 0))
             img.save(img_dir / f"img_{i:03d}.jpg")
 
-        npy_path = _prepare_calibration_data(onnx_path, str(img_dir), tmp_path, "int8", max_images=3)
+        npy_path = _prepare_calibration_data(onnx_path, str(img_dir), tmp_path, max_images=3)
 
         assert npy_path.is_file()
         data = np.load(str(npy_path))
@@ -986,7 +987,7 @@ class TestPrepareCalibrationData:
         onnx_path.write_bytes(b"\x00")
 
         with pytest.raises(FileNotFoundError, match="Calibration data path not found"):
-            _prepare_calibration_data(onnx_path, "/nonexistent/calib.npy", tmp_path, "fp32")
+            _prepare_calibration_data(onnx_path, "/nonexistent/calib.npy", tmp_path)
 
 
 # ---------------------------------------------------------------------------
