@@ -2433,6 +2433,35 @@ class TestBatchedDetectionMatching:
 
         assert matcher._match_many([layer1, layer2], targets) is None
 
+    def test_match_many_declines_cross_layer_pred_boxes_dtype_mismatch(self) -> None:
+        """Two otherwise-compatible layers with different ``pred_boxes`` dtypes must decline batching.
+
+        The compatibility gate checks ``pred_boxes.dtype`` equality across layers alongside ``pred_boxes.device``,
+        ``pred_logits.device``, and ``pred_logits.shape[-1]`` -- only the ``num_classes`` branch had a dedicated test,
+        leaving this branch unverified.
+        """
+        matcher = HungarianMatcher()
+        layer1, targets = _random_detection_batch(seed=415, sizes=[2, 3])
+        layer2, _ = _random_detection_batch(seed=416, sizes=[2, 3])
+        layer2["pred_boxes"] = layer2["pred_boxes"].double()
+
+        assert matcher._match_many([layer1, layer2], targets) is None
+
+    def test_match_many_declines_cross_layer_pred_logits_device_mismatch(self) -> None:
+        """Two otherwise-compatible layers with different ``pred_logits`` devices must decline batching.
+
+        The compatibility gate's ``pred_logits.device`` check is what item A5 (from the /oss:resolve PR #1361 review)
+        added alongside the pre-existing ``pred_boxes`` dtype/device check -- it had no dedicated test. A ``meta``
+        device is used only to make the device comparison itself differ; no tensor math runs on it, since the mismatch
+        short-circuits ``_match_many`` before any compute.
+        """
+        matcher = HungarianMatcher()
+        layer1, targets = _random_detection_batch(seed=417, sizes=[2, 3])
+        layer2, _ = _random_detection_batch(seed=418, sizes=[2, 3])
+        layer2["pred_logits"] = layer2["pred_logits"].to("meta")
+
+        assert matcher._match_many([layer1, layer2], targets) is None
+
     def test_match_many_declines_whole_batch_on_one_unsafe_layer(self) -> None:
         """One layer's non-finite ``pred_boxes`` must decline the entire batch, not just that layer.
 

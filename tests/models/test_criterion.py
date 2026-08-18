@@ -159,8 +159,8 @@ class TestLossMasksEmptyMatch:
 
 class TestLossMasksNonEmptyMatchUsesRealSegmentationHeadOutput:
     """The non-empty-match branch of the dict path (``criterion.py``'s einsum over
-    ``outputs["pred_masks"]["spatial_features"]``) reads that key straight off the dict with no projection of its own —
-    it trusts whatever produced it.
+    ``outputs["pred_masks"]["spatial_features"]``) reads that key straight off the dict with no projection of its own
+    — it trusts whatever produced it.
 
     ``SegmentationHead``-only tests can't catch a regression here, since they never call ``loss_masks``. This builds the
     dict with a real ``SegmentationHead`` (``sparse_forward(skip_blocks=True)``, non-identity ``spatial_features_proj``)
@@ -433,4 +433,53 @@ class TestMatchedTargetCache:
         assert torch.allclose(recomputed["loss_ce"], cached["loss_ce"]), (
             f"{loss_flag}=True must compute the same loss_ce from a cached matched_targets as it does recomputing "
             "target_classes_o/idx/target_boxes from targets+indices directly"
+        )
+
+
+class TestBatchedFastPathRespectsMatcherOverrides:
+    """The batched matcher fast path must decline whenever the matcher customizes matching."""
+
+    def test_forward_uses_subclass_override_instead_of_batched_fast_path(self) -> None:
+        """A ``HungarianMatcher`` subclass overriding ``forward`` must be called for every layer.
+
+        The batched fast path reads ``_match_many`` off the matcher's class and calls it unbound, bypassing
+        ``nn.Module.__call__``. Without the forward-identity veto, a subclass overriding ``forward`` (the sanctioned
+        extension point) would have the base ``_match_many`` silently answer in its place instead, with no error.
+        Driving a real multi-layer ``forward()`` call (final + aux + enc) through a logging subclass proves the override
+        actually runs once per layer rather than being silently skipped.
+        """
+        call_log: list[int] = []
+
+        class _LoggingMatcher(HungarianMatcher):
+            def forward(self, outputs, targets, group_detr=1, target_side_safety=None):
+                call_log.append(len(call_log))
+                return super().forward(outputs, targets, group_detr=group_detr, target_side_safety=target_side_safety)
+
+        batch_size, num_queries, num_classes = 2, 4, 3
+        criterion = SetCriterion(
+            num_classes=num_classes,
+            matcher=_LoggingMatcher(),
+            weight_dict={},
+            focal_alpha=0.25,
+            losses=["labels", "boxes"],
+            group_detr=1,
+        )
+        targets = [
+            {"labels": torch.tensor([1, 2]), "boxes": torch.rand(2, 4) * 0.4 + 0.3},
+            {"labels": torch.tensor([0]), "boxes": torch.rand(1, 4) * 0.4 + 0.3},
+        ]
+
+        def _layer() -> dict[str, torch.Tensor]:
+            return {
+                "pred_logits": torch.randn(batch_size, num_queries, num_classes),
+                "pred_boxes": torch.rand(batch_size, num_queries, 4) * 0.4 + 0.3,
+            }
+
+        outputs = {**_layer(), "aux_outputs": [_layer()], "enc_outputs": _layer()}
+
+        criterion(outputs, targets, num_boxes=1.0)
+
+        assert len(call_log) == 3, (
+            "the overridden forward() must run once per output layer (final + aux + enc); a call count below 3 "
+            "means the batched fast path silently bypassed the subclass override"
         )
