@@ -226,13 +226,13 @@ These parameters apply when training `RFDETRKeypointPreview` on COCO keypoint an
 
 !!! warning "`keypoint_flip_pairs`: `None` vs `[]` vs a populated list"
 
-    This value is tri-state, and the state — not just the value — controls whether horizontal-flip augmentations run at all when a custom `aug_config` is supplied:
+    This value is tri-state, and the state — not just the value — controls whether horizontal-flip augmentations run at all, on both the default torchvision-native pipeline (`aug_config=None`) and a custom Albumentations `aug_config`:
 
-    - `None` marks a detection-only pipeline. Horizontal-flip augmentations (`HorizontalFlip`, `Flip`, `D4`) in your `aug_config` are always kept, since there are no keypoint annotations that a flip could invalidate.
-    - `[]` on a keypoint pipeline means no flip pairs are defined. RF-DETR then drops horizontal-flip augmentations from your `aug_config` rather than flip an image without knowing which keypoints to swap — this is intentional annotation-safety behavior, not a bug, but easy to trip over if you set `keypoint_flip_pairs=[]` yourself without expecting the augmentation to disappear.
+    - `None` marks a detection-only pipeline. Horizontal-flip augmentations (torchvision's default flip, or `HorizontalFlip`/`Flip`/`D4` in your `aug_config`) are always kept, since there are no keypoint annotations that a flip could invalidate.
+    - `[]` on a keypoint pipeline means no flip pairs are defined. RF-DETR then drops horizontal-flip augmentations rather than flip an image without knowing which keypoints to swap — this is intentional annotation-safety behavior, not a bug, but easy to trip over if you set `keypoint_flip_pairs=[]` yourself without expecting the augmentation to disappear.
     - A populated list on a keypoint pipeline supplies the actual left/right index pairs, so horizontal-flip augmentations run and swap the paired keypoints.
 
-    The current pydantic default for `keypoint_flip_pairs` is `[]`, matching the field definition in `src/rfdetr/config.py`. See `AlbumentationsWrapper.from_config` in `src/rfdetr/datasets/transforms.py` for the exact gating check (`keypoint_flip_pairs is not None and not keypoint_flip_pairs`).
+    The current pydantic default for `keypoint_flip_pairs` is `[]`, matching the field definition in `src/rfdetr/config.py`. See `_build_torchvision_pipeline` in `src/rfdetr/datasets/coco.py` for the default-backend gating check, and `AlbumentationsWrapper.from_config` in `src/rfdetr/datasets/transforms.py` for the Albumentations-backend equivalent — both use the same `keypoint_flip_pairs is not None and not keypoint_flip_pairs` check.
 
 !!! note "OKS sigma values: flat vs per-keypoint"
 
