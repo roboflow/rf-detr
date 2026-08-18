@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 import numpy as np
 import torch
@@ -40,6 +40,36 @@ _SANITIZED_COST_MARGIN = 1.0
 _FOCAL_LOSS_GAMMA = 2.0
 _LinearSumAssignment = Callable[[Any], tuple[NDArray[np.int64], NDArray[np.int64]]]
 linear_sum_assignment = cast(_LinearSumAssignment, _linear_sum_assignment)
+
+
+class _TargetSideSafety(NamedTuple):
+    """A precomputed compact-path target-side safety result from
+    :meth:`HungarianMatcher._precompute_target_side_safety`.
+
+    Tied to the ``targets`` list object (by identity, not equality — the ``targets`` this reflects
+    can only be the exact object it was computed from; a different batch that happens to build an
+    equal-looking list is not the same targets) and to the ``pred_boxes`` dtype/device and
+    ``num_classes`` it was computed against, so :meth:`HungarianMatcher._detection_inputs_are_safe`
+    can verify those still match the current call before reusing ``safe``, falling back to a fresh
+    computation otherwise. Object identity distinguishes one step's targets list from another's —
+    dtype/device/``num_classes`` stay constant for an entire training run, so checking only those
+    would let a value computed for one step's targets be silently reused for a different step's —
+    but it cannot detect in-place mutation of the same list's contents between precompute and use.
+    Callers must not mutate ``targets`` after precomputing against it.
+
+    Attributes:
+        safe: Unsynced 0-d bool Tensor — whether the target-side safety sweep passed.
+        targets: The exact targets list object this was computed from (identity-checked on reuse).
+        pred_boxes_dtype: dtype of the ``pred_boxes`` this was computed against.
+        pred_boxes_device: Device of the ``pred_boxes`` this was computed against.
+        num_classes: Number of classes this was computed against.
+    """
+
+    safe: Tensor
+    targets: list[dict[str, Any]]
+    pred_boxes_dtype: torch.dtype
+    pred_boxes_device: torch.device
+    num_classes: int
 
 
 class HungarianMatcher(nn.Module):
@@ -167,20 +197,34 @@ class HungarianMatcher(nn.Module):
         return cost
 
     @staticmethod
-    def _detection_inputs_are_safe(outputs: dict[str, Any], targets: list[dict[str, Any]]) -> bool:
-        """Return whether the compact path can preserve the full path's finite-cost behavior.
+    def _target_side_precheck(
+        pred_boxes_dtype: torch.dtype,
+        pred_boxes_device: torch.device,
+        num_classes: int,
+        targets: list[dict[str, Any]],
+    ) -> Tensor:
+        """Return whether the *target*-side half of the compact-path safety gate passes.
+
+        Split out of :meth:`_detection_inputs_are_safe` because this half depends only on
+        ``targets`` plus ``pred_boxes_dtype``/``pred_boxes_device``/``num_classes`` — all identical
+        across every one of the (final layer + aux layers + enc layer) calls
+        ``SetCriterion.forward`` makes with the same ``targets`` in one training step — so
+        :meth:`_precompute_target_side_safety` can compute it once per step instead of once per call.
 
         Args:
-            outputs: Model outputs containing ``pred_boxes`` and ``pred_logits``.
+            pred_boxes_dtype: dtype of the predictions' box tensor.
+            pred_boxes_device: Device of the predictions' box tensor.
+            num_classes: Number of classes the predictions' logits cover.
             targets: Per-image target dicts containing ``boxes`` and ``labels``.
 
         Returns:
-            ``False`` if any target's box dtype or device disagrees with the predictions', if any
-            target's label device disagrees with the predictions', if any box coordinate (predicted or
-            target) is non-finite or exceeds ``coordinate_limit``, or if any label falls outside
-            ``[0, num_classes)``; ``True`` otherwise. Any ``False`` routes the batch to the full path.
+            An *unsynced* 0-d bool Tensor, false if any target's box dtype or device disagrees with
+            the predictions', if any target's label device disagrees with the predictions', if any
+            target box coordinate is non-finite or exceeds ``coordinate_limit``, or if any label
+            falls outside ``[0, num_classes)``; true otherwise. Deliberately left as a Tensor rather
+            than cast to ``bool`` so :meth:`_detection_inputs_are_safe` can fuse it with its
+            pred-side check into a single host-device sync.
         """
-        pred_boxes = outputs["pred_boxes"]
         # Metadata-only prechecks: attribute comparisons that launch no kernel and force no device
         # sync, and that short-circuit before any reduction below runs. `pad_sequence` allocates
         # from the first sequence, so a target whose boxes disagree in dtype with the rest is
@@ -189,10 +233,146 @@ class HungarianMatcher(nn.Module):
         # Route those batches to the full path so that loud failure is preserved.
         target_label_dtype = targets[0]["labels"].dtype
         for target in targets:
-            if target["boxes"].dtype != pred_boxes.dtype or target["boxes"].device != pred_boxes.device:
-                return False
-            if target["labels"].device != pred_boxes.device or target["labels"].dtype != target_label_dtype:
-                return False
+            if target["boxes"].dtype != pred_boxes_dtype or target["boxes"].device != pred_boxes_device:
+                return torch.tensor(False, device=pred_boxes_device)
+            if target["labels"].device != pred_boxes_device or target["labels"].dtype != target_label_dtype:
+                return torch.tensor(False, device=pred_boxes_device)
+
+        # Concatenates the per-image tensors into one before checking them, instead of looping
+        # `isfinite`/`abs`/comparison + `.all()` once per image: each per-image call launches
+        # several tiny kernels, so the loop's cost scales with `bs`. The metadata prechecks above
+        # guarantee every target's boxes share `pred_boxes_dtype` and every target's labels share
+        # dtype/device, so the concatenation cannot fail on metadata mismatches. Concatenation
+        # preserves which individual values are non-finite/out-of-range — it does not change what
+        # this check returns, only how many kernels it launches.
+        checks: list[Tensor] = []
+        # Keep enough headroom for cxcywh conversion, pairwise differences, areas, and unions.
+        coordinate_limit = torch.finfo(pred_boxes_dtype).max ** 0.5 / 16
+        target_boxes = torch.cat([target["boxes"] for target in targets])
+        checks.append(torch.isfinite(target_boxes).all() & (target_boxes.abs() <= coordinate_limit).all())
+        # `torch.gather` rejects an out-of-range class index outright, where the full path's
+        # `flat_pred_logits[:, tgt_ids]` wraps a negative label Python-style onto the last class and
+        # raises `IndexError` for a too-large one. Deliberately keep that pre-existing behavior —
+        # silent wrap included — by routing such batches to the full path rather than introducing a
+        # new hard error here. Appended to the same `checks` list so it rides the single
+        # `torch.stack` sync below instead of adding a second one.
+        target_labels = torch.cat([target["labels"] for target in targets])
+        checks.append((target_labels >= 0).all() & (target_labels < num_classes).all())
+        return torch.stack(checks).all()
+
+    @staticmethod
+    def _compact_path_applicable(outputs: dict[str, Any], targets: list[dict[str, Any]]) -> bool:
+        """Return whether the compact path could apply at all, before the input-safety gate is consulted.
+
+        Sole owner of the compact path's routing precondition, so callers that want to skip work the
+        compact path would never use (``SetCriterion.forward`` precomputing the target-side safety
+        sweep) test the same rule :meth:`forward` routes on instead of reimplementing it.
+
+        >>> outputs = {"pred_logits": torch.zeros(2, 3, 4)}
+        >>> HungarianMatcher._compact_path_applicable(outputs, [{}, {}])
+        True
+        >>> HungarianMatcher._compact_path_applicable({"pred_logits": torch.zeros(1, 3, 4)}, [{}])
+        False
+
+        Args:
+            outputs: Model outputs containing at least ``pred_logits``.
+            targets: Per-image target dicts.
+
+        Returns:
+            ``True`` only for a batch of more than one image with neither mask nor keypoint targets;
+            every other batch is matched by the full cartesian path regardless of input safety.
+        """
+        return (
+            outputs["pred_logits"].shape[0] > 1
+            and "masks" not in targets[0]
+            and not ("pred_keypoints" in outputs and "keypoints" in targets[0])
+        )
+
+    @torch.no_grad()
+    def _precompute_target_side_safety(
+        self, outputs: dict[str, Any], targets: list[dict[str, Any]]
+    ) -> _TargetSideSafety | None:
+        """Precompute the compact-path safety gate's target-side sweep once, for reuse across the several
+        :meth:`forward` calls ``SetCriterion.forward`` makes with the same ``targets`` (once per decoder layer, plus
+        aux/enc outputs). Recomputing the target-side sweep on every one of those calls wastes ~47% of the gate's total
+        cost on work that never changes within a step (measured on an RTX 4060: ~300-700us/step saved by caching it).
+
+        Examples:
+            >>> matcher = HungarianMatcher()
+            >>> outputs = {
+            ...     "pred_logits": torch.zeros(2, 3, 4),
+            ...     "pred_boxes": torch.rand(2, 3, 4),
+            ... }
+            >>> targets = [
+            ...     {"boxes": torch.rand(1, 4), "labels": torch.tensor([0])},
+            ...     {"boxes": torch.rand(1, 4), "labels": torch.tensor([1])},
+            ... ]
+            >>> result = matcher._precompute_target_side_safety(outputs, targets)
+            >>> bool(result.safe)  # .safe is an unsynced Tensor, so compare via bool() to sync it
+            True
+
+        Args:
+            outputs: Any one of the step's outputs dicts (``pred_boxes``/``pred_logits`` share the
+                same dtype/device/``num_classes`` across every layer of one forward pass, by
+                construction); typically the final-layer output.
+            targets: The step's targets, unchanged across every :meth:`forward` call it feeds.
+
+        Returns:
+            ``None`` when :meth:`_compact_path_applicable` rules the compact path out for this batch
+            entirely, since :meth:`forward` then never reaches the safety gate and sweeping the
+            targets would be pure overhead. Otherwise a :class:`_TargetSideSafety` to pass as
+            :meth:`forward`'s ``target_side_safety`` argument. :meth:`forward` verifies the exact
+            ``targets`` object (by identity) plus the dtype/device/``num_classes`` it was computed
+            against still match the current call before trusting it, falling back to a fresh
+            computation otherwise — reusing it never changes what :meth:`forward` returns, only how
+            much redundant work it does to get there.
+        """
+        if not self._compact_path_applicable(outputs, targets):
+            return None
+        pred_boxes = outputs["pred_boxes"]
+        num_classes = outputs["pred_logits"].shape[-1]
+        safe = self._target_side_precheck(pred_boxes.dtype, pred_boxes.device, num_classes, targets)
+        return _TargetSideSafety(safe, targets, pred_boxes.dtype, pred_boxes.device, num_classes)
+
+    @staticmethod
+    def _detection_inputs_are_safe(
+        outputs: dict[str, Any],
+        targets: list[dict[str, Any]],
+        target_side_safety: _TargetSideSafety | None = None,
+    ) -> bool:
+        """Return whether the compact path can preserve the full path's finite-cost behavior.
+
+        Args:
+            outputs: Model outputs containing ``pred_boxes`` and ``pred_logits``.
+            targets: Per-image target dicts containing ``boxes`` and ``labels``.
+            target_side_safety: An optional precomputed result from
+                :meth:`_precompute_target_side_safety`, reused instead of recomputing the
+                target-side sweep from scratch when it was computed from this exact ``targets``
+                object (by identity) and its dtype/device/``num_classes`` still match this call's
+                ``outputs``.
+
+        Returns:
+            ``False`` if any target's box dtype or device disagrees with the predictions', if any
+            target's label device disagrees with the predictions', if any box coordinate (predicted or
+            target) is non-finite or exceeds ``coordinate_limit``, or if any label falls outside
+            ``[0, num_classes)``; ``True`` otherwise. Any ``False`` routes the batch to the full path.
+            Both halves stay unsynced Tensors until one final ``bool()`` below, so the whole gate
+            costs exactly one host-device sync per call however the target-side half was obtained.
+        """
+        pred_boxes = outputs["pred_boxes"]
+        num_classes = outputs["pred_logits"].shape[-1]
+        if (
+            target_side_safety is not None
+            and target_side_safety.targets is targets
+            and target_side_safety.pred_boxes_dtype == pred_boxes.dtype
+            and target_side_safety.pred_boxes_device == pred_boxes.device
+            and target_side_safety.num_classes == num_classes
+        ):
+            target_side_safe = target_side_safety.safe
+        else:
+            target_side_safe = HungarianMatcher._target_side_precheck(
+                pred_boxes.dtype, pred_boxes.device, num_classes, targets
+            )
 
         # `pred_logits` is deliberately not swept here. A non-finite logit either lands in a class
         # column the compact matrix consumes — where it survives every coefficient (including
@@ -202,41 +382,33 @@ class HungarianMatcher(nn.Module):
         # change the assignment. Sweeping all of `[bs, num_queries, num_classes]` up front costs
         # more than building the compact matrix it was guarding.
         #
-        # Both remaining sweeps concatenate the per-image tensors into one before checking them,
-        # instead of looping `isfinite`/`abs`/comparison + `.all()` once per image: each per-image
-        # call launches several tiny kernels, so the loop's cost scales with `bs`. The metadata
-        # prechecks above guarantee every target's boxes share `pred_boxes.dtype` and every target's
-        # labels share dtype/device, so the concatenations cannot fail on metadata mismatches.
-        # `coordinate_limit` only needs computing once. Concatenation preserves which individual
-        # values are non-finite/out-of-range — it does not change what these checks return, only how
-        # many kernels they launch.
-        checks: list[Tensor] = []
-        # Keep enough headroom for cxcywh conversion, pairwise differences, areas, and unions.
+        # This sweep is per-call, unlike the target-side one above: `pred_boxes` differs by layer,
+        # so it cannot be cached across the calls `SetCriterion.forward` makes with the same
+        # `targets`.
         coordinate_limit = torch.finfo(pred_boxes.dtype).max ** 0.5 / 16
-        target_boxes = torch.cat([target["boxes"] for target in targets])
-        for boxes in (pred_boxes, target_boxes):
-            checks.append(torch.isfinite(boxes).all() & (boxes.abs() <= coordinate_limit).all())
-        # `torch.gather` rejects an out-of-range class index outright, where the full path's
-        # `flat_pred_logits[:, tgt_ids]` wraps a negative label Python-style onto the last class and
-        # raises `IndexError` for a too-large one. Deliberately keep that pre-existing behavior —
-        # silent wrap included — by routing such batches to the full path rather than introducing a
-        # new hard error here. Appended to the same `checks` list so it rides the single
-        # `torch.stack` sync below instead of adding a second one.
-        num_classes = outputs["pred_logits"].shape[-1]
-        target_labels = torch.cat([target["labels"] for target in targets])
-        checks.append((target_labels >= 0).all() & (target_labels < num_classes).all())
-        return bool(torch.stack(checks).all())
+        pred_side_safe = torch.isfinite(pred_boxes).all() & (pred_boxes.abs() <= coordinate_limit).all()
+        # The single sync for the whole gate: both halves are 0-d bool Tensors on `pred_boxes`'
+        # device, so stacking them costs one launch and one `bool()` transfer. An early
+        # `if not target_side_safe` above would have forced its own separate sync, which is what
+        # made a cached multi-call step pay N+1 syncs where recomputing per call paid N.
+        return bool(torch.stack([target_side_safe, pred_side_safe]).all())
 
     def _compute_compact_detection_cost_matrix(
         self,
         outputs: dict[str, Any],
         targets: list[dict[str, Any]],
+        *,
+        clamp_target_labels: bool = False,
     ) -> Tensor:
         """Compute same-image detection costs with targets padded only to the batch maximum.
 
         Args:
             outputs: Model outputs containing ``pred_boxes`` and ``pred_logits``.
             targets: Per-image target dicts containing ``boxes`` and ``labels``.
+            clamp_target_labels: If True, clamp target label ids into ``[0, num_classes)`` before
+                the gather so an out-of-range label cannot raise; used only by the batched fast
+                path, which defers the safety decision until after the single host transfer (see
+                the ``clamp_target_labels`` block below).
 
         Returns:
             Cost matrix of shape ``[num_queries, sum(sizes)]``, where ``sizes`` is each image's real
@@ -250,6 +422,15 @@ class HungarianMatcher(nn.Module):
         padded_target_ids = pad_sequence([target["labels"] for target in targets], batch_first=True)
         padded_target_boxes = pad_sequence([target["boxes"] for target in targets], batch_first=True)
         max_targets = padded_target_ids.shape[1]
+
+        if clamp_target_labels:
+            # The batched path checks label safety only after its single host transfer. Clamp solely
+            # to let `gather` construct a disposable matrix for unsafe batches; it is never assigned.
+            # This is a no-op on every batch the method serves: `pad_sequence` pads with in-range 0,
+            # `_target_side_precheck` gates labels to `[0, num_classes)`, and `_match_many` checks
+            # equal class counts across layers; weakening any invariant would silently match wrong
+            # class columns here instead of raising.
+            padded_target_ids = padded_target_ids.clamp(0, outputs["pred_logits"].shape[-1] - 1)
 
         gather_index = padded_target_ids[:, None, :].expand(batch_size, num_queries, max_targets)
         target_logits = torch.gather(outputs["pred_logits"], 2, gather_index)
@@ -265,6 +446,130 @@ class HungarianMatcher(nn.Module):
             [padded_cost_matrix[index, :, :size] for index, size in enumerate(sizes)],
             dim=-1,
         )
+
+    @torch.no_grad()
+    def _match_many(
+        self,
+        outputs_list: list[dict[str, Any]],
+        targets: list[dict[str, Any]],
+        group_detr: int = 1,
+        target_side_safety: _TargetSideSafety | None = None,
+    ) -> list[list[tuple[Tensor, Tensor]]] | None:
+        """Batch compatible detection matchers into one host transfer, or decline to preserve fallback behavior.
+
+        This private fast path is used only by ``SetCriterion`` for final, auxiliary, and encoder outputs from one
+        training step. It leaves unusual input shapes and unsafe values to :meth:`forward`, whose full-cartesian
+        fallback carries the established error and non-finite-cost behavior.
+
+        Args:
+            outputs_list: Detection outputs for the final, auxiliary, and encoder layers to match
+                together.
+            targets: Per-image target dicts shared by every layer in ``outputs_list``.
+            group_detr: Number of query groups to solve independently within each layer.
+            target_side_safety: Optional precomputed target-side safety result for these exact
+                ``targets`` and the reference layer's box dtype, device, and class count.
+
+        Returns:
+            ``list[list[tuple[Tensor, Tensor]]] | None`` containing per-image assignments for each
+            layer, or ``None``. ``None`` is the decline contract: the caller MUST execute the
+            per-layer fallback. A decline can occur after all L compact matrices are built,
+            staged into one host buffer, and transferred when the final loop finds a layer with
+            non-finite ``pred_boxes`` or a bad safety flag. This post-transfer decline costs
+            approximately 1.8x the pre-batching per-layer cost: a measured NaN in one of 7 layers
+            took 182% of the pre-PR matcher time (6.97 ms of wasted ``_match_many`` work plus
+            8.51 ms of sequential redo).
+        """
+        if len(outputs_list) < 2 or not all(
+            self._compact_path_applicable(outputs, targets) for outputs in outputs_list
+        ):
+            return None
+
+        reference_boxes = outputs_list[0]["pred_boxes"]
+        reference_classes = outputs_list[0]["pred_logits"].shape[-1]
+        if any(
+            outputs["pred_boxes"].dtype != reference_boxes.dtype
+            or outputs["pred_boxes"].device != reference_boxes.device
+            or outputs["pred_logits"].device != reference_boxes.device
+            or outputs["pred_logits"].shape[-1] != reference_classes
+            for outputs in outputs_list[1:]
+        ):
+            return None
+        if any(
+            target["boxes"].dtype != reference_boxes.dtype
+            or target["boxes"].device != reference_boxes.device
+            or target["labels"].device != reference_boxes.device
+            or target["labels"].dtype != targets[0]["labels"].dtype
+            for target in targets
+        ):
+            return None
+
+        if (
+            target_side_safety is not None
+            and target_side_safety.targets is targets
+            and target_side_safety.pred_boxes_dtype == reference_boxes.dtype
+            and target_side_safety.pred_boxes_device == reference_boxes.device
+            and target_side_safety.num_classes == reference_classes
+        ):
+            target_safe = target_side_safety.safe
+        else:
+            target_safe = self._target_side_precheck(
+                reference_boxes.dtype, reference_boxes.device, reference_classes, targets
+            )
+
+        sizes = [len(target["boxes"]) for target in targets]
+        total_targets = sum(sizes)
+        if total_targets == 0:
+            return None
+
+        coordinate_limit = torch.finfo(reference_boxes.dtype).max ** 0.5 / 16
+        # Every layer's payload is its queries plus one safety row, so all shapes — and therefore the
+        # whole flattened size and each layer's offset within it — are known before a single cost
+        # matrix exists. That lets the host buffer be allocated once and each layer be staged straight
+        # into its own slice, so only the layer being built is resident on the device. Accumulating the
+        # payloads for a closing `torch.cat` instead held all L matrices at once and then allocated a
+        # second full copy of them before the first was freed, roughly doubling peak device memory
+        # along the same group_detr/batch/crowd-density axes that push this batch toward OOM.
+        matrix_shapes = [(outputs["pred_logits"].shape[1] + 1, total_targets) for outputs in outputs_list]
+        # `_compute_compact_detection_cost_matrix` results are cast to float32 below, so the shared
+        # buffer is allocated for that dtype rather than the (possibly half) prediction dtype.
+        on_cuda = reference_boxes.is_cuda
+        cpu_payload = torch.empty(
+            sum(rows * columns for rows, columns in matrix_shapes),
+            dtype=torch.float32,
+            device="cpu",
+            pin_memory=on_cuda,
+        )
+        offset = 0
+        for outputs, matrix_shape in zip(outputs_list, matrix_shapes):
+            pred_boxes = outputs["pred_boxes"]
+            pred_safe = torch.isfinite(pred_boxes).all() & (pred_boxes.abs() <= coordinate_limit).all()
+            cost_matrix = self._compute_compact_detection_cost_matrix(
+                outputs, targets, clamp_target_labels=True
+            ).float()
+            # The final row carries the unsynced safety predicate with its layer's cost matrix, so the
+            # complete matcher batch still needs only one synchronization however many layers it holds.
+            payload = torch.cat([cost_matrix, (target_safe & pred_safe).to(cost_matrix.dtype).expand(1, total_targets)])
+            matrix_size = matrix_shape[0] * matrix_shape[1]
+            # A slice of a pinned buffer is itself pinned, so this copy stays asynchronous; the layer's
+            # device payload is released as the next iteration rebinds it, while the copy remains in
+            # flight under the stream-ordered caching allocator.
+            cpu_payload[offset : offset + matrix_size].copy_(payload.flatten(), non_blocking=on_cuda)
+            offset += matrix_size
+        if on_cuda:
+            # One synchronization for the whole batch, after every layer's copy has been issued.
+            torch.cuda.current_stream(reference_boxes.device).synchronize()
+
+        all_indices: list[list[tuple[Tensor, Tensor]]] = []
+        offset = 0
+        for matrix_shape in matrix_shapes:
+            matrix_size = matrix_shape[0] * matrix_shape[1]
+            payload = cpu_payload[offset : offset + matrix_size].view(matrix_shape)
+            offset += matrix_size
+            cost_matrix = payload[:-1]
+            if not bool(payload[-1, 0]) or not bool(torch.isfinite(cost_matrix).all()):
+                return None
+            all_indices.append(self._assign_compact_cost_matrix(cost_matrix, sizes, group_detr))
+        return all_indices
 
     @staticmethod
     def _assign_compact_cost_matrix(
@@ -322,6 +627,7 @@ class HungarianMatcher(nn.Module):
         outputs: dict[str, Any],
         targets: list[dict[str, Any]],
         group_detr: int = 1,
+        target_side_safety: _TargetSideSafety | None = None,
     ) -> list[tuple[Tensor, Tensor]]:
         """Performs the matching
 
@@ -335,6 +641,10 @@ class HungarianMatcher(nn.Module):
                  "boxes": Tensor of dim [num_target_boxes, 4] containing the target box coordinates "masks": Tensor of
                  dim [num_target_boxes, H, W] containing the target mask coordinates
             group_detr: Number of groups used for matching.
+            target_side_safety: An optional precomputed result from
+                :meth:`_precompute_target_side_safety`, forwarded to
+                :meth:`_detection_inputs_are_safe` to skip recomputing the target-side half of the
+                compact-path safety gate when it still applies.
 
         Returns:
             A list of size batch_size, containing tuples of (index_i, index_j) where:
@@ -348,8 +658,8 @@ class HungarianMatcher(nn.Module):
 
         masks_present = "masks" in targets[0]
         keypoints_present = "pred_keypoints" in outputs and "keypoints" in targets[0]
-        compact_eligible = (
-            bs > 1 and not masks_present and not keypoints_present and self._detection_inputs_are_safe(outputs, targets)
+        compact_eligible = self._compact_path_applicable(outputs, targets) and self._detection_inputs_are_safe(
+            outputs, targets, target_side_safety
         )
         if compact_eligible:
             compact_cost_matrix = self._compute_compact_detection_cost_matrix(outputs, targets).float().cpu()

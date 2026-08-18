@@ -1075,9 +1075,12 @@ class RFDETR:
         call is unaffected by an ``evaluate(resolution=...)`` call.
 
         Args:
-            split: Which split to evaluate. ``"test"`` evaluates the ``test/`` folder (Roboflow datasets; falls back to
-                the validation split otherwise) via ``trainer.test``; ``"val"`` evaluates the ``valid/`` folder via
-                ``trainer.validate``.
+            split: Which split to evaluate. ``"test"`` evaluates the ``test/`` folder (YOLO-format datasets — plain
+                YOLO datasets and Roboflow exports whose detected format is YOLO — fall back to the ``valid/`` split,
+                with a logged warning, when no ``test`` split can be resolved. A Roboflow export in COCO format has
+                no such fallback and still raises ``FileNotFoundError`` when its ``test`` split is missing;
+                COCO/Objects365 never attempt ``test`` and always evaluate ``valid/``) via ``trainer.test``;
+                ``"val"`` evaluates the ``valid/`` folder via ``trainer.validate``.
             **kwargs: The same keyword arguments accepted by :meth:`train` — ``dataset_dir`` is required (here or
                 already on the config), and the rest are forwarded to :func:`_prepare_run_config` /
                 :meth:`get_train_config`.
@@ -2337,6 +2340,10 @@ class RFDETR:
             input alone does not make the call fully round-trip-free. Pass ``include_source_image=False`` to avoid
             that copy as well.
 
+            Tensor range and shape checks are evaluated for every input. Any resulting ``ValueError`` is raised only
+            after all inputs have been inspected, so valid-shaped images later in a multi-image call still have their
+            conversion and transfer queued before an earlier validation failure raises.
+
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
@@ -2374,6 +2381,23 @@ class RFDETR:
         orig_sizes: list[Any] = []
         processed_images: list[Any] = []
         source_images: list[Any] | None = [] if include_source_image else None
+        # Deferred, not skipped: `(img > 1).any()` itself is a cheap async kernel launch, but
+        # consuming its result in `if ...:` forces Python to call `Tensor.__bool__()`, which blocks
+        # the calling thread until the device catches up. For a CUDA tensor passed directly to
+        # `predict()` (the documented host-round-trip-free path, see the Note above on pinning), doing
+        # that inline inside this loop serializes every image behind its own blocking round-trip,
+        # defeating the non-blocking transfers below. Collecting the (still un-synced) result tensors
+        # here and only forcing them to Python bools once, after every image has had its conversion,
+        # range-check kernels, and transfer all queued, lets the sync for image 1 overlap with the GPU
+        # work already queued for images 2..N instead of blocking in front of it. Kept per-image
+        # (not `torch.stack`-ed into one combined check) because the images in one `predict()` call
+        # are not guaranteed to share a device (e.g. a CPU-tensor image and a CUDA-tensor image mixed
+        # in the same list) — stacking would raise instead of validating each on its own device.
+        # The shape check below costs no sync (a plain Python int comparison on `.shape[0]`), but its
+        # raise is deferred here too, and re-ordered after both range checks in the loop below: the
+        # original code checked range before shape for a given image, and raising it eagerly here
+        # would flip that precedence for any tensor that is invalid on both axes at once.
+        pending_checks: list[tuple[torch.Tensor, torch.Tensor, bool, tuple[int, ...]]] = []
 
         for img_input in images:
             img: Any = img_input
@@ -2398,27 +2422,39 @@ class RFDETR:
                         src = (src * 255).clip(0, 255).astype(np.uint8)
                     source_images.append(src)  # type: ignore[union-attr]
                 img = F.to_tensor(img)
-            elif include_source_image:
+            elif include_source_image and img.dim() == 3:
+                # Source extraction requires a (C, H, W) tensor for permute(). Skip malformed ranks so the deferred
+                # validation below raises the public shape error instead of an internal RuntimeError.
                 source_images.append(  # type: ignore[union-attr]
                     (img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
                 )
 
-            if (img > 1).any():
-                raise ValueError(
-                    "Image has pixel values above 1. Please ensure the image is normalized (scaled to [0, 1]).",
+            # img.dim() != 3 is checked alongside the channel count (not just deferred as a message
+            # detail) because `h, w = img_tensor.shape[1:]` a few lines down unpacks exactly 2 values --
+            # deferring only the *raise* while still unconditionally unpacking a non-3D tensor's shape
+            # would trade the clear "Invalid tensor image shape" error for a confusing internal
+            # `ValueError: not enough values to unpack` (or, for a 0-d/1-d tensor, an IndexError out of
+            # `img.shape[0]` itself) the moment a malformed tensor reached this point.
+            invalid_shape = img.dim() != 3 or img.shape[0] != self.model_config.num_channels
+            pending_checks.append(
+                (
+                    (img > 1).any(),
+                    (img < 0).any(),
+                    invalid_shape,
+                    tuple(img.shape),
                 )
-            if (img < 0).any():
-                raise ValueError(
-                    "Image has pixel values below 0. Please ensure the image is normalized (scaled to [0, 1]).",
-                )
-            if img.shape[0] != self.model_config.num_channels:
-                raise ValueError(
-                    "Invalid tensor image shape. Tensor inputs to `predict()` must be in (C, H, W) format "
-                    f"with C matching the model configuration ({self.model_config.num_channels} channels). "
-                    f"Received tensor with shape {tuple(img.shape)}. "
-                    "For automatic RGB conversion, pass a PIL Image or a file path instead of a tensor."
-                )
+            )
             img_tensor = img
+
+            if invalid_shape:
+                # Already known to be un-usable -- record a placeholder so `processed_images`/
+                # `orig_sizes` don't silently go missing an entry (kept parallel with `pending_checks`
+                # for clarity, even though the loop below is guaranteed to raise on this image's
+                # `invalid_shape` before either list is ever read), and skip the size unpacking and
+                # transfer that assume a valid (C, H, W) tensor.
+                orig_sizes.append(None)
+                processed_images.append(None)
+                continue
 
             h, w = img_tensor.shape[1:]
             orig_sizes.append((h, w))
@@ -2436,6 +2472,28 @@ class RFDETR:
             # reads of the tensor's data can observe an in-flight (partially written) copy.
             non_blocking = self.model.device.type == "cuda"
             processed_images.append(img_tensor.to(self.model.device, non_blocking=non_blocking))
+
+        # Force the range-check results to Python bools only now, after every image's conversion,
+        # range-check kernels, and transfer have all been queued (see the comment where
+        # pending_checks is built). Same nested per-image, per-condition order as the original inline
+        # checks (image 0's "above 1", then "below 0", then its shape check; then image 1's, ...), so
+        # which of the three messages a given multi-image, multi-violation input raises is unchanged.
+        for invalid_high, invalid_low, invalid_shape, img_shape in pending_checks:
+            if invalid_high:
+                raise ValueError(
+                    "Image has pixel values above 1. Please ensure the image is normalized (scaled to [0, 1]).",
+                )
+            if invalid_low:
+                raise ValueError(
+                    "Image has pixel values below 0. Please ensure the image is normalized (scaled to [0, 1]).",
+                )
+            if invalid_shape:
+                raise ValueError(
+                    "Invalid tensor image shape. Tensor inputs to `predict()` must be in (C, H, W) format "
+                    f"with C matching the model configuration ({self.model_config.num_channels} channels). "
+                    f"Received tensor with shape {img_shape}. "
+                    "For automatic RGB conversion, pass a PIL Image or a file path instead of a tensor."
+                )
 
         resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
         # antialias=False matches the antialias-free bilinear resize (cv2.INTER_LINEAR)
@@ -2671,7 +2729,7 @@ class RFDETR:
         self,
         workspace: str,
         project_id: str,
-        version: int | str,
+        version: int | str | None = None,
         api_key: str | None = None,
         size: str | None = None,
     ) -> None:
@@ -2685,7 +2743,10 @@ class RFDETR:
         Args:
             workspace: The name of the Roboflow workspace to deploy to.
             project_id: The project ID to which the model will be deployed.
-            version: The project version to which the model will be deployed.
+            version: The project version to which the model will be deployed. If not provided, the highest
+                existing dataset version is resolved automatically via the Roboflow API; for a project with
+                no generated versions yet the lookup falls back to version ``1``, and the Roboflow SDK then
+                raises its own ``RuntimeError`` ("Version number 1 is not found.").
             api_key: Your Roboflow API key. If not provided,
                 it will be read from the environment variable `ROBOFLOW_API_KEY`.
             size: The size of the model to deploy. If not provided,
@@ -2732,6 +2793,15 @@ class RFDETR:
         with tempfile.TemporaryDirectory(prefix="roboflow_upload_") as tmp_out_dir:
             self.export_for_roboflow(tmp_out_dir)
             project = rf_workspace.project(project_id)
+            if version is None:
+                # Version ids come back as "<workspace>/<project>/<number>"; the highest number is the
+                # newest dataset version. default=1 keeps the SDK's own "Version number 1 is not found."
+                # as the error surface for a project with no generated versions.
+                version = max(
+                    (int(os.path.basename(info["id"])) for info in project.get_version_information()),
+                    default=1,
+                )
+                logger.info(f"deploy_to_roboflow: no version given, resolved latest version {version}")
             project_version = project.version(version)
             project_version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")
 

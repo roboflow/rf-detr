@@ -32,11 +32,30 @@ def _make_trainer(
     current_epoch: int = 1,
     is_global_zero: bool = True,
     callbacks: list[object] | None = None,
+    sanity_checking: bool = False,
 ) -> MagicMock:
     """Create a minimal mock Trainer with controllable callback_metrics.
 
     Sets the attributes required by ModelCheckpoint and EarlyStopping skip-guards so that callbacks run normally in unit
     tests.
+
+    Args:
+        metrics: Validation metric names mapped to values, exposed as ``trainer.callback_metrics``.
+        current_epoch: Value for ``trainer.current_epoch``.
+        is_global_zero: Value for ``trainer.is_global_zero``.
+        callbacks: Value for ``trainer.callbacks``; defaults to an empty list.
+        sanity_checking: Value for ``trainer.sanity_checking`` — True mimics PyTorch Lightning's pre-training
+            sanity-check pass (see #1348).
+
+    Returns:
+        A mock standing in for a :class:`~pytorch_lightning.Trainer`.
+
+    Examples:
+        >>> trainer = _make_trainer({"val/mAP_50_95": 0.5}, current_epoch=2, sanity_checking=True)
+        >>> trainer.current_epoch, trainer.sanity_checking
+        (2, True)
+        >>> trainer.callback_metrics["val/mAP_50_95"].item()
+        0.5
     """
     trainer = MagicMock()
     trainer.callback_metrics = {k: torch.tensor(v) for k, v in metrics.items()}
@@ -47,7 +66,7 @@ def _make_trainer(
     # Required by ModelCheckpoint._should_skip_saving_checkpoint
     trainer.fast_dev_run = False
     trainer.state.fn = TrainerFn.FITTING
-    trainer.sanity_checking = False
+    trainer.sanity_checking = sanity_checking
     trainer.global_step = 1  # int; differs from _last_global_step_saved=0
     # Required by EarlyStopping._log_info (world_size > 1 check)
     trainer.world_size = 1
@@ -312,6 +331,35 @@ class _CallbackStateCaptureCallback(Callback):
             self.early_stop_wait_count = self._early_stop_callback.wait_count
 
 
+class _SanityCheckEndProbe(Callback):
+    """Snapshot whether a checkpoint path exists at the exact moment PTL's sanity check ends.
+
+    ``on_sanity_check_end`` fires between the sanity-check validation pass and the first real training epoch, so it
+    catches a checkpoint written from sanity-check contamination before a real epoch's own (possibly identical) score
+    could produce the same file for a legitimate reason.
+    """
+
+    def __init__(self, checkpoint_path: Path) -> None:
+        """Store the checkpoint path to check for at sanity-check end.
+
+        Args:
+            checkpoint_path: File whose existence is snapshotted in ``on_sanity_check_end``.
+        """
+        super().__init__()
+        self._checkpoint_path = checkpoint_path
+        self.existed_after_sanity_check: bool | None = None
+
+    def on_sanity_check_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
+        """Record whether ``checkpoint_path`` exists right as the sanity check ends.
+
+        Args:
+            trainer: Unused; required by the ``Callback`` hook signature.
+            pl_module: Unused; required by the ``Callback`` hook signature.
+        """
+        del trainer, pl_module
+        self.existed_after_sanity_check = self._checkpoint_path.exists()
+
+
 # ---------------------------------------------------------------------------
 # TestBestModelCallback
 # ---------------------------------------------------------------------------
@@ -496,6 +544,116 @@ class TestBestModelCallback:
         cb.on_validation_end(trainer, pl_module)
 
         assert (tmp_path / "checkpoint_best_ema.pth").exists()
+
+    def test_ema_checkpoint_not_written_during_sanity_check(self, tmp_path: Path) -> None:
+        """PTL's pre-training sanity check must not seed checkpoint_best_ema.pth.
+
+        Regression test for #1348: PyTorch Lightning's sanity-check validation pass (which runs before any real training
+        epoch) was landing straight into the EMA improvement check below, so any positive sanity-check score — common
+        when starting a new training run initialized with pretrain_weights from a checkpoint pretrained on a different
+        dataset — got written out as the permanent "best" EMA checkpoint before a single real epoch ran. The regular-
+        checkpoint path already skips this via ModelCheckpoint._should_skip_saving_checkpoint's own
+        trainer.sanity_checking guard; the EMA block reimplements its own saving logic and never inherited that guard.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        pl_module = _make_pl_module()
+        trainer = _make_trainer(
+            {"val/mAP_50_95": 0.1, "val/ema_mAP_50_95": 0.83},
+            current_epoch=0,
+            sanity_checking=True,
+        )
+
+        cb.on_validation_end(trainer, pl_module)
+
+        assert not (tmp_path / "checkpoint_best_ema.pth").exists()
+        assert cb._best_ema == 0.0
+
+    def test_ema_checkpoint_written_on_first_real_epoch_after_sanity_check(self, tmp_path: Path) -> None:
+        """A genuine epoch 0 right after the sanity check still saves the EMA checkpoint.
+
+        Confirms the sanity_checking guard is specific to the sanity-check pass, not a blanket "never write at epoch 0"
+        — the correct guard is trainer.sanity_checking, not trainer.current_epoch == 0.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        pl_module = _make_pl_module()
+
+        sanity_trainer = _make_trainer(
+            {"val/mAP_50_95": 0.1, "val/ema_mAP_50_95": 0.83},
+            current_epoch=0,
+            sanity_checking=True,
+        )
+        cb.on_validation_end(sanity_trainer, pl_module)
+
+        real_trainer = _make_trainer(
+            {"val/mAP_50_95": 0.2, "val/ema_mAP_50_95": 0.35},
+            current_epoch=0,
+            sanity_checking=False,
+        )
+        cb.on_validation_end(real_trainer, pl_module)
+
+        assert (tmp_path / "checkpoint_best_ema.pth").exists()
+        assert cb._best_ema == pytest.approx(0.35)
+
+    def test_smoothed_regular_not_updated_during_sanity_check(self, tmp_path: Path) -> None:
+        """The regular-monitor smoothing accumulator must not warm up from the sanity check.
+
+        Guards the secondary smoothing state (smooth_alpha > 0) alongside the EMA checkpoint above: both are custom
+        bookkeeping that sits outside ModelCheckpoint's own sanity-check guard.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.9)
+        pl_module = _make_pl_module()
+        trainer = _make_trainer({"val/mAP_50_95": 0.83}, current_epoch=0, sanity_checking=True)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        assert cb._smoothed_regular == 0.0
+
+    def test_ema_checkpoint_not_written_during_real_ptl_sanity_check(self, tmp_path: Path) -> None:
+        """End-to-end: an unmodified Trainer with the sanity check enabled must not seed checkpoint_best_ema.pth.
+
+        The three tests above call on_validation_end directly with trainer.sanity_checking mocked True — they pin the
+        callback's own guard logic but not the premise it depends on: that PyTorch Lightning actually invokes
+        on_validation_end with trainer.sanity_checking=True during its real sanity-check pass
+        (Trainer._run_sanity_check, which reuses the same evaluation loop as real validation). This test runs a real
+        Trainer with num_sanity_val_steps left enabled to close that gap, using a probe callback's on_sanity_check_end
+        hook to pin down that no checkpoint exists at that exact moment — before a same-valued real epoch 0 could
+        produce the same file for a legitimate reason.
+        """
+        x = torch.randn(8, 4)
+        y = torch.randn(8, 1)
+        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+
+        checkpoint_path = tmp_path / "checkpoint_best_ema.pth"
+        save_cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
+        ema_cb = RFDETREMACallback()
+        probe = _SanityCheckEndProbe(checkpoint_path)
+        trainer = Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=2,
+            limit_train_batches=2,
+            limit_val_batches=1,
+            callbacks=[save_cb, ema_cb, probe],
+            default_root_dir=str(tmp_path),
+        )
+        # Same value on every validation call (sanity check and the real epoch both log unconditionally) —
+        # reproduces #1348 exactly. The probe below, not the end-state checkpoint, is what pins the timing down.
+        trainer.fit(
+            _EmaMetricModule(regular_value=0.2, ema_value=0.83),
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+        )
+
+        assert probe.existed_after_sanity_check is False, (
+            "checkpoint_best_ema.pth existed right after PTL's sanity check ended — the sanity-check validation pass "
+            "wrote it before any real epoch ran"
+        )
+        assert checkpoint_path.exists()
+        assert save_cb._best_ema == pytest.approx(0.83)
 
     def test_ema_checkpoint_saved_when_regular_monitor_absent(self, tmp_path: Path) -> None:
         """Under `eval_ema_only`, val/mAP_50_95 is never logged — only val/ema_mAP_50_95 is.

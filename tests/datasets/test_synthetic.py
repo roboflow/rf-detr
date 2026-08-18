@@ -356,6 +356,20 @@ class TestGenerateCocoDatasetWithSegmentation:
                 img_size=64,
             )
 
+    def test_write_coco_json_raises_when_class_id_missing(self, tmp_path):
+        """Detections carrying no class_id must raise rather than subscript None."""
+        annotations_path = tmp_path / "_annotations.coco.json"
+        detections = sv.Detections(xyxy=np.array([[0.0, 0.0, 10.0, 10.0]], dtype=float))
+
+        with pytest.raises(ValueError, match="must have class_id set"):
+            _write_coco_json(
+                annotations_path=annotations_path,
+                classes=["shape"],
+                file_paths=["/tmp/synthetic.png"],
+                detections_list=[detections],
+                img_size=64,
+            )
+
     def test_creates_files(self, tmp_path):
         """with_segmentation=True must create the same directory/file structure as the default."""
         output_dir = tmp_path / "seg_dataset"
