@@ -23,7 +23,7 @@ You can apply all changes in one go; working through sections one release at a t
     `TrainConfig.log_per_class_metrics` defaults to `False` (was `True`). Per-class AP keys (`test/AP/<class>`, `val/AP/<class>`) are no longer emitted by default — validation/test now skip that per-class computation. Set it explicitly to restore the old behavior:
 
     ```python
-    train_config = TrainConfig(log_per_class_metrics=True, ...)
+    train_config = TrainConfig(log_per_class_metrics=True)
     ```
 
 !!! warning "Breaking: `compute_val_loss` now defaults to `\"auto\"`"
@@ -31,7 +31,7 @@ You can apply all changes in one go; working through sections one release at a t
     `TrainConfig.compute_val_loss` defaults to `"auto"` (was `True`). In `"auto"` mode, validation loss is computed only when something actually consumes it — a `ReduceLROnPlateau` scheduler monitoring `val/loss`, or a callback (e.g. `ModelCheckpoint(monitor="val/loss")`, early stopping) that requires it — and is skipped otherwise. For a default run with no such consumer, `val/loss` no longer appears in `metrics.csv`, TensorBoard, or W&B. Set it explicitly to restore the old unconditional behavior:
 
     ```python
-    train_config = TrainConfig(compute_val_loss=True, ...)
+    train_config = TrainConfig(compute_val_loss=True)
     ```
 
 ---
@@ -76,13 +76,13 @@ You can apply all changes in one go; working through sections one release at a t
     ```python
     from rfdetr.datasets.aug_configs import AUG_CONFIG
 
-    train_config = TrainConfig(aug_config=AUG_CONFIG, ...)
+    train_config = TrainConfig(aug_config=AUG_CONFIG)
     ```
 
     Installing `rfdetr[augment]` alone is **not** sufficient to pin this behaviour — with Albumentations installed, `augmentation_backend="auto"`/`"cpu"` (the default) auto-selects Albumentations for you, but identical code on a machine without `[augment]` installed silently falls back to torchvision instead. The only setting that pins resize behaviour regardless of what is installed is:
 
     ```python
-    train_config = TrainConfig(augmentation_backend="torchvision", ...)
+    train_config = TrainConfig(augmentation_backend="torchvision")
     ```
 
 ### Removed
