@@ -15,6 +15,7 @@ import torch
 
 from rfdetr.evaluation.matching import build_matching_data, merge_matching_data
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
+from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -96,6 +97,8 @@ class TestSetup:
         """Detection mode uses iou_type='bbox'."""
         cb = COCOEvalCallback(max_dets=300, segmentation=False)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        assert isinstance(cb.map_metric, OnePassCocoMeanAveragePrecision)
+        assert isinstance(cb.map_metric_train, OnePassCocoMeanAveragePrecision)
         assert "bbox" in cb.map_metric.iou_type
         assert "segm" not in cb.map_metric.iou_type
 
@@ -269,20 +272,19 @@ class TestBatchEndCommon:
 
         assert cb.map_metric.update.call_count == 1
 
-    def test_map_metric_update_receives_cpu_state_inputs(self, hook, stage) -> None:
-        """Metric updates must receive the CPU copies that avoid per-annotation device synchronizations."""
+    def test_map_metric_update_receives_normalized_inputs(self, hook, stage) -> None:
+        """The callback must pass normalized detection inputs to the adapter that owns CPU-state conversion."""
         cb = COCOEvalCallback()
         cb.setup(_make_trainer(), _make_pl_module(), stage=stage)
         cb.map_metric = MagicMock(name="map_metric")
-        cpu_preds = _detection_preds(0)
-        cpu_targets = _detection_targets()
         outputs = {"results": _detection_preds(0), "targets": _detection_targets()}
 
-        with patch.object(cb, "_move_metric_inputs_to_cpu", return_value=(cpu_preds, cpu_targets)) as move_to_cpu:
-            getattr(cb, hook)(_make_trainer(), _make_pl_module(), outputs, None, 0)
+        getattr(cb, hook)(_make_trainer(), _make_pl_module(), outputs, None, 0)
 
-        move_to_cpu.assert_called_once()
-        cb.map_metric.update.assert_called_once_with(cpu_preds, cpu_targets)
+        called_preds, called_targets = cb.map_metric.update.call_args.args
+        assert called_preds[0].keys() == {"boxes", "scores", "labels"}
+        assert called_targets[0].keys() == {"boxes", "labels"}
+        assert "orig_size" not in called_targets[0]
 
     def test_f1_accumulator_grows_across_batches(self, hook, stage) -> None:
         """Calling the batch-end hook twice accumulates more GT in F1 state."""
@@ -338,48 +340,6 @@ class TestOnTestBatchEnd:
 
         # Must not raise with explicit dataloader_idx=0
         cb.on_test_batch_end(_make_trainer(), _make_pl_module(), outputs, None, 0, dataloader_idx=0)
-
-
-class TestMetricStateInputs:
-    """CPU mAP state conversion at the TorchMetrics boundary."""
-
-    def test_move_metric_inputs_to_cpu_preserves_metric_fields(self) -> None:
-        """CPU conversion retains only mAP fields, including masks, and detaches state that still requires grad.
-
-        Feeds ``_move_metric_inputs_to_cpu`` the same shape it receives in production — ``_convert_preds``/
-        ``_convert_targets`` output (``boxes``/``labels``/``masks``, no ``orig_size``) — instead of the raw pre-
-        conversion target dict, which carries ``orig_size`` and never reaches the helper in production. ``boxes`` starts
-        with ``requires_grad=True`` so detachment is asserted directly: ``.cpu()`` on an already-CPU tensor returns a
-        storage-sharing alias, making a bare device-type check vacuous on CPU-only CI runners, but ``.detach()`` clears
-        ``requires_grad``/``grad_fn`` regardless of device.
-        """
-        cb = COCOEvalCallback()
-        raw_preds = _detection_preds(1)
-        raw_preds[0]["boxes"].requires_grad_(True)
-        raw_preds[0]["masks"] = torch.zeros(1, 4, 4, dtype=torch.bool)
-        raw_preds[0]["keypoints"] = torch.zeros(1, 1, 3)
-        raw_preds[0]["keypoint_precision_cholesky"] = torch.zeros(1, 1, 3, 3)
-        raw_targets = _detection_targets()
-        raw_targets[0]["masks"] = torch.zeros(1, 4, 4, dtype=torch.bool)
-
-        preds = cb._convert_preds(raw_preds)
-        targets = cb._convert_targets(raw_targets, preds)
-        metric_preds, metric_targets = cb._move_metric_inputs_to_cpu(preds, targets)
-
-        assert metric_preds[0].keys() == {"boxes", "scores", "labels", "masks"}
-        assert metric_targets[0].keys() == targets[0].keys()
-        assert metric_preds[0] is not preds[0]
-        assert metric_targets[0] is not targets[0]
-        assert "orig_size" not in metric_targets[0]
-        assert "keypoints" not in metric_preds[0]
-        assert "keypoint_precision_cholesky" not in metric_preds[0]
-        torch.testing.assert_close(metric_preds[0]["boxes"], preds[0]["boxes"].detach())
-        torch.testing.assert_close(metric_targets[0]["boxes"], targets[0]["boxes"])
-        torch.testing.assert_close(metric_preds[0]["masks"], preds[0]["masks"])
-        torch.testing.assert_close(metric_targets[0]["masks"], targets[0]["masks"])
-        assert preds[0]["boxes"].requires_grad is True
-        assert metric_preds[0]["boxes"].requires_grad is False
-        assert metric_preds[0]["boxes"].grad_fn is None
 
 
 class TestValidationBatchEndDeviceRouting:
@@ -445,27 +405,20 @@ class TestOnTrainBatchEnd:
 
         cb.map_metric_train.update.assert_called_once()
 
-    def test_train_batch_end_uses_cpu_metric_inputs(self) -> None:
-        """map_metric_train.update must receive the CPU copies from _move_metric_inputs_to_cpu.
-
-        The train hot path runs this conversion on every batch; unit tests run CPU-only, so tensors are CPU either way
-        and a dropped conversion call is invisible to a call-count-only assertion. Only an explicit args check against
-        the mocked conversion output catches a silent revert.
-        """
+    def test_train_batch_end_delegates_normalized_inputs_to_adapter(self) -> None:
+        """Train accumulation must delegate normalized predictions and targets to the adapter exactly once."""
         cb = COCOEvalCallback()
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb.map_metric_train = MagicMock(name="map_metric_train")
         module = _make_pl_module()
         module.train_config = SimpleNamespace(compute_train_metrics=True)
-        cpu_preds = _detection_preds(1)
-        cpu_targets = _detection_targets()
         outputs = {"results": _detection_preds(1), "targets": _detection_targets()}
 
-        with patch.object(cb, "_move_metric_inputs_to_cpu", return_value=(cpu_preds, cpu_targets)) as move_to_cpu:
-            cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
+        cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
 
-        move_to_cpu.assert_called_once()
-        cb.map_metric_train.update.assert_called_once_with(cpu_preds, cpu_targets)
+        called_preds, called_targets = cb.map_metric_train.update.call_args.args
+        assert called_preds[0].keys() == {"boxes", "scores", "labels"}
+        assert called_targets[0].keys() == {"boxes", "labels"}
 
     def test_train_metrics_do_not_use_test_hook(self) -> None:
         """Train mAP must be logged under train/* via the train epoch hook, not through test/* hooks."""
@@ -487,7 +440,7 @@ class TestOnTrainBatchEnd:
         cb = COCOEvalCallback()
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb.map_metric_train = MagicMock(name="map_metric_train")
-        cb.map_metric_train._update_count = 0
+        cb.map_metric_train.has_updates = False
         module = _make_pl_module()
         module.train_config = SimpleNamespace(compute_train_metrics=True)
 
@@ -1132,7 +1085,7 @@ class TestOnValidationEpochEnd:
         cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric._update_count = 0  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: eval_ema_only never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb.map_metric_ema.compute.return_value = _minimal_metrics()
         cb._ema_has_updates = True
@@ -1160,7 +1113,7 @@ class TestOnValidationEpochEnd:
         cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric._update_count = 0  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: eval_ema_only never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb.map_metric_ema.compute.return_value = _minimal_metrics()
         cb._ema_has_updates = True
@@ -1196,7 +1149,7 @@ class TestOnValidationEpochEnd:
         cb._class_names = ["cat", "dog"]
         cb._cat_id_to_name = {0: "cat", 1: "dog"}
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric._update_count = 0  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: eval_ema_only never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         ema_metrics = _minimal_metrics()
         ema_metrics["map_per_class"] = torch.tensor([0.5, 0.4])
@@ -1228,7 +1181,7 @@ class TestOnValidationEpochEnd:
         cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric._update_count = 0  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: eval_ema_only never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb._ema_has_updates = False  # EMA metric also has no updates this epoch
         module = _make_pl_module()
@@ -1251,7 +1204,7 @@ class TestOnValidationEpochEnd:
         cb._class_names = ["cat"]
         cb._cat_id_to_name = {0: "cat"}
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric._update_count = 0  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: eval_ema_only never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         ema_metrics = _minimal_metrics(pfx="bbox_")
         ema_metrics["map_per_class"] = torch.tensor([0.5])
@@ -1586,10 +1539,8 @@ class TestValidationBatchEndEvalEmaOnly:
         ema_underlying.assert_called_once()
         cb.map_metric_ema.update.assert_called_once()
 
-    def test_eval_ema_only_true_routes_cpu_metric_inputs_to_ema_track(self) -> None:
-        """The used_ema_forward route must pass map_metric_ema.update the CPU-converted preds/targets from
-        _move_metric_inputs_to_cpu, not the pre-conversion tensors — a call-count-only assertion cannot catch a dropped
-        conversion on CPU-only CI, where tensors are CPU either way."""
+    def test_eval_ema_only_true_routes_normalized_inputs_to_ema_track(self) -> None:
+        """The used-EMA route must delegate normalized inputs only to the EMA adapter."""
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
         cb = COCOEvalCallback(eval_ema_only=True)
         trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
@@ -1597,22 +1548,17 @@ class TestValidationBatchEndEvalEmaOnly:
         cb.setup(trainer, module, stage="fit")
         cb.map_metric = MagicMock(name="map_metric")
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
-        cpu_preds = _detection_preds(0)
-        cpu_targets = _detection_targets()
-
         outputs = {"results": _detection_preds(0), "targets": _detection_targets()}
         batch = (torch.zeros(1), None)
-        with patch.object(cb, "_move_metric_inputs_to_cpu", return_value=(cpu_preds, cpu_targets)) as move_to_cpu:
-            cb.on_validation_batch_end(trainer, module, outputs, batch, 0)
+        cb.on_validation_batch_end(trainer, module, outputs, batch, 0)
 
-        move_to_cpu.assert_called_once()
-        cb.map_metric_ema.update.assert_called_once_with(cpu_preds, cpu_targets)
+        cb.map_metric.update.assert_not_called()
+        called_preds, called_targets = cb.map_metric_ema.update.call_args.args
+        assert called_preds[0].keys() == {"boxes", "scores", "labels"}
+        assert called_targets[0].keys() == {"boxes", "labels"}
 
-    def test_eval_ema_only_false_routes_cpu_metric_inputs_to_duplicate_ema_forward(self) -> None:
-        """The duplicate independent EMA forward path (eval_ema_only=False) must route its own
-        _move_metric_inputs_to_cpu output to map_metric_ema.update, distinct from the base call's own conversion output
-        routed to map_metric.update — a call-count-only assertion cannot catch either conversion being dropped or the
-        two outputs being swapped."""
+    def test_eval_ema_only_false_routes_each_forward_to_its_metric_adapter(self) -> None:
+        """Independent base and EMA forwards must each update their corresponding adapter once."""
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
         cb = COCOEvalCallback(eval_ema_only=False)
         trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
@@ -1620,23 +1566,12 @@ class TestValidationBatchEndEvalEmaOnly:
         cb.setup(trainer, module, stage="fit")
         cb.map_metric = MagicMock(name="map_metric")
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
-        base_cpu_preds = _detection_preds(0)
-        base_cpu_targets = _detection_targets()
-        ema_cpu_preds = _detection_preds(0)
-        ema_cpu_targets = _detection_targets()
-
         outputs = {"results": _detection_preds(0), "targets": _detection_targets()}
         batch = (torch.zeros(1), None)
-        with patch.object(
-            cb,
-            "_move_metric_inputs_to_cpu",
-            side_effect=[(base_cpu_preds, base_cpu_targets), (ema_cpu_preds, ema_cpu_targets)],
-        ) as move_to_cpu:
-            cb.on_validation_batch_end(trainer, module, outputs, batch, 0)
+        cb.on_validation_batch_end(trainer, module, outputs, batch, 0)
 
-        assert move_to_cpu.call_count == 2
-        cb.map_metric.update.assert_called_once_with(base_cpu_preds, base_cpu_targets)
-        cb.map_metric_ema.update.assert_called_once_with(ema_cpu_preds, ema_cpu_targets)
+        cb.map_metric.update.assert_called_once()
+        cb.map_metric_ema.update.assert_called_once()
 
     def test_on_validation_batch_end_resizes_native_gt_directly_to_prediction_grid(self) -> None:
         """Native-head evaluation must not round-trip transformed GT masks through ``orig_size``.
@@ -2299,62 +2234,6 @@ class TestEmaCollectiveSymmetry:
         mock_all_reduce.assert_called_once()
 
 
-def _metric_with_state(n: int = 1) -> MagicMock:
-    """Mock MeanAveragePrecision carrying minimal per-image state lists (one entry each)."""
-    metric = MagicMock(name="map_metric")
-    metric.detection_box = [torch.zeros(2, 4) for _ in range(n)]
-    metric.detection_scores = [torch.zeros(2) for _ in range(n)]
-    metric.detection_labels = [torch.zeros(2, dtype=torch.long) for _ in range(n)]
-    metric.detection_mask = [((10, 10), b"rle") for _ in range(n)]
-    metric.groundtruth_box = [torch.zeros(1, 4) for _ in range(n)]
-    metric.groundtruth_labels = [torch.zeros(1, dtype=torch.long) for _ in range(n)]
-    metric.groundtruth_mask = [((10, 10), b"rle") for _ in range(n)]
-    metric.groundtruth_crowds = [torch.zeros(1) for _ in range(n)]
-    metric.groundtruth_area = [torch.zeros(1) for _ in range(n)]
-    metric._update_count = 0
-    return metric
-
-
-class TestMergeMetricStateAcrossRanks:
-    """The DDP-safe replacement for torchmetrics' internal sync (#931/#449)."""
-
-    def test_no_op_when_not_distributed(self) -> None:
-        """Single-process / non-distributed: state is left untouched and no gather happens."""
-        cb = COCOEvalCallback()
-        metric = _metric_with_state(n=1)
-        with patch("rfdetr.training.callbacks.coco_eval.all_gather") as mock_gather:
-            cb._merge_metric_state_across_ranks(metric)
-        mock_gather.assert_not_called()
-        assert len(metric.detection_box) == 1  # unchanged
-
-    @patch("rfdetr.training.callbacks.coco_eval.get_world_size", return_value=2)
-    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
-    def test_concatenates_each_state_across_ranks(self, _init, _ws) -> None:
-        """Distributed: every state list is gathered once and concatenated across ranks."""
-        cb = COCOEvalCallback()
-        metric = _metric_with_state(n=1)
-        # Simulate a 2-rank gather: this rank's list plus an identical "other rank" list.
-        with patch("rfdetr.training.callbacks.coco_eval.all_gather", side_effect=lambda local: [local, local]) as mg:
-            cb._merge_metric_state_across_ranks(metric)
-        # One gather per state tensor (9 states), each now holding both ranks' entries.
-        assert mg.call_count == 9
-        assert len(metric.detection_box) == 2
-        assert len(metric.detection_scores) == 2
-        assert len(metric.detection_mask) == 2
-        assert len(metric.groundtruth_area) == 2
-
-    @patch("rfdetr.training.callbacks.coco_eval.get_world_size", return_value=1)
-    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
-    def test_no_op_when_world_size_one(self, _init, _ws) -> None:
-        """world_size==1 in an initialised group: state untouched, no gather issued."""
-        cb = COCOEvalCallback()
-        metric = _metric_with_state(n=1)
-        with patch("rfdetr.training.callbacks.coco_eval.all_gather") as mock_gather:
-            cb._merge_metric_state_across_ranks(metric)
-        mock_gather.assert_not_called()
-        assert len(metric.detection_box) == 1  # unchanged
-
-
 class TestOnTestEpochStart:
     """on_test_epoch_start resets _ema_has_updates before test to prevent stale val state."""
 
@@ -2423,9 +2302,9 @@ class TestComputeAndLogEmaResetPath:
 
         cb.map_metric = MagicMock(name="map_metric")
         cb.map_metric.compute.return_value = _minimal_metrics()
+        cb.map_metric.has_updates = True
 
         with (
-            patch.object(cb, "_merge_metric_state_across_ranks"),
             patch.object(cb, "_build_per_class_rows", return_value=[]),
             patch.object(cb, "_print_metrics_tables"),
             patch("rfdetr.training.callbacks.coco_eval.distributed_merge_matching_data", return_value={}),
@@ -2448,10 +2327,9 @@ class TestComputeAndLogEmaResetPath:
         cb.map_metric_ema.compute.return_value = _minimal_metrics()
         cb._ema_has_updates = True
 
-        with patch.object(cb, "_merge_metric_state_across_ranks"):
-            should_compute_ema, _ema_metrics = cb._compute_and_log_ema_metrics(
-                _make_trainer(), _make_pl_module(), "val", "", "mar_500"
-            )
+        should_compute_ema, _ema_metrics = cb._compute_and_log_ema_metrics(
+            _make_trainer(), _make_pl_module(), "val", "", "mar_500"
+        )
 
         assert should_compute_ema is True
         assert cb._ema_has_updates is False
