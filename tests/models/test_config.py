@@ -339,6 +339,41 @@ class TestTrainConfigT42PromotedFields:
         """compute_val_loss preserves explicit boolean and automatic policies."""
         assert self._tc(tmp_path, compute_val_loss=value).compute_val_loss == value
 
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            pytest.param("true", True, id="string-true-coerces-to-True"),
+            pytest.param("false", False, id="string-false-coerces-to-False"),
+            pytest.param("yes", True, id="string-yes-coerces-to-True"),
+            pytest.param("no", False, id="string-no-coerces-to-False"),
+            pytest.param("auto", "auto", id="string-auto-matches-literal"),
+        ],
+    )
+    def test_compute_val_loss_coerces_string_aliases(self, tmp_path, raw, expected):
+        """compute_val_loss silently coerces common string aliases via pydantic's lax bool parsing.
+
+        The bool | Literal["auto"] union tries the bool arm first, so "yes"/"no"/"true"/"false" coerce silently instead
+        of raising; "auto" instead matches the Literal arm unchanged. Pinning this behavior catches a pydantic upgrade
+        that changes union member resolution order.
+        """
+        assert self._tc(tmp_path, compute_val_loss=raw).compute_val_loss == expected
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            pytest.param("Auto", id="capitalized-auto-rejected"),
+            pytest.param("AUTO", id="uppercase-auto-rejected"),
+        ],
+    )
+    def test_compute_val_loss_rejects_case_variant_of_auto(self, tmp_path, raw):
+        """compute_val_loss rejects any casing of 'auto' other than the exact lowercase literal.
+
+        Literal["auto"] is case-strict and these variants don't match the bool arm's alias set either, so pydantic must
+        raise rather than silently normalizing casing.
+        """
+        with pytest.raises(ValidationError):
+            self._tc(tmp_path, compute_val_loss=raw)
+
     def test_compute_test_loss_default_is_true(self, tmp_path):
         """compute_test_loss defaults to True."""
         assert self._tc(tmp_path).compute_test_loss is True

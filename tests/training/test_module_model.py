@@ -6,6 +6,7 @@
 """Comprehensive unit tests for RFDETRModelModule (LightningModule wrapper)."""
 
 import random
+import warnings
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
@@ -17,6 +18,7 @@ from torch import nn
 from rfdetr.config import RFDETRBaseConfig, RFDETRSmallConfig, TrainConfig
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
+from rfdetr.training.callbacks.best_model import RFDETREarlyStopping
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.tensors import NestedTensor
@@ -1852,6 +1854,48 @@ class TestValidationStep:
         fake_criterion.assert_called_once_with({}, targets)
         assert any(call.args[0] == "val/loss" for call in module.log.call_args_list)
 
+    def test_auto_val_loss_keeps_criterion_for_rfdetr_early_stopping(self, tmp_path):
+        """compute_val_loss='auto' retains validation loss for a real RFDETREarlyStopping monitoring val/loss.
+
+        ``RFDETREarlyStopping.monitor`` is always the synthetic ``__rfdetr_effective_map__`` key it injects itself, so
+        the callback's real target only ever appears in ``_monitor_regular``. Stub callbacks carrying a plain
+        ``monitor="val/loss"`` attribute exercise the generic half of the scan and would keep passing even if the half
+        covering RF-DETR's own callbacks regressed.
+        """
+        tc = _base_train_config(tmp_path, compute_val_loss="auto")
+        module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
+        module.trainer = SimpleNamespace(callbacks=[RFDETREarlyStopping(monitor_regular="val/loss")])
+
+        assert module._should_compute_val_loss is True
+
+    def test_auto_val_loss_detects_ema_monitor_attribute(self, tmp_path):
+        """compute_val_loss='auto' retains validation loss for a callback consuming val/loss as its EMA monitor.
+
+        RF-DETR's ``BestModelCallback`` / ``RFDETREarlyStopping`` keep their EMA-track metric key in ``_monitor_ema``
+        rather than in the PTL-native ``monitor`` attribute, so a scan that inspects only ``monitor`` (and
+        ``_monitor_regular``) would silently skip the loss those callbacks still read.
+        """
+        tc = _base_train_config(tmp_path, compute_val_loss="auto")
+        module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
+        module.trainer = SimpleNamespace(
+            callbacks=[SimpleNamespace(monitor="__rfdetr_effective_map__", _monitor_ema="val/loss")]
+        )
+
+        assert module._should_compute_val_loss is True
+
+    def test_auto_val_loss_skips_criterion_for_empty_callback_list(self, tmp_path):
+        """compute_val_loss='auto' resolves to skipping the loss when the attached trainer carries no callbacks.
+
+        ``any()`` over an empty callback list is False, which is the intended answer, but nothing in the scan states
+        it: an attached trainer with an empty ``callbacks`` list must resolve exactly like the unattached case rather
+        than raising or falling back to computing the loss.
+        """
+        tc = _base_train_config(tmp_path, compute_val_loss="auto")
+        module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
+        module.trainer = SimpleNamespace(callbacks=[])
+
+        assert module._should_compute_val_loss is False
+
     def test_explicit_val_loss_disable_rejects_callback_monitor(self, tmp_path):
         """compute_val_loss=False rejects a callback that would consume val/loss."""
         tc = _base_train_config(tmp_path, compute_val_loss=False)
@@ -1860,6 +1904,48 @@ class TestValidationStep:
 
         with pytest.raises(ValueError, match="compute_val_loss=False is incompatible"):
             module.on_fit_start()
+
+    def test_standalone_validate_run_skips_the_fit_start_rejection(self, tmp_path):
+        """A standalone trainer.validate() with compute_val_loss=False runs despite a callback monitoring val/loss.
+
+        The rejection lives in ``on_fit_start``, which PTL invokes only when ``trainer.state.fn`` is ``FITTING``; a bare
+        ``validate()`` call sets it to ``VALIDATING`` and skips the hook entirely. The asymmetry is intentional (a
+        validation-only run has no scheduler or early-stopping loop to starve), so this test documents the current
+        behaviour instead of asserting a raise.
+        """
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path, compute_val_loss=False, num_workers=0)
+
+        class _ValLossMonitorCallback(Callback):
+            """Callback declaring a val/loss monitor, as PTL-native checkpoint and early-stopping callbacks do."""
+
+            monitor = "val/loss"
+
+        fake_postprocess = MagicMock(side_effect=_helpers_fake_postprocess)
+
+        with (
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(_FakeCriterion(), fake_postprocess),
+            ),
+            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=4)),
+        ):
+            module = RFDETRModelModule(mc, tc)
+            datamodule = RFDETRDataModule(mc, tc)
+            trainer = Trainer(
+                limit_val_batches=1,
+                accelerator="cpu",
+                enable_progress_bar=False,
+                enable_model_summary=False,
+                enable_checkpointing=False,
+                logger=False,
+                callbacks=[_ValLossMonitorCallback()],
+            )
+            trainer.validate(module, datamodule)
+
+        # The validation batch reached postprocess, so the loop ran to completion instead of raising the guard.
+        fake_postprocess.assert_called_once()
 
     def test_eval_ema_only_forwards_through_ema_model_not_base(self, tmp_path):
         """eval_ema_only=True must forward through the EMA-averaged model, not the base model (regression for #416:
@@ -1929,6 +2015,91 @@ class TestValidationStep:
         module.validation_step((samples, targets), batch_idx=0)
 
         fake_model.assert_called_once()
+
+
+class TestValidationLossSkipNotice:
+    """on_validation_epoch_start() announces an 'auto' policy that resolved to skipping validation-loss computation.
+
+    The consumer scan cannot see a human reading a ``val/loss`` curve from ``metrics.csv``, TensorBoard, or Weights &
+    Biases, so the resolution is stated once instead of the curve vanishing silently.
+    """
+
+    def _build_module_with_trainer(self, tmp_path, **trainer_state):
+        """Return an 'auto'-policy module whose stub trainer carries the given validation-loop state."""
+        tc = _base_train_config(tmp_path, compute_val_loss="auto")
+        module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
+        state = dict(callbacks=[], sanity_checking=False, is_global_zero=True)
+        state.update(trainer_state)
+        module.trainer = SimpleNamespace(**state)
+        return module
+
+    @patch("rfdetr.training.module_model.logger")
+    def test_notice_is_emitted_once_across_validation_epochs(self, mock_logger, tmp_path):
+        """The skip notice is logged on the first validation epoch only, not once per epoch.
+
+        Every validation epoch re-enters the hook, so an unguarded notice would repeat for the whole run and drown the
+        per-epoch metric lines it sits next to.
+        """
+        module = self._build_module_with_trainer(tmp_path)
+
+        module.on_validation_epoch_start()
+        module.on_validation_epoch_start()
+
+        mock_logger.info.assert_called_once()
+
+    @patch("rfdetr.training.module_model.logger")
+    def test_no_notice_when_a_callback_consumes_val_loss(self, mock_logger, tmp_path):
+        """No notice is logged while a callback monitors val/loss, because the loss is still computed."""
+        module = self._build_module_with_trainer(tmp_path, callbacks=[SimpleNamespace(monitor="val/loss")])
+
+        module.on_validation_epoch_start()
+
+        mock_logger.info.assert_not_called()
+
+    @patch("rfdetr.training.module_model.logger")
+    def test_sanity_check_pass_defers_the_notice(self, mock_logger, tmp_path):
+        """The pre-training sanity-check validation pass does not consume the one-shot notice.
+
+        Sanity checking runs before training starts and is invisible in most run logs; emitting the notice there would
+        spend the single announcement on a pass the user is least likely to be watching.
+        """
+        module = self._build_module_with_trainer(tmp_path, sanity_checking=True)
+
+        module.on_validation_epoch_start()
+
+        mock_logger.info.assert_not_called()
+
+
+class TestValidationLossPolicyCaching:
+    """_should_compute_val_loss reuses the resolution that on_validation_epoch_start cached for the running epoch."""
+
+    def test_per_batch_reads_reuse_the_epoch_resolution(self, tmp_path):
+        """A callback attached mid-epoch does not change the policy the running validation epoch already resolved.
+
+        The resolution walks every configured callback, so ``validation_step`` must not redo it per batch. Mutating
+        ``trainer.callbacks`` after the epoch hook ran is the observable proxy: an unchanged answer proves the batch
+        read came from the cached resolution rather than a fresh scan.
+        """
+        tc = _base_train_config(tmp_path, compute_val_loss="auto")
+        module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
+        module.trainer = SimpleNamespace(callbacks=[], sanity_checking=False, is_global_zero=True)
+        module.on_validation_epoch_start()
+
+        module.trainer.callbacks.append(SimpleNamespace(monitor="val/loss"))
+
+        assert module._should_compute_val_loss is False
+
+    def test_resolution_is_refreshed_at_every_validation_epoch(self, tmp_path):
+        """Each validation epoch re-resolves the policy, so a fit -> validate transition cannot serve a stale answer."""
+        tc = _base_train_config(tmp_path, compute_val_loss="auto")
+        module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
+        module.trainer = SimpleNamespace(callbacks=[], sanity_checking=False, is_global_zero=True)
+        module.on_validation_epoch_start()
+
+        module.trainer.callbacks.append(SimpleNamespace(monitor="val/loss"))
+        module.on_validation_epoch_start()
+
+        assert module._should_compute_val_loss is True
 
 
 class TestTestStep:
@@ -2461,6 +2632,31 @@ class TestConfigureOptimizers:
         assert config["monitor"] == "val/loss"
         assert config["interval"] == "epoch"
         assert module._should_compute_val_loss is True
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_callable_plateau_scheduler_rejects_disabled_val_loss(self, mock_get_param_dict, tmp_path):
+        """A closure-built ReduceLROnPlateau monitoring val/loss is rejected when compute_val_loss=False.
+
+        ``TrainConfig.validate_explicit_val_loss_disable`` only string-compares ``lr_scheduler`` against the
+        ReduceLROnPlateau dotted path, and a lambda closure — unlike a plain ``functools.partial``, which is desugared
+        to that path — never reaches the comparison. The runtime check in ``configure_optimizers`` is therefore the only
+        guard left once the concrete scheduler exists.
+        """
+        with warnings.catch_warnings():
+            # A lambda lr_scheduler cannot round-trip through training_config.json; that reproducibility warning is
+            # expected here and unrelated to the conflict under test.
+            warnings.simplefilter("ignore", UserWarning)
+            module, param_dicts = self._setup_module(
+                tmp_path,
+                warmup_epochs=0.0,
+                lr_scheduler=lambda optimizer: torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5),
+                lr_scheduler_monitor="val/loss",
+                compute_val_loss=False,
+            )
+        mock_get_param_dict.return_value = param_dicts
+
+        with pytest.raises(ValueError, match="incompatible with ReduceLROnPlateau"):
+            module.configure_optimizers()
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_uninstalled_scheduler_path_raises_value_error(self, mock_get_param_dict, tmp_path):
