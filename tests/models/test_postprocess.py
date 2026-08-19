@@ -5,11 +5,14 @@
 # ------------------------------------------------------------------------
 """Tests for PostProcess box clamping behaviour."""
 
+import weakref
 from unittest.mock import patch
 
 import pytest
 import torch
+import torch.nn.functional as F  # noqa: N812
 
+from rfdetr.models import postprocess
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities import box_ops
 
@@ -420,6 +423,117 @@ class TestPostProcessMasks:
         )[0]
         assert torch.equal(masks[0], masks[40])  # both occurrences identical across the chunk boundary
         assert torch.equal(masks[0], expected)  # and each maps to the correct source query, not query 0
+
+    def test_upsample_writes_chunks_into_preallocated_result_without_final_cat(self, monkeypatch):
+        """Upsampling must preserve exact chunked interpolation while avoiding a full-size bool concat."""
+        num_queries, num_select = 4, 48
+        out_masks = torch.randn(1, num_queries, 8, 8)
+        topk_boxes = (torch.arange(num_select) % num_queries).unsqueeze(0)
+        scores = torch.rand(1, num_select)
+        labels = torch.zeros(1, num_select, dtype=torch.long)
+        boxes = torch.zeros(1, num_select, 4)
+        target_sizes = torch.tensor([[64, 64]])
+
+        selected = out_masks[0].index_select(0, topk_boxes[0])
+        expected = torch.cat(
+            [
+                F.interpolate(
+                    selected[start : start + postprocess._MASK_CHUNK].unsqueeze(1),
+                    size=(64, 64),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                > 0.0
+                for start in range(0, num_select, postprocess._MASK_CHUNK)
+            ],
+            dim=0,
+        )
+
+        def _cat_must_not_run(*args, **kwargs):
+            raise AssertionError("mask upsampling must write into the preallocated result without torch.cat")
+
+        monkeypatch.setattr(torch, "cat", _cat_must_not_run)
+        result = PostProcess._postprocess_masks(
+            out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=True
+        )[0]["masks"]
+
+        assert torch.equal(result, expected)
+
+    def test_upsample_drops_previous_chunk_buffer_before_next_chunk_is_built(self, monkeypatch):
+        """The `del interpolated` after each `torch.gt` must free the transient chunk buffer before the next chunk's
+        `F.interpolate` call starts, not merely by the time the loop reassigns the variable.
+
+        Without the `del`, the previous chunk stays referenced by the loop variable for the full duration of the next
+        `F.interpolate` call, so two chunks are briefly alive at once -- the same double-buffering this whole
+        preallocation is meant to avoid, just smaller and confined to one loop iteration.
+        """
+        num_queries, num_select = 4, 96  # 3 chunks of 32, so the guard is exercised across two boundaries
+        out_masks = torch.randn(1, num_queries, 8, 8)
+        topk_boxes = (torch.arange(num_select) % num_queries).unsqueeze(0)
+        scores = torch.rand(1, num_select)
+        labels = torch.zeros(1, num_select, dtype=torch.long)
+        boxes = torch.zeros(1, num_select, 4)
+        target_sizes = torch.tensor([[64, 64]])
+
+        previous_chunk_ref = None
+        real_interpolate = F.interpolate
+
+        def _tracking_interpolate(*args, **kwargs):
+            nonlocal previous_chunk_ref
+            if previous_chunk_ref is not None:
+                assert previous_chunk_ref() is None, (
+                    "the previous chunk's buffer is still alive when the next chunk's F.interpolate starts"
+                )
+            result = real_interpolate(*args, **kwargs)
+            previous_chunk_ref = weakref.ref(result)
+            return result
+
+        monkeypatch.setattr(postprocess.F, "interpolate", _tracking_interpolate)
+
+        PostProcess._postprocess_masks(
+            out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=True
+        )
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_upsample_on_cuda_writes_chunks_into_preallocated_result_without_final_cat(self):
+        """Same guarantee as the CPU test above, on CUDA: bit-identical output, torch.cat never runs.
+
+        The preallocated write path is no longer gated to CPU only (verified here and on CPU; MPS/XLA untested) — see
+        CHANGELOG.md for the CUDA memory investigation that ruled out a device-specific fallback.
+        """
+        num_queries, num_select = 4, 48
+        out_masks = torch.randn(1, num_queries, 8, 8, device="cuda")
+        topk_boxes = (torch.arange(num_select) % num_queries).unsqueeze(0).to("cuda")
+        scores = torch.rand(1, num_select, device="cuda")
+        labels = torch.zeros(1, num_select, dtype=torch.long, device="cuda")
+        boxes = torch.zeros(1, num_select, 4, device="cuda")
+        target_sizes = torch.tensor([[64, 64]], device="cuda")
+
+        selected = out_masks[0].index_select(0, topk_boxes[0])
+        expected = torch.cat(
+            [
+                F.interpolate(
+                    selected[start : start + postprocess._MASK_CHUNK].unsqueeze(1),
+                    size=(64, 64),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                > 0.0
+                for start in range(0, num_select, postprocess._MASK_CHUNK)
+            ],
+            dim=0,
+        )
+
+        def _cat_must_not_run(*args, **kwargs):
+            raise AssertionError("CUDA mask upsampling must write into the preallocated result without torch.cat")
+
+        with patch("torch.cat", side_effect=_cat_must_not_run):
+            result = PostProcess._postprocess_masks(
+                out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=True
+            )[0]["masks"]
+
+        assert torch.equal(result, expected)
 
     def test_forward_threads_upsample_flag_from_constructor(self):
         """PostProcess.forward() must respect the constructor's upsample_masks_to_image_size setting."""
