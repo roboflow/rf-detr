@@ -10,6 +10,8 @@ Tests cover:
 * ``_check_onnx2tf_available()`` — import-based availability check
 * ``_numpy_allow_pickle()`` — NumPy monkey-patch context manager
 * ``_patch_validation_download()`` — validation download redirect
+* ``_interpreter_scripts_on_path()`` — PATH helper for onnx2tf's onnxsim subprocess
+* ``export_tflite()`` applies that helper around ``onnx2tf.convert()``
 * ``_get_onnx_input_info()`` — ONNX model input metadata reader
 * ``_prepare_calibration_data()`` — calibration data preparation
 * ``format="tflite"`` parameter wiring through ``RFDETR.export()``
@@ -18,7 +20,9 @@ Tests cover:
 from __future__ import annotations
 
 import logging
+import os
 import sys
+import sysconfig
 import types
 from pathlib import Path
 from typing import Any, Generator
@@ -36,6 +40,7 @@ from rfdetr.export._tflite.converter import (
     _VALID_QUANTIZATIONS,
     _check_onnx2tf_available,
     _get_onnx_input_info,
+    _interpreter_scripts_on_path,
     _load_calibration_images,
     _numpy_allow_pickle,
     _patch_validation_download,
@@ -1416,3 +1421,126 @@ class TestExportTflitePreloadOrder:
             export_tflite(onnx_path=onnx_model, output_dir=tflite_output)
 
         assert calls == ["preload", "check"], f"Expected preload before the onnx2tf check, got {calls}"
+
+
+class TestExportTfliteAppliesInterpreterPath:
+    """``export_tflite()`` must apply :func:`_interpreter_scripts_on_path` around ``onnx2tf.convert``.
+
+    Deliberately **not** gated on ``onnx2tf_available``: ``fake_onnx2tf`` injects a stub so this runs in CI.
+    """
+
+    def test_convert_sees_interpreter_scripts_dir_on_path(
+        self,
+        onnx_model: Path,
+        tflite_output: Path,
+        fake_onnx2tf: Any,
+        mock_prepare_calib: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``onnx2tf.convert`` runs with the interpreter script directory first on ``PATH``."""
+        monkeypatch.setenv("PATH", "/usr/bin")
+        seen: list[str] = []
+        _, convert_mock = fake_onnx2tf
+
+        def _capture_path(*_args: Any, **_kwargs: Any) -> None:
+            seen.append(os.environ.get("PATH", ""))
+
+        convert_mock.side_effect = _capture_path
+
+        export_tflite(onnx_path=onnx_model, output_dir=tflite_output)
+
+        assert seen, "onnx2tf.convert was not called"
+        first = seen[0].split(os.pathsep)[0]
+        assert first == str(Path(sys.executable).parent), (
+            f"Expected the interpreter script dir first during convert(), got {first!r}"
+        )
+        assert os.environ["PATH"] == "/usr/bin", "PATH must be restored after export_tflite() returns"
+
+
+# ---------------------------------------------------------------------------
+# TestInterpreterScriptsOnPath
+# ---------------------------------------------------------------------------
+
+
+class TestInterpreterScriptsOnPath:
+    """Tests for ``_interpreter_scripts_on_path()`` — makes onnx2tf's ``onnxsim`` subprocess resolvable."""
+
+    @pytest.mark.parametrize(
+        ("original_path", "expected_path"),
+        [("/usr/bin", "/usr/bin"), ("", ""), (None, None)],
+        ids=["nonempty", "explicit-empty", "unset"],
+    )
+    def test_restores_path_on_exception(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        original_path: str | None,
+        expected_path: str | None,
+    ) -> None:
+        """PATH value and presence are restored even when the wrapped conversion raises."""
+        if original_path is None:
+            monkeypatch.delenv("PATH", raising=False)
+        else:
+            monkeypatch.setenv("PATH", original_path)
+
+        with pytest.raises(RuntimeError, match="boom"), _interpreter_scripts_on_path():
+            raise RuntimeError("boom")
+
+        if expected_path is None:
+            assert "PATH" not in os.environ
+        else:
+            assert os.environ["PATH"] == expected_path
+
+    def test_no_duplicate_when_already_on_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Preferred script directories already at the front are not duplicated or reordered."""
+        preferred = list(dict.fromkeys([str(Path(sys.executable).parent), sysconfig.get_path("scripts")]))
+        monkeypatch.setenv("PATH", os.pathsep.join([*preferred, "/usr/bin"]))
+        before = os.environ["PATH"]
+
+        with _interpreter_scripts_on_path():
+            inside = os.environ["PATH"]
+
+        assert inside == before, f"PATH was modified unnecessarily: {inside!r}"
+
+    def test_moves_existing_script_dirs_to_front(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Preferred script directories move ahead of unrelated PATH entries without duplicates."""
+        preferred = list(dict.fromkeys([str(Path(sys.executable).parent), sysconfig.get_path("scripts")]))
+        unrelated = str(tmp_path)
+        monkeypatch.setenv("PATH", os.pathsep.join([unrelated, *preferred, unrelated]))
+
+        with _interpreter_scripts_on_path():
+            entries = os.environ["PATH"].split(os.pathsep)
+
+        assert entries[: len(preferred)] == preferred
+        assert entries[len(preferred) :] == [unrelated, unrelated]
+
+    @pytest.mark.parametrize("executable", ["", "python"], ids=["empty", "relative"])
+    def test_skips_empty_or_relative_executable(self, monkeypatch: pytest.MonkeyPatch, executable: str) -> None:
+        """Invalid executable paths do not add the current directory to PATH."""
+        monkeypatch.setattr("rfdetr.export._tflite.converter.sys.executable", executable)
+        scripts_dir = sysconfig.get_path("scripts")
+        monkeypatch.setenv("PATH", "/usr/bin")
+
+        with _interpreter_scripts_on_path():
+            entries = os.environ["PATH"].split(os.pathsep)
+
+        assert entries[0] == scripts_dir
+        assert "." not in entries
+
+    def test_restores_explicit_empty_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An explicitly empty PATH remains present and empty after cleanup."""
+        monkeypatch.setenv("PATH", "")
+
+        with _interpreter_scripts_on_path():
+            assert os.environ["PATH"]
+
+        assert "PATH" in os.environ
+        assert os.environ["PATH"] == ""
+
+    def test_restores_unset_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An originally unset PATH remains absent after cleanup."""
+        monkeypatch.delenv("PATH", raising=False)
+
+        with _interpreter_scripts_on_path():
+            assert os.environ["PATH"]
+
+        assert "PATH" not in os.environ
