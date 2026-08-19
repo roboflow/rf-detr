@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-08-18T12:29:44">
+  <meta property="article:modified_time" content="2026-08-19T23:16:15">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-08-18T12:29:44",
+    "dateModified": "2026-08-19T23:16:15",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3129,7 +3129,7 @@
 </span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="c1"># callable / functools.partial — bake arguments in; lr_scheduler_kwargs is ignored</span>
 </span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">train_config</span> <span class="o">=</span> <span class="n">TrainConfig</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">lr_scheduler</span><span class="o">=</span><span class="n">functools</span><span class="o">.</span><span class="n">partial</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">lr_scheduler</span><span class="o">.</span><span class="n">StepLR</span><span class="p">,</span> <span class="n">step_size</span><span class="o">=</span><span class="mi">30</span><span class="p">))</span>
 </span></code></pre></div>
-<p>With <code>warmup_epochs &gt; 0</code>, an explicit scheduler is automatically prepended with a linear warmup ramp via <code>SequentialLR</code> (managed presets bake warmup into their own schedule). <code>ReduceLROnPlateau</code> is special: it cannot be warmup-wrapped, always steps once per epoch, and reads the metric named by <code>lr_scheduler_monitor</code> (default <code>"val/loss"</code>). Use <code>lr_scheduler_interval="epoch"</code> to step other explicit schedulers per epoch instead of per optimizer step.</p>
+<p>With <code>warmup_epochs &gt; 0</code>, an explicit scheduler is automatically prepended with a linear warmup ramp via <code>SequentialLR</code> (managed presets bake warmup into their own schedule). <code>ReduceLROnPlateau</code> is special: it cannot be warmup-wrapped, always steps once per epoch, and reads the metric named by <code>lr_scheduler_monitor</code> (default <code>"val/loss"</code>). The default <code>compute_val_loss="auto"</code> preserves <code>val/loss</code> when that monitor is used. Use <code>lr_scheduler_interval="epoch"</code> to step other explicit schedulers per epoch instead of per optimizer step.</p>
 <p>See <a href="../training-parameters/#scheduler-and-regularization">Training parameters — scheduler</a> for the full parameter reference.</p>
 <hr />
 <h2 id="rfdetrdatamodule">RFDETRDataModule<a class="headerlink" href="#rfdetrdatamodule" title="Permanent link">&para;</a></h2>
@@ -3280,7 +3280,8 @@
 <h3 id="validation-only">Validation only<a class="headerlink" href="#validation-only" title="Permanent link">&para;</a></h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">trainer</span><span class="o">.</span><span class="n">validate</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">datamodule</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Runs one full validation pass and logs <code>val/mAP_50_95</code>, <code>val/mAP_50</code>, <code>val/F1</code>, and per-class AP metrics to all active loggers.</p>
+<p>Runs one full validation pass and logs <code>val/mAP_50_95</code>, <code>val/mAP_50</code>, and <code>val/F1</code> to all active loggers. Set <code>log_per_class_metrics=True</code> to include per-class AP metrics.</p>
+<p>A bare <code>trainer.validate(module, datamodule)</code> call like this configures no optimizers, so with <code>TrainConfig.compute_val_loss</code> at its default <code>"auto"</code> no <code>ReduceLROnPlateau</code>/<code>val/loss</code>-monitoring callback is present to trigger it — <code>val/loss</code> is absent from the returned metrics dict. Passing a callback that monitors <code>val/loss</code> (e.g. <code>ModelCheckpoint(monitor="val/loss")</code>) still causes <code>val/loss</code> to be computed and logged, since <code>"auto"</code> reacts to the configured callbacks, not just the optimizer.</p>
 <h3 id="inference-with-the-data-pipeline">Inference with the data pipeline<a class="headerlink" href="#inference-with-the-data-pipeline" title="Permanent link">&para;</a></h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">trainer</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">dataloaders</span><span class="o">=</span><span class="n">datamodule</span><span class="o">.</span><span class="n">val_dataloader</span><span class="p">())</span>
 </span></code></pre></div>
@@ -3490,8 +3491,8 @@
 </tr>
 <tr>
 <td><code>val/loss</code></td>
-<td>Each epoch</td>
-<td>Validation loss (if <code>train_config.compute_val_loss=True</code>)</td>
+<td>Each epoch when required</td>
+<td>Validation loss (if <code>compute_val_loss=True</code> or an automatic consumer monitors it)</td>
 </tr>
 <tr>
 <td><code>val/mAP_50_95</code></td>
@@ -3536,7 +3537,7 @@
 <tr>
 <td><code>val/AP/&lt;class&gt;</code></td>
 <td>Each eval epoch</td>
-<td>Per-class AP (if <code>log_per_class_metrics=True</code>)</td>
+<td>Per-class AP (if <code>log_per_class_metrics=True</code>; aggregate mAP/mAR/F1 remain available otherwise)</td>
 </tr>
 <tr>
 <td><code>val/segm_mAP_50_95</code></td>
@@ -3561,7 +3562,7 @@
 <tr>
 <td><code>test/*</code></td>
 <td>After <code>trainer.test()</code></td>
-<td>Mirror of <code>val/*</code> keys</td>
+<td>Mirror of <code>val/*</code> keys, except <code>test/loss</code>: <code>compute_test_loss</code> defaults to <code>True</code> unconditionally (unlike <code>compute_val_loss</code>'s <code>"auto"</code> default), so a default run emits <code>test/loss</code> even when <code>val/loss</code> is absent</td>
 </tr>
 </tbody>
 </table>
@@ -3595,7 +3596,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 18, 2026 12:29:44 UTC">2026-08-18 12:29:44</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 19, 2026 23:16:15 UTC">2026-08-19 23:16:15</span>
   </span>
 
     

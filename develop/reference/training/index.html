@@ -5273,9 +5273,33 @@
 
     <div class="doc doc-contents ">
 
-        <p>Seed RNGs at fit start when <code>TrainConfig.seed</code> is set.</p>
-<p>This avoids hidden global side-effects in <code>build_trainer</code> while still preserving deterministic training
-behaviour for actual fit runs.</p>
+        <p>Validate loss consumers and seed RNGs at fit start.</p>
+<p>Rejects <code>compute_val_loss=False</code> when a configured callback or scheduler
+consumes <code>val/loss</code>. Seeding here avoids hidden global side-effects in
+<code>build_trainer</code> while preserving deterministic training behaviour for fit runs.</p>
+
+
+<p><span class="doc-section-title">Raises:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="ValueError">ValueError</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If a callback or scheduler monitors <code>val/loss</code> while validation-loss computation is disabled.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
 
 
     </div>
