@@ -206,10 +206,18 @@ model.train(
 | ---------------------------- | ------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `eval_max_dets`              | `int`               | `500`   | Maximum detections per image for detection/segmentation COCO AP and AR evaluation. Keypoint AP/AR uses fixed COCO `maxDets=20`; lower values speed up detection/segmentation evaluation.                                                                             |
 | `eval_interval`              | `int`               | `1`     | Skip the whole COCO validation loop (forward pass, metric compute, EMA forward) on epochs that aren't a multiple of N, to reduce evaluation overhead during long training runs. The final epoch always validates regardless of this setting.                         |
-| `log_per_class_metrics`      | `bool`              | `True`  | Log per-class AP metrics to the console and loggers. Disable to also skip the underlying per-class `torchmetrics` computation (not just its display), reducing per-epoch compute when there are many classes.                                                        |
+| `log_per_class_metrics`      | `bool`              | `False` | Log per-class AP metrics to the console and loggers. Enable it to also run the underlying per-class `torchmetrics` computation. Aggregate mAP/mAR and F1 metrics remain available either way.                                                                        |
 | `eval_ema_only`              | `bool`              | `False` | Forward through the EMA model only during validation, skipping the duplicate base-model pass. Requires `use_ema=True`. See [EMA](#ema-exponential-moving-average).                                                                                                   |
 | `eval_masks_head_resolution` | `bool`              | `False` | Segmentation only. Skip upsampling predicted masks to full image resolution during validation, comparing at the mask head's native (lower) resolution instead. `val/segm_mAP` is then not comparable to a full-resolution run. No effect on `RFDETR.predict` output. |
 | `progress_bar`               | str \| bool \| None | `None`  | Progress bar style: `"tqdm"`, `"rich"`, or `None`. Legacy booleans are still accepted. `"rich"` leaves each completed epoch's bar in the terminal history instead of overwriting it.                                                                                 |
+
+### Validation performance
+
+- `log_per_class_metrics=False` is the default. It retains aggregate mAP/mAR and F1/precision/recall while omitting per-class rows and their underlying per-class metric computation. Set it to `True` when per-class reporting is needed.
+- `compute_val_loss="auto"` is the default. It computes `val/loss` only when a configured scheduler, checkpoint, or early-stopping callback monitors that key. Set it to `True` to always log validation loss or `False` to disable it; `False` is rejected when a configured consumer monitors `val/loss`.
+- `eval_ema_only=True` requires `use_ema=True` and evaluates only EMA weights. Regular `val/mAP_*` keys are absent, EMA values use `val/ema_*`, and best-checkpoint or early-stopping routing follows the available EMA metric. `val/F1` remains under its regular key.
+- `eval_interval` controls validation frequency, not the cost of a validation epoch: non-evaluation epochs skip the complete validation loop, while the final epoch always evaluates.
+- Lowering `eval_max_dets` can reduce detection/segmentation evaluation work, but it also changes AP and AR semantics. Keypoint evaluation keeps COCO `maxDets=20`.
 
 ## Keypoint Preview Parameters
 
@@ -260,14 +268,14 @@ The parameters below are available for fine-grained control over training behavi
 
 ### Runtime and Accelerator
 
-| Parameter              | Type   | Default  | Description                                                                                                                                                              |
-| ---------------------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `accelerator`          | `str`  | `"auto"` | PyTorch Lightning accelerator selection. `"auto"` picks GPU if available, then MPS, then CPU.                                                                            |
-| `seed`                 | `int`  | `None`   | Global random seed for reproducibility. `None` means no fixed seed is set.                                                                                               |
-| `fp16_eval`            | `bool` | `False`  | Run evaluation passes in FP16 precision. Reduces memory usage but may lower numerical precision.                                                                         |
-| `compute_val_loss`     | `bool` | `True`   | Compute and log the detection loss on the validation set each epoch.                                                                                                     |
-| `compute_test_loss`    | `bool` | `True`   | Compute and log the detection loss during the final test run.                                                                                                            |
-| `num_sanity_val_steps` | `int`  | `0`      | PyTorch Lightning sanity-check validation batches run before training starts. `0` disables it (the default); increase to catch val-path errors before a full epoch runs. |
+| Parameter              | Type             | Default  | Description                                                                                                                                                              |
+| ---------------------- | ---------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `accelerator`          | `str`            | `"auto"` | PyTorch Lightning accelerator selection. `"auto"` picks GPU if available, then MPS, then CPU.                                                                            |
+| `seed`                 | `int`            | `None`   | Global random seed for reproducibility. `None` means no fixed seed is set.                                                                                               |
+| `fp16_eval`            | `bool`           | `False`  | Run evaluation passes in FP16 precision. Reduces memory usage but may lower numerical precision.                                                                         |
+| `compute_val_loss`     | `bool \| "auto"` | `"auto"` | Compute and log validation loss only when a configured consumer monitors `val/loss`. Set `True` to always compute it or `False` to disable it.                           |
+| `compute_test_loss`    | `bool`           | `True`   | Compute and log the detection loss during the final test run.                                                                                                            |
+| `num_sanity_val_steps` | `int`            | `0`      | PyTorch Lightning sanity-check validation batches run before training starts. `0` disables it (the default); increase to catch val-path errors before a full epoch runs. |
 
 ### DataLoader Tuning
 
@@ -308,7 +316,7 @@ Below is a summary table of all training parameters:
 | `best_model_metric`          | `Literal["map","mar"]` | "map"          | Metric family for best-checkpoint selection and early stopping — mAP or mAR.                                                          |
 | `eval_max_dets`              | int                    | 500            | Maximum detections per image for detection/segmentation COCO AP and AR evaluation. Keypoint AP/AR uses fixed COCO `maxDets=20`.       |
 | `eval_interval`              | int                    | 1              | Skip the whole validation loop on epochs not a multiple of N; final epoch always validates.                                           |
-| `log_per_class_metrics`      | bool                   | True           | Log per-class AP metrics; disable to also skip the underlying per-class compute.                                                      |
+| `log_per_class_metrics`      | bool                   | False          | Log per-class AP metrics; enable to run the underlying per-class compute.                                                             |
 | `eval_ema_only`              | bool                   | False          | Forward through the EMA model only during validation. Requires use_ema=True.                                                          |
 | `eval_masks_head_resolution` | bool                   | False          | Segmentation only. Compare masks at native (lower) resolution instead of upsampling; not comparable across runs.                      |
 | `progress_bar`               | str \| bool \| None    | None           | Progress bar style: `"tqdm"`, `"rich"`, or `None`. Legacy booleans are still accepted.                                                |
@@ -322,7 +330,7 @@ Below is a summary table of all training parameters:
 | `lr_drop`                    | int                    | 100            | Deprecated — use lr_scheduler_kwargs["lr_drop"]. Epoch at which the "step" preset drops the LR by 10x.                                |
 | `warmup_epochs`              | float                  | 0.0            | Number of linear warmup epochs at the start of training.                                                                              |
 | `drop_path`                  | float                  | 0.0            | Stochastic depth drop-path rate for the backbone.                                                                                     |
-| `compute_val_loss`           | bool                   | True           | Compute and log loss during validation.                                                                                               |
+| `compute_val_loss`           | bool \| "auto"         | "auto"         | Compute validation loss only for a configured `val/loss` consumer; `True` forces it and `False` disables it.                          |
 | `compute_test_loss`          | bool                   | True           | Compute and log loss during the test run.                                                                                             |
 | `num_sanity_val_steps`       | int                    | 0              | PTL sanity-check validation batches run before training starts. 0 disables it; increase to catch val-path errors early.               |
 | `fp16_eval`                  | bool                   | False          | Run evaluation in FP16 precision to reduce memory usage.                                                                              |
