@@ -1731,7 +1731,8 @@ class TestValidationStep:
         loss_dict: dict[str, torch.Tensor] | None = None,
         weight_dict: dict[str, float] | None = None,
     ):
-        module, fake_model, fake_criterion, fake_pp = _build_module(tmp_path=tmp_path)
+        tc = _base_train_config(tmp_path, compute_val_loss=True)
+        module, fake_model, fake_criterion, fake_pp = _build_module(train_config=tc, tmp_path=tmp_path)
         samples, targets = _make_batch()
         fake_model.return_value = {}
         fake_criterion.return_value = loss_dict or {"loss_ce": torch.tensor(0.5)}
@@ -1820,6 +1821,45 @@ class TestValidationStep:
         logged_keys = [c[0][0] for c in module.log.call_args_list]
         assert "val/loss" not in logged_keys
         assert "results" in result and "targets" in result
+
+    def test_auto_val_loss_skips_criterion_without_a_loss_monitor(self, tmp_path):
+        """compute_val_loss='auto' skips validation loss when no configured consumer monitors it."""
+        tc = _base_train_config(tmp_path, compute_val_loss="auto")
+        module, fake_model, fake_criterion, _ = _build_module(train_config=tc, tmp_path=tmp_path)
+        samples, targets = _make_batch()
+        fake_model.return_value = {}
+        module.log = MagicMock()
+
+        result = module.validation_step((samples, targets), batch_idx=0)
+
+        fake_criterion.assert_not_called()
+        assert "results" in result and "targets" in result
+
+    def test_auto_val_loss_keeps_criterion_for_callback_monitor(self, tmp_path):
+        """compute_val_loss='auto' retains validation loss for a callback monitoring val/loss."""
+        tc = _base_train_config(tmp_path, compute_val_loss="auto")
+        module, fake_model, fake_criterion, _ = _build_module(train_config=tc, tmp_path=tmp_path)
+        samples, targets = _make_batch()
+        fake_model.return_value = {}
+        fake_criterion.return_value = {"loss_ce": torch.tensor(0.5)}
+        fake_criterion.weight_dict = {"loss_ce": 1.0}
+        module.trainer = SimpleNamespace(callbacks=[SimpleNamespace(monitor="val/loss")])
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+
+        module.validation_step((samples, targets), batch_idx=0)
+
+        fake_criterion.assert_called_once_with({}, targets)
+        assert any(call.args[0] == "val/loss" for call in module.log.call_args_list)
+
+    def test_explicit_val_loss_disable_rejects_callback_monitor(self, tmp_path):
+        """compute_val_loss=False rejects a callback that would consume val/loss."""
+        tc = _base_train_config(tmp_path, compute_val_loss=False)
+        module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
+        module.trainer = SimpleNamespace(callbacks=[SimpleNamespace(monitor="val/loss")])
+
+        with pytest.raises(ValueError, match="compute_val_loss=False is incompatible"):
+            module.on_fit_start()
 
     def test_eval_ema_only_forwards_through_ema_model_not_base(self, tmp_path):
         """eval_ema_only=True must forward through the EMA-averaged model, not the base model (regression for #416:
@@ -2405,7 +2445,7 @@ class TestConfigureOptimizers:
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_reduce_on_plateau_sets_monitor_and_epoch_interval(self, mock_get_param_dict, tmp_path):
-        """A ReduceLROnPlateau scheduler is configured with its monitor and stepped per epoch."""
+        """A plateau loss monitor makes automatic validation loss available each epoch."""
         module, param_dicts = self._setup_module(
             tmp_path,
             warmup_epochs=0.0,
@@ -2420,6 +2460,7 @@ class TestConfigureOptimizers:
         assert isinstance(config["scheduler"], torch.optim.lr_scheduler.ReduceLROnPlateau)
         assert config["monitor"] == "val/loss"
         assert config["interval"] == "epoch"
+        assert module._should_compute_val_loss is True
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_uninstalled_scheduler_path_raises_value_error(self, mock_get_param_dict, tmp_path):

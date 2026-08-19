@@ -438,11 +438,20 @@ class RFDETRModelModule(LightningModule):
     # ------------------------------------------------------------------
 
     def on_fit_start(self) -> None:
-        """Seed RNGs at fit start when ``TrainConfig.seed`` is set.
+        """Validate loss consumers and seed RNGs at fit start.
 
-        This avoids hidden global side-effects in ``build_trainer`` while still preserving deterministic training
-        behaviour for actual fit runs.
+        Rejects ``compute_val_loss=False`` when a configured callback or scheduler
+        consumes ``val/loss``. Seeding here avoids hidden global side-effects in
+        ``build_trainer`` while preserving deterministic training behaviour for fit runs.
+
+        Raises:
+            ValueError: If a callback or scheduler monitors ``val/loss`` while validation-loss computation is disabled.
         """
+        if self.train_config.compute_val_loss is False and self._validation_loss_is_monitored:
+            raise ValueError(
+                "compute_val_loss=False is incompatible with a callback or scheduler monitoring 'val/loss'. "
+                "Set compute_val_loss=True or 'auto', or monitor a metric that is produced."
+            )
         if self.train_config.seed is not None:
             seed_everything(self.train_config.seed + self.global_rank, workers=True)
 
@@ -1030,7 +1039,7 @@ class RFDETRModelModule(LightningModule):
         """
         samples, targets = batch
         outputs = self._resolve_eval_model()(samples)
-        if self.train_config.compute_val_loss:
+        if self._should_compute_val_loss:
             loss_dict = self.criterion(outputs, targets)
             weight_dict = self.criterion.weight_dict
             loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
@@ -1039,6 +1048,32 @@ class RFDETRModelModule(LightningModule):
         orig_sizes = torch.stack([t["orig_size"] for t in targets])
         results = self.postprocess(outputs, orig_sizes)
         return {"results": results, "targets": targets}
+
+    @property
+    def _validation_loss_is_monitored(self) -> bool:
+        """Return whether a configured scheduler or callback consumes ``val/loss``.
+
+        ``_lr_scheduler_monitor`` is set only after a concrete ``ReduceLROnPlateau`` scheduler is instantiated. Callback
+        inspection keeps the ``"auto"`` policy compatible with PTL-native checkpoint or early stopping callbacks
+        supplied through ``build_trainer(..., callbacks=...)``.
+        """
+        if self._lr_scheduler_monitor == "val/loss":
+            return True
+        try:
+            callbacks = getattr(self.trainer, "callbacks", [])
+        except RuntimeError:
+            return False
+        return any(
+            "val/loss" in {getattr(callback, "monitor", None), getattr(callback, "_monitor_regular", None)}
+            for callback in callbacks
+        )
+
+    @property
+    def _should_compute_val_loss(self) -> bool:
+        """Return whether validation should calculate loss for the current configuration."""
+        if self.train_config.compute_val_loss is True:
+            return True
+        return self.train_config.compute_val_loss == "auto" and self._validation_loss_is_monitored
 
     @property
     def _fused_adamw_env_eligible(self) -> bool:
@@ -1183,6 +1218,11 @@ class RFDETRModelModule(LightningModule):
             interval = tc.lr_scheduler_interval
             if isinstance(scheduler, ReduceLROnPlateau):
                 monitor = tc.lr_scheduler_monitor
+                if monitor == "val/loss" and tc.compute_val_loss is False:
+                    raise ValueError(
+                        "compute_val_loss=False is incompatible with ReduceLROnPlateau monitoring 'val/loss'. "
+                        "Set compute_val_loss=True or 'auto', or select a metric that is produced."
+                    )
                 # The monitored metric (e.g. val/loss) is only available per epoch, so plateau always steps
                 # on the epoch boundary regardless of the configured interval.
                 interval = "epoch"

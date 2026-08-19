@@ -1113,7 +1113,7 @@ class TrainConfig(BaseConfig):
     run_test: bool = False
     eval_max_dets: int = 500
     eval_interval: int = 1
-    log_per_class_metrics: bool = True
+    log_per_class_metrics: bool = False
     # Segmentation only. Skip upsampling predicted masks to full image resolution during
     # validation/test, returning them at the mask head's native (lower) resolution instead —
     # cheaper, but ground-truth masks must then be compared at that same lower resolution
@@ -1245,7 +1245,7 @@ class TrainConfig(BaseConfig):
     # Restores PTL's pre-training sanity-validation pass (0 = disabled, current default;
     # increase to re-enable and catch val-path errors before a full epoch runs).
     num_sanity_val_steps: int = 0
-    compute_val_loss: bool = True
+    compute_val_loss: bool | Literal["auto"] = "auto"
     compute_test_loss: bool = True
     pin_memory: bool | None = None
     persistent_workers: bool | None = None
@@ -1355,6 +1355,24 @@ class TrainConfig(BaseConfig):
         """``eval_ema_only`` has no EMA model to evaluate without ``use_ema=True``."""
         if self.eval_ema_only and not self.use_ema:
             raise ValueError("eval_ema_only=True requires use_ema=True.")
+        return self
+
+    @model_validator(mode="after")
+    def validate_explicit_val_loss_disable(self) -> "TrainConfig":
+        """Reject disabling validation loss for a configured plateau loss monitor.
+
+        Reconstructable scheduler callables are normalized to their dotted path before this validator runs. Non-
+        reconstructable callables are checked after their concrete scheduler is created by ``RFDETRModelModule``.
+        """
+        if (
+            self.compute_val_loss is False
+            and self.lr_scheduler == "torch.optim.lr_scheduler.ReduceLROnPlateau"
+            and self.lr_scheduler_monitor == "val/loss"
+        ):
+            raise ValueError(
+                "compute_val_loss=False requires a non-val/loss monitor when "
+                "lr_scheduler is ReduceLROnPlateau. Set compute_val_loss=True or 'auto'."
+            )
         return self
 
     @model_validator(mode="after")
