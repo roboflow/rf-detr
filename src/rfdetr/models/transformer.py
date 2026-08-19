@@ -928,7 +928,7 @@ class TransformerDecoderLayer(nn.Module):
         v = tgt
         if self.training:
             q = torch.cat(q.split(num_queries // self.group_detr, dim=1), dim=0)  # type: ignore[no-untyped-call]
-            k = torch.cat(k.split(num_queries // self.group_detr, dim=1), dim=0)  # type: ignore[no-untyped-call]
+            k = q
             v = torch.cat(v.split(num_queries // self.group_detr, dim=1), dim=0)  # type: ignore[no-untyped-call]
 
         tgt2 = self.self_attn(q, k, v, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask, need_weights=False)[0]

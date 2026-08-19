@@ -15,7 +15,12 @@ from torch import nn
 from rfdetr.models.math import MLP
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
-from rfdetr.models.transformer import Transformer, gen_encoder_output_proposals, gen_sineembed_for_position
+from rfdetr.models.transformer import (
+    Transformer,
+    TransformerDecoderLayer,
+    gen_encoder_output_proposals,
+    gen_sineembed_for_position,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +31,68 @@ def _reset_random_seeds() -> None:
 
 
 _MSDeformInputs = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[tuple[int, int]]]
+
+
+def test_decoder_grouping_reuses_query_tensor_as_key() -> None:
+    """Grouped self-attention should preserve layout while reusing query as key."""
+
+    class _RecordingSelfAttention(nn.Module):
+        """Fake self-attention that records whether ``query`` and ``key`` are the same object."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.query_is_key = False
+            self.query: torch.Tensor | None = None
+            self.key: torch.Tensor | None = None
+            self.value: torch.Tensor | None = None
+
+        def forward(
+            self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, **kwargs: object
+        ) -> tuple[torch.Tensor, None]:
+            """Record attention inputs, then return zeros shaped like ``query``."""
+            self.query_is_key = query is key
+            self.query = query.detach().clone()
+            self.key = key.detach().clone()
+            self.value = value.detach().clone()
+            return torch.zeros_like(query), None
+
+    class _ZeroCrossAttention(nn.Module):
+        """Fake cross-attention that ignores its inputs and returns zeros shaped like ``query``."""
+
+        def forward(self, query: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            """Return a zero tensor shaped like ``query``."""
+            return torch.zeros_like(query)
+
+    layer = TransformerDecoderLayer(
+        d_model=16,
+        sa_nhead=4,
+        ca_nhead=4,
+        dim_feedforward=32,
+        dropout=0,
+        group_detr=3,
+        num_feature_levels=2,
+    )
+    self_attn = _RecordingSelfAttention()
+    layer.self_attn = self_attn
+    layer.cross_attn = _ZeroCrossAttention()
+
+    tgt = torch.arange(2 * 12 * 16, dtype=torch.float32).reshape(2, 12, 16)
+    memory = torch.zeros(2, 20, 16)
+    query_pos = torch.full_like(tgt, 0.5)
+
+    layer.forward_post(tgt=tgt, memory=memory, query_pos=query_pos)
+
+    assert self_attn.query_is_key
+    assert self_attn.query is not None
+    assert self_attn.key is not None
+    assert self_attn.value is not None
+
+    expected_query = torch.cat((tgt + query_pos).split(4, dim=1), dim=0)
+    expected_value = torch.cat(tgt.split(4, dim=1), dim=0)
+    assert self_attn.query.shape == (6, 4, 16)
+    torch.testing.assert_close(self_attn.query, expected_query)
+    torch.testing.assert_close(self_attn.key, expected_query)
+    torch.testing.assert_close(self_attn.value, expected_value)
 
 
 def _build_ms_deform_inputs(
