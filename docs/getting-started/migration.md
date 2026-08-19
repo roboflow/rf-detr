@@ -7,10 +7,32 @@ description: Per-version migration guide for RF-DETR. Covers breaking changes an
 Read each section between your current version and your target — every section covers only the delta between two adjacent releases.
 
 ```
-1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9
+1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9  →  1.10
 ```
 
 You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs emit a `DeprecationWarning` until the version marked for removal. See the [Changelog](../changelog.md) for the full list of changes in each release.
+
+---
+
+## Upgrade 1.9 → 1.10
+
+### Breaking changes
+
+!!! warning "Breaking: `log_per_class_metrics` now defaults to `False`"
+
+    `TrainConfig.log_per_class_metrics` defaults to `False` (was `True`). Per-class AP keys (`test/AP/<class>`, `val/AP/<class>`) are no longer emitted by default — validation/test now skip that per-class computation. Set it explicitly to restore the old behavior:
+
+    ```python
+    train_config = TrainConfig(log_per_class_metrics=True, ...)
+    ```
+
+!!! warning "Breaking: `compute_val_loss` now defaults to `\"auto\"`"
+
+    `TrainConfig.compute_val_loss` defaults to `"auto"` (was `True`). In `"auto"` mode, validation loss is computed only when something actually consumes it — a `ReduceLROnPlateau` scheduler monitoring `val/loss`, or a callback (e.g. `ModelCheckpoint(monitor="val/loss")`, early stopping) that requires it — and is skipped otherwise. For a default run with no such consumer, `val/loss` no longer appears in `metrics.csv`, TensorBoard, or W&B. Set it explicitly to restore the old unconditional behavior:
+
+    ```python
+    train_config = TrainConfig(compute_val_loss=True, ...)
+    ```
 
 ---
 

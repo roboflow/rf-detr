@@ -268,6 +268,8 @@ trainer.validate(module, datamodule)
 
 Runs one full validation pass and logs `val/mAP_50_95`, `val/mAP_50`, and `val/F1` to all active loggers. Set `log_per_class_metrics=True` to include per-class AP metrics.
 
+A bare `trainer.validate(module, datamodule)` call like this configures no optimizers, so with `TrainConfig.compute_val_loss` at its default `"auto"` no `ReduceLROnPlateau`/`val/loss`-monitoring callback is present to trigger it — `val/loss` is absent from the returned metrics dict. Passing a callback that monitors `val/loss` (e.g. `ModelCheckpoint(monitor="val/loss")`) still causes `val/loss` to be computed and logged, since `"auto"` reacts to the configured callbacks, not just the optimizer.
+
 ### Inference with the data pipeline
 
 ```python
@@ -438,7 +440,7 @@ All logged keys (`train/loss`, `val/mAP_50_95`, `val/keypoint_map_50_95`, `val/F
 | `val/segm_mAP_50`        | Each eval epoch                                     | Segmentation mAP@.50 (segmentation models only)                                                 |
 | `val/keypoint_map_50_95` | Each eval epoch                                     | COCO keypoint AP@[.50:.05:.95] (keypoint preview only)                                          |
 | `val/keypoint_map_50`    | Each eval epoch                                     | COCO keypoint AP@.50 (keypoint preview only)                                                    |
-| `test/*`                 | After `trainer.test()`                              | Mirror of `val/*` keys                                                                          |
+| `test/*`                 | After `trainer.test()`                              | Mirror of `val/*` keys, except `test/loss`: `compute_test_loss` defaults to `True` unconditionally (unlike `compute_val_loss`'s `"auto"` default), so a default run emits `test/loss` even when `val/loss` is absent |
 
 With gradient accumulation, learning-rate metrics are emitted only when an optimizer update occurs, including a partial final accumulation window. Layer-specific auxiliary loss keys (such as `train/loss_bbox_0` and `train/loss_bbox_enc`) are replaced by their compact `train/loss_bbox_aux` aggregate.
 

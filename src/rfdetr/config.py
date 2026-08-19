@@ -1246,6 +1246,8 @@ class TrainConfig(BaseConfig):
     # increase to re-enable and catch val-path errors before a full epoch runs).
     num_sanity_val_steps: int = 0
     compute_val_loss: bool | Literal["auto"] = "auto"
+    # No "auto" here: unlike val/loss, nothing (schedulers, callbacks) monitors test/loss, and
+    # trainer.test() runs once rather than every epoch, so consumer-based auto-detection doesn't apply.
     compute_test_loss: bool = True
     pin_memory: bool | None = None
     persistent_workers: bool | None = None
