@@ -53,6 +53,57 @@ def _compute_mask_iou(pred_masks: Tensor, gt_masks: Tensor) -> Tensor:
     return torch.where(union > 0, inter / union, torch.zeros_like(inter))
 
 
+def _match_sorted_iou_matrix(
+    pred_scores_sorted: np.ndarray[Any, np.dtype[np.float32]],
+    iou_matrix_sorted: np.ndarray[Any, np.dtype[np.float32]],
+    gt_crowd_np: np.ndarray[Any, np.dtype[np.bool_]],
+    iou_threshold: float,
+) -> tuple[
+    np.ndarray[Any, np.dtype[np.float32]],
+    np.ndarray[Any, np.dtype[np.int64]],
+    np.ndarray[Any, np.dtype[np.bool_]],
+    int,
+]:
+    """Apply COCO greedy matching to score-ordered NumPy IoUs for one class.
+
+    Args:
+        pred_scores_sorted: Detection scores in descending order.
+        iou_matrix_sorted: Pairwise IoUs aligned to ``pred_scores_sorted``.
+        gt_crowd_np: Boolean crowd mask aligned to IoU columns.
+        iou_threshold: Minimum IoU to count as a positive match.
+
+    Returns:
+        Tuple of sorted scores, true-positive flags, crowd-ignore flags, and
+        the number of non-crowd ground truths.
+    """
+    n, m = iou_matrix_sorted.shape
+    gt_matched_np = np.zeros(m, dtype=np.bool_)
+    pred_match_np = np.zeros(n, dtype=np.int64)
+    pred_ignore_np = np.zeros(n, dtype=np.bool_)
+    any_crowd = bool(gt_crowd_np.any())
+    not_crowd_np = ~gt_crowd_np
+
+    # Each detection can claim at most one non-crowd target, so score order
+    # remains sequential even though the IoU matrix is already vectorized.
+    for index in range(len(iou_matrix_sorted)):
+        ious = cast(np.ndarray[Any, np.dtype[np.float32]], iou_matrix_sorted[index])
+        noncrowd_ious = ious.copy()
+        noncrowd_ious[gt_crowd_np] = -1.0
+        noncrowd_ious[gt_matched_np & not_crowd_np] = -1.0
+
+        best_noncrowd_index = int(np.argmax(noncrowd_ious))
+        if noncrowd_ious[best_noncrowd_index] >= iou_threshold:
+            pred_match_np[index] = 1
+            gt_matched_np[best_noncrowd_index] = True
+        elif any_crowd:
+            crowd_ious = ious.copy()
+            crowd_ious[not_crowd_np] = -1.0
+            if crowd_ious.max() >= iou_threshold:
+                pred_ignore_np[index] = True
+
+    return pred_scores_sorted, pred_match_np, pred_ignore_np, int(not_crowd_np.sum())
+
+
 def _match_single_class(
     pred_scores: Tensor,
     pred_items: Tensor,
@@ -86,9 +137,6 @@ def _match_single_class(
             - ignore_np: bool array [N], True if matched to a crowd GT.
             - total_gt: number of non-crowd GT instances.
     """
-    n = pred_scores.shape[0]
-    m = gt_items.shape[0]
-
     sort_idx = torch.argsort(pred_scores, descending=True)
     pred_scores_sorted = pred_scores[sort_idx]
     pred_sorted = pred_items[sort_idx]
@@ -108,39 +156,11 @@ def _match_single_class(
     iou_matrix_np = iou_matrix.detach().float().cpu().numpy()  # [N, M] -- float() guards bf16/fp16 (no numpy dtype)
     gt_crowd_np = gt_crowd.detach().cpu().numpy()  # [M]
 
-    gt_matched_np = np.zeros(m, dtype=np.bool_)
-    pred_match_np = np.zeros(n, dtype=np.int64)
-    pred_ignore_np = np.zeros(n, dtype=np.bool_)
-    any_crowd = bool(gt_crowd_np.any())
-    not_crowd_np = ~gt_crowd_np  # crowd mask is loop-invariant — compute the negation once
-
-    for i in range(n):
-        ious = iou_matrix_np[i]  # [M]
-
-        # Try to match to a non-crowd GT (each non-crowd GT matched at most once).
-        nc_ious = ious.copy()
-        nc_ious[gt_crowd_np] = -1.0
-        nc_ious[gt_matched_np & not_crowd_np] = -1.0  # already claimed
-
-        best_nc_idx = int(np.argmax(nc_ious))
-        best_nc_iou = nc_ious[best_nc_idx]
-        if best_nc_iou >= iou_threshold:
-            pred_match_np[i] = 1
-            gt_matched_np[best_nc_idx] = True
-        # A detection matched to a crowd GT is ignored (not a false positive).
-        elif any_crowd:
-            crowd_ious = ious.copy()
-            crowd_ious[not_crowd_np] = -1.0
-            if crowd_ious.max() >= iou_threshold:
-                pred_ignore_np[i] = True
-            # else: false positive — pred_match_np stays 0
-
-    total_gt = int((~gt_crowd_np).sum())
-    return (
+    return _match_sorted_iou_matrix(
         np.asarray(pred_scores_sorted.float().cpu().numpy(), dtype=np.float32),
-        pred_match_np,
-        pred_ignore_np,
-        total_gt,
+        iou_matrix_np,
+        gt_crowd_np,
+        iou_threshold,
     )
 
 
@@ -225,6 +245,20 @@ def build_matching_data(
         gt_noncrowd_count = Counter(label for label, crowd in zip(gt_label_ids, gt_crowd_ids) if not crowd)
         all_class_ids: set[int] = set(gt_count) | set(pred_count)
 
+        pred_label_ids_np = np.asarray(pred_label_ids, dtype=np.int64)
+        gt_label_ids_np = np.asarray(gt_label_ids, dtype=np.int64)
+        gt_crowd_np = np.asarray(gt_crowd_ids, dtype=np.bool_)
+        bbox_iou_matrix_np: np.ndarray[Any, np.dtype[np.float32]] | None = None
+        pred_scores_np: np.ndarray[Any, np.dtype[np.float32]] | None = None
+        if iou_type == "bbox" and pred_count:
+            pred_scores_np = np.asarray(pred_scores.detach().float().cpu().numpy(), dtype=np.float32)
+        if iou_type == "bbox" and pred_count and gt_count:
+            # One image-wide GPU IoU operation and one matrix transfer replace the
+            # class-local launches/transfers. Host slicing below retains class isolation.
+            bbox_iou_matrix_np = np.asarray(
+                box_iou(pred_boxes, gt_boxes).detach().float().cpu().numpy(), dtype=np.float32
+            )
+
         for class_id in all_class_ids:
             n_pred = pred_count.get(class_id, 0)
             n_gt = gt_count.get(class_id, 0)
@@ -238,35 +272,43 @@ def build_matching_data(
                 entry["total_gt"] = cast(int, entry["total_gt"]) + gt_noncrowd_count.get(class_id, 0)
                 continue
 
-            # Only materialize the boolean mask / gather predictions for classes that actually
-            # have detections — gt_mask_c below is deferred further, to classes that also matter.
-            pred_mask_c = pred_labels == class_id
-            p_scores = pred_scores[pred_mask_c]
+            if iou_type == "bbox":
+                pred_indices = np.flatnonzero(pred_label_ids_np == class_id)
+                assert pred_scores_np is not None
+                p_scores_np = pred_scores_np[pred_indices]
+            else:
+                # Segmentation IoU remains class-local to avoid materializing a potentially
+                # much larger all-pairs mask matrix for classes that cannot match.
+                pred_mask_c = pred_labels == class_id
+                p_scores = pred_scores[pred_mask_c]
 
             if n_gt == 0:
                 # TODO: support bfloat16 natively once numpy adds bf16 dtype
-                sc = np.asarray(p_scores.float().cpu().numpy(), dtype=np.float32)
+                sc = p_scores_np if iou_type == "bbox" else np.asarray(p_scores.float().cpu().numpy(), dtype=np.float32)
                 order = np.argsort(-sc)
                 cast(list[float], entry["scores"]).extend(sc[order].tolist())
                 cast(list[int], entry["matches"]).extend([0] * n_pred)
                 cast(list[bool], entry["ignore"]).extend([False] * n_pred)
                 continue
 
-            gt_mask_c = gt_labels == class_id
-            gt_crowd_c = gt_crowd[gt_mask_c]
-
             if iou_type == "bbox":
-                p_items: Tensor = pred_boxes[pred_mask_c]  # [n_pred, 4]
-                gt_items: Tensor = gt_boxes[gt_mask_c]  # [n_gt, 4]
+                gt_indices = np.flatnonzero(gt_label_ids_np == class_id)
+                assert bbox_iou_matrix_np is not None
+                order = np.argsort(-p_scores_np, kind="stable")
+                scores_np, matches_np, ignore_np, total_gt = _match_sorted_iou_matrix(
+                    p_scores_np[order],
+                    bbox_iou_matrix_np[np.ix_(pred_indices[order], gt_indices)],
+                    gt_crowd_np[gt_indices],
+                    iou_threshold,
+                )
             else:
+                gt_mask_c = gt_labels == class_id
+                gt_crowd_c = gt_crowd[gt_mask_c]
                 if pred_masks is None or gt_masks is None:
                     raise ValueError("iou_type='segm' requires 'masks' in both preds and targets")
-                p_items = pred_masks[pred_mask_c]  # [n_pred, H, W]
-                gt_items = gt_masks[gt_mask_c]  # [n_gt, H, W]
-
-            scores_np, matches_np, ignore_np, total_gt = _match_single_class(
-                p_scores, p_items, gt_items, gt_crowd_c, iou_threshold, iou_type
-            )
+                scores_np, matches_np, ignore_np, total_gt = _match_single_class(
+                    p_scores, pred_masks[pred_mask_c], gt_masks[gt_mask_c], gt_crowd_c, iou_threshold, iou_type
+                )
 
             cast(list[float], entry["scores"]).extend(float(score) for score in scores_np)
             cast(list[int], entry["matches"]).extend(int(match) for match in matches_np)

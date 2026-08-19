@@ -366,6 +366,25 @@ class TestBuildMatchingData:
         assert result[0]["total_gt"] == 1
         assert result[1]["total_gt"] == 1
 
+    def test_bbox_iou_is_computed_once_per_image(self) -> None:
+        """BBox matching shares one image-wide IoU matrix while preserving class-local matches."""
+        pred = self._make_pred(
+            [[0, 0, 10, 10], [0, 0, 10, 10], [40, 40, 50, 50]],
+            [0.8, 0.95, 0.9],
+            [0, 1, 0],
+        )
+        target = self._make_target([[0, 0, 10, 10], [20, 20, 30, 30]], [0, 1])
+
+        with patch("rfdetr.evaluation.matching.box_iou", wraps=box_iou) as box_iou_spy:
+            result = build_matching_data([pred], [target])
+
+        box_iou_spy.assert_called_once_with(pred["boxes"], target["boxes"])
+        np.testing.assert_allclose(result[0]["scores"], [0.9, 0.8], rtol=1e-6)
+        np.testing.assert_array_equal(result[0]["matches"], [0, 1])
+        np.testing.assert_array_equal(result[1]["matches"], [0])
+        assert result[0]["total_gt"] == 1
+        assert result[1]["total_gt"] == 1
+
     def test_multi_image_batch_accumulates(self) -> None:
         """Two-image batch must concatenate scores and sum total_gt."""
         pred1 = self._make_pred([[0, 0, 10, 10]], [0.9], [0])
