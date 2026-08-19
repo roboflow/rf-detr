@@ -15,7 +15,12 @@ from torch import nn
 from rfdetr.models.math import MLP
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
-from rfdetr.models.transformer import Transformer, gen_encoder_output_proposals, gen_sineembed_for_position
+from rfdetr.models.transformer import (
+    Transformer,
+    TransformerDecoderLayer,
+    gen_encoder_output_proposals,
+    gen_sineembed_for_position,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +31,52 @@ def _reset_random_seeds() -> None:
 
 
 _MSDeformInputs = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[tuple[int, int]]]
+
+
+def test_decoder_grouping_reuses_query_tensor_as_key() -> None:
+    """Grouped self-attention should not materialize the identical query/key tensor twice."""
+
+    class _RecordingSelfAttention(nn.Module):
+        """Fake self-attention that records whether ``query`` and ``key`` are the same object."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.query_is_key = False
+
+        def forward(
+            self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, **kwargs: object
+        ) -> tuple[torch.Tensor, None]:
+            """Record object identity between ``query`` and ``key``, then return zeros."""
+            self.query_is_key = query is key
+            return torch.zeros_like(query), None
+
+    class _ZeroCrossAttention(nn.Module):
+        """Fake cross-attention that ignores its inputs and returns zeros shaped like ``query``."""
+
+        def forward(self, query: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            """Return a zero tensor shaped like ``query``."""
+            return torch.zeros_like(query)
+
+    layer = TransformerDecoderLayer(
+        d_model=16,
+        sa_nhead=4,
+        ca_nhead=4,
+        dim_feedforward=32,
+        dropout=0,
+        group_detr=3,
+        num_feature_levels=2,
+    )
+    self_attn = _RecordingSelfAttention()
+    layer.self_attn = self_attn
+    layer.cross_attn = _ZeroCrossAttention()
+
+    layer.forward_post(
+        tgt=torch.randn(2, 12, 16),
+        memory=torch.randn(2, 20, 16),
+        query_pos=torch.randn(2, 12, 16),
+    )
+
+    assert self_attn.query_is_key
 
 
 def _build_ms_deform_inputs(
