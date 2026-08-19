@@ -370,6 +370,12 @@ class RFDETRModelModule(LightningModule):
         self._lr_scheduler_interval: str = "step"
         self._lr_scheduler_monitor: str | None = None
         self._accumulated_box_normalizer: Tensor | None = None
+        # One-shot guard for the notice announcing that the "auto" validation-loss policy resolved to skipping the
+        # loss; emitted from on_validation_epoch_start on the first real (non-sanity) validation epoch only.
+        self._logged_val_loss_skip_notice: bool = False
+        # Validation-loss policy resolved once per validation epoch by on_validation_epoch_start and read per batch by
+        # _should_compute_val_loss. None until that hook runs, so direct validation_step calls resolve it themselves.
+        self._resolved_compute_val_loss: bool | None = None
         # Memoized loss_name -> aggregate train/ key (or None for a standalone key), built lazily by
         # _aux_aggregate_map() and recomputed only when loss_dict's key set changes between calls.
         self._aux_aggregate_cache: dict[str, str | None] | None = None
@@ -881,6 +887,32 @@ class RFDETRModelModule(LightningModule):
             return
         scheduler.step()
 
+    def on_validation_epoch_start(self) -> None:
+        """Resolve the validation-loss policy for this epoch, announcing an ``"auto"`` skip the first time it happens.
+
+        The resolution is cached here — unconditionally, before every early return below — because ``validation_step``
+        reads it on every batch while it depends only on configuration that cannot change mid-epoch.
+
+        The consumer scan behind ``compute_val_loss="auto"`` only sees programmatic consumers — a plateau scheduler or a
+        monitoring callback. It cannot see a human reading a ``val/loss`` curve out of ``metrics.csv``, TensorBoard, or
+        Weights & Biases, who would otherwise find the curve silently gone. Stating the resolution once, on the first
+        real validation epoch of the global-zero rank, gives that reader the knob to turn.
+        """
+        self._resolved_compute_val_loss = self._resolve_should_compute_val_loss()
+        if self._logged_val_loss_skip_notice or self.train_config.compute_val_loss != "auto":
+            return
+        # The sanity-check pass runs before training and leaves the flag unset, so the first real epoch still logs.
+        if getattr(self.trainer, "sanity_checking", False) or not getattr(self.trainer, "is_global_zero", True):
+            return
+        if self._resolved_compute_val_loss:
+            return
+        self._logged_val_loss_skip_notice = True
+        logger.info(
+            "Skipping validation-loss computation: compute_val_loss='auto' found no scheduler or callback monitoring "
+            "'val/loss', so no 'val/loss' metric is logged this run. Set compute_val_loss=True to log it every "
+            "validation epoch (for example to read the curve from metrics.csv, TensorBoard, or Weights & Biases)."
+        )
+
     def on_validation_epoch_end(self) -> None:
         """Step ``ReduceLROnPlateau`` from the monitored metric on the manual-optimization path.
 
@@ -1056,6 +1088,11 @@ class RFDETRModelModule(LightningModule):
         ``_lr_scheduler_monitor`` is set only after a concrete ``ReduceLROnPlateau`` scheduler is instantiated. Callback
         inspection keeps the ``"auto"`` policy compatible with PTL-native checkpoint or early stopping callbacks
         supplied through ``build_trainer(..., callbacks=...)``.
+
+        RF-DETR's own callbacks are not covered by the PTL-native ``monitor`` attribute alone: ``BestModelCallback`` and
+        ``RFDETREarlyStopping`` track two metrics at once and keep their real targets in ``_monitor_regular`` /
+        ``_monitor_ema`` (``RFDETREarlyStopping.monitor`` is a synthetic key it injects itself), so all three attributes
+        are inspected.
         """
         if self._lr_scheduler_monitor == "val/loss":
             return True
@@ -1064,16 +1101,37 @@ class RFDETRModelModule(LightningModule):
         except RuntimeError:
             return False
         return any(
-            "val/loss" in {getattr(callback, "monitor", None), getattr(callback, "_monitor_regular", None)}
+            "val/loss"
+            in {
+                getattr(callback, "monitor", None),
+                getattr(callback, "_monitor_regular", None),
+                getattr(callback, "_monitor_ema", None),
+            }
             for callback in callbacks
         )
 
-    @property
-    def _should_compute_val_loss(self) -> bool:
-        """Return whether validation should calculate loss for the current configuration."""
+    def _resolve_should_compute_val_loss(self) -> bool:
+        """Resolve whether validation should calculate loss for the current configuration.
+
+        Returns:
+            ``True`` when the loss is requested outright, or when the ``"auto"`` policy finds a ``val/loss`` consumer.
+        """
         if self.train_config.compute_val_loss is True:
             return True
         return self.train_config.compute_val_loss == "auto" and self._validation_loss_is_monitored
+
+    @property
+    def _should_compute_val_loss(self) -> bool:
+        """Return whether validation should calculate loss, reusing the resolution cached for this epoch.
+
+        ``validation_step`` reads this once per batch while the ``"auto"`` policy resolution walks every configured
+        callback, so ``on_validation_epoch_start`` resolves it once per validation epoch and caches the result here.
+        The cache stays unset until that hook runs: a ``validation_step`` called directly, with no ``Trainer`` driving
+        the loop, resolves the live configuration rather than reading a value frozen before the trainer was attached.
+        """
+        if self._resolved_compute_val_loss is not None:
+            return self._resolved_compute_val_loss
+        return self._resolve_should_compute_val_loss()
 
     @property
     def _fused_adamw_env_eligible(self) -> bool:
