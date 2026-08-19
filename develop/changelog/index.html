@@ -2349,6 +2349,9 @@
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>The decoder's grouped self-attention now reuses the already-regrouped query tensor as the key instead of materializing the identical grouping twice. The regression test verifies the grouped query/key layout, ordering, values, and tensor identity; quantitative benchmark and profiling results are intentionally not recorded here because their external reproduction artifacts are not part of this change.</p>
+</li>
+<li>
 <p>Segmentation postprocessing now reads every image's mask resize target before the per-image loop, replacing one CUDA device-to-host synchronization per image with one per batch while preserving mask outputs exactly. <code>COCOEvalCallback._convert_targets</code> (train/val mAP accumulation) had the same per-target <code>orig_size.tolist()</code> pattern and gets the same fix.</p>
 </li>
 <li>
