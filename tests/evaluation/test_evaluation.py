@@ -16,6 +16,7 @@ from torchvision.ops import box_iou
 from rfdetr.evaluation.matching import (
     _compute_mask_iou,
     _match_single_class_segm,
+    _match_sorted_iou_matrix,
     build_matching_data,
     distributed_merge_matching_data,
     init_matching_accumulator,
@@ -76,6 +77,83 @@ class TestComputeMaskIou:
 
 
 # ---------------------------------------------------------------------------
+# _match_sorted_iou_matrix
+# ---------------------------------------------------------------------------
+
+
+class TestMatchSortedIouMatrix:
+    """Direct unit tests for the private _match_sorted_iou_matrix helper.
+
+    Every other test in this file drives this function indirectly, through ``_match_single_class_segm``,
+    ``_accumulate_bbox_class``, or ``build_matching_data``. These cases call it directly with small hand-built numpy IoU
+    matrices, so a regression here is localized to this one function instead of surfacing only as a mismatch several
+    call frames up.
+    """
+
+    def test_disjoint_and_matched_gts_split_into_tp_and_fp(self) -> None:
+        """One detection with sufficient IoU is a TP; one with insufficient IoU is a FP.
+
+        Two detections, each with its own GT (no competition between them), isolates the
+        threshold comparison from the greedy claiming logic: row 0's IoU (0.9) clears the 0.5
+        threshold against its own GT, row 1's IoU (0.1) does not clear it against its own GT.
+        """
+        iou_matrix_sorted = np.array([[0.9, 0.0], [0.0, 0.1]], dtype=np.float32)
+        gt_crowd_np = np.zeros(2, dtype=np.bool_)
+
+        matches, ignore, total_gt = _match_sorted_iou_matrix(iou_matrix_sorted, gt_crowd_np, iou_threshold=0.5)
+
+        np.testing.assert_array_equal(matches, [1, 0])
+        np.testing.assert_array_equal(ignore, [False, False])
+        assert total_gt == 2
+
+    def test_detection_matched_only_to_crowd_gt_is_ignored_not_fp(self) -> None:
+        """A detection whose only sufficient-IoU GT is a crowd instance is ignored, not a FP.
+
+        One detection, one crowd GT, IoU above threshold: the crowd-ignore branch must fire instead of the false-
+        positive branch, and the crowd GT must not inflate total_gt.
+        """
+        iou_matrix_sorted = np.array([[0.9]], dtype=np.float32)
+        gt_crowd_np = np.array([True], dtype=np.bool_)
+
+        matches, ignore, total_gt = _match_sorted_iou_matrix(iou_matrix_sorted, gt_crowd_np, iou_threshold=0.5)
+
+        np.testing.assert_array_equal(matches, [0])
+        np.testing.assert_array_equal(ignore, [True])
+        assert total_gt == 0
+
+    def test_zero_gt_columns_raises_value_error(self) -> None:
+        """An IoU matrix with no GT columns (m=0) raises ValueError, not a silent empty result.
+
+        ``np.argmax`` on the per-detection IoU row is unconditional, so a matrix with zero columns fails inside the loop
+        instead of returning early. Both call sites (``_accumulate_bbox_class``, ``_match_single_class_segm``) guard
+        against calling this function when a class has no GT, so this test documents/locks the current contract rather
+        than exercising a path either caller actually reaches.
+        """
+        iou_matrix_sorted = np.zeros((2, 0), dtype=np.float32)
+        gt_crowd_np = np.zeros(0, dtype=np.bool_)
+
+        with pytest.raises(ValueError, match="argmax of an empty sequence"):
+            _match_sorted_iou_matrix(iou_matrix_sorted, gt_crowd_np, iou_threshold=0.5)
+
+    def test_zero_pred_rows_returns_empty_arrays_without_error(self) -> None:
+        """An IoU matrix with no prediction rows (n=0) returns empty arrays, unlike the m=0 case.
+
+        The greedy loop iterates ``range(len(iou_matrix_sorted))``, which is 0 when there are no predictions, so the
+        loop body — and the ``np.argmax`` call that raises for m=0 — never executes. ``total_gt`` is still computed from
+        ``gt_crowd_np`` alone, so it is asserted against a non-trivial mix of crowd and non-crowd GTs rather than an
+        all-non-crowd matrix.
+        """
+        iou_matrix_sorted = np.zeros((0, 2), dtype=np.float32)
+        gt_crowd_np = np.array([False, True], dtype=np.bool_)
+
+        matches, ignore, total_gt = _match_sorted_iou_matrix(iou_matrix_sorted, gt_crowd_np, iou_threshold=0.5)
+
+        assert matches.shape == (0,)
+        assert ignore.shape == (0,)
+        assert total_gt == 1
+
+
+# ---------------------------------------------------------------------------
 # Mask rasterisation shared by the segm matcher tests and build_matching_data
 # ---------------------------------------------------------------------------
 
@@ -103,6 +181,65 @@ def _masks_from_boxes(boxes: list[list[float]], height: int, width: int) -> torc
     for index, (x1, y1, x2, y2) in enumerate(boxes):
         masks[index, int(y1) : int(y2), int(x1) : int(x2)] = True
     return masks
+
+
+def _reference_greedy_match(
+    order: list[int],
+    iou_matrix: torch.Tensor,
+    gt_crowd: torch.Tensor,
+    iou_threshold: float,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Naive, independently-written greedy matcher used as a ground-truth oracle.
+
+    Reimplements the COCO greedy-matching contract directly from spec with plain Python loops and
+    no shared code with ``_match_single_class_segm``/``_match_sorted_iou_matrix`` (no numpy
+    vectorization, no hoisted crowd mask) — a divergence in the optimized/numpy-ported
+    implementation (e.g. a tie-break or crowd-handling regression) will disagree with this
+    reference instead of silently agreeing with itself. Module-level because it is shared by
+    ``TestMatchSingleClassSegm`` (segm path, one class at a time) and
+    ``TestBuildMatchingDataBboxDifferential`` (bbox path, one class-slice at a time).
+
+    Args:
+        order: Detection indices into ``iou_matrix``'s rows, in descending-score order.
+        iou_matrix: Pairwise IoU, ``[n_preds, n_gt]``, rows in original (unsorted) order.
+        gt_crowd: Bool tensor ``[n_gt]``, ``True`` for crowd instances.
+        iou_threshold: Minimum IoU to count as a positive match.
+
+    Returns:
+        Tuple ``(matches, ignore, total_gt)`` aligned to ``order``.
+
+    Examples:
+        >>> order = [0, 1]
+        >>> iou_matrix = torch.tensor([[0.9, 0.0], [0.0, 0.9]])
+        >>> gt_crowd = torch.zeros(2, dtype=torch.bool)
+        >>> matches, ignore, total_gt = _reference_greedy_match(order, iou_matrix, gt_crowd, 0.5)
+        >>> matches.tolist()
+        [1, 1]
+        >>> total_gt
+        2
+    """
+    n_gt = iou_matrix.shape[1]
+    gt_matched = [False] * n_gt
+    matches = np.zeros(len(order), dtype=np.int64)
+    ignore = np.zeros(len(order), dtype=np.bool_)
+    for out_i, orig_i in enumerate(order):
+        best_iou, best_gt = -1.0, -1
+        for j in range(n_gt):
+            if gt_crowd[j] or gt_matched[j]:
+                continue
+            iou = float(iou_matrix[orig_i, j])
+            if iou > best_iou:
+                best_iou, best_gt = iou, j
+        if best_gt != -1 and best_iou >= iou_threshold:
+            matches[out_i] = 1
+            gt_matched[best_gt] = True
+            continue
+        for j in range(n_gt):
+            if gt_crowd[j] and float(iou_matrix[orig_i, j]) >= iou_threshold:
+                ignore[out_i] = True
+                break
+    total_gt = int((~gt_crowd.numpy()).sum())
+    return matches, ignore, total_gt
 
 
 # ---------------------------------------------------------------------------
@@ -242,53 +379,6 @@ class TestMatchSingleClassSegm:
         assert not ignore[0]
         assert total_gt == 1
 
-    @staticmethod
-    def _reference_greedy_match(
-        order: list[int],
-        iou_matrix: torch.Tensor,
-        gt_crowd: torch.Tensor,
-        iou_threshold: float,
-    ) -> tuple[np.ndarray, np.ndarray, int]:
-        """Naive, independently-written greedy matcher used as a ground-truth oracle.
-
-        Reimplements the COCO greedy-matching contract directly from spec with plain Python
-        loops and no shared code with ``_match_single_class_segm`` (no numpy vectorization, no
-        hoisted crowd mask) — a divergence in the optimized/numpy-ported implementation (e.g. a
-        tie-break or crowd-handling regression) will disagree with this reference instead of
-        silently agreeing with itself.
-
-        Args:
-            order: Detection indices into ``iou_matrix``'s rows, in descending-score order.
-            iou_matrix: Pairwise IoU, ``[n_preds, n_gt]``, rows in original (unsorted) order.
-            gt_crowd: Bool tensor ``[n_gt]``, ``True`` for crowd instances.
-            iou_threshold: Minimum IoU to count as a positive match.
-
-        Returns:
-            Tuple ``(matches, ignore, total_gt)`` aligned to ``order``.
-        """
-        n_gt = iou_matrix.shape[1]
-        gt_matched = [False] * n_gt
-        matches = np.zeros(len(order), dtype=np.int64)
-        ignore = np.zeros(len(order), dtype=np.bool_)
-        for out_i, orig_i in enumerate(order):
-            best_iou, best_gt = -1.0, -1
-            for j in range(n_gt):
-                if gt_crowd[j] or gt_matched[j]:
-                    continue
-                iou = float(iou_matrix[orig_i, j])
-                if iou > best_iou:
-                    best_iou, best_gt = iou, j
-            if best_gt != -1 and best_iou >= iou_threshold:
-                matches[out_i] = 1
-                gt_matched[best_gt] = True
-                continue
-            for j in range(n_gt):
-                if gt_crowd[j] and float(iou_matrix[orig_i, j]) >= iou_threshold:
-                    ignore[out_i] = True
-                    break
-        total_gt = int((~gt_crowd.numpy()).sum())
-        return matches, ignore, total_gt
-
     def test_greedy_loop_does_not_sync_a_tensor_per_detection(self) -> None:
         """Regression test for #416: the per-detection greedy loop must not force one device-to-host tensor sync
         (``Tensor.__bool__``) per detection, and the numpy-ported matching output must agree with an independent
@@ -326,7 +416,7 @@ class TestMatchSingleClassSegm:
 
         order = torch.argsort(scores, descending=True).tolist()
         iou_matrix = box_iou(pred_boxes, gt_boxes)
-        ref_matches, ref_ignore, ref_total_gt = self._reference_greedy_match(order, iou_matrix, gt_crowd, 0.5)
+        ref_matches, ref_ignore, ref_total_gt = _reference_greedy_match(order, iou_matrix, gt_crowd, 0.5)
         assert list(scores_out) == pytest.approx(scores[order].tolist())
         assert np.array_equal(matches, ref_matches)
         assert np.array_equal(ignore, ref_ignore)
@@ -697,6 +787,206 @@ class TestBuildMatchingData:
         for class_id in range(num_classes):
             assert result[class_id]["matches"].tolist() == expected_matches
             assert result[class_id]["total_gt"] == expected_total_gt
+
+
+# ---------------------------------------------------------------------------
+# Randomized differential oracle for build_matching_data(iou_type="bbox")
+# ---------------------------------------------------------------------------
+
+
+def _random_bbox_batch(
+    rng: np.random.Generator,
+    num_shared_preds: int,
+    num_shared_gts: int,
+    num_shared_classes: int,
+    canvas: int,
+) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    """Build one random single-image bbox pred/target pair for the differential oracle.
+
+    *num_shared_classes* random detections and GTs are drawn from a shared label pool, so a class
+    can end up with predictions and GTs, only predictions, only GTs, or neither (if unlucky) — the
+    common case ``_accumulate_bbox_class`` must handle via ``np.ix_`` slicing of the shared
+    image-wide IoU matrix. On top of that pool, one extra prediction is always given a
+    class id of its own (``num_shared_classes``) with no matching GT, and one extra GT is always
+    given a class id of its own (``num_shared_classes + 1``) with no matching prediction — this
+    guarantees the two empty-class edges (`gt_indices.size == 0`, and a GT-only class) are
+    exercised on every trial rather than only probabilistically.
+
+    Args:
+        rng: Seeded NumPy random generator, local to the caller (not the global RNG state).
+        num_shared_preds: Number of predictions drawn from the shared class pool.
+        num_shared_gts: Number of ground truths drawn from the shared class pool.
+        num_shared_classes: Size of the shared class-id pool.
+        canvas: Boxes are drawn with coordinates inside a ``canvas``-square area.
+
+    Returns:
+        A ``(pred, target)`` pair shaped like one ``build_matching_data()`` batch element, with a
+        random ``iscrowd`` flag on every GT.
+
+    Examples:
+        >>> rng = np.random.default_rng(0)
+        >>> pred, target = _random_bbox_batch(
+        ...     rng, num_shared_preds=3, num_shared_gts=2, num_shared_classes=2, canvas=16
+        ... )
+        >>> pred["boxes"].shape, pred["scores"].shape, pred["labels"].shape
+        (torch.Size([4, 4]), torch.Size([4]), torch.Size([4]))
+        >>> target["boxes"].shape, target["labels"].shape, target["iscrowd"].shape
+        (torch.Size([3, 4]), torch.Size([3]), torch.Size([3]))
+    """
+
+    def _random_boxes(count: int) -> np.ndarray:
+        top_left = rng.uniform(0, canvas / 2, size=(count, 2))
+        extent = rng.uniform(1, canvas / 2, size=(count, 2))
+        return np.concatenate([top_left, top_left + extent], axis=1)
+
+    pred_only_class = num_shared_classes
+    gt_only_class = num_shared_classes + 1
+
+    pred_boxes = np.concatenate([_random_boxes(num_shared_preds), _random_boxes(1)], axis=0)
+    pred_labels = np.append(rng.integers(0, num_shared_classes, size=num_shared_preds), pred_only_class)
+    pred_scores = rng.uniform(0.01, 1.0, size=num_shared_preds + 1)
+
+    gt_boxes = np.concatenate([_random_boxes(num_shared_gts), _random_boxes(1)], axis=0)
+    gt_labels = np.append(rng.integers(0, num_shared_classes, size=num_shared_gts), gt_only_class)
+    gt_crowd = rng.integers(0, 2, size=num_shared_gts + 1)
+
+    pred = {
+        "boxes": torch.tensor(pred_boxes, dtype=torch.float32),
+        "scores": torch.tensor(pred_scores, dtype=torch.float32),
+        "labels": torch.tensor(pred_labels, dtype=torch.int64),
+    }
+    target = {
+        "boxes": torch.tensor(gt_boxes, dtype=torch.float32),
+        "labels": torch.tensor(gt_labels, dtype=torch.int64),
+        "iscrowd": torch.tensor(gt_crowd, dtype=torch.int64),
+    }
+    return pred, target
+
+
+def _reference_bbox_matching(
+    pred: dict[str, torch.Tensor],
+    target: dict[str, torch.Tensor],
+    iou_threshold: float,
+) -> dict[int, tuple[np.ndarray, np.ndarray, int]]:
+    """Independently compute build_matching_data's bbox-path output, per class, as an oracle.
+
+    Mirrors the sharing strategy ``_accumulate_bbox_class`` uses (one image-wide ``box_iou``
+    matrix, sliced per class) so that a per-class slicing bug — e.g. a wrong ``np.ix_`` index —
+    disagrees with this independent per-class computation instead of silently agreeing with
+    itself. The actual greedy matching for each class is delegated to
+    ``_reference_greedy_match``, which reimplements the matching contract from spec rather than
+    reusing any of ``rfdetr.evaluation.matching``.
+
+    Args:
+        pred: One image's predictions with ``boxes``, ``scores``, ``labels``.
+        target: One image's ground truths with ``boxes``, ``labels``, and optional ``iscrowd``.
+        iou_threshold: Minimum IoU to count as a positive match.
+
+    Returns:
+        Dict mapping ``class_id`` to ``(matches, ignore, total_gt)``, with ``matches``/``ignore``
+        in the same per-class, descending-score order ``build_matching_data()`` returns.
+
+    Examples:
+        >>> pred = {
+        ...     "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
+        ...     "scores": torch.tensor([0.9]),
+        ...     "labels": torch.tensor([0]),
+        ... }
+        >>> target = {"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([0])}
+        >>> reference = _reference_bbox_matching(pred, target, iou_threshold=0.5)
+        >>> reference[0][0].tolist(), reference[0][2]
+        ([1], 1)
+    """
+    pred_labels_np = pred["labels"].numpy()
+    gt_labels_np = target["labels"].numpy()
+    scores_np = pred["scores"].numpy()
+    gt_crowd = target.get("iscrowd", torch.zeros(len(gt_labels_np), dtype=torch.int64)).bool()
+    iou_matrix = box_iou(pred["boxes"], target["boxes"])
+
+    reference: dict[int, tuple[np.ndarray, np.ndarray, int]] = {}
+    for class_id in sorted(set(pred_labels_np.tolist()) | set(gt_labels_np.tolist())):
+        pred_idx = np.flatnonzero(pred_labels_np == class_id)
+        gt_idx = np.flatnonzero(gt_labels_np == class_id)
+
+        if pred_idx.size == 0:
+            reference[class_id] = (
+                np.zeros(0, dtype=np.int64),
+                np.zeros(0, dtype=np.bool_),
+                int((~gt_crowd[gt_idx]).sum()),
+            )
+            continue
+        if gt_idx.size == 0:
+            reference[class_id] = (
+                np.zeros(pred_idx.size, dtype=np.int64),
+                np.zeros(pred_idx.size, dtype=np.bool_),
+                0,
+            )
+            continue
+
+        order = np.argsort(-scores_np[pred_idx], kind="stable")
+        sub_iou = iou_matrix[np.ix_(pred_idx[order], gt_idx)]
+        matches, ignore, total_gt = _reference_greedy_match(
+            list(range(len(order))), sub_iou, gt_crowd[gt_idx], iou_threshold
+        )
+        reference[class_id] = (matches, ignore, total_gt)
+    return reference
+
+
+def _assert_matching_equals_reference(
+    result: dict[int, dict[str, np.ndarray | int]],
+    reference: dict[int, tuple[np.ndarray, np.ndarray, int]],
+) -> None:
+    """Assert build_matching_data's per-class output equals a (matches, ignore, total_gt) reference.
+
+    Both ``build_matching_data()`` and ``_reference_bbox_matching()`` key on ``class_id`` and keep
+    detections in per-image descending-score order, so comparing arrays directly is valid without
+    re-sorting either side.
+
+    Args:
+        result: Output of ``build_matching_data()``.
+        reference: ``class_id -> (matches, ignore, total_gt)`` from ``_reference_bbox_matching()``.
+
+    Examples:
+        >>> result = {0: {"matches": np.array([1]), "ignore": np.array([False]), "total_gt": 1}}
+        >>> reference = {0: (np.array([1]), np.array([False]), 1)}
+        >>> _assert_matching_equals_reference(result, reference)
+    """
+    assert set(result) == set(reference)
+    for class_id, (ref_matches, ref_ignore, ref_total_gt) in reference.items():
+        np.testing.assert_array_equal(result[class_id]["matches"], ref_matches)
+        np.testing.assert_array_equal(result[class_id]["ignore"], ref_ignore)
+        assert result[class_id]["total_gt"] == ref_total_gt
+
+
+class TestBuildMatchingDataBboxDifferential:
+    """Randomized differential-oracle coverage for build_matching_data(iou_type="bbox").
+
+    ``test_greedy_loop_does_not_sync_a_tensor_per_detection`` (see ``TestMatchSingleClassSegm``) is
+    this suite's only other randomized differential oracle, and it exercises the segm path only.
+    The bbox path shares one image-wide ``box_iou`` matrix across classes and slices it per class
+    via ``np.ix_`` (``_accumulate_bbox_class``); every other bbox-path test in
+    ``TestBuildMatchingData`` hand-writes 2-3 detections, none of them drives this class-slicing
+    with more than one populated class at a time.
+    """
+
+    @pytest.mark.parametrize("seed", [pytest.param(seed, id=f"seed-{seed}") for seed in range(50)])
+    def test_matches_independent_reference_across_random_batches(self, seed: int) -> None:
+        """build_matching_data(iou_type="bbox") agrees with an independent per-class oracle.
+
+        Each of the 50 independently-seeded trials builds one random single-image batch with several shared classes (so
+        the ``np.ix_`` per-class slice of the one image-wide ``box_iou`` matrix is exercised for more than one class per
+        trial), a random ``iscrowd`` flag on every GT, one prediction-only class, and one GT-only class (see
+        ``_random_bbox_batch``). Many small, cheap trials are used instead of one large trial: each trial covers only a
+        handful of classes/detections, so the seed sweep covers far more of the class/crowd/empty combinations across 50
+        trials than a single larger draw would, for a comparable total detection count.
+        """
+        rng = np.random.default_rng(seed)
+        pred, target = _random_bbox_batch(rng, num_shared_preds=8, num_shared_gts=8, num_shared_classes=4, canvas=32)
+
+        result = build_matching_data([pred], [target], iou_type="bbox")
+
+        reference = _reference_bbox_matching(pred, target, iou_threshold=0.5)
+        _assert_matching_equals_reference(result, reference)
 
 
 # ---------------------------------------------------------------------------
