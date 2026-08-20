@@ -57,6 +57,15 @@ train = [
     "faster-coco-eval>=1.7.2",
     "pycocotools",
     "scipy",
+    # Batched Hungarian solver for the training matcher (Apache-2.0), training-only — the matcher
+    # lives in the loss path and is never built at inference. Accelerates the CUDA path only (its
+    # Triton backend needs Linux + compute capability >= 8.0 + torch >= 2.4); on every other device
+    # it falls back to SciPy internally, which is what the matcher would have called anyway, so
+    # behavior is identical everywhere and only the speed differs. Pure-Python install: nothing is
+    # compiled at install time, and the >=0.1.0 floor deliberately excludes the 0.0.x line, whose
+    # sdist built a CUDA extension against nvcc. See
+    # .plans/active/plan-native-linear-assignment.md Phase M3 Item 2 for the measurement evidence.
+    "torch-linear-assignment>=0.1.0,<0.2.0",
     "roboflow",
     "rf100vl",
 ]
@@ -220,6 +229,17 @@ Homepage = "https://github.com/roboflow/rf-detr"
 
 [project.scripts]
 rfdetr = "rfdetr.cli:main"
+
+# TODO: Temporary — torch-linear-assignment 0.1.0 is not on PyPI yet (the newest published release
+#   is the 0.0.6 compiled-CUDA sdist that the [train] floor deliberately excludes), so the 0.1.0
+#   line is installed from source meanwhile. `[tool.uv.sources]` is a uv-only resolution override
+#   that never appears in built distribution metadata — verified: the built wheel records only
+#   `Requires-Dist: torch-linear-assignment<0.2.0,>=0.1.0; extra == "train"` — so the [train] extra
+#   already reads exactly as it will after release. Honored by `uv pip`/`uv sync`/`uv lock`, which
+#   is what CI and the documented dev setup use; plain `pip` ignores it and cannot install [train]
+#   until the release lands. DELETE this whole block — and nothing else — once 0.1.0 ships on PyPI.
+[tool.uv.sources]
+torch-linear-assignment = { git = "https://github.com/Borda/torch-hungarian.git", branch = "refactor/triton" }
 
 [tool.uv]
 # onnx2tf>=2.4.0 pins numpy==1.26.4 (exact). Its dependency ml-dtypes==0.5.1 in turn requires
