@@ -28,6 +28,7 @@ except ImportError:
 import numpy as np
 import PIL
 import torch
+from numpy.typing import NDArray
 from PIL import Image
 from torch import Tensor
 from torchvision.transforms import Normalize as _TVNormalize
@@ -496,7 +497,7 @@ class AlbumentationsWrapper:
         return f"{self.__class__.__name__}(transform={transform}, type={transform_type})"
 
     @staticmethod
-    def _boxes_to_numpy(boxes: Tensor | np.ndarray) -> np.ndarray:
+    def _boxes_to_numpy(boxes: Tensor | NDArray[Any]) -> NDArray[Any]:
         """Convert boxes to numpy array and validate shape.
 
         >>> import torch
@@ -510,7 +511,7 @@ class AlbumentationsWrapper:
         return boxes_np
 
     @staticmethod
-    def _keypoints_to_numpy(keypoints: Tensor | np.ndarray, num_boxes: int) -> np.ndarray:
+    def _keypoints_to_numpy(keypoints: Tensor | NDArray[Any], num_boxes: int) -> NDArray[Any]:
         """Convert keypoints to numpy array and validate shape.
 
         >>> import torch
@@ -529,7 +530,7 @@ class AlbumentationsWrapper:
 
     @staticmethod
     def _build_albu_keypoints(
-        keypoints_np: np.ndarray,
+        keypoints_np: NDArray[Any],
         idxs: list[int],
     ) -> dict[str, Any]:
         """Flatten per-instance keypoints into Albumentations keypoint fields.
@@ -592,7 +593,7 @@ class AlbumentationsWrapper:
     def _rebuild_keypoints_from_albu(
         augmented: dict[str, Any],
         kept_idxs: list[int],
-        keypoints_np: np.ndarray,
+        keypoints_np: NDArray[Any],
         flip_pairs: list[int] | None = None,
         did_flip: bool = False,
     ) -> Tensor:
@@ -714,7 +715,7 @@ class AlbumentationsWrapper:
         return result
 
     def _apply_geometric_transform(
-        self, image_np: np.ndarray, target: dict[str, Any], labels: list[int]
+        self, image_np: NDArray[np.uint8], target: dict[str, Any], labels: list[int]
     ) -> tuple[Image.Image, dict[str, Any]]:
         """Apply geometric transform to image with boxes and optionally masks.
 
