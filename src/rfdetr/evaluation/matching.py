@@ -37,6 +37,18 @@ _ClassContribution: TypeAlias = tuple[
     int,
 ]
 
+#: Positions of one class inside an image's prediction and GT arrays: the rows and the columns it
+#: owns in the image-wide ``box_iou`` matrix. ``None`` instead means the image holds a single class,
+#: which owns the whole matrix and needs no positions at all.
+_ClassSlice: TypeAlias = tuple[
+    np.ndarray[Any, np.dtype[np.intp]],
+    np.ndarray[Any, np.dtype[np.intp]],
+]
+
+#: Column positions of a class that has predictions but no GT of its own. Shared, so the per-class
+#: lookup that misses can hand back an empty selection without allocating one every time.
+_NO_INDICES: np.ndarray[Any, np.dtype[np.intp]] = np.zeros(0, dtype=np.intp)
+
 
 def _compute_mask_iou(pred_masks: Tensor, gt_masks: Tensor) -> Tensor:
     """Compute pairwise boolean-mask IoU between N predictions and M ground truths.
@@ -73,6 +85,10 @@ def _match_sorted_iou_matrix(
 ]:
     """Apply COCO greedy matching to score-ordered NumPy IoUs for one class.
 
+    Dispatches on whether the class has any crowd GT. Both loops below are per-detection Python
+    loops whose cost is dominated by the number of NumPy calls each iteration makes, so the common
+    crowd-free case gets its own loop rather than paying for masks that can only be no-ops.
+
     Args:
         iou_matrix_sorted: Pairwise IoUs whose rows are in descending detection-score order. Must not
             be modified here: the bbox caller derives it from the one ``box_iou`` matrix shared by
@@ -84,6 +100,92 @@ def _match_sorted_iou_matrix(
     Returns:
         Tuple of true-positive flags, crowd-ignore flags, and the number of non-crowd ground truths.
         The scores the rows were ordered by are not returned — every caller already holds them.
+    """
+    if not gt_crowd_np.any():
+        return _match_rows_without_crowd(iou_matrix_sorted, iou_threshold)
+    return _match_rows_with_crowd(iou_matrix_sorted, gt_crowd_np, iou_threshold)
+
+
+def _match_rows_without_crowd(
+    iou_matrix_sorted: np.ndarray[Any, np.dtype[np.float32]],
+    iou_threshold: float,
+) -> tuple[
+    np.ndarray[Any, np.dtype[np.int64]],
+    np.ndarray[Any, np.dtype[np.bool_]],
+    int,
+]:
+    """Greedily match score-ordered IoUs for a class whose ground truths are all non-crowd.
+
+    Behaviourally a special case of ``_match_rows_with_crowd()`` — every GT is claimable, none can
+    be ignored, and ``total_gt`` is simply the column count. What makes it worth its own loop is
+    that the per-detection cost here is NumPy call overhead, not array work: at a few dozen GTs a
+    call costs more than the elements it touches, so the win comes from making calls disappear.
+
+    Two whole-matrix reductions do that for the two cases that need no search at all: a detection
+    whose best IoU is below the threshold cannot match any GT, and one whose best GT is still free
+    matches exactly that GT (masking can only lower other columns, so it cannot promote a different
+    one, and ``argmax`` already resolved ties to the lowest column index). Only a detection whose
+    best GT was claimed by a higher-scoring detection falls back to a masked search.
+
+    Args:
+        iou_matrix_sorted: Pairwise IoUs whose rows are in descending detection-score order. Read
+            only, for the reason given on ``_match_sorted_iou_matrix()``.
+        iou_threshold: Minimum IoU to count as a positive match.
+
+    Returns:
+        Tuple of true-positive flags, all-False crowd-ignore flags, and the ground-truth count.
+    """
+    n, m = iou_matrix_sorted.shape
+    gt_matched_np = np.zeros(m, dtype=np.bool_)
+    pred_match_np = np.zeros(n, dtype=np.int64)
+    # argmax before max, so that a matrix with no GT columns still fails with the same "argmax of
+    # an empty sequence" ValueError the per-detection search raises.
+    best_columns = cast(list[int], iou_matrix_sorted.argmax(axis=1).tolist())
+    best_ious = cast(list[float], iou_matrix_sorted.max(axis=1).tolist())
+
+    for index in range(n):
+        if best_ious[index] < iou_threshold:
+            continue
+        best_column = best_columns[index]
+        if not gt_matched_np[best_column]:
+            pred_match_np[index] = 1
+            gt_matched_np[best_column] = True
+            continue
+
+        # Copy-then-mask rather than np.where(): measured cheaper, and it leaves the source matrix
+        # — shared across the classes of an image on the bbox path — untouched either way.
+        free_ious = cast(np.ndarray[Any, np.dtype[np.float32]], iou_matrix_sorted[index].copy())
+        free_ious[gt_matched_np] = -1.0
+        best_index = int(free_ious.argmax())
+        if free_ious[best_index] >= iou_threshold:
+            pred_match_np[index] = 1
+            gt_matched_np[best_index] = True
+
+    return pred_match_np, np.zeros(n, dtype=np.bool_), m
+
+
+def _match_rows_with_crowd(
+    iou_matrix_sorted: np.ndarray[Any, np.dtype[np.float32]],
+    gt_crowd_np: np.ndarray[Any, np.dtype[np.bool_]],
+    iou_threshold: float,
+) -> tuple[
+    np.ndarray[Any, np.dtype[np.int64]],
+    np.ndarray[Any, np.dtype[np.bool_]],
+    int,
+]:
+    """Greedily match score-ordered IoUs for a class that may have crowd ground truths.
+
+    Handles crowd GTs in full generality, so it stays correct for an all-non-crowd input too — that
+    is what makes it the reference ``_match_rows_without_crowd()`` is differentially tested against.
+
+    Args:
+        iou_matrix_sorted: Pairwise IoUs whose rows are in descending detection-score order. Read
+            only, for the reason given on ``_match_sorted_iou_matrix()``.
+        gt_crowd_np: Boolean crowd mask aligned to IoU columns.
+        iou_threshold: Minimum IoU to count as a positive match.
+
+    Returns:
+        Tuple of true-positive flags, crowd-ignore flags, and the number of non-crowd ground truths.
     """
     n, m = iou_matrix_sorted.shape
     gt_matched_np = np.zeros(m, dtype=np.bool_)
@@ -100,7 +202,9 @@ def _match_sorted_iou_matrix(
         noncrowd_ious[gt_crowd_np] = -1.0
         noncrowd_ious[gt_matched_np & not_crowd_np] = -1.0
 
-        best_noncrowd_index = int(np.argmax(noncrowd_ious))
+        # The bound method, not np.argmax(): the module-level function re-dispatches on its
+        # argument, which costs more per call than the search over a few dozen GTs.
+        best_noncrowd_index = int(noncrowd_ious.argmax())
         if noncrowd_ious[best_noncrowd_index] >= iou_threshold:
             pred_match_np[index] = 1
             gt_matched_np[best_noncrowd_index] = True
@@ -111,6 +215,31 @@ def _match_sorted_iou_matrix(
                 pred_ignore_np[index] = True
 
     return pred_match_np, pred_ignore_np, int(not_crowd_np.sum())
+
+
+def _group_indices_by_label(
+    label_ids_np: np.ndarray[Any, np.dtype[np.int64]],
+) -> dict[int, np.ndarray[Any, np.dtype[np.intp]]]:
+    """Group array positions by label in one pass over an image's labels.
+
+    Replaces one ``label_ids_np == class_id`` scan per class — O(N) per class, O(N*C) over an
+    image — with a single stable sort. Within each group the positions stay ascending, which is the
+    order a per-class scan produces and the order the greedy matcher's stable score sort then
+    breaks ties on, so the grouping is a pure speedup and not a reordering.
+
+    Args:
+        label_ids_np: Label of every detection (or of every GT) of one image.
+
+    Returns:
+        Dict mapping each label present to its ascending positions in *label_ids_np*; empty for an
+        empty input.
+    """
+    if label_ids_np.size == 0:
+        return {}
+    order = np.argsort(label_ids_np, kind="stable")
+    sorted_labels = label_ids_np[order]
+    boundaries = np.flatnonzero(sorted_labels[1:] != sorted_labels[:-1]) + 1
+    return {int(label_ids_np[group[0]]): group for group in np.split(order, boundaries)}
 
 
 def _unmatched_contribution(
@@ -197,10 +326,8 @@ def _match_single_class_segm(
 
 
 def _accumulate_bbox_class(
-    class_id: int,
     pred_scores_np: np.ndarray[Any, np.dtype[np.floating[Any]]],
-    pred_label_ids_np: np.ndarray[Any, np.dtype[np.int64]],
-    gt_label_ids_np: np.ndarray[Any, np.dtype[np.int64]],
+    class_slice: _ClassSlice | None,
     gt_crowd_np: np.ndarray[Any, np.dtype[np.bool_]],
     bbox_iou_matrix_np: np.ndarray[Any, np.dtype[np.float32]] | None,
     iou_threshold: float,
@@ -208,26 +335,28 @@ def _accumulate_bbox_class(
     """Accumulate one class of one image against the image's shared box-IoU matrix.
 
     Everything needed here is already on the host, so the class is selected by slicing the per-image
-    NumPy arrays instead of by indexing device tensors.
+    NumPy arrays instead of by indexing device tensors. A *class_slice* of ``None`` says the image
+    holds one class only: it then owns every row and column of *bbox_iou_matrix_np*, and the
+    two-axis fancy-index copy that isolates a class becomes a copy of the whole matrix onto itself,
+    so only the rows are reordered and the crowd mask is taken as it stands.
 
     Args:
-        class_id: Class to accumulate.
         pred_scores_np: Every detection score of the image, in the caller's own float dtype.
-        pred_label_ids_np: Every detection label of the image, aligned to *pred_scores_np*.
-        gt_label_ids_np: Every GT label of the image.
-        gt_crowd_np: Crowd flag per GT, aligned to *gt_label_ids_np*.
+        class_slice: The class's prediction rows and GT columns, or ``None`` when the image holds a
+            single class. A class with predictions but no GT gets an empty column selection, never
+            ``None``.
+        gt_crowd_np: Crowd flag per GT of the image.
         bbox_iou_matrix_np: The image's ``box_iou`` matrix, or ``None`` when the image has no
             detections or no GT at all. A class without GT returns before it is read.
         iou_threshold: Minimum IoU to count as a positive match.
 
     Returns:
-        Tuple ``(scores_np, matches_np, ignore_np, total_gt)`` contributed by *class_id*.
+        Tuple ``(scores_np, matches_np, ignore_np, total_gt)`` contributed by the class.
     """
-    pred_indices = np.flatnonzero(pred_label_ids_np == class_id)
-    gt_indices = np.flatnonzero(gt_label_ids_np == class_id)
-    p_scores_np = pred_scores_np[pred_indices]
+    p_scores_np = pred_scores_np if class_slice is None else pred_scores_np[class_slice[0]]
+    n_gt = gt_crowd_np.size if class_slice is None else class_slice[1].size
 
-    if gt_indices.size == 0:
+    if n_gt == 0:
         return _unmatched_contribution(p_scores_np)
 
     assert bbox_iou_matrix_np is not None, (
@@ -235,11 +364,14 @@ def _accumulate_bbox_class(
         "and this class has at least one of each"
     )
     order = np.argsort(-p_scores_np, kind="stable")
-    matches_np, ignore_np, total_gt = _match_sorted_iou_matrix(
-        bbox_iou_matrix_np[np.ix_(pred_indices[order], gt_indices)],
-        gt_crowd_np[gt_indices],
-        iou_threshold,
-    )
+    if class_slice is None:
+        iou_matrix_sorted, class_crowd_np = bbox_iou_matrix_np[order], gt_crowd_np
+    else:
+        pred_indices, gt_indices = class_slice
+        iou_matrix_sorted = bbox_iou_matrix_np[np.ix_(pred_indices[order], gt_indices)]
+        class_crowd_np = gt_crowd_np[gt_indices]
+
+    matches_np, ignore_np, total_gt = _match_sorted_iou_matrix(iou_matrix_sorted, class_crowd_np, iou_threshold)
     return p_scores_np[order].astype(np.float32, copy=False), matches_np, ignore_np, total_gt
 
 
@@ -375,8 +507,15 @@ def build_matching_data(
         gt_noncrowd_count = Counter(label for label, crowd in zip(gt_label_ids, gt_crowd_ids) if not crowd)
         all_class_ids: set[int] = set(gt_count) | set(pred_count)
 
-        pred_label_ids_np = np.asarray(pred_label_ids, dtype=np.int64)
-        gt_label_ids_np = np.asarray(gt_label_ids, dtype=np.int64)
+        # One image whose detections and GTs are all of the same class needs no per-class positions
+        # at all: that class owns every row and column of the IoU matrix below.
+        single_class = len(all_class_ids) == 1
+        pred_groups: dict[int, np.ndarray[Any, np.dtype[np.intp]]] = {}
+        gt_groups: dict[int, np.ndarray[Any, np.dtype[np.intp]]] = {}
+        if iou_type == "bbox" and pred_count and not single_class:
+            pred_groups = _group_indices_by_label(np.asarray(pred_label_ids, dtype=np.int64))
+            gt_groups = _group_indices_by_label(np.asarray(gt_label_ids, dtype=np.int64))
+
         gt_crowd_np = np.asarray(gt_crowd_ids, dtype=np.bool_)
         bbox_iou_matrix_np: np.ndarray[Any, np.dtype[np.float32]] | None = None
         # Left in the caller's own dtype: this array orders the greedy loop, and a float32 cast
@@ -413,11 +552,10 @@ def build_matching_data(
                 assert pred_scores_np is not None, (
                     "the image's scores are moved to host whenever it has detections, and this class has one"
                 )
+                class_slice = None if single_class else (pred_groups[class_id], gt_groups.get(class_id, _NO_INDICES))
                 scores_np, matches_np, ignore_np, total_gt = _accumulate_bbox_class(
-                    class_id,
                     pred_scores_np,
-                    pred_label_ids_np,
-                    gt_label_ids_np,
+                    class_slice,
                     gt_crowd_np,
                     bbox_iou_matrix_np,
                     iou_threshold,
@@ -427,9 +565,11 @@ def build_matching_data(
                     preds, targets, gt_crowd, class_id, gt_count.get(class_id, 0), iou_threshold
                 )
 
-            cast(list[float], entry["scores"]).extend(float(score) for score in scores_np)
-            cast(list[int], entry["matches"]).extend(int(match) for match in matches_np)
-            cast(list[bool], entry["ignore"]).extend(bool(ignore) for ignore in ignore_np)
+            # ndarray.tolist() converts in C and yields the same Python scalars a per-element
+            # float()/int()/bool() generator would, one interpreter round-trip instead of N.
+            cast(list[float], entry["scores"]).extend(cast(list[float], scores_np.tolist()))
+            cast(list[int], entry["matches"]).extend(cast(list[int], matches_np.tolist()))
+            cast(list[bool], entry["ignore"]).extend(cast(list[bool], ignore_np.tolist()))
             entry["total_gt"] = cast(int, entry["total_gt"]) + total_gt
 
     return {

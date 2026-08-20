@@ -15,6 +15,8 @@ from torchvision.ops import box_iou
 
 from rfdetr.evaluation.matching import (
     _compute_mask_iou,
+    _match_rows_with_crowd,
+    _match_rows_without_crowd,
     _match_single_class_segm,
     _match_sorted_iou_matrix,
     build_matching_data,
@@ -151,6 +153,29 @@ class TestMatchSortedIouMatrix:
         assert matches.shape == (0,)
         assert ignore.shape == (0,)
         assert total_gt == 1
+
+    @pytest.mark.parametrize("seed", [pytest.param(seed, id=f"seed-{seed}") for seed in range(20)])
+    def test_crowd_free_loop_agrees_with_the_general_loop(self, seed: int) -> None:
+        """``_match_rows_without_crowd`` returns exactly what ``_match_rows_with_crowd`` returns on a crowd-free class.
+
+        ``_match_sorted_iou_matrix`` picks between the two loops on ``gt_crowd_np.any()``, so no other test in this
+        suite can observe the equivalence they are built on: a crowd-free input never reaches the general loop again.
+        Each seed draws a dense IoU matrix with six times as many detections as GTs and matches at a 0.5 threshold, so
+        GTs are contested and the crowd-free loop's fallback (its best GT already claimed by a higher-scoring
+        detection) is reached instead of only its two shortcut branches — the assertion that every GT ends up claimed
+        is what pins that contention down.
+        """
+        rng = np.random.default_rng(seed)
+        iou_matrix_sorted = rng.uniform(0.0, 1.0, size=(24, 4)).astype(np.float32)
+        gt_crowd_np = np.zeros(4, dtype=np.bool_)
+
+        crowd_free = _match_rows_without_crowd(iou_matrix_sorted, iou_threshold=0.5)
+        general = _match_rows_with_crowd(iou_matrix_sorted, gt_crowd_np, iou_threshold=0.5)
+
+        np.testing.assert_array_equal(crowd_free[0], general[0])
+        np.testing.assert_array_equal(crowd_free[1], general[1])
+        assert crowd_free[2] == general[2]
+        assert crowd_free[0].sum() == 4
 
 
 # ---------------------------------------------------------------------------
@@ -982,6 +1007,28 @@ class TestBuildMatchingDataBboxDifferential:
         """
         rng = np.random.default_rng(seed)
         pred, target = _random_bbox_batch(rng, num_shared_preds=8, num_shared_gts=8, num_shared_classes=4, canvas=32)
+
+        result = build_matching_data([pred], [target], iou_type="bbox")
+
+        reference = _reference_bbox_matching(pred, target, iou_threshold=0.5)
+        _assert_matching_equals_reference(result, reference)
+
+    @pytest.mark.parametrize("crowd_flag_scale", [pytest.param(1, id="with-crowd"), pytest.param(0, id="crowd-free")])
+    @pytest.mark.parametrize("seed", [pytest.param(seed, id=f"seed-{seed}") for seed in range(10)])
+    def test_single_class_image_matches_independent_reference(self, seed: int, crowd_flag_scale: int) -> None:
+        """An image whose detections and GTs are all one class agrees with the same independent oracle.
+
+        ``_random_bbox_batch`` always adds a prediction-only class and a GT-only class, so the trials above never
+        produce a single-class image. Relabelling every detection and GT to one class does, and that image takes the
+        path which skips per-class selection altogether — the one class owns every row and column of the image-wide
+        ``box_iou`` matrix, so there is nothing to select and only the row order changes. Scaling ``iscrowd`` to zero
+        pairs that with the crowd-free matching loop, which together are what a single-class evaluation actually runs.
+        """
+        rng = np.random.default_rng(seed)
+        pred, target = _random_bbox_batch(rng, num_shared_preds=8, num_shared_gts=6, num_shared_classes=3, canvas=32)
+        pred["labels"] = torch.zeros_like(pred["labels"])
+        target["labels"] = torch.zeros_like(target["labels"])
+        target["iscrowd"] = target["iscrowd"] * crowd_flag_scale
 
         result = build_matching_data([pred], [target], iou_type="bbox")
 
