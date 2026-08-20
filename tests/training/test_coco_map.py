@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Contract tests for RF-DETR's one-pass TorchMetrics COCO adapter."""
 
+import sys
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -361,6 +362,9 @@ def _distributed_empty_rank_worker(rank: int, world_size: int, init_file: str) -
         dist.destroy_process_group()
 
 
+# Windows CI currently cannot run this spawn test because gloo DDP spawn fails with
+# makeDeviceForHostname unsupported-device errors (see tests/training/test_trainer_smoke.py).
+@pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
 def test_distributed_merge_supports_uneven_shards_with_empty_rank(tmp_path) -> None:
     """Two real Gloo ranks must finish without deadlock when only rank zero receives a metric update."""
     init_file = tmp_path / "coco-map-gloo-init"
