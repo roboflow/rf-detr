@@ -137,7 +137,11 @@ def _match_single_class(
             - ignore_np: bool array [N], True if matched to a crowd GT.
             - total_gt: number of non-crowd GT instances.
     """
-    sort_idx = torch.argsort(pred_scores, descending=True)
+    # stable=True keeps tied scores in input order, which is the tie rule the bbox path gets from
+    # np.argsort(kind="stable") and PostProcess._select_topk gets from the same flag. torch's
+    # default sort is unstable past its ~32-element cutoff, so without it the greedy winner of a
+    # tie -- and with it the TP/FP split -- would depend on the sort backend rather than the input.
+    sort_idx = torch.argsort(pred_scores, descending=True, stable=True)
     pred_scores_sorted = pred_scores[sort_idx]
     pred_sorted = pred_items[sort_idx]
 
@@ -175,6 +179,11 @@ def build_matching_data(
     Implements greedy highest-score-first matching compatible with the COCO algorithm. The returned dict can be passed
     directly to ``merge_matching_data()`` and ultimately consumed by ``sweep_confidence_thresholds()`` after conversion
     to list form.
+
+    Detections are ranked in the dtype of ``preds["scores"]``, so a ``float64`` input keeps the full precision that
+    separates near-tied scores, and detections that really are tied keep their input order. Both ``iou_type`` paths
+    share that rule, which makes the TP/FP split reproducible across devices and dtypes. The returned scores are
+    float32 either way.
 
     Args:
         preds_list: Per-image predictions. Each dict must contain:
@@ -249,9 +258,17 @@ def build_matching_data(
         gt_label_ids_np = np.asarray(gt_label_ids, dtype=np.int64)
         gt_crowd_np = np.asarray(gt_crowd_ids, dtype=np.bool_)
         bbox_iou_matrix_np: np.ndarray[Any, np.dtype[np.float32]] | None = None
-        pred_scores_np: np.ndarray[Any, np.dtype[np.float32]] | None = None
+        # Left in the caller's own dtype: this array orders the greedy loop, and a float32 cast
+        # taken here would collapse near-tied float64 scores onto one value and hand the GT to
+        # whichever detection happened to come first instead of to the higher-scoring one. Only
+        # bfloat16 is cast, because numpy has no bfloat16 dtype. The scores that are handed back
+        # are cast to float32 after the ordering is fixed, so the returned dtype is unchanged.
+        pred_scores_np: np.ndarray[Any, np.dtype[np.floating[Any]]] | None = None
         if iou_type == "bbox" and pred_count:
-            pred_scores_np = np.asarray(pred_scores.detach().float().cpu().numpy(), dtype=np.float32)
+            pred_scores_cpu = pred_scores.detach().cpu()
+            if pred_scores_cpu.dtype == torch.bfloat16:
+                pred_scores_cpu = pred_scores_cpu.float()
+            pred_scores_np = pred_scores_cpu.numpy()
         if iou_type == "bbox" and pred_count and gt_count:
             # One image-wide GPU IoU operation and one matrix transfer replace the
             # class-local launches/transfers. Host slicing below retains class isolation.
@@ -296,7 +313,7 @@ def build_matching_data(
                 assert bbox_iou_matrix_np is not None
                 order = np.argsort(-p_scores_np, kind="stable")
                 scores_np, matches_np, ignore_np, total_gt = _match_sorted_iou_matrix(
-                    p_scores_np[order],
+                    p_scores_np[order].astype(np.float32, copy=False),
                     bbox_iou_matrix_np[np.ix_(pred_indices[order], gt_indices)],
                     gt_crowd_np[gt_indices],
                     iou_threshold,

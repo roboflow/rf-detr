@@ -279,6 +279,49 @@ class TestMatchSingleClass:
 # build_matching_data
 # ---------------------------------------------------------------------------
 
+# Geometry whose greedy matching outcome depends on the order the two detections are ranked in.
+# The two GTs overlap; the narrow detection can only reach the first, the wide one can reach either:
+#
+#     IoU(narrow, GT-A) = 0.700    IoU(narrow, GT-B) = 0.133
+#     IoU(wide,   GT-A) = 0.667    IoU(wide,   GT-B) = 0.538
+#
+# Ranking the narrow detection first yields two TPs (it claims GT-A, the wide one falls back to
+# GT-B); ranking the wide one first yields one (it claims GT-A, and GT-B is out of the narrow
+# detection's reach).
+_ORDER_SENSITIVE_GT_BOXES = [[0, 0, 100, 10], [50, 0, 150, 10]]
+_NARROW_PRED_BOX = [0, 0, 70, 10]
+_WIDE_PRED_BOX = [20, 0, 120, 10]
+# Padding that overlaps neither GT, so it cannot change the outcome, and pushes the detection count
+# past the ~32-element cutoff above which torch's default (unstable) sort permutes tied scores.
+_FILLER_PRED_BOX = [200, 0, 210, 10]
+_NUM_FILLER_PREDS = 38
+_ORDER_SENSITIVE_MASK_SIZE = (10, 210)
+
+
+def _masks_from_boxes(boxes: list[list[float]], height: int, width: int) -> torch.Tensor:
+    """Rasterise integer-aligned xyxy boxes into a boolean mask stack.
+
+    Lets the ``iou_type="segm"`` path be driven by the same geometry as the ``"bbox"`` path: for
+    integer-aligned boxes the pixel-count mask IoU equals the box-area IoU exactly, so both paths
+    see the same IoU matrix and any difference in the result comes from the ranking alone.
+
+    Args:
+        boxes: Rows of ``[x1, y1, x2, y2]`` in pixel coordinates.
+        height: Height of each rasterised mask.
+        width: Width of each rasterised mask.
+
+    Returns:
+        Boolean tensor of shape ``[len(boxes), height, width]``.
+
+    Examples:
+        >>> _masks_from_boxes([[0, 0, 2, 1]], height=1, width=4).int().tolist()
+        [[[1, 1, 0, 0]]]
+    """
+    masks = torch.zeros(len(boxes), height, width, dtype=torch.bool)
+    for index, (x1, y1, x2, y2) in enumerate(boxes):
+        masks[index, int(y1) : int(y2), int(x1) : int(x2)] = True
+    return masks
+
 
 class TestBuildMatchingData:
     """Unit tests for build_matching_data()."""
@@ -289,10 +332,11 @@ class TestBuildMatchingData:
         scores: list,
         labels: list,
         masks: torch.Tensor | None = None,
+        scores_dtype: torch.dtype = torch.float32,
     ) -> dict[str, torch.Tensor]:
         d: dict[str, torch.Tensor] = {
             "boxes": torch.tensor(boxes, dtype=torch.float32).reshape(-1, 4),
-            "scores": torch.tensor(scores, dtype=torch.float32),
+            "scores": torch.tensor(scores, dtype=scores_dtype),
             "labels": torch.tensor(labels, dtype=torch.int64),
         }
         if masks is not None:
@@ -384,6 +428,59 @@ class TestBuildMatchingData:
         np.testing.assert_array_equal(result[1]["matches"], [0])
         assert result[0]["total_gt"] == 1
         assert result[1]["total_gt"] == 1
+
+    @pytest.mark.parametrize("iou_type", [pytest.param("bbox", id="bbox"), pytest.param("segm", id="segm")])
+    def test_tied_scores_are_ranked_in_input_order_on_both_iou_types(self, iou_type: str) -> None:
+        """Detections tied on score are ranked in input order on the bbox path and the segm path alike.
+
+        The two paths ran through one matcher before the per-image IoU matrix was introduced, so
+        they broke ties identically; they must still agree afterwards. This is the scenario that
+        makes a divergence visible: 40 same-class detections, the two order-sensitive ones tied at
+        0.5 and the padding scoring above them, which places the tie group where ``torch.argsort``'s
+        default unstable sort reverses it and ``np.argsort(kind="stable")`` does not. Ranked in
+        input order the narrow detection claims GT-A and the wide one falls back to GT-B; reversed,
+        the wide detection takes GT-A and the narrow one is left with a GT it cannot reach.
+        """
+        boxes = [_NARROW_PRED_BOX, _WIDE_PRED_BOX, *([_FILLER_PRED_BOX] * _NUM_FILLER_PREDS)]
+        scores = [0.5, 0.5, *([0.9] * _NUM_FILLER_PREDS)]
+        pred = self._make_pred(
+            boxes,
+            scores,
+            [0] * len(scores),
+            masks=_masks_from_boxes(boxes, *_ORDER_SENSITIVE_MASK_SIZE),
+        )
+        target = self._make_target(
+            _ORDER_SENSITIVE_GT_BOXES,
+            [0, 0],
+            masks=_masks_from_boxes(_ORDER_SENSITIVE_GT_BOXES, *_ORDER_SENSITIVE_MASK_SIZE),
+        )
+
+        result = build_matching_data([pred], [target], iou_type=iou_type)
+
+        # Output is in descending-score order, so the higher-scoring padding comes first.
+        np.testing.assert_array_equal(result[0]["matches"], [0] * _NUM_FILLER_PREDS + [1, 1])
+        assert result[0]["total_gt"] == 2
+
+    def test_near_tied_float64_scores_are_ranked_at_full_precision(self) -> None:
+        """Float64 scores that collapse onto one float32 value still rank by their full precision.
+
+        ``0.50000001`` and ``0.50000002`` are distinct in float64 and the same number in float32, so
+        casting to float32 before the ranking hands greedy priority to whichever detection came
+        first in the input instead of to the higher-scoring one. Here the wide detection is first in
+        the input but scores lower: ranked at full precision the narrow detection claims GT-A and
+        the wide one falls back to GT-B, while a collapsed ranking gives GT-A to the wide detection
+        and leaves the narrow one nothing to match. The returned scores stay float32 either way —
+        only the ordering is allowed to see the caller's dtype.
+        """
+        boxes = [_WIDE_PRED_BOX, _NARROW_PRED_BOX, *([_FILLER_PRED_BOX] * _NUM_FILLER_PREDS)]
+        scores = [0.50000001, 0.50000002, *([0.5] * _NUM_FILLER_PREDS)]
+        pred = self._make_pred(boxes, scores, [0] * len(scores), scores_dtype=torch.float64)
+        target = self._make_target(_ORDER_SENSITIVE_GT_BOXES, [0, 0])
+
+        result = build_matching_data([pred], [target])
+
+        np.testing.assert_array_equal(result[0]["matches"], [1, 1, *([0] * _NUM_FILLER_PREDS)])
+        assert result[0]["scores"].dtype == np.float32
 
     def test_multi_image_batch_accumulates(self) -> None:
         """Two-image batch must concatenate scores and sum total_gt."""
