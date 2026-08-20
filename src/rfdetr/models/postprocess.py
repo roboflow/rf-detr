@@ -263,6 +263,9 @@ class PostProcess(nn.Module):
             ``upsample_masks_to_image_size``.
         """
         results = []
+        # Read every resize target in one device-to-host synchronization. Calling
+        # target_sizes[i].tolist() inside the loop forces a separate CUDA sync per image.
+        target_sizes_list = target_sizes.tolist() if upsample_masks_to_image_size and out_masks.shape[0] else []
         for i in range(out_masks.shape[0]):
             scores_i, labels_i, boxes_i, k_idx = scores[i], labels[i], boxes[i], topk_boxes[i]
             if score_threshold is not None:
@@ -280,7 +283,7 @@ class PostProcess(nn.Module):
                 res_i["masks"] = (masks_i > 0.0).unsqueeze(1)  # [K,1,Hm,Wm] bool, native resolution
                 results.append(res_i)
                 continue
-            h, w = target_sizes[i].tolist()
+            h, w = target_sizes_list[i]
             # Upsample in chunks and threshold *inside* the comprehension so only one float32 chunk
             # is live at a time; the accumulated list holds bool tensors (1 byte/pixel vs 4 for float32).
             # At K=300, 1080p this reduces peak memory from ~5 GB to ~1.5 GB vs a single F.interpolate
