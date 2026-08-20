@@ -14,6 +14,11 @@ crossover.
 Backend selection is deliberately *not* re-implemented here: the dependency owns that policy (its Triton CUDA kernel on
 Linux NVIDIA compute capability >= 8.0 with Torch >= 2.4, SciPy on everything else) and falls back internally, so this
 module is device-agnostic and its results are identical everywhere.
+
+``torch_linear_assignment`` ships in the ``train`` extra, and it is imported inside :func:`assign_many_bucketed` rather
+than at module scope: ``rfdetr.models`` imports ``criterion`` -> ``matcher`` -> this module, so a module-scope import
+would make a plain ``import rfdetr`` fail on an inference-only install that has no reason to solve an assignment problem
+at all.
 """
 
 from __future__ import annotations
@@ -22,10 +27,6 @@ from collections import defaultdict
 
 import torch
 from torch import Tensor
-from torch_linear_assignment import (  # type: ignore[import-untyped,unused-ignore]
-    assignment_to_indices,
-    batch_linear_assignment,
-)
 
 
 def assign_many_bucketed(
@@ -64,7 +65,16 @@ def assign_many_bucketed(
 
     Raises:
         ValueError: If ``num_queries`` is not evenly divisible by ``group_detr``.
+        ModuleNotFoundError: If ``torch_linear_assignment`` is missing, which means an install
+            without the ``train`` extra reached a training-only code path.
     """
+    # Optional-dependency boundary: see the module docstring -- importing this at module scope would
+    # break `import rfdetr` for inference-only installs, which never reach this function.
+    from torch_linear_assignment import (  # type: ignore[import-untyped,unused-ignore]
+        assignment_to_indices,
+        batch_linear_assignment,
+    )
+
     # Query counts may differ between layers (`_match_many` accepts that), so each layer carries its
     # own group width rather than inheriting the first layer's.
     group_widths: list[int] = []
