@@ -259,7 +259,10 @@ def _unmatched_contribution(
         all-zero matches, all-False ignore flags, and a ``total_gt`` of 0.
     """
     n = len(scores_np)
-    order = np.argsort(-scores_np)
+    # kind="stable" costs nothing here — every match is 0 and every ignore is False regardless of
+    # tie order, since there is no GT to match against — but it keeps this the only unstable sort
+    # site in the file, instead of a silent third tie-break convention alongside the other two.
+    order = np.argsort(-scores_np, kind="stable")
     return (
         scores_np[order].astype(np.float32, copy=False),
         np.zeros(n, dtype=np.int64),
