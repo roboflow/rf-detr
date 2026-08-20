@@ -797,8 +797,11 @@ class COCOEvalCallback(Callback):
         f1_overall, f1_by_cid = self._compute_and_log_f1_metrics(trainer, pl_module, split, f1_local)
         overall.update(f1_overall)
 
-        # torchmetrics returns `classes` as a 0-d scalar when only one class is
-        # present in the batch.  Ensure it is always 1-d before iterating.
+        # Defensive normalization, not currently triggered: OnePassCocoMeanAveragePrecision.compute()
+        # (coco_map.py) always returns `classes` and `*_per_class` as 1-d tensors, even for a single
+        # class (`torch.tensor([id])` / `torch.full((1,), ...)`), so this branch is dead against the
+        # installed torchmetrics 1.8.2 adapter today. Kept as a guard in case that invariant ever
+        # changes; ensure it is always 1-d before iterating.
         if "classes" in metrics and metrics["classes"].ndim == 0:
             metrics = dict(metrics)
             metrics["classes"] = metrics["classes"].unsqueeze(0)

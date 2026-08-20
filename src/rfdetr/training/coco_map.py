@@ -19,7 +19,11 @@ Usage:
     ``merge_distributed_state`` at rank-symmetric callback sites, then call ``compute``.
 Outputs:
     Return the same aggregate, per-class, and class-ID tensor keys consumed from TorchMetrics by RF-DETR. Evaluator
-    precision, recall, score, and IoU arrays are reduced immediately and are never returned or retained.
+    precision, recall, score, and IoU arrays are reduced immediately and are never returned or retained. One
+    deliberate divergence: when an IoU type has no images this pass, :meth:`compute` still emits
+    ``*_per_class`` sentinel keys (see :meth:`OnePassCocoMeanAveragePrecision._per_class_sentinels`), whereas
+    stock TorchMetrics omits them for that branch; this direction is safe for RF-DETR's callback (it always
+    expects the per-class keys to exist) but is not covered by parity tests against upstream for that path.
 Failure:
     Reject extended summaries, alternative backends, micro averaging, implicit distributed synchronization, and any
     installed TorchMetrics private layout that differs from the verified contract. These failures are intentional and
@@ -232,6 +236,8 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
                             12 * [-1.0], prefix=prefix, max_detection_thresholds=self.max_detection_thresholds
                         )
                     )
+                    # Divergence from stock TorchMetrics (module docstring's Outputs section): stock omits
+                    # *_per_class keys on this empty-images branch, but the callback always expects them.
                     result.update(self._per_class_sentinels(prefix, classes))
                     continue
 
