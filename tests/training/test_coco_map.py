@@ -169,6 +169,67 @@ def test_bbox_and_segmentation_results_match_torchmetrics() -> None:
             torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=1e-4, atol=1e-6)
 
 
+def test_adapter_matches_torchmetrics_on_nontrivial_multiclass_multiimage_data() -> None:
+    """One-pass extraction must match stock TorchMetrics when every compared value is not a trivial 1.0/0.0/-1.0.
+
+    ``test_bbox_and_segmentation_results_match_torchmetrics`` above uses one image, one class, one perfect
+    match — every compared value collapses to a degenerate sentinel, so an axis-order slip or class-permutation
+    bug in the adapter's one-pass reduction would still pass. This fixture spans three images and three
+    non-contiguous classes with a partial-overlap match, a missed detection, and a false positive, so per-class
+    AP/AR values are genuinely fractional and a reduction bug has real values to disagree on.
+    """
+    predictions = [
+        {
+            # Image 1: class 3 is a perfect match; class 17's IoU = 64 / (100 + 64 - 64) = 0.64 -- a
+            # partial, not perfect, match.
+            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 28.0, 28.0]]),
+            "scores": torch.tensor([0.9, 0.8]),
+            "labels": torch.tensor([3, 17]),
+        },
+        {
+            # Image 2: false positive -- class 42 has no ground truth anywhere in this fixture.
+            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
+            "scores": torch.tensor([0.95]),
+            "labels": torch.tensor([42]),
+        },
+        {
+            # Image 3: class 17's true positive plus an extra false-positive detection for the same class.
+            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [50.0, 50.0, 60.0, 60.0]]),
+            "scores": torch.tensor([0.6, 0.4]),
+            "labels": torch.tensor([17, 17]),
+        },
+    ]
+    targets = [
+        {
+            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 30.0, 30.0]]),
+            "labels": torch.tensor([3, 17]),
+        },
+        # Image 2: missed detection -- class 3 has ground truth here but no matching prediction.
+        {"boxes": torch.tensor([[5.0, 5.0, 15.0, 15.0]]), "labels": torch.tensor([3])},
+        {"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([17])},
+    ]
+    kwargs = {"class_metrics": True, "backend": "faster_coco_eval", "sync_on_compute": False}
+    expected_metric = MeanAveragePrecision(**kwargs)
+    actual_metric = OnePassCocoMeanAveragePrecision(**kwargs)
+    expected_metric.update(predictions, targets)
+    actual_metric.update(predictions, targets)
+
+    expected = expected_metric.compute()
+    actual = actual_metric.compute()
+
+    assert actual.keys() == expected.keys()
+    # Guard the fixture itself: if every per-class value below were 1.0/0.0/-1.0, this test would be as
+    # degenerate as the one it complements, and an axis-order bug could still slip through undetected.
+    assert set(expected["map_per_class"].tolist()) - {-1.0, 0.0, 1.0}, (
+        "fixture produced only degenerate per-class values; strengthen it before trusting this parity check"
+    )
+    for key in actual:
+        if key == "classes":
+            assert torch.equal(actual[key].reshape(-1), expected[key].reshape(-1))
+        else:
+            torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=1e-4, atol=1e-6)
+
+
 def test_empty_predictions_preserve_zero_recall() -> None:
     """A class with ground truth but no predictions must report zero AP/AR instead of a missing-value sentinel."""
     metric = OnePassCocoMeanAveragePrecision(class_metrics=True)
