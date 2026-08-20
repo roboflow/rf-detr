@@ -323,9 +323,56 @@ class TestTrainConfigT42PromotedFields:
         """ema_update_interval defaults to 1 (update every step)."""
         assert self._tc(tmp_path).ema_update_interval == 1
 
-    def test_compute_val_loss_default_is_true(self, tmp_path):
-        """compute_val_loss defaults to True."""
-        assert self._tc(tmp_path).compute_val_loss is True
+    def test_compute_val_loss_default_is_auto(self, tmp_path):
+        """compute_val_loss defaults to the automatic validation-monitor policy."""
+        assert self._tc(tmp_path).compute_val_loss == "auto"
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param(True, id="enabled"),
+            pytest.param(False, id="disabled"),
+            pytest.param("auto", id="automatic"),
+        ],
+    )
+    def test_compute_val_loss_accepts_bool_or_auto(self, tmp_path, value):
+        """compute_val_loss preserves explicit boolean and automatic policies."""
+        assert self._tc(tmp_path, compute_val_loss=value).compute_val_loss == value
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            pytest.param("true", True, id="string-true-coerces-to-True"),
+            pytest.param("false", False, id="string-false-coerces-to-False"),
+            pytest.param("yes", True, id="string-yes-coerces-to-True"),
+            pytest.param("no", False, id="string-no-coerces-to-False"),
+            pytest.param("auto", "auto", id="string-auto-matches-literal"),
+        ],
+    )
+    def test_compute_val_loss_coerces_string_aliases(self, tmp_path, raw, expected):
+        """compute_val_loss silently coerces common string aliases via pydantic's lax bool parsing.
+
+        The bool | Literal["auto"] union tries the bool arm first, so "yes"/"no"/"true"/"false" coerce silently instead
+        of raising; "auto" instead matches the Literal arm unchanged. Pinning this behavior catches a pydantic upgrade
+        that changes union member resolution order.
+        """
+        assert self._tc(tmp_path, compute_val_loss=raw).compute_val_loss == expected
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            pytest.param("Auto", id="capitalized-auto-rejected"),
+            pytest.param("AUTO", id="uppercase-auto-rejected"),
+        ],
+    )
+    def test_compute_val_loss_rejects_case_variant_of_auto(self, tmp_path, raw):
+        """compute_val_loss rejects any casing of 'auto' other than the exact lowercase literal.
+
+        Literal["auto"] is case-strict and these variants don't match the bool arm's alias set either, so pydantic must
+        raise rather than silently normalizing casing.
+        """
+        with pytest.raises(ValidationError):
+            self._tc(tmp_path, compute_val_loss=raw)
 
     def test_compute_test_loss_default_is_true(self, tmp_path):
         """compute_test_loss defaults to True."""
@@ -543,6 +590,16 @@ class TestTrainConfigLRScheduler:
         """A dotted import path is accepted verbatim as an explicit scheduler."""
         tc = self._tc(tmp_path, lr_scheduler="torch.optim.lr_scheduler.StepLR", lr_scheduler_kwargs={"step_size": 5})
         assert tc.lr_scheduler == "torch.optim.lr_scheduler.StepLR"
+
+    def test_compute_val_loss_false_rejects_plateau_loss_monitor(self, tmp_path):
+        """A plateau scheduler monitoring val/loss cannot disable the metric it requires."""
+        with pytest.raises(ValidationError, match="compute_val_loss=False requires a non-val/loss monitor"):
+            self._tc(
+                tmp_path,
+                compute_val_loss=False,
+                lr_scheduler="torch.optim.lr_scheduler.ReduceLROnPlateau",
+                lr_scheduler_monitor="val/loss",
+            )
 
     def test_callable_class_desugars_to_dotted_path(self, tmp_path):
         """A plain scheduler class desugars to its canonical dotted import path for serialization."""

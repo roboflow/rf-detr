@@ -1083,7 +1083,8 @@ class RFDETR:
 
         Returns:
             Mapping of metric name to value for the evaluated split, e.g. ``{"test/mAP_50_95": ..., "test/mAP_50": ...,
-            "test/F1": ..., "test/AP/<class>": ...}``. Empty when the trainer returns no metrics.
+            "test/F1": ...}``. Per-class keys (``"test/AP/<class>"``) are included only when
+            ``log_per_class_metrics=True`` (default ``False``). Empty when the trainer returns no metrics.
 
         Raises:
             ImportError: If training dependencies are not installed. Install with
