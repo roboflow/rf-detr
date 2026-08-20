@@ -232,36 +232,40 @@ class PostProcess(nn.Module):
                 results.append(res_i)
                 continue
             h, w = target_sizes_list[i]
-            # Write each thresholded interpolation chunk directly into a preallocated destination instead of
-            # building a list of bool chunks for a final torch.cat: the list-plus-cat path keeps every chunk
-            # live and then copies all of them again into the concatenated result, doubling the peak bytes
-            # held for the output itself. At K=300, 1080p the bool output alone is ~622 MB, so that
-            # duplication is material. `new_empty` on a zero-row input (masks_i.shape[0] == 0) already
-            # produces a correctly-shaped empty tensor, so no separate empty-input fallback is needed. The
-            # explicit `del` matters: without it, the *previous* chunk's transient float32 buffer is still
-            # referenced by the loop variable while `F.interpolate` builds the *next* one (Python evaluates
-            # the new value before rebinding the name), so two chunks briefly coexist instead of one — the
-            # same double-buffering this preallocation is meant to avoid, just smaller and inside this loop.
-            # On CUDA this preallocated path's peak is a flat "full output + at most one transient chunk",
-            # while the old path's peak is the larger of a mid-loop moment (partial output + one transient
-            # chunk) and the final torch.cat's full doubling. With few chunks (num_select at or below
-            # 4x _MASK_CHUNK=128, e.g. RFDETRSegNano/Small's default num_select=100 -> 4 chunks) the old path's
-            # mid-loop peak can stay just under this path's flat one, costing a few percent more CUDA memory;
-            # with more chunks (num_select=200+ -> 7+ chunks, measured on an RTX 4060) the old path's
-            # cat-time doubling dominates instead and this path wins decisively. Verified on real hardware
-            # across num_select in {100, 200, 300}; not chunk-size-tuned here since that trades off against
-            # Python loop/kernel-launch overhead in a way this change doesn't otherwise touch.
-            masks_resized = masks_i.new_empty((masks_i.shape[0], 1, int(h), int(w)), dtype=torch.bool)
-            for start in range(0, masks_i.shape[0], _MASK_CHUNK):
-                interpolated = F.interpolate(
-                    masks_i[start : start + _MASK_CHUNK].unsqueeze(1),
-                    size=(int(h), int(w)),
-                    mode="bilinear",
-                    align_corners=False,
-                )
-                torch.gt(interpolated, 0.0, out=masks_resized[start : start + _MASK_CHUNK])
-                del interpolated
-            masks_i = masks_resized  # [K,1,H,W] bool
+            # The list-plus-cat path keeps every bool chunk live and then copies all of them again into the
+            # concatenated result. Preallocation avoids that duplicate output allocation for CPU and larger
+            # CUDA selections. For CUDA selections of at most four chunks, the old path's partial-output peak
+            # is lower than the flat full-output allocation; keep it there to avoid the known low-K regression.
+            # Backends without a verified `out=` implementation use the established path until CI covers it.
+            use_preallocated = masks_i.device.type in {"cpu", "cuda"} and not (
+                masks_i.device.type == "cuda" and masks_i.shape[0] <= 4 * _MASK_CHUNK
+            )
+            if masks_i.shape[0] == 0:
+                masks_i = masks_i.new_empty((0, 1, int(h), int(w)), dtype=torch.bool)
+            elif not use_preallocated:
+                chunks = [
+                    F.interpolate(
+                        masks_i[start : start + _MASK_CHUNK].unsqueeze(1),
+                        size=(int(h), int(w)),
+                        mode="bilinear",
+                        align_corners=False,
+                    )
+                    > 0.0
+                    for start in range(0, masks_i.shape[0], _MASK_CHUNK)
+                ]
+                masks_i = torch.cat(chunks, dim=0)
+            else:
+                masks_resized = masks_i.new_empty((masks_i.shape[0], 1, int(h), int(w)), dtype=torch.bool)
+                for start in range(0, masks_i.shape[0], _MASK_CHUNK):
+                    interpolated = F.interpolate(
+                        masks_i[start : start + _MASK_CHUNK].unsqueeze(1),
+                        size=(int(h), int(w)),
+                        mode="bilinear",
+                        align_corners=False,
+                    )
+                    torch.gt(interpolated, 0.0, out=masks_resized[start : start + _MASK_CHUNK])
+                    del interpolated
+                masks_i = masks_resized  # [K,1,H,W] bool
             res_i["masks"] = masks_i
             results.append(res_i)
         return results

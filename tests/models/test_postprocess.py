@@ -478,7 +478,13 @@ class TestPostProcessMasks:
         previous_chunk_ref = None
         real_interpolate = F.interpolate
 
-        def _tracking_interpolate(*args, **kwargs):
+        def _tracking_interpolate(*args: object, **kwargs: object) -> torch.Tensor:
+            """Track interpolation output and require the previous chunk to be released before the next call.
+
+            Examples:
+                >>> callable(_tracking_interpolate)
+                True
+            """
             nonlocal previous_chunk_ref
             if previous_chunk_ref is not None:
                 assert previous_chunk_ref() is None, (
@@ -497,12 +503,11 @@ class TestPostProcessMasks:
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_upsample_on_cuda_writes_chunks_into_preallocated_result_without_final_cat(self):
-        """Same guarantee as the CPU test above, on CUDA: bit-identical output, torch.cat never runs.
+        """Same guarantee as the CPU test above for larger CUDA selections: bit-identical output, no final cat.
 
-        The preallocated write path is no longer gated to CPU only (verified here and on CPU; MPS/XLA untested) — see
-        CHANGELOG.md for the CUDA memory investigation that ruled out a device-specific fallback.
+        Low-K CUDA selections and unverified backends retain the established list/concat path.
         """
-        num_queries, num_select = 4, 48
+        num_queries, num_select = 4, 160  # Five chunks use the preallocated CUDA branch.
         out_masks = torch.randn(1, num_queries, 8, 8, device="cuda")
         topk_boxes = (torch.arange(num_select) % num_queries).unsqueeze(0).to("cuda")
         scores = torch.rand(1, num_select, device="cuda")
@@ -532,6 +537,62 @@ class TestPostProcessMasks:
             result = PostProcess._postprocess_masks(
                 out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=True
             )[0]["masks"]
+
+        assert torch.equal(result, expected)
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_upsample_on_cuda_uses_legacy_path_for_low_k_memory_regression(self):
+        """Low-K CUDA selections retain the lower-peak list/concat strategy."""
+        num_queries, num_select = 4, 100  # Four chunks cover shipped SegNano/SegSmall defaults.
+        out_masks = torch.randn(1, num_queries, 8, 8, device="cuda")
+        topk_boxes = (torch.arange(num_select) % num_queries).unsqueeze(0).to("cuda")
+        scores = torch.rand(1, num_select, device="cuda")
+        labels = torch.zeros(1, num_select, dtype=torch.long, device="cuda")
+        boxes = torch.zeros(1, num_select, 4, device="cuda")
+        target_sizes = torch.tensor([[64, 64]], device="cuda")
+
+        with patch("torch.cat", wraps=torch.cat) as cat:
+            result = PostProcess._postprocess_masks(
+                out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=True
+            )[0]["masks"]
+
+        assert cat.call_count == 1
+        assert result.shape == (num_select, 1, 64, 64)
+
+    @pytest.mark.xla
+    def test_upsample_on_xla_uses_supported_fallback(self):
+        """XLA exercises mask postprocessing without dispatching the unverified ``out=`` overload."""
+        pytest.importorskip("torch_xla")
+        import torch_xla
+
+        device = torch_xla.device()
+        num_queries, num_select = 4, 48
+        out_masks = torch.randn(1, num_queries, 8, 8, device=device)
+        topk_boxes = (torch.arange(num_select) % num_queries).unsqueeze(0).to(device)
+        scores = torch.rand(1, num_select, device=device)
+        labels = torch.zeros(1, num_select, dtype=torch.long, device=device)
+        boxes = torch.zeros(1, num_select, 4, device=device)
+        target_sizes = torch.tensor([[64, 64]])
+
+        selected = out_masks[0].index_select(0, topk_boxes[0])
+        expected = torch.cat(
+            [
+                F.interpolate(
+                    selected[start : start + postprocess._MASK_CHUNK].unsqueeze(1),
+                    size=(64, 64),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                > 0.0
+                for start in range(0, num_select, postprocess._MASK_CHUNK)
+            ],
+            dim=0,
+        )
+
+        result = PostProcess._postprocess_masks(
+            out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=True
+        )[0]["masks"]
 
         assert torch.equal(result, expected)
 
