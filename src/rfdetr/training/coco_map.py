@@ -31,6 +31,7 @@ Used by:
 from __future__ import annotations
 
 import contextlib
+import inspect
 import io
 from collections.abc import Callable
 from typing import Any, Literal, cast
@@ -58,6 +59,29 @@ _MAP_STATE_ATTRS = (
     "groundtruth_crowds",
     "groundtruth_area",
 )
+# Parameter names `compute()` (coco_map.py) relies on when calling each backend method — by keyword for
+# `average`/`prefix`/`max_detection_thresholds`, by position for the rest. A parameter rename upstream would
+# make those calls a silent TypeError rather than an actionable contract failure without this check.
+_BACKEND_METHOD_PARAMS: dict[str, tuple[str, ...]] = {
+    "_get_coco_datasets": (
+        "groundtruth_labels",
+        "groundtruth_box",
+        "groundtruth_mask",
+        "groundtruth_crowds",
+        "groundtruth_area",
+        "detection_labels",
+        "detection_box",
+        "detection_mask",
+        "detection_scores",
+        "iou_type",
+        "average",
+    ),
+    "_coco_stats_to_tensor_dict": ("stats", "prefix", "max_detection_thresholds"),
+}
+# Evaluator methods compute() calls with no arguments (coco_eval.evaluate() / .accumulate() / .summarize()) — a
+# newly-required parameter upstream would make that call fail at compute() time instead of at construction.
+_EVALUATOR_ZERO_ARG_METHODS = ("evaluate", "accumulate", "summarize")
+_VAR_PARAM_KINDS = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
 
 
 class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
@@ -230,6 +254,27 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         result["classes"] = torch.tensor(classes, dtype=torch.int32)
         return result
 
+    @staticmethod
+    def _mismatched_backend_signatures(backend: Any, present_methods: list[str]) -> list[str]:
+        """Return backend method names missing a parameter this adapter's call sites rely on."""
+        return [
+            name
+            for name in present_methods
+            if not set(_BACKEND_METHOD_PARAMS[name]) <= set(inspect.signature(getattr(backend, name)).parameters)
+        ]
+
+    @staticmethod
+    def _evaluator_methods_now_requiring_args(evaluator_type: Any, present_methods: list[str]) -> list[str]:
+        """Return evaluator method names that now require an argument this adapter never passes."""
+        mismatched = []
+        for name in present_methods:
+            # `evaluator_type` is the backend's evaluator class, not an instance, so the unbound
+            # function's first parameter is `self` — skip it before checking for new required args.
+            params = list(inspect.signature(getattr(evaluator_type, name)).parameters.values())[1:]
+            if any(p.default is inspect.Parameter.empty and p.kind not in _VAR_PARAM_KINDS for p in params):
+                mismatched.append(name)
+        return mismatched
+
     def _validate_private_contract(self) -> None:
         """Fail fast when installed TorchMetrics internals differ from the verified adapter boundary."""
         installed_states = {name for name, default in self._defaults.items() if isinstance(default, list)}
@@ -243,26 +288,46 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             if backend is None
             else [name for name in backend_methods if not callable(getattr(backend, name, None))]
         )
+        present_backend_methods = [name for name in backend_methods if name not in missing_methods]
+        mismatched_signatures = (
+            self._mismatched_backend_signatures(backend, present_backend_methods) if present_backend_methods else []
+        )
         try:
             evaluator_type = backend.cocoeval if backend is not None else None
-        except (AttributeError, TypeError):
+        except (AttributeError, TypeError, ImportError):
+            # `CocoBackend.cocoeval` lazily imports the backend package (e.g. `faster_coco_eval`) and
+            # raises `ModuleNotFoundError` (an `ImportError`) when it is absent; without catching it
+            # here that exception propagates raw instead of the actionable RuntimeError below.
             evaluator_type = None
         missing_evaluator_methods = (
             ["cocoeval"]
             if evaluator_type is None
-            else [
-                name
-                for name in ("evaluate", "accumulate", "summarize")
-                if not callable(getattr(evaluator_type, name, None))
-            ]
+            else [name for name in _EVALUATOR_ZERO_ARG_METHODS if not callable(getattr(evaluator_type, name, None))]
         )
-        if not (missing_states or stale_states or missing_methods or missing_evaluator_methods):
+        present_evaluator_methods = [
+            name for name in _EVALUATOR_ZERO_ARG_METHODS if name not in missing_evaluator_methods
+        ]
+        mismatched_evaluator_signatures = (
+            self._evaluator_methods_now_requiring_args(evaluator_type, present_evaluator_methods)
+            if present_evaluator_methods
+            else []
+        )
+        if not (
+            missing_states
+            or stale_states
+            or missing_methods
+            or missing_evaluator_methods
+            or mismatched_signatures
+            or mismatched_evaluator_signatures
+        ):
             return
         message = (
             "OnePassCocoMeanAveragePrecision is incompatible with installed "
             f"torchmetrics {torchmetrics.__version__}. Missing list states: {missing_states}; "
             f"unexpected list states: {stale_states}; missing backend methods: {missing_methods}; "
-            f"missing evaluator methods: {missing_evaluator_methods}. "
+            f"missing evaluator methods: {missing_evaluator_methods}; "
+            f"backend methods with an incompatible signature: {mismatched_signatures}; "
+            f"evaluator methods now requiring an argument: {mismatched_evaluator_signatures}. "
             "Re-verify rfdetr.training.coco_map before upgrade."
         )
         logger.error(message)

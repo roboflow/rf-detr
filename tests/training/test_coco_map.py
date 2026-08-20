@@ -242,6 +242,92 @@ def test_adapter_rejects_stale_torchmetrics_state_contract() -> None:
         OnePassCocoMeanAveragePrecision()
 
 
+def test_adapter_rejects_backend_method_missing_a_relied_on_parameter() -> None:
+    """Construction must fail when a backend method drops a keyword compute() calls by name.
+
+    Existence-only checks would miss an upstream rename of e.g. ``average``/``prefix`` on the installed backend helpers;
+    the adapter's compute() calls those by keyword, so a silent rename would otherwise surface as a raw TypeError deep
+    inside compute() instead of at construction.
+    """
+    with (
+        patch(
+            "rfdetr.training.coco_map._BACKEND_METHOD_PARAMS",
+            {"_get_coco_datasets": ("not_a_real_parameter",), "_coco_stats_to_tensor_dict": ()},
+        ),
+        pytest.raises(RuntimeError, match="incompatible signature"),
+    ):
+        OnePassCocoMeanAveragePrecision()
+
+
+class TestMismatchedBackendSignatures:
+    """Unit coverage for the two contract-validation static helpers in isolation."""
+
+    def test_flags_a_method_missing_a_relied_on_parameter(self) -> None:
+        """A backend method lacking one of the required parameter names is reported as mismatched."""
+
+        class _Backend:
+            def _get_coco_datasets(self, groundtruth_labels, average) -> None:  # missing most params
+                pass
+
+        backend = _Backend()
+
+        mismatched = OnePassCocoMeanAveragePrecision._mismatched_backend_signatures(backend, ["_get_coco_datasets"])
+
+        assert mismatched == ["_get_coco_datasets"]
+
+    def test_accepts_a_method_with_every_relied_on_parameter(self) -> None:
+        """A backend method whose signature is a superset of the required names is not flagged."""
+
+        class _Backend:
+            def _coco_stats_to_tensor_dict(self, stats, prefix, max_detection_thresholds, extra=None) -> None:
+                pass
+
+        backend = _Backend()
+
+        mismatched = OnePassCocoMeanAveragePrecision._mismatched_backend_signatures(
+            backend, ["_coco_stats_to_tensor_dict"]
+        )
+
+        assert mismatched == []
+
+
+class TestEvaluatorMethodsNowRequiringArgs:
+    """Unit coverage for the evaluator zero-arg-method regression check."""
+
+    def test_flags_a_method_that_gained_a_required_argument(self) -> None:
+        """A previously zero-arg evaluator method that now requires an argument is reported."""
+
+        class _Evaluator:
+            def evaluate(self, threshold) -> None:
+                pass
+
+        mismatched = OnePassCocoMeanAveragePrecision._evaluator_methods_now_requiring_args(_Evaluator, ["evaluate"])
+
+        assert mismatched == ["evaluate"]
+
+    def test_accepts_a_method_that_stayed_zero_arg(self) -> None:
+        """An evaluator method still callable with no arguments is not flagged."""
+
+        class _Evaluator:
+            def evaluate(self) -> None:
+                pass
+
+        mismatched = OnePassCocoMeanAveragePrecision._evaluator_methods_now_requiring_args(_Evaluator, ["evaluate"])
+
+        assert mismatched == []
+
+    def test_accepts_a_method_whose_new_argument_has_a_default(self) -> None:
+        """A new parameter with a default value does not break zero-argument calls."""
+
+        class _Evaluator:
+            def evaluate(self, threshold=0.5) -> None:
+                pass
+
+        mismatched = OnePassCocoMeanAveragePrecision._evaluator_methods_now_requiring_args(_Evaluator, ["evaluate"])
+
+        assert mismatched == []
+
+
 def test_crowd_annotations_do_not_reduce_class_metrics() -> None:
     """A detection matched to crowd ground truth must remain ignored while the non-crowd match stays perfect."""
     metric = OnePassCocoMeanAveragePrecision(class_metrics=True)
