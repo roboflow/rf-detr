@@ -2234,6 +2234,87 @@ class TestEmaCollectiveSymmetry:
         mock_all_reduce.assert_called_once()
 
 
+class TestMapCollectiveSymmetry:
+    """DDP-deadlock fix: the base/train mAP path's has_updates gate must be a collective vote.
+
+    Unlike ``_should_compute_ema``'s unanimous ``all_reduce(MIN)`` (skip whenever any rank is empty), this path votes
+    ``all_reduce(MAX)``: a rank with no local updates must still enter ``merge_distributed_state()`` when a peer has
+    data, or the ranks diverge on which collectives they issue next and deadlock validation.
+    """
+
+    def test_any_rank_has_updates_false_without_distributed(self) -> None:
+        """No distributed group and no local updates: the vote is False."""
+        cb = COCOEvalCallback()
+        metric = MagicMock(name="map_metric")
+        metric.has_updates = False
+
+        assert cb._any_rank_has_updates(metric, _cpu_module()) is False
+
+    def test_any_rank_has_updates_true_without_distributed(self) -> None:
+        """No distributed group and local updates present: the vote is True."""
+        cb = COCOEvalCallback()
+        metric = MagicMock(name="map_metric")
+        metric.has_updates = True
+
+        assert cb._any_rank_has_updates(metric, _cpu_module()) is True
+
+    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
+    @patch("rfdetr.training.callbacks.coco_eval.dist.all_reduce")
+    def test_max_vote_true_when_a_peer_has_updates(self, mock_all_reduce, _mock_init) -> None:
+        """A locally-empty rank still votes True when the MAX reduction surfaces a peer's update."""
+
+        def _peer_voted_one(flag, op=None):  # simulate a peer rank with data
+            flag.fill_(1)
+
+        mock_all_reduce.side_effect = _peer_voted_one
+        cb = COCOEvalCallback()
+        metric = MagicMock(name="map_metric")
+        metric.has_updates = False
+
+        assert cb._any_rank_has_updates(metric, _cpu_module()) is True
+        assert mock_all_reduce.call_args.kwargs["op"] is torch.distributed.ReduceOp.MAX
+
+    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
+    @patch("rfdetr.training.callbacks.coco_eval.dist.all_reduce")
+    def test_max_vote_false_when_no_rank_has_updates(self, mock_all_reduce, _mock_init) -> None:
+        """When every rank is empty (MAX reduction leaves the vote at 0), the gate returns False."""
+        mock_all_reduce.side_effect = lambda flag, op=None: None  # vote tensor stays [0]
+        cb = COCOEvalCallback()
+        metric = MagicMock(name="map_metric")
+        metric.has_updates = False
+
+        assert cb._any_rank_has_updates(metric, _cpu_module()) is False
+
+    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
+    @patch("rfdetr.training.callbacks.coco_eval.dist.all_reduce")
+    def test_compute_and_log_enters_merge_when_only_a_peer_has_updates(self, mock_all_reduce, _mock_init) -> None:
+        """A locally-empty rank still calls merge_distributed_state(), staying symmetric with its peer.
+
+        Reproduces the deadlock scenario directly at the callback level: rank 0 has no local
+        updates but a peer does. Before the fix, this rank took the early-return path and never
+        issued ``merge_distributed_state()``'s collectives while its peer did — desynchronising the
+        DDP collective sequence. After the fix, the collective vote makes both ranks agree to merge.
+        """
+
+        def _peer_has_map_updates_only(flag, op=None):
+            # A peer has base mAP data (MAX vote → 1) but no EMA data (MIN vote stays at local 0),
+            # isolating the has_updates gate under test from the unrelated EMA collective this
+            # code path also issues for split="val".
+            if op is torch.distributed.ReduceOp.MAX:
+                flag.fill_(1)
+
+        mock_all_reduce.side_effect = _peer_has_map_updates_only
+        cb = COCOEvalCallback(max_dets=500)
+        cb.setup(_make_trainer(), _cpu_module(), stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.has_updates = False
+        cb.map_metric.compute.return_value = _minimal_metrics()
+
+        cb._compute_and_log(_make_trainer(), _cpu_module(), "val")
+
+        cb.map_metric.merge_distributed_state.assert_called_once()
+
+
 class TestOnTestEpochStart:
     """on_test_epoch_start resets _ema_has_updates before test to prevent stale val state."""
 

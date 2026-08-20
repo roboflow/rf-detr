@@ -663,6 +663,34 @@ class COCOEvalCallback(Callback):
         trainer.callback_metrics[f"{split}/recall"] = torch.tensor(overall["Recall"])
         return overall, f1_by_cid
 
+    def _any_rank_has_updates(self, metric: Any, pl_module: Any) -> bool:
+        """Vote — identically on every rank — whether *any* rank has updates for *metric*.
+
+        ``metric.has_updates`` only reflects local per-rank state; branching on it directly lets ranks
+        diverge on whether they enter ``merge_distributed_state()``'s ``all_gather`` collectives next,
+        desynchronising the DDP collective sequence and deadlocking validation. This makes the decision
+        collectively instead. Unlike ``_should_compute_ema``'s ``all_reduce(MIN)`` (unanimous — skip
+        whenever any rank is empty, intentionally conservative to avoid discarding EMA state on an
+        uneven epoch), this uses ``all_reduce(MAX)``: the base/train mAP path must not silently drop a
+        populated rank's data just because a sibling rank's shard was empty, so any single rank voting 1
+        makes every rank enter the merge (``merge_distributed_state()`` treats an empty local shard as a
+        no-op contribution to the gather).
+
+        Args:
+            metric: The mAP accumulator to check (``self.map_metric`` or a split-specific variant).
+            pl_module: The LightningModule (provides the device for the reduction).
+
+        Returns:
+            ``True`` iff at least one rank accumulated updates this epoch, making it safe — and
+            necessary — for every rank to enter ``merge_distributed_state()`` identically.
+        """
+        vote = 1 if metric.has_updates else 0
+        if is_dist_avail_and_initialized():
+            flag = torch.tensor([vote], device=getattr(pl_module, "device", "cpu"))
+            dist.all_reduce(flag, op=dist.ReduceOp.MAX)
+            vote = int(flag.item())
+        return bool(vote)
+
     def _compute_and_log(self, trainer: Any, pl_module: Any, split: str, *, metric: Any | None = None) -> None:
         """Shared epoch-end logic for validation and test evaluation loops.
 
@@ -684,7 +712,7 @@ class COCOEvalCallback(Callback):
         # use it to log the EMA-only track under `eval_ema_only` (#1285).
         pfx = "bbox_" if self._use_segm_metrics else ""
         mar_key = f"{pfx}mar_{self._max_dets}"
-        if not metric.has_updates:
+        if not self._any_rank_has_updates(metric, pl_module):
             metric.reset()
             self._reset_keypoint_split(split)
             # Under `eval_ema_only`, on_validation_batch_end routes every prediction to
@@ -724,7 +752,8 @@ class COCOEvalCallback(Callback):
 
         # Merge per-rank state across ranks ourselves (DDP-safe, fixed-shape gather) before the
         # metric computes locally — replaces torchmetrics' deadlock-prone internal sync. No-op when
-        # not distributed. Called unconditionally on every rank, so the collectives stay symmetric.
+        # not distributed. Every rank reaches this call once the vote above agrees at least one rank
+        # has updates, so the collectives stay symmetric even on a rank whose own shard was empty.
         metric.merge_distributed_state()
         metrics = self._compute_map_metric(trainer, metric)
 
