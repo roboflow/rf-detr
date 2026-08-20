@@ -211,6 +211,9 @@ class PostProcess(nn.Module):
             ``upsample_masks_to_image_size``.
         """
         results = []
+        # Read every resize target in one device-to-host synchronization. Calling
+        # target_sizes[i].tolist() inside the loop forces a separate CUDA sync per image.
+        target_sizes_list = target_sizes.tolist() if upsample_masks_to_image_size and out_masks.shape[0] else []
         for i in range(out_masks.shape[0]):
             scores_i, labels_i, boxes_i, k_idx = scores[i], labels[i], boxes[i], topk_boxes[i]
             if score_threshold is not None:
@@ -228,24 +231,41 @@ class PostProcess(nn.Module):
                 res_i["masks"] = (masks_i > 0.0).unsqueeze(1)  # [K,1,Hm,Wm] bool, native resolution
                 results.append(res_i)
                 continue
-            h, w = target_sizes[i].tolist()
-            # Upsample in chunks and threshold *inside* the comprehension so only one float32 chunk
-            # is live at a time; the accumulated list holds bool tensors (1 byte/pixel vs 4 for float32).
-            # At K=300, 1080p this reduces peak memory from ~5 GB to ~1.5 GB vs a single F.interpolate
-            # call that would allocate the full [K,1,H,W] float tensor followed by a bool copy.
-            chunks = [
-                F.interpolate(
-                    masks_i[start : start + _MASK_CHUNK].unsqueeze(1),
-                    size=(int(h), int(w)),
-                    mode="bilinear",
-                    align_corners=False,
-                )
-                > 0.0
-                for start in range(0, masks_i.shape[0], _MASK_CHUNK)
-            ]
-            masks_i = (
-                torch.cat(chunks, dim=0) if chunks else masks_i.new_zeros((0, 1, int(h), int(w)), dtype=torch.bool)
-            )  # [K,1,H,W] bool
+            h, w = target_sizes_list[i]
+            # The list-plus-cat path keeps every bool chunk live and then copies all of them again into the
+            # concatenated result. Preallocation avoids that duplicate output allocation for CPU and larger
+            # CUDA selections. For CUDA selections of at most four chunks, the old path's partial-output peak
+            # is lower than the flat full-output allocation; keep it there to avoid the known low-K regression.
+            # Backends without a verified `out=` implementation use the established path until CI covers it.
+            use_preallocated = masks_i.device.type in {"cpu", "cuda"} and not (
+                masks_i.device.type == "cuda" and masks_i.shape[0] <= 4 * _MASK_CHUNK
+            )
+            if masks_i.shape[0] == 0:
+                masks_i = masks_i.new_empty((0, 1, int(h), int(w)), dtype=torch.bool)
+            elif not use_preallocated:
+                chunks = [
+                    F.interpolate(
+                        masks_i[start : start + _MASK_CHUNK].unsqueeze(1),
+                        size=(int(h), int(w)),
+                        mode="bilinear",
+                        align_corners=False,
+                    )
+                    > 0.0
+                    for start in range(0, masks_i.shape[0], _MASK_CHUNK)
+                ]
+                masks_i = torch.cat(chunks, dim=0)
+            else:
+                masks_resized = masks_i.new_empty((masks_i.shape[0], 1, int(h), int(w)), dtype=torch.bool)
+                for start in range(0, masks_i.shape[0], _MASK_CHUNK):
+                    interpolated = F.interpolate(
+                        masks_i[start : start + _MASK_CHUNK].unsqueeze(1),
+                        size=(int(h), int(w)),
+                        mode="bilinear",
+                        align_corners=False,
+                    )
+                    torch.gt(interpolated, 0.0, out=masks_resized[start : start + _MASK_CHUNK])
+                    del interpolated
+                masks_i = masks_resized  # [K,1,H,W] bool
             res_i["masks"] = masks_i
             results.append(res_i)
         return results
