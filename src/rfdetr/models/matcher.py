@@ -44,12 +44,6 @@ _FOCAL_LOSS_GAMMA = 2.0
 #: NVIDIA L4 (plan-native-linear-assignment.md, M2 results): stacking wins 1.45-5.8x up to ~312K
 #: elements but regresses to 0.79-1.03x from ~468K, so the budget sits between those points.
 _STACKED_COST_ELEMENT_LIMIT = 350_000
-#: Minimum ``len(sizes) * group_detr`` problem count under which ``forward``'s single-layer compact
-#: path solves on the host instead of handing the device-resident matrix to the batched solver.
-#: Calibrated to the SciPy/GPU crossover measured in the M2 spike (~50 problems on an NVIDIA L4;
-#: plan-native-linear-assignment.md, M2 results) — a single layer alone (unlike ``_match_many``,
-#: which buckets every layer of a step together) is often below that crossover.
-_BATCHED_ASSIGNMENT_MIN_PROBLEMS = 50
 _LinearSumAssignment = Callable[[Any], tuple[NDArray[np.int64], NDArray[np.int64]]]
 linear_sum_assignment = cast(_LinearSumAssignment, _linear_sum_assignment)
 
@@ -619,7 +613,13 @@ class HungarianMatcher(nn.Module):
         # The single synchronization for the whole batch.
         if not bool(torch.stack(safety_flags).all()):
             return None
-        return _assignment.assign_many_bucketed(cost_matrices, sizes, group_detr)
+        # Same device-based solver choice as `forward`: on CUDA the batched solver wins by a wide
+        # margin at this path's problem counts (layers x batch x groups), while off CUDA it resolves
+        # to the same SciPy solve behind extra bookkeeping, so the host loop stays faster. Moving to
+        # the host also keeps MPS working, since SciPy cannot read a tensor that is not on the host.
+        if reference_boxes.is_cuda:
+            return _assignment.assign_many_bucketed(cost_matrices, sizes, group_detr)
+        return [self._assign_compact_cost_matrix(cost_matrix.cpu(), sizes, group_detr) for cost_matrix in cost_matrices]
 
     @staticmethod
     def _assign_compact_cost_matrix(
@@ -713,16 +713,17 @@ class HungarianMatcher(nn.Module):
         )
         if compact_eligible:
             sizes = [len(target["boxes"]) for target in targets]
-            # A single layer alone (unlike `_match_many`, which buckets every layer of a step
-            # together) often sits below the measured SciPy/GPU crossover, so the batched solver is
-            # only worth its launch overhead here once this one layer supplies enough problems by
-            # itself (see `_BATCHED_ASSIGNMENT_MIN_PROBLEMS`); below that, solve on the host as before.
-            solve_on_device = len(sizes) * group_detr >= _BATCHED_ASSIGNMENT_MIN_PROBLEMS
             compact_cost_matrix = self._compute_compact_detection_cost_matrix(outputs, targets).float()
-            if not solve_on_device:
+            # Solver choice is by device, not by problem count: the batched solver's Triton kernel
+            # beats SciPy on CUDA from roughly 16 problems upward, and this path's smallest real
+            # batch already supplies `len(sizes) * group_detr` >= 26 with the default `group_detr`.
+            # Off CUDA the same call resolves to SciPy anyway, only behind extra stacking and
+            # gather bookkeeping, so the host solve stays faster there. The move to host also keeps
+            # MPS working, since SciPy cannot read a tensor that is not on the host.
+            if not compact_cost_matrix.is_cuda:
                 compact_cost_matrix = compact_cost_matrix.cpu()
             if torch.isfinite(compact_cost_matrix).all():
-                if solve_on_device:
+                if compact_cost_matrix.is_cuda:
                     return _assignment.assign_many_bucketed([compact_cost_matrix], sizes, group_detr)[0]
                 return self._assign_compact_cost_matrix(compact_cost_matrix, sizes, group_detr)
             # Weighted costs overflowed despite finite, bounded inputs (e.g. an extreme cost

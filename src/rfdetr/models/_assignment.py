@@ -38,10 +38,12 @@ def assign_many_bucketed(
 
     Buckets every ``(layer, group, image)`` problem by its real target count (``sizes[image]``)
     across *all* layers at once, since every layer sharing one call has the same ``targets`` and
-    therefore the same ``sizes``. Bucketing across layers instead of solving one layer at a time is
-    what pushes the per-bucket problem count (up to ``len(cost_matrices) * len(sizes) *
-    group_detr``) past the measured SciPy/GPU crossover (~50 problems on an NVIDIA L4); see the plan
-    doc's M3 Item 2 design notes.
+    therefore the same ``sizes``. Bucketing across layers instead of solving one layer at a time
+    raises the per-bucket problem count to as much as ``len(cost_matrices) * len(sizes) *
+    group_detr``, and the solver's advantage grows steeply with it — author-run L4/A100/RTX6000
+    benchmarks put the CUDA kernel around 7x SciPy at 16 problems and 57-71x at 208, from roughly
+    break-even at one. Callers are expected to route only CUDA work here for that reason; see the
+    plan doc's M3 Item 2 design notes.
 
     Examples:
         >>> import torch

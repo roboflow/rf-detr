@@ -67,7 +67,6 @@ train = [
     # .plans/active/plan-native-linear-assignment.md Phase M3 Item 2 for the measurement evidence.
     "torch-linear-assignment>=0.1.0,<0.2.0",
     "roboflow",
-    "rf100vl",
 ]
 augment = [
     "albumentations>=1.4.24,<3.0.0",  # optional custom CPU augmentations

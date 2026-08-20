@@ -2659,9 +2659,9 @@ class TestGpuAssignmentBucketing:
 class TestGpuAssignmentPreservesEstablishedAssignments:
     """Routing the solve through the dependency must not change any assignment the matcher already produced.
 
-    ``_match_many`` now always solves through ``assign_many_bucketed`` instead of staging cost matrices into a pinned
-    host buffer and looping SciPy. The dependency resolves to SciPy on every non-CUDA device, so the results must be
-    identical here — these pin that the replacement is behavior-preserving, not merely working.
+    ``_match_many`` picks its solver by device: the batched dependency on CUDA, the SciPy loop everywhere else. These
+    run on CPU, so they exercise the SciPy branch and pin that dropping the pinned host buffer left the assignments
+    themselves untouched — the reorganisation must be behaviour-preserving, not merely working.
     """
 
     def test_forward_matches_the_full_cartesian_path(self, matcher: HungarianMatcher) -> None:
@@ -2679,8 +2679,8 @@ class TestGpuAssignmentPreservesEstablishedAssignments:
     def test_match_many_matches_per_layer_forward(self, matcher: HungarianMatcher) -> None:
         """Batched multi-layer matching still equals matching each layer on its own.
 
-        This is ``_match_many``'s core invariant and it survived the rewrite from pinned-buffer-plus-SciPy to a single
-        bucketed solve: batching layers together must be an optimization, never a change in what each layer matches.
+        This is ``_match_many``'s core invariant and it must survive the removal of the pinned host buffer: batching
+        layers together is an optimization, never a change in what each layer matches.
         """
         outputs, targets = _random_detection_batch(seed=902, sizes=[2, 3])
         layer2, _ = _random_detection_batch(seed=903, sizes=[2, 3])
@@ -2698,9 +2698,10 @@ class TestGpuAssignmentPreservesEstablishedAssignments:
 class TestGpuAssignmentOnCUDA:
     """The device solve must agree with the host SciPy solve under real CUDA execution.
 
-    Everything else about this feature is checked on CPU, where the dependency resolves to SciPy internally — which
-    means the actual Triton kernel, the device-side safety reduction, and the index-only device-to-host transfer have no
-    coverage at all without this class. ``ci-tests-gpu.yml`` selects ``-m gpu``, so this is where they run.
+    Solver choice is by device, so CUDA is the only place the batched dependency runs at all: every CPU test exercises
+    the SciPy branch instead. That leaves the Triton kernel, the device-side safety reduction, and the index-only
+    device-to-host transfer with no coverage outside this class, and makes these the genuine cross-backend parity checks
+    — CUDA answers from the kernel, CPU answers from SciPy. ``ci-tests-gpu.yml`` selects ``-m gpu``.
     """
 
     def test_match_many_matches_the_cpu_solve_on_cuda(self) -> None:
