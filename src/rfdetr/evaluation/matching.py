@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any, cast
+from typing import Any, TypeAlias, cast
 
 import numpy as np
 import torch
@@ -27,6 +27,15 @@ from torch import Tensor
 from torchvision.ops import box_iou
 
 from rfdetr.utilities import all_gather
+
+#: One class's contribution to the accumulator: its detection scores in descending order, their
+#: true-positive flags, their crowd-ignore flags, and the class's non-crowd GT count.
+_ClassContribution: TypeAlias = tuple[
+    np.ndarray[Any, np.dtype[np.float32]],
+    np.ndarray[Any, np.dtype[np.int64]],
+    np.ndarray[Any, np.dtype[np.bool_]],
+    int,
+]
 
 
 def _compute_mask_iou(pred_masks: Tensor, gt_masks: Tensor) -> Tensor:
@@ -54,12 +63,10 @@ def _compute_mask_iou(pred_masks: Tensor, gt_masks: Tensor) -> Tensor:
 
 
 def _match_sorted_iou_matrix(
-    pred_scores_sorted: np.ndarray[Any, np.dtype[np.float32]],
     iou_matrix_sorted: np.ndarray[Any, np.dtype[np.float32]],
     gt_crowd_np: np.ndarray[Any, np.dtype[np.bool_]],
     iou_threshold: float,
 ) -> tuple[
-    np.ndarray[Any, np.dtype[np.float32]],
     np.ndarray[Any, np.dtype[np.int64]],
     np.ndarray[Any, np.dtype[np.bool_]],
     int,
@@ -67,14 +74,16 @@ def _match_sorted_iou_matrix(
     """Apply COCO greedy matching to score-ordered NumPy IoUs for one class.
 
     Args:
-        pred_scores_sorted: Detection scores in descending order.
-        iou_matrix_sorted: Pairwise IoUs aligned to ``pred_scores_sorted``.
+        iou_matrix_sorted: Pairwise IoUs whose rows are in descending detection-score order. Must not
+            be modified here: the bbox caller derives it from the one ``box_iou`` matrix shared by
+            every class of an image, so masking rows in place instead of copying them would leak one
+            class's matching state into the classes matched after it.
         gt_crowd_np: Boolean crowd mask aligned to IoU columns.
         iou_threshold: Minimum IoU to count as a positive match.
 
     Returns:
-        Tuple of sorted scores, true-positive flags, crowd-ignore flags, and
-        the number of non-crowd ground truths.
+        Tuple of true-positive flags, crowd-ignore flags, and the number of non-crowd ground truths.
+        The scores the rows were ordered by are not returned — every caller already holds them.
     """
     n, m = iou_matrix_sorted.shape
     gt_matched_np = np.zeros(m, dtype=np.bool_)
@@ -101,34 +110,55 @@ def _match_sorted_iou_matrix(
             if crowd_ious.max() >= iou_threshold:
                 pred_ignore_np[index] = True
 
-    return pred_scores_sorted, pred_match_np, pred_ignore_np, int(not_crowd_np.sum())
+    return pred_match_np, pred_ignore_np, int(not_crowd_np.sum())
 
 
-def _match_single_class(
+def _unmatched_contribution(
+    scores_np: np.ndarray[Any, np.dtype[np.floating[Any]]],
+) -> _ClassContribution:
+    """Build the contribution of a class that has detections but no ground truth.
+
+    Both ``iou_type`` paths reach this case and must report it identically: every detection is a
+    false positive, none is crowd-ignored, and the class adds nothing to the GT denominator.
+
+    Args:
+        scores_np: Detection scores of one class, in the caller's own float dtype so that near-tied
+            scores are ordered at full precision before the float32 cast.
+
+    Returns:
+        Tuple ``(scores_np, matches_np, ignore_np, total_gt)`` with the scores in descending order,
+        all-zero matches, all-False ignore flags, and a ``total_gt`` of 0.
+    """
+    n = len(scores_np)
+    order = np.argsort(-scores_np)
+    return (
+        scores_np[order].astype(np.float32, copy=False),
+        np.zeros(n, dtype=np.int64),
+        np.zeros(n, dtype=np.bool_),
+        0,
+    )
+
+
+def _match_single_class_segm(
     pred_scores: Tensor,
-    pred_items: Tensor,
-    gt_items: Tensor,
+    pred_masks: Tensor,
+    gt_masks: Tensor,
     gt_crowd: Tensor,
     iou_threshold: float,
-    iou_type: str,
-) -> tuple[
-    np.ndarray[Any, np.dtype[np.float32]],
-    np.ndarray[Any, np.dtype[np.int64]],
-    np.ndarray[Any, np.dtype[np.bool_]],
-    int,
-]:
-    """Greedy highest-score-first matching for one class in one image.
+) -> _ClassContribution:
+    """Greedy highest-score-first mask matching for one class in one image.
 
-    Implements the COCO matching algorithm: each GT is matched at most once; detections are processed in descending
-    score order; detections matched to crowd GTs are marked as ignored rather than false positives.
+    Implements the COCO matching algorithm over boolean-mask IoU: each GT is matched at most once; detections are
+    processed in descending score order; detections matched to crowd GTs are marked as ignored rather than false
+    positives. This is the segmentation path only — the box path never reaches here, because it shares one image-wide
+    ``box_iou`` matrix and calls ``_match_sorted_iou_matrix`` directly.
 
     Args:
         pred_scores: Float tensor of shape [N] with detection confidences.
-        pred_items: Predictions — boxes [N, 4] in xyxy coords or masks [N, H, W].
-        gt_items: Ground truths — boxes [M, 4] in xyxy coords or masks [M, H, W].
+        pred_masks: Boolean prediction masks of shape [N, H, W].
+        gt_masks: Boolean ground-truth masks of shape [M, H, W].
         gt_crowd: Bool tensor of shape [M], True for crowd instances.
         iou_threshold: Minimum IoU to count as a positive match.
-        iou_type: ``"bbox"`` for box IoU or ``"segm"`` for mask IoU.
 
     Returns:
         Tuple ``(scores_np, matches_np, ignore_np, total_gt)`` where:
@@ -143,12 +173,9 @@ def _match_single_class(
     # tie -- and with it the TP/FP split -- would depend on the sort backend rather than the input.
     sort_idx = torch.argsort(pred_scores, descending=True, stable=True)
     pred_scores_sorted = pred_scores[sort_idx]
-    pred_sorted = pred_items[sort_idx]
+    pred_sorted = pred_masks[sort_idx]
 
-    if iou_type == "bbox":
-        iou_matrix = box_iou(pred_sorted, gt_items)  # [N, M]
-    else:
-        iou_matrix = _compute_mask_iou(pred_sorted, gt_items)  # [N, M]
+    iou_matrix = _compute_mask_iou(pred_sorted, gt_masks)  # [N, M]
 
     # The greedy matching below is inherently sequential (each GT can only be claimed
     # once, so iteration i depends on the outcome of i-1) — it cannot be vectorized away.
@@ -160,11 +187,107 @@ def _match_single_class(
     iou_matrix_np = iou_matrix.detach().float().cpu().numpy()  # [N, M] -- float() guards bf16/fp16 (no numpy dtype)
     gt_crowd_np = gt_crowd.detach().cpu().numpy()  # [M]
 
-    return _match_sorted_iou_matrix(
-        np.asarray(pred_scores_sorted.float().cpu().numpy(), dtype=np.float32),
-        iou_matrix_np,
-        gt_crowd_np,
+    matches_np, ignore_np, total_gt = _match_sorted_iou_matrix(iou_matrix_np, gt_crowd_np, iou_threshold)
+    return (
+        np.asarray(pred_scores_sorted.detach().float().cpu().numpy(), dtype=np.float32),
+        matches_np,
+        ignore_np,
+        total_gt,
+    )
+
+
+def _accumulate_bbox_class(
+    class_id: int,
+    pred_scores_np: np.ndarray[Any, np.dtype[np.floating[Any]]],
+    pred_label_ids_np: np.ndarray[Any, np.dtype[np.int64]],
+    gt_label_ids_np: np.ndarray[Any, np.dtype[np.int64]],
+    gt_crowd_np: np.ndarray[Any, np.dtype[np.bool_]],
+    bbox_iou_matrix_np: np.ndarray[Any, np.dtype[np.float32]] | None,
+    iou_threshold: float,
+) -> _ClassContribution:
+    """Accumulate one class of one image against the image's shared box-IoU matrix.
+
+    Everything needed here is already on the host, so the class is selected by slicing the per-image
+    NumPy arrays instead of by indexing device tensors.
+
+    Args:
+        class_id: Class to accumulate.
+        pred_scores_np: Every detection score of the image, in the caller's own float dtype.
+        pred_label_ids_np: Every detection label of the image, aligned to *pred_scores_np*.
+        gt_label_ids_np: Every GT label of the image.
+        gt_crowd_np: Crowd flag per GT, aligned to *gt_label_ids_np*.
+        bbox_iou_matrix_np: The image's ``box_iou`` matrix, or ``None`` when the image has no
+            detections or no GT at all. A class without GT returns before it is read.
+        iou_threshold: Minimum IoU to count as a positive match.
+
+    Returns:
+        Tuple ``(scores_np, matches_np, ignore_np, total_gt)`` contributed by *class_id*.
+    """
+    pred_indices = np.flatnonzero(pred_label_ids_np == class_id)
+    gt_indices = np.flatnonzero(gt_label_ids_np == class_id)
+    p_scores_np = pred_scores_np[pred_indices]
+
+    if gt_indices.size == 0:
+        return _unmatched_contribution(p_scores_np)
+
+    assert bbox_iou_matrix_np is not None, (
+        "the image-wide box_iou matrix is built whenever the image has both detections and GTs, "
+        "and this class has at least one of each"
+    )
+    order = np.argsort(-p_scores_np, kind="stable")
+    matches_np, ignore_np, total_gt = _match_sorted_iou_matrix(
+        bbox_iou_matrix_np[np.ix_(pred_indices[order], gt_indices)],
+        gt_crowd_np[gt_indices],
         iou_threshold,
+    )
+    return p_scores_np[order].astype(np.float32, copy=False), matches_np, ignore_np, total_gt
+
+
+def _accumulate_segm_class(
+    preds: dict[str, Tensor],
+    targets: dict[str, Tensor],
+    gt_crowd: Tensor,
+    class_id: int,
+    n_gt: int,
+    iou_threshold: float,
+) -> _ClassContribution:
+    """Accumulate one class of one image on boolean-mask IoU.
+
+    Mask IoU stays class-local rather than being shared image-wide like the box path: an all-pairs
+    mask matrix is much larger, and most of it would cover pairs that cannot match.
+
+    Args:
+        preds: One image's predictions, keyed as documented on ``build_matching_data()``.
+        targets: One image's ground truths, keyed as documented on ``build_matching_data()``.
+        gt_crowd: Bool tensor [M] aligned to ``targets["labels"]``, already validated by the caller.
+        class_id: Class to accumulate.
+        n_gt: Number of GTs of *class_id* in this image. Taken from the caller's host-side label
+            counts rather than read back out of ``targets["labels"]``, which would cost one
+            device-to-host sync per class.
+        iou_threshold: Minimum IoU to count as a positive match.
+
+    Returns:
+        Tuple ``(scores_np, matches_np, ignore_np, total_gt)`` contributed by *class_id*.
+
+    Raises:
+        ValueError: If ``masks`` is missing from *preds* or *targets*. A class with no GT of its own
+            returns before that lookup, so a one-sided class is never reported.
+    """
+    pred_mask_c = preds["labels"] == class_id
+    p_scores = preds["scores"][pred_mask_c]
+
+    if n_gt == 0:
+        # TODO: support bfloat16 natively once numpy adds bf16 dtype
+        return _unmatched_contribution(np.asarray(p_scores.detach().float().cpu().numpy(), dtype=np.float32))
+
+    pred_masks = preds.get("masks")
+    gt_masks = targets.get("masks")
+    if pred_masks is None or gt_masks is None:
+        raise ValueError("iou_type='segm' requires 'masks' in both preds and targets")
+
+    gt_mask_c = targets["labels"] == class_id
+    return _match_single_class_segm(
+        p_scores, pred_masks[pred_mask_c], gt_masks[gt_mask_c], gt_crowd[gt_mask_c], iou_threshold
     )
 
 
@@ -224,11 +347,9 @@ def build_matching_data(
         pred_boxes = preds["boxes"]  # [N, 4]
         pred_scores = preds["scores"]  # [N]
         pred_labels = preds["labels"]  # [N]
-        pred_masks = preds.get("masks")  # [N, H, W] | None
 
         gt_boxes = targets["boxes"]  # [M, 4]
         gt_labels = targets["labels"]  # [M]
-        gt_masks = targets.get("masks")  # [M, H, W] | None
         raw_crowd = targets.get(
             "iscrowd",
             torch.zeros(len(gt_labels), dtype=torch.long, device=gt_labels.device),
@@ -277,54 +398,33 @@ def build_matching_data(
             )
 
         for class_id in all_class_ids:
-            n_pred = pred_count.get(class_id, 0)
-            n_gt = gt_count.get(class_id, 0)
-
             entry = acc.setdefault(
                 class_id,
                 {"scores": [], "matches": [], "ignore": [], "total_gt": 0},
             )
 
-            if n_pred == 0:
+            if pred_count.get(class_id, 0) == 0:
                 entry["total_gt"] = cast(int, entry["total_gt"]) + gt_noncrowd_count.get(class_id, 0)
                 continue
 
+            # The one place ``iou_type`` is branched on per class: each helper owns its own scores
+            # variable and its own empty-GT case, so the two paths cannot drift out of agreement.
             if iou_type == "bbox":
-                pred_indices = np.flatnonzero(pred_label_ids_np == class_id)
-                assert pred_scores_np is not None
-                p_scores_np = pred_scores_np[pred_indices]
-            else:
-                # Segmentation IoU remains class-local to avoid materializing a potentially
-                # much larger all-pairs mask matrix for classes that cannot match.
-                pred_mask_c = pred_labels == class_id
-                p_scores = pred_scores[pred_mask_c]
-
-            if n_gt == 0:
-                # TODO: support bfloat16 natively once numpy adds bf16 dtype
-                sc = p_scores_np if iou_type == "bbox" else np.asarray(p_scores.float().cpu().numpy(), dtype=np.float32)
-                order = np.argsort(-sc)
-                cast(list[float], entry["scores"]).extend(sc[order].tolist())
-                cast(list[int], entry["matches"]).extend([0] * n_pred)
-                cast(list[bool], entry["ignore"]).extend([False] * n_pred)
-                continue
-
-            if iou_type == "bbox":
-                gt_indices = np.flatnonzero(gt_label_ids_np == class_id)
-                assert bbox_iou_matrix_np is not None
-                order = np.argsort(-p_scores_np, kind="stable")
-                scores_np, matches_np, ignore_np, total_gt = _match_sorted_iou_matrix(
-                    p_scores_np[order].astype(np.float32, copy=False),
-                    bbox_iou_matrix_np[np.ix_(pred_indices[order], gt_indices)],
-                    gt_crowd_np[gt_indices],
+                assert pred_scores_np is not None, (
+                    "the image's scores are moved to host whenever it has detections, and this class has one"
+                )
+                scores_np, matches_np, ignore_np, total_gt = _accumulate_bbox_class(
+                    class_id,
+                    pred_scores_np,
+                    pred_label_ids_np,
+                    gt_label_ids_np,
+                    gt_crowd_np,
+                    bbox_iou_matrix_np,
                     iou_threshold,
                 )
             else:
-                gt_mask_c = gt_labels == class_id
-                gt_crowd_c = gt_crowd[gt_mask_c]
-                if pred_masks is None or gt_masks is None:
-                    raise ValueError("iou_type='segm' requires 'masks' in both preds and targets")
-                scores_np, matches_np, ignore_np, total_gt = _match_single_class(
-                    p_scores, pred_masks[pred_mask_c], gt_masks[gt_mask_c], gt_crowd_c, iou_threshold, iou_type
+                scores_np, matches_np, ignore_np, total_gt = _accumulate_segm_class(
+                    preds, targets, gt_crowd, class_id, gt_count.get(class_id, 0), iou_threshold
                 )
 
             cast(list[float], entry["scores"]).extend(float(score) for score in scores_np)

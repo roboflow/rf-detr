@@ -15,7 +15,7 @@ from torchvision.ops import box_iou
 
 from rfdetr.evaluation.matching import (
     _compute_mask_iou,
-    _match_single_class,
+    _match_single_class_segm,
     build_matching_data,
     distributed_merge_matching_data,
     init_matching_accumulator,
@@ -76,50 +76,96 @@ class TestComputeMaskIou:
 
 
 # ---------------------------------------------------------------------------
-# _match_single_class
+# Mask rasterisation shared by the segm matcher tests and build_matching_data
 # ---------------------------------------------------------------------------
 
 
-class TestMatchSingleClass:
-    """Unit tests for the private _match_single_class helper."""
+def _masks_from_boxes(boxes: list[list[float]], height: int, width: int) -> torch.Tensor:
+    """Rasterise integer-aligned xyxy boxes into a boolean mask stack.
+
+    Lets the ``iou_type="segm"`` path be driven by the same geometry as the ``"bbox"`` path: for
+    integer-aligned boxes the pixel-count mask IoU equals the box-area IoU exactly, so both paths
+    see the same IoU matrix and any difference in the result comes from the ranking alone.
+
+    Args:
+        boxes: Rows of ``[x1, y1, x2, y2]`` in pixel coordinates.
+        height: Height of each rasterised mask.
+        width: Width of each rasterised mask.
+
+    Returns:
+        Boolean tensor of shape ``[len(boxes), height, width]``.
+
+    Examples:
+        >>> _masks_from_boxes([[0, 0, 2, 1]], height=1, width=4).int().tolist()
+        [[[1, 1, 0, 0]]]
+    """
+    masks = torch.zeros(len(boxes), height, width, dtype=torch.bool)
+    for index, (x1, y1, x2, y2) in enumerate(boxes):
+        masks[index, int(y1) : int(y2), int(x1) : int(x2)] = True
+    return masks
+
+
+# ---------------------------------------------------------------------------
+# _match_single_class_segm
+# ---------------------------------------------------------------------------
+
+
+class TestMatchSingleClassSegm:
+    """Unit tests for the private _match_single_class_segm helper.
+
+    Cases are written as xyxy boxes and rasterised with ``_masks_from_boxes``, because for integer-aligned boxes the
+    pixel-count mask IoU equals the box-area IoU exactly — the expected IoU of each case can be read straight off the
+    coordinates. ``test_uses_mask_overlap_not_bounding_box`` is the deliberate exception, and builds masks that no box
+    could describe.
+    """
+
+    #: Side of the square canvas every box below is rasterised onto — larger than any coordinate used.
+    _CANVAS = 64
+
+    @classmethod
+    def _mask(cls, *coords: float) -> torch.Tensor:
+        """Return a [1, H, W] boolean mask covering the single xyxy box *coords*."""
+        return _masks_from_boxes([list(coords)], cls._CANVAS, cls._CANVAS)
+
+    @classmethod
+    def _masks(cls, *rows: list[float]) -> torch.Tensor:
+        """Return an [N, H, W] boolean mask stack from a sequence of [x1,y1,x2,y2] rows."""
+        return _masks_from_boxes(list(rows), cls._CANVAS, cls._CANVAS)
 
     @staticmethod
-    def _box(*coords: float) -> torch.Tensor:
-        """Return a [1, 4] float32 box tensor from (x1, y1, x2, y2)."""
-        return torch.tensor([list(coords)], dtype=torch.float32)
-
-    @staticmethod
-    def _boxes(*rows: list[float]) -> torch.Tensor:
-        """Return an [N, 4] float32 tensor from a sequence of [x1,y1,x2,y2] rows."""
-        return torch.tensor(list(rows), dtype=torch.float32)
+    def _random_boxes(count: int, canvas: int) -> torch.Tensor:
+        """Return *count* random integer-aligned xyxy boxes that fit inside a *canvas*-square image."""
+        top_left = torch.randint(0, canvas // 2, (count, 2))
+        extent = torch.randint(1, canvas // 2 + 1, (count, 2))
+        return torch.cat([top_left, top_left + extent], dim=1).float()
 
     def _run(
         self,
         pred_scores: torch.Tensor,
-        pred_items: torch.Tensor,
-        gt_items: torch.Tensor,
+        pred_masks: torch.Tensor,
+        gt_masks: torch.Tensor,
         gt_crowd: torch.Tensor | None = None,
         iou_threshold: float = 0.5,
-        iou_type: str = "bbox",
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+        """Run the matcher, defaulting every GT to non-crowd."""
         if gt_crowd is None:
-            gt_crowd = torch.zeros(len(gt_items), dtype=torch.bool)
-        return _match_single_class(pred_scores, pred_items, gt_items, gt_crowd, iou_threshold, iou_type)
+            gt_crowd = torch.zeros(len(gt_masks), dtype=torch.bool)
+        return _match_single_class_segm(pred_scores, pred_masks, gt_masks, gt_crowd, iou_threshold)
 
     def test_perfect_overlap_is_tp(self) -> None:
-        """A prediction that perfectly overlaps the GT box is a true positive."""
+        """A prediction whose mask is identical to the GT mask is a true positive."""
         scores = torch.tensor([0.9])
-        box = self._box(0, 0, 10, 10)
-        _, matches, ignore, total_gt = self._run(scores, box, box)
+        mask = self._mask(0, 0, 10, 10)
+        _, matches, ignore, total_gt = self._run(scores, mask, mask)
         assert matches[0] == 1
         assert not ignore[0]
         assert total_gt == 1
 
-    def test_disjoint_box_is_fp(self) -> None:
-        """A prediction with no overlap with the GT box is a false positive."""
+    def test_disjoint_mask_is_fp(self) -> None:
+        """A prediction with no overlap with the GT mask is a false positive."""
         scores = torch.tensor([0.9])
-        pred = self._box(0, 0, 10, 10)
-        gt = self._box(50, 50, 60, 60)
+        pred = self._mask(0, 0, 10, 10)
+        gt = self._mask(50, 50, 60, 60)
         _, matches, ignore, total_gt = self._run(scores, pred, gt)
         assert matches[0] == 0
         assert not ignore[0]
@@ -128,8 +174,8 @@ class TestMatchSingleClass:
     def test_iou_below_threshold_is_fp(self) -> None:
         """A detection with IoU < threshold must be marked as FP."""
         scores = torch.tensor([0.9])
-        pred = self._box(0, 0, 5, 10)  # area = 50
-        gt = self._box(6, 0, 10, 10)  # area = 40 — no overlap
+        pred = self._mask(0, 0, 5, 10)  # area = 50
+        gt = self._mask(6, 0, 10, 10)  # area = 40 — no overlap
         _, matches, _, _ = self._run(scores, pred, gt, iou_threshold=0.5)
         assert matches[0] == 0
 
@@ -137,8 +183,8 @@ class TestMatchSingleClass:
         """When two predictions compete for one GT, the higher-score pred wins."""
         # Sorted descending: [0.9, 0.5] -> first gets TP, second gets FP.
         scores = torch.tensor([0.5, 0.9])
-        preds = self._boxes([0, 0, 10, 10], [0, 0, 10, 10])
-        gt = self._box(0, 0, 10, 10)
+        preds = self._masks([0, 0, 10, 10], [0, 0, 10, 10])
+        gt = self._mask(0, 0, 10, 10)
         scores_out, matches, _, _ = self._run(scores, preds, gt)
         assert list(scores_out) == pytest.approx([0.9, 0.5])
         assert matches[0] == 1  # highest score -> TP
@@ -147,9 +193,9 @@ class TestMatchSingleClass:
     def test_crowd_gt_match_is_ignored_not_fp(self) -> None:
         """A detection matched to a crowd GT is ignored, not a false positive."""
         scores = torch.tensor([0.9])
-        box = self._box(0, 0, 10, 10)
+        mask = self._mask(0, 0, 10, 10)
         gt_crowd = torch.tensor([True])
-        _, matches, ignore, total_gt = self._run(scores, box, box, gt_crowd=gt_crowd)
+        _, matches, ignore, total_gt = self._run(scores, mask, mask, gt_crowd=gt_crowd)
         assert matches[0] == 0  # not TP
         assert ignore[0]  # ignored -> not counted as FP
         assert total_gt == 0  # crowd GT excluded from denominator
@@ -157,35 +203,43 @@ class TestMatchSingleClass:
     def test_non_crowd_gt_counts_in_total_gt(self) -> None:
         """Non-crowd GTs are counted in total_gt."""
         scores = torch.tensor([0.9])
-        box = self._box(0, 0, 10, 10)
+        mask = self._mask(0, 0, 10, 10)
         gt_crowd = torch.tensor([False])
-        _, _, _, total_gt = self._run(scores, box, box, gt_crowd=gt_crowd)
+        _, _, _, total_gt = self._run(scores, mask, mask, gt_crowd=gt_crowd)
         assert total_gt == 1
 
     def test_mixed_crowd_only_non_crowd_in_total_gt(self) -> None:
         """Only non-crowd instances contribute to total_gt."""
         scores = torch.tensor([0.9])
-        pred = self._box(0, 0, 5, 5)  # overlaps neither GT significantly
-        gt_boxes = self._boxes([0, 0, 10, 10], [20, 20, 30, 30])
+        pred = self._mask(0, 0, 5, 5)  # overlaps neither GT significantly
+        gt_masks = self._masks([0, 0, 10, 10], [20, 20, 30, 30])
         gt_crowd = torch.tensor([False, True])  # second GT is crowd
-        _, _, _, total_gt = self._run(scores, pred, gt_boxes, gt_crowd=gt_crowd)
+        _, _, _, total_gt = self._run(scores, pred, gt_masks, gt_crowd=gt_crowd)
         assert total_gt == 1
 
     def test_scores_returned_in_descending_order(self) -> None:
         """Output scores must be sorted in descending order."""
         scores = torch.tensor([0.3, 0.9, 0.6])
-        preds = self._boxes([0, 0, 10, 10], [20, 20, 30, 30], [40, 40, 50, 50])
-        gt = self._box(20, 20, 30, 30)
+        preds = self._masks([0, 0, 10, 10], [20, 20, 30, 30], [40, 40, 50, 50])
+        gt = self._mask(20, 20, 30, 30)
         scores_out, _, _, _ = self._run(scores, preds, gt)
         assert list(scores_out) == pytest.approx([0.9, 0.6, 0.3])
 
-    def test_segm_iou_type_identical_masks_is_tp(self) -> None:
-        """Identical masks with iou_type='segm' should yield a TP."""
-        mask = torch.ones(1, 4, 4, dtype=torch.bool)
+    def test_uses_mask_overlap_not_bounding_box(self) -> None:
+        """Matching is driven by pixel overlap, not by the region the masks span.
+
+        Two interleaved comb masks share no pixel at all (mask IoU 0.0), yet the boxes bounding them overlap at exactly
+        the 0.5 threshold — geometry that a box-area proxy would score as a TP and true mask overlap scores as a FP.
+        This is the one case in the class whose masks are built directly rather than rasterised from boxes, because no
+        box can describe them.
+        """
+        pred = torch.zeros(1, 4, 4, dtype=torch.bool)
+        pred[0, :, ::2] = True  # columns 0 and 2 -> bounding box (0, 0, 3, 4)
+        gt = ~pred  # columns 1 and 3 -> bounding box (1, 0, 4, 4), box IoU 8/16 = 0.5
         scores = torch.tensor([0.9])
-        gt_crowd = torch.tensor([False])
-        _, matches, _, total_gt = _match_single_class(scores, mask, mask, gt_crowd, 0.5, "segm")
-        assert matches[0] == 1
+        _, matches, ignore, total_gt = self._run(scores, pred, gt)
+        assert matches[0] == 0
+        assert not ignore[0]
         assert total_gt == 1
 
     @staticmethod
@@ -198,7 +252,7 @@ class TestMatchSingleClass:
         """Naive, independently-written greedy matcher used as a ground-truth oracle.
 
         Reimplements the COCO greedy-matching contract directly from spec with plain Python
-        loops and no shared code with ``_match_single_class`` (no numpy vectorization, no
+        loops and no shared code with ``_match_single_class_segm`` (no numpy vectorization, no
         hoisted crowd mask) — a divergence in the optimized/numpy-ported implementation (e.g. a
         tie-break or crowd-handling regression) will disagree with this reference instead of
         silently agreeing with itself.
@@ -239,13 +293,17 @@ class TestMatchSingleClass:
         """Regression test for #416: the per-detection greedy loop must not force one device-to-host tensor sync
         (``Tensor.__bool__``) per detection, and the numpy-ported matching output must agree with an independent
         reference implementation of the same algorithm at scale (matches/ignore/total_gt) — the sync-count assert alone
-        cannot catch a logic regression in the torch->numpy port (e.g. a tie-break or crowd-handling change)."""
-        n, m = 50, 10
+        cannot catch a logic regression in the torch->numpy port (e.g. a tie-break or crowd-handling change).
+
+        The geometry is random but integer-aligned, so ``box_iou`` over the source boxes reproduces the mask IoU the
+        matcher computes exactly, and the oracle stays independent of ``_compute_mask_iou``.
+        """
+        n, m, canvas = 50, 10, 32
         scores = torch.rand(n)
-        preds = torch.rand(n, 4) * 100
-        preds[:, 2:] += preds[:, :2] + 1.0
-        gts = torch.rand(m, 4) * 100
-        gts[:, 2:] += gts[:, :2] + 1.0
+        pred_boxes = self._random_boxes(n, canvas)
+        gt_boxes = self._random_boxes(m, canvas)
+        pred_masks = _masks_from_boxes(pred_boxes.tolist(), canvas, canvas)
+        gt_masks = _masks_from_boxes(gt_boxes.tolist(), canvas, canvas)
         gt_crowd = torch.zeros(m, dtype=torch.bool)
         gt_crowd[:3] = True  # exercise the crowd/ignore branch at scale, not just n<=3 cases
 
@@ -258,16 +316,16 @@ class TestMatchSingleClass:
             return orig_bool(self)
 
         with patch.object(torch.Tensor, "__bool__", counting_bool):
-            scores_out, matches, ignore, total_gt = self._run(scores, preds, gts, gt_crowd=gt_crowd)
+            scores_out, matches, ignore, total_gt = self._run(scores, pred_masks, gt_masks, gt_crowd=gt_crowd)
 
         assert call_count < n, (
-            f"_match_single_class triggered {call_count} tensor->bool syncs for n={n} "
+            f"_match_single_class_segm triggered {call_count} tensor->bool syncs for n={n} "
             "detections; expected O(1) syncs, not O(n) — the greedy loop should operate "
             "on host data, not per-iteration device tensor comparisons"
         )
 
         order = torch.argsort(scores, descending=True).tolist()
-        iou_matrix = box_iou(preds, gts)
+        iou_matrix = box_iou(pred_boxes, gt_boxes)
         ref_matches, ref_ignore, ref_total_gt = self._reference_greedy_match(order, iou_matrix, gt_crowd, 0.5)
         assert list(scores_out) == pytest.approx(scores[order].tolist())
         assert np.array_equal(matches, ref_matches)
@@ -296,31 +354,6 @@ _WIDE_PRED_BOX = [20, 0, 120, 10]
 _FILLER_PRED_BOX = [200, 0, 210, 10]
 _NUM_FILLER_PREDS = 38
 _ORDER_SENSITIVE_MASK_SIZE = (10, 210)
-
-
-def _masks_from_boxes(boxes: list[list[float]], height: int, width: int) -> torch.Tensor:
-    """Rasterise integer-aligned xyxy boxes into a boolean mask stack.
-
-    Lets the ``iou_type="segm"`` path be driven by the same geometry as the ``"bbox"`` path: for
-    integer-aligned boxes the pixel-count mask IoU equals the box-area IoU exactly, so both paths
-    see the same IoU matrix and any difference in the result comes from the ranking alone.
-
-    Args:
-        boxes: Rows of ``[x1, y1, x2, y2]`` in pixel coordinates.
-        height: Height of each rasterised mask.
-        width: Width of each rasterised mask.
-
-    Returns:
-        Boolean tensor of shape ``[len(boxes), height, width]``.
-
-    Examples:
-        >>> _masks_from_boxes([[0, 0, 2, 1]], height=1, width=4).int().tolist()
-        [[[1, 1, 0, 0]]]
-    """
-    masks = torch.zeros(len(boxes), height, width, dtype=torch.bool)
-    for index, (x1, y1, x2, y2) in enumerate(boxes):
-        masks[index, int(y1) : int(y2), int(x1) : int(x2)] = True
-    return masks
 
 
 class TestBuildMatchingData:
@@ -620,7 +653,7 @@ class TestBuildMatchingData:
         2. the bulk reads that remain (``tolist``) are exactly three per image — the pred labels, the
            GT labels and ``iscrowd`` — and do not grow with the class count.
 
-        Not covered: ``_match_single_class`` still moves its own scores and IoUs to host with
+        Not covered: ``_match_single_class_segm`` still moves its own scores and IoUs to host with
         ``.cpu()/.numpy()`` once per class that has detections. That is pre-existing and untouched
         here; this test fixes the cost of the classes that never reach the matcher.
         """
