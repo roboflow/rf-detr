@@ -113,16 +113,16 @@ def _stack_padded(
     for size in sizes:
         offsets.append(offsets[-1] + size)
 
-    per_layer: list[Tensor] = []
-    for cost_matrix in cost_matrices:
-        padded = cost_matrix.new_zeros(cost_matrix.shape[0], len(sizes), max_size)
+    # Filled directly in problem order (layer, image, group) so the trailing reshape is a free
+    # view. Building it as [queries, images, targets] and permuting instead would force a full
+    # contiguous copy of the whole batch.
+    stacked = cost_matrices[0].new_zeros(len(cost_matrices), len(sizes), group_detr, group_width, max_size)
+    for layer_index, cost_matrix in enumerate(cost_matrices):
         for image_index, size in enumerate(sizes):
             if size:
-                padded[:, image_index, :size] = cost_matrix[:, offsets[image_index] : offsets[image_index] + size]
-        # [group_detr, group_width, images, max_size] -> [images, group_detr, group_width, max_size]
-        grouped = padded.view(group_detr, group_width, len(sizes), max_size).permute(2, 0, 1, 3)
-        per_layer.append(grouped.reshape(len(sizes) * group_detr, group_width, max_size))
-    return torch.cat(per_layer)
+                block = cost_matrix[:, offsets[image_index] : offsets[image_index] + size]
+                stacked[layer_index, image_index, :, :, :size] = block.view(group_detr, group_width, size)
+    return stacked.reshape(-1, group_width, max_size)
 
 
 def _assign_padded(
@@ -152,24 +152,27 @@ def _assign_padded(
     stacked = _stack_padded(cost_matrices, sizes, group_width, group_detr, max_size)
     rows, cols = _solve_to_indices(stacked, min(group_width, max_size))
 
-    results: list[list[tuple[Tensor, Tensor]]] = []
-    per_layer_problems = len(sizes) * group_detr
-    for layer_index in range(len(cost_matrices)):
-        layer_result: list[tuple[Tensor, Tensor]] = []
-        for image_index, size in enumerate(sizes):
-            row_parts: list[Tensor] = []
-            col_parts: list[Tensor] = []
-            for group_index in range(group_detr):
-                problem = layer_index * per_layer_problems + image_index * group_detr + group_index
-                problem_cols = cols[problem]
-                # Padded columns sit at or above this image's real target count. Filtering on the
-                # host keeps the device free of a data-dependent op.
-                keep = problem_cols < size
-                row_parts.append(rows[problem][keep] + group_width * group_index)
-                col_parts.append(problem_cols[keep])
-            layer_result.append((torch.cat(row_parts), torch.cat(col_parts)))
-        results.append(layer_result)
-    return results
+    # Everything below is host-side and stays vectorized: a per-problem Python loop here costs
+    # more than the solve it is unpacking, since there is one problem per layer, image and group.
+    size_per_problem = torch.tensor(sizes, dtype=cols.dtype).repeat_interleave(group_detr).repeat(len(cost_matrices))
+    # Padded columns sit at or above their image's real target count.
+    keep = cols < size_per_problem.unsqueeze(1)
+    group_offset = torch.arange(rows.shape[0], dtype=rows.dtype) % group_detr * group_width
+    # Problems are ordered layer, then image, then group, and boolean indexing preserves that
+    # order, so each image's groups come out already concatenated in ascending group order.
+    kept_rows = (rows + group_offset.unsqueeze(1))[keep]
+    kept_cols = cols[keep]
+
+    per_image = [group_detr * size for _ in cost_matrices for size in sizes]
+    row_chunks = torch.split(kept_rows, per_image)
+    col_chunks = torch.split(kept_cols, per_image)
+    return [
+        [
+            (row_chunks[layer_index * len(sizes) + image_index], col_chunks[layer_index * len(sizes) + image_index])
+            for image_index in range(len(sizes))
+        ]
+        for layer_index in range(len(cost_matrices))
+    ]
 
 
 def _assign_bucketed_by_size(
