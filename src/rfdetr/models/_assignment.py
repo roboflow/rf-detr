@@ -22,6 +22,11 @@ Two properties of the dependency drive the design, both measured on an L4 at RF-
   measured at ~8 per call. Since the match count is known analytically, this module converts
   assignments to index pairs with shape-static ops instead and pays a single fused transfer.
 
+Both together, plus vectorized host-side unpacking, measured 5.6x the SciPy host loop on an L4 at
+208 problems and 3-12 targets (1.49 ms against 8.32 ms), with 3 synchronizations rather than 33.
+The call is launch-bound rather than compute-bound at these sizes, which is why folding a whole
+step into one launch matters more than the size of any individual problem.
+
 Backend selection is deliberately *not* re-implemented here: the dependency owns that policy (its
 Triton CUDA kernel on Linux NVIDIA compute capability >= 8.0 with Torch >= 2.4, SciPy on everything
 else) and falls back internally, so this module is device-agnostic and its results are identical
