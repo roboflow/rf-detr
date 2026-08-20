@@ -134,6 +134,12 @@ class TestBuildTrainerCallbacks:
         assert coco_cb._eval_interval == 3
         assert coco_cb._log_per_class_metrics is False
 
+    def test_coco_eval_default_skips_per_class_metrics(self, tmp_path):
+        """The default TrainConfig disables the costly per-class metric path."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        assert coco_cb._log_per_class_metrics is False
+
     def test_coco_eval_uses_keypoint_oks_sigmas(self, tmp_path):
         """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""
         sigmas = [0.05] * 25
