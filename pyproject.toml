@@ -53,7 +53,7 @@ lora = [
 train = [
     "peft",                            # LoRA backbone fine-tuning (available during training)
     "pytorch_lightning>=2.6,<3,!=2.6.2,!=2.6.3",  # Keep exclusions; see issue #1016 / related advisory for why 2.6.2 and 2.6.3 are blocked
-    "torchmetrics[detection]>=1.8.2,<1.9.0",  # one-pass COCO adapter validates the TorchMetrics 1.8 private backend contract
+    "torchmetrics[detection]>=1.8.2,<1.9.0",  # one-pass COCO adapter validates the TorchMetrics 1.8 private backend contract; re-verify _validate_private_contract() (src/rfdetr/training/coco_map.py) against 1.9+ before widening this pin
     "faster-coco-eval>=1.7.2",
     "pycocotools",
     "scipy",
