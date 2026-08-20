@@ -24,7 +24,7 @@ from typing import Any
 try:
     import albumentations as alb
 except ImportError:
-    alb = None  # type: ignore[assignment]
+    alb = None
 import numpy as np
 import PIL
 import torch
@@ -172,9 +172,9 @@ def _capped_longest_max_size_cls() -> type:
         A ``LongestMaxSize`` subclass with capped (never-upscale) resize behaviour.
     """
 
-    class CappedLongestMaxSize(alb.LongestMaxSize):
+    class CappedLongestMaxSize(alb.LongestMaxSize):  # type: ignore[misc]
         def get_params_dependent_on_data(self, params: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
-            resolved = super().get_params_dependent_on_data(params, data)
+            resolved: dict[str, Any] = super().get_params_dependent_on_data(params, data)
             resolved["scale"] = min(resolved["scale"], 1.0)
             return resolved
 
@@ -302,7 +302,7 @@ def _random_sized_crop_uses_size_param(aug_cls: type) -> bool:
     Returns:
         ``True`` when the class accepts a ``size`` keyword argument; otherwise ``False``.
     """
-    signature = inspect.signature(aug_cls.__init__)
+    signature = inspect.signature(aug_cls)
     return "size" in signature.parameters
 
 
@@ -671,7 +671,7 @@ class AlbumentationsWrapper:
         # torchvision path in ``_torchvision.py``, which filters ``labels`` directly with its keep mask.
         global_fields = {"boxes", "labels"} | IMAGE_LEVEL_TARGET_FIELDS
 
-        result = {}
+        result: dict[str, Any] = {}
         for key, value in target.items():
             if key in global_fields:
                 continue
@@ -700,7 +700,7 @@ class AlbumentationsWrapper:
         # torchvision path in ``_torchvision.py``, which filters ``labels`` directly with its keep mask.
         global_fields = {"boxes", "labels"} | IMAGE_LEVEL_TARGET_FIELDS
 
-        result = {}
+        result: dict[str, Any] = {}
         kept_idxs_tensor = torch.as_tensor(kept_idxs, dtype=torch.long)
         for key, value in target.items():
             if key in global_fields:
