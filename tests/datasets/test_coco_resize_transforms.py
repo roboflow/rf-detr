@@ -11,6 +11,8 @@ already pins for Albumentations.
 """
 
 import pytest
+import torch
+from PIL import Image
 
 from rfdetr.datasets._torchvision import RandomChoice, RandomResize, RandomSizedCrop
 from rfdetr.datasets.coco import _build_train_resize_transforms
@@ -64,6 +66,23 @@ class TestNonSquareCropBranch:
         crops = pipeline.transform2.transforms[1].transforms
 
         assert all(crop.min_max_height == (384, 600) for crop in crops)
+
+    def test_crop_branch_honors_the_non_square_max_size(self) -> None:
+        """A direct crop output above the cap keeps paired image and target sizes within the cap.
+
+        This forces Option B directly because ``RandomSelect`` otherwise hides the crop branch behind random selection.
+        The prior final ``RandomResize`` capped this branch; direct crop output must retain that bound without adding a
+        second image resample.
+        """
+        max_size = 1024
+        pipeline = _build_train_resize_transforms([1536], square=False, max_size=max_size)
+        image = Image.new("RGB", (800, 600))
+        target = {"boxes": torch.tensor([[10.0, 10.0, 100.0, 100.0]]), "labels": torch.tensor([1])}
+
+        transformed_image, transformed_target = pipeline.transform2(image, target)
+
+        assert transformed_image.size == (max_size, max_size)
+        assert transformed_target["size"].tolist() == [max_size, max_size]
 
 
 class TestSquareCropBranchUnchanged:
