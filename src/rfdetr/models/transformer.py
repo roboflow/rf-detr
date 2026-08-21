@@ -303,14 +303,28 @@ class Transformer(nn.Module):
                 assert mask_flatten_parts is not None
                 mask_flatten_parts.append(mask)
 
-        memory = torch.cat(src_flatten, 1)  # bs, \sum{hxw}, c
+        # MultiScaleProjector ends each stage with its channel LayerNorm, which returns channels-last storage viewed
+        # as NCHW. Its real flattened/transposed output is already contiguous; contiguous() preserves the old layout
+        # contract for custom strided inputs.
+        memory = src_flatten[0].contiguous() if len(src_flatten) == 1 else torch.cat(src_flatten, 1)  # bs, \sum{hxw}, c
         mask_flatten: Tensor | None = None
         valid_ratios: Tensor | None = None
         if masks is not None:
             assert mask_flatten_parts is not None
-            mask_flatten = torch.cat(mask_flatten_parts, 1)  # bs, \sum{hxw}
+            # Real padding masks are contiguous after flatten(1), so the single-level contiguous() is a no-op.
+            # It preserves cat's contiguous-layout contract for custom strided masks.
+            mask_flatten = (
+                mask_flatten_parts[0].contiguous() if len(mask_flatten_parts) == 1 else torch.cat(mask_flatten_parts, 1)
+            )  # bs, \sum{hxw}
             valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
-        lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten_parts, 1)  # bs, \sum{hxw}, c
+        # PositionEmbeddingSine produces channels-last storage viewed as NCHW, so flatten+transpose above is already
+        # contiguous. Current nondeprecated models use one projector level; contiguous() is then a no-op, while
+        # preserving cat's contiguous-layout contract for custom strided position tensors.
+        lvl_pos_embed_flatten = (
+            lvl_pos_embed_flatten_parts[0].contiguous()
+            if len(lvl_pos_embed_flatten_parts) == 1
+            else torch.cat(lvl_pos_embed_flatten_parts, 1)
+        )  # bs, \sum{hxw}, c
         # spatial_shapes must not be built by torch.empty(...) + in-place index assignment:
         # that emits a ScatterND feeding a shape tensor (level_start_index), which TensorRT
         # rejects ("IScatterLayer cannot be used to compute a shape tensor").
@@ -346,7 +360,8 @@ class Transformer(nn.Module):
             for cross_src in cross_attn_srcs:
                 tensor = getattr(cross_src, "tensors", cross_src)
                 ca_flatten.append(tensor.flatten(2).transpose(1, 2))
-            cross_attn_memory = torch.cat(ca_flatten, 1)
+            # The dual-projector path uses the same MultiScaleProjector layout as memory above.
+            cross_attn_memory = ca_flatten[0].contiguous() if len(ca_flatten) == 1 else torch.cat(ca_flatten, 1)
 
         if self.two_stage:
             assert self.enc_out_class_embed is not None
