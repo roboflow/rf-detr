@@ -163,6 +163,235 @@ def test_gen_encoder_output_proposals_passes_ij_indexing_to_meshgrid(monkeypatch
     assert call_count == 1
 
 
+@pytest.mark.parametrize("position_layout", ["real", "strided"], ids=["real-layout", "strided-fallback"])
+def test_transformer_packs_single_level_position_without_redundant_copy(position_layout: str) -> None:
+    """Reuse real contiguous position storage while preserving contiguous output for custom strided input."""
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=1,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    if position_layout == "real":
+        # PositionEmbeddingSine produces contiguous BHWC storage viewed as NCHW. Flattening spatial dimensions and
+        # transposing back to B(HW)C is already contiguous and aliases the original storage.
+        position_storage = torch.randn(batch_size, height, width, hidden_dim)
+        position = position_storage.permute(0, 3, 1, 2)
+    else:
+        position = torch.randn(batch_size, hidden_dim, height, width)
+    position.requires_grad_(True)
+    flattened_position = position.flatten(2).transpose(1, 2)
+    assert flattened_position.is_contiguous() is (position_layout == "real")
+    seen_decoder_positions: list[torch.Tensor] = []
+
+    handle = transformer.decoder.register_forward_pre_hook(
+        lambda _module, _args, kwargs: seen_decoder_positions.append(kwargs["pos"]), with_kwargs=True
+    )
+    try:
+        transformer(
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            [torch.zeros(batch_size, height, width, dtype=torch.bool)],
+            [position],
+            torch.rand(num_queries, 4),
+            torch.randn(num_queries, hidden_dim),
+        )
+    finally:
+        handle.remove()
+
+    assert len(seen_decoder_positions) == 1
+    assert torch.equal(seen_decoder_positions[0], flattened_position)
+    assert seen_decoder_positions[0].is_contiguous()
+    if position_layout == "real":
+        assert seen_decoder_positions[0].data_ptr() == flattened_position.data_ptr()
+
+    seen_decoder_positions[0].sum().backward()
+    assert position.grad is not None
+
+
+@pytest.mark.parametrize("mask_layout", ["real", "strided"], ids=["real-layout", "strided-fallback"])
+def test_transformer_packs_single_level_mask_without_redundant_copy(mask_layout: str) -> None:
+    """Reuse real padding-mask storage while preserving contiguous output for custom strided input."""
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=1,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    if mask_layout == "real":
+        mask = torch.zeros(batch_size, height, width, dtype=torch.bool)
+    else:
+        mask_storage = torch.zeros(batch_size, height, width * 2, dtype=torch.bool)
+        mask = mask_storage[:, :, ::2]
+    flattened_mask = mask.flatten(1)
+    assert flattened_mask.is_contiguous() is (mask_layout == "real")
+    seen_decoder_masks: list[torch.Tensor] = []
+
+    handle = transformer.decoder.register_forward_pre_hook(
+        lambda _module, _args, kwargs: seen_decoder_masks.append(kwargs["memory_key_padding_mask"]),
+        with_kwargs=True,
+    )
+    try:
+        transformer(
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            [mask],
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            torch.rand(num_queries, 4),
+            torch.randn(num_queries, hidden_dim),
+        )
+    finally:
+        handle.remove()
+
+    assert len(seen_decoder_masks) == 1
+    assert torch.equal(seen_decoder_masks[0], flattened_mask)
+    assert seen_decoder_masks[0].is_contiguous()
+    if mask_layout == "real":
+        assert seen_decoder_masks[0].data_ptr() == flattened_mask.data_ptr()
+
+
+@pytest.mark.parametrize("memory_layout", ["real", "strided"], ids=["real-layout", "strided-fallback"])
+def test_transformer_packs_single_level_memory_without_redundant_copy(memory_layout: str) -> None:
+    """Reuse real contiguous projector-feature storage while preserving contiguous output for custom strided input."""
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=1,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    if memory_layout == "real":
+        # MultiScaleProjector's final stage norm is unconditionally the permute-based LayerNorm defined in
+        # projector.py, which leaves contiguous BHWC storage viewed as NCHW. Flattening spatial dimensions and
+        # transposing back to B(HW)C is already contiguous and aliases the original storage.
+        src_storage = torch.randn(batch_size, height, width, hidden_dim)
+        src = src_storage.permute(0, 3, 1, 2)
+    else:
+        src = torch.randn(batch_size, hidden_dim, height, width)
+    src.requires_grad_(True)
+    flattened_src = src.flatten(2).transpose(1, 2)
+    assert flattened_src.is_contiguous() is (memory_layout == "real")
+    seen_decoder_memories: list[torch.Tensor] = []
+
+    handle = transformer.decoder.register_forward_pre_hook(
+        lambda _module, args, _kwargs: seen_decoder_memories.append(args[1]), with_kwargs=True
+    )
+    try:
+        transformer(
+            [src],
+            [torch.zeros(batch_size, height, width, dtype=torch.bool)],
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            torch.rand(num_queries, 4),
+            torch.randn(num_queries, hidden_dim),
+        )
+    finally:
+        handle.remove()
+
+    assert len(seen_decoder_memories) == 1
+    assert torch.equal(seen_decoder_memories[0], flattened_src)
+    assert seen_decoder_memories[0].is_contiguous()
+    if memory_layout == "real":
+        assert seen_decoder_memories[0].data_ptr() == flattened_src.data_ptr()
+
+    seen_decoder_memories[0].sum().backward()
+    assert src.grad is not None
+
+
+@pytest.mark.parametrize("memory_layout", ["real", "strided"], ids=["real-layout", "strided-fallback"])
+def test_transformer_packs_single_level_cross_attn_memory_without_redundant_copy(memory_layout: str) -> None:
+    """Reuse real contiguous dual-projector storage while preserving contiguous output for custom strided input."""
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=1,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+        dual_projector_kp_only=True,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    if memory_layout == "real":
+        cross_src_storage = torch.randn(batch_size, height, width, hidden_dim)
+        cross_src = cross_src_storage.permute(0, 3, 1, 2)
+    else:
+        cross_src = torch.randn(batch_size, hidden_dim, height, width)
+    cross_src.requires_grad_(True)
+    flattened_cross_src = cross_src.flatten(2).transpose(1, 2)
+    assert flattened_cross_src.is_contiguous() is (memory_layout == "real")
+    seen_cross_attn_memories: list[torch.Tensor] = []
+
+    handle = transformer.decoder.register_forward_pre_hook(
+        lambda _module, _args, kwargs: seen_cross_attn_memories.append(kwargs["kp_cross_attn_memory"]),
+        with_kwargs=True,
+    )
+    try:
+        transformer(
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            [torch.zeros(batch_size, height, width, dtype=torch.bool)],
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            torch.rand(num_queries, 4),
+            torch.randn(num_queries, hidden_dim),
+            cross_attn_srcs=[cross_src],
+        )
+    finally:
+        handle.remove()
+
+    assert len(seen_cross_attn_memories) == 1
+    assert torch.equal(seen_cross_attn_memories[0], flattened_cross_src)
+    assert seen_cross_attn_memories[0].is_contiguous()
+    if memory_layout == "real":
+        assert seen_cross_attn_memories[0].data_ptr() == flattened_cross_src.data_ptr()
+
+    seen_cross_attn_memories[0].sum().backward()
+    assert cross_src.grad is not None
+
+
 def test_gen_sineembed_for_position_keeps_box_dimensions_in_sin_cos_order() -> None:
     """4D box positional embeddings must use the pretrained sin/cos order for all dimensions."""
     pos_tensor = torch.tensor([[[0.125, 0.25, 0.5, 0.75]]], dtype=torch.float32)
