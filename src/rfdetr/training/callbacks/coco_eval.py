@@ -467,7 +467,12 @@ class COCOEvalCallback(Callback):
                 ema_outputs = ema_underlying(samples)
                 ema_results = pl_module.postprocess(ema_outputs, orig_sizes)
             ema_preds = self._convert_preds(ema_results)
-            ema_targets = self._convert_targets(outputs["targets"], ema_preds if self._use_segm_metrics else None)
+            # Outside segmentation the conversion has no prediction-dependent input, so redoing it here would
+            # recompute the same boxes and repeat the same orig_size host transfer for every validation batch.
+            # Reuse is safe because both accumulators store detached CPU copies of what they are handed
+            # (OnePassCocoMeanAveragePrecision.update) rather than holding on to the caller's dicts, and the
+            # macro-F1 accumulator between the two updates only reads them.
+            ema_targets = self._convert_targets(outputs["targets"], ema_preds) if self._use_segm_metrics else targets
             self.map_metric_ema.update(ema_preds, ema_targets)
             self._update_keypoint_oks_metric(
                 trainer,

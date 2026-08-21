@@ -1703,6 +1703,93 @@ class TestValidationBatchEndEvalEmaOnly:
         assert called_targets[0]["masks"].shape[-2:] == (4, 4)
 
 
+class TestValidationBatchEndTargetConversion:
+    """Independent base and EMA updates convert ``outputs["targets"]`` once when both conversions must agree."""
+
+    @staticmethod
+    def _trainer_with_ema(ema_underlying: MagicMock) -> MagicMock:
+        """Return a trainer whose EMA callback exposes ``ema_underlying`` as the averaged model.
+
+        Examples:
+            >>> underlying = MagicMock(name="ema_underlying_model")
+            >>> trainer = TestValidationBatchEndTargetConversion._trainer_with_ema(underlying)
+            >>> trainer.callbacks[0]._average_model.module.model is underlying
+            True
+        """
+        ema_cb = MagicMock(name="ema_callback")
+        ema_cb.get_ema_model_state_dict = MagicMock(name="get_ema_model_state_dict")
+        ema_cb._average_model = SimpleNamespace(module=SimpleNamespace(model=ema_underlying))
+        return _make_trainer(callbacks=[ema_cb])
+
+    def test_detection_hands_one_converted_target_list_to_both_metrics(self) -> None:
+        """Detection validation converts the batch's targets once and reuses that list for the EMA update.
+
+        Both call sites pass ``preds=None`` outside segmentation, so the second conversion recomputed a
+        byte-identical result: the same box rescale and the same ``orig_size`` host transfer, per validation batch,
+        on every epoch that evaluates both models. Reuse is safe because the accumulators store detached CPU copies
+        of what they are handed rather than the caller's tensors.
+        """
+        ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
+        cb = COCOEvalCallback()
+        trainer = self._trainer_with_ema(ema_underlying)
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        outputs = {"results": _detection_preds(0), "targets": _detection_targets()}
+
+        cb.on_validation_batch_end(trainer, module, outputs, (torch.zeros(1), None), 0)
+
+        assert cb.map_metric_ema.update.call_args.args[1] is cb.map_metric.update.call_args.args[1]
+
+    def test_segmentation_converts_targets_separately_for_the_ema_grid(self) -> None:
+        """Segmentation validation must keep converting targets twice, once per prediction grid.
+
+        Target masks are resampled onto the paired prediction's mask resolution, and the base and EMA heads can emit
+        different resolutions for the same image. Sharing the base conversion here would silently score the EMA masks
+        against a grid they were never produced on.
+        """
+        ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
+        cb = COCOEvalCallback(segmentation=True)
+        trainer = self._trainer_with_ema(ema_underlying)
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        module.postprocess.return_value = [
+            {
+                "scores": torch.tensor([0.9]),
+                "labels": torch.tensor([0]),
+                "boxes": torch.zeros(1, 4),
+                "masks": torch.zeros(1, 3, 3, dtype=torch.bool),
+            }
+        ]
+        outputs = {
+            "results": [
+                {
+                    "scores": torch.tensor([0.9]),
+                    "labels": torch.tensor([0]),
+                    "boxes": torch.zeros(1, 4),
+                    "masks": torch.zeros(1, 2, 2, dtype=torch.bool),
+                }
+            ],
+            "targets": [
+                {
+                    "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
+                    "labels": torch.tensor([0]),
+                    "orig_size": torch.tensor([5, 5]),
+                    "masks": torch.zeros(1, 4, 4, dtype=torch.bool),
+                }
+            ],
+        }
+
+        cb.on_validation_batch_end(trainer, module, outputs, (torch.zeros(1), None), 0)
+
+        ema_targets = cb.map_metric_ema.update.call_args.args[1]
+        assert ema_targets is not cb.map_metric.update.call_args.args[1]
+        assert ema_targets[0]["masks"].shape[-2:] == (3, 3)
+
+
 class TestEvalEmaOnlyBatchToEpochEndToEnd:
     """Full batch -> epoch pipeline for eval_ema_only, with real (non-mocked) accumulators (#1285).
 
