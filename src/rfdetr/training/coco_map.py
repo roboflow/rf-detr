@@ -11,8 +11,9 @@ Purpose:
     global evaluation for each requested IoU type.
 Scope:
     Own CPU-backed metric updates, validation of the private TorchMetrics state/backend contract, explicit fixed-order
-    distributed state merging, update-state inspection, and compact one-pass computation. Lightning lifecycle, EMA
-    voting, logging, checkpoint metrics, F1, keypoint evaluation, and terminal rendering remain callback concerns.
+    distributed state merging, update-state inspection, prediction-score hoisting during COCO-format construction, and
+    compact one-pass computation. Lightning lifecycle, EMA voting, logging, checkpoint metrics, F1, keypoint
+    evaluation, and terminal rendering remain callback concerns.
 Usage:
     Import :class:`OnePassCocoMeanAveragePrecision` only from RF-DETR training code. Construct it with the
     ``faster_coco_eval`` backend and ``sync_on_compute=False``, call ``update`` for each batch, explicitly call
@@ -63,9 +64,8 @@ _MAP_STATE_ATTRS = (
     "groundtruth_crowds",
     "groundtruth_area",
 )
-# Parameter names `compute()` (coco_map.py) relies on when calling each backend method — by keyword for
-# `average`/`prefix`/`max_detection_thresholds`, by position for the rest. A parameter rename upstream would
-# make those calls a silent TypeError rather than an actionable contract failure without this check.
+# Parameter names the adapter relies on when calling each backend method. A parameter rename upstream would make
+# those calls a raw TypeError rather than an actionable contract failure without this check.
 _BACKEND_METHOD_PARAMS: dict[str, tuple[str, ...]] = {
     "_get_coco_datasets": (
         "groundtruth_labels",
@@ -81,6 +81,14 @@ _BACKEND_METHOD_PARAMS: dict[str, tuple[str, ...]] = {
         "average",
     ),
     "_coco_stats_to_tensor_dict": ("stats", "prefix", "max_detection_thresholds"),
+    "_get_coco_format": ("labels", "all_labels", "boxes", "masks", "scores", "crowds", "area", "iou_type", "average"),
+}
+# Parameters passed by keyword at this adapter's private-backend call sites. They must not become positional-only in
+# a supported TorchMetrics release, because that would otherwise fail as a raw TypeError during metric computation.
+_BACKEND_KEYWORD_PARAMS: dict[str, tuple[str, ...]] = {
+    "_get_coco_datasets": ("average",),
+    "_coco_stats_to_tensor_dict": ("prefix", "max_detection_thresholds"),
+    "_get_coco_format": ("labels", "all_labels", "boxes", "masks", "scores", "crowds", "area", "iou_type", "average"),
 }
 # Evaluator methods compute() calls with no arguments (coco_eval.evaluate() / .accumulate() / .summarize()) — a
 # newly-required parameter upstream would make that call fail at compute() time instead of at construction.
@@ -206,22 +214,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         """
         classes = self._observed_classes()
         logger.debug("Computing one-pass COCO metrics for %d classes and IoU types %s.", len(classes), self.iou_type)
-        coco_preds, coco_target = cast(
-            tuple[Any, Any],
-            self._coco_backend._get_coco_datasets(
-                self.groundtruth_labels,
-                self.groundtruth_box,
-                self.groundtruth_mask,
-                self.groundtruth_crowds,
-                self.groundtruth_area,
-                self.detection_labels,
-                self.detection_box,
-                self.detection_mask,
-                self.detection_scores,
-                self.iou_type,
-                average=self.average,
-            ),
-        )
+        coco_preds, coco_target = self._coco_datasets(classes)
 
         result: dict[str, Tensor] = {}
         with contextlib.redirect_stdout(io.StringIO()):
@@ -260,14 +253,129 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         result["classes"] = torch.tensor(classes, dtype=torch.int32)
         return result
 
+    def _coco_datasets(self, classes: list[int]) -> tuple[Any, Any]:
+        """Return the COCO prediction and target datasets, hoisting prediction scores out of the annotation loop.
+
+        TorchMetrics' ``_get_coco_format`` hoists boxes and labels to Python lists once per image but reads scores
+        one annotation at a time (``scores[image_id][k].cpu().tolist()``, ``helpers.py:563``), which is CPU tensor
+        indexing and scalar conversion for every detection because ``update()`` stores detached CPU state. At
+        RF-DETR's validation scale that is hundreds of thousands of conversions per ``compute()``. Asking upstream
+        for the same annotations with
+        ``scores=None`` and assigning per-image score lists afterwards produces byte-identical datasets while
+        converting each image's scores once.
+
+        The rewrite needs prediction annotations to appear in state order with no image dropped. Upstream skips an
+        image only when it has no masks *and* no boxes (``helpers.py:508-511``), so the hoist is used only when
+        boxes are present; a mask-only prediction state falls back to upstream unchanged.
+
+        Args:
+            classes: Sorted class IDs observed in predictions or targets, used as COCO category IDs.
+
+        Returns:
+            The prediction and target datasets, in the order ``_get_coco_datasets`` returns them.
+
+        Raises:
+            ValueError: If stored detection scores are not one-dimensional floating-point tensors.
+            RuntimeError: If upstream stops emitting one annotation for each stored detection score.
+        """
+        backend = self._coco_backend
+        detection_boxes = self.detection_box if len(self.detection_box) > 0 else None
+        if detection_boxes is None:
+            return cast(
+                tuple[Any, Any],
+                backend._get_coco_datasets(
+                    self.groundtruth_labels,
+                    self.groundtruth_box,
+                    self.groundtruth_mask,
+                    self.groundtruth_crowds,
+                    self.groundtruth_area,
+                    self.detection_labels,
+                    self.detection_box,
+                    self.detection_mask,
+                    self.detection_scores,
+                    self.iou_type,
+                    average=self.average,
+                ),
+            )
+
+        coco_factory = cast(Callable[[], Any], backend.coco)
+        coco_target, coco_preds = coco_factory(), coco_factory()
+        # `_get_coco_datasets` passes this same list of Python ints (helpers.py:216) even though the parameter is
+        # annotated `list[Tensor]`; the values only ever become COCO category IDs.
+        all_labels = cast(list[Tensor], classes)
+        coco_target.dataset = backend._get_coco_format(
+            labels=self.groundtruth_labels,
+            boxes=self.groundtruth_box if len(self.groundtruth_box) > 0 else None,
+            masks=self.groundtruth_mask if len(self.groundtruth_mask) > 0 else None,
+            crowds=self.groundtruth_crowds,
+            area=self.groundtruth_area,
+            iou_type=self.iou_type,
+            all_labels=all_labels,
+            average=self.average,
+        )
+        coco_preds.dataset = backend._get_coco_format(
+            labels=self.detection_labels,
+            boxes=detection_boxes,
+            masks=self.detection_mask if len(self.detection_mask) > 0 else None,
+            scores=None,
+            iou_type=self.iou_type,
+            all_labels=all_labels,
+            average=self.average,
+        )
+        self._assign_detection_scores(coco_preds.dataset["annotations"])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            coco_target.createIndex()
+            coco_preds.createIndex()
+        return coco_preds, coco_target
+
+    def _assign_detection_scores(self, annotations: list[dict[str, Any]]) -> None:
+        """Attach stored detection scores to prediction annotations, converting one image of scores at a time.
+
+        Args:
+            annotations: Prediction annotations built by TorchMetrics with ``scores=None``, in state order.
+
+        Raises:
+            ValueError: If an image's scores are not one-dimensional floating-point tensors, which upstream rejects
+                per annotation.
+            RuntimeError: If the annotation count no longer matches the stored score count.
+        """
+        for image_id, image_scores in enumerate(self.detection_scores):
+            if image_scores.ndim != 1:
+                raise ValueError(
+                    f"Invalid input score of sample {image_id} "
+                    f"(expected one-dimensional tensor, got {image_scores.ndim} dimensions)"
+                )
+            if not torch.is_floating_point(image_scores):
+                raise ValueError(
+                    f"Invalid input score of sample {image_id} (expected floating point, got {image_scores.dtype})"
+                )
+        flat_scores = [score for image_scores in self.detection_scores for score in image_scores.cpu().tolist()]
+        if len(flat_scores) != len(annotations):
+            # TorchMetrics validates one score for each prediction box and label at update time
+            # (`_input_validator`, helpers.py:95-102), so a mismatch here means its annotation loop changed shape.
+            message = (
+                f"OnePassCocoMeanAveragePrecision built {len(annotations)} prediction annotations for "
+                f"{len(flat_scores)} detection scores with torchmetrics {torchmetrics.__version__}. "
+                "Re-verify rfdetr.training.coco_map before upgrade."
+            )
+            logger.error(message)
+            raise RuntimeError(message)
+        for annotation, score in zip(annotations, flat_scores):
+            annotation["score"] = score
+
     @staticmethod
     def _mismatched_backend_signatures(backend: Any, present_methods: list[str]) -> list[str]:
-        """Return backend method names missing a parameter this adapter's call sites rely on."""
-        return [
-            name
-            for name in present_methods
-            if not set(_BACKEND_METHOD_PARAMS[name]) <= set(inspect.signature(getattr(backend, name)).parameters)
-        ]
+        """Return backend methods whose required parameters cannot accept this adapter's calls."""
+        mismatched = []
+        for name in present_methods:
+            parameters = inspect.signature(getattr(backend, name)).parameters
+            if not set(_BACKEND_METHOD_PARAMS[name]) <= set(parameters) or any(
+                parameters[parameter].kind is inspect.Parameter.POSITIONAL_ONLY
+                for parameter in _BACKEND_KEYWORD_PARAMS[name]
+            ):
+                mismatched.append(name)
+        return mismatched
 
     @staticmethod
     def _evaluator_methods_now_requiring_args(evaluator_type: Any, present_methods: list[str]) -> list[str]:
@@ -287,7 +395,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         expected_states = set(_MAP_STATE_ATTRS)
         missing_states = sorted(expected_states - installed_states)
         stale_states = sorted(installed_states - expected_states)
-        backend_methods = ("_get_coco_datasets", "_coco_stats_to_tensor_dict")
+        backend_methods = tuple(_BACKEND_METHOD_PARAMS)
         backend = getattr(self, "_coco_backend", None)
         missing_methods = (
             ["_coco_backend"]
@@ -299,12 +407,17 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             self._mismatched_backend_signatures(backend, present_backend_methods) if present_backend_methods else []
         )
         try:
+            # `_coco_datasets` calls the `coco` dataset factory directly, so a rename upstream must fail here
+            # rather than at compute() time.
             evaluator_type = backend.cocoeval if backend is not None else None
+            coco_factory = backend.coco if backend is not None else None
         except (AttributeError, TypeError, ImportError):
             # `CocoBackend.cocoeval` lazily imports the backend package (e.g. `faster_coco_eval`) and
             # raises `ModuleNotFoundError` (an `ImportError`) when it is absent; without catching it
             # here that exception propagates raw instead of the actionable RuntimeError below.
-            evaluator_type = None
+            evaluator_type = coco_factory = None
+        if backend is not None and not callable(coco_factory):
+            missing_methods = [*missing_methods, "coco"]
         missing_evaluator_methods = (
             ["cocoeval"]
             if evaluator_type is None
