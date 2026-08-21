@@ -752,11 +752,14 @@ def _build_train_resize_transforms(
     resize_a = RandomResize(scales, max_size=cap)
     if not scale_jitter:
         return resize_a
+    # The crop resizes directly to the target scale, as on the square path above. It previously went through a fixed
+    # 384x384 output and was then resized a second time to `scales`, which resampled every image on this branch twice
+    # and squared it in between — discarding the aspect ratio this pipeline exists to keep. The Albumentations backend
+    # already dropped that hop (see _build_train_resize_config), so both backends now express the same recipe.
     resize_b = Compose(
         [
             RandomResize([400, 500, 600]),
-            RandomSizedCrop((384, 600), (384, 384)),
-            RandomResize(scales, max_size=cap),
+            RandomChoice([RandomSizedCrop((384, 600), (scale, scale)) for scale in scales]),
         ]
     )
     return RandomSelect(resize_a, resize_b)
