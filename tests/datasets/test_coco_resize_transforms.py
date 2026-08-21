@@ -49,8 +49,7 @@ class TestNonSquareCropBranch:
     def test_crop_outputs_one_variant_per_target_scale(self, scales):
         """Each crop variant resizes directly to one requested scale, mirroring the square path.
 
-        A single fixed 384x384 output also silently squared the image on a pipeline the caller asked to keep non-square,
-        so the aspect ratio the branch exists to preserve was discarded before the final resize.
+        The former fixed 384x384 output followed by another resize needlessly resampled each crop twice.
         """
         pipeline = _build_train_resize_transforms(scales, square=False)
 
