@@ -2349,6 +2349,9 @@
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><code>Transformer.forward</code> now reuses flattened position, padding-mask, source-feature, and cross-attention-source tensors on the single feature-level path instead of copying each through <code>torch.cat</code> over a one-element list. Current Nano/Small/Medium/Large detection, segmentation, and keypoint-preview models use that path by default; the legacy multi-level <code>RFDETRLargeDeprecatedConfig</code> retains concatenation. <code>.contiguous()</code> preserves the previous layout guarantee for custom strided inputs.</p>
+</li>
+<li>
 <p>The decoder's grouped self-attention now reuses the already-regrouped query tensor as the key instead of materializing the identical grouping twice. The regression test verifies the grouped query/key layout, ordering, values, and tensor identity; quantitative benchmark and profiling results are intentionally not recorded here because their external reproduction artifacts are not part of this change.</p>
 </li>
 <li>
