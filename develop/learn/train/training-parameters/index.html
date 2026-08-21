@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-08-19T23:16:15">
+  <meta property="article:modified_time" content="2026-08-21T11:23:57">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-08-19T23:16:15",
+    "dateModified": "2026-08-21T11:23:57",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2971,12 +2971,12 @@
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/dataset"</span><span class="p">,</span>
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">,</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="p">)</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="s2">"auto"</span><span class="p">,</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">,</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="p">)</span>
 </span></code></pre></div>
+<p><code>batch_size="auto"</code> requires a CUDA-capable GPU because it probes CUDA memory. For CPU or MPS training, provide a concrete integer batch size and use <code>grad_accum_steps</code> if memory limits the physical batch.</p>
 <h2 id="core-parameters">Core Parameters<a class="headerlink" href="#core-parameters" title="Permanent link">&para;</a></h2>
 <p>These are the essential parameters for training:</p>
 <table>
@@ -3016,14 +3016,20 @@
 <tr>
 <td><code>grad_accum_steps</code></td>
 <td><code>int</code></td>
-<td><code>4</code></td>
-<td>Accumulates gradients over multiple mini-batches. Use with <code>batch_size</code> to achieve effective batch size.</td>
+<td><code>1</code></td>
+<td>Accumulates gradients over several mini-batches before each optimizer step. Opt-in: raise it only when memory caps <code>batch_size</code> below the nominal effective-batch target you want.</td>
+</tr>
+<tr>
+<td><code>eval_batch_size</code></td>
+<td><code>int or None</code></td>
+<td><code>None</code></td>
+<td>Batch size for the validation, test and predict dataloaders. <code>None</code> inherits <code>batch_size</code>. <code>no_grad</code> avoids autograd activation storage, but in-fit evaluation still shares device memory with the model and optimizer state and needs memory for its forward outputs.</td>
 </tr>
 <tr>
 <td><code>auto_batch_target_effective</code></td>
 <td><code>int</code></td>
 <td><code>16</code></td>
-<td>Only used when <code>batch_size="auto"</code>. Per-device effective batch size the probe search targets (before scaling by <code>devices * num_nodes</code>).</td>
+<td>Only used when <code>batch_size="auto"</code>. Global nominal effective-batch target; the probe derives a per-device target before scaling by <code>devices * num_nodes</code>.</td>
 </tr>
 <tr>
 <td><code>auto_batch_max_targets_per_image</code></td>
@@ -3046,10 +3052,12 @@
 </tbody>
 </table>
 <h3 id="understanding-batch-size">Understanding Batch Size<a class="headerlink" href="#understanding-batch-size" title="Permanent link">&para;</a></h3>
-<p>The <strong>effective batch size</strong> is calculated as:</p>
+<p>The <strong>nominal effective batch size</strong> is calculated as:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>effective_batch_size = batch_size × grad_accum_steps × num_gpus
 </span></code></pre></div>
-<p>Recommended configurations for different GPUs (targeting effective batch size of 16):</p>
+<p><strong>Set <code>batch_size</code> first, <code>grad_accum_steps</code> second.</strong> Raise <code>batch_size</code> only as far as the selected model, task, resolution, and GPU allow, and leave <code>grad_accum_steps</code> at its default of <code>1</code> when possible. If hardware memory prevents the physical batch from reaching your nominal target, increase <code>grad_accum_steps</code> to recover that target's optimizer-step window. This is not an optimization-equivalent substitute: it splits the window across smaller forward/backward passes, changes microbatch cadence, and a small physical batch tends to leave the GPU under-occupied. On one L4 training <code>rfdetr-small</code>, <code>batch_size=16, grad_accum_steps=1</code> ran about 27% faster per epoch than <code>batch_size=4, grad_accum_steps=4</code> at the same nominal effective batch of 16, with mAP equal within run-to-run noise. That figure is one GPU and one dataset, so treat the direction as the lesson, not the number.</p>
+<p>When you trade between the two, use the product <code>batch_size × grad_accum_steps</code> as a nominal effective-batch target. Keeping that product constant does not guarantee identical optimization behavior: changing <code>batch_size</code> changes the forward/backward microbatch cadence even when the nominal images-per-optimizer-update target is unchanged. Start with <code>batch_size="auto"</code> on CUDA when the available memory or workload is uncertain; on CPU or MPS, choose a conservative integer batch size instead.</p>
+<p>Configurations reaching a nominal effective batch size of 16 on illustrative hardware:</p>
 <table>
 <thead>
 <tr>
@@ -3092,6 +3100,11 @@
 </tr>
 </tbody>
 </table>
+<p>These are illustrative starting configurations from the documented model/workload setup, not capacity guarantees. Actual safe values depend on the model, task, resolution, augmentations, optimizer state, and other workloads on the device. Use <code>batch_size="auto"</code> on CUDA or validate a conservative integer batch size before increasing it.</p>
+<div class="admonition note">
+<p class="admonition-title">The default nominal effective batch is 4, not 16</p>
+<p><code>grad_accum_steps</code> defaults to <code>1</code> (it was <code>4</code> in earlier versions), so the defaults give a nominal effective batch of <code>batch_size × 1 = 4</code>. If you were relying on the old defaults and want the previous nominal target of 16, set <code>grad_accum_steps=4</code> explicitly, then validate the resulting training behavior. Runs using <code>batch_size="auto"</code> are unaffected by this default change: the probe sets both values itself.</p>
+</div>
 <h2 id="learning-rate-parameters">Learning Rate Parameters<a class="headerlink" href="#learning-rate-parameters" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3743,8 +3756,14 @@
 <tr>
 <td><code>grad_accum_steps</code></td>
 <td>int</td>
-<td>4</td>
-<td>Gradient accumulation steps for effective larger batch sizes.</td>
+<td>1</td>
+<td>Gradient accumulation steps. Opt-in; raise only when memory caps <code>batch_size</code>.</td>
+</tr>
+<tr>
+<td><code>eval_batch_size</code></td>
+<td>int or None</td>
+<td>None</td>
+<td>Batch size for validation, test and predict dataloaders. <code>None</code> inherits <code>batch_size</code>; <code>no_grad</code> avoids autograd activation storage, but in-fit evaluation still shares device memory with the model and optimizer state.</td>
 </tr>
 <tr>
 <td><code>lr</code></td>
@@ -4014,7 +4033,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 19, 2026 23:16:15 UTC">2026-08-19 23:16:15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 21, 2026 11:23:57 UTC">2026-08-21 11:23:57</span>
   </span>
 
     

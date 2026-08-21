@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-07-31T16:35:04">
+  <meta property="article:modified_time" content="2026-08-21T11:23:57">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-07-31T16:35:04",
+    "dateModified": "2026-08-21T11:23:57",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2314,6 +2314,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#should-i-raise-batch_size-or-grad_accum_steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Should I raise batch_size or grad_accum_steps?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-export-formats-are-supported" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2539,6 +2550,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#should-i-raise-batch_size-or-grad_accum_steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Should I raise batch_size or grad_accum_steps?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-export-formats-are-supported" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2625,7 +2647,12 @@
 <h2 id="what-input-resolutions-are-allowed">What input resolutions are allowed?<a class="headerlink" href="#what-input-resolutions-are-allowed" title="Permanent link">&para;</a></h2>
 <p><code>resolution</code> must be a positive integer divisible by <code>patch_size × num_windows</code> for the selected variant (for example, current detection checkpoints use a block size of 32). A non-divisible value raises <code>ValueError</code> indicating the required divisor. Input is square; each variant ships a sensible default resolution.</p>
 <h2 id="does-my-effective-batch-size-have-to-be-16">Does my effective batch size have to be 16?<a class="headerlink" href="#does-my-effective-batch-size-have-to-be-16" title="Permanent link">&para;</a></h2>
-<p>It is the recommended target, not a hard requirement. Effective batch size is <code>batch_size × grad_accum_steps × num_gpus</code>. On smaller GPUs, keep <code>batch_size</code> low and raise <code>grad_accum_steps</code> to reach the same effective size — for example <code>batch_size=4, grad_accum_steps=4</code> on a T4. See <a href="../learn/train/training-parameters/">Training Parameters</a>.</p>
+<p>No. 16 is a reasonable nominal target, not a requirement. The nominal effective batch is <code>batch_size × grad_accum_steps × num_gpus</code>.</p>
+<p>Note that the defaults no longer produce 16: <code>grad_accum_steps</code> defaults to <code>1</code> (it was <code>4</code> in earlier versions), so <code>batch_size=4</code> alone gives a nominal effective batch of 4. If you were relying on the old defaults and want the previous behavior, set <code>grad_accum_steps=4</code> explicitly.</p>
+<h2 id="should-i-raise-batch_size-or-grad_accum_steps">Should I raise <code>batch_size</code> or <code>grad_accum_steps</code>?<a class="headerlink" href="#should-i-raise-batch_size-or-grad_accum_steps" title="Permanent link">&para;</a></h2>
+<p>Raise <code>batch_size</code> first, and only reach for <code>grad_accum_steps</code> when memory stops you.</p>
+<p>Both increase the nominal effective batch, but they are not equivalent in cost or necessarily in optimization behavior. If hardware memory prevents the physical batch from reaching your target, increase <code>grad_accum_steps</code> to recover the nominal optimizer-step window. Gradient accumulation splits that window across smaller forward/backward passes, changes microbatch cadence, and a small physical batch tends to leave the GPU under-occupied. On one L4 training <code>rfdetr-small</code>, <code>batch_size=16, grad_accum_steps=1</code> ran about 27% faster per epoch than <code>batch_size=4, grad_accum_steps=4</code> at the same nominal effective batch of 16, with mAP equal within run-to-run noise. That is a single GPU and a single dataset, so take the direction rather than the exact number.</p>
+<p>So: use <code>batch_size="auto"</code> on CUDA when the model, task, resolution, or available memory makes manual sizing uncertain. On CPU or MPS, use a concrete integer batch size. If you set it manually, increase the physical batch conservatively and use <code>grad_accum_steps</code> only when memory requires it. Keeping <code>batch_size × grad_accum_steps</code> constant preserves only the nominal effective-batch target; it does not guarantee the same optimization trajectory, even though the nominal images-per-optimizer-update target is unchanged. See <a href="../learn/train/training-parameters/">Training Parameters</a>.</p>
 <h2 id="what-export-formats-are-supported">What export formats are supported?<a class="headerlink" href="#what-export-formats-are-supported" title="Permanent link">&para;</a></h2>
 <p>ONNX, TFLite (FP32/FP16/INT8), ExecuTorch (XNNPACK, CoreML, QNN), and native CoreML (<code>.mlpackage</code>). TensorRT runs via the exported ONNX model. Install the matching extra — <code>rfdetr[onnx]</code>, <code>rfdetr[tflite]</code>, <code>rfdetr[executorch]</code>, or <code>rfdetr[coreml]</code> — then call <code>model.export()</code>. Native CoreML (<code>format="coreml"</code>) is distinct from the ExecuTorch CoreML backend (<code>format="executorch", backend="coreml"</code>) — the former produces a <code>.mlpackage</code> directly, the latter a <code>.pte</code>. See <a href="../learn/export/">Export Model</a>.</p>
 <h2 id="how-do-i-evaluate-a-trained-model-and-get-map">How do I evaluate a trained model and get mAP?<a class="headerlink" href="#how-do-i-evaluate-a-trained-model-and-get-map" title="Permanent link">&para;</a></h2>
@@ -2650,7 +2677,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="July 31, 2026 16:35:04 UTC">2026-07-31 16:35:04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 21, 2026 11:23:57 UTC">2026-08-21 11:23:57</span>
   </span>
 
     
