@@ -6,6 +6,7 @@
 """Contract tests for RF-DETR's one-pass TorchMetrics COCO adapter."""
 
 import sys
+from typing import Any
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -230,6 +231,160 @@ def test_adapter_matches_torchmetrics_on_nontrivial_multiclass_multiimage_data()
             torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=1e-4, atol=1e-6)
 
 
+class TestHoistedDetectionScores:
+    """Prediction COCO datasets built with per-image score conversion instead of TorchMetrics' per-annotation read."""
+
+    predictions = [
+        {
+            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 28.0, 28.0]]),
+            "scores": torch.tensor([0.9, 0.8]),
+            "labels": torch.tensor([3, 17]),
+        },
+        {
+            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
+            "scores": torch.tensor([0.95]),
+            "labels": torch.tensor([42]),
+        },
+    ]
+    targets = [
+        {"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3])},
+        {"boxes": torch.tensor([[5.0, 5.0, 15.0, 15.0]]), "labels": torch.tensor([3])},
+    ]
+
+    def _updated_metric(self) -> OnePassCocoMeanAveragePrecision:
+        """Return a metric holding this class's two-image prediction and target state.
+
+        Examples:
+            >>> metric = TestHoistedDetectionScores()._updated_metric()
+            >>> [scores.numel() for scores in metric.detection_scores]
+            [2, 1]
+        """
+        metric = OnePassCocoMeanAveragePrecision(class_metrics=True)
+        metric.update(self.predictions, self.targets)
+        return metric
+
+    def test_datasets_match_stock_construction(self) -> None:
+        """Hoisted construction must produce the same COCO datasets TorchMetrics' own helper produces.
+
+        The whole optimization rests on ``scores=None`` plus a second assignment pass being indistinguishable from the
+        per-annotation read. Comparing the raw dataset dicts catches a divergence -- a dropped ``info`` key, a shifted
+        ``annotation_id``, a misaligned score -- that aggregate mAP values could average away.
+        """
+        metric = self._updated_metric()
+        expected_preds, expected_target = metric._coco_backend._get_coco_datasets(
+            metric.groundtruth_labels,
+            metric.groundtruth_box,
+            metric.groundtruth_mask,
+            metric.groundtruth_crowds,
+            metric.groundtruth_area,
+            metric.detection_labels,
+            metric.detection_box,
+            metric.detection_mask,
+            metric.detection_scores,
+            metric.iou_type,
+            average=metric.average,
+        )
+
+        actual_preds, actual_target = metric._coco_datasets(metric._observed_classes())
+
+        assert actual_preds.dataset == expected_preds.dataset
+        assert actual_target.dataset == expected_target.dataset
+
+    def test_scores_are_converted_once_for_each_image(self) -> None:
+        """Prediction scores must cross the CPU conversion boundary once per image.
+
+        Dataset parity cannot detect a silent regression back to TorchMetrics' per-annotation score conversion. The two
+        stored score tensors contain three detections, so recording two vector conversions proves this adapter converts
+        scores once per image; a per-annotation implementation would instead record three scalar conversions.
+        """
+        metric = self._updated_metric()
+        recorded = MagicMock(side_effect=metric._coco_backend._get_coco_format)
+        original_cpu = torch.Tensor.cpu
+        score_storage_addresses = {scores.untyped_storage().data_ptr() for scores in metric.detection_scores}
+        score_conversion_shapes: list[tuple[int, ...]] = []
+
+        def record_cpu(tensor: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
+            if tensor.untyped_storage().data_ptr() in score_storage_addresses:
+                score_conversion_shapes.append(tuple(tensor.shape))
+            return original_cpu(tensor, *args, **kwargs)
+
+        with (
+            patch.object(CocoBackend, "_get_coco_format", recorded),
+            patch.object(torch.Tensor, "cpu", new=record_cpu),
+        ):
+            metric._coco_datasets(metric._observed_classes())
+
+        prediction_call = recorded.call_args_list[-1]
+        assert prediction_call.kwargs["scores"] is None
+        assert prediction_call.kwargs["labels"] is metric.detection_labels
+        assert score_conversion_shapes == [(2,), (1,)]
+
+    def test_annotation_count_mismatch_is_rejected(self) -> None:
+        """A prediction annotation count that no longer matches stored scores must fail loudly.
+
+        Assigning scores positionally is only sound while upstream emits one annotation per stored detection. If its
+        loop ever starts dropping or adding annotations, silently zipping the shorter of the two would attach wrong
+        scores to real detections and quietly corrupt every reported mAP.
+        """
+        metric = self._updated_metric()
+
+        with (
+            patch.object(
+                CocoBackend, "_get_coco_format", return_value={"images": [], "annotations": [], "categories": []}
+            ),
+            pytest.raises(RuntimeError, match="prediction annotations"),
+        ):
+            metric._coco_datasets(metric._observed_classes())
+
+    def test_mask_only_state_uses_stock_construction(self) -> None:
+        """Segmentation-only predictions must keep using TorchMetrics' own helper.
+
+        Without boxes, upstream drops an image that has no masks from the annotation list entirely
+        (``helpers.py:508-511``), so annotation order stops tracking stored score order and positional assignment would
+        attach one image's scores to another's detections. Nothing else in the suite reaches this branch: an empty ``(0,
+        4)`` box tensor still leaves ``detection_box`` populated and takes the hoisted path.
+        """
+        mask = torch.zeros(1, 8, 8, dtype=torch.bool)
+        mask[:, 1:5, 1:5] = True
+        metric = OnePassCocoMeanAveragePrecision(iou_type="segm", class_metrics=True)
+        metric.update(
+            [{"masks": mask.clone(), "scores": torch.tensor([0.9]), "labels": torch.tensor([7])}],
+            [{"masks": mask.clone(), "labels": torch.tensor([7])}],
+        )
+        recorded = MagicMock(side_effect=metric._coco_backend._get_coco_datasets)
+
+        with patch.object(CocoBackend, "_get_coco_datasets", recorded):
+            coco_preds, _ = metric._coco_datasets(metric._observed_classes())
+
+        assert recorded.call_count == 1
+        assert [annotation["score"] for annotation in coco_preds.dataset["annotations"]] == pytest.approx([0.9])
+
+    def test_non_float_scores_are_rejected(self) -> None:
+        """Integer score state must raise, matching the per-annotation type check the hoist replaces.
+
+        TorchMetrics validates that scores are a tensor but not that they are floating point; the float check only
+        happens during conversion. Converting a whole image at once skips that check, so it has to be restated.
+        """
+        metric = self._updated_metric()
+        metric.detection_scores = [scores.long() for scores in metric.detection_scores]
+
+        with pytest.raises(ValueError, match="expected floating point"):
+            metric._coco_datasets(metric._observed_classes())
+
+    def test_column_vector_scores_are_rejected(self) -> None:
+        """Column-vector scores must fail instead of becoming nested COCO score lists.
+
+        TorchMetrics' original per-annotation conversion rejects a list result. The hoisted conversion must preserve
+        that scalar-score contract before assigning annotations, because nested scores can otherwise survive until a
+        later backend operation and obscure the input error.
+        """
+        metric = self._updated_metric()
+        metric.detection_scores = [scores.unsqueeze(1) for scores in metric.detection_scores]
+
+        with pytest.raises(ValueError, match="one-dimensional"):
+            metric._coco_datasets(metric._observed_classes())
+
+
 def test_empty_predictions_preserve_zero_recall() -> None:
     """A class with ground truth but no predictions must report zero AP/AR instead of a missing-value sentinel."""
     metric = OnePassCocoMeanAveragePrecision(class_metrics=True)
@@ -303,6 +458,15 @@ def test_adapter_rejects_stale_torchmetrics_state_contract() -> None:
         OnePassCocoMeanAveragePrecision()
 
 
+def test_adapter_rejects_non_callable_coco_backend_factory() -> None:
+    """Construction must reject a non-callable COCO dataset factory before metric computation."""
+    with (
+        patch.object(CocoBackend, "coco", new=object()),
+        pytest.raises(RuntimeError, match=r"missing backend methods: \['coco'\]"),
+    ):
+        OnePassCocoMeanAveragePrecision()
+
+
 def test_adapter_rejects_backend_method_missing_a_relied_on_parameter() -> None:
     """Construction must fail when a backend method drops a keyword compute() calls by name.
 
@@ -350,6 +514,24 @@ class TestMismatchedBackendSignatures:
         )
 
         assert mismatched == []
+
+    def test_flags_keyword_call_to_a_positional_only_parameter(self) -> None:
+        """A positional-only backend parameter must fail before its keyword call reaches compute().
+
+        A parameter-name-only check accepts this signature even though ``_coco_datasets`` passes every
+        ``_get_coco_format`` argument by keyword. Construction-time rejection turns a private API shift into the
+        adapter's actionable compatibility error instead of a raw TypeError after state accumulation.
+        """
+
+        class _Backend:
+            def _get_coco_format(
+                self, labels, /, all_labels, boxes, masks, scores, crowds, area, iou_type, average
+            ) -> None:
+                pass
+
+        mismatched = OnePassCocoMeanAveragePrecision._mismatched_backend_signatures(_Backend(), ["_get_coco_format"])
+
+        assert mismatched == ["_get_coco_format"]
 
 
 class TestEvaluatorMethodsNowRequiringArgs:
