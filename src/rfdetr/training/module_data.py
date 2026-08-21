@@ -328,6 +328,23 @@ class RFDETRDataModule(LightningDataModule):
             )
         return batch_size
 
+    def _resolve_eval_batch_size(self) -> int:
+        """Return the batch size for the validation, test and predict dataloaders.
+
+        An explicit ``train_config.eval_batch_size`` wins; ``None`` (the default) falls back to the resolved
+        training batch size, preserving the historical behavior of tying eval batches to the train micro-batch.
+        The explicit value is returned without consulting ``batch_size``, so it stays usable even on the
+        ``batch_size="auto"`` path where :meth:`_resolve_batch_size` would raise.
+
+        Raises:
+            RuntimeError: If ``eval_batch_size`` is None and ``train_config.batch_size == "auto"`` was never
+                resolved (propagated from :meth:`_resolve_batch_size`).
+        """
+        eval_batch_size = self.train_config.eval_batch_size
+        if eval_batch_size is not None:
+            return eval_batch_size
+        return self._resolve_batch_size()
+
     @staticmethod
     def _require_dataset(dataset: torch.utils.data.Dataset[Any] | None, split: str) -> torch.utils.data.Dataset[Any]:
         """Return *dataset*, raising if ``setup()`` has not built it yet."""
@@ -405,7 +422,7 @@ class RFDETRDataModule(LightningDataModule):
         dataset = self._require_dataset(self._dataset_val, "validate")
         return DataLoader(
             dataset,
-            batch_size=self._resolve_batch_size(),
+            batch_size=self._resolve_eval_batch_size(),
             sampler=torch.utils.data.SequentialSampler(dataset),  # type: ignore[arg-type]
             drop_last=False,
             collate_fn=self._collate_fn,
@@ -425,7 +442,7 @@ class RFDETRDataModule(LightningDataModule):
         dataset = self._require_dataset(self._dataset_test, "test")
         return DataLoader(
             dataset,
-            batch_size=self._resolve_batch_size(),
+            batch_size=self._resolve_eval_batch_size(),
             sampler=torch.utils.data.SequentialSampler(dataset),  # type: ignore[arg-type]
             drop_last=False,
             collate_fn=self._collate_fn,
@@ -445,7 +462,7 @@ class RFDETRDataModule(LightningDataModule):
         dataset = self._require_dataset(self._dataset_val, "predict")
         return DataLoader(
             dataset,
-            batch_size=self._resolve_batch_size(),
+            batch_size=self._resolve_eval_batch_size(),
             sampler=torch.utils.data.SequentialSampler(dataset),  # type: ignore[arg-type]
             drop_last=False,
             collate_fn=self._collate_fn,
