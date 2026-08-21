@@ -46,7 +46,7 @@ You can apply all changes in one go; working through sections one release at a t
     train_config = TrainConfig(eval_base_model=True)
     ```
 
-### Deprecated in v1.10 → Remove in v2.0
+### Deprecated in v1.10 → Remove in v1.13
 
 !!! note "`eval_ema_only` is deprecated"
 

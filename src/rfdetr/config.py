@@ -1090,9 +1090,9 @@ class TrainConfig(BaseConfig):
     # accumulator and always follows validation_step's own forward — under the default that is the EMA
     # model, which now agrees with the mAP under the same key.
     eval_base_model: bool = False
-    # Deprecated: superseded by eval_base_model (removal in v2.0). Evaluating only the EMA model is now
-    # the default, so this flag is a no-op kept for one release; setting it emits a FutureWarning. Still
-    # requires use_ema=True, and contradicts eval_base_model=True.
+    # Deprecated: superseded by eval_base_model (removal in v1.13). Evaluating only the EMA model is now
+    # the default, so this no-op flag remains through the 0.3-cycle deprecation window; setting it emits a
+    # FutureWarning. It still requires use_ema=True and contradicts eval_base_model=True.
     eval_ema_only: bool = False
     num_workers: int = 2
     weight_decay: float = 1e-4

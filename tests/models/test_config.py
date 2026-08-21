@@ -568,7 +568,7 @@ class TestTrainConfigT42PromotedFields:
         """eval_ema_only=True is accepted when use_ema=True (the default), and warns that it is deprecated.
 
         Evaluating only the selected model is now the default, so the flag is inert. Existing scripts that set it must
-        keep working for one release rather than failing on an unknown field.
+        keep working through the 0.3-cycle deprecation window rather than failing on an unknown field.
         """
         with pytest.warns(FutureWarning, match="eval_ema_only"):
             tc = self._tc(tmp_path, eval_ema_only=True, use_ema=True)
