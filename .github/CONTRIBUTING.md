@@ -345,15 +345,17 @@ RF-DETR uses [pyDeprecate](https://github.com/Borda/pyDeprecate) to emit structu
 from deprecate import deprecated
 
 
-@deprecated(target=new_fn, deprecated_in="1.7.0", remove_in="1.9.0")
+@deprecated(target=new_fn, deprecated_in="1.10.0", remove_in="1.13.0")
 def old_fn(*args, **kwargs): ...
 ```
 
 **Rules:**
 
 - All version strings must be full semver: `1.7.0`, not `1.7`.
-- Minimum window: a symbol deprecated in `X.Y.0` cannot be removed before `X.(Y+2).0` (two minor releases).
-- Every new deprecation needs an entry in `docs/getting-started/migration.md` under a `### Deprecated (removal in vX.Z.0)` subsection.
+- Classify every deprecation when it is introduced:
+    - **Major-impact deprecations** — broad or incompatible public changes must remain until the next major release. For example, a symbol deprecated in `1.x` has `remove_in="2.0.0"`.
+    - **Minor deprecations** — routine API, argument, configuration, or rename migrations use a 0.3 release-cycle window. A symbol deprecated in `X.Y.0` has `remove_in="X.(Y+3).0"`; for example, `1.10.0` removes in `1.13.0`.
+- Every new deprecation needs an entry in `docs/getting-started/migration.md` under a `### Deprecated in vX.Y → Remove in vX.Z` subsection. State the tier when the removal target alone could be ambiguous.
 
 **Removal checklist** (when `remove_in` version arrives):
 

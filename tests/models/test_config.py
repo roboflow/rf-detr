@@ -555,19 +555,87 @@ class TestTrainConfigT42PromotedFields:
             self._tc(tmp_path, auto_batch_ema_headroom=ema_headroom)
 
     def test_eval_ema_only_requires_use_ema(self, tmp_path):
-        """eval_ema_only=True with use_ema=False must raise — no EMA model exists to evaluate."""
+        """eval_ema_only=True with use_ema=False must raise — no EMA model exists to evaluate.
+
+        The flag is deprecated but still validated: a contradictory pair must fail loudly rather than
+        be silently absorbed by the deprecation shim.
+        """
         with pytest.raises(ValidationError, match="eval_ema_only"):
-            self._tc(tmp_path, eval_ema_only=True, use_ema=False)
+            with pytest.warns(FutureWarning):
+                self._tc(tmp_path, eval_ema_only=True, use_ema=False)
 
     def test_eval_ema_only_accepted_with_use_ema(self, tmp_path):
-        """eval_ema_only=True is accepted when use_ema=True (the default)."""
-        tc = self._tc(tmp_path, eval_ema_only=True, use_ema=True)
+        """eval_ema_only=True is accepted when use_ema=True (the default), and warns that it is deprecated.
+
+        Evaluating only the selected model is now the default, so the flag is inert. Existing scripts that set it must
+        keep working through the 0.3-cycle deprecation window rather than failing on an unknown field.
+        """
+        with pytest.warns(FutureWarning, match="eval_ema_only"):
+            tc = self._tc(tmp_path, eval_ema_only=True, use_ema=True)
         assert tc.eval_ema_only is True
 
-    def test_eval_ema_only_defaults_to_false(self, tmp_path):
-        """eval_ema_only defaults to False, preserving current dual base+EMA validation behaviour."""
-        tc = self._tc(tmp_path)
+    def test_legacy_eval_ema_only_false_maps_to_base_model(self, tmp_path):
+        """An old explicit ``eval_ema_only=False`` input retains its prior base-plus-EMA behavior."""
+        with pytest.warns(FutureWarning, match="eval_ema_only"):
+            tc = self._tc(tmp_path, eval_ema_only=False, use_ema=True)
+
+        assert tc.eval_base_model is True
+
+    def test_dumped_eval_ema_only_config_reloads_without_warning(self, tmp_path):
+        """A new config dump carries the migrated policy and can reload without repeating the deprecation warning."""
+        with pytest.warns(FutureWarning, match="eval_ema_only"):
+            original = self._tc(tmp_path, eval_ema_only=True, use_ema=True)
+
+        dumped = original.model_dump()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            reloaded = TrainConfig(**dumped)
+
+        assert reloaded.eval_base_model is False
+
+    def test_eval_ema_only_defaults_to_false_without_warning(self, tmp_path):
+        """eval_ema_only defaults to False and a config that never sets it must not warn.
+
+        Round-tripping a dumped config carries every field explicitly at its default; warning on the default value would
+        make every reload noisy.
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            tc = self._tc(tmp_path)
         assert tc.eval_ema_only is False
+
+    def test_eval_base_model_defaults_to_false(self, tmp_path):
+        """eval_base_model defaults to False: validation evaluates only the selected model.
+
+        This is the PR12 behaviour change — with use_ema=True the base-model forward pass is no longer run every
+        validation batch, which is the ~3-3.5%-of-epoch saving.
+        """
+        tc = self._tc(tmp_path)
+        assert tc.eval_base_model is False
+
+    def test_eval_base_model_can_be_enabled(self, tmp_path):
+        """eval_base_model=True is accepted and restores the base+EMA two-forward comparison."""
+        tc = self._tc(tmp_path, eval_base_model=True)
+        assert tc.eval_base_model is True
+
+    def test_eval_base_model_is_accepted_without_ema(self, tmp_path):
+        """eval_base_model=True with use_ema=False must not raise — the base model is evaluated either way.
+
+        A default must be inert in every legal configuration; the opt-in that reverses it has to be too, so no cross-
+        field validator may reject this pair.
+        """
+        tc = self._tc(tmp_path, eval_base_model=True, use_ema=False)
+        assert tc.eval_base_model is True
+
+    def test_eval_ema_only_conflicts_with_eval_base_model(self, tmp_path):
+        """eval_ema_only=True together with eval_base_model=True must raise — the two requests contradict.
+
+        The deprecated flag asks for EMA-only evaluation while the new opt-in asks for the base model as well; silently
+        picking a winner would give one of the two settings no effect.
+        """
+        with pytest.raises(ValidationError, match="eval_base_model"):
+            with pytest.warns(FutureWarning):
+                self._tc(tmp_path, eval_ema_only=True, eval_base_model=True)
 
     def test_eval_masks_head_resolution_defaults_to_false(self, tmp_path):
         """eval_masks_head_resolution defaults to False, preserving full-resolution mask upsampling."""

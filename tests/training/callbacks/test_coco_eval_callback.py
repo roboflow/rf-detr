@@ -1072,20 +1072,21 @@ class TestOnValidationEpochEnd:
         logged_keys = {c.args[0] for c in module.log.call_args_list}
         assert "val/ema_mAP_50_95" in logged_keys
         assert "val/ema_mAP_50" in logged_keys
+        assert "val/ema_mAP_75" in logged_keys
         assert "val/ema_mAR" in logged_keys
         cb.map_metric_ema.reset.assert_called_once()
 
-    def test_eval_ema_only_still_logs_ema_metrics_when_base_metric_is_empty(self) -> None:
-        """Regression for #1285: under eval_ema_only, on_validation_batch_end routes every prediction to map_metric_ema
-        and map_metric never accumulates a single update this epoch.
+    def test_still_logs_ema_metrics_when_base_metric_is_empty(self) -> None:
+        """Regression for #1285: with the base model not evaluated, on_validation_batch_end routes every prediction to
+        map_metric_ema and map_metric never accumulates a single update this epoch.
 
         The empty-state guard in _compute_and_log must not also suppress the EMA metrics — before the fix it returned
-        before ever reaching the EMA compute block, so eval_ema_only runs logged no validation output at all.
+        before ever reaching the EMA compute block, so such runs logged no validation output at all.
         """
-        cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
+        cb = COCOEvalCallback(max_dets=500)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric.has_updates = False  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: the default policy never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb.map_metric_ema.compute.return_value = _minimal_metrics()
         cb._ema_has_updates = True
@@ -1098,22 +1099,78 @@ class TestOnValidationEpochEnd:
         assert "val/ema_mAP_50_95" in logged_keys
         assert "val/ema_mAP_50" in logged_keys
         assert "val/ema_mAR" in logged_keys
-        assert not any(k in {"val/mAP_50_95", "val/mAP_50", "val/mAP_75", "val/mAR"} for k in logged_keys)
         cb.map_metric_ema.reset.assert_called_once()
         cb.map_metric.reset.assert_called_once()
 
-    def test_eval_ema_only_computes_f1_from_accumulated_matches_when_base_metric_is_empty(self) -> None:
+    def test_ema_score_is_mirrored_onto_the_primary_keys_when_base_metric_is_empty(self) -> None:
+        """The EMA score must also reach val/mAP_50_95 when the base model was not evaluated this epoch.
+
+        Leaving the primary key unpopulated — what the deprecated eval_ema_only flag did — is safe for an opt-in
+        but not for a default: every scheduler, early-stopping hook, checkpoint monitor and dashboard watching
+        val/mAP_50_95 would silently see nothing. The mirrored value must be the EMA one, not a stale or zero
+        reading, so BestModelCallback's EMA track and external monitors agree on the epoch's score.
+        """
+        cb = COCOEvalCallback(max_dets=500)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.has_updates = False  # genuinely empty: the default policy never routes here
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        cb.map_metric_ema.compute.return_value = _minimal_metrics()
+        cb._ema_has_updates = True
+        trainer = _make_trainer()
+        trainer.callback_metrics = {}  # the mirror republishes whatever the EMA block wrote here
+        module = _make_pl_module()
+
+        cb.on_validation_epoch_end(trainer, module)
+
+        logged = {c.args[0]: c.args[1] for c in module.log.call_args_list}
+        assert logged["val/mAP_50_95"] == logged["val/ema_mAP_50_95"]
+        assert trainer.callback_metrics["val/mAP_50_95"] == trainer.callback_metrics["val/ema_mAP_50_95"]
+        assert logged["val/mAP_75"] == logged["val/ema_mAP_75"]
+        assert logged["val/mAR"] == logged["val/ema_mAR"]
+
+    def test_per_class_ap_is_mirrored_onto_the_primary_keys(self) -> None:
+        """EMA-only validation publishes per-class AP under both EMA and primary metric namespaces.
+
+        Per-class AP is logged through pl_module.log alone, so the primary alias must be emitted explicitly alongside
+        the EMA row when no base model was evaluated.
+        """
+        cb = COCOEvalCallback(max_dets=500)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb._class_names = ["cat"]
+        cb._cat_id_to_name = {0: "cat"}
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.has_updates = False  # genuinely empty: the default policy never routes here
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        ema_metrics = _minimal_metrics()
+        ema_metrics["map_per_class"] = torch.tensor([0.5])
+        ema_metrics["mar_500_per_class"] = torch.tensor([0.6])
+        ema_metrics["classes"] = torch.tensor([0])
+        cb.map_metric_ema.compute.return_value = ema_metrics
+        cb._ema_has_updates = True
+        module = _make_pl_module()
+
+        cb.on_validation_epoch_end(_make_trainer(), module)
+
+        logged_keys = {c.args[0] for c in module.log.call_args_list}
+        assert "val/ema_AP/cat" in logged_keys
+        assert "val/AP/cat" in logged_keys
+
+        logged = {c.args[0]: c.args[1] for c in module.log.call_args_list}
+        assert logged["val/AP/cat"] == logged["val/ema_AP/cat"]
+
+    def test_computes_f1_from_accumulated_matches_when_base_metric_is_empty(self) -> None:
         """Regression for #1285: on_validation_batch_end merges matching data into f1_local unconditionally (outside the
         used_ema_forward branch), independent of which mAP track a batch's predictions were routed to.
 
-        Under eval_ema_only, map_metric never accumulates, so the empty-state guard in _compute_and_log used to discard
-        f1_local via _reset_f1_local before ever computing val/F1 — silently dropping it even though real matching data
-        (from the EMA-quality predictions) had been collected.
+        With the base model not evaluated, map_metric never accumulates, so the empty-state guard in _compute_and_log
+        used to discard f1_local via _reset_f1_local before ever computing val/F1 — silently dropping it even though
+        real matching data (from the EMA-quality predictions) had been collected.
         """
-        cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
+        cb = COCOEvalCallback(max_dets=500)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric.has_updates = False  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: the default policy never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb.map_metric_ema.compute.return_value = _minimal_metrics()
         cb._ema_has_updates = True
@@ -1135,21 +1192,21 @@ class TestOnValidationEpochEnd:
         f1_call = next(c for c in module.log.call_args_list if c.args[0] == "val/F1")
         assert f1_call.args[1] == pytest.approx(1.0)
 
-    def test_eval_ema_only_prints_summary_table_when_base_metric_is_empty(self) -> None:
+    def test_prints_summary_table_when_base_metric_is_empty(self) -> None:
         """Regression for #1285: the console summary table is also part of "validation output".
 
         Before this fix, ``_print_metrics_tables`` was only ever called from the branch that reads the base ``metric`` —
-        which never has data under ``eval_ema_only`` — so no table was ever printed for the entire run, even after the
-        scalar/F1 logging gaps were closed. Per-class AP must be logged under ``ema_``-prefixed keys, mirroring
+        which never has data when the base model is not evaluated — so no table was ever printed for the run, even after
+        the scalar/F1 logging gaps were closed. Per-class AP must be logged under ``ema_``-prefixed keys, mirroring
         ``val/ema_mAP_50_95`` staying separate from ``val/mAP_50_95`` elsewhere, so it never collides with a base-track
         key.
         """
-        cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
+        cb = COCOEvalCallback(max_dets=500)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb._class_names = ["cat", "dog"]
         cb._cat_id_to_name = {0: "cat", 1: "dog"}
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric.has_updates = False  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: the default policy never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         ema_metrics = _minimal_metrics()
         ema_metrics["map_per_class"] = torch.tensor([0.5, 0.4])
@@ -1171,17 +1228,17 @@ class TestOnValidationEpochEnd:
         logged_keys = {c.args[0] for c in module.log.call_args_list}
         assert "val/ema_AP/cat" in logged_keys
         assert "val/ema_AP/dog" in logged_keys
-        assert "val/AP/cat" not in logged_keys
-        assert "val/AP/dog" not in logged_keys
+        assert "val/AP/cat" in logged_keys
+        assert "val/AP/dog" in logged_keys
 
-    def test_eval_ema_only_resets_val_ema_keypoints_when_ema_not_yet_warmed_up(self) -> None:
-        """Regression for #1289 review: under eval_ema_only, when the base metric is empty AND the EMA metric has not
-        accumulated any updates this epoch (e.g. EMA not yet warmed up), _should_compute_ema returns False and the
-        early-return branch must fall back to resetting the val_ema keypoint split instead of computing it."""
-        cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
+    def test_resets_val_ema_keypoints_when_ema_not_yet_warmed_up(self) -> None:
+        """Regression for #1289 review: when the base metric is empty AND the EMA metric has not accumulated any updates
+        this epoch (e.g. EMA not yet warmed up), _should_compute_ema returns False and the early-return branch must fall
+        back to resetting the val_ema keypoint split instead of computing it."""
+        cb = COCOEvalCallback(max_dets=500)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric.has_updates = False  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: the default policy never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb._ema_has_updates = False  # EMA metric also has no updates this epoch
         module = _make_pl_module()
@@ -1196,15 +1253,15 @@ class TestOnValidationEpochEnd:
         assert call("val_ema") in reset_keypoint_split.call_args_list
         cb.map_metric_ema.compute.assert_not_called()
 
-    def test_eval_ema_only_summary_table_includes_segm_metrics(self) -> None:
+    def test_summary_table_includes_segm_metrics(self) -> None:
         """Regression for #1289 review: _print_ema_only_summary must include segm mAP entries in the overall table when
         segmentation metrics are enabled, mirroring the base-metric path's segm handling."""
-        cb = COCOEvalCallback(max_dets=500, segmentation=True, eval_ema_only=True)
+        cb = COCOEvalCallback(max_dets=500, segmentation=True)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb._class_names = ["cat"]
         cb._cat_id_to_name = {0: "cat"}
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric.has_updates = False  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: the default policy never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         ema_metrics = _minimal_metrics(pfx="bbox_")
         ema_metrics["map_per_class"] = torch.tensor([0.5])
@@ -1467,9 +1524,12 @@ class TestOnTestEpochEnd:
         assert not any(k.startswith("val/") for k in logged_keys)
 
 
-class TestValidationBatchEndEvalEmaOnly:
-    """eval_ema_only=True must skip the duplicate EMA forward pass in on_validation_batch_end — validation_step already
-    forwarded through the EMA model directly (regression for #416)."""
+class TestValidationBatchEndEvalPolicy:
+    """Validation evaluates one model by default, so on_validation_batch_end must skip the duplicate EMA forward pass —
+    validation_step already forwarded through the EMA model directly (regression for #416).
+
+    eval_base_model=True opts back in to the two-forward base+EMA comparison.
+    """
 
     @staticmethod
     def _ema_callback_with_underlying(ema_underlying: MagicMock) -> MagicMock:
@@ -1479,12 +1539,12 @@ class TestValidationBatchEndEvalEmaOnly:
         ema_cb._average_model = SimpleNamespace(module=SimpleNamespace(model=ema_underlying))
         return ema_cb
 
-    def test_eval_ema_only_true_skips_duplicate_ema_forward(self) -> None:
-        """eval_ema_only=True must never call the EMA model's forward a second time, and must route the single forward's
+    def test_skips_duplicate_ema_forward_by_default(self) -> None:
+        """The default policy must never call the EMA model's forward a second time, and must route the single forward's
         predictions to the EMA metric/checkpoint track (not the regular one, which never ran a base-model forward this
         batch — regression for the val/mAP_50_95 metric/checkpoint-weights mismatch)."""
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
-        cb = COCOEvalCallback(eval_ema_only=True)
+        cb = COCOEvalCallback()
         trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
@@ -1500,11 +1560,11 @@ class TestValidationBatchEndEvalEmaOnly:
         cb.map_metric.update.assert_not_called()
         assert cb._ema_has_updates is True
 
-    def test_eval_ema_only_true_falls_back_to_regular_track_when_ema_not_warmed_up(self) -> None:
-        """eval_ema_only=True with no averaged EMA model yet available must route predictions to the regular map_metric,
-        mirroring RFDETRModelModule._resolve_eval_model's own base-model fallback — otherwise the EMA track would record
-        an update that never actually came from an EMA forward pass."""
-        cb = COCOEvalCallback(eval_ema_only=True)
+    def test_falls_back_to_regular_track_when_ema_not_warmed_up(self) -> None:
+        """No averaged EMA model yet available must route predictions to the regular map_metric, mirroring
+        RFDETRModelModule._resolve_eval_model's own base-model fallback — otherwise the EMA track would record an update
+        that never actually came from an EMA forward pass."""
+        cb = COCOEvalCallback()
         ema_cb = MagicMock(name="ema_callback")
         ema_cb.get_ema_model_state_dict = MagicMock(name="get_ema_model_state_dict")
         ema_cb._average_model = None
@@ -1522,10 +1582,10 @@ class TestValidationBatchEndEvalEmaOnly:
         cb.map_metric_ema.update.assert_not_called()
         assert cb._ema_has_updates is False
 
-    def test_eval_ema_only_false_still_runs_duplicate_ema_forward(self) -> None:
-        """eval_ema_only=False (default) must preserve the existing independent base+EMA forward behaviour."""
+    def test_eval_base_model_still_runs_duplicate_ema_forward(self) -> None:
+        """eval_base_model=True must restore the independent base+EMA forward behaviour that used to be the default."""
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
-        cb = COCOEvalCallback(eval_ema_only=False)
+        cb = COCOEvalCallback(eval_base_model=True)
         trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
@@ -1539,10 +1599,10 @@ class TestValidationBatchEndEvalEmaOnly:
         ema_underlying.assert_called_once()
         cb.map_metric_ema.update.assert_called_once()
 
-    def test_eval_ema_only_true_routes_normalized_inputs_to_ema_track(self) -> None:
+    def test_routes_normalized_inputs_to_ema_track(self) -> None:
         """The used-EMA route must delegate normalized inputs only to the EMA adapter."""
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
-        cb = COCOEvalCallback(eval_ema_only=True)
+        cb = COCOEvalCallback()
         trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
@@ -1557,10 +1617,10 @@ class TestValidationBatchEndEvalEmaOnly:
         assert called_preds[0].keys() == {"boxes", "scores", "labels"}
         assert called_targets[0].keys() == {"boxes", "labels"}
 
-    def test_eval_ema_only_false_routes_each_forward_to_its_metric_adapter(self) -> None:
+    def test_eval_base_model_routes_each_forward_to_its_metric_adapter(self) -> None:
         """Independent base and EMA forwards must each update their corresponding adapter once."""
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
-        cb = COCOEvalCallback(eval_ema_only=False)
+        cb = COCOEvalCallback(eval_base_model=True)
         trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
@@ -1616,7 +1676,7 @@ class TestValidationBatchEndEvalEmaOnly:
     def test_ema_validation_resizes_gt_to_ema_prediction_grid(self) -> None:
         """EMA segmentation metrics must use the EMA predictions' grid, not the base model's grid."""
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
-        cb = COCOEvalCallback(segmentation=True)
+        cb = COCOEvalCallback(segmentation=True, eval_base_model=True)
         trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
@@ -1661,12 +1721,12 @@ class TestValidationBatchEndEvalEmaOnly:
         called_targets = cb.map_metric_ema.update.call_args[0][1]
         assert torch.equal(called_targets[0]["masks"], expected_masks)
 
-    def test_eval_ema_only_and_native_resolution_masks_combined(self) -> None:
-        """eval_ema_only=True and native-resolution mask predictions active together (the #416 commenter's actual
+    def test_ema_only_eval_and_native_resolution_masks_combined(self) -> None:
+        """EMA-only evaluation and native-resolution mask predictions active together (the #416 commenter's actual
         workaround) must route to map_metric_ema with GT masks aligned to the native pred resolution — neither flag's
         handling should interfere with the other."""
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
-        cb = COCOEvalCallback(eval_ema_only=True, segmentation=True)
+        cb = COCOEvalCallback(segmentation=True)
         trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
@@ -1793,9 +1853,9 @@ class TestValidationBatchEndTargetConversion:
 
 
 class TestEvalEmaOnlyBatchToEpochEndToEnd:
-    """Full batch -> epoch pipeline for eval_ema_only, with real (non-mocked) accumulators (#1285).
+    """Full batch -> epoch pipeline for the default EMA-only policy, with real (non-mocked) accumulators (#1285).
 
-    TestValidationBatchEndEvalEmaOnly and TestOnValidationEpochEnd each replace map_metric / map_metric_ema with
+    TestValidationBatchEndEvalPolicy and TestOnValidationEpochEnd each replace map_metric / map_metric_ema with
     MagicMock and drive a single hook in isolation. Neither would catch a wiring bug between the two (e.g.
     `_ema_has_updates` set by batch-time routing never reaching epoch-end, or `_prepare_ema_metric` creating a
     `map_metric_ema` that batch-time routing never populates). This test keeps the real MeanAveragePrecision instances
@@ -1803,13 +1863,14 @@ class TestEvalEmaOnlyBatchToEpochEndToEnd:
     sequence on the same callback instance.
     """
 
-    def test_eval_ema_only_real_batch_then_epoch_end_logs_ema_metrics(self) -> None:
+    def test_real_batch_then_epoch_end_logs_ema_metrics(self) -> None:
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
         ema_cb = MagicMock(name="ema_callback")
         ema_cb.get_ema_model_state_dict = MagicMock(name="get_ema_model_state_dict")
         ema_cb._average_model = SimpleNamespace(module=SimpleNamespace(model=ema_underlying))
-        cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
+        cb = COCOEvalCallback(max_dets=500)
         trainer = _make_trainer(callbacks=[ema_cb])
+        trainer.callback_metrics = {}  # the mirror republishes whatever the EMA block wrote here
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
         cb.on_validation_epoch_start(trainer, module)  # real map_metric_ema creation (_prepare_ema_metric)
@@ -1818,7 +1879,7 @@ class TestEvalEmaOnlyBatchToEpochEndToEnd:
         batch = (torch.zeros(1), None)
         cb.on_validation_batch_end(trainer, module, outputs, batch, 0)
 
-        ema_underlying.assert_not_called()  # eval_ema_only routes validation_step's own forward, no duplicate
+        ema_underlying.assert_not_called()  # the default policy routes validation_step's own forward, no duplicate
         assert cb._ema_has_updates is True
         assert cb.map_metric._update_count == 0  # regular track never accumulated this epoch
 
@@ -1828,7 +1889,9 @@ class TestEvalEmaOnlyBatchToEpochEndToEnd:
         assert "val/ema_mAP_50_95" in logged_keys
         assert "val/ema_mAP_50" in logged_keys
         assert "val/ema_mAR" in logged_keys
-        assert not any(k in {"val/mAP_50_95", "val/mAP_50", "val/mAP_75", "val/mAR"} for k in logged_keys)
+        # Mirrored onto the primary keys because the base model was never evaluated this epoch.
+        assert "val/mAP_50_95" in logged_keys
+        assert "val/mAR" in logged_keys
 
 
 class TestConvertPreds:
