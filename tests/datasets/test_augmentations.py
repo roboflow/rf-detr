@@ -101,8 +101,27 @@ class TestAlbumentationsWrapper:
     @pytest.mark.parametrize(
         "transform_class,params,box_in,box_out",
         [
-            (alb.HorizontalFlip, {"p": 1.0}, [10.0, 20.0, 30.0, 40.0], [70.0, 20.0, 90.0, 40.0]),
-            (alb.VerticalFlip, {"p": 1.0}, [10.0, 20.0, 30.0, 40.0], [10.0, 60.0, 30.0, 80.0]),
+            pytest.param(
+                alb.HorizontalFlip,
+                {"p": 1.0},
+                [10.0, 20.0, 30.0, 40.0],
+                [70.0, 20.0, 90.0, 40.0],
+                id="horizontal-flip",
+            ),
+            pytest.param(
+                alb.TimeReverse,
+                {"p": 1.0},
+                [10.0, 20.0, 30.0, 40.0],
+                [70.0, 20.0, 90.0, 40.0],
+                id="time-reverse",
+            ),
+            pytest.param(
+                alb.VerticalFlip,
+                {"p": 1.0},
+                [10.0, 20.0, 30.0, 40.0],
+                [10.0, 60.0, 30.0, 80.0],
+                id="vertical-flip",
+            ),
         ],
     )
     def test_flip_transforms_with_boxes(self, transform_class, params, box_in, box_out):
@@ -218,10 +237,17 @@ class TestAlbumentationsWrapper:
         assert aug_target["boxes"].shape[0] == num_instances
         assert aug_target["keypoints"].shape[0] == num_instances
 
-    def test_horizontal_flip_swaps_paired_keypoints(self):
-        """HFlip with keypoint_flip_pairs exchanges keypoint slots for the configured pair."""
+    @pytest.mark.parametrize(
+        "transform_class",
+        [
+            pytest.param(alb.HorizontalFlip, id="HorizontalFlip"),
+            pytest.param(alb.TimeReverse, id="TimeReverse"),
+        ],
+    )
+    def test_horizontal_flip_swaps_paired_keypoints(self, transform_class):
+        """HFlip-type transforms, including the TimeReverse alias, exchange keypoint slots for the configured pair."""
         wrapper = AlbumentationsWrapper(
-            alb.HorizontalFlip(p=1.0),
+            transform_class(p=1.0),
             keypoint_flip_pairs=[0, 1],
         )
         image = Image.new("RGB", (100, 50))
@@ -1356,12 +1382,14 @@ class TestAlbumentationsWrapperNestedConfig:
         "hflip_name",
         [
             pytest.param("HorizontalFlip", id="HorizontalFlip"),
+            pytest.param("TimeReverse", id="TimeReverse"),
             pytest.param("Flip", id="Flip"),
             pytest.param("D4", id="D4"),
+            pytest.param("SquareSymmetry", id="SquareSymmetry"),
         ],
     )
     def test_hflip_disabled_for_keypoint_pipeline(self, hflip_name: str) -> None:
-        """HFlip-type transforms are skipped when keypoint_flip_pairs is provided."""
+        """HFlip-type transforms are skipped when keypoint_flip_pairs is empty (no left/right pairs configured)."""
         config = {hflip_name: {"p": 0.5}, "GaussianBlur": {"p": 0.5}}
 
         transforms = AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=[])
@@ -2123,6 +2151,11 @@ class TestReplayContainsHorizontalFlip:
                 {"__class_fullname__": "HorizontalFlip", "applied": False, "params": {}},
                 False,
                 id="horizontal-flip-not-applied",
+            ),
+            pytest.param(
+                {"__class_fullname__": "TimeReverse", "applied": True, "params": {}},
+                True,
+                id="time-reverse-applied",
             ),
             pytest.param(
                 {"__class_fullname__": "Flip", "applied": True, "params": {"axis": 1}},
