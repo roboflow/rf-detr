@@ -1790,7 +1790,7 @@ class TestValidationBatchEndTargetConversion:
         of what they are handed rather than the caller's tensors.
         """
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
-        cb = COCOEvalCallback()
+        cb = COCOEvalCallback(eval_base_model=True)
         trainer = self._trainer_with_ema(ema_underlying)
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
@@ -1812,7 +1812,7 @@ class TestValidationBatchEndTargetConversion:
         against a grid they were never produced on.
         """
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
-        cb = COCOEvalCallback(segmentation=True)
+        cb = COCOEvalCallback(segmentation=True, eval_base_model=True)
         trainer = self._trainer_with_ema(ema_underlying)
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
