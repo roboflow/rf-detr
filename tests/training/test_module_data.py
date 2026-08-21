@@ -1044,6 +1044,70 @@ class TestPredictDataloader:
         assert loader.num_workers == 0
 
 
+class TestEvalBatchSize:
+    """eval_batch_size decouples the val/test/predict DataLoaders from the train micro-batch size."""
+
+    _EVAL_LOADERS = [
+        pytest.param("val_dataloader", id="val"),
+        pytest.param("test_dataloader", id="test"),
+        pytest.param("predict_dataloader", id="predict"),
+    ]
+
+    def _setup_dm(self, tmp_path, batch_size=2, eval_batch_size=None, grad_accum_steps=1, dataset_length=50):
+        mc = _base_model_config()
+        tc = _base_train_config(
+            tmp_path,
+            batch_size=batch_size,
+            eval_batch_size=eval_batch_size,
+            grad_accum_steps=grad_accum_steps,
+            num_workers=0,
+        )
+        dm = RFDETRDataModule(mc, tc)
+        dm._dataset_train = _fake_dataset(dataset_length)
+        dm._dataset_val = _fake_dataset(dataset_length)
+        dm._dataset_test = _fake_dataset(dataset_length)
+        return dm
+
+    @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
+    def test_defaults_to_train_batch_size(self, tmp_path, loader_name):
+        """With eval_batch_size unset, every eval DataLoader keeps using the train batch size."""
+        dm = self._setup_dm(tmp_path, batch_size=6, eval_batch_size=None)
+        loader = getattr(dm, loader_name)()
+        assert loader.batch_size == 6
+
+    @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
+    def test_explicit_value_overrides_train_batch_size(self, tmp_path, loader_name):
+        """An explicit eval_batch_size is used by every eval DataLoader instead of the train batch size."""
+        dm = self._setup_dm(tmp_path, batch_size=2, eval_batch_size=16)
+        loader = getattr(dm, loader_name)()
+        assert loader.batch_size == 16
+
+    def test_train_dataloader_keeps_train_batch_size(self, tmp_path):
+        """The training DataLoader ignores eval_batch_size and keeps the configured train batch size."""
+        dm = self._setup_dm(tmp_path, batch_size=2, eval_batch_size=16)
+        loader = dm.train_dataloader()
+        assert loader.batch_sampler.batch_size == 2
+
+    def test_train_dataloader_grad_accum_alignment_unaffected(self, tmp_path):
+        """Train-side grad-accum padding still aligns to batch_size * grad_accum_steps, not eval_batch_size."""
+        dm = self._setup_dm(tmp_path, batch_size=2, eval_batch_size=16, grad_accum_steps=4, dataset_length=50)
+        loader = dm.train_dataloader()
+        assert len(loader.dataset) % (2 * 4) == 0
+
+    @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
+    def test_explicit_value_works_with_unresolved_auto_batch_size(self, tmp_path, loader_name):
+        """An explicit eval_batch_size does not depend on batch_size='auto' having been resolved."""
+        dm = self._setup_dm(tmp_path, batch_size="auto", eval_batch_size=8)
+        loader = getattr(dm, loader_name)()
+        assert loader.batch_size == 8
+
+    def test_unresolved_auto_batch_size_still_raises_without_explicit_value(self, tmp_path):
+        """Without eval_batch_size, an unresolved batch_size='auto' still fails eval loader construction."""
+        dm = self._setup_dm(tmp_path, batch_size="auto", eval_batch_size=None)
+        with pytest.raises(RuntimeError, match="was not resolved"):
+            dm.val_dataloader()
+
+
 class TestClassNames:
     """class_names property extracts names from COCO dataset annotations."""
 

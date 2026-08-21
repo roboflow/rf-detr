@@ -1024,7 +1024,20 @@ class TrainConfig(BaseConfig):
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
     batch_size: int | Literal["auto"] = 4
-    grad_accum_steps: int = 4
+    # Gradient accumulation is an explicit opt-in, not a silent default: max out batch_size for the GPU first
+    # and raise this only when memory forces a smaller physical batch. Defaulting to 1 (was 4) drops the
+    # default effective batch from 16 to 4 — a training-semantics change, see CHANGELOG. Runs with
+    # batch_size="auto" are unaffected: the auto-batch probe overwrites this field (see RFDETR.train).
+    grad_accum_steps: int = 1
+    # Batch size for the validation, test and predict dataloaders. None (the default) inherits the resolved
+    # train batch size, i.e. exactly the pre-existing behavior. Evaluation runs under no_grad and therefore
+    # carries none of training's gradient/optimizer-state memory, so a train batch_size lowered to fit an
+    # optimizer step needlessly shrinks eval batches too. The `eval_` prefix (not `val_`) matches the other
+    # evaluation-side knobs here (eval_ema_only, eval_max_dets, eval_interval, eval_masks_head_resolution)
+    # and reflects that this governs all three eval loaders, not validation alone. Unlike batch_size it
+    # accepts no "auto": it is never probed, and an explicit value stays usable even when batch_size="auto"
+    # has not been resolved.
+    eval_batch_size: int | None = None
     auto_batch_target_effective: int = 16  # per-device effective batch size target (before devices * num_nodes)
     # Auto-batch probe: worst-case assumptions when batch_size="auto".
     auto_batch_max_targets_per_image: int = 100
@@ -1261,6 +1274,14 @@ class TrainConfig(BaseConfig):
             return v
         if v < 1:
             raise ValueError("batch_size must be >= 1, or 'auto'.")
+        return v
+
+    @field_validator("eval_batch_size", mode="after")
+    @classmethod
+    def validate_eval_batch_size(cls, v: int | None) -> int | None:
+        """Validate eval_batch_size is None (inherit the train batch size) or >= 1."""
+        if v is not None and v < 1:
+            raise ValueError("eval_batch_size must be >= 1 when provided.")
         return v
 
     @field_validator(

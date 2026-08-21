@@ -16,8 +16,7 @@ model = RFDETRMedium()
 model.train(
     dataset_dir="path/to/dataset",
     epochs=100,
-    batch_size=4,
-    grad_accum_steps=4,
+    batch_size=16,
     lr=1e-4,
     output_dir="output",
 )
@@ -33,7 +32,8 @@ These are the essential parameters for training:
 | `output_dir`                       | `str`           | `"output"` | Directory where training artifacts (checkpoints, logs) are saved.                                                                                                                       |
 | `epochs`                           | `int`           | `100`      | Number of full passes over the training dataset.                                                                                                                                        |
 | `batch_size`                       | `int or "auto"` | `4`        | Number of samples processed per iteration. Higher values require more GPU memory. Set to `"auto"` to probe the GPU for the largest safe batch size automatically.                       |
-| `grad_accum_steps`                 | `int`           | `4`        | Accumulates gradients over multiple mini-batches. Use with `batch_size` to achieve effective batch size.                                                                                |
+| `grad_accum_steps`                 | `int`           | `1`        | Accumulates gradients over several mini-batches before each optimizer step. Opt-in: raise it only when memory caps `batch_size` below the effective batch you want.                     |
+| `eval_batch_size`                  | `int or None`   | `None`     | Batch size for the validation, test and predict dataloaders. `None` inherits `batch_size`. Evaluation needs no gradient memory, so it can often run larger batches than training.       |
 | `auto_batch_target_effective`      | `int`           | `16`       | Only used when `batch_size="auto"`. Per-device effective batch size the probe search targets (before scaling by `devices * num_nodes`).                                                 |
 | `auto_batch_max_targets_per_image` | `int`           | `100`      | Only used when `batch_size="auto"`. Synthetic target count per image the probe uses to simulate worst-case matcher/loss memory.                                                         |
 | `auto_batch_ema_headroom`          | `float`         | `0.7`      | Only used when `batch_size="auto"` and `use_ema=True`. Fraction of the probed batch size reserved as headroom for the EMA model's extra memory use. Must be in `(0, 1]`.                |
@@ -47,7 +47,11 @@ The **effective batch size** is calculated as:
 effective_batch_size = batch_size × grad_accum_steps × num_gpus
 ```
 
-Recommended configurations for different GPUs (targeting effective batch size of 16):
+**Set `batch_size` first, `grad_accum_steps` second.** Raise `batch_size` until the GPU is full, and leave `grad_accum_steps` at its default of `1`. Gradient accumulation exists to recover an effective batch that memory will not let you reach physically — it is not a free knob, because it splits one optimizer step across several smaller forward/backward passes and a small physical batch tends to leave the GPU under-occupied. On one L4 training `rfdetr-small`, `batch_size=16, grad_accum_steps=1` ran about 27% faster per epoch than `batch_size=4, grad_accum_steps=4` at the same effective batch of 16, with mAP equal within run-to-run noise. That figure is one GPU and one dataset, so treat the direction as the lesson, not the number.
+
+When you do trade between the two, hold the product `batch_size × grad_accum_steps` constant so the effective batch — and therefore the optimization behavior — stays put. Halving `batch_size` to fit memory means doubling `grad_accum_steps`.
+
+Configurations reaching an effective batch size of 16 on different GPUs:
 
 | GPU      | VRAM    | `batch_size` | `grad_accum_steps` |
 | -------- | ------- | ------------ | ------------------ |
@@ -56,6 +60,10 @@ Recommended configurations for different GPUs (targeting effective batch size of
 | RTX 3090 | 24GB    | 8            | 2                  |
 | T4       | 16GB    | 4            | 4                  |
 | RTX 3070 | 8GB     | 2            | 8                  |
+
+!!! note "The default effective batch is 4, not 16"
+
+    `grad_accum_steps` defaults to `1` (it was `4` in earlier versions), so the defaults give an effective batch of `batch_size × 1 = 4`. If you were relying on the old defaults and want the previous effective batch of 16, set `grad_accum_steps=4` explicitly — or better, raise `batch_size` toward 16 if the GPU allows it. Runs using `batch_size="auto"` are unaffected: the probe sets both values itself.
 
 ## Learning Rate Parameters
 
@@ -295,7 +303,8 @@ Below is a summary table of all training parameters:
 | `output_dir`                 | str                    | "output"       | Directory for checkpoints, logs, and other training artifacts.                                                                        |
 | `epochs`                     | int                    | 100            | Number of full passes over the dataset.                                                                                               |
 | `batch_size`                 | int or "auto"          | 4              | Samples per iteration. Set to `"auto"` to let RF-DETR probe the GPU for the largest safe batch size. Balance with `grad_accum_steps`. |
-| `grad_accum_steps`           | int                    | 4              | Gradient accumulation steps for effective larger batch sizes.                                                                         |
+| `grad_accum_steps`           | int                    | 1              | Gradient accumulation steps. Opt-in; raise only when memory caps `batch_size`.                                                        |
+| `eval_batch_size`            | int or None            | None           | Batch size for validation, test and predict dataloaders. `None` inherits `batch_size`.                                                |
 | `lr`                         | float                  | 1e-4           | Learning rate for the model (excluding encoder).                                                                                      |
 | `lr_encoder`                 | float                  | 1.5e-4         | Learning rate for the backbone encoder.                                                                                               |
 | `resolution`                 | int                    | Model-specific | Input image size (must be divisible by the selected model's `patch_size * num_windows`).                                              |

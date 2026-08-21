@@ -167,12 +167,13 @@ dataset/
 |-----------|---------|-------------|
 | `epochs` | 50 | Training epochs |
 | `batch_size` | 4 | Images per GPU step |
-| `grad_accum_steps` | 4 | Gradient accumulation steps (effective batch = batch_size × grad_accum_steps) |
+| `grad_accum_steps` | 1 | Gradient accumulation steps (effective batch = batch_size × grad_accum_steps). Opt-in: raise only when memory caps `batch_size` |
+| `eval_batch_size` | `None` | Batch size for validation/test/predict loaders. `None` inherits `batch_size`; evaluation needs no gradient memory so it can often go larger |
 | `lr` | 1e-4 | Peak learning rate |
 | `output_dir` | `"output"` | Checkpoint directory |
 | `checkpoint_interval` | 1 | Save checkpoint every N epochs |
 
-**Recommended effective batch size: 16** (e.g., batch_size=4, grad_accum_steps=4 on 8GB VRAM GPU).
+**Recommended effective batch size: 16.** Raise `batch_size` first and accumulate only when memory stops you — a larger physical batch is measurably faster at the same effective batch. On an 8GB GPU that means `batch_size=4, grad_accum_steps=4`; with 24GB+, prefer `batch_size=16, grad_accum_steps=1`.
 
 ### Checkpoint Types
 
@@ -360,6 +361,7 @@ Key fields for detection training configuration:
 | `epochs` | int | Training epochs |
 | `batch_size` | int | Images per GPU step |
 | `grad_accum_steps` | int | Gradient accumulation steps |
+| `eval_batch_size` | int or None | Batch size for validation/test/predict loaders; `None` inherits `batch_size` |
 | `lr` | float | Peak learning rate |
 | `output_dir` | str | Checkpoint output directory |
 | `resume` | str | Path to checkpoint to resume from |
