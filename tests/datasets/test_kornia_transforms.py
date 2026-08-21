@@ -426,7 +426,9 @@ class TestBuildKorniaPipeline:
         ],
         ids=["default", "scalar-default-value", "scalar", "pair", "pair-non-default"],
     )
-    def test_clahe_scalar_clip_limit_is_a_range_not_a_fixed_value(self, configured, expected) -> None:
+    def test_clahe_scalar_clip_limit_is_a_range_not_a_fixed_value(
+        self, configured: float | tuple[float, float] | None, expected: tuple[float, float]
+    ) -> None:
         """Albumentations reads a scalar clip_limit as (1, v), so the GPU path must too.
 
         Passing it through `_as_range` produced the degenerate (v, v), which pins every sample to maximum contrast
@@ -441,20 +443,39 @@ class TestBuildKorniaPipeline:
 
         assert tuple(transform.clip_limit) == pytest.approx(expected)
 
-    def test_clahe_clip_limit_matches_albumentations(self) -> None:
+    @pytest.mark.parametrize(
+        "configured",
+        [4.0, 2.0, (2.0, 6.0)],
+        ids=["scalar-default-value", "scalar", "pair"],
+    )
+    def test_clahe_clip_limit_matches_albumentations(self, configured: float | tuple[float, float]) -> None:
         """The contract stated directly: same config, same range on both backends."""
         albumentations = pytest.importorskip("albumentations")
 
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
 
-        for configured in (4.0, 2.0, (2.0, 6.0)):
-            pipeline = build_kornia_pipeline({"CLAHE": {"clip_limit": configured}}, 560)
-            transform = next(iter(pipeline.children()))
-            cpu = albumentations.CLAHE(clip_limit=configured)
+        pipeline = build_kornia_pipeline({"CLAHE": {"clip_limit": configured}}, 560)
+        transform = next(iter(pipeline.children()))
+        cpu = albumentations.CLAHE(clip_limit=configured)
 
-            assert tuple(transform.clip_limit) == pytest.approx(tuple(cpu.clip_limit)), (
-                f"backends disagree for clip_limit={configured!r}"
-            )
+        assert tuple(transform.clip_limit) == pytest.approx(tuple(cpu.clip_limit)), (
+            f"backends disagree for clip_limit={configured!r}"
+        )
+
+    @pytest.mark.parametrize("configured", [[4.0], (4.0,), (1.0, 2.0, 3.0)], ids=["one-list", "one-tuple", "three"])
+    def test_clahe_rejects_sequences_that_albumentations_rejects(
+        self, configured: tuple[float, ...] | list[float]
+    ) -> None:
+        """A one-element sequence is not a scalar.
+
+        Albumentations validates `clip_limit` as a float or an exact 2-tuple and raises on `[4.0]`. Reading it as a
+        scalar here would accept a config the CPU backend refuses, which is the divergence this helper exists to
+        remove.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        with pytest.raises(ValueError, match="2-element"):
+            build_kornia_pipeline({"CLAHE": {"clip_limit": configured}}, 560)
 
     def test_hue_saturation_value_still_unsupported(self):
         """Deliberately out of scope: albumentations shifts additively, Kornia scales multiplicatively."""

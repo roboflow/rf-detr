@@ -602,10 +602,16 @@ def _as_clahe_clip_limit(value: Any) -> tuple[float, float]:
     distribution rather than the units.
 
     Args:
-        value: A scalar, a 1-element sequence, or a 2-element ``(min, max)`` pair.
+        value: A scalar, or a 2-element ``(min, max)`` pair.
 
     Returns:
         The ``(min, max)`` pair Albumentations would sample from for the same config.
+
+    Raises:
+        ValueError: If *value* is a sequence of any length other than two. Albumentations validates ``clip_limit`` as
+            either a float or an exact 2-tuple and rejects ``[4.0]``, so accepting it here (as a scalar, via
+            :func:`_as_range`) would make the same config train on the GPU backend and fail on the CPU one. The point
+            of this helper is that the two agree.
 
     Examples:
         >>> _as_clahe_clip_limit(4.0)
@@ -613,11 +619,16 @@ def _as_clahe_clip_limit(value: Any) -> tuple[float, float]:
         >>> _as_clahe_clip_limit((2.0, 6.0))
         (2.0, 6.0)
     """
-    if isinstance(value, (list, tuple)) and len(value) == 2:
+    if isinstance(value, (list, tuple)):
+        if len(value) != 2:
+            raise ValueError(
+                "CLAHE clip_limit must be a scalar or a 2-element (min, max) pair; "
+                f"got a {len(value)}-element sequence: {value!r}. Albumentations rejects this too, so the CPU "
+                "(albumentations) backend would fail on the same config."
+            )
         return (float(value[0]), float(value[1]))
-    low, high = _as_range(value)
-    # A scalar (or 1-element sequence) arrives here as the degenerate (v, v).
-    return (1.0, high) if low == high else (low, high)
+    # A scalar means the range (1, v), which is what `to_tuple(v, low=1)` produces.
+    return (1.0, float(value))
 
 
 def _make_clahe(params: dict[str, Any]) -> Any:
