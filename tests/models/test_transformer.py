@@ -6,6 +6,7 @@
 """Tests for transformer utilities, MS deformable attention core, and MSDeformAttn module."""
 
 import io
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -548,6 +549,59 @@ class TestMSDeformAttnCorePytorch:
 
         assert output.shape[0] == 1
 
+    def test_single_level_skips_sample_packing(
+        self, monkeypatch: pytest.MonkeyPatch, single_level_inputs: _MSDeformInputs
+    ) -> None:
+        """Single-level attention should reuse its sampled tensor without stacking it."""
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = single_level_inputs
+        stack = Mock(wraps=torch.stack)
+        monkeypatch.setattr(torch, "stack", stack)
+
+        ms_deform_attn_core_pytorch(
+            value,
+            spatial_shapes_tensor,
+            sampling_locations,
+            attention_weights,
+            value_spatial_shapes_hw=levels,
+        )
+
+        stack.assert_not_called()
+
+    def test_single_level_with_tensor_spatial_shapes_skips_sample_packing(
+        self, monkeypatch: pytest.MonkeyPatch, single_level_inputs: _MSDeformInputs
+    ) -> None:
+        """Single-level packing skip must also apply on the tensor-only fallback (no value_spatial_shapes_hw)."""
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, _ = single_level_inputs
+        stack = Mock(wraps=torch.stack)
+        monkeypatch.setattr(torch, "stack", stack)
+
+        output = ms_deform_attn_core_pytorch(value, spatial_shapes_tensor, sampling_locations, attention_weights)
+
+        stack.assert_not_called()
+        bsz, n_heads, head_dim, _ = value.shape
+        len_q = sampling_locations.shape[1]
+        assert output.shape == (bsz, len_q, n_heads * head_dim)
+
+    def test_multiple_levels_keep_sample_packing(
+        self, monkeypatch: pytest.MonkeyPatch, make_inputs: _MSDeformInputs
+    ) -> None:
+        """Multi-level attention should still stack one sampled tensor per feature level."""
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = make_inputs
+        stack = Mock(wraps=torch.stack)
+        monkeypatch.setattr(torch, "stack", stack)
+
+        ms_deform_attn_core_pytorch(
+            value,
+            spatial_shapes_tensor,
+            sampling_locations,
+            attention_weights,
+            value_spatial_shapes_hw=levels,
+        )
+
+        stack.assert_called_once()
+        assert len(stack.call_args.args[0]) == len(levels)
+        assert stack.call_args.kwargs.get("dim") == -2
+
 
 class TestMSDeformAttnModule:
     """Tests for MSDeformAttn.forward covering the export-compatibility changes.
@@ -997,6 +1051,52 @@ def test_ms_deform_attn_core_pytorch_export_compatible() -> None:
     value_spatial_shapes_hw (concrete Python ints from a module attribute) bypasses the tensor iteration entirely.
     """
     levels: list[tuple[int, int]] = [(4, 4), (2, 2)]
+    bsz, n_heads, head_dim = 1, 2, 4
+    total_hw = sum(ht * wd for ht, wd in levels)
+    len_q, nlvl, npts = 3, len(levels), 1
+
+    class _MinimalDeformAttn(torch.nn.Module):
+        """Minimal wrapper to test torch.export.export on the hw-param code path."""
+
+        def __init__(self, hw: list[tuple[int, int]]) -> None:
+            super().__init__()
+            self.hw = hw
+
+        def forward(
+            self,
+            value: torch.Tensor,
+            spatial_shapes: torch.Tensor,
+            sampling_locations: torch.Tensor,
+            attention_weights: torch.Tensor,
+        ) -> torch.Tensor:
+            """Forward using concrete Python int pairs for export compatibility."""
+            return ms_deform_attn_core_pytorch(
+                value,
+                spatial_shapes,
+                sampling_locations,
+                attention_weights,
+                value_spatial_shapes_hw=self.hw,
+            )
+
+    value = torch.randn(bsz, n_heads, head_dim, total_hw)
+    spatial_shapes = torch.tensor(levels, dtype=torch.long)
+    sampling_locations = torch.rand(bsz, len_q, n_heads, nlvl, npts, 2)
+    attention_weights = torch.softmax(torch.randn(bsz, len_q, n_heads, nlvl * npts), dim=-1)
+
+    module = _MinimalDeformAttn(hw=levels)
+
+    exported = torch.export.export(module, args=(value, spatial_shapes, sampling_locations, attention_weights))
+    assert exported is not None
+
+
+def test_ms_deform_attn_core_pytorch_export_compatible_single_level() -> None:
+    """torch.export.export must succeed with a single feature level (num_levels == 1 packing skip).
+
+    Regression test for the singleton-packing change: the two-level case above already covers the general
+    torch.export path, but the num_levels == 1 branch replaces torch.stack(...).flatten(-2) with a direct index and
+    needs its own FakeTensor trace to confirm that substitution stays export-compatible.
+    """
+    levels: list[tuple[int, int]] = [(4, 4)]
     bsz, n_heads, head_dim = 1, 2, 4
     total_hw = sum(ht * wd for ht, wd in levels)
     len_q, nlvl, npts = 3, len(levels), 1
