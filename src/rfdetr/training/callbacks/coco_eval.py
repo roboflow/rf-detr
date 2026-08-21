@@ -11,6 +11,7 @@ import contextlib
 import importlib
 import io
 import logging
+import warnings
 from collections.abc import Callable, Mapping
 from typing import Any, cast
 
@@ -95,6 +96,24 @@ def _is_running_in_notebook() -> bool:
     return False
 
 
+def _resolve_eval_base_model(eval_base_model: bool | None, eval_ema_only: bool | None) -> bool:
+    """Resolve current and deprecated evaluation flags.
+
+    Examples:
+        >>> _resolve_eval_base_model(True, None)
+        True
+        >>> _resolve_eval_base_model(None, True)
+        False
+        >>> _resolve_eval_base_model(None, None)
+        False
+    """
+    if eval_base_model is not None:
+        return bool(eval_base_model)
+    if eval_ema_only is not None:
+        return not eval_ema_only
+    return False
+
+
 class COCOEvalCallback(Callback):
     """Validation callback that computes mAP (via torchmetrics) and macro-F1.
 
@@ -118,6 +137,9 @@ class COCOEvalCallback(Callback):
             always computed when ``trainer.test()`` is called.
         log_per_class_metrics: When ``False``, skip per-class AP computation
             (``MeanAveragePrecision(class_metrics=False)``) as well as the per-class logging/table.
+        eval_ema_only: Deprecated compatibility flag from the pre-1.10 callback API. When explicitly supplied,
+            ``True`` selects EMA-only evaluation and ``False`` selects base-plus-EMA evaluation, preserving the old
+            keyword and positional behavior. Omit it for the new default.
         eval_base_model: When ``False`` (default), ``validation_step`` already forwarded through
             the EMA model directly (see ``TrainConfig.eval_base_model``), so the independent
             duplicate EMA forward pass this callback would otherwise run every validation batch
@@ -134,14 +156,23 @@ class COCOEvalCallback(Callback):
         log_per_class_metrics: bool = True,
         keypoint_oks_sigmas: list[float] | None = None,
         in_notebook: bool | None = None,
-        eval_base_model: bool = False,
+        eval_ema_only: bool | None = None,
+        eval_base_model: bool | None = None,
     ) -> None:
         super().__init__()
         self._max_dets = max_dets
         self._segmentation = segmentation
         self._eval_interval = max(1, int(eval_interval))
         self._log_per_class_metrics = bool(log_per_class_metrics)
-        self._eval_base_model = bool(eval_base_model)
+        if eval_ema_only is not None:
+            warnings.warn(
+                "COCOEvalCallback.eval_ema_only is deprecated; use eval_base_model to opt into base-model evaluation.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        if eval_ema_only is not None and eval_base_model is not None:
+            raise ValueError("eval_ema_only and eval_base_model cannot both be supplied")
+        self._eval_base_model = _resolve_eval_base_model(eval_base_model, eval_ema_only)
         self._class_names: list[str] = []
         self._cat_id_to_name: dict[int, str] = {}
         self._f1_local: dict[int, dict[str, Any]] = init_matching_accumulator()
@@ -596,9 +627,11 @@ class COCOEvalCallback(Callback):
                 on_epoch=True,
             )
             pl_module.log(f"{split}/ema_mAP_50", ema_metrics[f"{pfx}map_50"], logger=True, on_step=False, on_epoch=True)
+            pl_module.log(f"{split}/ema_mAP_75", ema_metrics[f"{pfx}map_75"], logger=True, on_step=False, on_epoch=True)
             pl_module.log(f"{split}/ema_mAR", ema_metrics[mar_key], logger=True, on_step=False, on_epoch=True)
             trainer.callback_metrics[f"{split}/ema_mAP_50_95"] = ema_metrics[f"{pfx}map"].detach().cpu()
             trainer.callback_metrics[f"{split}/ema_mAP_50"] = ema_metrics[f"{pfx}map_50"].detach().cpu()
+            trainer.callback_metrics[f"{split}/ema_mAP_75"] = ema_metrics[f"{pfx}map_75"].detach().cpu()
             trainer.callback_metrics[f"{split}/ema_mAR"] = ema_metrics[mar_key].detach().cpu()
             if self._use_segm_metrics:
                 pl_module.log(
@@ -629,9 +662,8 @@ class COCOEvalCallback(Callback):
 
         Mirroring the whole ``ema_`` prefix rather than an enumerated key list keeps the primary namespace in
         step with whatever the EMA track logged for the task at hand — box, segmentation and keypoint keys
-        alike, including the task-specific key ``BestModelCallback``/``RFDETREarlyStopping`` monitor. Only
-        ``trainer.callback_metrics`` entries are mirrored, which is exactly the headline scalar set: per-class
-        AP goes through ``pl_module.log`` alone and deliberately stays under ``{split}/ema_AP/<class>``.
+        alike, including the task-specific key ``BestModelCallback``/``RFDETREarlyStopping`` monitor. Per-class AP is
+        mirrored separately in the EMA-only summary because it is logged outside ``trainer.callback_metrics``.
 
         The mirrored score comes from the EMA weights, so ``BestModelCallback`` must not run its base-weights
         track against it — see its ``evaluates_base_model`` argument, which trainer.py wires from the same
@@ -1129,10 +1161,9 @@ class COCOEvalCallback(Callback):
         early-return branch), so that path never runs and no table is ever printed for the entire run,
         even though ``map_metric_ema`` has real per-class data (built with the same ``class_metrics``
         setting as the base metric). Without this, fixing the logged scalars alone leaves the console
-        table half of the original "no validation output at all" complaint (#1285) unfixed. Per-class
-        AP is logged under ``ema_`` keys (via ``_build_per_class_rows``'s ``metric_prefix``) so it never
-        collides with a base-track ``{split}/AP/{name}`` key — consistent with ``val/ema_mAP_50_95``
-        staying separate from ``val/mAP_50_95`` elsewhere in this callback.
+        table half of the original "no validation output at all" complaint (#1285) unfixed. Per-class AP is logged
+        under both ``ema_`` and primary keys when this is the only validation track, keeping the default namespace
+        complete while preserving the explicit EMA namespace.
 
         Args:
             trainer: The PTL Trainer.
@@ -1180,6 +1211,8 @@ class COCOEvalCallback(Callback):
             f1_by_cid=f1_by_cid,
             metric_prefix="ema_",
         )
+        for row in per_class_ema:
+            pl_module.log(f"{split}/AP/{row['name']}", row["ap"], logger=True, on_step=False, on_epoch=True)
         self._print_metrics_tables(trainer, "val (ema)", overall_ema, per_class_ema)
 
     def _build_per_class_rows(

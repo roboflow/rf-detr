@@ -61,11 +61,6 @@ class BestModelCallback(ModelCheckpoint):
         output_dir: Directory where checkpoint files are written.
         monitor_regular: Metric key for the regular model (mAP or mAR, per ``TrainConfig.best_model_metric``).
         monitor_ema: Metric key for the EMA model (mAP or mAR).  ``None`` disables EMA tracking.
-        evaluates_base_model: Whether validation actually evaluates the base model this run (see
-            ``TrainConfig.eval_base_model``).  ``False`` disables the regular checkpoint track entirely,
-            because ``monitor_regular`` then carries the EMA score mirrored by ``COCOEvalCallback`` while
-            this track saves base weights — checkpointing one model against the other's score.  The EMA
-            track still runs, and ``on_fit_end`` promotes its checkpoint to ``checkpoint_best_total.pth``.
         run_test: If ``True``, run ``trainer.test()`` on the best model at the end of training.
         skip_best_epochs: Ignore the first N epochs (0..N-1) when tracking
             best regular and EMA checkpoints.  Useful when fine-tuning from ``pretrain_weights``: the pretrained model's
@@ -81,6 +76,11 @@ class BestModelCallback(ModelCheckpoint):
             raw per-epoch swings can lock the best checkpoint to an early local peak.  The EMA accumulator is updated
             on every validation epoch including epochs within the ``skip_best_epochs`` window so the smoothed value
             is pre-warmed by the first eligible comparison.
+        evaluates_base_model: Whether validation actually evaluates the base model this run (see
+            ``TrainConfig.eval_base_model``). ``False`` disables the regular checkpoint track because
+            ``monitor_regular`` then carries the EMA score mirrored by ``COCOEvalCallback`` while this track saves
+            base weights. The EMA track still runs, and ``on_fit_end`` promotes its checkpoint to
+            ``checkpoint_best_total.pth``.
 
     Examples:
         Skip the first 3 epochs so pretrained weights do not dominate:
@@ -100,10 +100,10 @@ class BestModelCallback(ModelCheckpoint):
         output_dir: str,
         monitor_regular: str = "val/mAP_50_95",
         monitor_ema: str | None = None,
-        evaluates_base_model: bool = True,
         run_test: bool = True,
         skip_best_epochs: int = 0,
         smooth_alpha: float = 0.0,
+        evaluates_base_model: bool = True,
     ) -> None:
         super().__init__(
             dirpath=output_dir,
@@ -603,12 +603,25 @@ class BestModelCallback(ModelCheckpoint):
             best_regular = self._best_raw_regular
         else:
             best_regular = self.best_model_score.item() if self.best_model_score is not None else 0.0
-        regular_path = Path(self.best_model_path) if self.best_model_path else None
         ema_path = self._output_dir / "checkpoint_best_ema.pth"
         total_path = self._output_dir / "checkpoint_best_total.pth"
 
-        # Strict > for EMA to win (matches legacy behaviour).
-        best_is_ema = self._best_ema > best_regular
+        # Backfill before choosing the winner: a valid zero EMA score does not pass the strict improvement check, but
+        # EMA-only runs still need a source checkpoint to promote to checkpoint_best_total.pth.
+        ema_state_dict: dict[str, Tensor] | None = None
+        if self._monitor_ema is not None:
+            self._output_dir.mkdir(parents=True, exist_ok=True)
+            ema_state_dict = self._get_ema_model_state_dict(trainer, pl_module)
+            if not ema_path.exists():
+                self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, ema_path)
+                logger.info("EMA metric never improved; saved final EMA weights as %s", ema_path.name)
+
+        regular_path = Path(self.best_model_path) if self.best_model_path else None
+        # EMA owns selection whenever the base model was not evaluated, including a valid zero score. When both tracks
+        # ran, retain the legacy strict comparison so equal scores keep the regular checkpoint.
+        best_is_ema = self._monitor_ema is not None and (
+            not self._evaluates_base_model or self._best_ema > best_regular
+        )
         # ``chose_ema`` reflects the source actually copied: EMA can win the comparison yet be
         # unavailable on disk, in which case regular is used and recorded.
         chose_ema = best_is_ema and ema_path.exists()
@@ -626,15 +639,8 @@ class BestModelCallback(ModelCheckpoint):
                 self._best_ema,
             )
 
-        # When EMA tracking is enabled, always leave EMA-named checkpoints on disk for clarity:
-        # a guaranteed checkpoint_best_ema.pth (backfilled with final EMA weights when the EMA metric
-        # never improved) and last_ema.pth (final EMA weights, mirroring last.pth for the live model).
-        if self._monitor_ema is not None:
-            self._output_dir.mkdir(parents=True, exist_ok=True)
-            ema_state_dict = self._get_ema_model_state_dict(trainer, pl_module)
-            if not ema_path.exists():
-                self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, ema_path)
-                logger.info("EMA metric never improved; saved final EMA weights as %s", ema_path.name)
+        # When EMA tracking is enabled, always leave last_ema.pth on disk, mirroring last.pth for the live model.
+        if self._monitor_ema is not None and ema_state_dict is not None:
             self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, self._output_dir / "last_ema.pth")
 
         if self._run_test:

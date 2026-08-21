@@ -1084,9 +1084,9 @@ class TrainConfig(BaseConfig):
     # selected (EMA) model, mirrored from the EMA track by COCOEvalCallback so every scheduler,
     # early-stopping hook, checkpoint monitor and dashboard watching the primary key keeps receiving a
     # real number. val/ema_* is always the EMA track and is what the EMA checkpoint monitor reads.
-    # Two keys deliberately stay EMA-prefixed under the default rather than being mirrored: per-class AP
-    # (val/ema_AP/<class>) and val/mAP_75, which the EMA track does not log. The printed summary table is
-    # titled "val (ema)" when the base model was not evaluated. val/F1 has no parallel EMA-tracked
+    # The EMA-only path mirrors aggregate mAP/mAR and per-class AP onto the primary namespace; val/ema_* remains
+    # available for explicit EMA monitors. The printed summary table is titled "val (ema)" when the base model was
+    # not evaluated. val/F1 has no parallel EMA-tracked
     # accumulator and always follows validation_step's own forward — under the default that is the EMA
     # model, which now agrees with the mAP under the same key.
     eval_base_model: bool = False
@@ -1399,15 +1399,23 @@ class TrainConfig(BaseConfig):
     def _warn_deprecated_eval_ema_only(cls, data: Any) -> Any:
         """Warn that ``eval_ema_only`` is superseded by the default single-model evaluation policy.
 
-        Only an explicitly supplied non-default value warns, so reloading a dumped config — which always carries every
-        field — stays silent, matching ``_map_deprecated_lr_fields``.
+        Legacy input that contains ``eval_ema_only`` without the new ``eval_base_model`` field is migrated to the
+        equivalent old base-plus-EMA policy and warns. New dumps contain both fields, so reloading them stays silent.
         """
         if not isinstance(data, dict):
             return data
-        if data.get("eval_ema_only", cls.model_fields["eval_ema_only"].default):
+        if "eval_ema_only" not in data:
+            return data
+        if "eval_base_model" in data and not data["eval_base_model"]:
+            return data
+        data = dict(data)
+        if "eval_base_model" not in data:
+            data["eval_base_model"] = not bool(data["eval_ema_only"])
+        if data.get("eval_ema_only") is not None:
             warnings.warn(
-                "eval_ema_only is deprecated and now a no-op: validation evaluates only the selected model "
-                "(EMA when use_ema=True) by default. Set eval_base_model=True to also evaluate the base model.",
+                "eval_ema_only is deprecated. New configurations evaluate only the selected model "
+                "(EMA when use_ema=True) by default; legacy configurations are migrated from this flag. "
+                "Set eval_base_model=True to also evaluate the base model.",
                 FutureWarning,
                 stacklevel=2,
             )

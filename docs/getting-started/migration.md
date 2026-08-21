@@ -10,7 +10,7 @@ Read each section between your current version and your target — every section
 1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9  →  1.10
 ```
 
-You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs emit a `DeprecationWarning` until the version marked for removal. See the [Changelog](../changelog.md) for the full list of changes in each release.
+You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs emit a `DeprecationWarning`, while deprecated configuration fields emit a `FutureWarning`, until the version marked for removal. See the [Changelog](../changelog.md) for the full list of changes in each release.
 
 ---
 
@@ -36,7 +36,7 @@ You can apply all changes in one go; working through sections one release at a t
 
 !!! warning "Breaking: validation evaluates one model, and `val/mAP_*` follows it"
 
-    Validation now runs **one** forward pass per batch instead of two: through the EMA weights when `use_ema=True` (the default), through the base weights otherwise. `val/mAP_50_95`, `val/mAP_50` and `val/mAR` therefore report the EMA model on a default run — they used to report the base model — while `val/ema_*` is unchanged. Best-checkpoint selection is unaffected in substance (it already preferred EMA), but the "regular" track no longer writes `checkpoint_best_regular.pth` on such runs; `checkpoint_best_total.pth` is copied from the EMA checkpoint. Two keys are not mirrored onto the primary namespace: per-class AP stays at `val/ema_AP/<class>`, and `val/mAP_75` is not emitted.
+    Validation now runs **one** forward pass per batch instead of two: through the EMA weights when `use_ema=True` (the default), through the base weights otherwise. `val/mAP_50_95`, `val/mAP_50`, `val/mAP_75`, `val/mAR`, and per-class `val/AP/<class>` therefore report the EMA model on a default run — they used to report the base model — while the matching `val/ema_*` namespace remains available. Best-checkpoint selection is unaffected in substance (it already preferred EMA), but the "regular" track no longer writes `checkpoint_best_regular.pth` on such runs; `checkpoint_best_total.pth` is copied from the EMA checkpoint.
 
     `val/F1` and `val/loss` (when computed) follow the same single forward, so they now describe the EMA model too — consistent with the mAP under the primary key, but a change of meaning if you monitor `val/loss` with a `ReduceLROnPlateau` scheduler, `ModelCheckpoint`, or early stopping.
 
@@ -48,9 +48,9 @@ You can apply all changes in one go; working through sections one release at a t
 
 ### Deprecated in v1.10 → Remove in v2.0
 
-!!! note "`eval_ema_only` is now a no-op"
+!!! note "`eval_ema_only` is deprecated"
 
-    Evaluating only the EMA model is the default, so `TrainConfig(eval_ema_only=True)` no longer changes behavior and emits a `FutureWarning`. It still requires `use_ema=True` and now conflicts with `eval_base_model=True`. Drop it; use `eval_base_model=True` if you want the base model evaluated as well.
+    Evaluating only the selected model is the default. Explicit legacy `TrainConfig(eval_ema_only=True)` preserves EMA-only evaluation and emits a `FutureWarning`; explicit `eval_ema_only=False` is migrated to the old base-plus-EMA behavior and also warns. Drop the field from new configurations. Use `eval_base_model=True` if you want the base model evaluated as well; `eval_ema_only=True` still requires `use_ema=True` and conflicts with that opt-in.
 
     One improvement for existing `eval_ema_only` users: `val/mAP_50_95` is now populated (with the EMA score) instead of staying absent, so monitors pointed at it start receiving values again.
 

@@ -574,6 +574,25 @@ class TestTrainConfigT42PromotedFields:
             tc = self._tc(tmp_path, eval_ema_only=True, use_ema=True)
         assert tc.eval_ema_only is True
 
+    def test_legacy_eval_ema_only_false_maps_to_base_model(self, tmp_path):
+        """An old explicit ``eval_ema_only=False`` input retains its prior base-plus-EMA behavior."""
+        with pytest.warns(FutureWarning, match="eval_ema_only"):
+            tc = self._tc(tmp_path, eval_ema_only=False, use_ema=True)
+
+        assert tc.eval_base_model is True
+
+    def test_dumped_eval_ema_only_config_reloads_without_warning(self, tmp_path):
+        """A new config dump carries the migrated policy and can reload without repeating the deprecation warning."""
+        with pytest.warns(FutureWarning, match="eval_ema_only"):
+            original = self._tc(tmp_path, eval_ema_only=True, use_ema=True)
+
+        dumped = original.model_dump()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            reloaded = TrainConfig(**dumped)
+
+        assert reloaded.eval_base_model is False
+
     def test_eval_ema_only_defaults_to_false_without_warning(self, tmp_path):
         """eval_ema_only defaults to False and a config that never sets it must not warn.
 

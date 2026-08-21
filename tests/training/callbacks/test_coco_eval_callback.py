@@ -1072,6 +1072,7 @@ class TestOnValidationEpochEnd:
         logged_keys = {c.args[0] for c in module.log.call_args_list}
         assert "val/ema_mAP_50_95" in logged_keys
         assert "val/ema_mAP_50" in logged_keys
+        assert "val/ema_mAP_75" in logged_keys
         assert "val/ema_mAR" in logged_keys
         cb.map_metric_ema.reset.assert_called_once()
 
@@ -1125,13 +1126,14 @@ class TestOnValidationEpochEnd:
         logged = {c.args[0]: c.args[1] for c in module.log.call_args_list}
         assert logged["val/mAP_50_95"] == logged["val/ema_mAP_50_95"]
         assert trainer.callback_metrics["val/mAP_50_95"] == trainer.callback_metrics["val/ema_mAP_50_95"]
+        assert logged["val/mAP_75"] == logged["val/ema_mAP_75"]
         assert logged["val/mAR"] == logged["val/ema_mAR"]
 
-    def test_per_class_ap_is_not_mirrored_onto_the_primary_keys(self) -> None:
-        """Only headline scalars are mirrored; per-class AP stays under val/ema_AP/<class>.
+    def test_per_class_ap_is_mirrored_onto_the_primary_keys(self) -> None:
+        """EMA-only validation publishes per-class AP under both EMA and primary metric namespaces.
 
-        Per-class AP is logged through pl_module.log alone and never enters trainer.callback_metrics, so no monitor can
-        be watching it. Mirroring it would double every per-class row in the logs for no consumer.
+        Per-class AP is logged through pl_module.log alone, so the primary alias must be emitted explicitly alongside
+        the EMA row when no base model was evaluated.
         """
         cb = COCOEvalCallback(max_dets=500)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
@@ -1152,7 +1154,10 @@ class TestOnValidationEpochEnd:
 
         logged_keys = {c.args[0] for c in module.log.call_args_list}
         assert "val/ema_AP/cat" in logged_keys
-        assert "val/AP/cat" not in logged_keys
+        assert "val/AP/cat" in logged_keys
+
+        logged = {c.args[0]: c.args[1] for c in module.log.call_args_list}
+        assert logged["val/AP/cat"] == logged["val/ema_AP/cat"]
 
     def test_computes_f1_from_accumulated_matches_when_base_metric_is_empty(self) -> None:
         """Regression for #1285: on_validation_batch_end merges matching data into f1_local unconditionally (outside the
@@ -1223,8 +1228,8 @@ class TestOnValidationEpochEnd:
         logged_keys = {c.args[0] for c in module.log.call_args_list}
         assert "val/ema_AP/cat" in logged_keys
         assert "val/ema_AP/dog" in logged_keys
-        assert "val/AP/cat" not in logged_keys
-        assert "val/AP/dog" not in logged_keys
+        assert "val/AP/cat" in logged_keys
+        assert "val/AP/dog" in logged_keys
 
     def test_resets_val_ema_keypoints_when_ema_not_yet_warmed_up(self) -> None:
         """Regression for #1289 review: when the base metric is empty AND the EMA metric has not accumulated any updates

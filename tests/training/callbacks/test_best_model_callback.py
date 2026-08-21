@@ -425,6 +425,15 @@ class TestEvaluatesBaseModel:
 class TestBestModelCallback:
     """Verify best-model checkpoint saving and selection."""
 
+    def test_existing_positional_arguments_keep_their_meaning(self, tmp_path: Path) -> None:
+        """Appending the new base-model flag preserves the legacy positional constructor order."""
+        callback = BestModelCallback(str(tmp_path), "val/mAP_50_95", None, False, 3, 0.2)
+
+        assert callback._run_test is False
+        assert callback._skip_best_epochs == 3
+        assert callback._smooth_alpha == pytest.approx(0.2)
+        assert callback._evaluates_base_model is True
+
     def test_checkpoint_payload_includes_model_config_when_provided(self) -> None:
         """Saved ``.pth`` checkpoints should carry the architecture schema needed for reload."""
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
@@ -893,6 +902,23 @@ class TestBestModelCallback:
         cb.on_fit_end(trainer, pl_module)
 
         assert (tmp_path / "checkpoint_best_ema.pth").exists()
+
+    def test_zero_ema_score_promotes_ema_checkpoint_for_ema_only_runs(self, tmp_path: Path) -> None:
+        """A valid zero EMA score still produces and promotes the total checkpoint when no base model was evaluated."""
+        callback = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+            evaluates_base_model=False,
+            run_test=False,
+        )
+        trainer = _make_trainer({"val/ema_mAP_50_95": 0.0})
+
+        callback.on_validation_end(trainer, _make_pl_module())
+        callback.on_fit_end(trainer, _make_pl_module())
+
+        assert (tmp_path / "checkpoint_best_ema.pth").exists()
+        total = torch.load(tmp_path / "checkpoint_best_total.pth", map_location="cpu", weights_only=False)
+        assert total["best_total_source"] == "ema"
 
     def test_best_ema_not_overwritten_when_metric_improved(self, tmp_path: Path) -> None:
         """on_fit_end must not rewrite checkpoint_best_ema.pth when a true best was saved during training."""
