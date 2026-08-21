@@ -230,6 +230,106 @@ def test_adapter_matches_torchmetrics_on_nontrivial_multiclass_multiimage_data()
             torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=1e-4, atol=1e-6)
 
 
+class TestHoistedDetectionScores:
+    """Prediction COCO datasets built with per-image score conversion instead of TorchMetrics' per-annotation read."""
+
+    predictions = [
+        {
+            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 28.0, 28.0]]),
+            "scores": torch.tensor([0.9, 0.8]),
+            "labels": torch.tensor([3, 17]),
+        },
+        {
+            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
+            "scores": torch.tensor([0.95]),
+            "labels": torch.tensor([42]),
+        },
+    ]
+    targets = [
+        {"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3])},
+        {"boxes": torch.tensor([[5.0, 5.0, 15.0, 15.0]]), "labels": torch.tensor([3])},
+    ]
+
+    def _updated_metric(self) -> OnePassCocoMeanAveragePrecision:
+        """Return a metric holding this class's two-image prediction and target state."""
+        metric = OnePassCocoMeanAveragePrecision(class_metrics=True)
+        metric.update(self.predictions, self.targets)
+        return metric
+
+    def test_datasets_match_stock_construction(self) -> None:
+        """Hoisted construction must produce the same COCO datasets TorchMetrics' own helper produces.
+
+        The whole optimization rests on ``scores=None`` plus a second assignment pass being indistinguishable from the
+        per-annotation read. Comparing the raw dataset dicts catches a divergence -- a dropped ``info`` key, a shifted
+        ``annotation_id``, a misaligned score -- that aggregate mAP values could average away.
+        """
+        metric = self._updated_metric()
+        expected_preds, expected_target = metric._coco_backend._get_coco_datasets(
+            metric.groundtruth_labels,
+            metric.groundtruth_box,
+            metric.groundtruth_mask,
+            metric.groundtruth_crowds,
+            metric.groundtruth_area,
+            metric.detection_labels,
+            metric.detection_box,
+            metric.detection_mask,
+            metric.detection_scores,
+            metric.iou_type,
+            average=metric.average,
+        )
+
+        actual_preds, actual_target = metric._coco_datasets(metric._observed_classes())
+
+        assert actual_preds.dataset == expected_preds.dataset
+        assert actual_target.dataset == expected_target.dataset
+
+    def test_scores_are_converted_once_for_each_image(self) -> None:
+        """Prediction annotations must be requested without scores, so no score is converted per annotation.
+
+        Parity alone cannot detect a silent regression back to the slow path: passing ``scores`` through to
+        TorchMetrics would still be correct, just as slow as before. Asserting the call keyword pins the behaviour
+        that makes this change worth having.
+        """
+        metric = self._updated_metric()
+        recorded = MagicMock(side_effect=metric._coco_backend._get_coco_format)
+
+        with patch.object(CocoBackend, "_get_coco_format", recorded):
+            metric._coco_datasets(metric._observed_classes())
+
+        prediction_call = recorded.call_args_list[-1]
+        assert prediction_call.kwargs["scores"] is None
+        assert prediction_call.kwargs["labels"] is metric.detection_labels
+
+    def test_annotation_count_mismatch_is_rejected(self) -> None:
+        """A prediction annotation count that no longer matches stored scores must fail loudly.
+
+        Assigning scores positionally is only sound while upstream emits one annotation per stored detection. If its
+        loop ever starts dropping or adding annotations, silently zipping the shorter of the two would attach wrong
+        scores to real detections and quietly corrupt every reported mAP.
+        """
+        metric = self._updated_metric()
+
+        with (
+            patch.object(
+                CocoBackend, "_get_coco_format", return_value={"images": [], "annotations": [], "categories": []}
+            ),
+            pytest.raises(RuntimeError, match="prediction annotations"),
+        ):
+            metric._coco_datasets(metric._observed_classes())
+
+    def test_non_float_scores_are_rejected(self) -> None:
+        """Integer score state must raise, matching the per-annotation type check the hoist replaces.
+
+        TorchMetrics validates that scores are a tensor but not that they are floating point; the float check only
+        happens during conversion. Converting a whole image at once skips that check, so it has to be restated.
+        """
+        metric = self._updated_metric()
+        metric.detection_scores = [scores.long() for scores in metric.detection_scores]
+
+        with pytest.raises(ValueError, match="expected floating point"):
+            metric._coco_datasets(metric._observed_classes())
+
+
 def test_empty_predictions_preserve_zero_recall() -> None:
     """A class with ground truth but no predictions must report zero AP/AR instead of a missing-value sentinel."""
     metric = OnePassCocoMeanAveragePrecision(class_metrics=True)
