@@ -523,7 +523,7 @@ class TestTrainConfigT42PromotedFields:
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, **{field: value})
 
-    def test_grad_accum_steps_defaults_to_one(self, tmp_path):
+    def test_grad_accum_steps_defaults_to_one(self, tmp_path: Path) -> None:
         """Gradient accumulation is opt-in: the default is 1, so the default effective batch is batch_size alone."""
         assert self._tc(tmp_path).grad_accum_steps == 1
 
@@ -534,12 +534,17 @@ class TestTrainConfigT42PromotedFields:
             pytest.param(-1, id="negative"),
         ],
     )
-    def test_eval_batch_size_rejects_non_positive_values(self, tmp_path, eval_batch_size):
-        """eval_batch_size must be >= 1 when provided; it accepts no 'auto' sentinel."""
-        with pytest.raises((ValueError, ValidationError)):
+    def test_eval_batch_size_rejects_non_positive_values(self, tmp_path: Path, eval_batch_size: int) -> None:
+        """eval_batch_size must be >= 1 when provided."""
+        with pytest.raises(ValidationError, match=r"eval_batch_size\s+Value error, eval_batch_size must be >= 1"):
             self._tc(tmp_path, eval_batch_size=eval_batch_size)
 
-    def test_eval_batch_size_defaults_to_none(self, tmp_path):
+    def test_eval_batch_size_rejects_auto_sentinel(self, tmp_path: Path) -> None:
+        """eval_batch_size rejects batch_size's automatic-sizing sentinel."""
+        with pytest.raises(ValidationError, match=r"eval_batch_size\s+Input should be a valid integer"):
+            self._tc(tmp_path, eval_batch_size="auto")
+
+    def test_eval_batch_size_defaults_to_none(self, tmp_path: Path) -> None:
         """eval_batch_size defaults to None so eval loaders inherit the resolved train batch size."""
         assert self._tc(tmp_path).eval_batch_size is None
 

@@ -1053,7 +1053,21 @@ class TestEvalBatchSize:
         pytest.param("predict_dataloader", id="predict"),
     ]
 
-    def _setup_dm(self, tmp_path, batch_size=2, eval_batch_size=None, grad_accum_steps=1, dataset_length=50):
+    def _setup_dm(
+        self,
+        tmp_path: Path,
+        batch_size: int | str = 2,
+        eval_batch_size: int | None = None,
+        grad_accum_steps: int = 1,
+        dataset_length: int = 50,
+    ) -> RFDETRDataModule:
+        """Build a data module with every loader dataset injected.
+
+        Examples:
+            >>> datamodule = TestEvalBatchSize()._setup_dm(Path("/tmp"), batch_size=4, eval_batch_size=8)
+            >>> datamodule.train_config.batch_size, datamodule.train_config.eval_batch_size
+            (4, 8)
+        """
         mc = _base_model_config()
         tc = _base_train_config(
             tmp_path,
@@ -1069,39 +1083,39 @@ class TestEvalBatchSize:
         return dm
 
     @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
-    def test_defaults_to_train_batch_size(self, tmp_path, loader_name):
+    def test_defaults_to_train_batch_size(self, tmp_path: Path, loader_name: str) -> None:
         """With eval_batch_size unset, every eval DataLoader keeps using the train batch size."""
         dm = self._setup_dm(tmp_path, batch_size=6, eval_batch_size=None)
         loader = getattr(dm, loader_name)()
         assert loader.batch_size == 6
 
     @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
-    def test_explicit_value_overrides_train_batch_size(self, tmp_path, loader_name):
+    def test_explicit_value_overrides_train_batch_size(self, tmp_path: Path, loader_name: str) -> None:
         """An explicit eval_batch_size is used by every eval DataLoader instead of the train batch size."""
         dm = self._setup_dm(tmp_path, batch_size=2, eval_batch_size=16)
         loader = getattr(dm, loader_name)()
         assert loader.batch_size == 16
 
-    def test_train_dataloader_keeps_train_batch_size(self, tmp_path):
+    def test_train_dataloader_keeps_train_batch_size(self, tmp_path: Path) -> None:
         """The training DataLoader ignores eval_batch_size and keeps the configured train batch size."""
         dm = self._setup_dm(tmp_path, batch_size=2, eval_batch_size=16)
         loader = dm.train_dataloader()
         assert loader.batch_sampler.batch_size == 2
 
-    def test_train_dataloader_grad_accum_alignment_unaffected(self, tmp_path):
+    def test_train_dataloader_grad_accum_alignment_unaffected(self, tmp_path: Path) -> None:
         """Train-side grad-accum padding still aligns to batch_size * grad_accum_steps, not eval_batch_size."""
         dm = self._setup_dm(tmp_path, batch_size=2, eval_batch_size=16, grad_accum_steps=4, dataset_length=50)
         loader = dm.train_dataloader()
         assert len(loader.dataset) % (2 * 4) == 0
 
     @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
-    def test_explicit_value_works_with_unresolved_auto_batch_size(self, tmp_path, loader_name):
+    def test_explicit_value_works_with_unresolved_auto_batch_size(self, tmp_path: Path, loader_name: str) -> None:
         """An explicit eval_batch_size does not depend on batch_size='auto' having been resolved."""
         dm = self._setup_dm(tmp_path, batch_size="auto", eval_batch_size=8)
         loader = getattr(dm, loader_name)()
         assert loader.batch_size == 8
 
-    def test_unresolved_auto_batch_size_still_raises_without_explicit_value(self, tmp_path):
+    def test_unresolved_auto_batch_size_still_raises_without_explicit_value(self, tmp_path: Path) -> None:
         """Without eval_batch_size, an unresolved batch_size='auto' still fails eval loader construction."""
         dm = self._setup_dm(tmp_path, batch_size="auto", eval_batch_size=None)
         with pytest.raises(RuntimeError, match="was not resolved"):

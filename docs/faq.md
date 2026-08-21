@@ -71,17 +71,17 @@ If both are set, `RF_HOME` wins. This only affects where **bare-filename** weigh
 
 ## Does my effective batch size have to be 16?
 
-No. 16 is a reasonable target, not a requirement. Effective batch size is `batch_size × grad_accum_steps × num_gpus`.
+No. 16 is a reasonable nominal target, not a requirement. The nominal effective batch is `batch_size × grad_accum_steps × num_gpus`.
 
-Note that the defaults no longer produce 16: `grad_accum_steps` defaults to `1` (it was `4` in earlier versions), so `batch_size=4` alone gives an effective batch of 4. If you were relying on the old defaults and want the previous behavior, set `grad_accum_steps=4` explicitly.
+Note that the defaults no longer produce 16: `grad_accum_steps` defaults to `1` (it was `4` in earlier versions), so `batch_size=4` alone gives a nominal effective batch of 4. If you were relying on the old defaults and want the previous behavior, set `grad_accum_steps=4` explicitly.
 
 ## Should I raise `batch_size` or `grad_accum_steps`?
 
 Raise `batch_size` first, and only reach for `grad_accum_steps` when memory stops you.
 
-Both increase the effective batch, but they are not equivalent in cost. Gradient accumulation splits one optimizer step across several smaller forward/backward passes, and a small physical batch tends to leave the GPU under-occupied. On one L4 training `rfdetr-small`, `batch_size=16, grad_accum_steps=1` ran about 27% faster per epoch than `batch_size=4, grad_accum_steps=4` at the same effective batch of 16, with mAP equal within run-to-run noise. That is a single GPU and a single dataset, so take the direction rather than the exact number.
+Both increase the nominal effective batch, but they are not equivalent in cost or necessarily in optimization behavior. If hardware memory prevents the physical batch from reaching your target, increase `grad_accum_steps` to recover the nominal optimizer-step window. Gradient accumulation splits that window across smaller forward/backward passes, changes microbatch cadence, and a small physical batch tends to leave the GPU under-occupied. On one L4 training `rfdetr-small`, `batch_size=16, grad_accum_steps=1` ran about 27% faster per epoch than `batch_size=4, grad_accum_steps=4` at the same nominal effective batch of 16, with mAP equal within run-to-run noise. That is a single GPU and a single dataset, so take the direction rather than the exact number.
 
-So: push `batch_size` up until you hit an out-of-memory error, then back off one step. If that leaves you below the effective batch you want, raise `grad_accum_steps` to make up the difference — keeping the product `batch_size × grad_accum_steps` constant preserves the effective batch, and with it the optimization behavior. On a 16GB T4, `batch_size=4, grad_accum_steps=4` still reaches an effective batch of 16. If you would rather not tune this by hand, set `batch_size="auto"` and let the probe pick both values. See [Training Parameters](learn/train/training-parameters.md).
+So: use `batch_size="auto"` on CUDA when the model, task, resolution, or available memory makes manual sizing uncertain. On CPU or MPS, use a concrete integer batch size. If you set it manually, increase the physical batch conservatively and use `grad_accum_steps` only when memory requires it. Keeping `batch_size × grad_accum_steps` constant preserves only the nominal effective-batch target; it does not guarantee the same optimization trajectory, even though the nominal images-per-optimizer-update target is unchanged. See [Training Parameters](learn/train/training-parameters.md).
 
 ## What export formats are supported?
 

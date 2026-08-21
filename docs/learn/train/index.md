@@ -52,7 +52,7 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
     model.train(
         dataset_dir="<DATASET_PATH>",
         epochs=100,
-        batch_size=16,
+        batch_size="auto",
         lr=1e-4,
         output_dir="<OUTPUT_PATH>",
     )
@@ -68,7 +68,7 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
     model.train(
         dataset_dir="<DATASET_PATH>",
         epochs=100,
-        batch_size=16,
+        batch_size="auto",
         lr=1e-4,
         output_dir="<OUTPUT_PATH>",
     )
@@ -84,14 +84,13 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
     model.train(
         dataset_dir="<KEYPOINT_DATASET_PATH>",
         epochs=50,
-        batch_size=2,
-        grad_accum_steps=8,
+        batch_size="auto",
         lr=1e-5,
         output_dir="<OUTPUT_PATH>",
     )
     ```
 
-Different GPUs have different VRAM capacities, so adjust `batch_size` to what yours holds, aiming for an effective batch of 16. **Raise `batch_size` first and leave `grad_accum_steps` at its default of `1`** — a larger physical batch keeps the GPU better occupied and is measurably faster at the same effective batch. Only when memory caps `batch_size` below your target should you raise `grad_accum_steps` to make up the difference, keeping the product `batch_size × grad_accum_steps` at 16. On an A100 that is `batch_size=16, grad_accum_steps=1`; on a 16GB T4, `batch_size=4, grad_accum_steps=4`.
+Different models, tasks, resolutions, and GPUs have different memory requirements. On CUDA, the portable starting point is `batch_size="auto"`: the probe sizes the physical batch for the current training setup and recommends accumulation toward its configured target. CPU and MPS training require a concrete integer batch size; if hardware memory limits that physical batch, increase `grad_accum_steps` to recover a nominal effective-batch target. The product is not an optimization-equivalence guarantee: accumulation changes forward/backward microbatch cadence, and a larger physical batch can have different throughput and optimization behavior.
 
 Each model class downloads its COCO-pretrained checkpoint automatically when instantiated. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
 
