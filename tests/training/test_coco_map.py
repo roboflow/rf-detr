@@ -317,6 +317,29 @@ class TestHoistedDetectionScores:
         ):
             metric._coco_datasets(metric._observed_classes())
 
+    def test_mask_only_state_uses_stock_construction(self) -> None:
+        """Segmentation-only predictions must keep using TorchMetrics' own helper.
+
+        Without boxes, upstream drops an image that has no masks from the annotation list entirely
+        (``helpers.py:508-511``), so annotation order stops tracking stored score order and positional assignment would
+        attach one image's scores to another's detections. Nothing else in the suite reaches this branch: an empty ``(0,
+        4)`` box tensor still leaves ``detection_box`` populated and takes the hoisted path.
+        """
+        mask = torch.zeros(1, 8, 8, dtype=torch.bool)
+        mask[:, 1:5, 1:5] = True
+        metric = OnePassCocoMeanAveragePrecision(iou_type="segm", class_metrics=True)
+        metric.update(
+            [{"masks": mask.clone(), "scores": torch.tensor([0.9]), "labels": torch.tensor([7])}],
+            [{"masks": mask.clone(), "labels": torch.tensor([7])}],
+        )
+        recorded = MagicMock(side_effect=metric._coco_backend._get_coco_datasets)
+
+        with patch.object(CocoBackend, "_get_coco_datasets", recorded):
+            coco_preds, _ = metric._coco_datasets(metric._observed_classes())
+
+        assert recorded.call_count == 1
+        assert [annotation["score"] for annotation in coco_preds.dataset["annotations"]] == pytest.approx([0.9])
+
     def test_non_float_scores_are_rejected(self) -> None:
         """Integer score state must raise, matching the per-annotation type check the hoist replaces.
 
