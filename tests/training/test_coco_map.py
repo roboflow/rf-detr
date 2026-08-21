@@ -6,6 +6,7 @@
 """Contract tests for RF-DETR's one-pass TorchMetrics COCO adapter."""
 
 import sys
+from typing import Any
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -251,7 +252,13 @@ class TestHoistedDetectionScores:
     ]
 
     def _updated_metric(self) -> OnePassCocoMeanAveragePrecision:
-        """Return a metric holding this class's two-image prediction and target state."""
+        """Return a metric holding this class's two-image prediction and target state.
+
+        Examples:
+            >>> metric = TestHoistedDetectionScores()._updated_metric()
+            >>> [scores.numel() for scores in metric.detection_scores]
+            [2, 1]
+        """
         metric = OnePassCocoMeanAveragePrecision(class_metrics=True)
         metric.update(self.predictions, self.targets)
         return metric
@@ -284,21 +291,33 @@ class TestHoistedDetectionScores:
         assert actual_target.dataset == expected_target.dataset
 
     def test_scores_are_converted_once_for_each_image(self) -> None:
-        """Prediction annotations must be requested without scores, so no score is converted per annotation.
+        """Prediction scores must cross the CPU conversion boundary once per image.
 
-        Parity alone cannot detect a silent regression back to the slow path: passing ``scores`` through to
-        TorchMetrics would still be correct, just as slow as before. Asserting the call keyword pins the behaviour
-        that makes this change worth having.
+        Dataset parity cannot detect a silent regression back to TorchMetrics' per-annotation score conversion. The two
+        stored score tensors contain three detections, so recording two vector conversions proves this adapter converts
+        scores once per image; a per-annotation implementation would instead record three scalar conversions.
         """
         metric = self._updated_metric()
         recorded = MagicMock(side_effect=metric._coco_backend._get_coco_format)
+        original_cpu = torch.Tensor.cpu
+        score_storage_addresses = {scores.untyped_storage().data_ptr() for scores in metric.detection_scores}
+        score_conversion_shapes: list[tuple[int, ...]] = []
 
-        with patch.object(CocoBackend, "_get_coco_format", recorded):
+        def record_cpu(tensor: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
+            if tensor.untyped_storage().data_ptr() in score_storage_addresses:
+                score_conversion_shapes.append(tuple(tensor.shape))
+            return original_cpu(tensor, *args, **kwargs)
+
+        with (
+            patch.object(CocoBackend, "_get_coco_format", recorded),
+            patch.object(torch.Tensor, "cpu", new=record_cpu),
+        ):
             metric._coco_datasets(metric._observed_classes())
 
         prediction_call = recorded.call_args_list[-1]
         assert prediction_call.kwargs["scores"] is None
         assert prediction_call.kwargs["labels"] is metric.detection_labels
+        assert score_conversion_shapes == [(2,), (1,)]
 
     def test_annotation_count_mismatch_is_rejected(self) -> None:
         """A prediction annotation count that no longer matches stored scores must fail loudly.
@@ -350,6 +369,19 @@ class TestHoistedDetectionScores:
         metric.detection_scores = [scores.long() for scores in metric.detection_scores]
 
         with pytest.raises(ValueError, match="expected floating point"):
+            metric._coco_datasets(metric._observed_classes())
+
+    def test_column_vector_scores_are_rejected(self) -> None:
+        """Column-vector scores must fail instead of becoming nested COCO score lists.
+
+        TorchMetrics' original per-annotation conversion rejects a list result. The hoisted conversion must preserve
+        that scalar-score contract before assigning annotations, because nested scores can otherwise survive until a
+        later backend operation and obscure the input error.
+        """
+        metric = self._updated_metric()
+        metric.detection_scores = [scores.unsqueeze(1) for scores in metric.detection_scores]
+
+        with pytest.raises(ValueError, match="one-dimensional"):
             metric._coco_datasets(metric._observed_classes())
 
 
@@ -426,6 +458,15 @@ def test_adapter_rejects_stale_torchmetrics_state_contract() -> None:
         OnePassCocoMeanAveragePrecision()
 
 
+def test_adapter_rejects_non_callable_coco_backend_factory() -> None:
+    """Construction must reject a non-callable COCO dataset factory before metric computation."""
+    with (
+        patch.object(CocoBackend, "coco", new=object()),
+        pytest.raises(RuntimeError, match=r"missing backend methods: \['coco'\]"),
+    ):
+        OnePassCocoMeanAveragePrecision()
+
+
 def test_adapter_rejects_backend_method_missing_a_relied_on_parameter() -> None:
     """Construction must fail when a backend method drops a keyword compute() calls by name.
 
@@ -473,6 +514,24 @@ class TestMismatchedBackendSignatures:
         )
 
         assert mismatched == []
+
+    def test_flags_keyword_call_to_a_positional_only_parameter(self) -> None:
+        """A positional-only backend parameter must fail before its keyword call reaches compute().
+
+        A parameter-name-only check accepts this signature even though ``_coco_datasets`` passes every
+        ``_get_coco_format`` argument by keyword. Construction-time rejection turns a private API shift into the
+        adapter's actionable compatibility error instead of a raw TypeError after state accumulation.
+        """
+
+        class _Backend:
+            def _get_coco_format(
+                self, labels, /, all_labels, boxes, masks, scores, crowds, area, iou_type, average
+            ) -> None:
+                pass
+
+        mismatched = OnePassCocoMeanAveragePrecision._mismatched_backend_signatures(_Backend(), ["_get_coco_format"])
+
+        assert mismatched == ["_get_coco_format"]
 
 
 class TestEvaluatorMethodsNowRequiringArgs:

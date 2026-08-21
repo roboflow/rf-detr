@@ -64,9 +64,8 @@ _MAP_STATE_ATTRS = (
     "groundtruth_crowds",
     "groundtruth_area",
 )
-# Parameter names `compute()` (coco_map.py) relies on when calling each backend method — by keyword for
-# `average`/`prefix`/`max_detection_thresholds`, by position for the rest. A parameter rename upstream would
-# make those calls a silent TypeError rather than an actionable contract failure without this check.
+# Parameter names the adapter relies on when calling each backend method. A parameter rename upstream would make
+# those calls a raw TypeError rather than an actionable contract failure without this check.
 _BACKEND_METHOD_PARAMS: dict[str, tuple[str, ...]] = {
     "_get_coco_datasets": (
         "groundtruth_labels",
@@ -82,6 +81,13 @@ _BACKEND_METHOD_PARAMS: dict[str, tuple[str, ...]] = {
         "average",
     ),
     "_coco_stats_to_tensor_dict": ("stats", "prefix", "max_detection_thresholds"),
+    "_get_coco_format": ("labels", "all_labels", "boxes", "masks", "scores", "crowds", "area", "iou_type", "average"),
+}
+# Parameters passed by keyword at this adapter's private-backend call sites. They must not become positional-only in
+# a supported TorchMetrics release, because that would otherwise fail as a raw TypeError during metric computation.
+_BACKEND_KEYWORD_PARAMS: dict[str, tuple[str, ...]] = {
+    "_get_coco_datasets": ("average",),
+    "_coco_stats_to_tensor_dict": ("prefix", "max_detection_thresholds"),
     "_get_coco_format": ("labels", "all_labels", "boxes", "masks", "scores", "crowds", "area", "iou_type", "average"),
 }
 # Evaluator methods compute() calls with no arguments (coco_eval.evaluate() / .accumulate() / .summarize()) — a
@@ -251,9 +257,10 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         """Return the COCO prediction and target datasets, hoisting prediction scores out of the annotation loop.
 
         TorchMetrics' ``_get_coco_format`` hoists boxes and labels to Python lists once per image but reads scores
-        one annotation at a time (``scores[image_id][k].cpu().tolist()``, ``helpers.py:563``), which is a tensor
-        index, a device copy and a scalar conversion for every detection. At RF-DETR's validation scale that is
-        hundreds of thousands of conversions per ``compute()``. Asking upstream for the same annotations with
+        one annotation at a time (``scores[image_id][k].cpu().tolist()``, ``helpers.py:563``), which is CPU tensor
+        indexing and scalar conversion for every detection because ``update()`` stores detached CPU state. At
+        RF-DETR's validation scale that is hundreds of thousands of conversions per ``compute()``. Asking upstream
+        for the same annotations with
         ``scores=None`` and assigning per-image score lists afterwards produces byte-identical datasets while
         converting each image's scores once.
 
@@ -268,6 +275,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             The prediction and target datasets, in the order ``_get_coco_datasets`` returns them.
 
         Raises:
+            ValueError: If stored detection scores are not one-dimensional floating-point tensors.
             RuntimeError: If upstream stops emitting one annotation for each stored detection score.
         """
         backend = self._coco_backend
@@ -328,10 +336,16 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             annotations: Prediction annotations built by TorchMetrics with ``scores=None``, in state order.
 
         Raises:
-            ValueError: If an image's scores are not floating point, which upstream rejects per annotation.
+            ValueError: If an image's scores are not one-dimensional floating-point tensors, which upstream rejects
+                per annotation.
             RuntimeError: If the annotation count no longer matches the stored score count.
         """
         for image_id, image_scores in enumerate(self.detection_scores):
+            if image_scores.ndim != 1:
+                raise ValueError(
+                    f"Invalid input score of sample {image_id} "
+                    f"(expected one-dimensional tensor, got {image_scores.ndim} dimensions)"
+                )
             if not torch.is_floating_point(image_scores):
                 raise ValueError(
                     f"Invalid input score of sample {image_id} (expected floating point, got {image_scores.dtype})"
@@ -352,12 +366,16 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
 
     @staticmethod
     def _mismatched_backend_signatures(backend: Any, present_methods: list[str]) -> list[str]:
-        """Return backend method names missing a parameter this adapter's call sites rely on."""
-        return [
-            name
-            for name in present_methods
-            if not set(_BACKEND_METHOD_PARAMS[name]) <= set(inspect.signature(getattr(backend, name)).parameters)
-        ]
+        """Return backend methods whose required parameters cannot accept this adapter's calls."""
+        mismatched = []
+        for name in present_methods:
+            parameters = inspect.signature(getattr(backend, name)).parameters
+            if not set(_BACKEND_METHOD_PARAMS[name]) <= set(parameters) or any(
+                parameters[parameter].kind is inspect.Parameter.POSITIONAL_ONLY
+                for parameter in _BACKEND_KEYWORD_PARAMS[name]
+            ):
+                mismatched.append(name)
+        return mismatched
 
     @staticmethod
     def _evaluator_methods_now_requiring_args(evaluator_type: Any, present_methods: list[str]) -> list[str]:
