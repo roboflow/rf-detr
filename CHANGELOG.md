@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- `Transformer.forward` now reuses flattened position, padding-mask, source-feature, and cross-attention-source tensors on the single feature-level path instead of copying each through `torch.cat` over a one-element list. Current Nano/Small/Medium/Large detection, segmentation, and keypoint-preview models use that path by default; the legacy multi-level `RFDETRLargeDeprecatedConfig` retains concatenation. `.contiguous()` preserves the previous layout guarantee for custom strided inputs.
+
 - The decoder's grouped self-attention now reuses the already-regrouped query tensor as the key instead of materializing the identical grouping twice. The regression test verifies the grouped query/key layout, ordering, values, and tensor identity; quantitative benchmark and profiling results are intentionally not recorded here because their external reproduction artifacts are not part of this change.
 
 - Segmentation postprocessing now reads every image's mask resize target before the per-image loop, replacing one CUDA device-to-host synchronization per image with one per batch while preserving mask outputs exactly. `COCOEvalCallback._convert_targets` (train/val mAP accumulation) had the same per-target `orig_size.tolist()` pattern and gets the same fix.
