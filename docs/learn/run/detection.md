@@ -95,6 +95,8 @@ embeddings = detections.data["embeddings"]  # shape (K, H)
 
     Calling `predict(return_embeddings=...)` with a value that doesn't match the optimized model raises `RuntimeError`.
 
+For an end-to-end walkthrough — ranking mislabelled annotations, surfacing unannotated objects, and object-level similarity search — see the [Query Embeddings for Dataset Quality Auditing](../../cookbooks/embedding-extraction.ipynb) cookbook.
+
 ## Run on video, webcam, or RTSP stream
 
 These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>`, `<WEBCAM_INDEX>`, and `<RTSP_STREAM_URL>` with your inputs. `<WEBCAM_INDEX>` is usually `0` for the default camera.

@@ -1,4 +1,10 @@
 cards:
+  - href: embedding-extraction/
+    name: "Query Embeddings for Dataset Quality Auditing"
+    labels: [INFERENCE, EMBEDDINGS]
+    version: v1.10.0
+    author: unaxEtxeberriaBieleDigital
+    description: "Extract per-detection query embeddings with predict(return_embeddings=True) and use them to rank mislabelled annotations, surface unannotated objects, and retrieve similar instances — measured on a public COCO subset."
   - href: export-coreml/
     name: "Export to Native CoreML & Run Inference"
     labels: [EXPORT, INFERENCE, DEPLOY]
