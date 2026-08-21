@@ -16,38 +16,44 @@ model = RFDETRMedium()
 model.train(
     dataset_dir="path/to/dataset",
     epochs=100,
-    batch_size=4,
-    grad_accum_steps=4,
+    batch_size="auto",
     lr=1e-4,
     output_dir="output",
 )
 ```
 
+`batch_size="auto"` requires a CUDA-capable GPU because it probes CUDA memory. For CPU or MPS training, provide a concrete integer batch size and use `grad_accum_steps` if memory limits the physical batch.
+
 ## Core Parameters
 
 These are the essential parameters for training:
 
-| Parameter                          | Type            | Default    | Description                                                                                                                                                                             |
-| ---------------------------------- | --------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dataset_dir`                      | `str`           | Required   | Path to your dataset directory. RF-DETR auto-detects if it's in COCO or YOLO format. See [Dataset Formats](dataset-formats.md).                                                         |
-| `output_dir`                       | `str`           | `"output"` | Directory where training artifacts (checkpoints, logs) are saved.                                                                                                                       |
-| `epochs`                           | `int`           | `100`      | Number of full passes over the training dataset.                                                                                                                                        |
-| `batch_size`                       | `int or "auto"` | `4`        | Number of samples processed per iteration. Higher values require more GPU memory. Set to `"auto"` to probe the GPU for the largest safe batch size automatically.                       |
-| `grad_accum_steps`                 | `int`           | `4`        | Accumulates gradients over multiple mini-batches. Use with `batch_size` to achieve effective batch size.                                                                                |
-| `auto_batch_target_effective`      | `int`           | `16`       | Only used when `batch_size="auto"`. Per-device effective batch size the probe search targets (before scaling by `devices * num_nodes`).                                                 |
-| `auto_batch_max_targets_per_image` | `int`           | `100`      | Only used when `batch_size="auto"`. Synthetic target count per image the probe uses to simulate worst-case matcher/loss memory.                                                         |
-| `auto_batch_ema_headroom`          | `float`         | `0.7`      | Only used when `batch_size="auto"` and `use_ema=True`. Fraction of the probed batch size reserved as headroom for the EMA model's extra memory use. Must be in `(0, 1]`.                |
-| `resume`                           | `str`           | `None`     | Path to a saved checkpoint to continue training. Full `.ckpt` files restore model, optimizer, and scheduler state; lightweight best `.pth` files restart optimizer and scheduler state. |
+| Parameter                          | Type            | Default    | Description                                                                                                                                                                                                                                                            |
+| ---------------------------------- | --------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dataset_dir`                      | `str`           | Required   | Path to your dataset directory. RF-DETR auto-detects if it's in COCO or YOLO format. See [Dataset Formats](dataset-formats.md).                                                                                                                                        |
+| `output_dir`                       | `str`           | `"output"` | Directory where training artifacts (checkpoints, logs) are saved.                                                                                                                                                                                                      |
+| `epochs`                           | `int`           | `100`      | Number of full passes over the training dataset.                                                                                                                                                                                                                       |
+| `batch_size`                       | `int or "auto"` | `4`        | Number of samples processed per iteration. Higher values require more GPU memory. Set to `"auto"` to probe the GPU for the largest safe batch size automatically.                                                                                                      |
+| `grad_accum_steps`                 | `int`           | `1`        | Accumulates gradients over several mini-batches before each optimizer step. Opt-in: raise it only when memory caps `batch_size` below the nominal effective-batch target you want.                                                                                     |
+| `eval_batch_size`                  | `int or None`   | `None`     | Batch size for the validation, test and predict dataloaders. `None` inherits `batch_size`. `no_grad` avoids autograd activation storage, but in-fit evaluation still shares device memory with the model and optimizer state and needs memory for its forward outputs. |
+| `auto_batch_target_effective`      | `int`           | `16`       | Only used when `batch_size="auto"`. Global nominal effective-batch target; the probe derives a per-device target before scaling by `devices * num_nodes`.                                                                                                              |
+| `auto_batch_max_targets_per_image` | `int`           | `100`      | Only used when `batch_size="auto"`. Synthetic target count per image the probe uses to simulate worst-case matcher/loss memory.                                                                                                                                        |
+| `auto_batch_ema_headroom`          | `float`         | `0.7`      | Only used when `batch_size="auto"` and `use_ema=True`. Fraction of the probed batch size reserved as headroom for the EMA model's extra memory use. Must be in `(0, 1]`.                                                                                               |
+| `resume`                           | `str`           | `None`     | Path to a saved checkpoint to continue training. Full `.ckpt` files restore model, optimizer, and scheduler state; lightweight best `.pth` files restart optimizer and scheduler state.                                                                                |
 
 ### Understanding Batch Size
 
-The **effective batch size** is calculated as:
+The **nominal effective batch size** is calculated as:
 
 ```
 effective_batch_size = batch_size × grad_accum_steps × num_gpus
 ```
 
-Recommended configurations for different GPUs (targeting effective batch size of 16):
+**Set `batch_size` first, `grad_accum_steps` second.** Raise `batch_size` only as far as the selected model, task, resolution, and GPU allow, and leave `grad_accum_steps` at its default of `1` when possible. If hardware memory prevents the physical batch from reaching your nominal target, increase `grad_accum_steps` to recover that target's optimizer-step window. This is not an optimization-equivalent substitute: it splits the window across smaller forward/backward passes, changes microbatch cadence, and a small physical batch tends to leave the GPU under-occupied. On one L4 training `rfdetr-small`, `batch_size=16, grad_accum_steps=1` ran about 27% faster per epoch than `batch_size=4, grad_accum_steps=4` at the same nominal effective batch of 16, with mAP equal within run-to-run noise. That figure is one GPU and one dataset, so treat the direction as the lesson, not the number.
+
+When you trade between the two, use the product `batch_size × grad_accum_steps` as a nominal effective-batch target. Keeping that product constant does not guarantee identical optimization behavior: changing `batch_size` changes the forward/backward microbatch cadence even when the nominal images-per-optimizer-update target is unchanged. Start with `batch_size="auto"` on CUDA when the available memory or workload is uncertain; on CPU or MPS, choose a conservative integer batch size instead.
+
+Configurations reaching a nominal effective batch size of 16 on illustrative hardware:
 
 | GPU      | VRAM    | `batch_size` | `grad_accum_steps` |
 | -------- | ------- | ------------ | ------------------ |
@@ -56,6 +62,12 @@ Recommended configurations for different GPUs (targeting effective batch size of
 | RTX 3090 | 24GB    | 8            | 2                  |
 | T4       | 16GB    | 4            | 4                  |
 | RTX 3070 | 8GB     | 2            | 8                  |
+
+These are illustrative starting configurations from the documented model/workload setup, not capacity guarantees. Actual safe values depend on the model, task, resolution, augmentations, optimizer state, and other workloads on the device. Use `batch_size="auto"` on CUDA or validate a conservative integer batch size before increasing it.
+
+!!! note "The default nominal effective batch is 4, not 16"
+
+    `grad_accum_steps` defaults to `1` (it was `4` in earlier versions), so the defaults give a nominal effective batch of `batch_size × 1 = 4`. If you were relying on the old defaults and want the previous nominal target of 16, set `grad_accum_steps=4` explicitly, then validate the resulting training behavior. Runs using `batch_size="auto"` are unaffected by this default change: the probe sets both values itself.
 
 ## Learning Rate Parameters
 
@@ -299,6 +311,7 @@ Below is a summary table of all training parameters:
 | `epochs`                     | int                    | 100            | Number of full passes over the dataset.                                                                                               |
 | `batch_size`                 | int or "auto"          | 4              | Samples per iteration. Set to `"auto"` to let RF-DETR probe the GPU for the largest safe batch size. Balance with `grad_accum_steps`. |
 | `grad_accum_steps`           | int                    | 4              | Gradient accumulation steps for effective larger batch sizes.                                                                         |
+| `eval_batch_size`            | int or None            | None           | Batch size for validation, test and predict dataloaders. `None` inherits `batch_size`; `no_grad` avoids autograd activation storage, but in-fit evaluation still shares device memory with the model and optimizer state. |
 | `lr`                         | float                  | 1e-4           | Learning rate for the model (excluding encoder).                                                                                      |
 | `lr_encoder`                 | float                  | 1.5e-4         | Learning rate for the backbone encoder.                                                                                               |
 | `resolution`                 | int                    | Model-specific | Input image size (must be divisible by the selected model's `patch_size * num_windows`).                                              |
