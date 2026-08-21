@@ -220,7 +220,7 @@ uv run twine check --strict dist/*
 
 **Augmentations:**
 
-- Default training, validation, prediction, and export preprocessing use torchvision-native transforms.
+- Default training, validation, prediction, and export preprocessing use torchvision-native transforms **unless Albumentations is installed** — `augmentation_backend="cpu"`/`"auto"` (the default) then auto-selects Albumentations and injects the default `AUG_CONFIG`, even when `aug_config=None`. Identical code therefore resolves differently across environments; pass `augmentation_backend="torchvision"` to pin the torchvision pipeline regardless of what is installed.
 - Custom non-empty `aug_config` values on the CPU path use Albumentations and require `rfdetr[augment]`.
 - `augmentation_backend="gpu"` uses Kornia and requires `rfdetr[augment]`; `augmentation_backend="auto"` falls back to CPU when CUDA or Kornia is unavailable.
 
