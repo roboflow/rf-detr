@@ -34,6 +34,26 @@ You can apply all changes in one go; working through sections one release at a t
     train_config = TrainConfig(compute_val_loss=True)
     ```
 
+!!! warning "Breaking: validation evaluates one model, and `val/mAP_*` follows it"
+
+    Validation now runs **one** forward pass per batch instead of two: through the EMA weights when `use_ema=True` (the default), through the base weights otherwise. `val/mAP_50_95`, `val/mAP_50` and `val/mAR` therefore report the EMA model on a default run — they used to report the base model — while `val/ema_*` is unchanged. Best-checkpoint selection is unaffected in substance (it already preferred EMA), but the "regular" track no longer writes `checkpoint_best_regular.pth` on such runs; `checkpoint_best_total.pth` is copied from the EMA checkpoint. Two keys are not mirrored onto the primary namespace: per-class AP stays at `val/ema_AP/<class>`, and `val/mAP_75` is not emitted.
+
+    `val/F1` and `val/loss` (when computed) follow the same single forward, so they now describe the EMA model too — consistent with the mAP under the primary key, but a change of meaning if you monitor `val/loss` with a `ReduceLROnPlateau` scheduler, `ModelCheckpoint`, or early stopping.
+
+    Restore the previous two-forward behavior, both metric namespaces and both checkpoint tracks:
+
+    ```python
+    train_config = TrainConfig(eval_base_model=True)
+    ```
+
+### Deprecated in v1.10 → Remove in v2.0
+
+!!! note "`eval_ema_only` is now a no-op"
+
+    Evaluating only the EMA model is the default, so `TrainConfig(eval_ema_only=True)` no longer changes behavior and emits a `FutureWarning`. It still requires `use_ema=True` and now conflicts with `eval_base_model=True`. Drop it; use `eval_base_model=True` if you want the base model evaluated as well.
+
+    One improvement for existing `eval_ema_only` users: `val/mAP_50_95` is now populated (with the EMA score) instead of staying absent, so monitors pointed at it start receiving values again.
+
 ---
 
 ## Upgrade 1.8 → 1.9

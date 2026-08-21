@@ -49,8 +49,10 @@ class BestModelCallback(ModelCheckpoint):
 
     Each track only updates when its own monitor key is actually logged that epoch, and the two tracks are
     checked independently.  On non-eval epochs (``eval_interval > 1`` skips COCO eval entirely) both keys are
-    absent and the callback is a full no-op.  Under ``eval_ema_only`` (see ``TrainConfig.eval_ema_only``),
-    ``monitor_regular`` is never populated, so only the EMA track ever updates.
+    absent and the callback is a full no-op.  When validation evaluates only the EMA model (the default, see
+    ``TrainConfig.eval_base_model``), ``monitor_regular`` *is* populated — ``COCOEvalCallback`` mirrors the EMA
+    score onto it so external monitors keep working — but it reports the EMA weights, so ``evaluates_base_model``
+    disables the regular track and the EMA track becomes the only one that updates.
 
     ``state_dict()`` and ``load_state_dict()`` are overridden to persist ``_best_ema`` in the Lightning callback state,
     ensuring that ``trainer.fit(ckpt_path=...)`` resumes EMA high-water-mark tracking from the correct value.
@@ -59,6 +61,11 @@ class BestModelCallback(ModelCheckpoint):
         output_dir: Directory where checkpoint files are written.
         monitor_regular: Metric key for the regular model (mAP or mAR, per ``TrainConfig.best_model_metric``).
         monitor_ema: Metric key for the EMA model (mAP or mAR).  ``None`` disables EMA tracking.
+        evaluates_base_model: Whether validation actually evaluates the base model this run (see
+            ``TrainConfig.eval_base_model``).  ``False`` disables the regular checkpoint track entirely,
+            because ``monitor_regular`` then carries the EMA score mirrored by ``COCOEvalCallback`` while
+            this track saves base weights — checkpointing one model against the other's score.  The EMA
+            track still runs, and ``on_fit_end`` promotes its checkpoint to ``checkpoint_best_total.pth``.
         run_test: If ``True``, run ``trainer.test()`` on the best model at the end of training.
         skip_best_epochs: Ignore the first N epochs (0..N-1) when tracking
             best regular and EMA checkpoints.  Useful when fine-tuning from ``pretrain_weights``: the pretrained model's
@@ -93,6 +100,7 @@ class BestModelCallback(ModelCheckpoint):
         output_dir: str,
         monitor_regular: str = "val/mAP_50_95",
         monitor_ema: str | None = None,
+        evaluates_base_model: bool = True,
         run_test: bool = True,
         skip_best_epochs: int = 0,
         smooth_alpha: float = 0.0,
@@ -109,6 +117,7 @@ class BestModelCallback(ModelCheckpoint):
             enable_version_counter=False,
         )
         self._monitor_ema = monitor_ema
+        self._evaluates_base_model = bool(evaluates_base_model)
         self._run_test = run_test
         self._best_ema: float = 0.0
         self._output_dir = Path(output_dir)
@@ -514,18 +523,19 @@ class BestModelCallback(ModelCheckpoint):
         # Update the EMA accumulator before the skip guard so it warms up during skipped
         # epochs and avoids cold-start deflation at the first eligible epoch.
         raw: float | None = None
-        if self._smooth_alpha > 0.0 and self.monitor in trainer.callback_metrics:
+        if self._smooth_alpha > 0.0 and self._evaluates_base_model and self.monitor in trainer.callback_metrics:
             raw = trainer.callback_metrics[self.monitor].item()
             self._smoothed_regular = self._smooth_alpha * self._smoothed_regular + (1.0 - self._smooth_alpha) * raw
         if trainer.current_epoch < self._skip_best_epochs:
             return
-        # Guard: only run the REGULAR checkpoint logic when the monitored metric was
-        # actually logged this epoch (non-eval epochs with eval_interval > 1 skip COCO
-        # eval so the key is absent; so does every epoch under `eval_ema_only`, which
-        # routes the epoch's only score to `monitor_ema` instead — see config.py's
-        # `eval_ema_only` docstring). This must NOT also skip the EMA block below: under
-        # `eval_ema_only` that block is the only checkpoint tracking that ever runs (#1285).
-        if self.monitor in trainer.callback_metrics:
+        # Guard: only run the REGULAR checkpoint logic when the base model was actually evaluated
+        # AND its metric was logged this epoch. Non-eval epochs with eval_interval > 1 skip COCO
+        # eval so the key is absent; and when validation evaluates only the EMA model (the default,
+        # see config.py's `eval_base_model` docstring) the key IS present but carries the EMA score
+        # mirrored by COCOEvalCallback — saving base weights against it would checkpoint one model
+        # on the other's score. This must NOT also skip the EMA block below: in both cases that
+        # block is the only checkpoint tracking that ever runs (#1285).
+        if self._evaluates_base_model and self.monitor in trainer.callback_metrics:
             # Optional EMA smoothing of the monitored metric before the parent's improvement
             # check.  The smoothed value is substituted into ``trainer.callback_metrics`` for
             # the duration of the super() call only; the original raw tensor is always
@@ -553,7 +563,7 @@ class BestModelCallback(ModelCheckpoint):
                 super().on_validation_end(trainer, pl_module)
 
         # EMA model — custom tracking on top of parent. Independent of the regular-monitor
-        # guard above: under `eval_ema_only` this is the only track with data this epoch.
+        # guard above: when the base model is not evaluated this is the only track that runs.
         if self._monitor_ema is None or not trainer.is_global_zero:
             return
         ema_val = trainer.callback_metrics.get(self._monitor_ema, torch.tensor(0.0)).item()
