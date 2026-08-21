@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-08-21T11:23:57">
+  <meta property="article:modified_time" content="2026-08-21T15:56:27">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-08-21T11:23:57",
+    "dateModified": "2026-08-21T15:56:27",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3245,10 +3245,16 @@
 <td>Enables Exponential Moving Average of weights. Produces a smoothed checkpoint that often improves final performance.</td>
 </tr>
 <tr>
+<td><code>eval_base_model</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>Validation-only: also evaluate the base model. Validation forwards through one model by default — the EMA weights when <code>use_ema=True</code> — which halves per-batch validation compute. Set to <code>True</code> to restore the base+EMA comparison. See Evaluation Parameters.</td>
+</tr>
+<tr>
 <td><code>eval_ema_only</code></td>
 <td><code>bool</code></td>
 <td><code>False</code></td>
-<td>Validation-only: forward through the EMA model instead of the base model, halving per-batch validation compute. Requires <code>use_ema=True</code>. The base model is never evaluated that epoch, so <code>val/mAP_*</code> stays unpopulated; the real per-epoch score is logged under <code>val/ema_mAP_*</code> instead — see Evaluation Parameters.</td>
+<td><strong>Deprecated (removal in v1.13)</strong> — explicit legacy <code>True</code> preserves EMA-only evaluation and explicit legacy <code>False</code> preserves base-plus-EMA evaluation; either emits a <code>FutureWarning</code>. Omit it in new configs; use <code>eval_base_model=True</code> to request the base-model pass.</td>
 </tr>
 </tbody>
 </table>
@@ -3465,10 +3471,16 @@
 <td>Log per-class AP metrics to the console and loggers. Enable it to also run the underlying per-class <code>torchmetrics</code> computation. Aggregate mAP/mAR and F1 metrics remain available either way.</td>
 </tr>
 <tr>
+<td><code>eval_base_model</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>Also evaluate the base model during validation, restoring the base+EMA two-forward comparison. Inert when <code>use_ema=False</code>. See <a href="#ema-exponential-moving-average">EMA</a>.</td>
+</tr>
+<tr>
 <td><code>eval_ema_only</code></td>
 <td><code>bool</code></td>
 <td><code>False</code></td>
-<td>Forward through the EMA model only during validation, skipping the duplicate base-model pass. Requires <code>use_ema=True</code>. See <a href="#ema-exponential-moving-average">EMA</a>.</td>
+<td><strong>Deprecated (removal in v1.13)</strong> — legacy compatibility field. Explicit values preserve the old <code>True</code>/<code>False</code> policies and emit a <code>FutureWarning</code>; omit it in new configurations. Use <code>eval_base_model</code> for the current opt-in.</td>
 </tr>
 <tr>
 <td><code>eval_masks_head_resolution</code></td>
@@ -3487,8 +3499,9 @@
 <h3 id="validation-performance">Validation performance<a class="headerlink" href="#validation-performance" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>log_per_class_metrics=False</code> is the default. It retains aggregate mAP/mAR and F1/precision/recall while omitting per-class rows and their underlying per-class metric computation. Set it to <code>True</code> when per-class reporting is needed.</li>
-<li><code>compute_val_loss="auto"</code> is the default. It computes <code>val/loss</code> only when a configured scheduler, checkpoint, or early-stopping callback monitors that key. Set it to <code>True</code> to always log validation loss or <code>False</code> to disable it; <code>False</code> is rejected when a configured consumer monitors <code>val/loss</code>.</li>
-<li><code>eval_ema_only=True</code> requires <code>use_ema=True</code> and evaluates only EMA weights. Regular <code>val/mAP_*</code> keys are absent, EMA values use <code>val/ema_*</code>, and best-checkpoint or early-stopping routing follows the available EMA metric. <code>val/F1</code> remains under its regular key.</li>
+<li><code>compute_val_loss="auto"</code> is the default. It computes <code>val/loss</code> only when a configured scheduler, checkpoint, or early-stopping callback monitors that key. Set it to <code>True</code> to always log validation loss or <code>False</code> to disable it; <code>False</code> is rejected when a configured consumer monitors <code>val/loss</code>. When computed, <code>val/loss</code> describes whichever model validation forwards through — the EMA model under the default <code>eval_base_model=False</code>, the base model under <code>eval_base_model=True</code>.</li>
+<li><code>eval_base_model=False</code> is the default: validation runs <strong>one</strong> forward pass per batch, through the EMA weights when <code>use_ema=True</code> and through the base weights otherwise. This removes a full forward pass over the validation set each epoch. <code>val/mAP_*</code> and per-class <code>val/AP/&lt;class&gt;</code> report the model that was evaluated — the EMA model under the default — so schedulers, early stopping, checkpoint monitors and dashboards keep receiving a real number; <code>val/ema_*</code> and <code>val/ema_AP/&lt;class&gt;</code> remain available for explicit EMA monitors. The best-checkpoint "regular" track is disabled in this mode, because it saves base weights that were never scored; <code>checkpoint_best_ema.pth</code> is promoted to <code>checkpoint_best_total.pth</code> instead.</li>
+<li><code>eval_base_model=True</code> restores the previous behaviour: the base model is evaluated under <code>val/mAP_*</code>, the EMA model under <code>val/ema_*</code>, and both checkpoint tracks run. It costs one extra forward pass per validation batch.</li>
 <li><code>eval_interval</code> controls validation frequency, not the cost of a validation epoch: non-evaluation epochs skip the complete validation loop, while the final epoch always evaluates.</li>
 <li>Lowering <code>eval_max_dets</code> can reduce detection/segmentation evaluation work, but it also changes AP and AR semantics. Keypoint evaluation keeps COCO <code>maxDets=20</code>.</li>
 </ul>
@@ -3757,7 +3770,7 @@
 <td><code>grad_accum_steps</code></td>
 <td>int</td>
 <td>1</td>
-<td>Gradient accumulation steps. Opt-in; raise only when memory caps <code>batch_size</code>.</td>
+<td>Gradient accumulation steps for effective larger batch sizes.</td>
 </tr>
 <tr>
 <td><code>eval_batch_size</code></td>
@@ -3892,10 +3905,16 @@
 <td>Log per-class AP metrics; enable to run the underlying per-class compute.</td>
 </tr>
 <tr>
+<td><code>eval_base_model</code></td>
+<td>bool</td>
+<td>False</td>
+<td>Also evaluate the base model during validation (two forward passes). Inert when use_ema=False.</td>
+</tr>
+<tr>
 <td><code>eval_ema_only</code></td>
 <td>bool</td>
 <td>False</td>
-<td>Forward through the EMA model only during validation. Requires use_ema=True.</td>
+<td>Deprecated (removal in v1.13); no-op alias for the default policy. Use <code>eval_base_model</code>.</td>
 </tr>
 <tr>
 <td><code>eval_masks_head_resolution</code></td>
@@ -4033,7 +4052,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 21, 2026 11:23:57 UTC">2026-08-21 11:23:57</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 21, 2026 15:56:27 UTC">2026-08-21 15:56:27</span>
   </span>
 
     

@@ -3035,6 +3035,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.best_model.BestModelCallback(evaluates_base_model)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;evaluates_base_model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rfdetr.training.callbacks.best_model.BestModelCallback-functions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3376,6 +3387,17 @@
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;eval_ema_only
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback(eval_base_model)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;eval_base_model
       
     </span>
   </a>
@@ -4590,6 +4612,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.best_model.BestModelCallback(evaluates_base_model)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;evaluates_base_model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rfdetr.training.callbacks.best_model.BestModelCallback-functions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4931,6 +4964,17 @@
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;eval_ema_only
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback(eval_base_model)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;eval_base_model
       
     </span>
   </a>
@@ -6729,8 +6773,10 @@ files (instead of full <code>.ckpt</code> files) and to track a separate EMA che
 <code>last_ema.pth</code> (final EMA weights, mirroring <code>last.pth</code> for the live model).</p>
 <p>Each track only updates when its own monitor key is actually logged that epoch, and the two tracks are
 checked independently.  On non-eval epochs (<code>eval_interval &gt; 1</code> skips COCO eval entirely) both keys are
-absent and the callback is a full no-op.  Under <code>eval_ema_only</code> (see <code>TrainConfig.eval_ema_only</code>),
-<code>monitor_regular</code> is never populated, so only the EMA track ever updates.</p>
+absent and the callback is a full no-op.  When validation evaluates only the EMA model (the default, see
+<code>TrainConfig.eval_base_model</code>), <code>monitor_regular</code> <em>is</em> populated — <code>COCOEvalCallback</code> mirrors the EMA
+score onto it so external monitors keep working — but it reports the EMA weights, so <code>evaluates_base_model</code>
+disables the regular track and the EMA track becomes the only one that updates.</p>
 <p><code>state_dict()</code> and <code>load_state_dict()</code> are overridden to persist <code>_best_ema</code> in the Lightning callback state,
 ensuring that <code>trainer.fit(ckpt_path=...)</code> resumes EMA high-water-mark tracking from the correct value.</p>
 
@@ -6854,6 +6900,26 @@ is pre-warmed by the first eligible comparison.</p>
                   <code>0.0</code>
             </td>
           </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.training.callbacks.best_model.BestModelCallback(evaluates_base_model)" class="doc doc-heading doc-heading-parameter">                  <code>evaluates_base_model</code>
+<a href="#rfdetr.training.callbacks.best_model.BestModelCallback(evaluates_base_model)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Whether validation actually evaluates the base model this run (see
+<code>TrainConfig.eval_base_model</code>). <code>False</code> disables the regular checkpoint track because
+<code>monitor_regular</code> then carries the EMA score mirrored by <code>COCOEvalCallback</code> while this track saves
+base weights. The EMA track still runs, and <code>on_fit_end</code> promotes its checkpoint to
+<code>checkpoint_best_total.pth</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
+            </td>
+          </tr>
       </tbody>
     </table>
 
@@ -6891,7 +6957,7 @@ is pre-warmed by the first eligible comparison.</p>
 
 
 <h3 id="rfdetr.training.callbacks.best_model.BestModelCallback.__init__" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="n">monitor_regular</span><span class="o">=</span><span class="s1">'val/mAP_50_95'</span><span class="p">,</span> <span class="n">monitor_ema</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">run_test</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">skip_best_epochs</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">smooth_alpha</span><span class="o">=</span><span class="mf">0.0</span><span class="p">)</span></code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="n">monitor_regular</span><span class="o">=</span><span class="s1">'val/mAP_50_95'</span><span class="p">,</span> <span class="n">monitor_ema</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">run_test</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">skip_best_epochs</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">smooth_alpha</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">evaluates_base_model</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></code>
 
 <a href="#rfdetr.training.callbacks.best_model.BestModelCallback.__init__" class="headerlink" title="Permanent link">&para;</a></h3>
 
@@ -7394,18 +7460,38 @@ always computed when <code>trainer.test()</code> is called.</p>
 <h2 id="rfdetr.training.callbacks.coco_eval.COCOEvalCallback(eval_ema_only)" class="doc doc-heading doc-heading-parameter">                  <code>eval_ema_only</code>
 <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback(eval_ema_only)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
             <td>
-                  <code><span title="bool">bool</span></code>
+                  <code><span title="bool">bool</span> | None</code>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>When <code>True</code>, <code>validation_step</code> already forwarded through the EMA
-model directly (see <code>TrainConfig.eval_ema_only</code>), so the independent duplicate
-EMA forward pass this callback would otherwise run every validation batch is
-skipped.</p>
+                <p>Deprecated compatibility flag from the pre-1.10 callback API. When explicitly supplied,
+<code>True</code> selects EMA-only evaluation and <code>False</code> selects base-plus-EMA evaluation, preserving the old
+keyword and positional behavior. Omit it for the new default.</p>
               </div>
             </td>
             <td>
-                  <code>False</code>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.training.callbacks.coco_eval.COCOEvalCallback(eval_base_model)" class="doc doc-heading doc-heading-parameter">                  <code>eval_base_model</code>
+<a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback(eval_base_model)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="bool">bool</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>When <code>False</code> (default), <code>validation_step</code> already forwarded through
+the EMA model directly (see <code>TrainConfig.eval_base_model</code>), so the independent
+duplicate EMA forward pass this callback would otherwise run every validation batch
+is skipped and its predictions are routed to the EMA track. When <code>True</code>,
+<code>validation_step</code> forwards the base model and this callback runs the second, EMA
+forward pass, so both models are evaluated from independent predictions.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
             </td>
           </tr>
       </tbody>
@@ -7434,7 +7520,7 @@ skipped.</p>
 
 
 <h3 id="rfdetr.training.callbacks.coco_eval.COCOEvalCallback.__init__" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">max_dets</span><span class="o">=</span><span class="n">DEFAULT_KEYPOINT_MAX_DETS</span><span class="p">,</span> <span class="n">segmentation</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">eval_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">log_per_class_metrics</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">keypoint_oks_sigmas</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">in_notebook</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_ema_only</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">max_dets</span><span class="o">=</span><span class="n">DEFAULT_KEYPOINT_MAX_DETS</span><span class="p">,</span> <span class="n">segmentation</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">eval_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">log_per_class_metrics</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">keypoint_oks_sigmas</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">in_notebook</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_ema_only</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_base_model</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
 
 <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback.__init__" class="headerlink" title="Permanent link">&para;</a></h3>
 
