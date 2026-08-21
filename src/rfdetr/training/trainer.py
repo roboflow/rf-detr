@@ -336,6 +336,10 @@ def _append_training_callbacks(
         monitor_regular = f"val/{det_key}"
         early_stopping_monitor_ema = f"val/ema_{det_key}"
     monitor_ema = early_stopping_monitor_ema if enable_ema else None
+    # Validation evaluates the base model only when explicitly asked for it, or when there is no EMA
+    # model to prefer (see TrainConfig.eval_base_model). Otherwise monitor_regular carries the EMA
+    # score COCOEvalCallback mirrors onto it, and the base-weights checkpoint track must stand down.
+    evaluates_base_model = tc.eval_base_model or not enable_ema
 
     best_model_smooth_alpha = tc.smooth_alpha
 
@@ -350,6 +354,7 @@ def _append_training_callbacks(
             output_dir=str(tc.output_dir),
             monitor_regular=monitor_regular,
             monitor_ema=monitor_ema,
+            evaluates_base_model=evaluates_base_model,
             run_test=tc.run_test,
             skip_best_epochs=tc.skip_best_epochs,
             smooth_alpha=best_model_smooth_alpha,
@@ -719,7 +724,7 @@ def build_trainer(
             eval_interval=tc.eval_interval,
             log_per_class_metrics=tc.log_per_class_metrics,
             keypoint_oks_sigmas=tc.keypoint_oks_sigmas,
-            eval_ema_only=tc.eval_ema_only,
+            eval_base_model=tc.eval_base_model,
         )
     )
 
