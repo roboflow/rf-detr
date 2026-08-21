@@ -1071,19 +1071,28 @@ class TrainConfig(BaseConfig):
     do_random_resize_via_padding: bool = False
     use_ema: bool = True
     ema_update_interval: int = 1
-    # Validation-only: forward through the EMA model instead of the base model, and skip the
-    # duplicate base-model forward pass COCOEvalCallback would otherwise also run — halves
-    # per-batch validation compute when EMA is enabled. Requires use_ema=True.
-    # Metric-key routing: when active, val/mAP_50_95 (and val/segm_mAP_*) stay unpopulated —
-    # the base model is never evaluated this epoch, so there is nothing real to report under
-    # that key. The real per-epoch score is logged under val/ema_mAP_50_95 (and
-    # val/ema_segm_mAP_*) instead (see COCOEvalCallback._compute_and_log_ema_metrics). Best-
-    # checkpoint tracking follows: the "regular" checkpoint track sees no data this epoch
-    # (safely no-ops, see BestModelCallback) while the EMA checkpoint track (monitor_ema) can
-    # be pointed at val/ema_mAP_50_95 to receive it. val/F1 is not remapped (no parallel
-    # EMA-tracked accumulator) and still reflects EMA-quality predictions under the regular key.
-    # Per-class AP follows the mAP routing: logged under val/ema_AP/<class> instead of
-    # val/AP/<class>, and the printed per-epoch summary table is titled "val (ema)".
+    # Validation-only: also evaluate the base model, on top of the model validation already forwards
+    # through. Validation evaluates exactly ONE model by default — the EMA-averaged weights when
+    # use_ema=True, the base weights otherwise — because the EMA model is the one best-checkpoint
+    # selection ships and the base-model pass is diagnostic. Dropping it removes one full forward pass
+    # over the validation set per epoch (measured ~3-3.5% of epoch time). Set eval_base_model=True to
+    # restore the base+EMA comparison: validation_step then forwards the base model and COCOEvalCallback
+    # runs the EMA model in a second no_grad pass, exactly as it did before this default existed.
+    # Inert when use_ema=False — the base model is the selected model, so it is evaluated either way.
+    # Metric-key routing: val/mAP_50_95 (and val/mAP_50, val/mAR, val/segm_mAP_*) always report the
+    # model that was evaluated first-class — the base model when eval_base_model=True, otherwise the
+    # selected (EMA) model, mirrored from the EMA track by COCOEvalCallback so every scheduler,
+    # early-stopping hook, checkpoint monitor and dashboard watching the primary key keeps receiving a
+    # real number. val/ema_* is always the EMA track and is what the EMA checkpoint monitor reads.
+    # The EMA-only path mirrors aggregate mAP/mAR and per-class AP onto the primary namespace; val/ema_* remains
+    # available for explicit EMA monitors. The printed summary table is titled "val (ema)" when the base model was
+    # not evaluated. val/F1 has no parallel EMA-tracked
+    # accumulator and always follows validation_step's own forward — under the default that is the EMA
+    # model, which now agrees with the mAP under the same key.
+    eval_base_model: bool = False
+    # Deprecated: superseded by eval_base_model (removal in v1.13). Evaluating only the EMA model is now
+    # the default, so this no-op flag remains through the 0.3-cycle deprecation window; setting it emits a
+    # FutureWarning. It still requires use_ema=True and contradicts eval_base_model=True.
     eval_ema_only: bool = False
     num_workers: int = 2
     weight_decay: float = 1e-4
@@ -1371,10 +1380,46 @@ class TrainConfig(BaseConfig):
 
     @model_validator(mode="after")
     def validate_eval_ema_only(self) -> "TrainConfig":
-        """``eval_ema_only`` has no EMA model to evaluate without ``use_ema=True``."""
+        """``eval_ema_only`` has no EMA model to evaluate without ``use_ema=True``, and contradicts ``eval_base_model``.
+
+        The flag is deprecated (see ``_warn_deprecated_eval_ema_only``) but still validated: absorbing a contradictory
+        pair into the no-op alias would leave one of the two settings silently without effect.
+        """
         if self.eval_ema_only and not self.use_ema:
             raise ValueError("eval_ema_only=True requires use_ema=True.")
+        if self.eval_ema_only and self.eval_base_model:
+            raise ValueError(
+                "eval_ema_only=True contradicts eval_base_model=True. Drop the deprecated eval_ema_only: "
+                "evaluating only the selected model is now the default."
+            )
         return self
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_deprecated_eval_ema_only(cls, data: Any) -> Any:
+        """Warn that ``eval_ema_only`` is superseded by the default single-model evaluation policy.
+
+        Legacy input that contains ``eval_ema_only`` without the new ``eval_base_model`` field is migrated to the
+        equivalent old base-plus-EMA policy and warns. New dumps contain both fields, so reloading them stays silent.
+        """
+        if not isinstance(data, dict):
+            return data
+        if "eval_ema_only" not in data:
+            return data
+        if "eval_base_model" in data and not data["eval_base_model"]:
+            return data
+        data = dict(data)
+        if "eval_base_model" not in data:
+            data["eval_base_model"] = not bool(data["eval_ema_only"])
+        if data.get("eval_ema_only") is not None:
+            warnings.warn(
+                "eval_ema_only is deprecated. New configurations evaluate only the selected model "
+                "(EMA when use_ema=True) by default; legacy configurations are migrated from this flag. "
+                "Set eval_base_model=True to also evaluate the base model.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        return data
 
     @model_validator(mode="after")
     def validate_explicit_val_loss_disable(self) -> "TrainConfig":
