@@ -1320,9 +1320,9 @@ class TestPerspectiveFactory:
 
 
 class TestGaussianDefaultsMatchAlbumentations:
-    """The unspecified GaussianBlur sigma and GaussNoise std defaults must match the
-    Albumentations defaults they stand in for (issue #1351): the same aug_config with no
-    explicit value should augment by the same amount on either backend."""
+    """The unspecified GaussianBlur sigma and GaussNoise std defaults must match the Albumentations defaults they stand
+    in for (issue #1351): the same aug_config with no explicit value should augment by the same amount on either
+    backend."""
 
     @pytest.fixture(autouse=True)
     def _require_kornia(self):
@@ -1361,8 +1361,8 @@ class TestGaussianDefaultsMatchAlbumentations:
         )
 
     def test_default_gauss_noise_warns_because_the_default_range_is_non_degenerate(self):
-        """The albumentations default range is non-degenerate, so building with no std_range
-        still emits the fixed-std divergence warning rather than going silent."""
+        """The albumentations default range is non-degenerate, so building with no std_range still emits the fixed-std
+        divergence warning rather than going silent."""
         from unittest import mock
 
         from rfdetr.datasets import kornia_transforms
