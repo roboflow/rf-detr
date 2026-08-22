@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 import io
+import warnings
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -268,6 +269,86 @@ class TestPredictSourceData:
         assert isinstance(detections.metadata["source_image"], np.ndarray)
         assert detections.metadata["source_image"].dtype == np.uint8
         assert detections.metadata["source_image"].shape == (48, 64, 3)
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize(
+        ("dtype", "shape", "expected_transfer_dtype"),
+        [
+            pytest.param(torch.float16, (3, 48, 64), torch.uint8, id="float16"),
+            pytest.param(torch.float32, (3, 48, 64), torch.uint8, id="float32"),
+            pytest.param(torch.float64, (3, 48, 64), torch.uint8, id="float64"),
+            pytest.param(torch.float32, (3, 1, 64), torch.float32, id="degenerate_height"),
+            pytest.param(torch.float32, (3, 48, 1), torch.float32, id="degenerate_width"),
+        ],
+    )
+    def test_cuda_source_image_transfers_exact_bytes(
+        self,
+        dtype: torch.dtype,
+        shape: tuple[int, int, int],
+        expected_transfer_dtype: torch.dtype,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The default public path transfers uint8 storage without changing source metadata."""
+        values = torch.rand(shape, generator=torch.Generator().manual_seed(20260821))
+        boundary_count = min(256, values.numel())
+        values.view(-1)[:boundary_count] = torch.arange(boundary_count, dtype=torch.float32) / 255
+        tensor = values.to(device="cuda", dtype=dtype)
+        expected = (tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+        expected_source_shape = (shape[1], shape[2], shape[0])
+        transferred_dtypes: list[torch.dtype] = []
+        original_cpu = torch.Tensor.cpu
+
+        def record_source_transfer(image: torch.Tensor) -> torch.Tensor:
+            """Record the source-image transfer dtype before delegating to PyTorch.
+
+            Examples:
+                This closure requires CUDA and is covered by the enclosing GPU test:
+                >>> record_source_transfer(torch.zeros(3, 48, 64, device="cuda"))  # doctest: +SKIP
+            """
+            if image.device.type == "cuda" and tuple(image.shape) == expected_source_shape:
+                transferred_dtypes.append(image.dtype)
+            return original_cpu(image)
+
+        monkeypatch.setattr(torch.Tensor, "cpu", record_source_transfer)
+
+        detections = _DummyRFDETR().predict(tensor)
+        actual = detections.metadata["source_image"]
+
+        assert transferred_dtypes == [expected_transfer_dtype]
+        assert actual.shape == expected.shape
+        assert actual.dtype == expected.dtype
+        assert actual.strides == expected.strides
+        assert actual.flags.owndata == expected.flags.owndata
+        assert actual.flags.writeable == expected.flags.writeable
+        assert actual.tobytes() == expected.tobytes()
+
+    @pytest.mark.gpu
+    def test_cuda_source_image_transfers_exact_bytes_strided_input(self) -> None:
+        """The fast path matches the previous NumPy path byte-for-byte for a non-contiguous CUDA tensor."""
+        values = torch.rand((3, 96, 128), generator=torch.Generator().manual_seed(20260821))
+        tensor = values.to(device="cuda", dtype=torch.float32)[:, ::2, ::2]
+        assert not tensor.is_contiguous()
+        expected = (tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+
+        detections = _DummyRFDETR().predict(tensor)
+        actual = detections.metadata["source_image"]
+
+        assert actual.shape == expected.shape
+        assert actual.dtype == expected.dtype
+        assert actual.strides == expected.strides
+        assert actual.flags.owndata == expected.flags.owndata
+        assert actual.flags.writeable == expected.flags.writeable
+        assert actual.tobytes() == expected.tobytes()
+
+    @pytest.mark.gpu
+    def test_cuda_source_image_nan_conversion_emits_no_warning(self) -> None:
+        """The on-device cast does not emit NumPy's incidental invalid-cast RuntimeWarning that the old CPU cast did."""
+        tensor = torch.full((3, 4, 5), torch.nan, device="cuda", dtype=torch.float32)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            detections = _DummyRFDETR().predict(tensor)
+        assert caught == []
+        assert "source_image" in detections.metadata
 
     def test_tensor_with_negative_values_raises(self) -> None:
         """Tensor with negative pixel values raises ValueError."""

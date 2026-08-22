@@ -58,6 +58,40 @@ logger = get_logger()
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
+
+def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
+    """Convert a normalized CHW tensor into the uint8 HWC source-image representation.
+
+    For a CUDA tensor in ``float16``/``float32``/``float64`` with every dimension greater than one, the
+    multiply-then-truncate cast runs on-device before the (now ``uint8``) transfer; every other input,
+    including CPU tensors and CUDA tensors of another dtype such as ``bfloat16``, keeps the previous
+    NumPy-side conversion. NaN pixels convert successfully on both paths, but only the NumPy-side path
+    emits an incidental invalid-cast ``RuntimeWarning`` for them; the on-device path does not.
+
+    Args:
+        image: Source tensor in channel-first layout.
+
+    Returns:
+        The writable, owning NumPy array stored in prediction metadata.
+
+    Examples:
+        >>> source = _tensor_to_source_array(torch.zeros(3, 2, 2))
+        >>> source.shape
+        (2, 2, 3)
+    """
+    source_view = image.permute(1, 2, 0)
+    if (
+        image.device.type == "cuda"
+        and image.dtype in (torch.float16, torch.float32, torch.float64)
+        and all(size > 1 for size in image.shape)
+    ):
+        # Preserve the existing multiply-then-truncate result, but transfer one byte per channel instead of a
+        # floating-point image before NumPy performs the same conversion on the host.
+        # ``copy(order="K")`` retains NumPy ownership and the channel-major strides produced by the existing cast.
+        return source_view.mul(255).to(torch.uint8).cpu().numpy().copy(order="K")
+    return (source_view.cpu().numpy() * 255).astype(np.uint8)
+
+
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
 _VARIANT_EXPORTS = (
     "RFDETRBase",
@@ -2405,9 +2439,7 @@ class RFDETR:
             elif include_source_image and img.dim() == 3:
                 # Source extraction requires a (C, H, W) tensor for permute(). Skip malformed ranks so the deferred
                 # validation below raises the public shape error instead of an internal RuntimeError.
-                source_images.append(  # type: ignore[union-attr]
-                    (img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-                )
+                source_images.append(_tensor_to_source_array(img))  # type: ignore[union-attr]
 
             # img.dim() != 3 is checked alongside the channel count (not just deferred as a message
             # detail) because `h, w = img_tensor.shape[1:]` a few lines down unpacks exactly 2 values --
