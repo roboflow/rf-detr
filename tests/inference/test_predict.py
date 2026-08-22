@@ -346,11 +346,16 @@ class TestPredictSourceData:
     def test_cuda_source_image_nan_conversion_emits_no_warning(self) -> None:
         """The on-device cast does not emit NumPy's incidental invalid-cast RuntimeWarning that the old CPU cast did."""
         tensor = torch.full((3, 4, 5), torch.nan, device="cuda", dtype=torch.float32)
+        expected = np.zeros((5, 4, 3), dtype=np.uint8)
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             detections = _DummyRFDETR().predict(tensor)
         assert caught == []
         assert "source_image" in detections.metadata
+        actual = detections.metadata["source_image"]
+        assert actual.shape == expected.shape
+        assert actual.dtype == expected.dtype
+        assert actual.tobytes() == expected.tobytes()
 
     def test_tensor_with_negative_values_raises(self) -> None:
         """Tensor with negative pixel values raises ValueError."""
