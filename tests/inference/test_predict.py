@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 import io
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -688,7 +689,36 @@ class TestPredictPixelRangeValidation:
         ):
             model.predict(image, include_source_image=False)
 
-    def test_known_valid_file_path_skips_range_scans(self, tmp_path) -> None:
+    def test_known_valid_url_skips_range_scans(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A successful URL fetch becomes a PIL image and must bypass range scans."""
+        model = _DummyRFDETR()
+
+        def fake_get(url: str, **kwargs: object) -> _FakeResponse:
+            """Return a valid image response for the URL conversion boundary.
+
+            Examples:
+                >>> fake_get("https://example.com/image.png").status_code
+                200
+            """
+            return _FakeResponse(content=_png_bytes(), status_code=200)
+
+        monkeypatch.setattr(requests, "get", fake_get)
+        with (
+            patch("rfdetr.detr.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
+            patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
+        ):
+            model.predict("https://example.com/image.png", include_source_image=False)
+
+    def test_mixed_known_valid_and_float_numpy_images_still_check_each_image(self) -> None:
+        """A known-valid first image must not suppress a later float image's range error."""
+        model = _DummyRFDETR()
+        known_valid = PIL.Image.new("RGB", (8, 8), color=(255, 255, 255))
+        out_of_range = np.full((8, 8, 3), 1.5, dtype=np.float32)
+
+        with pytest.raises(ValueError, match="pixel values above 1"):
+            model.predict([known_valid, out_of_range], include_source_image=False)
+
+    def test_known_valid_file_path_skips_range_scans(self, tmp_path: Path) -> None:
         """A file-path input is opened into a PIL image before the range check, so it skips the scan too."""
         img_path = tmp_path / "known_valid.png"
         PIL.Image.new("RGB", (8, 8), color=(255, 255, 255)).save(str(img_path))
