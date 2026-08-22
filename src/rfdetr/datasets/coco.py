@@ -49,9 +49,6 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 _COCO_MAX_SIZE = 1333
-# Largest short side the scale-jitter crop branch resizes to before cropping; mirrors the 600 in
-# `_build_train_resize_transforms` and `_build_train_resize_config`.
-_JITTER_SHORT_SIDE_MAX = 600
 
 
 def is_valid_coco_dataset(dataset_dir: str) -> bool:
@@ -302,16 +299,22 @@ def draft_size_for_transforms(
     expanded_scales: bool = False,
     patch_size: int = 16,
     num_windows: int = 4,
-    scale_jitter: bool = True,
     include_masks: bool = False,
 ) -> int | None:
-    """Return the smallest source extent the transform pipeline can consume without upscaling.
+    """Return the source extent below which the transform pipeline starts losing detail.
 
     :meth:`CocoDetection._decode_image` passes this to ``PIL.Image.draft`` so JPEG sources far larger than the training
     resolution are decoded at a reduced DCT scale instead of at full size.  ``draft`` never returns an image smaller
-    than the requested box, so the value must cover the largest intermediate the pipeline can ask for: the largest
-    multi-scale target, and — when ``scale_jitter`` is on — the 600-pixel short side of the crop branch's first resize
-    (``_build_train_resize_transforms`` / ``_build_train_resize_config``).
+    than the requested box, so the box is the largest resize target the direct branch can pick — the largest
+    multi-scale scale, or ``resolution`` when multi-scale is off.
+
+    The scale-jitter crop branch is deliberately **not** treated as a floor even though its first step resizes the
+    short side to 400/500/600 (``_build_train_resize_transforms`` / ``_build_train_resize_config``).  That step
+    upscales for 96% of COCO val2017 images, whose short sides are 427 at the median, so it is a fixed sampling
+    density in the DETR recipe rather than a fidelity requirement on the source.  Honouring it as a floor would cost
+    the whole optimisation on 1920x1080 sources — 1080/2 = 540 falls just under 600, so no power-of-two reduction
+    would be legal.  ``RandomSizedCrop`` runs after that resize and therefore always sees a short side of at least
+    400 regardless of how the source was decoded.
 
     Two cases return ``None`` (decode at full resolution):
 
@@ -320,13 +323,12 @@ def draft_size_for_transforms(
     * Mask datasets.  RLE ``segmentation`` cannot be rescaled by :func:`scale_coco_annotation`.
 
     Args:
-        image_set: Dataset split name.  Only ``"train"`` has jitter and multi-scale branches.
+        image_set: Dataset split name.  Only ``"train"`` is decoded at a reduced scale.
         resolution: Base square resolution the split is built for.
         multi_scale: Whether multi-scale training is enabled.
         expanded_scales: Whether the multi-scale range is widened.
         patch_size: Patch size used to derive multi-scale candidates.
         num_windows: Window count used to derive multi-scale candidates.
-        scale_jitter: Whether the training resize picks between the direct and crop branches.
         include_masks: Whether the dataset decodes segmentation masks.
 
     Returns:
@@ -337,23 +339,16 @@ def draft_size_for_transforms(
         True
         >>> draft_size_for_transforms("train", 512, include_masks=True) is None
         True
-        >>> draft_size_for_transforms("train", 512, scale_jitter=False)
-        512
         >>> draft_size_for_transforms("train", 512)
-        600
+        512
         >>> draft_size_for_transforms("train", 512, multi_scale=True)
         768
     """
     if image_set != "train" or include_masks:
         return None
-    scales = (
-        compute_multi_scale_scales(resolution, expanded_scales, patch_size, num_windows)
-        if multi_scale
-        else [resolution]
-    )
-    if scale_jitter:
-        return max(*scales, _JITTER_SHORT_SIDE_MAX)
-    return max(scales)
+    if not multi_scale:
+        return resolution
+    return max(compute_multi_scale_scales(resolution, expanded_scales, patch_size, num_windows))
 
 
 def scale_coco_annotation(annotation: dict[str, Any], scale: float) -> dict[str, Any]:
@@ -1331,7 +1326,6 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
         expanded_scales=args.expanded_scales,
         patch_size=args.patch_size,
         num_windows=args.num_windows,
-        scale_jitter=scale_jitter,
         include_masks=include_masks,
     )
 
@@ -1440,7 +1434,6 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
         expanded_scales=expanded_scales,
         patch_size=patch_size,
         num_windows=num_windows,
-        scale_jitter=scale_jitter,
         include_masks=include_masks,
     )
 
