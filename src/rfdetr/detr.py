@@ -92,6 +92,32 @@ def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
     return (source_view.cpu().numpy() * 255).astype(np.uint8)
 
 
+def _uint8_image_to_tensor(image: np.ndarray[Any, Any]) -> torch.Tensor:
+    """Convert a 2-D/3-D uint8 image to contiguous CHW floating-point storage.
+
+    This is the uint8 branch of ``torchvision.transforms.functional.to_tensor`` with its layout/dtype conversion fused
+    and division performed on fresh storage in place.
+
+    Args:
+        image: A ``(H, W)`` grayscale or ``(H, W, C)`` HWC ``uint8`` array.
+
+    Returns:
+        A contiguous ``(C, H, W)`` tensor in the current default floating-point dtype, scaled to ``[0, 1]``,
+        byte-for-byte identical to ``to_tensor``'s output. For ``C == 1`` the leading dimension's own stride
+        may differ from ``to_tensor``'s, which is immaterial: a size-1 dimension's stride has no memory-layout
+        effect.
+
+    Examples:
+        >>> arr = np.zeros((2, 2, 3), dtype=np.uint8)
+        >>> _uint8_image_to_tensor(arr).shape
+        torch.Size([3, 2, 2])
+    """
+    if image.ndim == 2:
+        image = image[:, :, None]
+    chw = torch.from_numpy(image.transpose((2, 0, 1)))
+    return chw.to(dtype=torch.get_default_dtype(), memory_format=torch.contiguous_format).div_(255)
+
+
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
 _VARIANT_EXPORTS = (
     "RFDETRBase",
@@ -2355,10 +2381,10 @@ class RFDETR:
             that copy as well.
 
             Tensor and non-uint8 NumPy range checks and every input's shape check are evaluated before inference.
-            PIL and uint8 NumPy images skip a redundant range scan because ``to_tensor`` guarantees values in
-            ``[0, 1]`` for both. Any resulting ``ValueError`` is raised only after all inputs have been inspected, so
-            valid-shaped images later in a multi-image call still have their conversion and transfer queued before an
-            earlier validation failure raises.
+            PIL and uint8 NumPy images skip a redundant range scan because their byte-to-float conversion
+            guarantees values in ``[0, 1]`` for both. Any resulting ``ValueError`` is raised only after all inputs
+            have been inspected, so valid-shaped images later in a multi-image call still have their conversion and
+            transfer queued before an earlier validation failure raises.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -2433,17 +2459,30 @@ class RFDETR:
                 # the channel dimension is the caller's responsibility.
                 if isinstance(img, Image.Image) and img.mode != "RGB":
                     img = img.convert("RGB")
+                pil_image = isinstance(img, Image.Image)
+                source_array: np.ndarray[Any, Any] | None = None
                 if include_source_image:
-                    src = np.array(img)
-                    if src.dtype != np.uint8:
-                        src = (src * 255).clip(0, 255).astype(np.uint8)
-                    source_images.append(src)  # type: ignore[union-attr]
-                # PIL conversion above guarantees an 8-bit RGB image, and ``to_tensor`` scales
-                # both PIL and uint8 NumPy storage into [0, 1]. Their range cannot fail the checks below.
-                range_known_valid = isinstance(img, Image.Image) or (
-                    isinstance(img, np.ndarray) and img.dtype == np.uint8
-                )
-                img = F.to_tensor(img)
+                    source_array = np.array(img)
+                    if source_array.dtype != np.uint8:
+                        source_array = (source_array * 255).clip(0, 255).astype(np.uint8)
+                    source_images.append(source_array)  # type: ignore[union-attr]
+                uint8_array = isinstance(img, np.ndarray) and img.dtype == np.uint8
+                # PIL conversion above guarantees an 8-bit RGB image, and both conversion paths below
+                # scale PIL and uint8 NumPy storage into [0, 1]. Their range cannot fail the checks below.
+                range_known_valid = pil_image or uint8_array
+                if pil_image or (uint8_array and img.ndim in (2, 3)):
+                    # ``F.to_tensor`` first materializes contiguous CHW uint8 storage, then
+                    # allocates float storage, then allocates again for division. Convert dtype
+                    # and layout together and divide that fresh float allocation in place.
+                    if pil_image:
+                        tensor_source = (
+                            source_array if source_array is not None else np.array(img, dtype=np.uint8, copy=True)
+                        )
+                    else:
+                        tensor_source = img
+                    img = _uint8_image_to_tensor(tensor_source)
+                else:
+                    img = F.to_tensor(img)
             elif include_source_image and img.dim() == 3:
                 # Source extraction requires a (C, H, W) tensor for permute(). Skip malformed ranks so the deferred
                 # validation below raises the public shape error instead of an internal RuntimeError.

@@ -16,7 +16,9 @@ import pytest
 import requests
 import supervision as sv
 import torch
+import torchvision.transforms.functional as F  # noqa: N812
 
+import rfdetr.detr as detr_module
 from rfdetr import RFDETRNano, RFDETRSegNano
 from rfdetr.detr import RFDETR
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
@@ -734,6 +736,121 @@ class TestPredictImagePinning:
 
         assert captured, "expected predict() to move the image tensor with .to()"
         assert not any(captured), "CUDA tensor -> CPU-model transfer must not set non_blocking=True"
+
+
+class TestPredictUint8Conversion:
+    """The fused uint8 path must retain torchvision's exact conversion semantics."""
+
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64])
+    @pytest.mark.parametrize("grayscale", [False, True])
+    def test_converter_is_bit_exact_for_supported_default_dtypes(self, dtype: torch.dtype, grayscale: bool) -> None:
+        """Layout/dtype fusion and in-place division produce the same raw floating-point bits."""
+        rng = np.random.default_rng(20260821)
+        image = rng.integers(0, 256, size=(17, 29, 3), dtype=np.uint8)[:, ::2]
+        if grayscale:
+            image = image[:, :, 0]
+        previous_dtype = torch.get_default_dtype()
+        try:
+            torch.set_default_dtype(dtype)
+            expected = F.to_tensor(image)
+            actual = detr_module._uint8_image_to_tensor(image)
+        finally:
+            torch.set_default_dtype(previous_dtype)
+
+        assert actual.dtype == expected.dtype
+        assert actual.shape == expected.shape
+        assert actual.stride() == expected.stride()
+        assert actual.contiguous().view(torch.uint8).equal(expected.contiguous().view(torch.uint8))
+
+    @pytest.mark.parametrize(
+        "image",
+        [
+            pytest.param(PIL.Image.new("RGB", (29, 17), color=(1, 127, 255)), id="pil_rgb"),
+            pytest.param(np.full((17, 29, 3), 127, dtype=np.uint8), id="numpy_uint8"),
+        ],
+    )
+    @pytest.mark.parametrize("include_source_image", [False, True])
+    def test_predict_uses_fused_path_for_uint8_images(self, image: object, include_source_image: bool) -> None:
+        """PIL and valid uint8 NumPy inputs do not fall back to torchvision's allocating path."""
+        model = _DummyRFDETR()
+        to_tensor_spy = MagicMock(side_effect=AssertionError("uint8 input unexpectedly used F.to_tensor"))
+
+        with patch("rfdetr.detr.F.to_tensor", to_tensor_spy):
+            model.predict(image, include_source_image=include_source_image)
+
+        to_tensor_spy.assert_not_called()
+
+    def test_converter_matches_torchvision_for_contiguous_single_channel_hwc(self) -> None:
+        """A freshly-allocated (not sliced) ``(H, W, 1)`` array exercises ``num_channels=1`` models
+        (``ModelConfig.num_channels``, ``config.py``).
+
+        Unlike a channel-sliced view, this array is already C-contiguous on input, which is exactly when torchvision's
+        own ``to_tensor`` leaves the size-1 leading dimension's stride un-normalized -- so equivalence is checked on
+        every dimension that actually has memory-layout meaning (size > 1), plus dtype/shape/contiguity/raw bits.
+        """
+        rng = np.random.default_rng(20260821)
+        image = rng.integers(0, 256, size=(17, 29, 1), dtype=np.uint8)
+
+        expected = F.to_tensor(image)
+        actual = detr_module._uint8_image_to_tensor(image)
+
+        assert actual.dtype == expected.dtype
+        assert actual.shape == expected.shape
+        assert actual.is_contiguous() == expected.is_contiguous()
+        assert actual.stride()[1:] == expected.stride()[1:]
+        assert actual.contiguous().view(torch.uint8).equal(expected.contiguous().view(torch.uint8))
+
+    def test_predict_reuses_pil_source_array_for_conversion(self) -> None:
+        """Default PIL prediction converts the same NumPy allocation retained as source metadata."""
+        model = _DummyRFDETR()
+        image = PIL.Image.new("RGB", (29, 17), color=(1, 127, 255))
+
+        with patch("rfdetr.detr._uint8_image_to_tensor", wraps=detr_module._uint8_image_to_tensor) as converter_spy:
+            detections = model.predict(image)
+
+        converter_spy.assert_called_once()
+        assert converter_spy.call_args.args[0] is detections.metadata["source_image"]
+
+    def test_predict_keeps_original_readonly_numpy_as_tensor_source(self) -> None:
+        """NumPy conversion retains the caller's storage, so it still triggers ``torch.from_numpy``'s not-writable
+        ``UserWarning`` exactly like ``F.to_tensor`` would on the same array."""
+        model = _DummyRFDETR()
+        image = np.full((17, 29, 3), 127, dtype=np.uint8)
+        image.flags.writeable = False
+
+        with (
+            patch("rfdetr.detr._uint8_image_to_tensor", wraps=detr_module._uint8_image_to_tensor) as converter_spy,
+            pytest.warns(UserWarning, match="not writable"),
+        ):
+            detections = model.predict(image)
+
+        converter_spy.assert_called_once()
+        assert converter_spy.call_args.args[0] is image
+        assert detections.metadata["source_image"] is not image
+        assert detections.metadata["source_image"].flags.writeable
+
+    def test_predict_keeps_torchvision_fallback_for_float_numpy(self) -> None:
+        """Non-uint8 NumPy inputs retain torchvision's no-scaling conversion semantics."""
+        model = _DummyRFDETR()
+        image = np.full((17, 29, 3), 0.5, dtype=np.float32)
+
+        with patch("rfdetr.detr.F.to_tensor", wraps=F.to_tensor) as to_tensor_spy:
+            model.predict(image)
+
+        to_tensor_spy.assert_called_once_with(image)
+
+    def test_predict_keeps_torchvision_fallback_for_invalid_uint8_numpy_rank(self) -> None:
+        """A uint8 NumPy input outside the documented 2-D/3-D shape keeps torchvision's validation error."""
+        model = _DummyRFDETR()
+        image = np.zeros((1, 3, 17, 29), dtype=np.uint8)
+
+        with (
+            patch("rfdetr.detr.F.to_tensor", wraps=F.to_tensor) as to_tensor_spy,
+            pytest.raises(ValueError, match="2/3 dimensional"),
+        ):
+            model.predict(image)
+
+        to_tensor_spy.assert_called_once_with(image)
 
 
 class TestPredictPixelRangeValidation:
