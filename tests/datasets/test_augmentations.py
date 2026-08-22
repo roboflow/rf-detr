@@ -266,6 +266,63 @@ class TestAlbumentationsWrapper:
         torch.testing.assert_close(kp[0, 0], torch.tensor(19.0), rtol=1e-4, atol=1e-6)
         torch.testing.assert_close(kp[1, 0], torch.tensor(89.0), rtol=1e-4, atol=1e-6)
 
+    @pytest.mark.skipif(
+        not hasattr(alb, "SquareSymmetry"), reason="SquareSymmetry is unavailable in this Albumentations version"
+    )
+    def test_square_symmetry_explicit_pairs_keeps_instances_aligned(self, monkeypatch):
+        """SquareSymmetry's horizontal element keeps image annotations and keypoint slots aligned."""
+        square_symmetry = alb.SquareSymmetry(p=1.0)
+        monkeypatch.setattr(square_symmetry, "get_params", lambda: {"group_element": "h"})
+        if hasattr(square_symmetry, "get_params_dependent_on_data"):
+            monkeypatch.setattr(
+                square_symmetry,
+                "get_params_dependent_on_data",
+                lambda params, data: {"group_element": "h"},
+            )
+
+        wrapper = AlbumentationsWrapper(square_symmetry, keypoint_flip_pairs=[0, 1])
+        height, width = 50, 100
+        image_array = np.arange(height * width * 3, dtype=np.uint8).reshape(height, width, 3)
+        masks = torch.zeros((2, height, width), dtype=torch.uint8)
+        masks[0, 5:25, 10:30] = 1
+        masks[1, 10:40, 60:90] = 1
+        target = {
+            "boxes": torch.tensor([[10.0, 5.0, 30.0, 25.0], [60.0, 10.0, 90.0, 40.0]]),
+            "labels": torch.tensor([3, 7]),
+            "area": torch.tensor([400.0, 900.0]),
+            "iscrowd": torch.tensor([0, 1]),
+            "masks": masks,
+            "keypoints": torch.tensor(
+                [
+                    [[12.0, 10.0, 2.0], [28.0, 20.0, 2.0], [20.0, 15.0, 0.0]],
+                    [[65.0, 15.0, 2.0], [85.0, 35.0, 2.0], [75.0, 25.0, 0.0]],
+                ]
+            ),
+        }
+
+        transformed_image, transformed = wrapper(Image.fromarray(image_array), target)
+
+        assert np.array_equal(np.asarray(transformed_image), np.fliplr(image_array))
+        torch.testing.assert_close(
+            transformed["boxes"],
+            torch.tensor([[70.0, 5.0, 90.0, 25.0], [10.0, 10.0, 40.0, 40.0]]),
+        )
+        assert transformed["labels"].tolist() == [3, 7]
+        torch.testing.assert_close(transformed["area"], torch.tensor([400.0, 900.0]))
+        assert transformed["iscrowd"].tolist() == [0, 1]
+        assert transformed["masks"].dtype == torch.bool
+        assert transformed["masks"].shape == (2, height, width)
+        torch.testing.assert_close(transformed["masks"], torch.flip(masks.bool(), dims=[2]))
+        torch.testing.assert_close(
+            transformed["keypoints"],
+            torch.tensor(
+                [
+                    [[71.0, 20.0, 2.0], [87.0, 10.0, 2.0], [0.0, 0.0, 0.0]],
+                    [[14.0, 35.0, 2.0], [34.0, 15.0, 2.0], [0.0, 0.0, 0.0]],
+                ]
+            ),
+        )
+
     def test_nested_horizontal_flip_swaps_slots_after_all_geometry(self):
         """Nested HFlip+VFlip should mirror coordinates once, then swap only the left/right slots."""
         wrapper = AlbumentationsWrapper(
