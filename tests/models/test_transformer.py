@@ -22,6 +22,7 @@ from rfdetr.models.transformer import (
     gen_encoder_output_proposals,
     gen_sineembed_for_position,
 )
+from rfdetr.utilities.tensors import _bilinear_grid_sample
 
 
 @pytest.fixture(autouse=True)
@@ -581,6 +582,52 @@ class TestMSDeformAttnCorePytorch:
         bsz, n_heads, head_dim, _ = value.shape
         len_q = sampling_locations.shape[1]
         assert output.shape == (bsz, len_q, n_heads * head_dim)
+
+    @pytest.mark.parametrize(
+        "sampling_layout",
+        [pytest.param("rank-6", id="rank-6"), pytest.param("merged-rank-5", id="merged-rank-5")],
+    )
+    def test_single_level_two_points_matches_prechange_sample_packing(self, sampling_layout: str) -> None:
+        """Single-level two-point output must match the former singleton stack-and-flatten packing.
+
+        The direct singleton path avoids allocating a temporary rank-5 tensor, while the pre-change
+        ``torch.stack([single_sample], dim=-2).flatten(-2)`` expression establishes the numerical contract for both
+        eager rank-6 and export rank-5 sampling-location layouts.
+        """
+        value, spatial_shapes, sampling_locations, attention_weights, levels = _build_ms_deform_inputs(
+            npts=2, levels=[(4, 4)]
+        )
+        if sampling_layout == "merged-rank-5":
+            sampling_locations = sampling_locations.flatten(3, 4)
+
+        output = ms_deform_attn_core_pytorch(
+            value,
+            spatial_shapes,
+            sampling_locations,
+            attention_weights,
+            value_spatial_shapes_hw=levels,
+        )
+
+        batch_size, n_heads, head_dim, _ = value.shape
+        height, width = levels[0]
+        grid_locations = sampling_locations[:, :, :, 0] if sampling_locations.ndim == 6 else sampling_locations
+        sampling_grid = (2 * grid_locations - 1).transpose(1, 2).flatten(0, 1)
+        single_sample = _bilinear_grid_sample(
+            value.view(batch_size * n_heads, head_dim, height, width),
+            sampling_grid,
+            padding_mode="zeros",
+            align_corners=False,
+        )
+        prechange_sampling_values = torch.stack([single_sample], dim=-2).flatten(-2)
+        len_query = sampling_locations.shape[1]
+        prechange_attention_weights = attention_weights.transpose(1, 2).reshape(batch_size * n_heads, 1, len_query, 2)
+        expected = (
+            (prechange_sampling_values * prechange_attention_weights)
+            .sum(-1)
+            .view(batch_size, n_heads * head_dim, len_query)
+        )
+
+        torch.testing.assert_close(output, expected.transpose(1, 2).contiguous())
 
     def test_multiple_levels_keep_sample_packing(
         self, monkeypatch: pytest.MonkeyPatch, make_inputs: _MSDeformInputs
@@ -1190,6 +1237,59 @@ def test_ms_deform_attn_module_export_compatible_with_singleton_level_dim() -> N
         module,
         args=(query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index),
     )
+    assert exported is not None
+
+
+def test_ms_deform_attn_module_export_compatible_single_level() -> None:
+    """A one-level exported MSDeformAttn module must trace its rank-5 sampling route.
+
+    Regression: the existing single-level core trace passes rank-6 sampling locations,
+    while ``MSDeformAttn.export()`` creates the rank-5 merged level-and-point layout
+    consumed by the core during an actual module export.
+    """
+    hw_pairs: list[tuple[int, int]] = [(4, 4)]
+    d_model, n_heads, n_points = 32, 4, 2
+    batch_size, num_queries = 1, 3
+
+    class _SingleLevelMSDeformAttnExportWrapper(torch.nn.Module):
+        """Export MSDeformAttn with concrete one-level spatial dimensions."""
+
+        def __init__(self, hw: list[tuple[int, int]]) -> None:
+            super().__init__()
+            self.attn = MSDeformAttn(d_model=d_model, n_levels=1, n_heads=n_heads, n_points=n_points)
+            self.attn.export()
+            self.hw = hw
+
+        def forward(
+            self,
+            query: torch.Tensor,
+            reference_points: torch.Tensor,
+            input_flatten: torch.Tensor,
+            input_spatial_shapes: torch.Tensor,
+            input_level_start_index: torch.Tensor,
+        ) -> torch.Tensor:
+            """Run the one-level export path with concrete spatial dimensions."""
+            return self.attn(
+                query,
+                reference_points,
+                input_flatten,
+                input_spatial_shapes,
+                input_level_start_index,
+                input_spatial_shapes_hw=self.hw,
+            )
+
+    query = torch.randn(batch_size, num_queries, d_model)
+    reference_points = torch.rand(batch_size, num_queries, 1, 4)
+    input_flatten = torch.randn(batch_size, 16, d_model)
+    input_spatial_shapes = torch.tensor(hw_pairs, dtype=torch.long)
+    input_level_start_index = torch.tensor([0], dtype=torch.long)
+    module = _SingleLevelMSDeformAttnExportWrapper(hw=hw_pairs)
+
+    exported = torch.export.export(
+        module,
+        args=(query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index),
+    )
+
     assert exported is not None
 
 
