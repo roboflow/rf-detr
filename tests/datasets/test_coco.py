@@ -492,7 +492,7 @@ class TestBuildO365RawGpuBackend:
 
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=True),
+            patch.object(AugmentationBackend, "_is_available", lambda self: True),
             patch("rfdetr.datasets.o365.logger") as mock_logger,
         ):
             self._call_build_o365_raw("auto")
@@ -525,7 +525,7 @@ class TestBuildO365RawGpuBackend:
 
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=True),
+            patch.object(AugmentationBackend, "_is_available", lambda self: True),
         ):
             _, mock_transform, _ = self._call_build_o365_raw("auto")
         call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
@@ -564,7 +564,7 @@ class TestBuildO365RawGpuBackend:
 
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
             pytest.raises(ImportError, match="rfdetr\\[augment\\]"),
         ):
             self._call_build_o365_raw("gpu")
@@ -625,7 +625,7 @@ class TestBuildRoboflowFromCocoBackendResolution:
         args = types.SimpleNamespace(dataset_dir=str(tmp_path), augmentation_backend="gpu")
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
             pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
         ):
             build_roboflow_from_coco("train", args, resolution=640)
