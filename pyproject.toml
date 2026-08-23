@@ -384,6 +384,7 @@ overrides = [
     "seaborn", "seaborn.*",
     "tqdm", "tqdm.*",
     "kornia", "kornia.*",
+    "albumentations", "albumentations.*",
     "onnx", "onnx.*",
     "onnx2tf", "onnx2tf.*",
     "onnx_graphsurgeon", "onnx_graphsurgeon.*",
@@ -407,6 +408,5 @@ overrides = [
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [
     "rfdetr.datasets.coco",
-    "rfdetr.datasets.transforms",
   ], ignore_errors = true },
 ]

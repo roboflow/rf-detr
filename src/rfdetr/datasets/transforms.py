@@ -24,10 +24,11 @@ from typing import Any
 try:
     import albumentations as alb
 except ImportError:
-    alb = None  # type: ignore[assignment]
+    alb = None
 import numpy as np
 import PIL
 import torch
+from numpy.typing import NDArray
 from PIL import Image
 from torch import Tensor
 from torchvision.transforms import Normalize as _TVNormalize
@@ -174,9 +175,9 @@ def _capped_longest_max_size_cls() -> type:
         A ``LongestMaxSize`` subclass with capped (never-upscale) resize behaviour.
     """
 
-    class CappedLongestMaxSize(alb.LongestMaxSize):
+    class CappedLongestMaxSize(alb.LongestMaxSize):  # type: ignore[misc]
         def get_params_dependent_on_data(self, params: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
-            resolved = super().get_params_dependent_on_data(params, data)
+            resolved: dict[str, Any] = super().get_params_dependent_on_data(params, data)
             resolved["scale"] = min(resolved["scale"], 1.0)
             return resolved
 
@@ -304,7 +305,7 @@ def _random_sized_crop_uses_size_param(aug_cls: type) -> bool:
     Returns:
         ``True`` when the class accepts a ``size`` keyword argument; otherwise ``False``.
     """
-    signature = inspect.signature(aug_cls.__init__)
+    signature = inspect.signature(aug_cls)
     return "size" in signature.parameters
 
 
@@ -498,7 +499,7 @@ class AlbumentationsWrapper:
         return f"{self.__class__.__name__}(transform={transform}, type={transform_type})"
 
     @staticmethod
-    def _boxes_to_numpy(boxes: Tensor | np.ndarray) -> np.ndarray:
+    def _boxes_to_numpy(boxes: Tensor | NDArray[Any]) -> NDArray[Any]:
         """Convert boxes to numpy array and validate shape.
 
         >>> import torch
@@ -512,7 +513,7 @@ class AlbumentationsWrapper:
         return boxes_np
 
     @staticmethod
-    def _keypoints_to_numpy(keypoints: Tensor | np.ndarray, num_boxes: int) -> np.ndarray:
+    def _keypoints_to_numpy(keypoints: Tensor | NDArray[Any], num_boxes: int) -> NDArray[Any]:
         """Convert keypoints to numpy array and validate shape.
 
         >>> import torch
@@ -531,7 +532,7 @@ class AlbumentationsWrapper:
 
     @staticmethod
     def _build_albu_keypoints(
-        keypoints_np: np.ndarray,
+        keypoints_np: NDArray[Any],
         idxs: list[int],
     ) -> dict[str, Any]:
         """Flatten per-instance keypoints into Albumentations keypoint fields.
@@ -594,7 +595,7 @@ class AlbumentationsWrapper:
     def _rebuild_keypoints_from_albu(
         augmented: dict[str, Any],
         kept_idxs: list[int],
-        keypoints_np: np.ndarray,
+        keypoints_np: NDArray[Any],
         flip_pairs: list[int] | None = None,
         did_flip: bool = False,
     ) -> Tensor:
@@ -673,7 +674,7 @@ class AlbumentationsWrapper:
         # torchvision path in ``_torchvision.py``, which filters ``labels`` directly with its keep mask.
         global_fields = {"boxes", "labels"} | IMAGE_LEVEL_TARGET_FIELDS
 
-        result = {}
+        result: dict[str, Any] = {}
         for key, value in target.items():
             if key in global_fields:
                 continue
@@ -702,7 +703,7 @@ class AlbumentationsWrapper:
         # torchvision path in ``_torchvision.py``, which filters ``labels`` directly with its keep mask.
         global_fields = {"boxes", "labels"} | IMAGE_LEVEL_TARGET_FIELDS
 
-        result = {}
+        result: dict[str, Any] = {}
         kept_idxs_tensor = torch.as_tensor(kept_idxs, dtype=torch.long)
         for key, value in target.items():
             if key in global_fields:
@@ -716,7 +717,7 @@ class AlbumentationsWrapper:
         return result
 
     def _apply_geometric_transform(
-        self, image_np: np.ndarray, target: dict[str, Any], labels: list[int]
+        self, image_np: NDArray[np.uint8], target: dict[str, Any], labels: list[int]
     ) -> tuple[Image.Image, dict[str, Any]]:
         """Apply geometric transform to image with boxes and optionally masks.
 
