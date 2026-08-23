@@ -22,6 +22,7 @@ from numpy.typing import NDArray
 from PIL import Image as PILImage
 from supervision import Detections
 
+from rfdetr.export._class_layout import _exclude_background_class
 from rfdetr.export._resize import _bilinear_resize_half_pixel
 from rfdetr.export._topk import _select_topk_multiclass
 from rfdetr.utilities.logger import get_logger
@@ -178,6 +179,7 @@ def _run_inference(
     image_path: str | Path,
     threshold: float = 0.3,
     num_select: int | None = None,
+    background_class_id: int | None = -1,
 ) -> tuple[Detections, PILImage.Image]:
     """Preprocess one image, run TFLite inference, and decode detections.
 
@@ -192,6 +194,9 @@ def _run_inference(
         threshold: Confidence threshold; detections below this are discarded.
         num_select: Maximum query/class pairs selected before thresholding. ``None`` uses the exported model's query
             count, matching shipped RF-DETR configurations; pass an explicit value for custom exports.
+        background_class_id: Exported class slot to exclude before selection. The default ``-1`` preserves the common
+            final-slot background convention. Pass ``None`` for sparse COCO checkpoints, whose final slot is class 90,
+            or ``0`` for legacy background-first keypoint checkpoints.
 
     Returns:
         A tuple of ``(detections, pil_img)`` where ``detections`` contains pixel-space ``xyxy`` boxes (and ``mask`` for
@@ -267,9 +272,8 @@ def _run_inference(
         boxes_idx, logits_idx = logits_idx, boxes_idx
         boxes_cwh = interp.get_tensor(out_det[boxes_idx]["index"])[0]
 
-    # Drop last logit column: RF-DETR adds +1 to num_classes (no-object slot, criterion.py:323).
-    # Keeping it causes class_id == len(class_names) → IndexError at display time.
-    logits = interp.get_tensor(out_det[logits_idx]["index"])[0, :, :-1]  # (Q, num_classes)
+    # Background placement is checkpoint-dependent and cannot be inferred from the tensor width alone.
+    logits = interp.get_tensor(out_det[logits_idx]["index"])[0]
 
     # RF-DETR uses per-class sigmoid (not softmax) — mirrors PostProcess.forward in postprocess.py.
     if logits.size:
@@ -284,12 +288,14 @@ def _run_inference(
         logger.debug("Logits stats: empty shape=%s", logits.shape)
     one = np.asarray(1, dtype=logits.dtype)
     scores_all = one / (one + np.exp(-logits.clip(-88, 88)))
+    scores_all, class_ids = _exclude_background_class(scores_all, background_class_id)
     # Flatten (Q, C) to Q*C query/class pairs and take the top-scoring ones before thresholding —
     # mirrors PostProcess._select_topk. A per-query argmax (the previous approach) keeps at most
     # one class per query, silently dropping legitimate detections whenever a query scores above
     # threshold on more than one class; see _topk.py for why that happens routinely here.
     selection_cap = logits.shape[0] if num_select is None else num_select
     scores, cls, query_idx = _select_topk_multiclass(scores_all, threshold, num_select=selection_cap)
+    cls = class_ids[cls]
     if scores_all.size:
         logger.debug(
             "Scores stats: min=%.3f max=%.3f — detections above threshold %.2f: %d",
@@ -306,10 +312,13 @@ def _run_inference(
     xyxy = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)
     xyxy *= np.array([ow, oh, ow, oh], dtype=np.float32)
 
-    # Segmentation exports add a rank-4 mask output; decode it when present.
+    # Segmentation exports add a rank-4 mask output; decode it when present. Keypoint exports also
+    # add a rank-4 output (pred_keypoints, output name "keypoints") that must not be mistaken for it.
     mask_idx = next((i for i, od in enumerate(out_det) if "masks" in str(od.get("name", ""))), None)
     if mask_idx is None:
-        rank4_candidates = [i for i, od in enumerate(out_det) if len(od["shape"]) == 4]
+        rank4_candidates = [
+            i for i, od in enumerate(out_det) if len(od["shape"]) == 4 and "keypoints" not in str(od.get("name", ""))
+        ]
         if len(rank4_candidates) == 1:
             mask_idx = rank4_candidates[0]
         elif len(rank4_candidates) >= 2:

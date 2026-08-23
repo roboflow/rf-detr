@@ -159,6 +159,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- ONNX and TFLite reference inference helpers now accept an explicit `background_class_id`: `-1` preserves the existing final-background default, `None` retains every exported logit slot for sparse-ID COCO checkpoints, and `0` supports legacy background-first keypoint checkpoints.
 - Keypoint L1-loss helper (`compute_l1_keypoint_loss`) now returns **graph-connected** zeros on its out-of-schema class-index guard instead of detached `new_zeros`. A detached zero left the keypoint-head parameters without a gradient path on that batch, which desyncs `DistributedDataParallel`'s gradient reducer across ranks (hang or "parameter did not receive grad") when the guard fires on some ranks but not others. This is a prerequisite for the multi-GPU keypoint training above.
 - Non-square Albumentations training resize (`aug_config` set, `augmentation_backend` resolving to `"albumentations"`) no longer silently inflates every image's longest side to `max_size` (1333 by default). `SmallestMaxSize` → `LongestMaxSize` always forces an exact resize in Albumentations, not a conditional cap; a new `CappedLongestMaxSize` internal transform only shrinks, never upscales, matching torchvision's `RandomResize` semantics.
 - Explicit `augmentation_backend="albumentations"` now raises a clear `ImportError` immediately if Albumentations is not installed, instead of resolving successfully and failing later, deep in dataset construction.
