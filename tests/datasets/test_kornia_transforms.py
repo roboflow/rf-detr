@@ -9,6 +9,8 @@ All tests in this module are CPU-compatible — Kornia operates on CPU tensors i
 ``@pytest.mark.gpu`` is needed.
 """
 
+import builtins
+
 import pytest
 import torch
 
@@ -1320,9 +1322,8 @@ class TestPerspectiveFactory:
 
 
 class TestGaussianDefaultsMatchAlbumentations:
-    """The unspecified GaussianBlur sigma and GaussNoise std defaults must match the Albumentations defaults they stand
-    in for (issue #1351): the same aug_config with no explicit value should augment by the same amount on either
-    backend."""
+    """Unspecified Gaussian defaults must align to Albumentations bounds while documenting known sampling
+    differences."""
 
     @pytest.fixture(autouse=True)
     def _require_kornia(self):
@@ -1340,8 +1341,58 @@ class TestGaussianDefaultsMatchAlbumentations:
 
         assert gpu_default == pytest.approx(cpu_default), (
             f"unspecified GaussianBlur sigma is {gpu_default} on the GPU path but "
-            f"{cpu_default} on the CPU path, so the same config blurs by different amounts"
+            f"{cpu_default} on the CPU path, so the same config uses different default sigma bounds"
         )
+
+    def test_gaussian_blur_propagates_nested_albumentations_import_error(self, monkeypatch):
+        """A broken Albumentations dependency must not be mistaken for the package being absent."""
+        from rfdetr.datasets import kornia_transforms
+
+        original_import = builtins.__import__
+
+        def import_with_broken_albumentations(name, *args, **kwargs):
+            if name == "albumentations":
+                raise ModuleNotFoundError("No module named 'albumentations.core'", name="albumentations.core")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", import_with_broken_albumentations)
+
+        with pytest.raises(ModuleNotFoundError, match=r"albumentations\.core"):
+            kornia_transforms._make_gaussian_blur({"blur_limit": 3, "p": 0.3})
+
+    def test_gaussian_blur_uses_kornia_default_without_albumentations(self, monkeypatch):
+        """A GPU-only install keeps Kornia's historic GaussianBlur default."""
+        from rfdetr.datasets import kornia_transforms
+
+        original_import = builtins.__import__
+
+        def import_without_albumentations(name, *args, **kwargs):
+            if name == "albumentations":
+                raise ModuleNotFoundError("No module named 'albumentations'", name="albumentations")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", import_without_albumentations)
+
+        transform = kornia_transforms._make_gaussian_blur({"blur_limit": 3, "p": 0.3})
+
+        assert tuple(float(value) for value in transform._param_generator.sigma) == pytest.approx((0.1, 2.0))
+
+    def test_gaussian_blur_keeps_explicit_sigma_when_albumentations_is_unavailable(self, monkeypatch):
+        """An explicit sigma remains authoritative when the optional CPU backend is absent."""
+        from rfdetr.datasets import kornia_transforms
+
+        original_import = builtins.__import__
+
+        def import_without_albumentations(name, *args, **kwargs):
+            if name == "albumentations":
+                raise ModuleNotFoundError("No module named 'albumentations'", name="albumentations")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", import_without_albumentations)
+
+        transform = kornia_transforms._make_gaussian_blur({"blur_limit": 3, "sigma": (1.25, 1.5), "p": 0.3})
+
+        assert tuple(float(value) for value in transform._param_generator.sigma) == pytest.approx((1.25, 1.5))
 
     def test_gauss_noise_std_default_matches_albumentations(self):
         """An unspecified std_range must equal albumentations' GaussNoise std_range default."""
@@ -1357,7 +1408,7 @@ class TestGaussianDefaultsMatchAlbumentations:
 
         assert gpu_std == pytest.approx(cpu_default[1]), (
             f"unspecified GaussNoise std is {gpu_std} on the GPU path but the CPU path "
-            f"samples up to {cpu_default[1]}, so the same config adds different noise"
+            f"samples up to {cpu_default[1]}, so the default upper bound is not aligned"
         )
 
     def test_default_gauss_noise_warns_because_the_default_range_is_non_degenerate(self):

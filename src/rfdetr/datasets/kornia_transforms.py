@@ -481,11 +481,20 @@ def _make_gaussian_blur(params: dict[str, Any]) -> Any:
 
     # Shared with Blur: a (min, max) pair collapses to its upper bound, forced odd and >= 3.
     blur_limit = _as_odd_kernel(params.get("blur_limit", 3), "GaussianBlur")
-    # Default to the CPU (albumentations) GaussianBlur sigma_limit default, (0.5, 3.0), so the same
-    # aug_config blurs by the same amount on either backend. The previous default (0.1, 2.0) was Kornia's
-    # own convention, so an unspecified sigma blurred noticeably less on the GPU path; AUG_INDUSTRIAL
-    # reaches this default (it sets blur_limit but no sigma). An explicit sigma still wins.
-    sigma_range = params.get("sigma", (0.5, 3.0))
+    if "sigma" in params:
+        sigma_range = params["sigma"]
+    else:
+        # The supported Albumentations range has version-dependent defaults. Read the installed CPU transform so a
+        # shared config stays aligned whenever both optional augmentation backends are available; otherwise retain
+        # Kornia's original default for GPU-only installations. AUG_INDUSTRIAL reaches this branch.
+        try:
+            import albumentations
+        except ModuleNotFoundError as error:
+            if error.name != "albumentations":
+                raise
+            sigma_range = (0.1, 2.0)
+        else:
+            sigma_range = albumentations.GaussianBlur().sigma_limit
     blur_sigma = _as_range(sigma_range)
     return RandomGaussianBlur(
         kernel_size=(blur_limit, blur_limit),
@@ -504,8 +513,8 @@ def _make_gauss_noise(params: dict[str, Any]) -> Any:
     from kornia.augmentation import RandomGaussianNoise
 
     # Default to the CPU (albumentations) GaussNoise std_range default, (0.2, 0.44), on the 0-1 image
-    # scale both backends use, so an unspecified std_range adds the same noise on either path. The
-    # previous default (0.01, 0.05) was rf-detr's own, 4-9x weaker than the CPU backend.
+    # scale both backends use. Kornia still fixes its std at the upper bound, while the CPU path samples
+    # the range; the warning below makes that unavoidable distribution difference visible.
     std_range = _as_range(params.get("std_range", (0.2, 0.44)))
     if std_range[0] != std_range[1]:
         logger.warning(
