@@ -48,7 +48,7 @@ import tempfile
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, Literal
 
 import torch
@@ -548,6 +548,35 @@ def _distributed_world_size() -> int:
     return 1
 
 
+def _shard_url(path: PurePath) -> str:
+    """Return the ``file:`` URL naming *path* to ``webdataset``'s shard opener.
+
+    ``webdataset`` calls ``urlparse`` on every shard string and, for the empty and ``file`` schemes, opens
+    ``urlparse(url).path`` verbatim — no percent-decoding, and no conversion from URL syntax back to a native path.
+    Two spellings that look right therefore fail on Windows: a bare ``str(path)`` parses ``C:\\shards\\train.tar``
+    as scheme ``c``, which has no handler, and :meth:`pathlib.Path.as_uri` yields ``file:///C:/shards/train.tar``,
+    whose path keeps a leading slash that ``open`` rejects with ``[Errno 22] Invalid argument``. An authority-less
+    ``file:`` URL over the forward-slash form of the path leaves ``C:/shards/train.tar`` on Windows and
+    ``/shards/train.tar`` elsewhere, both of which ``open`` takes as-is. Percent-encoding is deliberately omitted
+    for the same reason: nothing downstream reverses it, so a directory containing spaces has to pass through
+    literally.
+
+    Args:
+        path: Path to one shard, absolute or relative to the working directory.
+
+    Returns:
+        The URL to hand to ``webdataset``.
+
+    Examples:
+        >>> from pathlib import PurePosixPath, PureWindowsPath
+        >>> _shard_url(PureWindowsPath(r"C:\\data\\shards\\train-000000.tar"))
+        'file:C:/data/shards/train-000000.tar'
+        >>> _shard_url(PurePosixPath("/data/shards/train-000000.tar"))
+        'file:/data/shards/train-000000.tar'
+    """
+    return f"file:{path.as_posix()}"
+
+
 class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
     """Streaming COCO-style detection dataset reading WebDataset tar shards.
 
@@ -730,6 +759,16 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
             image, target = self._transforms(image, target)
         return image, target
 
+    def _shard_urls(self) -> list[str]:
+        """Return this split's shards as ``file:`` URLs.
+
+        See :func:`_shard_url` for why a shard is named as a ``file:`` URL rather than by its plain path.
+
+        Returns:
+            One ``file:`` URL per shard, in index order.
+        """
+        return [_shard_url(self._shard_dir / shard) for shard in self.index.shards]
+
     def __iter__(self) -> Iterator[tuple[Any, Any]]:
         """Iterate this worker's share of the split.
 
@@ -738,7 +777,7 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         """
         wds = _require_webdataset()
         shard_seed, buffer_seed = self._epoch_seeds()
-        urls = [str(self._shard_dir / shard) for shard in self.index.shards]
+        urls = self._shard_urls()
         pipeline = wds.WebDataset(
             urls,
             # A split with fewer shards than workers legitimately leaves some workers with nothing to read;

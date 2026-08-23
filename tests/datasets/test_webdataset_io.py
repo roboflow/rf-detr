@@ -18,8 +18,9 @@ import tarfile
 import types
 import warnings
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
+from urllib.parse import urlparse
 
 import numpy as np
 import pytest
@@ -35,6 +36,7 @@ from rfdetr.datasets.webdataset_io import (
     ShardIndex,
     WebDatasetDetection,
     WebDatasetSplitUnavailableError,
+    _shard_url,
     build_webdataset,
     build_webdataset_loader,
     index_name,
@@ -352,6 +354,31 @@ class TestWebDatasetDetection:
             A pytest fixture, only runnable through pytest's fixture injection.
         """
         pytest.importorskip("webdataset")
+
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            pytest.param(
+                PureWindowsPath(r"C:\Temp\shards\train-000000.tar"),
+                "C:/Temp/shards/train-000000.tar",
+                id="windows-drive",
+            ),
+            pytest.param(
+                PurePosixPath("/tmp/shard dir/train-000000.tar"),
+                "/tmp/shard dir/train-000000.tar",
+                id="posix-with-space",
+            ),
+        ],
+    )
+    def test_shard_url_names_a_path_open_accepts(self, path: PurePosixPath | PureWindowsPath, expected: str) -> None:
+        assert urlparse(_shard_url(path)).path == expected
+
+    def test_webdataset_opens_every_shard_url_this_dataset_emits(self, tmp_path: Path) -> None:
+        shard_dir = _pack(tmp_path / "shard dir", count=4)
+        dataset = WebDatasetDetection(shard_dir, "train", transforms=None)
+        opener = pytest.importorskip("webdataset.cache").StreamingOpen()
+        opened = [source["stream"].read() for source in opener(dataset._shard_urls())]
+        assert opened == [(shard_dir / name).read_bytes() for name in dataset.index.shards]
 
     def test_every_sample_is_streamed_once(self, tmp_path: Path) -> None:
         dataset = WebDatasetDetection(_pack(tmp_path, count=12), "train", transforms=None)
