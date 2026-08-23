@@ -688,6 +688,102 @@ class TestShapeBasedOutputFallback:
 
 
 # ---------------------------------------------------------------------------
+# TestRank4OutputKind
+# ---------------------------------------------------------------------------
+
+
+def _make_rank4_interp(rank4_tensor: np.ndarray, rank4_name: str = "StatefulPartitionedCall:2") -> mock.MagicMock:
+    """Build a mock interpreter for a 3-output export whose rank-4 output carries no kind in its name.
+
+    ``onnx2tf`` does not carry the ONNX output names into the TFLite graph, so RF-DETR's own exports report
+    ``StatefulPartitionedCall:N``. Segmentation masks and keypoints then look identical from the name alone.
+
+    Args:
+        rank4_tensor: The rank-4 output, shaped ``(1, Q, *, *)``.
+        rank4_name: Output name the interpreter reports for *rank4_tensor*.
+
+    Returns:
+        A mock interpreter exposing boxes, logits, and *rank4_tensor* at tensor indices 1, 2, and 3.
+
+    Examples:
+        >>> interp = _make_rank4_interp(np.zeros((1, 10, 17, 8), dtype=np.float32))
+        >>> [od["name"] for od in interp.get_output_details()]
+        ['StatefulPartitionedCall:0', 'StatefulPartitionedCall:1', 'StatefulPartitionedCall:2']
+        >>> interp.get_tensor(3).shape
+        (1, 10, 17, 8)
+    """
+    boxes = _make_boxes()
+    logits = _make_logits(high_conf_idx=0)
+    tensors = {1: boxes, 2: logits, 3: rank4_tensor}
+
+    interp = mock.MagicMock()
+    interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+    interp.get_output_details.return_value = [
+        {"shape": [1, 10, 4], "name": "StatefulPartitionedCall:0", "index": 1},
+        {"shape": [1, 10, 82], "name": "StatefulPartitionedCall:1", "index": 2},
+        {"shape": list(rank4_tensor.shape), "name": rank4_name, "index": 3},
+    ]
+    interp.get_tensor.side_effect = lambda index: tensors[index]
+    return interp
+
+
+class TestRank4OutputKind:
+    """Tests for classifying a rank-4 output whose name does not say what it holds."""
+
+    @pytest.fixture()
+    def rgb_image(self, tmp_path: Path) -> Path:
+        """Write a small RGB JPEG to a temp file and return its path."""
+        p = tmp_path / "image.jpg"
+        _save_rgb_image(p)
+        return p
+
+    def test_nameless_rank4_output_is_decoded_as_a_mask_by_default(self, rgb_image: Path) -> None:
+        """The default keeps decoding a name-stripped segmentation export's rank-4 output as a mask."""
+        masks = np.full((1, 10, 28, 28), -10.0, dtype=np.float32)
+        masks[0, 0] = 10.0
+
+        dets, _ = _run_inference(_make_rank4_interp(masks), rgb_image, threshold=0.3)
+
+        assert dets.mask is not None
+        assert dets.mask[0].all()
+
+    @pytest.mark.parametrize(
+        "rank4_output",
+        [pytest.param("keypoints", id="declared-keypoints"), pytest.param(None, id="declared-unknown")],
+    )
+    def test_nameless_rank4_output_is_not_decoded_as_a_mask_when_declared_otherwise(
+        self,
+        rgb_image: Path,
+        rank4_output: str | None,
+    ) -> None:
+        """A name-stripped keypoint export's ``pred_keypoints`` tensor never reaches the mask decoder."""
+        keypoints = np.zeros((1, 10, 17, 8), dtype=np.float32)
+
+        dets, _ = _run_inference(_make_rank4_interp(keypoints), rgb_image, threshold=0.3, rank4_output=rank4_output)
+
+        assert len(dets) >= 1
+        assert dets.mask is None
+
+    def test_named_mask_output_is_decoded_whatever_the_declared_kind(self, rgb_image: Path) -> None:
+        """An output named ``masks`` is evidence from the artifact and outranks the caller's fallback declaration."""
+        masks = np.full((1, 10, 28, 28), -10.0, dtype=np.float32)
+        masks[0, 0] = 10.0
+        interp = _make_rank4_interp(masks, rank4_name="serving_default_masks:0")
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3, rank4_output=None)
+
+        assert dets.mask is not None
+        assert dets.mask[0].all()
+
+    def test_unrecognised_rank4_output_kind_is_rejected(self, rgb_image: Path) -> None:
+        """A misspelled kind fails fast instead of silently falling through to mask decoding."""
+        keypoints = np.zeros((1, 10, 17, 8), dtype=np.float32)
+
+        with pytest.raises(ValueError, match="rank4_output"):
+            _run_inference(_make_rank4_interp(keypoints), rgb_image, rank4_output="keypoint")
+
+
+# ---------------------------------------------------------------------------
 # TestMaskDecoding
 # ---------------------------------------------------------------------------
 

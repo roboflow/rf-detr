@@ -15,7 +15,7 @@ from __future__ import annotations
 import contextlib
 import importlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -31,6 +31,7 @@ logger = get_logger()
 
 _IMAGENET_MEAN: list[float] = [0.485, 0.456, 0.406]
 _IMAGENET_STD: list[float] = [0.229, 0.224, 0.225]
+_RANK4_OUTPUT_KINDS: tuple[str, ...] = ("masks", "keypoints")
 
 
 def _create_interpreter(model_path: str | Path) -> Any:
@@ -180,6 +181,7 @@ def _run_inference(
     threshold: float = 0.3,
     num_select: int | None = None,
     background_class_id: int | None = -1,
+    rank4_output: Literal["masks", "keypoints"] | None = "masks",
 ) -> tuple[Detections, PILImage.Image]:
     """Preprocess one image, run TFLite inference, and decode detections.
 
@@ -197,11 +199,25 @@ def _run_inference(
         background_class_id: Exported class slot to exclude before selection. The default ``-1`` preserves the common
             final-slot background convention. Pass ``None`` for sparse COCO checkpoints, whose final slot is class 90,
             or ``0`` for legacy background-first keypoint checkpoints.
+        rank4_output: What a rank-4 output holds when no output names itself ``masks``. Segmentation and keypoint
+            exports each add exactly one rank-4 tensor, and RF-DETR's own TFLite files reach the interpreter with
+            the ONNX output names replaced by ``StatefulPartitionedCall:N``, so the kind is usually not readable
+            from the graph. The default ``"masks"`` preserves the existing segmentation behaviour; pass
+            ``"keypoints"`` for a keypoint export, or ``None`` to decode a mask only from an output that does
+            name itself.
 
     Returns:
         A tuple of ``(detections, pil_img)`` where ``detections`` contains pixel-space ``xyxy`` boxes (and ``mask`` for
         segmentation models) and ``pil_img`` is the original PIL image at its original resolution.
+
+    Raises:
+        ValueError: If *rank4_output* is neither ``None`` nor one of ``"masks"``/``"keypoints"``, if the model's
+            input tensor is not ``float32``, or if the ``dets``/``labels`` outputs cannot be matched by name or
+            shape.
     """
+    if rank4_output is not None and rank4_output not in _RANK4_OUTPUT_KINDS:
+        raise ValueError(f"rank4_output must be one of {_RANK4_OUTPUT_KINDS} or None; got {rank4_output!r}")
+
     inp_det = interp.get_input_details()
     out_det = interp.get_output_details()
     _, height, width, channels = inp_det[0]["shape"]
@@ -312,15 +328,21 @@ def _run_inference(
     xyxy = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)
     xyxy *= np.array([ow, oh, ow, oh], dtype=np.float32)
 
-    # Segmentation exports add a rank-4 mask output; decode it when present. Keypoint exports also
-    # add a rank-4 output (pred_keypoints, output name "keypoints") that must not be mistaken for it.
+    # Segmentation exports add a rank-4 mask output; decode it when present. Keypoint exports add a rank-4
+    # output too (pred_keypoints), and the ONNX output names rarely survive the conversion, so an anonymous
+    # rank-4 tensor is only taken for a mask when the caller declares the export a segmentation one.
     mask_idx = next((i for i, od in enumerate(out_det) if "masks" in str(od.get("name", ""))), None)
-    if mask_idx is None:
+    if mask_idx is None and rank4_output == "masks":
         rank4_candidates = [
             i for i, od in enumerate(out_det) if len(od["shape"]) == 4 and "keypoints" not in str(od.get("name", ""))
         ]
         if len(rank4_candidates) == 1:
             mask_idx = rank4_candidates[0]
+            logger.debug(
+                "Rank-4 output %s carries no kind in its name; decoding it as a segmentation mask "
+                "(pass rank4_output='keypoints' for a keypoint export).",
+                str(out_det[mask_idx].get("name", "<unnamed>")),
+            )
         elif len(rank4_candidates) >= 2:
             logger.warning(
                 "Ambiguous rank-4 outputs (%d candidates); skipping mask decode. "

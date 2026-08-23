@@ -406,7 +406,13 @@ The `onnx2tf` converter **always** produces both FP32 and FP16 TFLite files, reg
 
 !!! note
 
-    Segmentation models produce TFLite files with three outputs: `dets` (bounding boxes), `labels` (class scores), and `masks` (per-instance segmentation masks).
+    Segmentation models produce TFLite files with three outputs: `dets` (bounding boxes), `labels` (class scores), and `masks` (per-instance segmentation masks). Keypoint models produce three outputs too, the third being `keypoints`.
+
+!!! warning "RF-DETR's TFLite outputs are not named `dets` / `labels`"
+
+    RF-DETR converts through `onnx2tf`'s SavedModel route, which renames every output: the `dets` / `labels` / `masks` / `keypoints` names visible in the `.onnx` file arrive as `StatefulPartitionedCall:0`, `StatefulPartitionedCall:1`, … in the `.tflite` file, and the signature def exposes them as `output_0`, `output_1`, … Only the *input* keeps a readable name (`serving_default_input:0`). Match outputs by rank and last dimension instead — boxes are the rank-3 tensor with last dim `4`, logits the other rank-3 tensor — and treat the name check as a best-effort first attempt.
+
+    Segmentation masks and keypoints are both rank-4, so neither the name nor the rank tells them apart. The TFLite `_run_inference` reference helper takes the answer from the caller through `rank4_output` (`"masks"` by default, `"keypoints"` for a keypoint export, or `None` to decode a mask only from an output that does name itself).
 
 ### TFLite Inference Example
 
@@ -443,10 +449,16 @@ image_array = image_tensor.permute(1, 2, 0).unsqueeze(0).contiguous().numpy().as
 interpreter.set_tensor(input_details[0]["index"], image_array)
 interpreter.invoke()
 
+# onnx2tf renames the outputs, so the ONNX names are usually gone: fall back to rank and last dimension.
+# The fallback cannot resolve num_classes == 3, where the logits' last dimension is 4 as well; it raises there.
 boxes_detail = next((detail for detail in output_details if "dets" in str(detail.get("name", ""))), None)
 labels_detail = next((detail for detail in output_details if "labels" in str(detail.get("name", ""))), None)
 if boxes_detail is None or labels_detail is None:
-    raise ValueError(f"Expected TFLite outputs named dets and labels; got {output_details}")
+    rank3 = [detail for detail in output_details if len(detail["shape"]) == 3]
+    boxes_detail = next((detail for detail in rank3 if detail["shape"][-1] == 4), None)
+    labels_detail = next((detail for detail in rank3 if detail["shape"][-1] != 4), None)
+if boxes_detail is None or labels_detail is None:
+    raise ValueError(f"Could not identify the dets/labels TFLite outputs; got {output_details}")
 
 boxes = interpreter.get_tensor(boxes_detail["index"])
 labels = interpreter.get_tensor(labels_detail["index"])
