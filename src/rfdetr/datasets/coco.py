@@ -291,6 +291,108 @@ def compute_multi_scale_scales(
     return proposed_scales
 
 
+def draft_size_for_transforms(
+    image_set: str,
+    resolution: int,
+    *,
+    multi_scale: bool = False,
+    expanded_scales: bool = False,
+    patch_size: int = 16,
+    num_windows: int = 4,
+    scale_jitter: bool = False,
+    include_masks: bool = False,
+) -> int | None:
+    """Return the source extent below which the transform pipeline starts losing detail.
+
+    :meth:`CocoDetection._decode_image` passes this to ``PIL.Image.draft`` so JPEG sources far larger than the training
+    resolution are decoded at a reduced DCT scale instead of at full size. ``draft`` never returns an image smaller
+    than the requested box, so the box preserves the largest direct-resize target. Scale jitter also preserves its
+    600-pixel pre-crop resize floor, avoiding an extra upsample after JPEG decoding.
+
+    Two cases return ``None`` (decode at full resolution):
+
+    * Non-train splits.  :class:`~rfdetr.datasets.coco_eval.CocoEvaluator` scores predictions against the unscaled
+      annotation file, so a reduced decode would shift ``orig_size`` and mis-scale every prediction.
+    * Mask datasets.  RLE ``segmentation`` cannot be rescaled by :func:`scale_coco_annotation`.
+
+    Args:
+        image_set: Dataset split name.  Only ``"train"`` is decoded at a reduced scale.
+        resolution: Base square resolution the split is built for.
+        multi_scale: Whether multi-scale training is enabled.
+        expanded_scales: Whether the multi-scale range is widened.
+        patch_size: Patch size used to derive multi-scale candidates.
+        num_windows: Window count used to derive multi-scale candidates.
+        scale_jitter: Whether the training crop branch can resize the short side to 600 pixels.
+        include_masks: Whether the dataset decodes segmentation masks.
+
+    Returns:
+        Minimum extent, in pixels, that a decoded image must retain on both axes, or ``None`` to decode at full size.
+
+    Examples:
+        >>> draft_size_for_transforms("val", 512) is None
+        True
+        >>> draft_size_for_transforms("train", 512, include_masks=True) is None
+        True
+        >>> draft_size_for_transforms("train", 512)
+        512
+        >>> draft_size_for_transforms("train", 512, multi_scale=True)
+        768
+    """
+    if image_set != "train" or include_masks:
+        return None
+    direct_branch_size = (
+        max(compute_multi_scale_scales(resolution, expanded_scales, patch_size, num_windows))
+        if multi_scale
+        else resolution
+    )
+    return max(direct_branch_size, 600) if scale_jitter else direct_branch_size
+
+
+def scale_coco_annotation(annotation: dict[str, Any], x_scale: float, y_scale: float) -> dict[str, Any]:
+    """Return a COCO annotation scaled into its decoded image coordinate space.
+
+    Needed when an image is decoded at a reduced scale (see :meth:`CocoDetection._decode_image`): ``ConvertCoco`` clamps
+    boxes to the decoded image size, so annotations must move into the decoded image's coordinate space first. JPEG
+    draft dimensions round each axis independently, so boxes, polygon points, keypoints, and area use separate x/y
+    factors.
+    Keypoint visibility, ``iscrowd``, and every other field are copied unchanged. RLE ``segmentation`` cannot be scaled
+    this way, which is why :func:`draft_size_for_transforms` refuses to draft mask datasets.
+
+    Args:
+        annotation: One COCO annotation dict.  Not mutated.
+        x_scale: Horizontal decoded-to-source ratio.
+        y_scale: Vertical decoded-to-source ratio.
+
+    Returns:
+        Scaled copy of the annotation.
+
+    Examples:
+        >>> scale_coco_annotation({"bbox": [10, 20, 30, 40], "area": 1200, "category_id": 1}, 0.5, 0.25)
+        {'bbox': [5.0, 5.0, 15.0, 10.0], 'area': 150.0, 'category_id': 1}
+        >>> scale_coco_annotation({"keypoints": [10, 20, 2]}, 0.5, 0.25)
+        {'keypoints': [5.0, 5.0, 2]}
+    """
+    scaled = dict(annotation)
+    if "bbox" in scaled:
+        x, y, width, height = scaled["bbox"]
+        scaled["bbox"] = [x * x_scale, y * y_scale, width * x_scale, height * y_scale]
+    if "area" in scaled:
+        scaled["area"] = scaled["area"] * x_scale * y_scale
+    segmentation = scaled.get("segmentation")
+    if segmentation and not _is_rle(segmentation):
+        scaled["segmentation"] = [
+            [value * (x_scale if index % 2 == 0 else y_scale) for index, value in enumerate(polygon)]
+            for polygon in segmentation
+        ]
+    keypoints = scaled.get("keypoints")
+    if keypoints:
+        scaled["keypoints"] = [
+            value if index % 3 == 2 else value * (x_scale if index % 3 == 0 else y_scale)
+            for index, value in enumerate(keypoints)
+        ]
+    return scaled
+
+
 def _is_rle(segmentation: Any) -> bool:
     """Check whether a COCO segmentation entry is in RLE format.
 
@@ -404,6 +506,9 @@ class CocoDetection(torchvision.datasets.CocoDetection):
             and the keypoint derivation.  :func:`build_roboflow_from_coco` passes the train split's mapping here so
             that validation and test splits share one label space (see :func:`_train_split_cat2label`); ``None`` (the
             default) keeps the split-local derivation.
+        draft_size: Smallest source extent the transform pipeline can consume without upscaling, used to enable
+            JPEG DCT-domain downscaling during decode (see :meth:`_decode_image`).  ``None`` (the default) decodes at
+            full resolution.  :func:`draft_size_for_transforms` derives the value from the pipeline's scales.
     """
 
     def __init__(
@@ -416,9 +521,11 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         num_keypoints_per_class: list[int] | None = None,
         remap_category_ids: bool = False,
         cat2label: dict[int, int] | None = None,
+        draft_size: int | None = None,
     ) -> None:
         super().__init__(img_folder, ann_file)
         self._transforms = transforms
+        self._draft_size = draft_size
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
         if cat2label is not None and not remap_category_ids:
@@ -456,10 +563,37 @@ class CocoDetection(torchvision.datasets.CocoDetection):
             num_keypoints_per_class=num_keypoints_per_class,
         )
 
+    def _decode_image(self, image_id: int) -> tuple[Image.Image, tuple[float, float]]:
+        """Decode one image, optionally letting the JPEG decoder downscale in the DCT domain.
+
+        Used instead of ``torchvision.datasets.CocoDetection._load_image``, which this class no longer calls, and
+        deliberately not named the same: it returns a decode scale alongside the image.  When ``draft_size`` is set,
+        ``PIL.Image.draft`` asks libjpeg for the cheapest power-of-two-reduced decode whose output is still at least
+        ``draft_size`` on both axes.  ``draft`` is a no-op for non-JPEG files and whenever no power-of-two reduction
+        keeps the image above the box, so no format check is needed.  This also closes the file handle, which the
+        torchvision implementation leaves to the garbage collector.
+
+        Args:
+            image_id: COCO image id.
+
+        Returns:
+            Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+        """
+        path = self.coco.loadImgs(image_id)[0]["file_name"]
+        with Image.open(Path(self.root) / path) as image:
+            full_width = image.width
+            full_height = image.height
+            if self._draft_size is not None:
+                image.draft("RGB", (self._draft_size, self._draft_size))
+            return image.convert("RGB"), (image.width / full_width, image.height / full_height)
+
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
-        img, target = super().__getitem__(idx)
         image_id = self.ids[idx]
-        target = {"image_id": image_id, "annotations": target}
+        img, (x_scale, y_scale) = self._decode_image(image_id)
+        annotations = self._load_target(image_id)
+        if (x_scale, y_scale) != (1.0, 1.0):
+            annotations = [scale_coco_annotation(annotation, x_scale, y_scale) for annotation in annotations]
+        target = {"image_id": image_id, "annotations": annotations}
         img, target = self.prepare(img, target)
         if self._transforms is not None:
             # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to
@@ -1192,6 +1326,16 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             "unavailable; disabling GPU postprocess transforms and retaining CPU normalization."
         )
     gpu_postprocess = is_gpu_postprocess(resolved_augmentation_backend)
+    draft_size = draft_size_for_transforms(
+        image_set,
+        resolution,
+        multi_scale=args.multi_scale,
+        expanded_scales=args.expanded_scales,
+        patch_size=args.patch_size,
+        num_windows=args.num_windows,
+        scale_jitter=scale_jitter,
+        include_masks=include_masks,
+    )
 
     if square_resize_div_64:
         logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
@@ -1218,6 +1362,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             # Active-first [17] maps keypoint categories to slot 0; changing either without
             # the other silently misaligns training supervision.
             remap_category_ids=include_keypoints,
+            draft_size=draft_size,
         )
     else:
         logger.info(f"Building COCO {image_set} dataset at resolution {resolution}")
@@ -1244,6 +1389,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             # Active-first [17] maps keypoint categories to slot 0; changing either without
             # the other silently misaligns training supervision.
             remap_category_ids=include_keypoints,
+            draft_size=draft_size,
         )
     return dataset
 
@@ -1289,6 +1435,16 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     # train but not in valid shift every later label index of that split. The keypoint path maps categories onto
     # schema slots instead of annotation coverage, so it keeps its own derivation.
     cat2label = None if split == "train" or include_keypoints else _train_split_cat2label(root)
+    draft_size = draft_size_for_transforms(
+        image_set,
+        resolution,
+        multi_scale=multi_scale,
+        expanded_scales=expanded_scales,
+        patch_size=patch_size,
+        num_windows=num_windows,
+        scale_jitter=scale_jitter,
+        include_masks=include_masks,
+    )
 
     if square_resize_div_64:
         logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")
@@ -1313,6 +1469,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             num_keypoints_per_class=num_keypoints_per_class,
             remap_category_ids=True,
             cat2label=cat2label,
+            draft_size=draft_size,
         )
     else:
         logger.info(f"Building Roboflow {image_set} dataset at resolution {resolution}")
@@ -1337,5 +1494,6 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             num_keypoints_per_class=num_keypoints_per_class,
             remap_category_ids=True,
             cat2label=cat2label,
+            draft_size=draft_size,
         )
     return dataset
