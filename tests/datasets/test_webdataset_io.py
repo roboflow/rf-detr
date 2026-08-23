@@ -36,7 +36,9 @@ from rfdetr.datasets.webdataset_io import (
     ShardIndex,
     WebDatasetDetection,
     WebDatasetSplitUnavailableError,
+    _pack_generation,
     _shard_url,
+    _validate_split_name,
     build_webdataset,
     build_webdataset_loader,
     index_name,
@@ -222,6 +224,68 @@ class TestPackCocoToShardsFailures:
         annotations.write_text(json.dumps(payload), encoding="utf-8")
         with pytest.raises(ValueError, match="matching no image"):
             pack_coco_to_shards(image_dir, annotations, tmp_path / "shards")
+
+    @pytest.mark.parametrize(
+        "category_ids",
+        [pytest.param("contiguous", id="unknown-word"), pytest.param("", id="empty")],
+    )
+    def test_unknown_category_policy_is_rejected_before_anything_is_written(
+        self, tmp_path: Path, category_ids: str
+    ) -> None:
+        """The CLI's choices= does not protect a library caller; without this the pack only fails at read time."""
+        image_dir, annotations = _build_coco_split(tmp_path, count=2)
+        shard_dir = tmp_path / "shards"
+        with pytest.raises(ValueError, match="category_ids"):
+            pack_coco_to_shards(image_dir, annotations, shard_dir, split="train", category_ids=category_ids)
+        assert not shard_dir.exists() or not list(shard_dir.iterdir())
+
+    @pytest.mark.parametrize(
+        "split",
+        [pytest.param("*", id="star"), pytest.param("tr?in", id="question"), pytest.param("tr[ai]n", id="bracket")],
+    )
+    def test_glob_metacharacters_in_split_are_rejected(self, split: str) -> None:
+        """A split used as a glob would match, and then delete, other splits' shards."""
+        with pytest.raises(ValueError, match="glob metacharacter|must not contain"):
+            _validate_split_name(split)
+
+    def test_repacking_one_split_leaves_another_splits_shards_alone(self, tmp_path: Path) -> None:
+        shard_dir = tmp_path / "shards"
+        val_images, val_annotations = _build_coco_split(tmp_path, count=4, subdir="other")
+        val_index = pack_coco_to_shards(val_images, val_annotations, shard_dir, split="val")
+        val_bytes = {name: (shard_dir / name).read_bytes() for name in val_index.shards}
+
+        train_images, train_annotations = _build_coco_split(tmp_path, count=6, subdir="tr")
+        pack_coco_to_shards(train_images, train_annotations, shard_dir, split="train")
+        pack_coco_to_shards(train_images, train_annotations, shard_dir, split="train", max_shard_bytes=4096)
+
+        assert read_shard_index(shard_dir, "val").shards == val_index.shards
+        for name, payload in val_bytes.items():
+            assert (shard_dir / name).read_bytes() == payload
+
+    def test_a_repack_never_leaves_the_index_pointing_at_a_missing_shard(self, tmp_path: Path) -> None:
+        """Publication order must keep the index and the shards it names consistent at every step."""
+        shard_dir = tmp_path / "shards"
+        first_images, first_annotations = _build_coco_split(tmp_path, count=8, subdir="first")
+        pack_coco_to_shards(first_images, first_annotations, shard_dir, split="train", max_shard_bytes=4096)
+
+        second_images, second_annotations = _build_coco_split(tmp_path, count=3, subdir="second")
+        pack_coco_to_shards(second_images, second_annotations, shard_dir, split="train", max_shard_bytes=4096)
+
+        index = read_shard_index(shard_dir, "train")
+        assert index.num_samples == 3
+        for name in index.shards:
+            assert (shard_dir / name).exists()
+        # Nothing from the first generation is left behind unindexed.
+        on_disk = {path.name for path in shard_dir.glob("train-*.tar")}
+        assert on_disk == set(index.shards)
+
+    def test_generation_is_content_derived_so_repacking_is_reproducible(self, tmp_path: Path) -> None:
+        image_dir, annotations = _build_coco_split(tmp_path, count=4)
+        first = pack_coco_to_shards(image_dir, annotations, tmp_path / "a", split="train")
+        second = pack_coco_to_shards(image_dir, annotations, tmp_path / "b", split="train")
+        assert first.shards == second.shards
+        assert _pack_generation({"x": 1}, [2]) == _pack_generation({"x": 1}, [2])
+        assert _pack_generation({"x": 1}, [2]) != _pack_generation({"x": 2}, [2])
 
     @pytest.mark.parametrize("max_shard_bytes", [pytest.param(0, id="zero"), pytest.param(-1, id="negative")])
     def test_non_positive_shard_size_is_rejected(self, tmp_path: Path, max_shard_bytes: int) -> None:
@@ -664,6 +728,28 @@ class TestBuildWebdatasetLoader:
         with pytest.raises(TypeError):
             len(loader)
 
+    @pytest.mark.parametrize(
+        "fixed_epoch",
+        [pytest.param(True, id="training"), pytest.param(False, id="evaluation")],
+    )
+    def test_fewer_shards_than_ranks_is_rejected_on_both_paths(self, tmp_path: Path, fixed_epoch: bool) -> None:
+        """A rank with no shard never reaches the step function while the others do, which deadlocks DDP.
+
+        Evaluation used to skip this check, so only training was protected.
+        """
+        shard_dir = _pack(tmp_path, count=8)
+        dataset = WebDatasetDetection(shard_dir, "train", transforms=None)
+        shards = len(dataset.index.shards)
+        with pytest.raises(ValueError, match="rank"):
+            build_webdataset_loader(
+                dataset,
+                batch_size=2,
+                collate_fn=_count_collate,
+                num_workers=1,
+                fixed_epoch=fixed_epoch,
+                world_size=shards + 1,
+            )
+
     def test_more_workers_than_shards_is_rejected_for_training(self, tmp_path: Path) -> None:
         image_dir, annotations = _build_coco_split(tmp_path, count=16)
         shard_dir = tmp_path / "shards"
@@ -831,6 +917,25 @@ class TestBuildWebdataset:
         image, target = next(iter(dataset))
         assert image.ndim == 3
         assert target["boxes"].shape[-1] == 4
+
+    def test_category_policy_mismatch_between_splits_is_rejected(self, tmp_path: Path) -> None:
+        """Train packed raw beside val packed remap would score two different label spaces against each other."""
+        shard_dir = tmp_path / "shards"
+        train_images, train_annotations = _build_coco_split(tmp_path, count=6, subdir="tr")
+        pack_coco_to_shards(train_images, train_annotations, shard_dir, split="train", category_ids="raw")
+        val_images, val_annotations = _build_coco_split(tmp_path, count=4, subdir="va")
+        pack_coco_to_shards(val_images, val_annotations, shard_dir, split="val", category_ids="remap")
+        with pytest.raises(ValueError, match="category_ids"):
+            build_webdataset("val", self._namespace(shard_dir), 224)
+
+    def test_matching_raw_policy_across_splits_is_accepted(self, tmp_path: Path) -> None:
+        shard_dir = tmp_path / "shards"
+        train_images, train_annotations = _build_coco_split(tmp_path, count=6, subdir="tr2")
+        pack_coco_to_shards(train_images, train_annotations, shard_dir, split="train", category_ids="raw")
+        val_images, val_annotations = _build_coco_split(tmp_path, count=4, subdir="va2")
+        pack_coco_to_shards(val_images, val_annotations, shard_dir, split="val", category_ids="raw")
+        dataset = build_webdataset("val", self._namespace(shard_dir), 224)
+        assert dataset.cat2label is None
 
     def test_build_dataset_routes_the_webdataset_format(self, tmp_path: Path) -> None:
         shard_dir = _pack(tmp_path, count=4)

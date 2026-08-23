@@ -39,6 +39,7 @@ See https://github.com/roboflow/rf-detr/issues/1392.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -112,7 +113,9 @@ def _validate_split_name(split: str) -> str:
         *split*, unchanged, once validated.
 
     Raises:
-        ValueError: If *split* is empty, or contains a path separator or a ``.``/``..`` segment.
+        ValueError: If *split* is empty, contains a path separator or a ``.``/``..`` segment, or carries a
+            glob metacharacter. The last one matters because the name is also matched against existing shard
+            files: a split called ``*`` would match — and then delete — the shards of every other split.
 
     Examples:
         >>> _validate_split_name("train")
@@ -124,15 +127,23 @@ def _validate_split_name(split: str) -> str:
     """
     if not split or "/" in split or "\\" in split or split in (".", ".."):
         raise ValueError(f"split {split!r} must not contain a path separator or '..'.")
+    forbidden = sorted(set("*?[]") & set(split))
+    if forbidden:
+        raise ValueError(
+            f"split {split!r} must not contain {''.join(forbidden)}: the name is matched against existing shard "
+            "files, so a glob metacharacter would reach other splits' shards."
+        )
     return split
 
 
-def _shard_name(split: str, index: int) -> str:
+def _shard_name(split: str, index: int, generation: str | None = None) -> str:
     """Return the file name of shard *index* of *split*.
 
     Args:
         split: Split name the shard belongs to.
         index: Zero-based shard number.
+        generation: Token identifying one pack run. Included in the name so that re-packing a split writes new
+            files instead of overwriting the ones the published index still points at.
 
     Returns:
         Shard file name.
@@ -143,9 +154,13 @@ def _shard_name(split: str, index: int) -> str:
     Examples:
         >>> _shard_name("train", 7)
         'train-000007.tar'
+        >>> _shard_name("train", 7, "a1b2c3d4")
+        'train-a1b2c3d4-000007.tar'
     """
     _validate_split_name(split)
-    return f"{split}-{index:06d}.tar"
+    if generation is None:
+        return f"{split}-{index:06d}.tar"
+    return f"{split}-{generation}-{index:06d}.tar"
 
 
 def index_name(split: str) -> str:
@@ -357,6 +372,56 @@ def _annotations_by_image(coco_data: dict[str, Any]) -> dict[Any, list[dict[str,
     return grouped
 
 
+def _pack_generation(payload: dict[str, Any], shard_sizes: list[int]) -> str:
+    """Derive a short generation token from what was packed.
+
+    Deterministic on purpose: the same split packed twice produces the same token, so re-packing unchanged data
+    reproduces the same file names rather than churning the directory. Any change to the sample count, the
+    category set, the per-shard sample counts or the shard byte sizes changes the token, which is what keeps a
+    re-pack from writing over the shards a currently published index still references.
+
+    Args:
+        payload: The index mapping for this pack, excluding the shard names it is about to name.
+        shard_sizes: Byte size of each staged shard, in order.
+
+    Returns:
+        Eight hex characters.
+
+    Examples:
+        >>> a = _pack_generation({"split": "train", "num_samples": 2}, [10, 20])
+        >>> a == _pack_generation({"split": "train", "num_samples": 2}, [10, 20])
+        True
+        >>> a == _pack_generation({"split": "train", "num_samples": 3}, [10, 20])
+        False
+    """
+    material = json.dumps({"index": payload, "sizes": shard_sizes}, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(material).hexdigest()[:8]
+
+
+def _published_shard_names(destination: Path, split: str) -> set[str]:
+    """Return the shard names the currently published index of *split* references.
+
+    Reading the index rather than globbing keeps cleanup scoped to what this split actually published: the
+    directory legitimately holds other splits, and a half-written generation from a crashed run must not be
+    mistaken for a live one.
+
+    Args:
+        destination: Directory holding the pack.
+        split: Split whose published index to read.
+
+    Returns:
+        Shard file names from the published index, or an empty set when the split has no readable index yet.
+
+    Examples:
+        >>> _published_shard_names(Path("/nonexistent"), "train")
+        set()
+    """
+    try:
+        return set(read_shard_index(destination, split).shards)
+    except (WebDatasetSplitUnavailableError, ValueError, KeyError, json.JSONDecodeError):
+        return set()
+
+
 def pack_coco_to_shards(
     image_dir: str | Path,
     annotations_file: str | Path,
@@ -399,6 +464,10 @@ def pack_coco_to_shards(
     """
     if max_shard_bytes <= 0:
         raise ValueError(f"max_shard_bytes must be > 0, got {max_shard_bytes}.")
+    if category_ids not in ("remap", "raw"):
+        # The CLI constrains this with `choices`, but a library caller can pass anything. Without this the pack
+        # succeeds and only fails later, at read time, when ShardIndex.from_json rejects the policy it wrote.
+        raise ValueError(f"category_ids must be 'remap' or 'raw', got {category_ids!r}.")
     _validate_split_name(split)
 
     image_root = Path(image_dir)
@@ -494,6 +563,20 @@ def pack_coco_to_shards(
             tar = None
             shard_sample_counts.append(shard_samples)
 
+        provisional = list(shard_names)
+        shard_sizes = [(work_dir / name).stat().st_size for name in provisional]
+        generation = _pack_generation(
+            {
+                "split": split,
+                "num_samples": written,
+                "categories": list(coco_data.get("categories", ())),
+                "annotated_category_ids": sorted(annotated_ids),
+                "category_ids": category_ids,
+                "samples_per_shard": shard_sample_counts,
+            },
+            shard_sizes,
+        )
+        shard_names = [_shard_name(split, position, generation) for position in range(len(provisional))]
         index = ShardIndex(
             split=split,
             shards=tuple(shard_names),
@@ -509,12 +592,20 @@ def pack_coco_to_shards(
         # this run does not reproduce (e.g. it produced fewer of them) are removed too, so no stale, unindexed
         # shard is left behind. The index is written last, so a reader can never observe an index whose shard
         # list is only partially on disk.
-        stale_shards = {path.name for path in destination.glob(f"{split}-*.tar")} - set(shard_names)
-        for name in shard_names:
-            (work_dir / name).replace(destination / name)
-        for name in stale_shards:
-            (destination / name).unlink()
-        (destination / index_name(split)).write_bytes(index_bytes)
+        # Shard names carry this run's generation token, so moving them in cannot overwrite a shard the
+        # published index still points at. Publication is therefore: move this generation's shards in, swap the
+        # index with os.replace (atomic on POSIX), then drop the shards only the previous index referenced. A
+        # reader that opened the old index keeps a complete pack until that last step; one that opens the new
+        # index sees this generation in full. The window where a reader loses files it is mid-way through is
+        # narrowed to the cleanup, not the whole re-pack.
+        previous = _published_shard_names(destination, split)
+        for staged, published in zip(provisional, shard_names):
+            (work_dir / staged).replace(destination / published)
+        staged_index = destination / f".{index_name(split)}.{generation}"
+        staged_index.write_bytes(index_bytes)
+        staged_index.replace(destination / index_name(split))
+        for name in previous - set(shard_names):
+            (destination / name).unlink(missing_ok=True)
     finally:
         if tar is not None:
             tar.close()
@@ -894,12 +985,24 @@ def build_webdataset_loader(
         A ``DataLoader`` over *dataset*.
 
     Raises:
-        ValueError: If a planned epoch would leave a worker with no shard to read.
+        ValueError: If the split has fewer shards than distributed ranks, or if a planned epoch would leave a
+            worker with no shard to read.
     """
     _require_webdataset()
     ranks = _distributed_world_size() if world_size is None else world_size
+    shard_count = len(dataset.index.shards)
+    if ranks > shard_count:
+        # An empty DataLoader *worker* is harmless; an entirely empty *rank* is not. split_by_node would leave
+        # that rank with no batches, so it never enters validation_step/test_step while the populated ranks do —
+        # and their DDP forward and sync_dist=True logging then wait on a rank that never arrives. This applies
+        # to evaluation as much as to training, so it is checked before the fixed_epoch branch below.
+        raise ValueError(
+            f"Split {dataset.index.split!r} has {shard_count} shard(s) for {ranks} rank(s): a rank with no shard "
+            "never reaches the step function while the others do, which deadlocks the process group. Re-pack "
+            "with a smaller --max-shard-mb so the split has at least one shard per rank."
+        )
     if fixed_epoch:
-        shards = len(dataset.index.shards)
+        shards = shard_count
         slots = ranks * max(1, num_workers)
         if slots > shards:
             raise ValueError(
@@ -1019,7 +1122,23 @@ def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDe
         keypoint_flip_pairs=None,
     )
 
-    cat2label = None if is_train else read_shard_index(root, "train").cat2label()
+    if is_train:
+        cat2label = None
+    else:
+        # Both indexes are read so a policy mismatch is refused rather than silently honoured. Passing None for a
+        # "raw" train split would let this split derive its own mapping from its own index, so a train split
+        # packed "raw" beside a val split packed "remap" would evaluate remapped labels against raw-trained
+        # predictions — wrong numbers, no error.
+        train_index = read_shard_index(root, "train")
+        split_index = read_shard_index(root, split)
+        if split_index.category_ids != train_index.category_ids:
+            raise ValueError(
+                f"Split {split!r} was packed with category_ids={split_index.category_ids!r} but the train split "
+                f"was packed with {train_index.category_ids!r}. The two label spaces do not match, so evaluation "
+                "would score predictions against different class indices than training used. Re-pack both splits "
+                "with the same --category-ids."
+            )
+        cat2label = train_index.cat2label()
     logger.info("Building WebDataset %s dataset at resolution %d from %s", image_set, resolution, root)
     return WebDatasetDetection(
         root,

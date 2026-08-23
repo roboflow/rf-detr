@@ -414,13 +414,15 @@ Repeat once per split, into the same `--output-dir`:
 
 ```
 coco-shards/
-├── train-000000.tar        # ~100 MB each, override with --max-shard-mb
-├── train-000001.tar
+├── train-a1b2c3d4-000000.tar   # ~100 MB each, override with --max-shard-mb
+├── train-a1b2c3d4-000001.tar
 ├── ...
 ├── train-index.json        # shard list, sample count, categories
-├── val-000000.tar
+├── val-5e6f7a8b-000000.tar
 └── val-index.json
 ```
+
+The hex segment in a shard name is a generation token derived from the packed contents. It lets a re-pack write its shards alongside the ones the published index still points at, so the index swap is the only moment the pack changes; because it is derived from the contents rather than random, re-packing unchanged data reproduces the same names instead of churning the directory.
 
 Image bytes are copied verbatim — no re-encode — so a packed split decodes to exactly the same pixels as the directory it came from. A `.json` member next to each image carries that image's `image_id`, `file_name` and annotation list, segmentation polygons included.
 
