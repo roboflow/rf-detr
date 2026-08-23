@@ -33,7 +33,13 @@ from PIL import Image
 from torch import Tensor
 from torchvision.transforms import Normalize as _TVNormalize
 
-from rfdetr.datasets._aug_utils import IMAGE_LEVEL_TARGET_FIELDS, filter_keypoint_hflip_augmentations
+from rfdetr.datasets._aug_utils import (
+    D4_ALIAS_NAMES,
+    HFLIP_TRANSFORM_NAMES,
+    HORIZONTAL_FLIP_ALIAS_NAMES,
+    IMAGE_LEVEL_TARGET_FIELDS,
+    filter_keypoint_hflip_augmentations,
+)
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
 
@@ -100,12 +106,9 @@ class Normalize:
 # These transforms modify spatial coordinates, so bounding boxes must be transformed accordingly.
 # For custom geometric transforms, add the class name to this set.
 GEOMETRIC_TRANSFORMS = {
-    # Flips and transpositions
-    "HorizontalFlip",
+    # Flips and transpositions not covered by HFLIP_TRANSFORM_NAMES
     "VerticalFlip",
-    "Flip",
     "Transpose",
-    "D4",
     # Rotations and affine transforms
     "Rotate",
     "RandomRotate90",
@@ -144,8 +147,7 @@ GEOMETRIC_TRANSFORMS = {
     # Padding and symmetry
     "PadIfNeeded",
     "Pad",
-    "SquareSymmetry",
-}
+} | HFLIP_TRANSFORM_NAMES
 
 # Albumentations container/meta transforms that hold nested transforms
 ALBUMENTATIONS_CONTAINERS = frozenset({"OneOf", "SomeOf", "Sequential"})
@@ -579,12 +581,12 @@ class AlbumentationsWrapper:
             return False
 
         transform_name = str(replay.get("__class_fullname__", "")).rsplit(".", 1)[-1]
-        if transform_name == "HorizontalFlip":
+        if transform_name in HORIZONTAL_FLIP_ALIAS_NAMES:
             return True
         if transform_name == "Flip":
             params = replay.get("params") or {}
             return int(params.get("axis", params.get("d", -1))) == 1
-        if transform_name in {"D4", "SquareSymmetry"}:
+        if transform_name in D4_ALIAS_NAMES:
             params = replay.get("params") or {}
             return str(params.get("group_element")) == "h"
         return False

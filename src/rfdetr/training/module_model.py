@@ -1026,25 +1026,28 @@ class RFDETRModelModule(LightningModule):
     def _resolve_eval_model(self) -> Any:
         """Return the model to forward through for validation.
 
-        When ``TrainConfig.eval_ema_only`` is set, validation forwards through the EMA-averaged
-        weights directly instead of the base model — this replaces the second, duplicate
-        base+EMA forward pass ``COCOEvalCallback`` would otherwise also run every validation
-        batch (see issue 416). Falls back to the base model when EMA is enabled but not yet
-        warmed up (e.g. the very first validation epoch, before ``RFDETREMACallback.setup``
-        has built its averaged model), or when this module isn't attached to a ``Trainer`` at
-        all (``LightningModule.trainer`` raises ``RuntimeError`` rather than returning ``None``
-        when unattached — e.g. ``validation_step`` called directly outside ``Trainer.fit``/
-        ``Trainer.validate``).
+        Validation evaluates one model by default: the EMA-averaged weights when EMA is available,
+        because those are the weights best-checkpoint selection ships. Forwarding through them here
+        replaces the second, duplicate base+EMA forward pass ``COCOEvalCallback`` would otherwise run
+        every validation batch (see issue 416). ``TrainConfig.eval_base_model`` opts back in to that
+        comparison: the base model is forwarded here and ``COCOEvalCallback`` runs the EMA pass.
+
+        Falls back to the base model when EMA is enabled but not yet warmed up (e.g. the very first
+        validation epoch, before ``RFDETREMACallback.setup`` has built its averaged model), or when
+        this module isn't attached to a ``Trainer`` at all (``LightningModule.trainer`` raises
+        ``RuntimeError`` rather than returning ``None`` when unattached — e.g. ``validation_step``
+        called directly outside ``Trainer.fit``/``Trainer.validate``). The same fallback covers
+        ``use_ema=False``, where no EMA callback exists and the base model is the selected model.
 
         Uses the same ``_get_ema_inner_module`` helper as ``COCOEvalCallback`` (see
         ``coco_eval.py``) so both consumers resolve the EMA-averaged detection net through one
         shared code path instead of independently duck-typing ``RFDETREMACallback``.
 
         Returns:
-            The base model, or the EMA-averaged inner module's underlying detection net when
-            ``eval_ema_only`` is active and available.
+            The EMA-averaged inner module's underlying detection net when it is the selected model and
+            available, else the base model.
         """
-        if not self.train_config.eval_ema_only:
+        if self.train_config.eval_base_model:
             return self.model
         try:
             callbacks = getattr(self.trainer, "callbacks", [])

@@ -752,11 +752,15 @@ def _build_train_resize_transforms(
     resize_a = RandomResize(scales, max_size=cap)
     if not scale_jitter:
         return resize_a
+    # Resize each crop directly to the selected target scale, capped as the removed final RandomResize did. Previously
+    # the crop was resized to a fixed 384x384 output and then resized again to `scales`, needlessly resampling it twice.
+    # The Albumentations backend already dropped that extra hop (see _build_train_resize_config), so both backends now
+    # express the same recipe while retaining the historical non-square maximum size.
+    capped_scales = [min(scale, cap) for scale in scales]
     resize_b = Compose(
         [
             RandomResize([400, 500, 600]),
-            RandomSizedCrop((384, 600), (384, 384)),
-            RandomResize(scales, max_size=cap),
+            RandomChoice([RandomSizedCrop((384, 600), (scale, scale)) for scale in capped_scales]),
         ]
     )
     return RandomSelect(resize_a, resize_b)

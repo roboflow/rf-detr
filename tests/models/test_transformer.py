@@ -6,6 +6,7 @@
 """Tests for transformer utilities, MS deformable attention core, and MSDeformAttn module."""
 
 import io
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -21,6 +22,7 @@ from rfdetr.models.transformer import (
     gen_encoder_output_proposals,
     gen_sineembed_for_position,
 )
+from rfdetr.utilities.tensors import _bilinear_grid_sample
 
 
 @pytest.fixture(autouse=True)
@@ -161,6 +163,235 @@ def test_gen_encoder_output_proposals_passes_ij_indexing_to_meshgrid(monkeypatch
     )
 
     assert call_count == 1
+
+
+@pytest.mark.parametrize("position_layout", ["real", "strided"], ids=["real-layout", "strided-fallback"])
+def test_transformer_packs_single_level_position_without_redundant_copy(position_layout: str) -> None:
+    """Reuse real contiguous position storage while preserving contiguous output for custom strided input."""
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=1,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    if position_layout == "real":
+        # PositionEmbeddingSine produces contiguous BHWC storage viewed as NCHW. Flattening spatial dimensions and
+        # transposing back to B(HW)C is already contiguous and aliases the original storage.
+        position_storage = torch.randn(batch_size, height, width, hidden_dim)
+        position = position_storage.permute(0, 3, 1, 2)
+    else:
+        position = torch.randn(batch_size, hidden_dim, height, width)
+    position.requires_grad_(True)
+    flattened_position = position.flatten(2).transpose(1, 2)
+    assert flattened_position.is_contiguous() is (position_layout == "real")
+    seen_decoder_positions: list[torch.Tensor] = []
+
+    handle = transformer.decoder.register_forward_pre_hook(
+        lambda _module, _args, kwargs: seen_decoder_positions.append(kwargs["pos"]), with_kwargs=True
+    )
+    try:
+        transformer(
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            [torch.zeros(batch_size, height, width, dtype=torch.bool)],
+            [position],
+            torch.rand(num_queries, 4),
+            torch.randn(num_queries, hidden_dim),
+        )
+    finally:
+        handle.remove()
+
+    assert len(seen_decoder_positions) == 1
+    assert torch.equal(seen_decoder_positions[0], flattened_position)
+    assert seen_decoder_positions[0].is_contiguous()
+    if position_layout == "real":
+        assert seen_decoder_positions[0].data_ptr() == flattened_position.data_ptr()
+
+    seen_decoder_positions[0].sum().backward()
+    assert position.grad is not None
+
+
+@pytest.mark.parametrize("mask_layout", ["real", "strided"], ids=["real-layout", "strided-fallback"])
+def test_transformer_packs_single_level_mask_without_redundant_copy(mask_layout: str) -> None:
+    """Reuse real padding-mask storage while preserving contiguous output for custom strided input."""
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=1,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    if mask_layout == "real":
+        mask = torch.zeros(batch_size, height, width, dtype=torch.bool)
+    else:
+        mask_storage = torch.zeros(batch_size, height, width * 2, dtype=torch.bool)
+        mask = mask_storage[:, :, ::2]
+    flattened_mask = mask.flatten(1)
+    assert flattened_mask.is_contiguous() is (mask_layout == "real")
+    seen_decoder_masks: list[torch.Tensor] = []
+
+    handle = transformer.decoder.register_forward_pre_hook(
+        lambda _module, _args, kwargs: seen_decoder_masks.append(kwargs["memory_key_padding_mask"]),
+        with_kwargs=True,
+    )
+    try:
+        transformer(
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            [mask],
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            torch.rand(num_queries, 4),
+            torch.randn(num_queries, hidden_dim),
+        )
+    finally:
+        handle.remove()
+
+    assert len(seen_decoder_masks) == 1
+    assert torch.equal(seen_decoder_masks[0], flattened_mask)
+    assert seen_decoder_masks[0].is_contiguous()
+    if mask_layout == "real":
+        assert seen_decoder_masks[0].data_ptr() == flattened_mask.data_ptr()
+
+
+@pytest.mark.parametrize("memory_layout", ["real", "strided"], ids=["real-layout", "strided-fallback"])
+def test_transformer_packs_single_level_memory_without_redundant_copy(memory_layout: str) -> None:
+    """Reuse real contiguous projector-feature storage while preserving contiguous output for custom strided input."""
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=1,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    if memory_layout == "real":
+        # MultiScaleProjector's final stage norm is unconditionally the permute-based LayerNorm defined in
+        # projector.py, which leaves contiguous BHWC storage viewed as NCHW. Flattening spatial dimensions and
+        # transposing back to B(HW)C is already contiguous and aliases the original storage.
+        src_storage = torch.randn(batch_size, height, width, hidden_dim)
+        src = src_storage.permute(0, 3, 1, 2)
+    else:
+        src = torch.randn(batch_size, hidden_dim, height, width)
+    src.requires_grad_(True)
+    flattened_src = src.flatten(2).transpose(1, 2)
+    assert flattened_src.is_contiguous() is (memory_layout == "real")
+    seen_decoder_memories: list[torch.Tensor] = []
+
+    handle = transformer.decoder.register_forward_pre_hook(
+        lambda _module, args, _kwargs: seen_decoder_memories.append(args[1]), with_kwargs=True
+    )
+    try:
+        transformer(
+            [src],
+            [torch.zeros(batch_size, height, width, dtype=torch.bool)],
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            torch.rand(num_queries, 4),
+            torch.randn(num_queries, hidden_dim),
+        )
+    finally:
+        handle.remove()
+
+    assert len(seen_decoder_memories) == 1
+    assert torch.equal(seen_decoder_memories[0], flattened_src)
+    assert seen_decoder_memories[0].is_contiguous()
+    if memory_layout == "real":
+        assert seen_decoder_memories[0].data_ptr() == flattened_src.data_ptr()
+
+    seen_decoder_memories[0].sum().backward()
+    assert src.grad is not None
+
+
+@pytest.mark.parametrize("memory_layout", ["real", "strided"], ids=["real-layout", "strided-fallback"])
+def test_transformer_packs_single_level_cross_attn_memory_without_redundant_copy(memory_layout: str) -> None:
+    """Reuse real contiguous dual-projector storage while preserving contiguous output for custom strided input."""
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=1,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+        dual_projector_kp_only=True,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    if memory_layout == "real":
+        cross_src_storage = torch.randn(batch_size, height, width, hidden_dim)
+        cross_src = cross_src_storage.permute(0, 3, 1, 2)
+    else:
+        cross_src = torch.randn(batch_size, hidden_dim, height, width)
+    cross_src.requires_grad_(True)
+    flattened_cross_src = cross_src.flatten(2).transpose(1, 2)
+    assert flattened_cross_src.is_contiguous() is (memory_layout == "real")
+    seen_cross_attn_memories: list[torch.Tensor] = []
+
+    handle = transformer.decoder.register_forward_pre_hook(
+        lambda _module, _args, kwargs: seen_cross_attn_memories.append(kwargs["kp_cross_attn_memory"]),
+        with_kwargs=True,
+    )
+    try:
+        transformer(
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            [torch.zeros(batch_size, height, width, dtype=torch.bool)],
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            torch.rand(num_queries, 4),
+            torch.randn(num_queries, hidden_dim),
+            cross_attn_srcs=[cross_src],
+        )
+    finally:
+        handle.remove()
+
+    assert len(seen_cross_attn_memories) == 1
+    assert torch.equal(seen_cross_attn_memories[0], flattened_cross_src)
+    assert seen_cross_attn_memories[0].is_contiguous()
+    if memory_layout == "real":
+        assert seen_cross_attn_memories[0].data_ptr() == flattened_cross_src.data_ptr()
+
+    seen_cross_attn_memories[0].sum().backward()
+    assert cross_src.grad is not None
 
 
 def test_gen_sineembed_for_position_keeps_box_dimensions_in_sin_cos_order() -> None:
@@ -318,6 +549,105 @@ class TestMSDeformAttnCorePytorch:
         )
 
         assert output.shape[0] == 1
+
+    def test_single_level_skips_sample_packing(
+        self, monkeypatch: pytest.MonkeyPatch, single_level_inputs: _MSDeformInputs
+    ) -> None:
+        """Single-level attention should reuse its sampled tensor without stacking it."""
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = single_level_inputs
+        stack = Mock(wraps=torch.stack)
+        monkeypatch.setattr(torch, "stack", stack)
+
+        ms_deform_attn_core_pytorch(
+            value,
+            spatial_shapes_tensor,
+            sampling_locations,
+            attention_weights,
+            value_spatial_shapes_hw=levels,
+        )
+
+        stack.assert_not_called()
+
+    def test_single_level_with_tensor_spatial_shapes_skips_sample_packing(
+        self, monkeypatch: pytest.MonkeyPatch, single_level_inputs: _MSDeformInputs
+    ) -> None:
+        """Single-level packing skip must also apply on the tensor-only fallback (no value_spatial_shapes_hw)."""
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, _ = single_level_inputs
+        stack = Mock(wraps=torch.stack)
+        monkeypatch.setattr(torch, "stack", stack)
+
+        output = ms_deform_attn_core_pytorch(value, spatial_shapes_tensor, sampling_locations, attention_weights)
+
+        stack.assert_not_called()
+        bsz, n_heads, head_dim, _ = value.shape
+        len_q = sampling_locations.shape[1]
+        assert output.shape == (bsz, len_q, n_heads * head_dim)
+
+    @pytest.mark.parametrize(
+        "sampling_layout",
+        [pytest.param("rank-6", id="rank-6"), pytest.param("merged-rank-5", id="merged-rank-5")],
+    )
+    def test_single_level_two_points_matches_prechange_sample_packing(self, sampling_layout: str) -> None:
+        """Single-level two-point output must match the former singleton stack-and-flatten packing.
+
+        The direct singleton path avoids allocating a temporary rank-5 tensor, while the pre-change
+        ``torch.stack([single_sample], dim=-2).flatten(-2)`` expression establishes the numerical contract for both
+        eager rank-6 and export rank-5 sampling-location layouts.
+        """
+        value, spatial_shapes, sampling_locations, attention_weights, levels = _build_ms_deform_inputs(
+            npts=2, levels=[(4, 4)]
+        )
+        if sampling_layout == "merged-rank-5":
+            sampling_locations = sampling_locations.flatten(3, 4)
+
+        output = ms_deform_attn_core_pytorch(
+            value,
+            spatial_shapes,
+            sampling_locations,
+            attention_weights,
+            value_spatial_shapes_hw=levels,
+        )
+
+        batch_size, n_heads, head_dim, _ = value.shape
+        height, width = levels[0]
+        grid_locations = sampling_locations[:, :, :, 0] if sampling_locations.ndim == 6 else sampling_locations
+        sampling_grid = (2 * grid_locations - 1).transpose(1, 2).flatten(0, 1)
+        single_sample = _bilinear_grid_sample(
+            value.view(batch_size * n_heads, head_dim, height, width),
+            sampling_grid,
+            padding_mode="zeros",
+            align_corners=False,
+        )
+        prechange_sampling_values = torch.stack([single_sample], dim=-2).flatten(-2)
+        len_query = sampling_locations.shape[1]
+        prechange_attention_weights = attention_weights.transpose(1, 2).reshape(batch_size * n_heads, 1, len_query, 2)
+        expected = (
+            (prechange_sampling_values * prechange_attention_weights)
+            .sum(-1)
+            .view(batch_size, n_heads * head_dim, len_query)
+        )
+
+        torch.testing.assert_close(output, expected.transpose(1, 2).contiguous())
+
+    def test_multiple_levels_keep_sample_packing(
+        self, monkeypatch: pytest.MonkeyPatch, make_inputs: _MSDeformInputs
+    ) -> None:
+        """Multi-level attention should still stack one sampled tensor per feature level."""
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = make_inputs
+        stack = Mock(wraps=torch.stack)
+        monkeypatch.setattr(torch, "stack", stack)
+
+        ms_deform_attn_core_pytorch(
+            value,
+            spatial_shapes_tensor,
+            sampling_locations,
+            attention_weights,
+            value_spatial_shapes_hw=levels,
+        )
+
+        stack.assert_called_once()
+        assert len(stack.call_args.args[0]) == len(levels)
+        assert stack.call_args.kwargs.get("dim") == -2
 
 
 class TestMSDeformAttnModule:
@@ -806,6 +1136,52 @@ def test_ms_deform_attn_core_pytorch_export_compatible() -> None:
     assert exported is not None
 
 
+def test_ms_deform_attn_core_pytorch_export_compatible_single_level() -> None:
+    """torch.export.export must succeed with a single feature level (num_levels == 1 packing skip).
+
+    Regression test for the singleton-packing change: the two-level case above already covers the general
+    torch.export path, but the num_levels == 1 branch replaces torch.stack(...).flatten(-2) with a direct index and
+    needs its own FakeTensor trace to confirm that substitution stays export-compatible.
+    """
+    levels: list[tuple[int, int]] = [(4, 4)]
+    bsz, n_heads, head_dim = 1, 2, 4
+    total_hw = sum(ht * wd for ht, wd in levels)
+    len_q, nlvl, npts = 3, len(levels), 1
+
+    class _MinimalDeformAttn(torch.nn.Module):
+        """Minimal wrapper to test torch.export.export on the hw-param code path."""
+
+        def __init__(self, hw: list[tuple[int, int]]) -> None:
+            super().__init__()
+            self.hw = hw
+
+        def forward(
+            self,
+            value: torch.Tensor,
+            spatial_shapes: torch.Tensor,
+            sampling_locations: torch.Tensor,
+            attention_weights: torch.Tensor,
+        ) -> torch.Tensor:
+            """Forward using concrete Python int pairs for export compatibility."""
+            return ms_deform_attn_core_pytorch(
+                value,
+                spatial_shapes,
+                sampling_locations,
+                attention_weights,
+                value_spatial_shapes_hw=self.hw,
+            )
+
+    value = torch.randn(bsz, n_heads, head_dim, total_hw)
+    spatial_shapes = torch.tensor(levels, dtype=torch.long)
+    sampling_locations = torch.rand(bsz, len_q, n_heads, nlvl, npts, 2)
+    attention_weights = torch.softmax(torch.randn(bsz, len_q, n_heads, nlvl * npts), dim=-1)
+
+    module = _MinimalDeformAttn(hw=levels)
+
+    exported = torch.export.export(module, args=(value, spatial_shapes, sampling_locations, attention_weights))
+    assert exported is not None
+
+
 def test_ms_deform_attn_module_export_compatible_with_singleton_level_dim() -> None:
     """torch.export.export must succeed on MSDeformAttn.forward with decoder-style singleton-level refs.
 
@@ -861,6 +1237,59 @@ def test_ms_deform_attn_module_export_compatible_with_singleton_level_dim() -> N
         module,
         args=(query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index),
     )
+    assert exported is not None
+
+
+def test_ms_deform_attn_module_export_compatible_single_level() -> None:
+    """A one-level exported MSDeformAttn module must trace its rank-5 sampling route.
+
+    Regression: the existing single-level core trace passes rank-6 sampling locations,
+    while ``MSDeformAttn.export()`` creates the rank-5 merged level-and-point layout
+    consumed by the core during an actual module export.
+    """
+    hw_pairs: list[tuple[int, int]] = [(4, 4)]
+    d_model, n_heads, n_points = 32, 4, 2
+    batch_size, num_queries = 1, 3
+
+    class _SingleLevelMSDeformAttnExportWrapper(torch.nn.Module):
+        """Export MSDeformAttn with concrete one-level spatial dimensions."""
+
+        def __init__(self, hw: list[tuple[int, int]]) -> None:
+            super().__init__()
+            self.attn = MSDeformAttn(d_model=d_model, n_levels=1, n_heads=n_heads, n_points=n_points)
+            self.attn.export()
+            self.hw = hw
+
+        def forward(
+            self,
+            query: torch.Tensor,
+            reference_points: torch.Tensor,
+            input_flatten: torch.Tensor,
+            input_spatial_shapes: torch.Tensor,
+            input_level_start_index: torch.Tensor,
+        ) -> torch.Tensor:
+            """Run the one-level export path with concrete spatial dimensions."""
+            return self.attn(
+                query,
+                reference_points,
+                input_flatten,
+                input_spatial_shapes,
+                input_level_start_index,
+                input_spatial_shapes_hw=self.hw,
+            )
+
+    query = torch.randn(batch_size, num_queries, d_model)
+    reference_points = torch.rand(batch_size, num_queries, 1, 4)
+    input_flatten = torch.randn(batch_size, 16, d_model)
+    input_spatial_shapes = torch.tensor(hw_pairs, dtype=torch.long)
+    input_level_start_index = torch.tensor([0], dtype=torch.long)
+    module = _SingleLevelMSDeformAttnExportWrapper(hw=hw_pairs)
+
+    exported = torch.export.export(
+        module,
+        args=(query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index),
+    )
+
     assert exported is not None
 
 
