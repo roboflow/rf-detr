@@ -22,7 +22,7 @@ from rfdetr.datasets.aug_configs import AUG_CONFIG
 from rfdetr.datasets.yolo import YoloSplitUnavailableError
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.tensors import make_collate_fn
+from rfdetr.utilities.tensors import PackedTargets, make_collate_fn
 
 logger = get_logger()
 
@@ -153,6 +153,7 @@ class RFDETRDataModule(LightningDataModule):
             )
         self._collate_fn = make_collate_fn(
             block_size=block_size,
+            pack=train_config.pack_targets,
         )
 
         self._dataset_train: torch.utils.data.Dataset[Any] | None = None
@@ -362,7 +363,8 @@ class RFDETRDataModule(LightningDataModule):
         so that PTL can auto-inject ``DistributedSampler`` in DDP mode.
 
         Returns:
-            DataLoader for the training dataset.
+            DataLoader for the training dataset. With ``TrainConfig.pack_targets=True`` (the default), its collated
+            batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset: torch.utils.data.Dataset[Any] = self._require_dataset(self._dataset_train, "fit")
         batch_size = self._resolve_batch_size()
@@ -417,7 +419,8 @@ class RFDETRDataModule(LightningDataModule):
         """Return the validation DataLoader.
 
         Returns:
-            DataLoader for the validation dataset with sequential sampling.
+            DataLoader for the validation dataset with sequential sampling. With ``TrainConfig.pack_targets=True``
+            (the default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_val, "validate")
         return DataLoader(
@@ -437,7 +440,8 @@ class RFDETRDataModule(LightningDataModule):
         """Return the test DataLoader.
 
         Returns:
-            DataLoader for the test dataset with sequential sampling.
+            DataLoader for the test dataset with sequential sampling. With ``TrainConfig.pack_targets=True`` (the
+            default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_test, "test")
         return DataLoader(
@@ -457,7 +461,8 @@ class RFDETRDataModule(LightningDataModule):
         """Return the predict DataLoader (reuses the validation dataset, no augmentation).
 
         Returns:
-            DataLoader for the validation dataset with sequential sampling.
+            DataLoader for the validation dataset with sequential sampling. With ``TrainConfig.pack_targets=True``
+            (the default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_val, "predict")
         return DataLoader(
@@ -796,7 +801,9 @@ class RFDETRDataModule(LightningDataModule):
         ``NestedTensor`` must be moved explicitly.
 
         Args:
-            batch: Tuple of (NestedTensor samples, list of target dicts).
+            batch: Tuple of ``NestedTensor`` samples and targets that are either a collated ``PackedTargets`` object
+                or an unpacked tuple of target dicts. Packed targets are materialized to a plain list of dicts after
+                transfer.
             device: Target device.
             dataloader_idx: Index of the dataloader providing this batch.
 
@@ -806,5 +813,10 @@ class RFDETRDataModule(LightningDataModule):
         samples, targets = batch
         non_blocking = device.type == "cuda"
         samples = samples.to(device, non_blocking=non_blocking)
-        targets = [{k: v.to(device, non_blocking=non_blocking) for k, v in t.items()} for t in targets]
+        if isinstance(targets, PackedTargets):
+            # One transfer per field instead of one per field per sample, then materialised so that callers can
+            # mutate the dicts exactly as they do on the unpacked path.
+            targets = targets.to(device, non_blocking=non_blocking).as_list()
+        else:
+            targets = [{k: v.to(device, non_blocking=non_blocking) for k, v in t.items()} for t in targets]
         return samples, targets
