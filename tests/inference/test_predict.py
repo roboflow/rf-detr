@@ -780,6 +780,30 @@ class TestPredictUint8Conversion:
 
         to_tensor_spy.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "image",
+        [
+            pytest.param(np.full((17, 29), 127, dtype=np.uint8), id="numpy_uint8_grayscale"),
+            pytest.param(np.full((17, 29, 1), 127, dtype=np.uint8), id="numpy_uint8_single_channel_hwc"),
+        ],
+    )
+    def test_predict_uses_fused_path_for_single_channel_uint8_images(self, image: np.ndarray[Any, Any]) -> None:
+        """One-channel uint8 images use the fused converter at the public ``predict()`` boundary."""
+        model = _DummyRFDETR()
+        model.model_config.num_channels = 1
+        model.means = model.means[:1]
+        model.stds = model.stds[:1]
+        to_tensor_spy = MagicMock(side_effect=AssertionError("uint8 input unexpectedly used F.to_tensor"))
+
+        with (
+            patch("rfdetr.detr._uint8_image_to_tensor", wraps=detr_module._uint8_image_to_tensor) as converter_spy,
+            patch("rfdetr.detr.F.to_tensor", to_tensor_spy),
+        ):
+            model.predict(image)
+
+        converter_spy.assert_called_once_with(image)
+        to_tensor_spy.assert_not_called()
+
     def test_converter_matches_torchvision_for_contiguous_single_channel_hwc(self) -> None:
         """A freshly-allocated (not sliced) ``(H, W, 1)`` array exercises ``num_channels=1`` models
         (``ModelConfig.num_channels``, ``config.py``).
