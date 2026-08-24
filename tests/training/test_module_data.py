@@ -836,7 +836,7 @@ class TestTrainDataloader:
         assert len(loader.dataset) == 120
 
     @staticmethod
-    def _raw_sample(h=16, w=16):
+    def _raw_sample(h: int = 16, w: int = 16) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Build one (image, target) pair as a dataset __getitem__ would return it, for collate_fn input.
 
         Examples:
@@ -853,18 +853,29 @@ class TestTrainDataloader:
         }
         return image, target
 
-    def test_pack_targets_true_makes_collate_fn_return_packed_targets(self, tmp_path):
-        """TrainConfig.pack_targets=True must reach train_dataloader().collate_fn, not just pack_targets() directly."""
-        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, pack_targets=True))
-        dm._dataset_train = _fake_dataset(200)
+    @pytest.mark.parametrize(
+        ("loader_name", "dataset_attribute"),
+        [
+            pytest.param("train_dataloader", "_dataset_train", id="train"),
+            pytest.param("val_dataloader", "_dataset_val", id="validation"),
+            pytest.param("test_dataloader", "_dataset_test", id="test"),
+            pytest.param("predict_dataloader", "_dataset_val", id="predict"),
+        ],
+    )
+    def test_pack_targets_default_makes_every_loader_collate_packed_targets(
+        self, tmp_path, loader_name, dataset_attribute
+    ):
+        """The default must make each public DataLoader's collate function return PackedTargets."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path))
+        setattr(dm, dataset_attribute, _fake_dataset(200))
 
-        loader = dm.train_dataloader()
+        loader = getattr(dm, loader_name)()
         _, targets = loader.collate_fn([self._raw_sample(), self._raw_sample()])
 
         assert isinstance(targets, PackedTargets)
 
     def test_pack_targets_false_keeps_collate_fn_output_a_tuple_of_dicts(self, tmp_path):
-        """The default TrainConfig.pack_targets=False must leave train_dataloader().collate_fn's output unpacked."""
+        """An explicit TrainConfig.pack_targets=False leaves train_dataloader().collate_fn output unpacked."""
         dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, pack_targets=False))
         dm._dataset_train = _fake_dataset(200)
 

@@ -20,6 +20,7 @@ import pytest
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torch.testing
+from torch.utils.data import DataLoader
 
 from rfdetr.utilities.tensors import (
     PackedTargets,
@@ -767,6 +768,29 @@ class TestPackedTargets:
         assert not isinstance(result, PackedTargets)
         assert result == tuple(batch)
 
+    def test_a_grad_bearing_value_falls_back_by_identity(self) -> None:
+        """Packing must not replace autograd-owned target tensors with a concatenated non-leaf tensor."""
+        targets = (
+            {"boxes": torch.tensor([[1.0, 2.0, 3.0, 4.0]], requires_grad=True)},
+            {"boxes": torch.tensor([[5.0, 6.0, 7.0, 8.0]], requires_grad=True)},
+        )
+
+        result = pack_targets(targets)
+
+        assert result is targets
+        assert all(target["boxes"].requires_grad for target in result)
+
+    def test_a_field_with_mixed_devices_falls_back_by_identity(self) -> None:
+        """Packing must reject a mixed-device field before ``torch.cat`` can raise."""
+        targets = (
+            {"boxes": torch.zeros(1, 4)},
+            {"boxes": torch.empty(1, 4, device="meta")},
+        )
+
+        result = pack_targets(targets)
+
+        assert result is targets
+
     def test_large_int64_values_are_never_routed_through_a_float_cat(self) -> None:
         """A value above float32's exact-integer range must come back exactly, or not be packed at all."""
         big = 2**54 + 1
@@ -855,3 +879,42 @@ class TestPackedTargets:
         for unpacked, rebuilt in zip(plain, packed):
             for key, value in unpacked.items():
                 assert torch.equal(rebuilt[key], value)
+
+    def test_worker_collation_packs_losslessly_and_falls_back_for_grad_targets(self) -> None:
+        """A real worker must return packed plain targets and preserve grad-bearing targets unpacked."""
+        targets = self._batch()[:2]
+        dataset = [
+            (torch.full((3, 8, 8), 1.0), targets[0]),
+            (torch.full((3, 8, 8), 2.0), targets[1]),
+        ]
+
+        images, packed = next(
+            iter(DataLoader(dataset, batch_size=2, collate_fn=make_collate_fn(pack=True), num_workers=1))
+        )
+
+        assert isinstance(packed, PackedTargets)
+        assert torch.equal(images.tensors[0, :, :8, :8], dataset[0][0])
+        assert torch.equal(images.tensors[1, :, :8, :8], dataset[1][0])
+        for original, rebuilt in zip(targets, packed):
+            assert original.keys() == rebuilt.keys()
+            for key, value in original.items():
+                assert rebuilt[key].dtype == value.dtype
+                assert rebuilt[key].shape == value.shape
+                assert torch.equal(rebuilt[key], value)
+
+        grad_targets = (
+            {"boxes": torch.tensor([[1.0, 2.0, 3.0, 4.0]], requires_grad=True)},
+            {"boxes": torch.tensor([[5.0, 6.0, 7.0, 8.0]], requires_grad=True)},
+        )
+        grad_dataset = [
+            (torch.full((3, 8, 8), 3.0), grad_targets[0]),
+            (torch.full((3, 8, 8), 4.0), grad_targets[1]),
+        ]
+
+        _, fallback = next(
+            iter(DataLoader(grad_dataset, batch_size=2, collate_fn=make_collate_fn(pack=True), num_workers=1))
+        )
+
+        assert isinstance(fallback, tuple)
+        assert not isinstance(fallback, PackedTargets)
+        assert all(target["boxes"].requires_grad for target in fallback)

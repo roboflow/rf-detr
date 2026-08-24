@@ -363,7 +363,8 @@ class RFDETRDataModule(LightningDataModule):
         so that PTL can auto-inject ``DistributedSampler`` in DDP mode.
 
         Returns:
-            DataLoader for the training dataset.
+            DataLoader for the training dataset. With ``TrainConfig.pack_targets=True`` (the default), its collated
+            batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset: torch.utils.data.Dataset[Any] = self._require_dataset(self._dataset_train, "fit")
         batch_size = self._resolve_batch_size()
@@ -418,7 +419,8 @@ class RFDETRDataModule(LightningDataModule):
         """Return the validation DataLoader.
 
         Returns:
-            DataLoader for the validation dataset with sequential sampling.
+            DataLoader for the validation dataset with sequential sampling. With ``TrainConfig.pack_targets=True``
+            (the default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_val, "validate")
         return DataLoader(
@@ -438,7 +440,8 @@ class RFDETRDataModule(LightningDataModule):
         """Return the test DataLoader.
 
         Returns:
-            DataLoader for the test dataset with sequential sampling.
+            DataLoader for the test dataset with sequential sampling. With ``TrainConfig.pack_targets=True`` (the
+            default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_test, "test")
         return DataLoader(
@@ -458,7 +461,8 @@ class RFDETRDataModule(LightningDataModule):
         """Return the predict DataLoader (reuses the validation dataset, no augmentation).
 
         Returns:
-            DataLoader for the validation dataset with sequential sampling.
+            DataLoader for the validation dataset with sequential sampling. With ``TrainConfig.pack_targets=True``
+            (the default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_val, "predict")
         return DataLoader(
@@ -797,7 +801,9 @@ class RFDETRDataModule(LightningDataModule):
         ``NestedTensor`` must be moved explicitly.
 
         Args:
-            batch: Tuple of (NestedTensor samples, list of target dicts).
+            batch: Tuple of ``NestedTensor`` samples and targets that are either a collated ``PackedTargets`` object
+                or an unpacked tuple of target dicts. Packed targets are materialized to a plain list of dicts after
+                transfer.
             device: Target device.
             dataloader_idx: Index of the dataloader providing this batch.
 

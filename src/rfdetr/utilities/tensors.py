@@ -522,8 +522,9 @@ def pack_targets(targets: Sequence[dict[str, Tensor]]) -> PackedTargets | tuple[
 
     Returns:
         The packed batch, or *targets* unchanged as a tuple when it cannot be packed losslessly -- an empty batch,
-        samples whose key sets differ, or a value that is not a dense (strided), non-quantized tensor. Falling
-        back keeps a custom dataset working at the original throughput rather than failing on it.
+        samples whose key sets differ, gradient-tracked values, inconsistent field devices, or a value that is not a
+        dense (strided), non-quantized tensor. Falling back keeps a custom dataset working at the original throughput
+        rather than failing on it.
     """
     if not targets:
         return tuple(targets)
@@ -538,14 +539,20 @@ def pack_targets(targets: Sequence[dict[str, Tensor]]) -> PackedTargets | tuple[
             # RuntimeError instead of falling back. A quantized value can share torch.dtype with another sample
             # while using a different (scale, zero_point), in which case torch.cat silently requantizes it to
             # the first sample's parameters rather than failing -- dtype equality alone does not catch either case.
-            if not isinstance(value, Tensor) or value.layout != torch.strided or value.is_quantized:
+            if (
+                not isinstance(value, Tensor)
+                or value.layout != torch.strided
+                or value.is_quantized
+                or value.requires_grad
+            ):
                 return tuple(targets)
     for key in keys:
         # torch.cat promotes across mixed dtypes rather than failing, which would silently change a field's
         # dtype and can lose integer precision. A COCO sample with no annotations yields float32 for fields a
         # populated sample yields as int64, so this is reachable on real data, not a theoretical case.
         dtype = targets[0][key].dtype
-        if any(target[key].dtype != dtype for target in targets):
+        device = targets[0][key].device
+        if any(target[key].dtype != dtype or target[key].device != device for target in targets):
             return tuple(targets)
     for key in keys:
         column = [target[key] for target in targets]

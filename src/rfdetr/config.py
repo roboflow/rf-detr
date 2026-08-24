@@ -1270,7 +1270,7 @@ class TrainConfig(BaseConfig):
     pin_memory: bool | None = None
     persistent_workers: bool | None = None
     prefetch_factor: int | None = None
-    pack_targets: bool = False
+    pack_targets: bool = True
 
     @field_validator("batch_size", mode="after")
     @classmethod
