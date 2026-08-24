@@ -192,6 +192,22 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
     TrainConfig(lr_scheduler="step", lr_scheduler_kwargs={"lr_drop": 80, "min_factor": 0.1})
     ```
 
+### Deprecated in v1.9 → Remove in v1.12
+
+!!! note "`rfdetr.datasets.aug_config` is deprecated"
+
+    The module was renamed to `rfdetr.datasets.aug_configs` (plural) in v1.8.0 — see the "Upgrade 1.7 → 1.8" section below, where it is listed as a breaking change because that rename shipped with no compatibility shim. A shim was added in v1.9.0, so the singular path imports again and emits a `FutureWarning`. It is scheduled for removal in **v1.12.0**; migrate before then.
+
+    The preset constants are unchanged — only the module path moves.
+
+    ```python
+    # Before (deprecated, warns since v1.9.0)
+    from rfdetr.datasets.aug_config import AUG_AGGRESSIVE
+
+    # After
+    from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
+    ```
+
 ---
 
 ## Upgrade 1.7 → 1.8

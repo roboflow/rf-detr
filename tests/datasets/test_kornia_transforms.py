@@ -1130,8 +1130,7 @@ class TestResolveAugmentationBackend:
         from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
 
         with (
-            patch.object(AugmentationBackend, "_is_albu_available", return_value=False),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is AugmentationBackend.TV),
         ):
             assert resolve_augmentation_backend(value, has_cuda=False) == AugmentationBackend.TV
 
@@ -1158,7 +1157,7 @@ class TestResolveAugmentationBackend:
         from rfdetr.config import AugmentationBackend
         from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
 
-        with patch.object(AugmentationBackend, "_is_albu_available", return_value=True):
+        with patch.object(AugmentationBackend, "_is_available", lambda self: True):
             assert resolve_augmentation_backend("albu", has_cuda=False) == AugmentationBackend.ALBU
 
     def test_albu_missing_raises_import_error(self) -> None:
@@ -1169,7 +1168,7 @@ class TestResolveAugmentationBackend:
         from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
 
         with (
-            patch.object(AugmentationBackend, "_is_albu_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.ALBU),
             pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
         ):
             resolve_augmentation_backend("albu", has_cuda=False)
@@ -1200,7 +1199,7 @@ class TestResolveBackendForBuild:
         from rfdetr.datasets.kornia_transforms import resolve_backend_for_build
 
         with (
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
             pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
         ):
             resolve_backend_for_build("gpu", has_cuda=True)

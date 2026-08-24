@@ -54,8 +54,19 @@ _LEGACY_AUGMENTATION_BACKEND_ALIASES: Dict[str, str] = {
 }
 
 
+#: Import probe per augmentation backend value — the module whose importability decides that backend's availability.
+_AUGMENTATION_BACKEND_PROBE_MODULES: Dict[str, str] = {
+    "albumentations": "albumentations",
+    "kornia": "kornia.augmentation",
+    "torchvision": "torchvision.transforms.v2",
+}
+
+
+@functools.lru_cache(maxsize=None)
 def _package_importable(module_name: str) -> bool:
     """Return ``True`` when *module_name* can be imported.
+
+    Cached for the process lifetime — package installation state does not change at runtime.
 
     Args:
         module_name: Dotted module path to probe (e.g. ``"kornia.augmentation"``).
@@ -124,11 +135,11 @@ class AugmentationBackend(str, Enum):
         """
         value = _LEGACY_AUGMENTATION_BACKEND_ALIASES.get(value, value)
         if value in ("cpu", "auto"):
-            if value == "auto" and has_cuda and cls._is_kornia_available():
+            if value == "auto" and has_cuda and cls.KORNIA._is_available():
                 return cls.KORNIA
-            if cls._is_albu_available():
+            if cls.ALBU._is_available():
                 return cls.ALBU
-            if cls._is_kornia_available():
+            if cls.KORNIA._is_available():
                 return cls.KORNIA
             return cls.TV
         try:
@@ -139,45 +150,26 @@ class AugmentationBackend(str, Enum):
                 "'albumentations', 'kornia'."
             ) from None
 
-    @classmethod
-    @functools.lru_cache(maxsize=None)
-    def _is_albu_available(cls) -> bool:
-        """Return ``True`` when Albumentations is importable.
+    def _is_available(self) -> bool:
+        """Return ``True`` when this backend's package is importable.
 
-        Cached for the process lifetime — package installation state does not change at runtime.
-        Tests that need to simulate "not installed" should patch this method directly (e.g.
-        ``patch.object(AugmentationBackend, "_is_albu_available", return_value=False)``) rather
-        than blocking the underlying import, since the cache is keyed on this method, not on the
-        import machinery.
+        Every backend is probed lazily, on first call rather than at ``import rfdetr`` time. ``ALBU`` and ``KORNIA``
+        are optional extras (``pip install 'rfdetr[augment]'``); ``TV`` is a required RF-DETR dependency. Probing all
+        three keeps the availability contract consistent and verifies the ``torchvision.transforms.v2`` API RF-DETR
+        uses is importable.
 
-        Returns:
-            ``True`` if ``albumentations`` can be imported.
-        """
-        return _package_importable("albumentations")
+        The underlying probe is cached for the process lifetime (see :func:`_package_importable`). Tests that
+        need to simulate "not installed" must patch **this method**, never ``_package_importable`` or the import
+        machinery beneath it — a real probe result is cached process-wide and would leak into later tests. Patch
+        with a plain function so it still binds and receives the member, which is what makes per-backend
+        simulation possible::
 
-    @classmethod
-    @functools.lru_cache(maxsize=None)
-    def _is_kornia_available(cls) -> bool:
-        """Return ``True`` when Kornia's augmentation module is importable.
-
-        Cached for the process lifetime — see :meth:`_is_albu_available` for the caching and test
-        rationale.
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA)
 
         Returns:
-            ``True`` if ``kornia.augmentation`` can be imported.
+            ``True`` if this backend can be used in the current environment.
         """
-        return _package_importable("kornia.augmentation")
-
-    @classmethod
-    def _is_tv_available(cls) -> bool:
-        """Return ``True`` — torchvision is a hard (non-optional) RF-DETR dependency.
-
-        Not cached: the result is a compile-time constant, not worth the caching machinery.
-
-        Returns:
-            Always ``True``.
-        """
-        return True
+        return _package_importable(_AUGMENTATION_BACKEND_PROBE_MODULES[self.value])
 
 
 class PretrainWeightsCompatibilityWarning(UserWarning):

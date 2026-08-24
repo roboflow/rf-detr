@@ -250,7 +250,7 @@ def _require_kornia() -> None:
     Raises:
         ImportError: When ``kornia`` is not installed, with an install hint.
     """
-    if not AugmentationBackend._is_kornia_available():
+    if not AugmentationBackend.KORNIA._is_available():
         raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[augment]'")
 
 
@@ -260,7 +260,7 @@ def _require_albu() -> None:
     Raises:
         ImportError: When ``albumentations`` is not installed, with an install hint.
     """
-    if not AugmentationBackend._is_albu_available():
+    if not AugmentationBackend.ALBU._is_available():
         raise ImportError(
             "Custom Albumentations augmentations require albumentations. Install with: pip install 'rfdetr[augment]'"
         )
