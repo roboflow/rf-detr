@@ -674,7 +674,7 @@ class RFDETRDataModule(LightningDataModule):
         if resolved is None or not is_gpu_postprocess(resolved):
             return
 
-        if not AugmentationBackend._is_kornia_available():
+        if not AugmentationBackend.KORNIA._is_available():
             raise ImportError("Kornia augmentation requires kornia. Install with: pip install 'rfdetr[augment]'")
 
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize

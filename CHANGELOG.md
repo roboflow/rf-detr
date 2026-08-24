@@ -52,6 +52,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `RFDETR.predict()` no longer runs the deferred `[0, 1]` pixel-range scan (introduced in #1341) for PIL and `uint8` NumPy array inputs, including images loaded from a file path or URL. `torchvision.transforms.functional.to_tensor` already scales an 8-bit RGB PIL image and a `uint8` NumPy array into `[0, 1]`, so `(img > 1).any()` / `(img < 0).any()` always evaluated to `False` for those two input types; the checks are now skipped instead of computed. Tensor inputs and non-`uint8` NumPy inputs (including `float` arrays, which can hold values outside `[0, 1]`) keep both checks unchanged. Public detections are unaffected — the skip only removes a check whose result was already guaranteed, not the underlying tensor values.
 
+### Deprecated
+
+- The `rfdetr.datasets.aug_config` compatibility shim now names a concrete removal version: deprecated since 1.9.0, **removal in v1.12.0**. Import the augmentation presets (`AUG_CONFIG`, `AUG_CONSERVATIVE`, `AUG_AGGRESSIVE`, `AUG_AERIAL`, `AUG_INDUSTRIAL`) from `rfdetr.datasets.aug_configs` (plural) instead; the constants themselves are unchanged. The module was renamed in 1.8.0 as a documented breaking change ([#1103](https://github.com/roboflow/rf-detr/pull/1103)) and the singular path reappeared as a `FutureWarning`-emitting shim in 1.9.0 ([#1037](https://github.com/roboflow/rf-detr/pull/1037)) without a changelog entry or a removal target. The shim keeps working until v1.12.0; its warning and its regression test now both state that deadline.
+
 ### Fixed
 
 - The torchvision-native non-square training pipeline no longer resamples crop-branch outputs twice. `_build_train_resize_transforms(square=False)` now resizes each crop directly to a randomly selected target scale, matching the square and Albumentations paths. This changes the augmented pixel distribution for non-square training by avoiding the fixed `384x384` intermediate and its extra resampling step. Square training (the released default for every shipped model config) is untouched, as are validation, prediction, and export preprocessing.
