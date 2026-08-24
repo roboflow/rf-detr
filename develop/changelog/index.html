@@ -2396,6 +2396,10 @@
 <p><code>RFDETR.predict()</code> no longer runs the deferred <code>[0, 1]</code> pixel-range scan (introduced in #1341) for PIL and <code>uint8</code> NumPy array inputs, including images loaded from a file path or URL. <code>torchvision.transforms.functional.to_tensor</code> already scales an 8-bit RGB PIL image and a <code>uint8</code> NumPy array into <code>[0, 1]</code>, so <code>(img &gt; 1).any()</code> / <code>(img &lt; 0).any()</code> always evaluated to <code>False</code> for those two input types; the checks are now skipped instead of computed. Tensor inputs and non-<code>uint8</code> NumPy inputs (including <code>float</code> arrays, which can hold values outside <code>[0, 1]</code>) keep both checks unchanged. Public detections are unaffected — the skip only removes a check whose result was already guaranteed, not the underlying tensor values.</p>
 </li>
 </ul>
+<h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The <code>rfdetr.datasets.aug_config</code> compatibility shim now names a concrete removal version: deprecated since 1.9.0, <strong>removal in v1.12.0</strong>. Import the augmentation presets (<code>AUG_CONFIG</code>, <code>AUG_CONSERVATIVE</code>, <code>AUG_AGGRESSIVE</code>, <code>AUG_AERIAL</code>, <code>AUG_INDUSTRIAL</code>) from <code>rfdetr.datasets.aug_configs</code> (plural) instead; the constants themselves are unchanged. The module was renamed in 1.8.0 as a documented breaking change (<a href="https://github.com/roboflow/rf-detr/pull/1103">#1103</a>) and the singular path reappeared as a <code>FutureWarning</code>-emitting shim in 1.9.0 (<a href="https://github.com/roboflow/rf-detr/pull/1037">#1037</a>) without a changelog entry or a removal target. The shim keeps working until v1.12.0; its warning and its regression test now both state that deadline.</li>
+</ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
@@ -2499,7 +2503,7 @@
 <li><code>TrainConfig.optimizer</code> (<code>str | Callable</code>) and <code>optimizer_kwargs</code> — configurable training optimizer. <code>optimizer="adamw"</code> (the default) keeps RF-DETR's built-in fused <code>torch.optim.AdamW</code> path unchanged. A bare short name selects a native <code>torch.optim</code> optimizer only (e.g. <code>"sgd"</code>, <code>"adam"</code>); any other optimizer — including third-party ones such as <a href="https://github.com/kozistr/pytorch_optimizer"><code>pytorch-optimizer</code></a> (install separately) — is selected by a full dotted import path (<code>"pytorch_optimizer.Lion"</code>) or a callable / <code>functools.partial</code> called with the RF-DETR parameter groups. <code>optimizer_kwargs</code> forwards constructor arguments (ignored for callables, which bake their own arguments in). (<a href="https://github.com/roboflow/rf-detr/pull/1006">#1006</a>)</li>
 <li><code>TrainConfig.lr_scheduler</code> (<code>str | Callable</code>) plus <code>lr_scheduler_kwargs</code>, <code>lr_scheduler_interval</code>, and <code>lr_scheduler_monitor</code> — configurable LR scheduler, mirroring <code>optimizer</code>. <code>lr_scheduler="step"</code>/<code>"cosine"</code> (the managed presets) keep RF-DETR's built-in warmup-aware schedules unchanged; any other scheduler is selected by a full dotted import path (<code>"torch.optim.lr_scheduler.OneCycleLR"</code>) or a callable / <code>functools.partial</code> called with the optimizer. Explicit schedulers are built from <code>lr_scheduler_kwargs</code> only (no <code>total_steps</code>/<code>T_max</code> injected), are auto-wrapped in a <code>SequentialLR</code> linear warmup when <code>warmup_epochs&gt;0</code>, and step at <code>lr_scheduler_interval</code> (<code>"step"</code>/<code>"epoch"</code>). <code>ReduceLROnPlateau</code> is supported end-to-end: it steps once per epoch on the metric named by <code>lr_scheduler_monitor</code> (default <code>"val/loss"</code>), in both the automatic and manual (keypoint) optimization paths.</li>
 </ul>
-<h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>
+<h3 id="deprecated_1">Deprecated<a class="headerlink" href="#deprecated_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>TrainConfig.lr_drop</code> and <code>lr_min_factor</code> — pass them through <code>lr_scheduler_kwargs</code> instead (<code>{"lr_drop": ...}</code> / <code>{"min_factor": ...}</code>). Deprecated since v1.9.0, will be removed in v1.11.0. The fields still work in the meantime and are folded into <code>lr_scheduler_kwargs</code> for the managed presets with a <code>FutureWarning</code>; default values (e.g. on config reload) do not warn. Set with an explicit (non-managed) scheduler they are inert and emit a <code>FutureWarning</code>.</li>
 </ul>
@@ -2512,7 +2516,7 @@
 <li>Segmentation evaluation resized ground-truth masks to each image's original resolution before comparison, a lossy round trip vs. the mask head's native grid; GT masks now resize directly to each prediction's own pixel grid, so segm mAP is computed on consistent pixel grids. (<a href="https://github.com/roboflow/rf-detr/pull/1241">#1241</a>)</li>
 <li><code>pip install 'rfdetr[onnx]'</code> (and <code>[tflite]</code>) no longer hangs building <code>onnxsim</code> from source on CPython 3.11/3.13 and Linux aarch64. The previous <code>onnxsim&lt;0.6.0</code> pin resolved to 0.5.0, which ships no wheels for those targets, so pip compiled onnxsim's bundled onnxruntime/onnx from source. The constraint is now <code>onnxsim&gt;=0.7.0</code>, which publishes prebuilt wheels across CPython 3.10–3.13 on Linux x86_64/aarch64, Windows x86_64, and macOS arm64. (<a href="https://github.com/roboflow/rf-detr/pull/1242">#1242</a>)</li>
 </ul>
-<h3 id="deprecated_1">Deprecated<a class="headerlink" href="#deprecated_1" title="Permanent link">&para;</a></h3>
+<h3 id="deprecated_2">Deprecated<a class="headerlink" href="#deprecated_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>RFDETR.optimize_for_inference()</code> renamed to <code>RFDETR.inference()</code> (same signature). The old name is kept as a deprecated alias that forwards to <code>inference()</code> and emits a <code>FutureWarning</code>. Deprecated since v1.9.0, will be removed in v1.11.0.</li>
 </ul>
@@ -2663,7 +2667,7 @@
 <li>Native RLE annotation support in the COCO segmentation pipeline: <code>convert_coco_poly_to_mask</code> now explicitly detects and decodes both compressed (string counts) and uncompressed (int-list counts) RLE formats alongside existing polygon support. Malformed annotations now raise instead of being silently swallowed. (<a href="https://github.com/roboflow/rf-detr/pull/897">#897</a>)</li>
 <li>Pinned PyTorch Lightning to exclude known-compromised versions. (<a href="https://github.com/roboflow/rf-detr/pull/1020">#1020</a>)</li>
 </ul>
-<h3 id="deprecated_2">Deprecated<a class="headerlink" href="#deprecated_2" title="Permanent link">&para;</a></h3>
+<h3 id="deprecated_3">Deprecated<a class="headerlink" href="#deprecated_3" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>build_namespace(model_config, train_config)</code> — no longer used internally and deprecated in this release; use <code>build_model_from_config</code>, <code>build_criterion_from_config</code>, or <code>_namespace_from_configs</code> directly. It will be removed in v1.9 and currently emits a <code>DeprecationWarning</code> on use. (<a href="https://github.com/roboflow/rf-detr/pull/845">#845</a>)</li>
 <li><code>load_pretrain_weights(nn_model, model_config, train_config)</code> — the <code>train_config</code> positional argument is deprecated and will be removed in v1.9; it is no longer used internally. Omit it: <code>load_pretrain_weights(nn_model, model_config)</code>. Passing a non-<code>None</code> value emits a <code>DeprecationWarning</code>. (<a href="https://github.com/roboflow/rf-detr/pull/845">#845</a>)</li>
@@ -2779,7 +2783,7 @@
 <li>Fixed ONNX export for models with dynamic batch dimensions — replaced <code>H_.expand(N_)</code> with <code>torch.full</code> for Python-int spatial dims to eliminate tracer failures. (<a href="https://github.com/roboflow/rf-detr/pull/871">#871</a>)</li>
 </ul>
 <h2 id="161-2026-03-25">[1.6.1] — 2026-03-25<a class="headerlink" href="#161-2026-03-25" title="Permanent link">&para;</a></h2>
-<h3 id="deprecated_3">Deprecated<a class="headerlink" href="#deprecated_3" title="Permanent link">&para;</a></h3>
+<h3 id="deprecated_4">Deprecated<a class="headerlink" href="#deprecated_4" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>RFDETR.export(..., simplify=..., force=...)</code> — both arguments are now no-ops and emit a <code>DeprecationWarning</code>. RF-DETR no longer runs ONNX simplification automatically; remove these arguments from your calls. They will be removed in v1.8. (<a href="https://github.com/roboflow/rf-detr/pull/861">#861</a>)</li>
 </ul>
@@ -2815,7 +2819,7 @@
 <li>Current learning rate is now shown in the training progress bar alongside loss. (<a href="https://github.com/roboflow/rf-detr/pull/809">#809</a>)</li>
 <li><code>supervision</code>, <code>pytorch_lightning</code>, and other heavy dependencies are now imported lazily (on first use) rather than at module load, reducing cold-import time in inference-only environments. (<a href="https://github.com/roboflow/rf-detr/pull/801">#801</a>)</li>
 </ul>
-<h3 id="deprecated_4">Deprecated<a class="headerlink" href="#deprecated_4" title="Permanent link">&para;</a></h3>
+<h3 id="deprecated_5">Deprecated<a class="headerlink" href="#deprecated_5" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>rfdetr.deploy.*</code> — redirects to <code>rfdetr.export.*</code> with a <code>DeprecationWarning</code>. Migrate before v1.7.</li>
 <li><code>rfdetr.util.*</code> — redirects to <code>rfdetr.utilities.*</code> with a <code>DeprecationWarning</code>. Migrate before v1.7.</li>
