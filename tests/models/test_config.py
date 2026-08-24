@@ -15,6 +15,7 @@ import pytest
 import torch
 from pydantic import ValidationError
 
+import rfdetr.config as config_module
 from rfdetr.config import (
     AugmentationBackend,
     KeypointTrainConfig,
@@ -1326,6 +1327,58 @@ class TestTrainConfigAugmentationBackendSerialization:
         config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=sentinel)
         dumped = config.model_dump()
         assert dumped["augmentation_backend"] == sentinel
+
+
+class TestAugmentationBackendAvailability:
+    """Availability probes use the backend-specific optional dependency contract."""
+
+    @pytest.mark.parametrize(
+        ("backend", "module_name"),
+        [
+            pytest.param(AugmentationBackend.ALBU, "albumentations", id="albumentations"),
+            pytest.param(AugmentationBackend.KORNIA, "kornia.augmentation", id="kornia"),
+            pytest.param(AugmentationBackend.GPU, "kornia.augmentation", id="gpu-alias"),
+        ],
+    )
+    def test_optional_backend_probes_its_required_module(self, backend: AugmentationBackend, module_name: str) -> None:
+        """Optional backends check the module that implements their transform path."""
+        package_importable = MagicMock(return_value=True)
+
+        with patch.object(config_module, "_package_importable", package_importable):
+            assert backend._is_available()
+
+        package_importable.assert_called_once_with(module_name)
+
+    @pytest.mark.parametrize(
+        ("backend", "module_name"),
+        [
+            pytest.param(AugmentationBackend.ALBU, "albumentations", id="albumentations"),
+            pytest.param(AugmentationBackend.KORNIA, "kornia.augmentation", id="kornia"),
+        ],
+    )
+    def test_optional_backend_propagates_a_failed_module_probe(
+        self, backend: AugmentationBackend, module_name: str
+    ) -> None:
+        """Optional backends report unavailable when their required module is absent."""
+        package_importable = MagicMock(return_value=False)
+
+        with patch.object(config_module, "_package_importable", package_importable):
+            assert not backend._is_available()
+
+        package_importable.assert_called_once_with(module_name)
+
+    def test_gpu_is_an_alias_for_kornia(self) -> None:
+        """The legacy GPU spelling retains Kornia availability semantics."""
+        assert AugmentationBackend.GPU is AugmentationBackend.KORNIA
+
+    def test_tv_is_available_without_an_optional_dependency_probe(self) -> None:
+        """Torchvision is a core dependency and requires no optional import probe."""
+        package_importable = MagicMock()
+
+        with patch.object(config_module, "_package_importable", package_importable):
+            assert AugmentationBackend.TV._is_available()
+
+        package_importable.assert_not_called()
 
 
 class TestTrainConfigAugmentationBackendConstruction:
