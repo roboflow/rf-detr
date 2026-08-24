@@ -2352,6 +2352,9 @@
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><code>RFDETR.predict()</code> now converts PIL and uint8 NumPy inputs from HWC byte storage to contiguous CHW floating-point storage with one dtype/layout allocation and in-place scaling. The default source-image path reuses its already-materialized PIL array, while non-uint8 NumPy inputs retain torchvision's conversion path. The <code>[0, 1]</code> range-scan skip for those same two input types is unaffected: the fused conversion divides <code>uint8</code> storage by 255 and carries the same guarantee <code>to_tensor</code> did.</p>
+</li>
+<li>
 <p>The deformable-attention core now reuses its sampled tensor directly for one-level inputs instead of stacking and flattening a one-element list. Multi-level packing is unchanged. This primarily removes allocation work from keypoint cross-attention, whose current configuration uses one feature level and many more queries than the detection decoder.</p>
 </li>
 <li>
