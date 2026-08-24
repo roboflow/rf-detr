@@ -21,6 +21,8 @@ backend.
 
 from __future__ import annotations
 
+from unittest import mock
+
 import numpy as np
 import pytest
 import torch
@@ -45,6 +47,86 @@ def _reference_select_topk(
 
 
 class TestTopkSelectionParity:
+    def test_float32_partial_selection_uses_partition_without_full_sort(self) -> None:
+        """The common float32 partial-selection path partitions instead of sorting the complete score grid."""
+        rng = np.random.default_rng(12)
+        scores_all = rng.random((300, 91), dtype=np.float32)
+        num_select = 300
+        flat_scores = scores_all.reshape(-1)
+        flat_idx = np.arange(flat_scores.size, dtype=np.int64)
+        expected_idx = np.lexsort((flat_idx, -flat_scores))[:num_select]
+
+        with (
+            mock.patch("rfdetr.export._topk.np.argpartition", wraps=np.argpartition) as partition,
+            mock.patch("rfdetr.export._topk.np.lexsort", wraps=np.lexsort) as lexsort,
+        ):
+            scores, labels, queries = _select_topk_multiclass(scores_all, threshold=-1.0, num_select=num_select)
+
+        partition.assert_called_once()
+        lexsort.assert_not_called()
+        np.testing.assert_array_equal(scores.view(np.uint32), flat_scores[expected_idx].view(np.uint32))
+        np.testing.assert_array_equal(queries * scores_all.shape[1] + labels, expected_idx)
+
+    def test_dense_float32_selection_retains_full_sort(self) -> None:
+        """Selecting more than one quarter of the grid avoids partition overhead."""
+        rng = np.random.default_rng(13)
+        scores_all = rng.random((300, 2), dtype=np.float32)
+        num_select = 300
+        flat_scores = scores_all.reshape(-1)
+        flat_idx = np.arange(flat_scores.size, dtype=np.int64)
+        expected_idx = np.lexsort((flat_idx, -flat_scores))[:num_select]
+
+        with (
+            mock.patch("rfdetr.export._topk.np.argpartition", wraps=np.argpartition) as partition,
+            mock.patch("rfdetr.export._topk.np.lexsort", wraps=np.lexsort) as lexsort,
+        ):
+            scores, labels, queries = _select_topk_multiclass(scores_all, threshold=-1.0, num_select=num_select)
+
+        partition.assert_not_called()
+        lexsort.assert_called_once()
+        np.testing.assert_array_equal(scores.view(np.uint32), flat_scores[expected_idx].view(np.uint32))
+        np.testing.assert_array_equal(queries * scores_all.shape[1] + labels, expected_idx)
+
+    def test_float32_partition_preserves_special_value_and_tie_order(self) -> None:
+        """NaN, infinity, signed zero, and tied cutoff scores retain the established lexicographic order."""
+        scores_all = np.full((8, 4), -np.inf, dtype=np.float32)
+        scores_all.reshape(-1)[:8] = np.array(
+            [np.nan, np.inf, 1.0, 1.0, 0.0, -0.0, -1.0, -np.inf],
+            dtype=np.float32,
+        )
+        flat_scores = scores_all.reshape(-1)
+        flat_idx = np.arange(flat_scores.size, dtype=np.int64)
+        sort_scores = np.where(np.isnan(flat_scores), np.inf, flat_scores)
+        expected_idx = np.lexsort((flat_idx, -sort_scores))[:8]
+        expected_scores = flat_scores[expected_idx]
+        expected_keep = expected_scores > -np.inf
+
+        with mock.patch("rfdetr.export._topk.np.argpartition", wraps=np.argpartition) as partition:
+            scores, labels, queries = _select_topk_multiclass(scores_all, threshold=-np.inf, num_select=8)
+
+        partition.assert_called_once()
+        np.testing.assert_array_equal(scores.view(np.uint32), expected_scores[expected_keep].view(np.uint32))
+        np.testing.assert_array_equal(
+            queries * scores_all.shape[1] + labels,
+            expected_idx[expected_keep],
+        )
+
+    @pytest.mark.parametrize("dtype", [np.float16, np.float64], ids=["float16", "float64"])
+    def test_non_float32_fallback_preserves_exact_order(self, dtype: type[np.floating]) -> None:
+        """Other floating dtypes retain the complete lexicographic fallback."""
+        scores_all = np.array([[0.5, 0.5, 0.25], [0.75, np.nan, -0.0]], dtype=dtype)
+        flat_scores = scores_all.reshape(-1)
+        flat_idx = np.arange(flat_scores.size, dtype=np.int64)
+        sort_scores = np.where(np.isnan(flat_scores), np.inf, flat_scores)
+        expected_idx = np.lexsort((flat_idx, -sort_scores))[:4]
+        expected_scores = flat_scores[expected_idx]
+        expected_keep = expected_scores > -1.0
+
+        scores, labels, queries = _select_topk_multiclass(scores_all, threshold=-1.0, num_select=4)
+
+        np.testing.assert_array_equal(scores.view(np.uint8), expected_scores[expected_keep].view(np.uint8))
+        np.testing.assert_array_equal(queries * scores_all.shape[1] + labels, expected_idx[expected_keep])
+
     @pytest.mark.parametrize("seed", [0, 1, 2, 7, 42])
     def test_matches_postprocess_select_topk(self, seed: int) -> None:
         """Random logits: the (query, class, score) set our NumPy helper keeps above threshold must equal what

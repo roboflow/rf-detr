@@ -68,6 +68,8 @@ def ms_deform_attn_core_pytorch(
         batch_size * n_heads, 1, len_query, num_levels * num_points
     )
     # batch_size*n_heads, head_dim, len_query, num_levels*num_points
-    sampling_values = torch.stack(sampling_value_list, dim=-2).flatten(-2)
+    sampling_values = (
+        sampling_value_list[0] if num_levels == 1 else torch.stack(sampling_value_list, dim=-2).flatten(-2)
+    )
     output = (sampling_values * attention_weights).sum(-1).view(batch_size, n_heads * head_dim, len_query)
     return output.transpose(1, 2).contiguous()

@@ -1298,7 +1298,7 @@ class TestBackendResolution:
 
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
         ):
             dm = self._setup_with_mock_build(dm)
 
@@ -1323,7 +1323,7 @@ class TestBackendResolution:
 
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
             pytest.raises(ImportError, match="rfdetr\\[augment\\]"),
         ):
             self._setup_with_mock_build(dm)
@@ -1354,7 +1354,7 @@ class TestBackendResolution:
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
             patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=True),
+            patch.object(AugmentationBackend, "_is_available", lambda self: True),
             patch("rfdetr.datasets.kornia_transforms.build_kornia_pipeline", side_effect=_fake_build_kornia),
             patch("rfdetr.datasets.kornia_transforms.build_normalize", return_value=MagicMock()),
         ):
