@@ -487,14 +487,12 @@ def _make_gaussian_blur(params: dict[str, Any]) -> Any:
         # The supported Albumentations range has version-dependent defaults. Read the installed CPU transform so a
         # shared config stays aligned whenever both optional augmentation backends are available; otherwise retain
         # Kornia's original default for GPU-only installations. AUG_INDUSTRIAL reaches this branch.
-        try:
+        if AugmentationBackend.ALBU._is_available():
             import albumentations
-        except ModuleNotFoundError as error:
-            if error.name != "albumentations":
-                raise
-            sigma_range = (0.1, 2.0)
-        else:
+
             sigma_range = albumentations.GaussianBlur().sigma_limit
+        else:
+            sigma_range = (0.1, 2.0)
     blur_sigma = _as_range(sigma_range)
     return RandomGaussianBlur(
         kernel_size=(blur_limit, blur_limit),

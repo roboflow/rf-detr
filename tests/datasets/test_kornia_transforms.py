@@ -9,8 +9,6 @@ All tests in this module are CPU-compatible — Kornia operates on CPU tensors i
 ``@pytest.mark.gpu`` is needed.
 """
 
-import builtins
-
 import pytest
 import torch
 
@@ -1343,51 +1341,24 @@ class TestGaussianDefaultsMatchAlbumentations:
             f"{cpu_default} on the CPU path, so the same config uses different default sigma bounds"
         )
 
-    def test_gaussian_blur_propagates_nested_albumentations_import_error(self, monkeypatch):
-        """A broken Albumentations dependency must not be mistaken for the package being absent."""
-        from rfdetr.datasets import kornia_transforms
-
-        original_import = builtins.__import__
-
-        def import_with_broken_albumentations(name, *args, **kwargs):
-            if name == "albumentations":
-                raise ModuleNotFoundError("No module named 'albumentations.core'", name="albumentations.core")
-            return original_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", import_with_broken_albumentations)
-
-        with pytest.raises(ModuleNotFoundError, match=r"albumentations\.core"):
-            kornia_transforms._make_gaussian_blur({"blur_limit": 3, "p": 0.3})
-
-    def test_gaussian_blur_uses_kornia_default_without_albumentations(self, monkeypatch):
+    def test_gaussian_blur_uses_kornia_default_when_albu_backend_is_unavailable(self, monkeypatch):
         """A GPU-only install keeps Kornia's historic GaussianBlur default."""
+        from rfdetr.config import AugmentationBackend
         from rfdetr.datasets import kornia_transforms
 
-        original_import = builtins.__import__
-
-        def import_without_albumentations(name, *args, **kwargs):
-            if name == "albumentations":
-                raise ModuleNotFoundError("No module named 'albumentations'", name="albumentations")
-            return original_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", import_without_albumentations)
+        monkeypatch.setattr(
+            AugmentationBackend,
+            "_is_available",
+            lambda self: self is not AugmentationBackend.ALBU,
+        )
 
         transform = kornia_transforms._make_gaussian_blur({"blur_limit": 3, "p": 0.3})
 
         assert tuple(float(value) for value in transform._param_generator.sigma) == pytest.approx((0.1, 2.0))
 
-    def test_gaussian_blur_keeps_explicit_sigma_when_albumentations_is_unavailable(self, monkeypatch):
-        """An explicit sigma remains authoritative when the optional CPU backend is absent."""
+    def test_gaussian_blur_keeps_explicit_sigma(self):
+        """An explicit sigma remains authoritative over backend availability."""
         from rfdetr.datasets import kornia_transforms
-
-        original_import = builtins.__import__
-
-        def import_without_albumentations(name, *args, **kwargs):
-            if name == "albumentations":
-                raise ModuleNotFoundError("No module named 'albumentations'", name="albumentations")
-            return original_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", import_without_albumentations)
 
         transform = kornia_transforms._make_gaussian_blur({"blur_limit": 3, "sigma": (1.25, 1.5), "p": 0.3})
 
