@@ -1017,6 +1017,36 @@ class TestMaskDecoding:
 class TestBilinearResizeHalfPixel:
     """Tests for ``_bilinear_resize_half_pixel()``."""
 
+    def test_near_scale_ratio_uses_separable_horizontal_pass(self) -> None:
+        """Near-scale resizes interpolate source rows once before gathering output rows."""
+        src = np.arange(2 * 7 * 8, dtype=np.float32).reshape(2, 7, 8)
+
+        with mock.patch("rfdetr.export._resize.np.take", wraps=np.take) as take:
+            out = _bilinear_resize_half_pixel(src, 6, 5)
+
+        assert out.shape == (2, 6, 5)
+        assert take.call_count == 2
+
+    def test_large_downscale_retains_bounded_output_grid(self) -> None:
+        """Large height reductions avoid a separable intermediate proportional to the source height."""
+        src = np.arange(25 * 9, dtype=np.float32).reshape(1, 25, 9)
+
+        with mock.patch("rfdetr.export._resize.np.take", wraps=np.take) as take:
+            out = _bilinear_resize_half_pixel(src, 6, 5)
+
+        assert out.shape == (1, 6, 5)
+        take.assert_not_called()
+
+    def test_four_thirds_boundary_retains_output_grid(self) -> None:
+        """The exact 4:3 height boundary avoids the larger three-source-grid intermediate."""
+        src = np.arange(2 * 8 * 9, dtype=np.float32).reshape(2, 8, 9)
+
+        with mock.patch("rfdetr.export._resize.np.take", wraps=np.take) as take:
+            out = _bilinear_resize_half_pixel(src, 6, 5)
+
+        assert out.shape == (2, 6, 5)
+        take.assert_not_called()
+
     def test_output_shape(self) -> None:
         """Output shape is (K, out_h, out_w)."""
         src = np.ones((3, 8, 8), dtype=np.float32)
