@@ -6308,7 +6308,17 @@ so that PTL can auto-inject <code>DistributedSampler</code> in DDP mode.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>DataLoader for the training dataset.</p>
+                <p>DataLoader for the training dataset. With <code>TrainConfig.pack_targets=True</code> (the default), its collated</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="torch.utils.data.DataLoader">DataLoader</span>[<span title="typing.Any">Any</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>batches contain <code>PackedTargets</code> for losslessly packable target batches.</p>
               </div>
             </td>
           </tr>
@@ -6349,7 +6359,17 @@ so that PTL can auto-inject <code>DistributedSampler</code> in DDP mode.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>DataLoader for the validation dataset with sequential sampling.</p>
+                <p>DataLoader for the validation dataset with sequential sampling. With <code>TrainConfig.pack_targets=True</code></p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="torch.utils.data.DataLoader">DataLoader</span>[<span title="typing.Any">Any</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>(the default), its collated batches contain <code>PackedTargets</code> for losslessly packable target batches.</p>
               </div>
             </td>
           </tr>
@@ -6390,7 +6410,17 @@ so that PTL can auto-inject <code>DistributedSampler</code> in DDP mode.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>DataLoader for the test dataset with sequential sampling.</p>
+                <p>DataLoader for the test dataset with sequential sampling. With <code>TrainConfig.pack_targets=True</code> (the</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="torch.utils.data.DataLoader">DataLoader</span>[<span title="typing.Any">Any</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>default), its collated batches contain <code>PackedTargets</code> for losslessly packable target batches.</p>
               </div>
             </td>
           </tr>
