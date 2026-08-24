@@ -118,7 +118,8 @@ model = RFDETRLarge()
 model.train(
     dataset_dir="./dataset",
     epochs=50,
-    batch_size="auto",
+    batch_size=4,
+    grad_accum_steps=4,  # effective batch = batch_size * grad_accum_steps = 16
     lr=1e-4,
     output_dir="./output"
 )
@@ -130,7 +131,7 @@ model.train(
 from rfdetr import RFDETRSegLarge
 
 model = RFDETRSegLarge()
-model.train(dataset_dir="./dataset", epochs=50, batch_size="auto")
+model.train(dataset_dir="./dataset", epochs=50, batch_size=4)
 ```
 
 ### Dataset Formats
@@ -166,13 +167,12 @@ dataset/
 |-----------|---------|-------------|
 | `epochs` | 50 | Training epochs |
 | `batch_size` | 4 | Images per GPU step |
-| `grad_accum_steps` | 1 | Gradient accumulation steps. The product with `batch_size` is a nominal effective-batch target; accumulation is not an optimization-equivalent substitute for physical batch |
-| `eval_batch_size` | `None` | Batch size for validation/test/predict loaders. `None` inherits `batch_size`; `no_grad` avoids autograd activation storage, but in-fit evaluation still shares device memory with the model and optimizer state and needs memory for forward outputs |
+| `grad_accum_steps` | 4 | Gradient accumulation steps (effective batch = batch_size × grad_accum_steps) |
 | `lr` | 1e-4 | Peak learning rate |
 | `output_dir` | `"output"` | Checkpoint directory |
 | `checkpoint_interval` | 1 | Save checkpoint every N epochs |
 
-**Nominal effective batch size: 16 is a starting target, not a requirement.** On CUDA, use `batch_size="auto"` when the available memory or workload is uncertain; on CPU or MPS, use a concrete integer batch size. If hardware memory limits the physical batch, increase `grad_accum_steps` to recover the nominal optimizer-step window. The product is not an optimization-equivalence guarantee: a constant product preserves the nominal images-per-update target but changes forward/backward microbatch cadence and can produce a different optimization trajectory.
+**Recommended effective batch size: 16** (e.g., batch_size=4, grad_accum_steps=4 on 8GB VRAM GPU).
 
 ### Checkpoint Types
 
@@ -252,6 +252,7 @@ model.export(format="tensorrt")
 model.deploy_to_roboflow(
     workspace="your-workspace",
     project_id="your-project-id",
+    version=1,
     api_key="YOUR_API_KEY"
 )
 ```
@@ -313,7 +314,7 @@ RF-DETR (Roboflow Detection Transformer) is a real-time object detection and ins
 RF-DETR-L achieves 56.5 AP50:95 on COCO at 6.8 ms latency on an NVIDIA T4, outperforming YOLO11x (54.7 AP) at lower latency. The DINOv2 backbone gives RF-DETR stronger performance on domain-shift benchmarks such as RF100-VL.
 
 **What GPU is required to train RF-DETR?**
-Training memory depends on the model size, task, input resolution, batch size, augmentations, and available hardware, so there is no universal VRAM threshold. Use a CUDA-capable GPU when possible and start with `batch_size="auto"`; if memory is limited, reduce the physical batch or resolution and validate the resulting run. CPU inference is supported for evaluation.
+A CUDA-capable GPU with at least 8 GB VRAM (e.g., NVIDIA RTX 3060, T4, A10) is recommended for fine-tuning. Smaller models (RF-DETR-N and RF-DETR-S) can fit in 6 GB VRAM with reduced batch size. CPU inference is supported for evaluation.
 
 **Which dataset formats does RF-DETR support?**
 RF-DETR supports COCO JSON and YOLO-format datasets. Roboflow datasets export directly to both formats. Detection and segmentation datasets use the same format — the model variant determines the task.
@@ -328,7 +329,7 @@ Detection models output bounding boxes. Segmentation models additionally output 
 Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. XLarge and 2XLarge models require the rfdetr[plus] package (PML 1.0 license).
 
 **How do I fine-tune RF-DETR on a custom dataset?**
-Instantiate a model and call model.train() with your dataset directory in COCO JSON or YOLO format. Example: model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size='auto'). The model downloads pretrained weights automatically and resumes from the best checkpoint.
+Instantiate a model and call model.train() with your dataset directory in COCO JSON or YOLO format. Example: model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4). The model downloads pretrained weights automatically and resumes from the best checkpoint.
 
 **How do I export RF-DETR to ONNX or TensorRT?**
 Call model.export(format='onnx') after training or loading a checkpoint. ONNX export works on CPU. For TensorRT, use model.export(format='tensorrt') (requires pip install rfdetr[trt] and a CUDA GPU), which builds a .trt engine in-process via the TensorRT Python API.
@@ -349,7 +350,7 @@ All model classes inherit from `RFDETR` and share these methods:
 - `predict(image, threshold=0.5)` — run inference on a single image (path, URL, numpy array, or PIL Image)
 - `train(dataset_dir, epochs, batch_size, ...)` — fine-tune on custom dataset
 - `export(format)` — export to ONNX, TFLite, or TensorRT
-- `deploy_to_roboflow(workspace, project_id, version=None)` — deploy model to Roboflow hosted inference (latest dataset version when `version` omitted; an empty project falls back to version `1`, then the SDK raises its usual error)
+- `deploy_to_roboflow(workspace, project_id, version)` — deploy model to Roboflow hosted inference
 
 ### TrainConfig
 
@@ -360,7 +361,6 @@ Key fields for detection training configuration:
 | `epochs` | int | Training epochs |
 | `batch_size` | int | Images per GPU step |
 | `grad_accum_steps` | int | Gradient accumulation steps |
-| `eval_batch_size` | int or None | Batch size for validation/test/predict loaders; `None` inherits `batch_size` |
 | `lr` | float | Peak learning rate |
 | `output_dir` | str | Checkpoint output directory |
 | `resume` | str | Path to checkpoint to resume from |
