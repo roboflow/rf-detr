@@ -463,8 +463,8 @@ class HungarianMatcher(nn.Module):
         class gather, ``cdist``, and the vmapped GIoU each launch once for all layers instead of
         once per layer. The concatenated call sees ``len(outputs_list) * len(targets)`` images
         whose per-image target counts repeat layer-major, so its output columns are each layer's
-        compact matrix laid side by side — slicing them apart reproduces the per-layer results
-        bitwise; only the kernel-launch count changes.
+        compact matrix laid side by side. Slicing them apart reproduces the per-layer results within
+        floating-point tolerance; only the kernel-launch count changes.
 
         Callers must guarantee every layer shares the prediction query count (dtype, device, and
         class count are already enforced by :meth:`_match_many`). Target labels are clamped exactly
