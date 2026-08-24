@@ -1026,7 +1026,12 @@ class TrainConfig(BaseConfig):
     # accepts no "auto": it is never probed, and an explicit value stays usable even when batch_size="auto"
     # has not been resolved.
     eval_batch_size: int | None = None
-    auto_batch_target_effective: int = 16  # global effective batch size target, divided across devices and nodes
+    # Global effective batch size target, divided across devices and nodes. This is a floor, not a cap: the probe
+    # only raises grad_accum_steps to *reach* it (see recommend_grad_accum_steps), and never shrinks the micro-batch
+    # to hold it. Once the probed micro-batch already meets or exceeds this value, grad_accum_steps stays at 1 and
+    # the effective batch is simply whatever fit in memory — so it grows with VRAM while lr stays put. Pin
+    # batch_size to a concrete integer when training semantics must match across GPUs of different sizes.
+    auto_batch_target_effective: int = 16
     # Auto-batch probe: worst-case assumptions when batch_size="auto".
     auto_batch_max_targets_per_image: int = 100
     auto_batch_ema_headroom: float = 0.7  # scale safe batch by this when use_ema=True (EMA uses extra memory)
