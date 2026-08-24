@@ -24,6 +24,10 @@ def freshly_imported_shim() -> ModuleType:
     A module-level ``warnings.warn`` runs once per process, at first import. Any earlier import — by another test, or by
     collection — would leave the module cached and make the warning unobservable here, so the cached entry is evicted
     before importing.
+
+    Examples:
+        Fixture execution is managed by pytest, so this example cannot run standalone.
+        >>> freshly_imported_shim()  # doctest: +SKIP
     """
     sys.modules.pop("rfdetr.datasets.aug_config", None)
     with pytest.warns(FutureWarning):
