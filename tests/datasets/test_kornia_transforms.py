@@ -1316,3 +1316,79 @@ class TestPerspectiveFactory:
 
         with pytest.raises(ValueError, match="Unknown augmentation key"):
             build_kornia_pipeline({name: {"height": 32, "width": 32}}, 560)
+
+
+class TestGaussianDefaultsMatchAlbumentations:
+    """Unspecified Gaussian defaults must align to Albumentations bounds while documenting known sampling
+    differences."""
+
+    @pytest.fixture(autouse=True)
+    def _require_kornia(self):
+        pytest.importorskip("kornia")
+
+    def test_gaussian_blur_sigma_default_matches_albumentations(self):
+        """An unspecified sigma must equal albumentations' GaussianBlur sigma_limit default."""
+        albumentations = pytest.importorskip("albumentations")
+
+        from rfdetr.datasets import kornia_transforms
+
+        cpu_default = tuple(albumentations.GaussianBlur().sigma_limit)
+        transform = kornia_transforms._make_gaussian_blur({"blur_limit": 3, "p": 0.3})
+        gpu_default = tuple(float(v) for v in transform._param_generator.sigma)
+
+        assert gpu_default == pytest.approx(cpu_default), (
+            f"unspecified GaussianBlur sigma is {gpu_default} on the GPU path but "
+            f"{cpu_default} on the CPU path, so the same config uses different default sigma bounds"
+        )
+
+    def test_gaussian_blur_uses_kornia_default_when_albu_backend_is_unavailable(self, monkeypatch):
+        """A GPU-only install keeps Kornia's historic GaussianBlur default."""
+        from rfdetr.config import AugmentationBackend
+        from rfdetr.datasets import kornia_transforms
+
+        monkeypatch.setattr(
+            AugmentationBackend,
+            "_is_available",
+            lambda self: self is not AugmentationBackend.ALBU,
+        )
+
+        transform = kornia_transforms._make_gaussian_blur({"blur_limit": 3, "p": 0.3})
+
+        assert tuple(float(value) for value in transform._param_generator.sigma) == pytest.approx((0.1, 2.0))
+
+    def test_gaussian_blur_keeps_explicit_sigma(self):
+        """An explicit sigma remains authoritative over backend availability."""
+        from rfdetr.datasets import kornia_transforms
+
+        transform = kornia_transforms._make_gaussian_blur({"blur_limit": 3, "sigma": (1.25, 1.5), "p": 0.3})
+
+        assert tuple(float(value) for value in transform._param_generator.sigma) == pytest.approx((1.25, 1.5))
+
+    def test_gauss_noise_std_default_matches_albumentations(self):
+        """An unspecified std_range must equal albumentations' GaussNoise std_range default."""
+        albumentations = pytest.importorskip("albumentations")
+
+        from rfdetr.datasets import kornia_transforms
+
+        cpu_default = tuple(albumentations.GaussNoise().std_range)
+        # Kornia takes a single std (the range's upper bound); the DEFAULT range must still
+        # be the albumentations one, so an unspecified config lands on the same upper bound.
+        transform = kornia_transforms._make_gauss_noise({"p": 0.3})
+        gpu_std = float(transform.flags["std"])
+
+        assert gpu_std == pytest.approx(cpu_default[1]), (
+            f"unspecified GaussNoise std is {gpu_std} on the GPU path but the CPU path "
+            f"samples up to {cpu_default[1]}, so the default upper bound is not aligned"
+        )
+
+    def test_default_gauss_noise_warns_because_the_default_range_is_non_degenerate(self):
+        """The albumentations default range is non-degenerate, so building with no std_range still emits the fixed-std
+        divergence warning rather than going silent."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_gauss_noise({"p": 0.3})
+
+        mock_warning.assert_called_once()

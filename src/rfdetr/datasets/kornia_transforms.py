@@ -481,8 +481,18 @@ def _make_gaussian_blur(params: dict[str, Any]) -> Any:
 
     # Shared with Blur: a (min, max) pair collapses to its upper bound, forced odd and >= 3.
     blur_limit = _as_odd_kernel(params.get("blur_limit", 3), "GaussianBlur")
-    # Match the CPU albumentations default sigma range while allowing an explicit override via config.
-    sigma_range = params.get("sigma", (0.1, 2.0))
+    if "sigma" in params:
+        sigma_range = params["sigma"]
+    else:
+        # The supported Albumentations range has version-dependent defaults. Read the installed CPU transform so a
+        # shared config stays aligned whenever both optional augmentation backends are available; otherwise retain
+        # Kornia's original default for GPU-only installations. AUG_INDUSTRIAL reaches this branch.
+        if AugmentationBackend.ALBU._is_available():
+            import albumentations
+
+            sigma_range = albumentations.GaussianBlur().sigma_limit
+        else:
+            sigma_range = (0.1, 2.0)
     blur_sigma = _as_range(sigma_range)
     return RandomGaussianBlur(
         kernel_size=(blur_limit, blur_limit),
@@ -500,7 +510,10 @@ def _make_gauss_noise(params: dict[str, Any]) -> Any:
     """
     from kornia.augmentation import RandomGaussianNoise
 
-    std_range = _as_range(params.get("std_range", (0.01, 0.05)))
+    # Default to the CPU (albumentations) GaussNoise std_range default, (0.2, 0.44), on the 0-1 image
+    # scale both backends use. Kornia still fixes its std at the upper bound, while the CPU path samples
+    # the range; the warning below makes that unavoidable distribution difference visible.
+    std_range = _as_range(params.get("std_range", (0.2, 0.44)))
     if std_range[0] != std_range[1]:
         logger.warning(
             "GPU augmentation (Kornia) uses fixed std=%.3f for GaussianNoise "
