@@ -2450,6 +2450,20 @@ class TestBatchedDetectionMatching:
 
         assert matcher._match_many([layer1, layer2], targets) is None
 
+    def test_match_many_declines_cross_layer_pred_logits_dtype_mismatch(self) -> None:
+        """Two layers with different logit dtypes must not share one stacked cost construction.
+
+        ``torch.cat`` promotes the logits when stacking, which subtly changes the focal classification cost for the
+        lower-precision layer. Declining preserves the established per-layer calculation instead of accepting an
+        assignment from mixed-precision arithmetic.
+        """
+        matcher = HungarianMatcher()
+        layer1, targets = _random_detection_batch(seed=419, sizes=[2, 3])
+        layer2, _ = _random_detection_batch(seed=420, sizes=[2, 3])
+        layer2["pred_logits"] = layer2["pred_logits"].double()
+
+        assert matcher._match_many([layer1, layer2], targets) is None
+
     def test_match_many_declines_cross_layer_pred_logits_device_mismatch(self) -> None:
         """Two otherwise-compatible layers with different ``pred_logits`` devices must decline batching.
 
@@ -2558,6 +2572,43 @@ class TestStackedCostConstruction:
         monkeypatch.setattr(torch, "cdist", spy)
 
         result = matcher._match_many([outputs, layer2], targets)
+
+        assert result is not None
+        assert len(calls) == expected_cdist_calls
+
+    @pytest.mark.parametrize(
+        ("layer_count", "expected_cdist_calls"),
+        [
+            pytest.param(5, 1, id="total-at-calibrated-limit-stacks-once"),
+            pytest.param(6, 6, id="total-over-calibrated-limit-loops-per-layer"),
+        ],
+    )
+    def test_element_limit_includes_layer_count(
+        self, monkeypatch: pytest.MonkeyPatch, layer_count: int, expected_cdist_calls: int
+    ) -> None:
+        """The stacked gate measures the full layer-folded padded matrix, not one layer.
+
+        Each layer contributes ``2 * 10 * 10 = 200`` padded elements. A 1,000-element calibration
+        therefore permits five layers but must decline six, which would allocate 1,200 elements in
+        the stacked pass. The production 350,000-element limit uses the same calculation.
+        """
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=617, sizes=[10, 10], num_queries=10)
+        layers = [outputs]
+        for seed in range(618, 617 + layer_count):
+            layer, _ = _random_detection_batch(seed=seed, sizes=[10, 10], num_queries=10)
+            layers.append(layer)
+        monkeypatch.setattr(matcher_module, "_STACKED_COST_ELEMENT_LIMIT", 1_000)
+        calls: list[int] = []
+        original = torch.cdist
+
+        def spy(x1: torch.Tensor, x2: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
+            calls.append(1)
+            return original(x1, x2, *args, **kwargs)
+
+        monkeypatch.setattr(torch, "cdist", spy)
+
+        result = matcher._match_many(layers, targets)
 
         assert result is not None
         assert len(calls) == expected_cdist_calls

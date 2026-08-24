@@ -17,15 +17,16 @@ Two properties of the dependency drive the design, both measured on an L4 at RF-
   1.15-1.37x SciPy (and 0.89-0.93x at 15-30 targets); 208 measured 2.0-2.5x; 624 measured ~5.9x.
   Splitting a step's problems across several calls therefore costs real throughput, so every
   problem in a step is padded to a common target count and solved in one call.
-* **The convenience wrapper synchronizes.** ``assignment_to_indices`` reads a CUDA bool in an
-  ``if``, calls ``.item()``, and runs ``nonzero``/``masked_select`` -- each a host-device stall,
-  measured at ~8 per call. Since the match count is known analytically, this module converts
-  assignments to index pairs with shape-static ops instead and pays a single fused transfer.
+* **The convenience wrapper has data-dependent device operations.** ``assignment_to_indices``
+  reads a CUDA bool in an ``if``, calls ``.item()``, and runs ``nonzero``/``masked_select``.
+  Those operations can stall the host. Since the match count is known analytically, this module
+  converts assignments to index pairs with shape-static ops and transfers both index tensors
+  together.
 
-Both together, plus vectorized host-side unpacking, measured 5.6x the SciPy host loop on an L4 at
-208 problems and 3-12 targets (1.49 ms against 8.32 ms), with 3 synchronizations rather than 33.
-The call is launch-bound rather than compute-bound at these sizes, which is why folding a whole
-step into one launch matters more than the size of any individual problem.
+Retained benchmarks characterize elapsed time but do not preserve a per-operation trace that
+proves a synchronization count. This module therefore makes no exact synchronization claim; the
+call structure keeps a whole step together because the solver's throughput depends on its batch
+size.
 
 Backend selection is deliberately *not* re-implemented here: the dependency owns that policy (its
 Triton CUDA kernel on Linux NVIDIA compute capability >= 8.0 with Torch >= 2.4, SciPy on everything
@@ -49,11 +50,11 @@ from torch import Tensor
 def _solve_to_indices(stacked: Tensor, num_matches: int) -> tuple[Tensor, Tensor]:
     """Solve a uniform batch of problems and return host-side index pairs.
 
-    Converts the solver's per-row assignment into ``(rows, cols)`` without any data-dependent
-    device op: ``num_matches`` is known by construction, and a stable descending sort of the
-    matched mask lists the matched rows in ascending order, which is what ``nonzero`` would have
-    produced at the cost of a synchronization. The two index tensors cross the device boundary
-    together as one transfer.
+    Converts the solver's per-row assignment into ``(rows, cols)`` with shape-static operations:
+    ``num_matches`` is known by construction, and a stable descending sort of the matched mask
+    lists the matched rows in ascending order. The two index tensors transfer together. This helper
+    does not claim whether that transfer, ``nonzero``, or solver internals synchronize because no
+    per-operation trace is retained.
 
     Args:
         stacked: ``[num_problems, group_width, targets]`` costs, all problems the same shape.
@@ -70,9 +71,9 @@ def _solve_to_indices(stacked: Tensor, num_matches: int) -> tuple[Tensor, Tensor
     """
     # Optional-dependency boundary: see the module docstring -- importing this at module scope
     # would break `import rfdetr` for inference-only installs, which never reach this function.
-    from torch_linear_assignment import batch_linear_assignment  # type: ignore[import-untyped,unused-ignore]
+    import torch_linear_assignment  # type: ignore[import-not-found,import-untyped,unused-ignore]
 
-    assignment = batch_linear_assignment(stacked)
+    assignment = torch_linear_assignment.batch_linear_assignment(stacked)
     matched = assignment >= 0
     # Stable + descending puts every matched column first while preserving ascending row order.
     order = torch.argsort(matched.to(torch.int8), dim=1, descending=True, stable=True)

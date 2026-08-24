@@ -39,8 +39,8 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 _SANITIZED_COST_MARGIN = 1.0
 _FOCAL_LOSS_GAMMA = 2.0
-#: Per-layer padded cost-matrix element budget (``batch * queries * max_targets``) under which
-#: ``_match_many`` folds all layers into one stacked cost-construction pass. Calibrated on an
+#: Total padded cost-matrix element budget (``layers * batch * queries * max_targets``) under
+#: which ``_match_many`` folds all layers into one stacked cost-construction pass. Calibrated on an
 #: NVIDIA L4 (plan-native-linear-assignment.md, M2 results): stacking wins 1.45-5.8x up to ~312K
 #: elements but regresses to 0.79-1.03x from ~468K, so the budget sits between those points.
 _STACKED_COST_ELEMENT_LIMIT = 350_000
@@ -532,8 +532,8 @@ class HungarianMatcher(nn.Module):
             ``list[list[tuple[Tensor, Tensor]]] | None`` containing per-image assignments for each
             layer, or ``None``. ``None`` is the decline contract: the caller MUST execute the
             per-layer fallback. A decline is all-or-nothing and can only be detected after every
-            layer's cost matrix has been built, since the safety predicates are reduced together to
-            keep the whole batch down to one synchronization — so a single layer with non-finite
+            layer's cost matrix has been built. The reduced safety gate performs one explicit host
+            read; solver internals may synchronize separately, so a single layer with non-finite
             ``pred_boxes`` or a failed safety flag discards the work done for all of them and pays
             for the sequential redo on top.
         """
@@ -543,10 +543,12 @@ class HungarianMatcher(nn.Module):
             return None
 
         reference_boxes = outputs_list[0]["pred_boxes"]
-        reference_classes = outputs_list[0]["pred_logits"].shape[-1]
+        reference_logits = outputs_list[0]["pred_logits"]
+        reference_classes = reference_logits.shape[-1]
         if any(
             outputs["pred_boxes"].dtype != reference_boxes.dtype
             or outputs["pred_boxes"].device != reference_boxes.device
+            or outputs["pred_logits"].dtype != reference_logits.dtype
             or outputs["pred_logits"].device != reference_boxes.device
             or outputs["pred_logits"].shape[-1] != reference_classes
             for outputs in outputs_list[1:]
@@ -580,23 +582,22 @@ class HungarianMatcher(nn.Module):
             return None
 
         coordinate_limit = torch.finfo(reference_boxes.dtype).max ** 0.5 / 16
-        # Stacked cost construction holds every layer's padded matrix at once, so it is gated to
-        # small padded shapes where the L4 calibration measured launch-bound wins; dense
-        # compute-bound batches measured 0.79-1.03x stacked and keep the per-layer loop. Layers with
-        # differing query counts cannot fold into one batch dimension and also keep the loop.
+        # Stacked cost construction holds the full layer-folded padded matrix at once, so it is
+        # gated to small total shapes where the L4 calibration measured launch-bound wins; dense
+        # compute-bound batches measured 0.79-1.03x stacked and keep the per-layer loop. Layers
+        # with differing query counts cannot fold into one batch dimension and also keep the loop.
         query_counts = {outputs["pred_logits"].shape[1] for outputs in outputs_list}
         stacked_cost_matrices = None
         if (
             len(query_counts) == 1
-            and len(targets) * next(iter(query_counts)) * max(sizes) <= _STACKED_COST_ELEMENT_LIMIT
+            and len(outputs_list) * len(targets) * next(iter(query_counts)) * max(sizes) <= _STACKED_COST_ELEMENT_LIMIT
         ):
             stacked_cost_matrices = self._compute_stacked_compact_cost_matrices(outputs_list, targets)
 
         cost_matrices: list[Tensor] = []
-        # Every layer's safety predicate stays an unsynced 0-d tensor and is reduced together with
-        # every other layer's below, so the whole matcher batch still costs exactly one
-        # synchronization however many layers it holds — the property the previous pinned-buffer
-        # design carried by appending a safety row to each layer's transferred payload.
+        # Every layer's safety predicate stays an unsynced 0-d tensor and is reduced together
+        # below, so the safety gate reads one scalar regardless of layer count. Solver internals
+        # may add their own device synchronization and are not implied by this reduction.
         safety_flags: list[Tensor] = [target_safe]
         for layer_index, outputs in enumerate(outputs_list):
             pred_boxes = outputs["pred_boxes"]
@@ -610,7 +611,7 @@ class HungarianMatcher(nn.Module):
             cost_matrices.append(cost_matrix)
             safety_flags.append(torch.isfinite(cost_matrix).all())
 
-        # The single synchronization for the whole batch.
+        # The safety gate's single host read for the whole batch.
         if not bool(torch.stack(safety_flags).all()):
             return None
         # Same device-based solver choice as `forward`: on CUDA the batched solver wins by a wide
