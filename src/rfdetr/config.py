@@ -54,11 +54,11 @@ _LEGACY_AUGMENTATION_BACKEND_ALIASES: Dict[str, str] = {
 }
 
 
-#: Import probe per augmentation backend value — the module whose importability decides that backend's
-#: availability. A backend absent from this mapping needs no probe (its packages are hard dependencies).
+#: Import probe per augmentation backend value — the module whose importability decides that backend's availability.
 _AUGMENTATION_BACKEND_PROBE_MODULES: Dict[str, str] = {
     "albumentations": "albumentations",
     "kornia": "kornia.augmentation",
+    "torchvision": "torchvision.transforms.v2",
 }
 
 
@@ -153,10 +153,10 @@ class AugmentationBackend(str, Enum):
     def _is_available(self) -> bool:
         """Return ``True`` when this backend's package is importable.
 
-        ``TV`` always reports available: torchvision is a hard (non-optional) RF-DETR dependency, so it has no
-        entry in :data:`_AUGMENTATION_BACKEND_PROBE_MODULES` and needs no probe. ``ALBU`` and ``KORNIA`` are
-        optional extras (``pip install 'rfdetr[augment]'``) and are probed lazily, on first call rather than at
-        ``import rfdetr`` time, so importing RF-DETR never drags in Albumentations or Kornia.
+        Every backend is probed lazily, on first call rather than at ``import rfdetr`` time. ``ALBU`` and ``KORNIA``
+        are optional extras (``pip install 'rfdetr[augment]'``); ``TV`` is a required RF-DETR dependency. Probing all
+        three keeps the availability contract consistent and verifies the ``torchvision.transforms.v2`` API RF-DETR
+        uses is importable.
 
         The underlying probe is cached for the process lifetime (see :func:`_package_importable`). Tests that
         need to simulate "not installed" must patch **this method**, never ``_package_importable`` or the import
@@ -169,8 +169,7 @@ class AugmentationBackend(str, Enum):
         Returns:
             ``True`` if this backend can be used in the current environment.
         """
-        probe = _AUGMENTATION_BACKEND_PROBE_MODULES.get(self.value)
-        return probe is None or _package_importable(probe)
+        return _package_importable(_AUGMENTATION_BACKEND_PROBE_MODULES[self.value])
 
 
 class PretrainWeightsCompatibilityWarning(UserWarning):
