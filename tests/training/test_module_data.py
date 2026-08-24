@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.datasets.yolo import YoloDetection, YoloSplitUnavailableError
 from rfdetr.training.module_data import RFDETRDataModule
-from rfdetr.utilities.tensors import NestedTensor
+from rfdetr.utilities.tensors import NestedTensor, PackedTargets, pack_targets
 
 # ---------------------------------------------------------------------------
 # Private helpers — used by both module-level fixtures and class-level _setup_*
@@ -835,6 +835,56 @@ class TestTrainDataloader:
         assert len(loader.dataset) % (2 * 4 * 3) == 0
         assert len(loader.dataset) == 120
 
+    @staticmethod
+    def _raw_sample(h: int = 16, w: int = 16) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Build one (image, target) pair as a dataset __getitem__ would return it, for collate_fn input.
+
+        Examples:
+            >>> image, target = TestTrainDataloader._raw_sample()
+            >>> image.shape, sorted(target)
+            (torch.Size([3, 16, 16]), ['boxes', 'image_id', 'labels', 'orig_size'])
+        """
+        image = torch.randn(3, h, w)
+        target = {
+            "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
+            "labels": torch.tensor([1]),
+            "image_id": torch.tensor(0),
+            "orig_size": torch.tensor([h, w]),
+        }
+        return image, target
+
+    @pytest.mark.parametrize(
+        ("loader_name", "dataset_attribute"),
+        [
+            pytest.param("train_dataloader", "_dataset_train", id="train"),
+            pytest.param("val_dataloader", "_dataset_val", id="validation"),
+            pytest.param("test_dataloader", "_dataset_test", id="test"),
+            pytest.param("predict_dataloader", "_dataset_val", id="predict"),
+        ],
+    )
+    def test_pack_targets_default_makes_every_loader_collate_packed_targets(
+        self, tmp_path, loader_name, dataset_attribute
+    ):
+        """The default must make each public DataLoader's collate function return PackedTargets."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path))
+        setattr(dm, dataset_attribute, _fake_dataset(200))
+
+        loader = getattr(dm, loader_name)()
+        _, targets = loader.collate_fn([self._raw_sample(), self._raw_sample()])
+
+        assert isinstance(targets, PackedTargets)
+
+    def test_pack_targets_false_keeps_collate_fn_output_a_tuple_of_dicts(self, tmp_path):
+        """An explicit TrainConfig.pack_targets=False leaves train_dataloader().collate_fn output unpacked."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, pack_targets=False))
+        dm._dataset_train = _fake_dataset(200)
+
+        loader = dm.train_dataloader()
+        _, targets = loader.collate_fn([self._raw_sample(), self._raw_sample()])
+
+        assert not isinstance(targets, PackedTargets)
+        assert all(isinstance(t, dict) for t in targets)
+
 
 class TestGradAccumAlignedDataset:
     """Unit tests for the GradAccumAlignedDataset wrapper."""
@@ -1250,6 +1300,30 @@ class TestTransferBatchToDevice:
         result_samples, _ = dm.transfer_batch_to_device((samples, targets), torch.device("cpu"), dataloader_idx=0)
 
         assert isinstance(result_samples, NestedTensor)
+
+    def test_packed_targets_are_unpacked_to_a_plain_list_on_target_device(self, fixture_training_setup):
+        """When the collate_fn packed targets (``TrainConfig.pack_targets=True``), transfer_batch_to_device must
+        still hand downstream code the same plain per-sample dict list the unpacked path returns, on the target
+        device -- not a ``PackedTargets``. ``on_after_batch_transfer`` mutates target dicts by key reassignment,
+        and ``PackedTargets.__getitem__``/iteration rebuilds a fresh dict on every access, so a reassignment into
+        an un-materialised ``PackedTargets`` would silently vanish on the next access."""
+        _, _, dm = fixture_training_setup
+        samples, plain_targets = _make_batch()
+        packed_targets = pack_targets(plain_targets)
+        assert isinstance(packed_targets, PackedTargets)
+        device = torch.device("cpu")
+
+        _, result_targets = dm.transfer_batch_to_device((samples, packed_targets), device, dataloader_idx=0)
+
+        assert isinstance(result_targets, list)
+        assert not isinstance(result_targets, PackedTargets)
+        for t in result_targets:
+            assert isinstance(t, dict)
+            for v in t.values():
+                assert v.device == device
+        for original, rebuilt in zip(plain_targets, result_targets):
+            for key, value in original.items():
+                assert torch.equal(rebuilt[key], value)
 
 
 # ---------------------------------------------------------------------------
