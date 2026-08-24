@@ -26,7 +26,8 @@ def freshly_imported_shim() -> ModuleType:
     before importing.
     """
     sys.modules.pop("rfdetr.datasets.aug_config", None)
-    return importlib.import_module("rfdetr.datasets.aug_config")
+    with pytest.warns(FutureWarning):
+        return importlib.import_module("rfdetr.datasets.aug_config")
 
 
 class TestAugConfigShim:
