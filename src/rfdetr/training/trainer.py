@@ -723,6 +723,7 @@ def build_trainer(
             segmentation=model_config.segmentation_head,
             eval_interval=tc.eval_interval,
             log_per_class_metrics=tc.log_per_class_metrics,
+            eval_backend=tc.eval_backend,
             keypoint_oks_sigmas=tc.keypoint_oks_sigmas,
             eval_base_model=tc.eval_base_model,
         )

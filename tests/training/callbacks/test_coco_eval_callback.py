@@ -15,7 +15,7 @@ import torch
 
 from rfdetr.evaluation.matching import build_matching_data, merge_matching_data
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
-from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision
+from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _HotCocoBackend
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -145,6 +145,28 @@ class TestSetup:
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         assert cb.map_metric.class_metrics is False
         assert cb.map_metric_train.class_metrics is False
+
+    def test_eval_backend_reaches_every_metric(self) -> None:
+        """The configured evaluation backend must reach the validation and train-split metrics alike.
+
+        The backend is chosen once in ``TrainConfig`` but instantiated three times, and the EMA metric is built by a
+        separate method that re-lists its keyword arguments by hand, so a missed call site would silently evaluate part
+        of a run on the other backend.
+        """
+        cb = COCOEvalCallback(eval_backend="faster_coco_eval")
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        with patch.object(cb, "_get_ema_callback", return_value=MagicMock()):
+            cb._prepare_ema_metric(_make_trainer())
+
+        assert cb.map_metric_ema is not None, "EMA metric must exist or this asserts nothing"
+        for metric in (cb.map_metric, cb.map_metric_train, cb.map_metric_ema):
+            assert not isinstance(metric._coco_backend, _HotCocoBackend)
+
+    def test_eval_backend_defaults_to_hotcoco(self) -> None:
+        """Omitting the backend must select hotcoco, which is what makes evaluation fast by default."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        assert isinstance(cb.map_metric._coco_backend, _HotCocoBackend)
 
     def test_log_per_class_metrics_default_keeps_class_metrics_compute(self) -> None:
         """Default log_per_class_metrics=True keeps per-class AP computation on for both metrics.

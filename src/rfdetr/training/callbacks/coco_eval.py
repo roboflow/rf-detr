@@ -13,7 +13,7 @@ import io
 import logging
 import warnings
 from collections.abc import Callable, Mapping
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 import torch
@@ -137,6 +137,9 @@ class COCOEvalCallback(Callback):
             always computed when ``trainer.test()`` is called.
         log_per_class_metrics: When ``False``, skip per-class AP computation
             (``MeanAveragePrecision(class_metrics=False)``) as well as the per-class logging/table.
+        eval_backend: COCO evaluation backend, mirroring :attr:`~rfdetr.config.TrainConfig.eval_backend`. Both
+            backends return identical metrics; ``"hotcoco"`` is the faster default and ``"faster_coco_eval"`` is
+            the previous evaluator.
         eval_ema_only: Deprecated compatibility flag from the pre-1.10 callback API. When explicitly supplied,
             ``True`` selects EMA-only evaluation and ``False`` selects base-plus-EMA evaluation, preserving the old
             keyword and positional behavior. Omit it for the new default.
@@ -154,6 +157,7 @@ class COCOEvalCallback(Callback):
         segmentation: bool = False,
         eval_interval: int = 1,
         log_per_class_metrics: bool = True,
+        eval_backend: Literal["hotcoco", "faster_coco_eval"] = "hotcoco",
         keypoint_oks_sigmas: list[float] | None = None,
         in_notebook: bool | None = None,
         eval_ema_only: bool | None = None,
@@ -164,6 +168,7 @@ class COCOEvalCallback(Callback):
         self._segmentation = segmentation
         self._eval_interval = max(1, int(eval_interval))
         self._log_per_class_metrics = bool(log_per_class_metrics)
+        self._eval_backend = eval_backend
         if eval_ema_only is not None:
             warnings.warn(
                 "COCOEvalCallback.eval_ema_only is deprecated; use eval_base_model to opt into base-model evaluation.",
@@ -227,7 +232,7 @@ class COCOEvalCallback(Callback):
             # `all_gather`, then compute() runs locally on the full set.
             sync_on_compute=False,
         )
-        kwargs["backend"] = "faster_coco_eval"
+        kwargs["backend"] = self._eval_backend
         self.map_metric = OnePassCocoMeanAveragePrecision(iou_type=iou_type, **kwargs)
         self.map_metric_train = OnePassCocoMeanAveragePrecision(iou_type=iou_type, **kwargs)
         # Separate metric for the EMA model.  Created deterministically on EVERY rank in
@@ -975,7 +980,7 @@ class COCOEvalCallback(Callback):
                 iou_type=ema_iou_type,
                 class_metrics=self._log_per_class_metrics,
                 max_detection_thresholds=[1, 10, self._max_dets],
-                backend="faster_coco_eval",
+                backend=self._eval_backend,
                 sync_on_compute=False,  # we merge state across ranks ourselves (see map_metric in setup)
             )
         else:
