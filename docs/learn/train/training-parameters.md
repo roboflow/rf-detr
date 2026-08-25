@@ -301,7 +301,7 @@ The parameters below are available for fine-grained control over training behavi
 | `prefetch_factor`    | `int`  | `None`  | Number of batches to prefetch per DataLoader worker. `None` uses PyTorch's built-in default.                             |
 | `pack_targets`       | `bool` | `True`  | Concatenate target dicts before crossing the DataLoader worker boundary. See the contract below; set `False` to opt out. |
 
-With `pack_targets=True`, train, validation, test, and predict loaders yield batches whose target element is `PackedTargets` whenever packing is lossless. The Lightning `transfer_batch_to_device` hook accepts those batches or an unpacked tuple of target dicts. It moves packed fields to the target device, then materializes them into the same plain per-sample dict list that training, validation, test, and prediction hooks receive on the unpacked path. Batches that cannot be packed losslessly retain their original tuple of dicts.
+With `pack_targets=True`, train, validation, test, and predict loaders yield batches whose target element is `PackedTargets` whenever packing is lossless. The Lightning `transfer_batch_to_device` hook accepts those batches or an unpacked tuple of target dicts. It materializes each packed field directly into its own independently owned per-sample tensor on the target device, producing the same plain per-sample dict list that training, validation, test, and prediction hooks receive on the unpacked path. Batches that cannot be packed losslessly retain their original tuple of dicts.
 
 ## Complete Parameter Reference
 
