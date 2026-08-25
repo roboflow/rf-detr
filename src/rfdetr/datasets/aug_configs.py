@@ -34,8 +34,8 @@ model.train(dataset_dir="...", aug_config={"HorizontalFlip": {"p": 0.5}})
 
 ## Transform Categories
 
-**Geometric transforms** (automatically transform bounding boxes):
-- Flips: HorizontalFlip, VerticalFlip
+**Geometric transforms** (automatically transform bounding boxes; this representative list is not exhaustive):
+- Flips and square symmetries: HorizontalFlip, TimeReverse, VerticalFlip, D4, SquareSymmetry
 - Rotations: Rotate, Affine, ShiftScaleRotate
 - Crops: RandomCrop, CenterCrop, RandomResizedCrop
 - Perspective: Perspective, ElasticTransform, GridDistortion
@@ -49,9 +49,12 @@ model.train(dataset_dir="...", aug_config={"HorizontalFlip": {"p": 0.5}})
 
 1. **Start conservative**: Use moderate probabilities (p=0.3-0.5) and small parameter ranges
 2. **Geometric caution**: Extreme rotations (>45°) or crops may remove too many boxes
-3. **Performance**: Fewer transforms = faster training; prioritize transforms that match your domain
-4. **Validation**: Monitor validation mAP - excessive augmentation can hurt performance
-5. **Domain-specific**: Enable augmentations that reflect real-world variations in your data
+3. **Keypoint safety**: Keypoint pipelines with an empty `keypoint_flip_pairs` list disable
+   all horizontal-flip-capable aliases, including `TimeReverse`, `D4`, and `SquareSymmetry`;
+   provide left/right pairs to retain them.
+4. **Performance**: Fewer transforms = faster training; prioritize transforms that match your domain
+5. **Validation**: Monitor validation mAP - excessive augmentation can hurt performance
+6. **Domain-specific**: Enable augmentations that reflect real-world variations in your data
 
 ## Adding Custom Transforms
 
@@ -81,7 +84,7 @@ or torchvision defaults. Install it with ``pip install 'rfdetr[augment]'``.
 | ``ColorJitter`` | ``K.ColorJiggle`` | Same multiplicative semantics |
 | ``ToGray`` | ``K.RandomGrayscale`` | Grayscale, 3 channels; only ``p`` honored, method/num_output_channels ignored |
 | ``RandomBrightnessContrast`` | ``K.ColorJiggle`` | ``brightness_limit`` / ``contrast_limit`` direct |
-| ``GaussianBlur`` | ``K.RandomGaussianBlur`` | ``blur_limit`` rounded up to odd; ``sigma=(0.1, 2.0)`` |
+| ``GaussianBlur`` | ``K.RandomGaussianBlur`` | ``blur_limit`` rounded up to odd; ``sigma`` mirrors Albumentations |
 | ``GaussNoise`` | ``K.RandomGaussianNoise`` | Upper bound of ``std_range`` used as fixed std |
 | ``Blur`` | ``K.RandomBoxBlur`` | Box blur; ``blur_limit`` rounded up to odd, pair collapses to its upper bound |
 | ``Sharpen`` | ``K.RandomSharpness`` | ``sharpness = 1.0 + alpha`` (1.0-pivoted); ``lightness``/``method`` ignored |

@@ -30,6 +30,7 @@ from scipy.optimize import linear_sum_assignment as _linear_sum_assignment  # ty
 from torch import Tensor, nn
 from torch.nn.utils.rnn import pad_sequence
 
+from rfdetr.models import _assignment
 from rfdetr.models.heads.keypoints import compute_keypoint_matching_cost
 from rfdetr.models.heads.segmentation import point_sample
 from rfdetr.utilities.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
@@ -38,6 +39,11 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 _SANITIZED_COST_MARGIN = 1.0
 _FOCAL_LOSS_GAMMA = 2.0
+#: Total padded cost-matrix element budget (``layers * batch * queries * max_targets``) under
+#: which ``_match_many`` folds all layers into one stacked cost-construction pass. Calibrated on an
+#: NVIDIA L4 (plan-native-linear-assignment.md, M2 results): stacking wins 1.45-5.8x up to ~312K
+#: elements but regresses to 0.79-1.03x from ~468K, so the budget sits between those points.
+_STACKED_COST_ELEMENT_LIMIT = 350_000
 _LinearSumAssignment = Callable[[Any], tuple[NDArray[np.int64], NDArray[np.int64]]]
 linear_sum_assignment = cast(_LinearSumAssignment, _linear_sum_assignment)
 
@@ -447,6 +453,55 @@ class HungarianMatcher(nn.Module):
             dim=-1,
         )
 
+    def _compute_stacked_compact_cost_matrices(
+        self, outputs_list: list[dict[str, Any]], targets: list[dict[str, Any]]
+    ) -> list[Tensor]:
+        """Compute every layer's compact detection cost matrix in one stacked pass.
+
+        Folds the layer dimension into the batch dimension and reuses
+        :meth:`_compute_compact_detection_cost_matrix` on the concatenation, so target padding, the
+        class gather, ``cdist``, and the vmapped GIoU each launch once for all layers instead of
+        once per layer. The concatenated call sees ``len(outputs_list) * len(targets)`` images
+        whose per-image target counts repeat layer-major, so its output columns are each layer's
+        compact matrix laid side by side. Slicing them apart reproduces the per-layer results within
+        floating-point tolerance; only the kernel-launch count changes.
+
+        Callers must guarantee every layer shares the prediction query count (dtype, device, and
+        class count are already enforced by :meth:`_match_many`). Target labels are clamped exactly
+        as :meth:`_match_many`'s per-layer calls do.
+
+        Examples:
+            >>> matcher = HungarianMatcher()
+            >>> outputs = {"pred_logits": torch.zeros(2, 4, 5), "pred_boxes": torch.rand(2, 4, 4)}
+            >>> targets = [
+            ...     {"boxes": torch.rand(1, 4), "labels": torch.tensor([0])},
+            ...     {"boxes": torch.rand(2, 4), "labels": torch.tensor([1, 2])},
+            ... ]
+            >>> [m.shape for m in matcher._compute_stacked_compact_cost_matrices([outputs, outputs], targets)]
+            [torch.Size([4, 3]), torch.Size([4, 3])]
+
+        Args:
+            outputs_list: Per-layer detection outputs with identical ``pred_logits``/``pred_boxes``
+                shapes.
+            targets: Per-image target dicts shared by every layer.
+
+        Returns:
+            One ``[num_queries, sum(sizes)]`` cost matrix per layer, in ``outputs_list`` order,
+            each a column slice of the single stacked computation.
+        """
+        stacked_outputs = {
+            "pred_logits": torch.cat([outputs["pred_logits"] for outputs in outputs_list]),
+            "pred_boxes": torch.cat([outputs["pred_boxes"] for outputs in outputs_list]),
+        }
+        stacked_matrix = self._compute_compact_detection_cost_matrix(
+            stacked_outputs, targets * len(outputs_list), clamp_target_labels=True
+        )
+        total_targets = sum(len(target["boxes"]) for target in targets)
+        return [
+            stacked_matrix[:, offset : offset + total_targets]
+            for offset in range(0, stacked_matrix.shape[1], total_targets)
+        ]
+
     @torch.no_grad()
     def _match_many(
         self,
@@ -455,11 +510,15 @@ class HungarianMatcher(nn.Module):
         group_detr: int = 1,
         target_side_safety: _TargetSideSafety | None = None,
     ) -> list[list[tuple[Tensor, Tensor]]] | None:
-        """Batch compatible detection matchers into one host transfer, or decline to preserve fallback behavior.
+        """Solve every compatible detection layer in one batched pass, or decline to preserve fallback behavior.
 
         This private fast path is used only by ``SetCriterion`` for final, auxiliary, and encoder outputs from one
         training step. It leaves unusual input shapes and unsafe values to :meth:`forward`, whose full-cartesian
         fallback carries the established error and non-finite-cost behavior.
+
+        Every layer's cost matrix is built and left on its own device, then all of them are handed to
+        :func:`~rfdetr.models._assignment.assign_many_bucketed`, which groups same-shaped problems across layers so the
+        solver sees far more work per call than any single layer could supply.
 
         Args:
             outputs_list: Detection outputs for the final, auxiliary, and encoder layers to match
@@ -472,12 +531,11 @@ class HungarianMatcher(nn.Module):
         Returns:
             ``list[list[tuple[Tensor, Tensor]]] | None`` containing per-image assignments for each
             layer, or ``None``. ``None`` is the decline contract: the caller MUST execute the
-            per-layer fallback. A decline can occur after all L compact matrices are built,
-            staged into one host buffer, and transferred when the final loop finds a layer with
-            non-finite ``pred_boxes`` or a bad safety flag. This post-transfer decline costs
-            approximately 1.8x the pre-batching per-layer cost: a measured NaN in one of 7 layers
-            took 182% of the pre-PR matcher time (6.97 ms of wasted ``_match_many`` work plus
-            8.51 ms of sequential redo).
+            per-layer fallback. A decline is all-or-nothing and can only be detected after every
+            layer's cost matrix has been built. The reduced safety gate performs one explicit host
+            read; solver internals may synchronize separately, so a single layer with non-finite
+            ``pred_boxes`` or a failed safety flag discards the work done for all of them and pays
+            for the sequential redo on top.
         """
         if len(outputs_list) < 2 or not all(
             self._compact_path_applicable(outputs, targets) for outputs in outputs_list
@@ -485,10 +543,12 @@ class HungarianMatcher(nn.Module):
             return None
 
         reference_boxes = outputs_list[0]["pred_boxes"]
-        reference_classes = outputs_list[0]["pred_logits"].shape[-1]
+        reference_logits = outputs_list[0]["pred_logits"]
+        reference_classes = reference_logits.shape[-1]
         if any(
             outputs["pred_boxes"].dtype != reference_boxes.dtype
             or outputs["pred_boxes"].device != reference_boxes.device
+            or outputs["pred_logits"].dtype != reference_logits.dtype
             or outputs["pred_logits"].device != reference_boxes.device
             or outputs["pred_logits"].shape[-1] != reference_classes
             for outputs in outputs_list[1:]
@@ -522,54 +582,45 @@ class HungarianMatcher(nn.Module):
             return None
 
         coordinate_limit = torch.finfo(reference_boxes.dtype).max ** 0.5 / 16
-        # Every layer's payload is its queries plus one safety row, so all shapes — and therefore the
-        # whole flattened size and each layer's offset within it — are known before a single cost
-        # matrix exists. That lets the host buffer be allocated once and each layer be staged straight
-        # into its own slice, so only the layer being built is resident on the device. Accumulating the
-        # payloads for a closing `torch.cat` instead held all L matrices at once and then allocated a
-        # second full copy of them before the first was freed, roughly doubling peak device memory
-        # along the same group_detr/batch/crowd-density axes that push this batch toward OOM.
-        matrix_shapes = [(outputs["pred_logits"].shape[1] + 1, total_targets) for outputs in outputs_list]
-        # `_compute_compact_detection_cost_matrix` results are cast to float32 below, so the shared
-        # buffer is allocated for that dtype rather than the (possibly half) prediction dtype.
-        on_cuda = reference_boxes.is_cuda
-        cpu_payload = torch.empty(
-            sum(rows * columns for rows, columns in matrix_shapes),
-            dtype=torch.float32,
-            device="cpu",
-            pin_memory=on_cuda,
-        )
-        offset = 0
-        for outputs, matrix_shape in zip(outputs_list, matrix_shapes):
-            pred_boxes = outputs["pred_boxes"]
-            pred_safe = torch.isfinite(pred_boxes).all() & (pred_boxes.abs() <= coordinate_limit).all()
-            cost_matrix = self._compute_compact_detection_cost_matrix(
-                outputs, targets, clamp_target_labels=True
-            ).float()
-            # The final row carries the unsynced safety predicate with its layer's cost matrix, so the
-            # complete matcher batch still needs only one synchronization however many layers it holds.
-            payload = torch.cat([cost_matrix, (target_safe & pred_safe).to(cost_matrix.dtype).expand(1, total_targets)])
-            matrix_size = matrix_shape[0] * matrix_shape[1]
-            # A slice of a pinned buffer is itself pinned, so this copy stays asynchronous; the layer's
-            # device payload is released as the next iteration rebinds it, while the copy remains in
-            # flight under the stream-ordered caching allocator.
-            cpu_payload[offset : offset + matrix_size].copy_(payload.flatten(), non_blocking=on_cuda)
-            offset += matrix_size
-        if on_cuda:
-            # One synchronization for the whole batch, after every layer's copy has been issued.
-            torch.cuda.current_stream(reference_boxes.device).synchronize()
+        # Stacked cost construction holds the full layer-folded padded matrix at once, so it is
+        # gated to small total shapes where the L4 calibration measured launch-bound wins; dense
+        # compute-bound batches measured 0.79-1.03x stacked and keep the per-layer loop. Layers
+        # with differing query counts cannot fold into one batch dimension and also keep the loop.
+        query_counts = {outputs["pred_logits"].shape[1] for outputs in outputs_list}
+        stacked_cost_matrices = None
+        if (
+            len(query_counts) == 1
+            and len(outputs_list) * len(targets) * next(iter(query_counts)) * max(sizes) <= _STACKED_COST_ELEMENT_LIMIT
+        ):
+            stacked_cost_matrices = self._compute_stacked_compact_cost_matrices(outputs_list, targets)
 
-        all_indices: list[list[tuple[Tensor, Tensor]]] = []
-        offset = 0
-        for matrix_shape in matrix_shapes:
-            matrix_size = matrix_shape[0] * matrix_shape[1]
-            payload = cpu_payload[offset : offset + matrix_size].view(matrix_shape)
-            offset += matrix_size
-            cost_matrix = payload[:-1]
-            if not bool(payload[-1, 0]) or not bool(torch.isfinite(cost_matrix).all()):
-                return None
-            all_indices.append(self._assign_compact_cost_matrix(cost_matrix, sizes, group_detr))
-        return all_indices
+        cost_matrices: list[Tensor] = []
+        # Every layer's safety predicate stays an unsynced 0-d tensor and is reduced together
+        # below, so the safety gate reads one scalar regardless of layer count. Solver internals
+        # may add their own device synchronization and are not implied by this reduction.
+        safety_flags: list[Tensor] = [target_safe]
+        for layer_index, outputs in enumerate(outputs_list):
+            pred_boxes = outputs["pred_boxes"]
+            safety_flags.append(torch.isfinite(pred_boxes).all() & (pred_boxes.abs() <= coordinate_limit).all())
+            if stacked_cost_matrices is None:
+                cost_matrix = self._compute_compact_detection_cost_matrix(
+                    outputs, targets, clamp_target_labels=True
+                ).float()
+            else:
+                cost_matrix = stacked_cost_matrices[layer_index].float()
+            cost_matrices.append(cost_matrix)
+            safety_flags.append(torch.isfinite(cost_matrix).all())
+
+        # The safety gate's single host read for the whole batch.
+        if not bool(torch.stack(safety_flags).all()):
+            return None
+        # Same device-based solver choice as `forward`: on CUDA the batched solver wins by a wide
+        # margin at this path's problem counts (layers x batch x groups), while off CUDA it resolves
+        # to the same SciPy solve behind extra bookkeeping, so the host loop stays faster. Moving to
+        # the host also keeps MPS working, since SciPy cannot read a tensor that is not on the host.
+        if reference_boxes.is_cuda:
+            return _assignment.assign_many_bucketed(cost_matrices, sizes, group_detr)
+        return [self._assign_compact_cost_matrix(cost_matrix.cpu(), sizes, group_detr) for cost_matrix in cost_matrices]
 
     @staticmethod
     def _assign_compact_cost_matrix(
@@ -662,9 +713,19 @@ class HungarianMatcher(nn.Module):
             outputs, targets, target_side_safety
         )
         if compact_eligible:
-            compact_cost_matrix = self._compute_compact_detection_cost_matrix(outputs, targets).float().cpu()
+            sizes = [len(target["boxes"]) for target in targets]
+            compact_cost_matrix = self._compute_compact_detection_cost_matrix(outputs, targets).float()
+            # Solver choice is by device, not by problem count: the batched solver's Triton kernel
+            # beats SciPy on CUDA from roughly 16 problems upward, and this path's smallest real
+            # batch already supplies `len(sizes) * group_detr` >= 26 with the default `group_detr`.
+            # Off CUDA the same call resolves to SciPy anyway, only behind extra stacking and
+            # gather bookkeeping, so the host solve stays faster there. The move to host also keeps
+            # MPS working, since SciPy cannot read a tensor that is not on the host.
+            if not compact_cost_matrix.is_cuda:
+                compact_cost_matrix = compact_cost_matrix.cpu()
             if torch.isfinite(compact_cost_matrix).all():
-                sizes = [len(target["boxes"]) for target in targets]
+                if compact_cost_matrix.is_cuda:
+                    return _assignment.assign_many_bucketed([compact_cost_matrix], sizes, group_detr)[0]
                 return self._assign_compact_cost_matrix(compact_cost_matrix, sizes, group_detr)
             # Weighted costs overflowed despite finite, bounded inputs (e.g. an extreme cost
             # coefficient) — fall through to the full path below instead of sanitizing the padded

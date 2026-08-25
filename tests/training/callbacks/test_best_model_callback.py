@@ -365,8 +365,74 @@ class _SanityCheckEndProbe(Callback):
 # ---------------------------------------------------------------------------
 
 
+class TestEvaluatesBaseModel:
+    """Regular-track behaviour when validation does not evaluate the base model (``TrainConfig.eval_base_model``)."""
+
+    def test_regular_checkpoint_is_not_written_when_base_model_is_not_evaluated(self, tmp_path: Path) -> None:
+        """No base-weights checkpoint may be saved while the primary key carries the EMA score.
+
+        Under the default eval policy COCOEvalCallback mirrors the EMA score onto ``val/mAP_50_95``, so the key is
+        present and the parent ModelCheckpoint would happily save the base weights against it — checkpointing one model
+        on the other model's score. Only the EMA track is entitled to write this epoch.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), evaluates_base_model=False)
+        trainer = _make_trainer({"val/mAP_50_95": 0.9})
+
+        cb.on_validation_end(trainer, _make_pl_module())
+
+        assert not (tmp_path / "checkpoint_best_regular.pth").exists()
+
+    def test_ema_checkpoint_is_still_written_when_base_model_is_not_evaluated(self, tmp_path: Path) -> None:
+        """Suppressing the regular track must not also suppress the EMA track.
+
+        The EMA track is the only checkpoint tracking that runs under the default policy (#1285); disabling both would
+        leave a run with no best checkpoint at all.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", evaluates_base_model=False)
+        trainer = _make_trainer({"val/mAP_50_95": 0.9, "val/ema_mAP_50_95": 0.9})
+
+        cb.on_validation_end(trainer, _make_pl_module())
+
+        assert (tmp_path / "checkpoint_best_ema.pth").exists()
+
+    def test_regular_checkpoint_is_written_when_base_model_is_evaluated(self, tmp_path: Path) -> None:
+        """eval_base_model=True (and every use_ema=False run) keeps the regular track working as before.
+
+        The suppression must be scoped to the configuration that actually stops evaluating the base model, not applied
+        whenever EMA happens to be enabled.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), evaluates_base_model=True)
+        trainer = _make_trainer({"val/mAP_50_95": 0.9})
+
+        cb.on_validation_end(trainer, _make_pl_module())
+
+        assert (tmp_path / "checkpoint_best_regular.pth").exists()
+
+    def test_smoothing_accumulator_ignores_the_mirrored_ema_score(self, tmp_path: Path) -> None:
+        """The regular smoothing accumulator must not absorb EMA values it will never checkpoint against.
+
+        ``_smoothed_regular`` is persisted in the callback state and compared against the raw EMA score in
+        ``on_fit_end``; letting the mirrored EMA score feed it would corrupt that comparison on a later resume.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), evaluates_base_model=False, smooth_alpha=0.5)
+        trainer = _make_trainer({"val/mAP_50_95": 0.9})
+
+        cb.on_validation_end(trainer, _make_pl_module())
+
+        assert cb._smoothed_regular == 0.0
+
+
 class TestBestModelCallback:
     """Verify best-model checkpoint saving and selection."""
+
+    def test_existing_positional_arguments_keep_their_meaning(self, tmp_path: Path) -> None:
+        """Appending the new base-model flag preserves the legacy positional constructor order."""
+        callback = BestModelCallback(str(tmp_path), "val/mAP_50_95", None, False, 3, 0.2)
+
+        assert callback._run_test is False
+        assert callback._skip_best_epochs == 3
+        assert callback._smooth_alpha == pytest.approx(0.2)
+        assert callback._evaluates_base_model is True
 
     def test_checkpoint_payload_includes_model_config_when_provided(self) -> None:
         """Saved ``.pth`` checkpoints should carry the architecture schema needed for reload."""
@@ -836,6 +902,23 @@ class TestBestModelCallback:
         cb.on_fit_end(trainer, pl_module)
 
         assert (tmp_path / "checkpoint_best_ema.pth").exists()
+
+    def test_zero_ema_score_promotes_ema_checkpoint_for_ema_only_runs(self, tmp_path: Path) -> None:
+        """A valid zero EMA score still produces and promotes the total checkpoint when no base model was evaluated."""
+        callback = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+            evaluates_base_model=False,
+            run_test=False,
+        )
+        trainer = _make_trainer({"val/ema_mAP_50_95": 0.0})
+
+        callback.on_validation_end(trainer, _make_pl_module())
+        callback.on_fit_end(trainer, _make_pl_module())
+
+        assert (tmp_path / "checkpoint_best_ema.pth").exists()
+        total = torch.load(tmp_path / "checkpoint_best_total.pth", map_location="cpu", weights_only=False)
+        assert total["best_total_source"] == "ema"
 
     def test_best_ema_not_overwritten_when_metric_improved(self, tmp_path: Path) -> None:
         """on_fit_end must not rewrite checkpoint_best_ema.pth when a true best was saved during training."""

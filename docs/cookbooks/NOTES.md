@@ -60,3 +60,4 @@ For newly added or updated notebooks, write markdown cells in plain, notebook-po
 | `fine-tune_segmentation.ipynb`      | Fine-Tune RF-DETR Instance Segmentation         | v1.8.2  |
 | `inference-latency-benchmark.ipynb` | Inference Latency Benchmark                     | v1.8.2  |
 | `pytorch-lightning.ipynb`           | Training with PyTorch Lightning                 | v1.6.0  |
+| `train-coco2017.ipynb`              | Train RF-DETR Nano on COCO2017                  | v1.10.0 |

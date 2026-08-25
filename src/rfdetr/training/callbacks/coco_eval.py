@@ -11,6 +11,7 @@ import contextlib
 import importlib
 import io
 import logging
+import warnings
 from collections.abc import Callable, Mapping
 from typing import Any, cast
 
@@ -20,7 +21,6 @@ import torch.distributed as dist
 import torch.nn.functional as F  # noqa: N812
 from pytorch_lightning import Callback
 from torch import Tensor
-from torchmetrics.detection import MeanAveragePrecision
 
 from rfdetr.datasets import get_coco_api_from_dataset
 from rfdetr.evaluation.f1_sweep import sweep_confidence_thresholds
@@ -35,6 +35,7 @@ from rfdetr.evaluation.matching import (
     init_matching_accumulator,
     merge_matching_data,
 )
+from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 from rfdetr.utilities.console import (
     _IS_RICH_AVAILABLE,
@@ -43,13 +44,10 @@ from rfdetr.utilities.console import (
     _render_overall_merged,
     _render_summary_tables,
 )
-from rfdetr.utilities.distributed import all_gather, get_world_size, is_dist_avail_and_initialized
+from rfdetr.utilities.distributed import is_dist_avail_and_initialized
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
-
-# torchmetrics 1.8.2 MeanAveragePrecision.update() reads only these fields. Re-verify this read set on upgrade.
-_METRIC_INPUT_FIELDS = frozenset({"boxes", "scores", "labels", "masks", "iscrowd", "area"})
 
 
 def _warn_missing_rich_once(warning_emitted: bool) -> bool:
@@ -98,6 +96,24 @@ def _is_running_in_notebook() -> bool:
     return False
 
 
+def _resolve_eval_base_model(eval_base_model: bool | None, eval_ema_only: bool | None) -> bool:
+    """Resolve current and deprecated evaluation flags.
+
+    Examples:
+        >>> _resolve_eval_base_model(True, None)
+        True
+        >>> _resolve_eval_base_model(None, True)
+        False
+        >>> _resolve_eval_base_model(None, None)
+        False
+    """
+    if eval_base_model is not None:
+        return bool(eval_base_model)
+    if eval_ema_only is not None:
+        return not eval_ema_only
+    return False
+
+
 class COCOEvalCallback(Callback):
     """Validation callback that computes mAP (via torchmetrics) and macro-F1.
 
@@ -121,10 +137,15 @@ class COCOEvalCallback(Callback):
             always computed when ``trainer.test()`` is called.
         log_per_class_metrics: When ``False``, skip per-class AP computation
             (``MeanAveragePrecision(class_metrics=False)``) as well as the per-class logging/table.
-        eval_ema_only: When ``True``, ``validation_step`` already forwarded through the EMA
-            model directly (see ``TrainConfig.eval_ema_only``), so the independent duplicate
-            EMA forward pass this callback would otherwise run every validation batch is
-            skipped.
+        eval_ema_only: Deprecated compatibility flag from the pre-1.10 callback API. When explicitly supplied,
+            ``True`` selects EMA-only evaluation and ``False`` selects base-plus-EMA evaluation, preserving the old
+            keyword and positional behavior. Omit it for the new default.
+        eval_base_model: When ``False`` (default), ``validation_step`` already forwarded through
+            the EMA model directly (see ``TrainConfig.eval_base_model``), so the independent
+            duplicate EMA forward pass this callback would otherwise run every validation batch
+            is skipped and its predictions are routed to the EMA track. When ``True``,
+            ``validation_step`` forwards the base model and this callback runs the second, EMA
+            forward pass, so both models are evaluated from independent predictions.
     """
 
     def __init__(
@@ -135,14 +156,23 @@ class COCOEvalCallback(Callback):
         log_per_class_metrics: bool = True,
         keypoint_oks_sigmas: list[float] | None = None,
         in_notebook: bool | None = None,
-        eval_ema_only: bool = False,
+        eval_ema_only: bool | None = None,
+        eval_base_model: bool | None = None,
     ) -> None:
         super().__init__()
         self._max_dets = max_dets
         self._segmentation = segmentation
         self._eval_interval = max(1, int(eval_interval))
         self._log_per_class_metrics = bool(log_per_class_metrics)
-        self._eval_ema_only = bool(eval_ema_only)
+        if eval_ema_only is not None:
+            warnings.warn(
+                "COCOEvalCallback.eval_ema_only is deprecated; use eval_base_model to opt into base-model evaluation.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        if eval_ema_only is not None and eval_base_model is not None:
+            raise ValueError("eval_ema_only and eval_base_model cannot both be supplied")
+        self._eval_base_model = _resolve_eval_base_model(eval_base_model, eval_ema_only)
         self._class_names: list[str] = []
         self._cat_id_to_name: dict[int, str] = {}
         self._f1_local: dict[int, dict[str, Any]] = init_matching_accumulator()
@@ -193,29 +223,13 @@ class COCOEvalCallback(Callback):
             # state tensor to have the same ndim on all ranks, but DDP seg validation produces
             # per-rank states that are scalar on some ranks and vectors on others, so the internal
             # sync issues a different number of collectives per rank and deadlocks (known torchmetrics
-            # bug, #931/#449). We merge state across ranks ourselves in `_merge_metric_state_across_ranks`
-            # using the repo's fixed-shape `all_gather`, then compute() runs locally on the full set.
+            # bug, #931/#449). The adapter merges state with the repo's fixed-order
+            # `all_gather`, then compute() runs locally on the full set.
             sync_on_compute=False,
         )
         kwargs["backend"] = "faster_coco_eval"
-        self.map_metric = MeanAveragePrecision(iou_type=iou_type, **kwargs)
-        self.map_metric_train = MeanAveragePrecision(iou_type=iou_type, **kwargs)
-        # Verify _MAP_STATE_ATTRS is complete for the installed torchmetrics version.  A missing
-        # attr is silently skipped in _merge_metric_state_across_ranks, producing wrong mAP with
-        # no error — an upgrade that adds a list-type state would hit this silently without the check.
-        installed = {k for k, v in self.map_metric._defaults.items() if isinstance(v, list)}
-        declared = set(self._MAP_STATE_ATTRS)
-        if installed != declared:
-            raise RuntimeError(
-                "COCOEvalCallback._MAP_STATE_ATTRS is out of sync with the installed torchmetrics"
-                f" (version {self.map_metric.__class__.__module__})."
-                f" Missing from _MAP_STATE_ATTRS: {sorted(installed - declared)}."
-                f" Stale in _MAP_STATE_ATTRS: {sorted(declared - installed)}."
-                ' Re-run: python -c "from torchmetrics.detection import MeanAveragePrecision;'
-                " m = MeanAveragePrecision();"
-                ' print(sorted(k for k, v in m._defaults.items() if isinstance(v, list)))"'
-                " and update COCOEvalCallback._MAP_STATE_ATTRS to match."
-            )
+        self.map_metric = OnePassCocoMeanAveragePrecision(iou_type=iou_type, **kwargs)
+        self.map_metric_train = OnePassCocoMeanAveragePrecision(iou_type=iou_type, **kwargs)
         # Separate metric for the EMA model.  Created deterministically on EVERY rank in
         # on_validation_epoch_start / on_test_epoch_start (see _prepare_ema_metric) so its
         # cross-rank compute() sync is issued symmetrically and cannot deadlock DDP val.
@@ -370,8 +384,7 @@ class COCOEvalCallback(Callback):
                 )
                 self._train_segm_skip_warned = True
             return
-        metric_preds, metric_targets = self._move_metric_inputs_to_cpu(preds, targets)
-        self.map_metric_train.update(metric_preds, metric_targets)
+        self.map_metric_train.update(preds, targets)
 
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
@@ -431,14 +444,19 @@ class COCOEvalCallback(Callback):
         When an EMA callback is present the EMA model is run on the same batch in a separate ``torch.no_grad()`` forward
         pass so that base and EMA metrics are computed from independent predictions.
 
-        When ``eval_ema_only`` is active and the EMA model has warmed up, ``validation_step`` already forwarded
-        through the EMA-averaged weights (see ``RFDETRModelModule._resolve_eval_model``) — these predictions are
-        routed to the EMA mAP/checkpoint track (``map_metric_ema`` / ``val/ema_*``) instead of the regular one,
-        which never ran a base-model forward pass this batch. Without this routing, the regular ``val/mAP_50_95``
-        key silently reflects EMA quality while ``BestModelCallback`` checkpoints the (unevaluated) base weights
-        under that key — a metric/weights mismatch. The macro-F1 sweep (``val/F1``) has no parallel EMA-tracked
-        accumulator and is not rerouted; under ``eval_ema_only`` it reflects EMA-quality predictions logged under
-        the regular key, a known limitation of this mode.
+        Unless ``eval_base_model`` is set, and once the EMA model has warmed up, ``validation_step`` already
+        forwarded through the EMA-averaged weights (see ``RFDETRModelModule._resolve_eval_model``) — these
+        predictions are routed to the EMA mAP/checkpoint track (``map_metric_ema`` / ``val/ema_*``) instead of
+        the regular one, which never ran a base-model forward pass this batch. Without this routing, the regular
+        ``val/mAP_50_95`` key would silently reflect EMA quality while ``BestModelCallback`` checkpoints the
+        (unevaluated) base weights under that key — a metric/weights mismatch. ``_compute_and_log`` then mirrors
+        the EMA score onto the primary key so monitors keep receiving a real number, and ``BestModelCallback``
+        suppresses its base-weights track for the same reason (see its ``evaluates_base_model`` argument).
+
+        The macro-F1 sweep (``val/F1``) has no parallel EMA-tracked accumulator and always follows
+        ``validation_step``'s own forward — which under the default is the same EMA model the mirrored
+        ``val/mAP_50_95`` reports, so the two agree. Under ``eval_base_model=True`` both follow the base model
+        instead, and the EMA track has no F1 counterpart.
 
         Args:
             trainer: The PTL Trainer.
@@ -452,19 +470,17 @@ class COCOEvalCallback(Callback):
             return
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
         targets = self._convert_targets(outputs["targets"], preds if self._use_segm_metrics else None)
-        metric_preds, metric_targets = self._move_metric_inputs_to_cpu(preds, targets)
-
         # ema_cb._average_model availability is rank-invariant (EMA updates fire on the same
         # global step on every rank), so per-rank EMA-forward decisions stay consistent.
         ema_cb = self._get_ema_callback(trainer)
         ema_inner = _get_ema_inner_module(ema_cb)
-        used_ema_forward = self._eval_ema_only and ema_inner is not None
+        used_ema_forward = not self._eval_base_model and ema_inner is not None
         if used_ema_forward:
             if self.map_metric_ema is not None:
-                self.map_metric_ema.update(metric_preds, metric_targets)
+                self.map_metric_ema.update(preds, targets)
                 self._ema_has_updates = True
         else:
-            self.map_metric.update(metric_preds, metric_targets)
+            self.map_metric.update(preds, targets)
 
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
@@ -476,11 +492,11 @@ class COCOEvalCallback(Callback):
         # The EMA metric object itself is created on every rank in
         # on_validation_epoch_start (_prepare_ema_metric); here we only run the EMA
         # forward pass + update when the averaged model is available.
-        # Skipped entirely when eval_ema_only=True: validation_step already forwarded through
+        # Skipped entirely unless eval_base_model=True: validation_step already forwarded through
         # the EMA model directly (RFDETRModelModule._resolve_eval_model) and the primary preds
         # above are already routed to the EMA track, so this second, independent EMA forward
-        # pass would be pure duplicate compute (#416).
-        if not self._eval_ema_only and ema_cb is not None and ema_inner is not None and self.map_metric_ema is not None:
+        # pass would be pure duplicate compute (#416) — the ~3-3.5%-of-epoch saving PR12 claims.
+        if self._eval_base_model and ema_cb is not None and ema_inner is not None and self.map_metric_ema is not None:
             samples, _ = batch
             orig_sizes = torch.stack([t["orig_size"] for t in outputs["targets"]]).to(pl_module.device)
             ema_underlying = ema_inner.model
@@ -489,9 +505,13 @@ class COCOEvalCallback(Callback):
                 ema_outputs = ema_underlying(samples)
                 ema_results = pl_module.postprocess(ema_outputs, orig_sizes)
             ema_preds = self._convert_preds(ema_results)
-            ema_targets = self._convert_targets(outputs["targets"], ema_preds if self._use_segm_metrics else None)
-            ema_metric_preds, ema_metric_targets = self._move_metric_inputs_to_cpu(ema_preds, ema_targets)
-            self.map_metric_ema.update(ema_metric_preds, ema_metric_targets)
+            # Outside segmentation the conversion has no prediction-dependent input, so redoing it here would
+            # recompute the same boxes and repeat the same orig_size host transfer for every validation batch.
+            # Reuse is safe because both accumulators store detached CPU copies of what they are handed
+            # (OnePassCocoMeanAveragePrecision.update) rather than holding on to the caller's dicts, and the
+            # macro-F1 accumulator between the two updates only reads them.
+            ema_targets = self._convert_targets(outputs["targets"], ema_preds) if self._use_segm_metrics else targets
+            self.map_metric_ema.update(ema_preds, ema_targets)
             self._update_keypoint_oks_metric(
                 trainer,
                 {"results": ema_results, "targets": outputs["targets"]},
@@ -547,8 +567,7 @@ class COCOEvalCallback(Callback):
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
         targets = self._convert_targets(outputs["targets"], preds if self._use_segm_metrics else None)
 
-        metric_preds, metric_targets = self._move_metric_inputs_to_cpu(preds, targets)
-        self.map_metric.update(metric_preds, metric_targets)
+        self.map_metric.update(preds, targets)
 
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
@@ -576,7 +595,7 @@ class COCOEvalCallback(Callback):
         """Compute, log, and reset ``map_metric_ema`` if every rank agrees it has data this epoch.
 
         Extracted out of :meth:`_compute_and_log` so its early-return branch (base ``metric`` empty)
-        can call it too — under ``eval_ema_only`` the base metric never accumulates updates (see
+        can call it too — when the base model is not evaluated it never accumulates updates (see
         ``on_validation_batch_end``), so gating EMA logging on the base metric's own guard silently
         drops the EMA metrics as well, leaving the epoch with no validation output at all (#1285).
 
@@ -602,7 +621,7 @@ class COCOEvalCallback(Callback):
         should_compute_ema = self._should_compute_ema(pl_module)
         ema_metrics: dict[str, Any] | None = None
         if should_compute_ema:
-            self._merge_metric_state_across_ranks(self.map_metric_ema)
+            self.map_metric_ema.merge_distributed_state()
             ema_metrics = self._compute_map_metric(trainer, self.map_metric_ema)
             pl_module.log(
                 f"{split}/ema_mAP_50_95",
@@ -613,9 +632,11 @@ class COCOEvalCallback(Callback):
                 on_epoch=True,
             )
             pl_module.log(f"{split}/ema_mAP_50", ema_metrics[f"{pfx}map_50"], logger=True, on_step=False, on_epoch=True)
+            pl_module.log(f"{split}/ema_mAP_75", ema_metrics[f"{pfx}map_75"], logger=True, on_step=False, on_epoch=True)
             pl_module.log(f"{split}/ema_mAR", ema_metrics[mar_key], logger=True, on_step=False, on_epoch=True)
             trainer.callback_metrics[f"{split}/ema_mAP_50_95"] = ema_metrics[f"{pfx}map"].detach().cpu()
             trainer.callback_metrics[f"{split}/ema_mAP_50"] = ema_metrics[f"{pfx}map_50"].detach().cpu()
+            trainer.callback_metrics[f"{split}/ema_mAP_75"] = ema_metrics[f"{pfx}map_75"].detach().cpu()
             trainer.callback_metrics[f"{split}/ema_mAR"] = ema_metrics[mar_key].detach().cpu()
             if self._use_segm_metrics:
                 pl_module.log(
@@ -635,6 +656,40 @@ class COCOEvalCallback(Callback):
             self._ema_has_updates = False
         return should_compute_ema, ema_metrics
 
+    def _mirror_ema_metrics_to_primary_keys(self, trainer: Any, pl_module: Any, split: str) -> None:
+        """Copy every ``{split}/ema_<name>`` scalar onto ``{split}/<name>`` when the EMA track is the only one.
+
+        Called only from the branch where the base ``metric`` accumulated nothing, so the primary keys are
+        genuinely unwritten this epoch and nothing can be overwritten. Without the mirror, the epoch's real
+        score reaches ``val/ema_mAP_50_95`` alone and every scheduler, early-stopping hook, checkpoint monitor
+        and dashboard watching ``val/mAP_50_95`` silently sees nothing — tolerable for the opt-in
+        ``eval_ema_only`` flag this replaces, not for a default (``TrainConfig.eval_base_model``).
+
+        Mirroring the whole ``ema_`` prefix rather than an enumerated key list keeps the primary namespace in
+        step with whatever the EMA track logged for the task at hand — box, segmentation and keypoint keys
+        alike, including the task-specific key ``BestModelCallback``/``RFDETREarlyStopping`` monitor. Per-class AP is
+        mirrored separately in the EMA-only summary because it is logged outside ``trainer.callback_metrics``.
+
+        The mirrored score comes from the EMA weights, so ``BestModelCallback`` must not run its base-weights
+        track against it — see its ``evaluates_base_model`` argument, which trainer.py wires from the same
+        config field.
+
+        Args:
+            trainer: The PTL Trainer, whose ``callback_metrics`` supplies and receives the mirrored values.
+            pl_module: The LightningModule used to log the mirrored scalars to external loggers.
+            split: Metric namespace — ``"val"`` (the only split that reaches this method).
+        """
+        ema_prefix = f"{split}/ema_"
+        for key in [k for k in trainer.callback_metrics if k.startswith(ema_prefix)]:
+            metric_name = key[len(ema_prefix) :]
+            primary_key = f"{split}/{metric_name}"
+            value = trainer.callback_metrics[key]
+            trainer.callback_metrics[primary_key] = value
+            # Headline AP keeps its progress-bar slot: `_compute_and_log` shows `{split}/mAP_50_95` there on a
+            # base-model epoch, so a default (EMA-only) epoch would otherwise silently lose it from the bar.
+            prog_bar = metric_name.lower().endswith("map_50_95")
+            pl_module.log(primary_key, value, prog_bar=prog_bar, logger=True, on_step=False, on_epoch=True)
+
     def _compute_and_log_f1_metrics(
         self, trainer: Any, pl_module: Any, split: str, f1_local: dict[int, dict[str, Any]]
     ) -> tuple[dict[str, float], dict[int, dict[str, float]]]:
@@ -643,8 +698,8 @@ class COCOEvalCallback(Callback):
         Independent of ``self.map_metric``/``self.map_metric_ema``: ``f1_local`` accumulates every batch's matching
         data via ``merge_matching_data`` in ``on_validation_batch_end`` unconditionally, regardless of which mAP
         track (base vs EMA) that batch's predictions were routed to. Extracted so the empty-``metric`` early-return
-        branch of :meth:`_compute_and_log` can also call it — under ``eval_ema_only`` ``f1_local`` is the only
-        accumulator with real data this epoch, so discarding it via ``_reset_f1_local`` without computing would
+        branch of :meth:`_compute_and_log` can also call it — when the base model is not evaluated ``f1_local`` is the
+        only accumulator with real data this epoch, so discarding it via ``_reset_f1_local`` without computing would
         silently drop ``val/F1`` too, even though real matching data was collected (#1285).
 
         Args:
@@ -687,6 +742,34 @@ class COCOEvalCallback(Callback):
         trainer.callback_metrics[f"{split}/recall"] = torch.tensor(overall["Recall"])
         return overall, f1_by_cid
 
+    def _any_rank_has_updates(self, metric: Any, pl_module: Any) -> bool:
+        """Vote — identically on every rank — whether *any* rank has updates for *metric*.
+
+        ``metric.has_updates`` only reflects local per-rank state; branching on it directly lets ranks
+        diverge on whether they enter ``merge_distributed_state()``'s ``all_gather`` collectives next,
+        desynchronising the DDP collective sequence and deadlocking validation. This makes the decision
+        collectively instead. Unlike ``_should_compute_ema``'s ``all_reduce(MIN)`` (unanimous — skip
+        whenever any rank is empty, intentionally conservative to avoid discarding EMA state on an
+        uneven epoch), this uses ``all_reduce(MAX)``: the base/train mAP path must not silently drop a
+        populated rank's data just because a sibling rank's shard was empty, so any single rank voting 1
+        makes every rank enter the merge (``merge_distributed_state()`` treats an empty local shard as a
+        no-op contribution to the gather).
+
+        Args:
+            metric: The mAP accumulator to check (``self.map_metric`` or a split-specific variant).
+            pl_module: The LightningModule (provides the device for the reduction).
+
+        Returns:
+            ``True`` iff at least one rank accumulated updates this epoch, making it safe — and
+            necessary — for every rank to enter ``merge_distributed_state()`` identically.
+        """
+        vote = 1 if metric.has_updates else 0
+        if is_dist_avail_and_initialized():
+            flag = torch.tensor([vote], device=getattr(pl_module, "device", "cpu"))
+            dist.all_reduce(flag, op=dist.ReduceOp.MAX)
+            vote = int(flag.item())
+        return bool(vote)
+
     def _compute_and_log(self, trainer: Any, pl_module: Any, split: str, *, metric: Any | None = None) -> None:
         """Shared epoch-end logic for validation and test evaluation loops.
 
@@ -705,16 +788,16 @@ class COCOEvalCallback(Callback):
         f1_local = self._f1_train_local if split == "train" else self._f1_local
         # torchmetrics prefixes all keys when iou_type is a list (e.g. "bbox_map"). Computed
         # up front (pure, independent of `metric`) so the early-return branch below can also
-        # use it to log the EMA-only track under `eval_ema_only` (#1285).
+        # use it to log the EMA-only track when the base model is not evaluated (#1285).
         pfx = "bbox_" if self._use_segm_metrics else ""
         mar_key = f"{pfx}mar_{self._max_dets}"
-        if not self._metric_has_updates(metric):
+        if not self._any_rank_has_updates(metric, pl_module):
             metric.reset()
             self._reset_keypoint_split(split)
-            # Under `eval_ema_only`, on_validation_batch_end routes every prediction to
+            # Unless `eval_base_model` is set, on_validation_batch_end routes every prediction to
             # map_metric_ema instead of `metric` (see its docstring), so `metric` never
             # accumulates any update this epoch — that must not also suppress the EMA metrics,
-            # or an eval_ema_only run logs no validation output at all (#1285). train/test never
+            # or such a run logs no validation output at all (#1285). train/test never
             # populate map_metric_ema this way (on_test_epoch_start resets _ema_has_updates for
             # test, and on_train_epoch_end never reaches this branch with stale EMA state from a
             # prior validation epoch under normal use), so this is scoped to "val" only.
@@ -726,17 +809,18 @@ class COCOEvalCallback(Callback):
                     self._compute_and_log_keypoint_map(
                         "val_ema", pl_module, trainer, log_split="val", metric_prefix="ema_"
                     )
+                    self._mirror_ema_metrics_to_primary_keys(trainer, pl_module, split)
                 else:
                     self._reset_keypoint_split("val_ema")
                 # f1_local accumulates every batch's matching data unconditionally in
                 # on_validation_batch_end (merge_matching_data runs outside the used_ema_forward
                 # branch), independent of which mAP track a batch's predictions were routed to.
-                # Under eval_ema_only `metric` never updates but f1_local does — computing it here
+                # When the base model is not evaluated `metric` never updates but f1_local does — computing it here
                 # instead of via the unconditional _reset_f1_local below prevents val/F1 from
                 # silently going unlogged even though real matching data was collected (#1285).
                 f1_overall, f1_by_cid = self._compute_and_log_f1_metrics(trainer, pl_module, split, f1_local)
                 # The normal per-class/table path below only ever reads from the base `metric`,
-                # which never has data here — without this, eval_ema_only prints no console table
+                # which never has data here — without this, an EMA-only epoch prints no console table
                 # for the whole run even though ema_metrics has real per-class data (#1285).
                 if should_compute_ema and ema_metrics is not None:
                     self._print_ema_only_summary(
@@ -748,8 +832,9 @@ class COCOEvalCallback(Callback):
 
         # Merge per-rank state across ranks ourselves (DDP-safe, fixed-shape gather) before the
         # metric computes locally — replaces torchmetrics' deadlock-prone internal sync. No-op when
-        # not distributed. Called unconditionally on every rank, so the collectives stay symmetric.
-        self._merge_metric_state_across_ranks(metric)
+        # not distributed. Every rank reaches this call once the vote above agrees at least one rank
+        # has updates, so the collectives stay symmetric even on a rank whose own shard was empty.
+        metric.merge_distributed_state()
         metrics = self._compute_map_metric(trainer, metric)
 
         overall: dict[str, float] = {
@@ -792,8 +877,11 @@ class COCOEvalCallback(Callback):
         f1_overall, f1_by_cid = self._compute_and_log_f1_metrics(trainer, pl_module, split, f1_local)
         overall.update(f1_overall)
 
-        # torchmetrics returns `classes` as a 0-d scalar when only one class is
-        # present in the batch.  Ensure it is always 1-d before iterating.
+        # Defensive normalization, not currently triggered: OnePassCocoMeanAveragePrecision.compute()
+        # (coco_map.py) always returns `classes` and `*_per_class` as 1-d tensors, even for a single
+        # class (`torch.tensor([id])` / `torch.full((1,), ...)`), so this branch is dead against the
+        # installed torchmetrics 1.8.2 adapter today. Kept as a guard in case that invariant ever
+        # changes; ensure it is always 1-d before iterating.
         if "classes" in metrics and metrics["classes"].ndim == 0:
             metrics = dict(metrics)
             metrics["classes"] = metrics["classes"].unsqueeze(0)
@@ -870,7 +958,7 @@ class COCOEvalCallback(Callback):
         """Ensure ``map_metric_ema`` exists (and is reset) on EVERY rank when EMA is active.
 
         Driven by the rank-invariant presence of the EMA callback rather than by per-batch state, so any cross-rank
-        state merge (via :meth:`_merge_metric_state_across_ranks`) is issued symmetrically across DDP ranks. Previously
+        state merge (via the metric adapter) is issued symmetrically across DDP ranks. Previously
         the metric was created lazily in :meth:`on_validation_batch_end`, so a rank with an empty/uneven shard could
         finish without it, skip the merge/compute path, and deadlock validation (#931 / #449).
 
@@ -883,7 +971,7 @@ class COCOEvalCallback(Callback):
             return
         if self.map_metric_ema is None:
             ema_iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
-            self.map_metric_ema = MeanAveragePrecision(
+            self.map_metric_ema = OnePassCocoMeanAveragePrecision(
                 iou_type=ema_iou_type,
                 class_metrics=self._log_per_class_metrics,
                 max_detection_thresholds=[1, 10, self._max_dets],
@@ -896,7 +984,7 @@ class COCOEvalCallback(Callback):
     def _should_compute_ema(self, pl_module: Any) -> bool:
         """Decide — identically on every rank — whether to run the EMA metric ``compute()``.
 
-        Under DDP, ``_merge_metric_state_across_ranks`` issues cross-rank collectives that every rank must
+        Under DDP, ``map_metric_ema.merge_distributed_state()`` issues cross-rank collectives that every rank must
         participate in, or none may — a rank that skips desynchronises the NCCL collective sequence and deadlocks
         validation (#931 / #449).  Each rank votes ``1`` only when its EMA metric exists and received at least
         one batch update this epoch; a cross-rank ``all_reduce(MIN)`` makes the decision unanimous — a single
@@ -917,72 +1005,6 @@ class COCOEvalCallback(Callback):
             dist.all_reduce(flag, op=dist.ReduceOp.MIN)
             vote = int(flag.item())
         return bool(vote)
-
-    # torchmetrics MeanAveragePrecision list-type state attributes — verified against torchmetrics >=1.2,<2
-    # (pyproject.toml pin).  List states are identified by an empty-list default in metric._defaults.
-    # On any torchmetrics upgrade, re-verify and update:
-    #   python -c "from torchmetrics.detection import MeanAveragePrecision; \
-    #              m = MeanAveragePrecision(); \
-    #              print(sorted(k for k, v in m._defaults.items() if isinstance(v, list)))"
-    # setup() asserts this tuple matches installed torchmetrics on every run.
-    # TODO: remove this tuple (and the merge workaround) when Lightning-AI/torchmetrics#3199 is resolved.
-    _MAP_STATE_ATTRS = (
-        "detection_box",
-        "detection_scores",
-        "detection_labels",
-        "detection_mask",
-        "groundtruth_box",
-        "groundtruth_labels",
-        "groundtruth_mask",
-        "groundtruth_crowds",
-        "groundtruth_area",
-    )
-
-    def _merge_metric_state_across_ranks(self, metric: Any) -> None:
-        """Merge a metric's accumulated per-rank state onto every rank, replacing torchmetrics' sync.
-
-        torchmetrics' built-in sync (``gather_all_tensors``) varies the number of collectives by each state
-        tensor's *local* ndim (scalar → 1 all_gather, vector → 2), so when DDP seg validation leaves a state
-        scalar on some ranks and a vector on others the ranks issue different collective counts and deadlock
-        (#931 / #449).  Instead we gather each state list once with the repo's pickle-based ``all_gather`` — a
-        fixed collective pattern issued identically on every rank regardless of tensor shape — and concatenate.
-        With ``sync_on_compute=False`` the metric's own ``compute()`` then runs locally over the merged full-set
-        state, yielding the identical global mAP without any shape-dependent collective.
-
-        Args:
-            metric: The ``MeanAveragePrecision`` instance whose state should be merged in place.
-
-        Note:
-            No-op when ``metric`` is ``None``, when the distributed process group is not
-            initialised, or when world size is 1 (single GPU / CPU training).  In these
-            cases the metric state is unchanged.
-        """
-        if metric is None or not is_dist_avail_and_initialized() or get_world_size() == 1:
-            return
-        for attr in self._MAP_STATE_ATTRS:
-            local = getattr(metric, attr, None)
-            if local is None:
-                continue
-            # Move tensors to CPU so cross-device pickling during the gather is safe; RLE mask
-            # entries are already CPU tuples and pass through unchanged.
-            local_cpu = [v.detach().cpu() if torch.is_tensor(v) else v for v in local]
-            gathered = all_gather(local_cpu)  # list of per-rank lists (identical on every rank)
-            merged = [item for rank_list in gathered for item in rank_list]
-            setattr(metric, attr, merged)
-        # After merging, _update_count may still be 0 on ranks that received no local updates.
-        # torchmetrics 1.x compute() works correctly regardless, but emits a UserWarning
-        # ("compute called before update") that spams DDP logs on those ranks.
-        metric._update_count = max(getattr(metric, "_update_count", 0), 1)
-
-    @staticmethod
-    def _metric_has_updates(metric: Any) -> bool:
-        """Return whether a torchmetrics metric has accumulated at least one update."""
-        update_count = getattr(metric, "_update_count", None)
-        if isinstance(update_count, int):
-            return update_count > 0
-        if torch.is_tensor(update_count):
-            return bool(update_count.detach().cpu().item() > 0)
-        return True
 
     def _get_or_create_keypoint_oks_metric(self, trainer: Any, split: str) -> MetricKeypointOKS | None:
         """Return the :class:`~rfdetr.evaluation.keypoint_oks.MetricKeypointOKS` for *split*, creating it if needed.
@@ -1140,14 +1162,13 @@ class COCOEvalCallback(Callback):
         """Print the Rich summary table from ``ema_metrics`` when it is the epoch's only track with data.
 
         The normal table/per-class path in :meth:`_compute_and_log` only ever reads from the base
-        ``metric`` — under ``eval_ema_only`` that metric never accumulates a single update (see the
+        ``metric`` — when the base model is not evaluated that metric never accumulates a single update (see the
         early-return branch), so that path never runs and no table is ever printed for the entire run,
         even though ``map_metric_ema`` has real per-class data (built with the same ``class_metrics``
         setting as the base metric). Without this, fixing the logged scalars alone leaves the console
-        table half of the original "no validation output at all" complaint (#1285) unfixed. Per-class
-        AP is logged under ``ema_`` keys (via ``_build_per_class_rows``'s ``metric_prefix``) so it never
-        collides with a base-track ``{split}/AP/{name}`` key — consistent with ``val/ema_mAP_50_95``
-        staying separate from ``val/mAP_50_95`` elsewhere in this callback.
+        table half of the original "no validation output at all" complaint (#1285) unfixed. Per-class AP is logged
+        under both ``ema_`` and primary keys when this is the only validation track, keeping the default namespace
+        complete while preserving the explicit EMA namespace.
 
         Args:
             trainer: The PTL Trainer.
@@ -1157,7 +1178,7 @@ class COCOEvalCallback(Callback):
             mar_key: Prefixed AR metric key for ``self._max_dets``.
             ema_metrics: Raw ``map_metric_ema.compute()`` output, from ``_compute_and_log_ema_metrics``.
             f1_overall: ``{"F1", "Precision", "Recall"}`` from ``_compute_and_log_f1_metrics``; not
-                EMA-prefixed by existing design (see ``TrainConfig.eval_ema_only`` docstring) since
+                EMA-prefixed by existing design (see ``TrainConfig.eval_base_model`` docstring) since
                 ``f1_local`` has no parallel EMA-tracked accumulator.
             f1_by_cid: Per-class F1/precision/recall keyed by ``category_id``, from the same call.
         """
@@ -1195,6 +1216,8 @@ class COCOEvalCallback(Callback):
             f1_by_cid=f1_by_cid,
             metric_prefix="ema_",
         )
+        for row in per_class_ema:
+            pl_module.log(f"{split}/AP/{row['name']}", row["ap"], logger=True, on_step=False, on_epoch=True)
         self._print_metrics_tables(trainer, "val (ema)", overall_ema, per_class_ema)
 
     def _build_per_class_rows(
@@ -1405,30 +1428,3 @@ class COCOEvalCallback(Callback):
                 entry["iscrowd"] = t["iscrowd"]
             out.append(entry)
         return out
-
-    @staticmethod
-    def _move_metric_inputs_to_cpu(
-        preds: list[dict[str, Tensor]], targets: list[dict[str, Tensor]]
-    ) -> tuple[list[dict[str, Tensor]], list[dict[str, Tensor]]]:
-        """Return detached CPU copies of mAP inputs so TorchMetrics stores CPU metric state.
-
-        TorchMetrics converts every stored annotation to a Python COCO record during ``compute()``. Keeping this state
-        on CPU makes those internal ``.cpu()`` calls no-ops while leaving the original GPU tensors available to the
-        F1 and keypoint paths that run in the validation batch hook.
-
-        Args:
-            preds: Per-image prediction dicts normalized for ``MeanAveragePrecision``.
-            targets: Per-image target dicts normalized for ``MeanAveragePrecision``.
-
-        Returns:
-            CPU copies of the supported mAP fields, preserving their per-image order.
-        """
-
-        def move_items(items: list[dict[str, Tensor]]) -> list[dict[str, Tensor]]:
-            # Excluding PostProcess-only fields avoids D2H copies that torchmetrics never consumes, such as keypoints.
-            return [
-                {name: value.detach().cpu() for name, value in item.items() if name in _METRIC_INPUT_FIELDS}
-                for item in items
-            ]
-
-        return move_items(preds), move_items(targets)
