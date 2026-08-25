@@ -415,8 +415,4 @@ overrides = [
   # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the
   # pre-commit hook (which runs mypy with --ignore-missing-imports so rich types are unresolved).
   { module = ["rfdetr.utilities.console"], warn_unused_ignores = false },
-  # Modules with pre-existing type errors — ignored until incrementally fixed.
-  { module = [
-    "rfdetr.datasets.coco",
-  ], ignore_errors = true },
 ]
