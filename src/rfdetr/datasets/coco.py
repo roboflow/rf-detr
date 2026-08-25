@@ -685,8 +685,8 @@ class ConvertCoco:
         target["image_id"] = image_id
 
         # for conversion to coco api
-        area = torch.as_tensor([obj["area"] for obj in anno])
-        iscrowd = torch.as_tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
+        area = torch.as_tensor([obj["area"] for obj in anno], dtype=torch.float32)
+        iscrowd = torch.as_tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno], dtype=torch.int64)
         target["area"] = area[keep]
         target["iscrowd"] = iscrowd[keep]
 
