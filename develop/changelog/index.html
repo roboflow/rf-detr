@@ -2407,6 +2407,9 @@
 <li>The <code>rfdetr.datasets.aug_config</code> compatibility shim now names a concrete removal version: deprecated since 1.9.0, <strong>removal in v1.12.0</strong>. Import the augmentation presets (<code>AUG_CONFIG</code>, <code>AUG_CONSERVATIVE</code>, <code>AUG_AGGRESSIVE</code>, <code>AUG_AERIAL</code>, <code>AUG_INDUSTRIAL</code>) from <code>rfdetr.datasets.aug_configs</code> (plural) instead; the constants themselves are unchanged. The module was renamed in 1.8.0 as a documented breaking change (<a href="https://github.com/roboflow/rf-detr/pull/1103">#1103</a>) and the singular path reappeared as a <code>FutureWarning</code>-emitting shim in 1.9.0 (<a href="https://github.com/roboflow/rf-detr/pull/1037">#1037</a>) without a changelog entry or a removal target. The shim keeps working until v1.12.0; its warning and its regression test now both state that deadline.</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Empty COCO targets now keep <code>iscrowd</code> as <code>int64</code> and <code>area</code> as <code>float32</code>, matching populated targets and allowing mixed empty/populated batches to use lossless packed-target worker transport.</li>
+</ul>
 <hr />
 <h2 id="194-2026-08-24">[1.9.4] — 2026-08-24<a class="headerlink" href="#194-2026-08-24" title="Permanent link">&para;</a></h2>
 <h3 id="fixed_1">Fixed<a class="headerlink" href="#fixed_1" title="Permanent link">&para;</a></h3>
