@@ -91,6 +91,7 @@ or torchvision defaults. Install it with ``pip install 'rfdetr[augment]'``.
 | ``Equalize`` | ``K.RandomEqualize`` | Only ``p`` honored; ``mode``/``by_channels``/``mask`` ignored |
 | ``CLAHE`` | ``K.RandomClahe`` | ``clip_limit`` and ``tile_grid_size`` map directly |
 | ``Perspective`` | ``K.RandomPerspective`` | Approximate; see the note below. ``keep_size=False`` raises |
+| ``ShiftScaleRotate`` | ``K.RandomAffine`` | Limits are deltas, not absolute ranges; see the note below |
 
 ``Perspective`` is the one entry in the table that is not a faithful mapping. Albumentations samples each
 corner offset from ``abs(N(0, scale))``, Kornia samples uniformly from ``distortion_scale``, so the two
@@ -101,9 +102,20 @@ config, not only for a range. ``keep_size=False`` raises rather than silently re
 ``mask_interpolation``, ``border_mode``, ``fill`` and ``fill_mask`` are ignored. Use the Albumentations
 backend when the exact Albumentations semantics matter.
 
+``ShiftScaleRotate`` maps onto the same ``K.RandomAffine`` as ``Affine``, which is what makes it safe here:
+it preserves the output resolution, so the padding-mask constraint that keeps the crops unsupported does not
+apply. Its limits are deltas rather than absolute ranges, so they are converted rather than forwarded.
+``scale_limit`` is biased by 1 in Albumentations, meaning it samples from ``(1 + low, 1 + high)``, so the
+default ``(-0.1, 0.1)`` is a scale between ``0.9`` and ``1.1``; that pivot is applied here. All three limits
+also read a scalar ``v`` as the symmetric ``(-v, v)``. ``shift_limit_x`` and ``shift_limit_y`` map onto
+Kornia's per-axis ``translate``. ``interpolation``, ``border_mode``, ``mask_interpolation``, ``fill``,
+``fill_mask`` and ``rotate_method`` have no equivalent and are ignored with a warning. Note that
+Albumentations itself deprecates ``ShiftScaleRotate`` in favour of ``Affine``, which this backend already
+supports; new configs should prefer ``Affine``.
+
 Not yet supported on Kornia: ``HueSaturationValue`` (Albumentations shifts hue/saturation/value additively,
 Kornia's ``ColorJiggle`` scales them multiplicatively, so there is no faithful mapping), and the geometric
-group ``ShiftScaleRotate``, ``RandomCrop``, ``CenterCrop``, ``RandomResizedCrop``,
+group ``RandomCrop``, ``CenterCrop``, ``RandomResizedCrop``,
 ``ElasticTransform`` and ``GridDistortion``, whose CPU behavior is not faithfully mapped by the current
 Kornia pipeline. These still work on the Albumentations backend.
 
