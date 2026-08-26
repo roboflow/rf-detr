@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
@@ -207,7 +209,7 @@ def batch_dice_loss(inputs: Tensor, targets: Tensor) -> Tensor:
     return loss
 
 
-batch_dice_loss_jit = torch.jit.script(batch_dice_loss)
+batch_dice_loss_jit = batch_dice_loss if sys.version_info >= (3, 14) else torch.jit.script(batch_dice_loss)
 
 
 def batch_sigmoid_ce_loss(inputs: Tensor, targets: Tensor) -> Tensor:
@@ -231,4 +233,6 @@ def batch_sigmoid_ce_loss(inputs: Tensor, targets: Tensor) -> Tensor:
     return loss / hw
 
 
-batch_sigmoid_ce_loss_jit = torch.jit.script(batch_sigmoid_ce_loss)
+batch_sigmoid_ce_loss_jit = (
+    batch_sigmoid_ce_loss if sys.version_info >= (3, 14) else torch.jit.script(batch_sigmoid_ce_loss)
+)

@@ -115,7 +115,7 @@ rf-detr/
 
 ## Development Environment Setup
 
-RF-DETR uses **`uv`** as the package manager for dependency management. Ensure you have Python >=3.10 installed (supports 3.10, 3.11, 3.12, 3.13).
+RF-DETR uses **`uv`** as the package manager for dependency management. Ensure you have Python >=3.10 installed (supports 3.10, 3.11, 3.12, 3.13, 3.14).
 
 ### Installing uv
 
@@ -282,7 +282,7 @@ Tests marked with `@pytest.mark.gpu` are excluded from CPU CI workflows and run 
 Our continuous integration tests run on:
 
 - **Operating Systems:** Ubuntu, Windows, macOS
-- **Python Versions:** 3.10, 3.11, 3.12, 3.13
+- **Python Versions:** 3.10, 3.11, 3.12, 3.13, 3.14
 - **CPU Workflow:** `pytest -m "not gpu"` - Runs on all OS/Python combinations
 - **GPU Workflow:** `pytest -m gpu` - Runs separately on GPU infrastructure
 
@@ -292,7 +292,7 @@ This ensures your changes work across all supported platforms and Python version
 
 **Key GitHub Actions workflow files** (in `.github/workflows/`):
 
-- **ci-tests-cpu.yml** — CPU tests across Ubuntu/Windows/macOS × Python 3.10–3.13
+- **ci-tests-cpu.yml** — CPU tests on Ubuntu across Python 3.10–3.14, plus Windows and macOS boundary versions
 - **ci-tests-gpu.yml** — GPU-dependent tests
 - **ci-legacy-checkpoints.yml** — Backward-compatibility checkpoint-loading tests across historical rfdetr releases (advisory only — not a required check; a compat break does not block merge)
 - **build-package.yml** — Build and validate distributions (`uv build` + `twine check`)

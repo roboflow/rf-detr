@@ -198,6 +198,33 @@ class TestImportPaths:
             f"stderr:\n{result.stderr}"
         )
 
+    def test_top_level_import_avoids_unsupported_torchscript(self) -> None:
+        """Top-level import must not invoke unsupported TorchScript compilation."""
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import warnings\n"
+                    "warnings.filterwarnings(\n"
+                    "    'error',\n"
+                    "    message=r'.*torch\\.jit\\.script.*',\n"
+                    "    category=DeprecationWarning,\n"
+                    ")\n"
+                    "import rfdetr\n"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            "Subprocess for top-level import failed:\n"
+            f"return code: {result.returncode}\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+
     def test_identity_across_import_paths(self) -> None:
         """The same class object must be returned regardless of import path.
 
