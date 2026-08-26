@@ -370,6 +370,16 @@ class RFDETRModelModule(LightningModule):
         self._lr_scheduler_interval: str = "step"
         self._lr_scheduler_monitor: str | None = None
         self._accumulated_box_normalizer: Tensor | None = None
+        # One-shot guard for the notice announcing that the "auto" validation-loss policy resolved to skipping the
+        # loss; emitted from on_validation_epoch_start on the first real (non-sanity) validation epoch only.
+        self._logged_val_loss_skip_notice: bool = False
+        # Validation-loss policy resolved once per validation epoch by on_validation_epoch_start and read per batch by
+        # _should_compute_val_loss. None until that hook runs, so direct validation_step calls resolve it themselves.
+        self._resolved_compute_val_loss: bool | None = None
+        # Memoized loss_name -> aggregate train/ key (or None for a standalone key), built lazily by
+        # _aux_aggregate_map() and recomputed only when loss_dict's key set changes between calls.
+        self._aux_aggregate_cache: dict[str, str | None] | None = None
+        self._aux_aggregate_cache_keys: frozenset[str] | None = None
         # Allow partial state-dict loading when resuming from a .pth checkpoint
         # (which contains only model weights, not criterion/postprocess state).
         self.strict_loading = False
@@ -434,11 +444,20 @@ class RFDETRModelModule(LightningModule):
     # ------------------------------------------------------------------
 
     def on_fit_start(self) -> None:
-        """Seed RNGs at fit start when ``TrainConfig.seed`` is set.
+        """Validate loss consumers and seed RNGs at fit start.
 
-        This avoids hidden global side-effects in ``build_trainer`` while still preserving deterministic training
-        behaviour for actual fit runs.
+        Rejects ``compute_val_loss=False`` when a configured callback or scheduler
+        consumes ``val/loss``. Seeding here avoids hidden global side-effects in
+        ``build_trainer`` while preserving deterministic training behaviour for fit runs.
+
+        Raises:
+            ValueError: If a callback or scheduler monitors ``val/loss`` while validation-loss computation is disabled.
         """
+        if self.train_config.compute_val_loss is False and self._validation_loss_is_monitored:
+            raise ValueError(
+                "compute_val_loss=False is incompatible with a callback or scheduler monitoring 'val/loss'. "
+                "Set compute_val_loss=True or 'auto', or monitor a metric that is produced."
+            )
         if self.train_config.seed is not None:
             seed_everything(self.train_config.seed + self.global_rank, workers=True)
 
@@ -563,9 +582,15 @@ class RFDETRModelModule(LightningModule):
         loss_for_return = loss if self._use_manual_optimization else loss / accumulate_grad_batches
         train_log_sync_dist = bool(self.train_config.train_log_sync_dist)
         train_log_on_step = bool(self.train_config.train_log_on_step)
+        if self.train_config.compact_train_metrics:
+            train_loss_metrics = self._compact_train_loss_metrics(loss_dict, weight_dict)
+            component_on_step = False
+        else:
+            train_loss_metrics = {f"train/{loss_name}": value for loss_name, value in loss_dict.items()}
+            component_on_step = train_log_on_step
         self.log_dict(
-            {f"train/{k}": v for k, v in loss_dict.items()},
-            on_step=train_log_on_step,
+            train_loss_metrics,
+            on_step=component_on_step,
             on_epoch=True,
             sync_dist=train_log_sync_dist,
             batch_size=batch_size,
@@ -583,17 +608,6 @@ class RFDETRModelModule(LightningModule):
         optimizer = self.optimizers()
         if isinstance(optimizer, list):
             optimizer = optimizer[0]
-        # Optimizer may have multiple param groups with different LRs (e.g., backbone/decoder).
-        # Preserve the first group's LR for backward compatibility and progress-bar visibility.
-        # Keep min/max in the logs without taking extra progress-bar metric slots.
-        group_lrs = [pg["lr"] for pg in optimizer.param_groups if "lr" in pg]
-        if group_lrs:
-            base_lr = group_lrs[0]
-            min_lr = min(group_lrs)
-            max_lr = max(group_lrs)
-            self.log("train/lr", base_lr, prog_bar=True, on_step=True, on_epoch=False)
-            self.log("train/lr_min", min_lr, prog_bar=False, on_step=True, on_epoch=False)
-            self.log("train/lr_max", max_lr, prog_bar=False, on_step=True, on_epoch=False)
         if self._use_manual_optimization:
             # loss_for_backward is only None in the automatic-optimization branch above,
             # which is mutually exclusive with _use_manual_optimization.
@@ -624,6 +638,61 @@ class RFDETRModelModule(LightningModule):
                 "targets": targets,
             }
         return loss_for_return.detach() if self._use_manual_optimization else loss_for_return
+
+    def _aux_aggregate_map(self, loss_dict: dict[str, Tensor], weight_dict: dict[str, float]) -> dict[str, str | None]:
+        """Return the memoized ``loss_name -> aggregate train/ key`` map for the current loss_dict keys.
+
+        The classification only depends on ``loss_dict``'s key set and ``weight_dict`` membership, both
+        fixed by model architecture, so it is safe to compute once and cache across microbatches; it is
+        recomputed only if the observed key set changes.
+
+        Args:
+            loss_dict: Per-term loss values for the current microbatch.
+            weight_dict: Criterion-defined mapping of weighted loss-term names to their weights.
+
+        Returns:
+            Mapping from each ``loss_dict`` key to its ``train/<base>_aux`` aggregate key, or ``None``
+            when the key should be logged individually.
+        """
+        keys = frozenset(loss_dict)
+        if self._aux_aggregate_cache is None or self._aux_aggregate_cache_keys != keys:
+            aggregate_map: dict[str, str | None] = {}
+            for loss_name in loss_dict:
+                base_name, separator, suffix = loss_name.rpartition("_")
+                is_layer_suffixed = separator and (suffix.isdigit() or suffix == "enc")
+                # Only weight_dict members are genuine per-layer loss terms; diagnostics such as
+                # cardinality_error are never weighted, so they always fall through to individual logging.
+                aggregate_map[loss_name] = (
+                    f"train/{base_name}_aux" if is_layer_suffixed and loss_name in weight_dict else None
+                )
+            self._aux_aggregate_cache = aggregate_map
+            self._aux_aggregate_cache_keys = keys
+        return self._aux_aggregate_cache
+
+    def _compact_train_loss_metrics(
+        self, loss_dict: dict[str, Tensor], weight_dict: dict[str, float]
+    ) -> dict[str, Tensor]:
+        """Aggregate per-layer auxiliary loss terms into one ``train/<term>_aux`` tensor per base loss.
+
+        Args:
+            loss_dict: Per-term loss values for the current microbatch.
+            weight_dict: Criterion-defined mapping of weighted loss-term names to their weights.
+
+        Returns:
+            Mapping of ``train/`` metric names to tensors, ready for ``self.log_dict``.
+        """
+        aggregate_map = self._aux_aggregate_map(loss_dict, weight_dict)
+        grouped: dict[str, list[Tensor]] = {}
+        train_loss_metrics: dict[str, Tensor] = {}
+        for loss_name, value in loss_dict.items():
+            aggregate_name = aggregate_map[loss_name]
+            if aggregate_name is None:
+                train_loss_metrics[f"train/{loss_name}"] = value
+            else:
+                grouped.setdefault(aggregate_name, []).append(value)
+        for aggregate_name, values in grouped.items():
+            train_loss_metrics[aggregate_name] = torch.stack(values).sum()
+        return train_loss_metrics
 
     def _compute_train_losses(
         self,
@@ -725,6 +794,19 @@ class RFDETRModelModule(LightningModule):
             and batch_idx + 1 >= num_training_batches
         )
 
+    def _log_learning_rates(self, optimizer: torch.optim.Optimizer | LightningOptimizer) -> None:
+        """Log the learning-rate range used by an optimizer update.
+
+        Args:
+            optimizer: Optimizer about to update model parameters.
+        """
+        group_lrs = [param_group["lr"] for param_group in optimizer.param_groups if "lr" in param_group]
+        if not group_lrs:
+            return
+        self.log("train/lr", group_lrs[0], prog_bar=True, on_step=True, on_epoch=False)
+        self.log("train/lr_min", min(group_lrs), prog_bar=False, on_step=True, on_epoch=False)
+        self.log("train/lr_max", max(group_lrs), prog_bar=False, on_step=True, on_epoch=False)
+
     def _step_optimizer(self, optimizer: torch.optim.Optimizer | LightningOptimizer) -> None:
         """Clip gradients, step optimizer and scheduler, then reset accumulation state.
 
@@ -780,6 +862,18 @@ class RFDETRModelModule(LightningModule):
             return
         scheduler.step()
 
+    def on_before_optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
+        """Log rates immediately before each Lightning-managed optimizer step.
+
+        Lightning invokes this hook for both automatic-optimization and
+        manual-optimization (keypoint) training paths, so it is the sole
+        emission site for learning-rate logging on either path.
+
+        Args:
+            optimizer: Optimizer about to update model parameters.
+        """
+        self._log_learning_rates(optimizer)
+
     def on_train_epoch_end(self) -> None:
         """Step epoch-interval (non-plateau) schedulers on the manual-optimization path.
 
@@ -793,6 +887,32 @@ class RFDETRModelModule(LightningModule):
             return
         scheduler.step()
 
+    def on_validation_epoch_start(self) -> None:
+        """Resolve the validation-loss policy for this epoch, announcing an ``"auto"`` skip the first time it happens.
+
+        The resolution is cached here — unconditionally, before every early return below — because ``validation_step``
+        reads it on every batch while it depends only on configuration that cannot change mid-epoch.
+
+        The consumer scan behind ``compute_val_loss="auto"`` only sees programmatic consumers — a plateau scheduler or a
+        monitoring callback. It cannot see a human reading a ``val/loss`` curve out of ``metrics.csv``, TensorBoard, or
+        Weights & Biases, who would otherwise find the curve silently gone. Stating the resolution once, on the first
+        real validation epoch of the global-zero rank, gives that reader the knob to turn.
+        """
+        self._resolved_compute_val_loss = self._resolve_should_compute_val_loss()
+        if self._logged_val_loss_skip_notice or self.train_config.compute_val_loss != "auto":
+            return
+        # The sanity-check pass runs before training and leaves the flag unset, so the first real epoch still logs.
+        if getattr(self.trainer, "sanity_checking", False) or not getattr(self.trainer, "is_global_zero", True):
+            return
+        if self._resolved_compute_val_loss:
+            return
+        self._logged_val_loss_skip_notice = True
+        logger.info(
+            "Skipping validation-loss computation: compute_val_loss='auto' found no scheduler or callback monitoring "
+            "'val/loss', so no 'val/loss' metric is logged this run. Set compute_val_loss=True to log it every "
+            "validation epoch (for example to read the curve from metrics.csv, TensorBoard, or Weights & Biases)."
+        )
+
     def on_validation_epoch_end(self) -> None:
         """Step ``ReduceLROnPlateau`` from the monitored metric on the manual-optimization path.
 
@@ -800,6 +920,9 @@ class RFDETRModelModule(LightningModule):
         from ``trainer.callback_metrics`` and step the scheduler itself. The pre-training sanity-check validation is
         skipped so plateau patience/cooldown bookkeeping is not seeded from the untrained model.
         """
+        # build_trainer() defaults num_sanity_val_steps=0, so trainer.sanity_checking is False for
+        # RFDETR.train() users by default; this half of the guard stays live only for direct
+        # build_trainer() callers who explicitly re-enable sanity validation.
         if self.automatic_optimization or self.trainer.sanity_checking:
             return
         scheduler = self._current_lr_scheduler()
@@ -903,25 +1026,28 @@ class RFDETRModelModule(LightningModule):
     def _resolve_eval_model(self) -> Any:
         """Return the model to forward through for validation.
 
-        When ``TrainConfig.eval_ema_only`` is set, validation forwards through the EMA-averaged
-        weights directly instead of the base model — this replaces the second, duplicate
-        base+EMA forward pass ``COCOEvalCallback`` would otherwise also run every validation
-        batch (see issue 416). Falls back to the base model when EMA is enabled but not yet
-        warmed up (e.g. the very first validation epoch, before ``RFDETREMACallback.setup``
-        has built its averaged model), or when this module isn't attached to a ``Trainer`` at
-        all (``LightningModule.trainer`` raises ``RuntimeError`` rather than returning ``None``
-        when unattached — e.g. ``validation_step`` called directly outside ``Trainer.fit``/
-        ``Trainer.validate``).
+        Validation evaluates one model by default: the EMA-averaged weights when EMA is available,
+        because those are the weights best-checkpoint selection ships. Forwarding through them here
+        replaces the second, duplicate base+EMA forward pass ``COCOEvalCallback`` would otherwise run
+        every validation batch (see issue 416). ``TrainConfig.eval_base_model`` opts back in to that
+        comparison: the base model is forwarded here and ``COCOEvalCallback`` runs the EMA pass.
+
+        Falls back to the base model when EMA is enabled but not yet warmed up (e.g. the very first
+        validation epoch, before ``RFDETREMACallback.setup`` has built its averaged model), or when
+        this module isn't attached to a ``Trainer`` at all (``LightningModule.trainer`` raises
+        ``RuntimeError`` rather than returning ``None`` when unattached — e.g. ``validation_step``
+        called directly outside ``Trainer.fit``/``Trainer.validate``). The same fallback covers
+        ``use_ema=False``, where no EMA callback exists and the base model is the selected model.
 
         Uses the same ``_get_ema_inner_module`` helper as ``COCOEvalCallback`` (see
         ``coco_eval.py``) so both consumers resolve the EMA-averaged detection net through one
         shared code path instead of independently duck-typing ``RFDETREMACallback``.
 
         Returns:
-            The base model, or the EMA-averaged inner module's underlying detection net when
-            ``eval_ema_only`` is active and available.
+            The EMA-averaged inner module's underlying detection net when it is the selected model and
+            available, else the base model.
         """
-        if not self.train_config.eval_ema_only:
+        if self.train_config.eval_base_model:
             return self.model
         try:
             callbacks = getattr(self.trainer, "callbacks", [])
@@ -948,7 +1074,7 @@ class RFDETRModelModule(LightningModule):
         """
         samples, targets = batch
         outputs = self._resolve_eval_model()(samples)
-        if self.train_config.compute_val_loss:
+        if self._should_compute_val_loss:
             loss_dict = self.criterion(outputs, targets)
             weight_dict = self.criterion.weight_dict
             loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
@@ -957,6 +1083,58 @@ class RFDETRModelModule(LightningModule):
         orig_sizes = torch.stack([t["orig_size"] for t in targets])
         results = self.postprocess(outputs, orig_sizes)
         return {"results": results, "targets": targets}
+
+    @property
+    def _validation_loss_is_monitored(self) -> bool:
+        """Return whether a configured scheduler or callback consumes ``val/loss``.
+
+        ``_lr_scheduler_monitor`` is set only after a concrete ``ReduceLROnPlateau`` scheduler is instantiated. Callback
+        inspection keeps the ``"auto"`` policy compatible with PTL-native checkpoint or early stopping callbacks
+        supplied through ``build_trainer(..., callbacks=...)``.
+
+        RF-DETR's own callbacks are not covered by the PTL-native ``monitor`` attribute alone: ``BestModelCallback`` and
+        ``RFDETREarlyStopping`` track two metrics at once and keep their real targets in ``_monitor_regular`` /
+        ``_monitor_ema`` (``RFDETREarlyStopping.monitor`` is a synthetic key it injects itself), so all three attributes
+        are inspected.
+        """
+        if self._lr_scheduler_monitor == "val/loss":
+            return True
+        try:
+            callbacks = getattr(self.trainer, "callbacks", [])
+        except RuntimeError:
+            return False
+        return any(
+            "val/loss"
+            in {
+                getattr(callback, "monitor", None),
+                getattr(callback, "_monitor_regular", None),
+                getattr(callback, "_monitor_ema", None),
+            }
+            for callback in callbacks
+        )
+
+    def _resolve_should_compute_val_loss(self) -> bool:
+        """Resolve whether validation should calculate loss for the current configuration.
+
+        Returns:
+            ``True`` when the loss is requested outright, or when the ``"auto"`` policy finds a ``val/loss`` consumer.
+        """
+        if self.train_config.compute_val_loss is True:
+            return True
+        return self.train_config.compute_val_loss == "auto" and self._validation_loss_is_monitored
+
+    @property
+    def _should_compute_val_loss(self) -> bool:
+        """Return whether validation should calculate loss, reusing the resolution cached for this epoch.
+
+        ``validation_step`` reads this once per batch while the ``"auto"`` policy resolution walks every configured
+        callback, so ``on_validation_epoch_start`` resolves it once per validation epoch and caches the result here.
+        The cache stays unset until that hook runs: a ``validation_step`` called directly, with no ``Trainer`` driving
+        the loop, resolves the live configuration rather than reading a value frozen before the trainer was attached.
+        """
+        if self._resolved_compute_val_loss is not None:
+            return self._resolved_compute_val_loss
+        return self._resolve_should_compute_val_loss()
 
     @property
     def _fused_adamw_env_eligible(self) -> bool:
@@ -1101,6 +1279,11 @@ class RFDETRModelModule(LightningModule):
             interval = tc.lr_scheduler_interval
             if isinstance(scheduler, ReduceLROnPlateau):
                 monitor = tc.lr_scheduler_monitor
+                if monitor == "val/loss" and tc.compute_val_loss is False:
+                    raise ValueError(
+                        "compute_val_loss=False is incompatible with ReduceLROnPlateau monitoring 'val/loss'. "
+                        "Set compute_val_loss=True or 'auto', or select a metric that is produced."
+                    )
                 # The monitored metric (e.g. val/loss) is only available per epoch, so plateau always steps
                 # on the epoch boundary regardless of the configured interval.
                 interval = "epoch"

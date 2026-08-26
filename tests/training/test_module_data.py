@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.datasets.yolo import YoloDetection, YoloSplitUnavailableError
 from rfdetr.training.module_data import RFDETRDataModule
-from rfdetr.utilities.tensors import NestedTensor
+from rfdetr.utilities.tensors import NestedTensor, PackedTargets, pack_targets
 
 # ---------------------------------------------------------------------------
 # Private helpers — used by both module-level fixtures and class-level _setup_*
@@ -835,6 +835,56 @@ class TestTrainDataloader:
         assert len(loader.dataset) % (2 * 4 * 3) == 0
         assert len(loader.dataset) == 120
 
+    @staticmethod
+    def _raw_sample(h: int = 16, w: int = 16) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Build one (image, target) pair as a dataset __getitem__ would return it, for collate_fn input.
+
+        Examples:
+            >>> image, target = TestTrainDataloader._raw_sample()
+            >>> image.shape, sorted(target)
+            (torch.Size([3, 16, 16]), ['boxes', 'image_id', 'labels', 'orig_size'])
+        """
+        image = torch.randn(3, h, w)
+        target = {
+            "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
+            "labels": torch.tensor([1]),
+            "image_id": torch.tensor(0),
+            "orig_size": torch.tensor([h, w]),
+        }
+        return image, target
+
+    @pytest.mark.parametrize(
+        ("loader_name", "dataset_attribute"),
+        [
+            pytest.param("train_dataloader", "_dataset_train", id="train"),
+            pytest.param("val_dataloader", "_dataset_val", id="validation"),
+            pytest.param("test_dataloader", "_dataset_test", id="test"),
+            pytest.param("predict_dataloader", "_dataset_val", id="predict"),
+        ],
+    )
+    def test_pack_targets_default_makes_every_loader_collate_packed_targets(
+        self, tmp_path, loader_name, dataset_attribute
+    ):
+        """The default must make each public DataLoader's collate function return PackedTargets."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path))
+        setattr(dm, dataset_attribute, _fake_dataset(200))
+
+        loader = getattr(dm, loader_name)()
+        _, targets = loader.collate_fn([self._raw_sample(), self._raw_sample()])
+
+        assert isinstance(targets, PackedTargets)
+
+    def test_pack_targets_false_keeps_collate_fn_output_a_tuple_of_dicts(self, tmp_path):
+        """An explicit TrainConfig.pack_targets=False leaves train_dataloader().collate_fn output unpacked."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, pack_targets=False))
+        dm._dataset_train = _fake_dataset(200)
+
+        loader = dm.train_dataloader()
+        _, targets = loader.collate_fn([self._raw_sample(), self._raw_sample()])
+
+        assert not isinstance(targets, PackedTargets)
+        assert all(isinstance(t, dict) for t in targets)
+
 
 class TestGradAccumAlignedDataset:
     """Unit tests for the GradAccumAlignedDataset wrapper."""
@@ -1044,6 +1094,84 @@ class TestPredictDataloader:
         assert loader.num_workers == 0
 
 
+class TestEvalBatchSize:
+    """eval_batch_size decouples the val/test/predict DataLoaders from the train micro-batch size."""
+
+    _EVAL_LOADERS = [
+        pytest.param("val_dataloader", id="val"),
+        pytest.param("test_dataloader", id="test"),
+        pytest.param("predict_dataloader", id="predict"),
+    ]
+
+    def _setup_dm(
+        self,
+        tmp_path: Path,
+        batch_size: int | str = 2,
+        eval_batch_size: int | None = None,
+        grad_accum_steps: int = 1,
+        dataset_length: int = 50,
+    ) -> RFDETRDataModule:
+        """Build a data module with every loader dataset injected.
+
+        Examples:
+            >>> datamodule = TestEvalBatchSize()._setup_dm(Path("/tmp"), batch_size=4, eval_batch_size=8)
+            >>> datamodule.train_config.batch_size, datamodule.train_config.eval_batch_size
+            (4, 8)
+        """
+        mc = _base_model_config()
+        tc = _base_train_config(
+            tmp_path,
+            batch_size=batch_size,
+            eval_batch_size=eval_batch_size,
+            grad_accum_steps=grad_accum_steps,
+            num_workers=0,
+        )
+        dm = RFDETRDataModule(mc, tc)
+        dm._dataset_train = _fake_dataset(dataset_length)
+        dm._dataset_val = _fake_dataset(dataset_length)
+        dm._dataset_test = _fake_dataset(dataset_length)
+        return dm
+
+    @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
+    def test_defaults_to_train_batch_size(self, tmp_path: Path, loader_name: str) -> None:
+        """With eval_batch_size unset, every eval DataLoader keeps using the train batch size."""
+        dm = self._setup_dm(tmp_path, batch_size=6, eval_batch_size=None)
+        loader = getattr(dm, loader_name)()
+        assert loader.batch_size == 6
+
+    @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
+    def test_explicit_value_overrides_train_batch_size(self, tmp_path: Path, loader_name: str) -> None:
+        """An explicit eval_batch_size is used by every eval DataLoader instead of the train batch size."""
+        dm = self._setup_dm(tmp_path, batch_size=2, eval_batch_size=16)
+        loader = getattr(dm, loader_name)()
+        assert loader.batch_size == 16
+
+    def test_train_dataloader_keeps_train_batch_size(self, tmp_path: Path) -> None:
+        """The training DataLoader ignores eval_batch_size and keeps the configured train batch size."""
+        dm = self._setup_dm(tmp_path, batch_size=2, eval_batch_size=16)
+        loader = dm.train_dataloader()
+        assert loader.batch_sampler.batch_size == 2
+
+    def test_train_dataloader_grad_accum_alignment_unaffected(self, tmp_path: Path) -> None:
+        """Train-side grad-accum padding still aligns to batch_size * grad_accum_steps, not eval_batch_size."""
+        dm = self._setup_dm(tmp_path, batch_size=2, eval_batch_size=16, grad_accum_steps=4, dataset_length=50)
+        loader = dm.train_dataloader()
+        assert len(loader.dataset) % (2 * 4) == 0
+
+    @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
+    def test_explicit_value_works_with_unresolved_auto_batch_size(self, tmp_path: Path, loader_name: str) -> None:
+        """An explicit eval_batch_size does not depend on batch_size='auto' having been resolved."""
+        dm = self._setup_dm(tmp_path, batch_size="auto", eval_batch_size=8)
+        loader = getattr(dm, loader_name)()
+        assert loader.batch_size == 8
+
+    def test_unresolved_auto_batch_size_still_raises_without_explicit_value(self, tmp_path: Path) -> None:
+        """Without eval_batch_size, an unresolved batch_size='auto' still fails eval loader construction."""
+        dm = self._setup_dm(tmp_path, batch_size="auto", eval_batch_size=None)
+        with pytest.raises(RuntimeError, match="was not resolved"):
+            dm.val_dataloader()
+
+
 class TestClassNames:
     """class_names property extracts names from COCO dataset annotations."""
 
@@ -1173,6 +1301,30 @@ class TestTransferBatchToDevice:
 
         assert isinstance(result_samples, NestedTensor)
 
+    def test_packed_targets_are_unpacked_to_a_plain_list_on_target_device(self, fixture_training_setup):
+        """When the collate_fn packed targets (``TrainConfig.pack_targets=True``), transfer_batch_to_device must
+        still hand downstream code the same plain per-sample dict list the unpacked path returns, on the target
+        device -- not a ``PackedTargets``. ``on_after_batch_transfer`` mutates target dicts by key reassignment,
+        and ``PackedTargets.__getitem__``/iteration rebuilds a fresh dict on every access, so a reassignment into
+        an un-materialised ``PackedTargets`` would silently vanish on the next access."""
+        _, _, dm = fixture_training_setup
+        samples, plain_targets = _make_batch()
+        packed_targets = pack_targets(plain_targets)
+        assert isinstance(packed_targets, PackedTargets)
+        device = torch.device("cpu")
+
+        _, result_targets = dm.transfer_batch_to_device((samples, packed_targets), device, dataloader_idx=0)
+
+        assert isinstance(result_targets, list)
+        assert not isinstance(result_targets, PackedTargets)
+        for t in result_targets:
+            assert isinstance(t, dict)
+            for v in t.values():
+                assert v.device == device
+        for original, rebuilt in zip(plain_targets, result_targets):
+            for key, value in original.items():
+                assert torch.equal(rebuilt[key], value)
+
 
 # ---------------------------------------------------------------------------
 # TestBackendResolution — validates augmentation_backend logic in setup("fit")
@@ -1220,7 +1372,7 @@ class TestBackendResolution:
 
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
         ):
             dm = self._setup_with_mock_build(dm)
 
@@ -1245,7 +1397,7 @@ class TestBackendResolution:
 
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
             pytest.raises(ImportError, match="rfdetr\\[augment\\]"),
         ):
             self._setup_with_mock_build(dm)
@@ -1270,12 +1422,13 @@ class TestBackendResolution:
 
         def _fake_build_kornia(aug_cfg, resolution, with_masks=False):
             captured["aug_config"] = aug_cfg
+            captured["with_masks"] = with_masks
             return MagicMock()
 
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
             patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=True),
+            patch.object(AugmentationBackend, "_is_available", lambda self: True),
             patch("rfdetr.datasets.kornia_transforms.build_kornia_pipeline", side_effect=_fake_build_kornia),
             patch("rfdetr.datasets.kornia_transforms.build_normalize", return_value=MagicMock()),
         ):
@@ -1284,6 +1437,7 @@ class TestBackendResolution:
         assert captured.get("aug_config") is AUG_CONFIG, (
             "GPU path must fall back to AUG_CONFIG when train_config.aug_config is None"
         )
+        assert captured.get("with_masks") is True, "GPU path must transport the padding mask for detection batches"
 
     def test_auto_no_cuda_does_not_strip_cpu_normalize(self, tmp_path):
         """Auto + no CUDA: gpu_postprocess must be False so CPU Normalize is retained."""
@@ -1382,9 +1536,10 @@ class TestOnAfterBatchTransfer:
 
         samples, targets = self._make_kornia_batch()
         img_aug = samples.tensors.clone()
-        # Mock pipeline returns (augmented_images, augmented_boxes)
+        # Mock pipeline returns the image, boxes, and transported padding mask.
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
         dm._kornia_pipeline = mock_pipeline
 
         # Normalize adds +1 so we can assert the normalization step is applied.
@@ -1404,6 +1559,74 @@ class TestOnAfterBatchTransfer:
             torch.testing.assert_close(
                 boxes[0], torch.tensor([0.375, 0.375, 0.5, 0.5], dtype=torch.float32), rtol=1e-4, atol=1e-6
             )
+
+    def test_training_uses_transformed_padding_mask(self, tmp_path) -> None:
+        """The returned NestedTensor mask comes from the same Kornia geometry as the image."""
+        dm = self._build_dm(tmp_path)
+        dm = self._attach_mock_trainer(dm, training=True)
+
+        samples, targets = self._make_kornia_batch()
+        assert samples.mask is not None
+        samples.mask[0, 8:, :] = True
+        samples.mask[1, :, 12:] = True
+        img_aug = samples.tensors.clone()
+        boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        padding_masks_aug[0, :, 5:, :] = 1.0
+        padding_masks_aug[1, :, :, 3:] = 1.0
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+
+        result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        call_args, call_kwargs = dm._kornia_pipeline.call_args
+        assert len(call_args) == 3
+        assert not call_kwargs
+        torch.testing.assert_close(call_args[2], samples.mask.unsqueeze(1).to(torch.float32), rtol=0, atol=0)
+        assert result_samples.mask is not None
+        assert result_samples.mask.dtype == torch.bool
+        assert torch.equal(result_samples.mask, padding_masks_aug[:, 0].to(torch.bool))
+
+    def test_perspective_warps_padding_mask_with_real_pipeline(self, tmp_path) -> None:
+        """Perspective transports unequal-size batch padding through the real Kornia sequence."""
+        pytest.importorskip("kornia")
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, collate_boxes
+        from rfdetr.utilities.tensors import nested_tensor_from_tensor_list
+
+        dm = self._build_dm(tmp_path)
+        dm = self._attach_mock_trainer(dm, training=True)
+        samples = nested_tensor_from_tensor_list([torch.ones(3, 48, 48), torch.ones(3, 64, 64)])
+        assert samples.mask is not None
+        targets = [
+            {
+                "boxes": torch.tensor([[4.0, 4.0, 36.0, 36.0]]),
+                "labels": torch.tensor([1]),
+                "area": torch.tensor([1024.0]),
+                "iscrowd": torch.tensor([0]),
+                "image_id": torch.tensor(index),
+                "orig_size": torch.tensor([size, size]),
+            }
+            for index, size in enumerate((48, 64))
+        ]
+        config = {"Perspective": {"scale": 0.4, "p": 1.0}}
+        dm._kornia_pipeline = build_kornia_pipeline(config, 64, with_masks=True)
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+        boxes_padded, _ = collate_boxes(targets, samples.tensors.device)
+        reference_pipeline = build_kornia_pipeline(config, 64, with_masks=True)
+
+        torch.manual_seed(7)
+        _, _, expected_padding = reference_pipeline(
+            samples.tensors,
+            boxes_padded,
+            samples.mask.unsqueeze(1).to(torch.float32),
+        )
+        torch.manual_seed(7)
+        result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        assert result_samples.mask is not None
+        assert result_samples.mask.dtype == torch.bool
+        assert torch.equal(result_samples.mask, expected_padding[:, 0].to(torch.bool))
+        assert not torch.equal(result_samples.mask, samples.mask)
 
     def test_training_false_skips_augmentation(self, tmp_path):
         """When training=False, batch is returned unchanged."""
@@ -1431,7 +1654,8 @@ class TestOnAfterBatchTransfer:
         samples, targets = self._make_kornia_batch_with_masks()
         img_aug = samples.tensors.clone()
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        masks_aug = torch.ones(2, 1, 16, 16, dtype=torch.float32)
+        masks_aug = torch.ones(2, 2, 16, 16, dtype=torch.float32)
+        masks_aug[:, 1] = 0.0
 
         mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded, masks_aug))
         dm._kornia_pipeline = mock_pipeline
@@ -1447,8 +1671,10 @@ class TestOnAfterBatchTransfer:
         masks_arg = call_args[2]
         assert isinstance(masks_arg, torch.Tensor), "third pipeline argument must be a masks tensor"
         assert masks_arg.dtype == torch.float32, "masks passed to pipeline must be float32"
-        assert masks_arg.shape == (2, 1, 16, 16), "masks passed to pipeline must have shape [B, N_max, H, W]"
+        assert masks_arg.shape == (2, 2, 16, 16), "masks passed to pipeline must include instance and padding channels"
         assert "masks" in result_targets[0], "masks key must be present in output targets for segmentation"
+        assert result_samples.mask is not None
+        assert not result_samples.mask.any()
 
     def test_segmentation_masks_stay_in_sync_with_boxes(self, tmp_path):
         """Masks are filtered in sync with boxes: one instance removed → one mask removed."""
@@ -1474,7 +1700,8 @@ class TestOnAfterBatchTransfer:
         ]
         # Augmented: box 0 survives, box 1 becomes zero-area
         boxes_aug_out = torch.tensor([[[2.0, 2.0, 8.0, 8.0], [5.0, 5.0, 5.0, 5.0]]])
-        masks_aug_out = torch.ones(1, 2, h, w, dtype=torch.float32)
+        masks_aug_out = torch.ones(1, 3, h, w, dtype=torch.float32)
+        masks_aug_out[:, 2] = 0.0
         mock_pipeline = MagicMock(return_value=(tensors, boxes_aug_out, masks_aug_out))
         dm._kornia_pipeline = mock_pipeline
         dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
@@ -1493,7 +1720,8 @@ class TestOnAfterBatchTransfer:
         samples, targets = self._make_kornia_batch()
         img_aug = samples.tensors.clone()
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
         dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
 
         result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
@@ -1513,7 +1741,8 @@ class TestOnAfterBatchTransfer:
 
         img_aug = samples.tensors.clone()
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
         dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
 
         _, result_targets = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)

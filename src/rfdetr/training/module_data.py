@@ -22,7 +22,7 @@ from rfdetr.datasets.aug_configs import AUG_CONFIG
 from rfdetr.datasets.yolo import YoloSplitUnavailableError
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.tensors import make_collate_fn
+from rfdetr.utilities.tensors import PackedTargets, make_collate_fn
 
 logger = get_logger()
 
@@ -153,6 +153,7 @@ class RFDETRDataModule(LightningDataModule):
             )
         self._collate_fn = make_collate_fn(
             block_size=block_size,
+            pack=train_config.pack_targets,
         )
 
         self._dataset_train: torch.utils.data.Dataset[Any] | None = None
@@ -328,6 +329,23 @@ class RFDETRDataModule(LightningDataModule):
             )
         return batch_size
 
+    def _resolve_eval_batch_size(self) -> int:
+        """Return the batch size for the validation, test and predict dataloaders.
+
+        An explicit ``train_config.eval_batch_size`` wins; ``None`` (the default) falls back to the resolved
+        training batch size, preserving the historical behavior of tying eval batches to the train micro-batch.
+        The explicit value is returned without consulting ``batch_size``, so it stays usable even on the
+        ``batch_size="auto"`` path where :meth:`_resolve_batch_size` would raise.
+
+        Raises:
+            RuntimeError: If ``eval_batch_size`` is None and ``train_config.batch_size == "auto"`` was never
+                resolved (propagated from :meth:`_resolve_batch_size`).
+        """
+        eval_batch_size = self.train_config.eval_batch_size
+        if eval_batch_size is not None:
+            return eval_batch_size
+        return self._resolve_batch_size()
+
     @staticmethod
     def _require_dataset(dataset: torch.utils.data.Dataset[Any] | None, split: str) -> torch.utils.data.Dataset[Any]:
         """Return *dataset*, raising if ``setup()`` has not built it yet."""
@@ -345,7 +363,8 @@ class RFDETRDataModule(LightningDataModule):
         so that PTL can auto-inject ``DistributedSampler`` in DDP mode.
 
         Returns:
-            DataLoader for the training dataset.
+            DataLoader for the training dataset. With ``TrainConfig.pack_targets=True`` (the default), its collated
+            batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset: torch.utils.data.Dataset[Any] = self._require_dataset(self._dataset_train, "fit")
         batch_size = self._resolve_batch_size()
@@ -400,12 +419,13 @@ class RFDETRDataModule(LightningDataModule):
         """Return the validation DataLoader.
 
         Returns:
-            DataLoader for the validation dataset with sequential sampling.
+            DataLoader for the validation dataset with sequential sampling. With ``TrainConfig.pack_targets=True``
+            (the default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_val, "validate")
         return DataLoader(
             dataset,
-            batch_size=self._resolve_batch_size(),
+            batch_size=self._resolve_eval_batch_size(),
             sampler=torch.utils.data.SequentialSampler(dataset),  # type: ignore[arg-type]
             drop_last=False,
             collate_fn=self._collate_fn,
@@ -420,12 +440,13 @@ class RFDETRDataModule(LightningDataModule):
         """Return the test DataLoader.
 
         Returns:
-            DataLoader for the test dataset with sequential sampling.
+            DataLoader for the test dataset with sequential sampling. With ``TrainConfig.pack_targets=True`` (the
+            default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_test, "test")
         return DataLoader(
             dataset,
-            batch_size=self._resolve_batch_size(),
+            batch_size=self._resolve_eval_batch_size(),
             sampler=torch.utils.data.SequentialSampler(dataset),  # type: ignore[arg-type]
             drop_last=False,
             collate_fn=self._collate_fn,
@@ -440,12 +461,13 @@ class RFDETRDataModule(LightningDataModule):
         """Return the predict DataLoader (reuses the validation dataset, no augmentation).
 
         Returns:
-            DataLoader for the validation dataset with sequential sampling.
+            DataLoader for the validation dataset with sequential sampling. With ``TrainConfig.pack_targets=True``
+            (the default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_val, "predict")
         return DataLoader(
             dataset,
-            batch_size=self._resolve_batch_size(),
+            batch_size=self._resolve_eval_batch_size(),
             sampler=torch.utils.data.SequentialSampler(dataset),  # type: ignore[arg-type]
             drop_last=False,
             collate_fn=self._collate_fn,
@@ -657,7 +679,7 @@ class RFDETRDataModule(LightningDataModule):
         if resolved is None or not is_gpu_postprocess(resolved):
             return
 
-        if not AugmentationBackend._is_kornia_available():
+        if not AugmentationBackend.KORNIA._is_available():
             raise ImportError("Kornia augmentation requires kornia. Install with: pip install 'rfdetr[augment]'")
 
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize
@@ -665,7 +687,8 @@ class RFDETRDataModule(LightningDataModule):
         self._kornia_pipeline = build_kornia_pipeline(
             self.train_config.aug_config if self.train_config.aug_config is not None else AUG_CONFIG,
             self.model_config.resolution,
-            with_masks=self.model_config.segmentation_head,
+            # The padding mask must receive every geometric warp, even for detection-only batches.
+            with_masks=True,
         )
         self._kornia_normalize = build_normalize()
         logger.info("Kornia augmentation pipeline built (resolved=%s)", resolved)
@@ -676,8 +699,9 @@ class RFDETRDataModule(LightningDataModule):
         When ``_kornia_pipeline`` is set and the trainer is in training mode, augmentation and normalization are applied
         on the GPU.  Validation and test batches pass through unchanged.
 
-        Segmentation models use a mask-aware pipeline (``with_masks=True``) so images, boxes, and per-instance masks are
-        augmented in sync.
+        The pipeline carries the ``NestedTensor`` padding mask with every batch, so geometric transforms keep valid
+        image regions and padding aligned. Segmentation batches concatenate their instance masks before that final
+        padding-mask channel, then split it back out before target unpacking.
 
         Args:
             batch: Tuple of ``(NestedTensor, list[dict])`` already on device.
@@ -701,18 +725,26 @@ class RFDETRDataModule(LightningDataModule):
         kornia_pipeline.to(img.device)
         kornia_normalize.to(img.device)
         boxes_padded, valid = collate_boxes(targets, img.device)
+        padding_mask = samples.mask
+        if padding_mask is None:
+            padding_mask = torch.zeros(img.shape[0], *img.shape[-2:], dtype=torch.bool, device=img.device)
+        padding_masks = padding_mask.unsqueeze(1).to(torch.float32)
 
         if self.model_config.segmentation_head:
             image_height, image_width = img.shape[-2:]
             masks_padded = collate_masks(
                 targets, img.device, n_max=valid.shape[1], image_height=image_height, image_width=image_width
             )
-            img_aug, boxes_aug, masks_aug = kornia_pipeline(img, boxes_padded, masks_padded)
+            auxiliary_masks = torch.cat((masks_padded, padding_masks), dim=1)
+            img_aug, boxes_aug, auxiliary_masks_aug = kornia_pipeline(img, boxes_padded, auxiliary_masks)
+            masks_aug = auxiliary_masks_aug[:, : valid.shape[1]]
+            padding_mask_aug = auxiliary_masks_aug[:, valid.shape[1]] > 0.5
             img_aug = kornia_normalize(img_aug)
             aug_height, aug_width = img_aug.shape[-2:]
             targets = unpack_boxes(boxes_aug, valid, targets, aug_height, aug_width, masks_aug=masks_aug)
         else:
-            img_aug, boxes_aug = kornia_pipeline(img, boxes_padded)
+            img_aug, boxes_aug, padding_masks_aug = kornia_pipeline(img, boxes_padded, padding_masks)
+            padding_mask_aug = padding_masks_aug[:, 0] > 0.5
             img_aug = kornia_normalize(img_aug)
             aug_height, aug_width = img_aug.shape[-2:]
             targets = unpack_boxes(boxes_aug, valid, targets, aug_height, aug_width)
@@ -724,7 +756,7 @@ class RFDETRDataModule(LightningDataModule):
                 continue
             scale = boxes.new_tensor([width, height, width, height])
             target["boxes"] = box_xyxy_to_cxcywh(boxes) / scale
-        batch = (NestedTensor(img_aug, samples.mask), targets)
+        batch = (NestedTensor(img_aug, padding_mask_aug), targets)
         return batch
 
     # ------------------------------------------------------------------
@@ -769,7 +801,9 @@ class RFDETRDataModule(LightningDataModule):
         ``NestedTensor`` must be moved explicitly.
 
         Args:
-            batch: Tuple of (NestedTensor samples, list of target dicts).
+            batch: Tuple of ``NestedTensor`` samples and targets that are either a collated ``PackedTargets`` object
+                or an unpacked tuple of target dicts. Packed targets are materialized to a plain list of dicts after
+                transfer.
             device: Target device.
             dataloader_idx: Index of the dataloader providing this batch.
 
@@ -779,5 +813,10 @@ class RFDETRDataModule(LightningDataModule):
         samples, targets = batch
         non_blocking = device.type == "cuda"
         samples = samples.to(device, non_blocking=non_blocking)
-        targets = [{k: v.to(device, non_blocking=non_blocking) for k, v in t.items()} for t in targets]
+        if isinstance(targets, PackedTargets):
+            # One transfer per field instead of one per field per sample, then materialised so that callers can
+            # mutate the dicts exactly as they do on the unpacked path.
+            targets = targets.to(device, non_blocking=non_blocking).as_list()
+        else:
+            targets = [{k: v.to(device, non_blocking=non_blocking) for k, v in t.items()} for t in targets]
         return samples, targets

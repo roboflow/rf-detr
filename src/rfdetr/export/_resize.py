@@ -49,9 +49,19 @@ def _bilinear_resize_half_pixel(src: NDArray[np.float32], out_h: int, out_w: int
     x1 = np.minimum(x0 + 1, src_w - 1)
     dy = (src_y - y0)[:, None]
     dx = (src_x - x0)[None, :]
-    a = src[..., y0[:, None], x0[None, :]]
-    b = src[..., y0[:, None], x1[None, :]]
-    c = src[..., y1[:, None], x0[None, :]]
-    d = src[..., y1[:, None], x1[None, :]]
-    out = (1 - dy) * ((1 - dx) * a + dx * b) + dy * ((1 - dx) * c + dx * d)
+    if 3 * src_h < 4 * out_h:
+        # Interpolate each source row horizontally once, then gather the two rows needed for
+        # each output pixel. This preserves the existing arithmetic order while avoiding four
+        # full output-grid gathers. Keep the three source-height work grids below the size of
+        # those four output-height gathers; otherwise retain the bounded formulation below.
+        left = np.take(src, x0, axis=-1)
+        right = np.take(src, x1, axis=-1)
+        horizontal = (1 - dx) * left + dx * right
+        out = (1 - dy) * horizontal[..., y0, :] + dy * horizontal[..., y1, :]
+    else:
+        a = src[..., y0[:, None], x0[None, :]]
+        b = src[..., y0[:, None], x1[None, :]]
+        c = src[..., y1[:, None], x0[None, :]]
+        d = src[..., y1[:, None], x1[None, :]]
+        out = (1 - dy) * ((1 - dx) * a + dx * b) + dy * ((1 - dx) * c + dx * d)
     return np.asarray(out, dtype=np.float32)

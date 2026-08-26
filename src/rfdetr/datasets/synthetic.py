@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
+from numpy.typing import NDArray
 from PIL import Image
 from supervision import Color, Detections, box_iou_batch, draw_filled_polygon
 from tqdm.auto import tqdm
@@ -42,7 +43,7 @@ class DatasetSplitRatios:
     val: float = 0.2
     test: float = 0.1
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate that ratios sum to approximately 1.0 and are non-negative."""
         total = self.train + self.val + self.test
         if any(r < 0 for r in [self.train, self.val, self.test]):
@@ -118,8 +119,8 @@ SYNTHETIC_COLORS = {"red": Color.RED, "green": Color.GREEN, "blue": Color.BLUE}
 
 
 def draw_synthetic_shape(
-    img: np.ndarray, shape: str, color: Color, center: tuple[int, int], size: int
-) -> tuple[np.ndarray, list[float]]:
+    img: NDArray[np.uint8], shape: str, color: Color, center: tuple[int, int], size: int
+) -> tuple[NDArray[np.uint8], list[float]]:
     """Draw a geometric shape on an image and return its COCO polygon.
 
     The polygon is computed first, then used for both rendering and annotation, so the two are always identical.
@@ -165,7 +166,7 @@ def draw_synthetic_shape(
     return img, polygon
 
 
-def calculate_boundary_overlap(bbox: np.ndarray, img_size: int) -> float:
+def calculate_boundary_overlap(bbox: NDArray[np.float64], img_size: int) -> float:
     """Calculate how much of a bounding box is outside the image boundaries.
 
     Args:
@@ -200,7 +201,7 @@ def generate_synthetic_sample(
     min_size_ratio: float = 0.1,
     max_size_ratio: float = 0.3,
     overlap_threshold: float = 0.1,
-) -> tuple[np.ndarray, Detections]:
+) -> tuple[NDArray[np.uint8], Detections]:
     """Generate a single synthetic image and its detections.
 
     Args:
@@ -219,11 +220,11 @@ def generate_synthetic_sample(
         ``detections`` is an :class:`Detections` instance whose ``data["polygons"]`` field contains one flat ``[x1,
         y1, x2, y2, …]`` polygon list per detection, matching the geometry returned by :func:`draw_synthetic_shape`.
     """
-    img = np.ones((img_size, img_size, 3), dtype=np.uint8) * 128
+    img: NDArray[np.uint8] = np.ones((img_size, img_size, 3), dtype=np.uint8) * 128
     color_names = list(SYNTHETIC_COLORS.keys())
     num_objects = random.randint(min_objects, max_objects)
 
-    xyxys = []
+    xyxys: list[NDArray[np.float64]] = []
     class_ids = []
     polygons: list[list[float]] = []
     failed_attempts = 0
@@ -336,6 +337,7 @@ def _write_coco_json(
             no ``"polygons"`` key in its ``data`` dict.
         ValueError: If ``with_segmentation=True`` and the ``"polygons"`` array
             has fewer entries than there are detections for that image.
+        ValueError: If a detections entry has ``class_id`` set to ``None``.
         ValueError: If any detection has a ``class_id`` outside the range
             ``[0, len(classes))``.
     """
@@ -374,10 +376,16 @@ def _write_coco_json(
                 )
         else:
             polygon_data = np.empty(0, dtype=object)
+        detection_class_ids = detections.class_id
+        if detection_class_ids is None:
+            raise ValueError(
+                "every detections entry must have class_id set, but got None "
+                f"for image index {img_id} (file: {file_path})"
+            )
         for det_idx in range(len(detections)):
             x1, y1, x2, y2 = (float(v) for v in detections.xyxy[det_idx])
             w, h_box = x2 - x1, y2 - y1
-            class_id = int(detections.class_id[det_idx])
+            class_id = int(detection_class_ids[det_idx])
             if class_id < 0 or class_id >= len(classes):
                 raise ValueError(
                     f"Invalid class_id {class_id} for detection index {det_idx} "

@@ -10,9 +10,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+# Albumentations aliases that carry the same horizontal-flip semantics.
+D4_ALIAS_NAMES: frozenset[str] = frozenset({"D4", "SquareSymmetry"})
+HORIZONTAL_FLIP_ALIAS_NAMES: frozenset[str] = frozenset({"HorizontalFlip", "TimeReverse"})
+
 # Transforms that include a horizontal-flip component. Applying these to keypoint
 # data without swapping left/right joint pairs produces incorrect annotations.
-HFLIP_TRANSFORM_NAMES: frozenset[str] = frozenset({"HorizontalFlip", "Flip", "D4"})
+HFLIP_TRANSFORM_NAMES: frozenset[str] = HORIZONTAL_FLIP_ALIAS_NAMES | frozenset({"Flip"}) | D4_ALIAS_NAMES
 
 CONTAINER_TRANSFORM_NAMES: frozenset[str] = frozenset({"OneOf", "SomeOf", "Sequential"})
 
@@ -45,14 +49,33 @@ def resolve_keypoint_flip_pairs(args: Any, *, include_keypoints: bool) -> list[i
     return (getattr(args, "keypoint_flip_pairs", []) or []) if include_keypoints else None
 
 
-def _warn_keypoint_hflip_disabled(aug_name: str, warn: Callable[..., None]) -> None:
-    """Emit the standard warning for a disabled keypoint horizontal flip."""
+def _warn_keypoint_hflip_disabled(
+    aug_name: str,
+    warn: Callable[..., None],
+    *,
+    editable_config: bool = True,
+) -> None:
+    """Emit the standard warning for a disabled keypoint horizontal flip.
+
+    Args:
+        aug_name: Name of the disabled flip transform, for the warning text.
+        warn: Warning sink, typically ``logger.warning``.
+        editable_config: Whether the caller has an ``aug_config`` object the flip
+            transform can be removed from. The torchvision-native default pipeline
+            (``aug_config=None``) builds ``RandomHorizontalFlip`` directly and has
+            no such config to point the user at.
+    """
+    remedy = (
+        f"Remove '{aug_name}' from your augmentation config or provide keypoint_flip_pairs."
+        if editable_config
+        else "Provide keypoint_flip_pairs to enable it."
+    )
     warn(
         "Keypoint pipeline: '%s' performs a horizontal flip but no keypoint flip pairs "
         "were configured. The transform has been disabled to prevent incorrect keypoint "
-        "annotations. Remove '%s' from your augmentation config or provide keypoint_flip_pairs.",
+        "annotations. %s",
         aug_name,
-        aug_name,
+        remedy,
     )
 
 

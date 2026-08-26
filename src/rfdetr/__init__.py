@@ -20,6 +20,8 @@ import importlib.machinery
 import importlib.util
 import os
 import sys
+from collections.abc import Sequence
+from types import ModuleType
 from typing import Any
 
 # np.complex_ was removed in NumPy 2.0 (June 2024) but some transitive dependencies (e.g. older tensorflow, chumpy)
@@ -36,7 +38,7 @@ except ImportError:
 if _IS_NUMPY_INSTALLED and not hasattr(numpy, "complex_"):
     _complex128 = getattr(numpy, "complex128", None)
     if _complex128 is not None:
-        numpy.complex_ = _complex128
+        setattr(numpy, "complex_", _complex128)
 
 
 from rfdetr.detr import RFDETR
@@ -114,8 +116,8 @@ class _RemovedModuleFinder(importlib.abc.MetaPathFinder):
     def find_spec(
         self,
         fullname: str,
-        path: list[str] | None,
-        target: object | None = None,
+        path: Sequence[str] | None,
+        target: ModuleType | None = None,
     ) -> importlib.machinery.ModuleSpec | None:
         """Return a failing spec with a migration hint for removed legacy modules."""
         if not fullname.startswith(f"{__name__}."):
@@ -136,10 +138,10 @@ _REMOVED_MODULE_FINDER = _RemovedModuleFinder()
 
 if not getattr(sys, "_rfdetr_removed_finder", False):
     sys.meta_path.insert(0, _REMOVED_MODULE_FINDER)
-    sys._rfdetr_removed_finder = True
+    setattr(sys, "_rfdetr_removed_finder", True)
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazily resolve training/PTL and plus-only exports and handle removed-module aliases.
 
     This hook is only invoked on explicit attribute access (e.g. ``rfdetr.RFDETRModelModule``) and supports three

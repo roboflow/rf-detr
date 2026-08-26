@@ -134,6 +134,12 @@ class TestBuildTrainerCallbacks:
         assert coco_cb._eval_interval == 3
         assert coco_cb._log_per_class_metrics is False
 
+    def test_coco_eval_default_skips_per_class_metrics(self, tmp_path):
+        """The default TrainConfig disables the costly per-class metric path."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        assert coco_cb._log_per_class_metrics is False
+
     def test_coco_eval_uses_keypoint_oks_sigmas(self, tmp_path):
         """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""
         sigmas = [0.05] * 25
@@ -143,6 +149,28 @@ class TestBuildTrainerCallbacks:
         )
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._keypoint_oks_sigmas == sigmas
+
+    @pytest.mark.parametrize(
+        "use_ema, eval_base_model, expected",
+        [
+            pytest.param(True, False, False, id="ema_default_evaluates_ema_only"),
+            pytest.param(True, True, True, id="ema_with_opt_in_evaluates_both"),
+            pytest.param(False, False, True, id="no_ema_evaluates_base"),
+        ],
+    )
+    def test_eval_policy_is_wired_to_both_callbacks(self, tmp_path, use_ema, eval_base_model, expected):
+        """The eval policy must reach COCOEvalCallback and BestModelCallback consistently.
+
+        The two callbacks have to agree: whenever the base model is not evaluated, COCOEvalCallback mirrors the
+        EMA score onto the primary key and BestModelCallback must stop checkpointing base weights against it.
+        Wiring only one of the pair reintroduces the metric/weights mismatch this policy exists to avoid.
+        """
+        trainer = build_trainer(_tc(tmp_path, use_ema=use_ema, eval_base_model=eval_base_model), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+
+        assert coco_cb._eval_base_model is eval_base_model
+        assert best_cb._evaluates_base_model is expected
 
     def test_best_model_always_present(self, tmp_path):
         """BestModelCallback is always included."""
