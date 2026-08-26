@@ -1431,10 +1431,9 @@ def _affine_ranges(transform) -> dict:
 class TestShiftScaleRotateFactory:
     """`ShiftScaleRotate` on the Kornia backend (issue #1252).
 
-    Albumentations deprecates this name in favour of `Affine`, but the CPU path still accepts it,
-    so a config using it trained on a CPU box and raised on a GPU box. It maps onto the same
-    `RandomAffine` that `Affine` uses, which is what makes it safe: no resolution change, so the
-    padding-mask constraint that keeps the crops unsupported does not apply.
+    Albumentations deprecates this name in favour of `Affine`, but the CPU path still accepts it, so a config using it
+    trained on a CPU box and raised on a GPU box. It maps onto the same `RandomAffine` that `Affine` uses, which is what
+    makes it safe: no resolution change, so the padding-mask constraint that keeps the crops unsupported does not apply.
 
     The limits are *not* pass-through, which is why this needs its own builder rather than an alias.
     """
@@ -1456,10 +1455,9 @@ class TestShiftScaleRotateFactory:
     def test_scale_limit_is_a_delta_biased_by_one(self) -> None:
         """The mapping that a plain alias to Affine would get wrong.
 
-        Albumentations documents `scale_limit` as "biased by 1": it samples from
-        `(1 + low, 1 + high)`, so `0.1` means a scale between 0.9 and 1.1. Kornia's `scale` is the
-        absolute multiplier, so forwarding `0.1` unchanged would ask it to shrink the image to
-        between a tenth of its size and nothing at all.
+        Albumentations documents `scale_limit` as "biased by 1": it samples from `(1 + low, 1 + high)`, so `0.1` means a
+        scale between 0.9 and 1.1. Kornia's `scale` is the absolute multiplier, so forwarding `0.1` unchanged would ask
+        it to shrink the image to between a tenth of its size and nothing at all.
         """
         ranges = _affine_ranges(self._only_affine({"ShiftScaleRotate": {"scale_limit": 0.1, "p": 1.0}}))
         assert ranges["scale"] == pytest.approx((0.9, 1.1), abs=1e-4)
