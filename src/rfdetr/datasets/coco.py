@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 import torch
 import torch.utils.data
@@ -80,7 +80,7 @@ def annotated_category_ids(coco_data: dict[str, Any]) -> set[int]:
 def _category_name(category: dict[str, Any]) -> str:
     """Return a category's ``name``, failing with an actionable message when the field is absent."""
     try:
-        return category["name"]
+        return cast(str, category["name"])
     except KeyError:
         raise KeyError(
             f"COCO category {category.get('id', '?')} is missing the required 'name' field; "
@@ -464,7 +464,7 @@ def convert_coco_poly_to_mask(segmentations: list[Any], height: int, width: int)
     return torch.stack(masks, dim=0)
 
 
-class CocoDetection(torchvision.datasets.CocoDetection):
+class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
     """COCO detection dataset with optional sparse-to-contiguous category ID remapping.
 
     Extends ``torchvision.datasets.CocoDetection`` with two additions:
@@ -533,6 +533,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):
                 "cat2label was supplied but remap_category_ids is False, so the mapping would be ignored. "
                 "Pass remap_category_ids=True to apply it, or drop cat2label to keep raw COCO category ids."
             )
+        self.cat2label: dict[int, int] | None
+        self.label2cat: dict[int, int] | None
         if remap_category_ids:
             # Mapping from original COCO category_id to contiguous label indices
             if cat2label is not None:
@@ -654,26 +656,27 @@ class ConvertCoco:
 
         anno = [obj for obj in anno if "iscrowd" not in obj or obj["iscrowd"] == 0]
 
-        boxes = [obj["bbox"] for obj in anno]
+        box_values = [obj["bbox"] for obj in anno]
         # guard against no boxes via resizing
-        boxes = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4)
+        boxes = torch.as_tensor(box_values, dtype=torch.float32).reshape(-1, 4)
         boxes[:, 2:] += boxes[:, :2]
         boxes[:, 0::2].clamp_(min=0, max=w)
         boxes[:, 1::2].clamp_(min=0, max=h)
 
-        classes: list[int] = []
+        class_ids: list[int] = []
+        cat2label = self.cat2label
         for obj in anno:
             category_id = obj["category_id"]
-            if getattr(self, "cat2label", None) is not None:
-                if category_id not in self.cat2label:
+            if cat2label is not None:
+                if category_id not in cat2label:
                     raise KeyError(
                         f"Unknown category_id {category_id} for image_id {target.get('image_id')} "
                         "encountered in annotations. Check that your category mapping matches the dataset."
                     )
-                classes.append(self.cat2label[category_id])
+                class_ids.append(cat2label[category_id])
             else:
-                classes.append(category_id)
-        classes = torch.as_tensor(classes, dtype=torch.int64)
+                class_ids.append(category_id)
+        classes = torch.as_tensor(class_ids, dtype=torch.int64)
 
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
         boxes = boxes[keep]
@@ -685,8 +688,8 @@ class ConvertCoco:
         target["image_id"] = image_id
 
         # for conversion to coco api
-        area = torch.as_tensor([obj["area"] for obj in anno])
-        iscrowd = torch.as_tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
+        area = torch.as_tensor([obj["area"] for obj in anno], dtype=torch.float32)
+        iscrowd = torch.as_tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno], dtype=torch.int64)
         target["area"] = area[keep]
         target["iscrowd"] = iscrowd[keep]
 
@@ -853,7 +856,7 @@ def _build_train_resize_transforms(
     square: bool,
     max_size: Optional[int] = None,
     scale_jitter: bool = True,
-) -> Compose | RandomSelect:
+) -> Compose | RandomChoice | RandomResize | RandomSelect:
     """Build the default torchvision-native training resize pipeline.
 
     Args:
@@ -869,9 +872,9 @@ def _build_train_resize_transforms(
         or just Option A when ``scale_jitter=False``.
     """
     if square:
-        resize_a = RandomChoice([Resize((scale, scale)) for scale in scales])
+        square_resize = RandomChoice([Resize((scale, scale)) for scale in scales])
         if not scale_jitter:
-            return resize_a
+            return square_resize
         resize_b = Compose(
             [
                 RandomResize([400, 500, 600]),
@@ -880,12 +883,12 @@ def _build_train_resize_transforms(
                 ),
             ]
         )
-        return RandomSelect(resize_a, resize_b)
+        return RandomSelect(square_resize, resize_b)
 
     cap = max_size or _COCO_MAX_SIZE
-    resize_a = RandomResize(scales, max_size=cap)
+    resize = RandomResize(scales, max_size=cap)
     if not scale_jitter:
-        return resize_a
+        return resize
     # Resize each crop directly to the selected target scale, capped as the removed final RandomResize did. Previously
     # the crop was resized to a fixed 384x384 output and then resized again to `scales`, needlessly resampling it twice.
     # The Albumentations backend already dropped that extra hop (see _build_train_resize_config), so both backends now
@@ -897,7 +900,7 @@ def _build_train_resize_transforms(
             RandomChoice([RandomSizedCrop((384, 600), (scale, scale)) for scale in capped_scales]),
         ]
     )
-    return RandomSelect(resize_a, resize_b)
+    return RandomSelect(resize, resize_b)
 
 
 def _build_albumentations_pipeline(
@@ -941,7 +944,7 @@ def _build_albumentations_pipeline(
                 scale_jitter=scale_jitter,
             )
         )
-        pipeline = [*resize_wrappers]
+        pipeline: list[Any] = [*resize_wrappers]
         if not gpu_postprocess:
             aug_wrappers = AlbumentationsWrapper.from_config(
                 aug_config if aug_config is not None else AUG_CONFIG,

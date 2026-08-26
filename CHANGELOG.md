@@ -68,6 +68,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Empty COCO targets now keep `iscrowd` as `int64` and `area` as `float32`, matching populated targets and allowing mixed empty/populated batches to use lossless packed-target worker transport.
+
 ---
 
 ## [1.9.4] — 2026-08-24
