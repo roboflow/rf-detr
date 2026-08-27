@@ -130,16 +130,20 @@ pip install uv
 git clone https://github.com/YOUR_USERNAME/rf-detr.git
 cd rf-detr
 
-# Install all development dependencies
-uv sync --all-groups
+# Install the extras and groups the CPU test job uses (add ,coreml on macOS).
+# UV_TORCH_BACKEND=cpu keeps this from pulling a CUDA build of PyTorch.
+UV_TORCH_BACKEND=cpu uv pip install -e ".[train,augment,cli,visual]" --group tests
 
-# Or install specific dependency groups
-uv sync --group tests      # Testing dependencies only
+# Docs or build work only, without the test extras
 uv sync --group docs       # Documentation dependencies only
 uv sync --group build      # Build tools only
 ```
 
-**Important:** Always run `uv sync` after pulling changes to ensure your dependencies are up to date.
+Use `uv pip install` rather than `uv sync` for the test environment. `uv sync` resolves a universal lock across every extra, which fails on extras that declare different Python floors, and `uv sync --all-extras` errors outright because `coreml` and `executorch` are declared as conflicting. `UV_TORCH_BACKEND` is also only honoured by `uv pip`.
+
+The test suite imports the training and augmentation dependencies, so installing dependency groups alone leaves a large number of tests erroring on import.
+
+**Important:** Re-run the install command after pulling changes to ensure your dependencies are up to date.
 
 ### Optional Extras
 
@@ -152,11 +156,13 @@ uv sync --group build      # Build tools only
 
 ```bash
 # Run CPU tests (default for local development; mirrors CI)
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
+uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu and not coco17 and not e2e_coreml and not e2e_executorch and not e2e_roboflow and not xla and not tpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
 
 # Run GPU tests (requires GPU; mirrors CI)
-uv run --no-sync pytest tests/ -m gpu --ignore=tests/legacy/test_checkpoint_compat.py -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
+uv run --no-sync pytest tests/ -m "gpu and not e2e_tensorrt" --ignore=tests/legacy/test_checkpoint_compat.py -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
 ```
+
+The marker expressions exclude suites that need assets or hardware a local checkout does not have: `coco17` needs the COCO dataset, `e2e_roboflow` needs a Roboflow API key, and `xla` / `tpu` / `e2e_tensorrt` need accelerators. Dropping them from the expression is what produces most local-only failures.
 
 **Development vs. PR Requirements:**
 
