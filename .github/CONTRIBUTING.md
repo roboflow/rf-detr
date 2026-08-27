@@ -130,6 +130,10 @@ pip install uv
 git clone https://github.com/YOUR_USERNAME/rf-detr.git
 cd rf-detr
 
+# Create the environment. `uv pip install` installs into an existing virtualenv and
+# will not create one for you.
+uv venv
+
 # Install the extras and groups the CPU test job uses (add ,coreml on macOS).
 # UV_TORCH_BACKEND=cpu keeps this from pulling a CUDA build of PyTorch.
 UV_TORCH_BACKEND=cpu uv pip install -e ".[train,augment,cli,visual]" --group tests
@@ -139,7 +143,7 @@ uv sync --group docs       # Documentation dependencies only
 uv sync --group build      # Build tools only
 ```
 
-Use `uv pip install` rather than `uv sync` for the test environment. `uv sync` resolves a universal lock across every extra, which fails on extras that declare different Python floors, and `uv sync --all-extras` errors outright because `coreml` and `executorch` are declared as conflicting. `UV_TORCH_BACKEND` is also only honoured by `uv pip`.
+Use `uv pip install` rather than `uv sync` for the test environment. It needs the `uv venv` step above, because unlike `uv sync` it does not create the environment itself. `uv sync` resolves a universal lock across every extra, which fails on extras that declare different Python floors, and `uv sync --all-extras` errors outright because `coreml` and `executorch` are declared as conflicting. `UV_TORCH_BACKEND` is also only honoured by `uv pip`.
 
 The test suite imports the training and augmentation dependencies, so installing dependency groups alone leaves a large number of tests erroring on import.
 
