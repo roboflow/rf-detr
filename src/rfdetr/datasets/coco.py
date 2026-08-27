@@ -1309,8 +1309,10 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
 
     img_folder, ann_file = PATHS[image_set.split("_", maxsplit=1)[0]]
 
-    square_resize_div_64 = getattr(args, "square_resize_div_64", False)
-    include_masks = getattr(args, "segmentation_head", False)
+    # Pipeline options are read directly, never via getattr with a literal default;
+    # see build_roboflow_from_coco in rfdetr/datasets/coco.py for why.
+    square_resize_div_64 = args.square_resize_div_64
+    include_masks = args.segmentation_head
     include_keypoints = has_keypoints
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
     aug_config = getattr(args, "aug_config", None)
@@ -1419,13 +1421,18 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
 
     split = image_set.split("_", maxsplit=1)[0]
     img_folder, ann_file = PATHS[split]
-    square_resize_div_64 = getattr(args, "square_resize_div_64", False)
-    include_masks = getattr(args, "segmentation_head", False)
-    multi_scale = getattr(args, "multi_scale", False)
-    expanded_scales = getattr(args, "expanded_scales", False)
-    do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
-    patch_size = getattr(args, "patch_size", 16)
-    num_windows = getattr(args, "num_windows", 4)
+    # Read directly rather than via getattr with a literal default: these options have no safe constant.
+    # patch_size, num_windows and segmentation_head are variant-dependent, and square_resize_div_64,
+    # multi_scale and expanded_scales all default to True on TrainConfig. An incomplete namespace must fail
+    # here instead of silently building a different pipeline (GitHub #N). The optional fields below keep getattr on
+    # purpose: their absence means "detection, no custom augmentation", which is a real and safe default.
+    square_resize_div_64 = args.square_resize_div_64
+    include_masks = args.segmentation_head
+    multi_scale = args.multi_scale
+    expanded_scales = args.expanded_scales
+    do_random_resize_via_padding = args.do_random_resize_via_padding
+    patch_size = args.patch_size
+    num_windows = args.num_windows
     # Roboflow detection exports omit keypoint schema/flip-pair fields; missing values mean detection-only.
     include_keypoints = getattr(args, "use_grouppose_keypoints", False)
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])

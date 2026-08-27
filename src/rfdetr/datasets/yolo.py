@@ -1051,13 +1051,15 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     img_folder, lb_folder = _resolve_yolo_split_dirs(root, data_file, split_key)
     if split_key == "test":
         _validate_yolo_test_split(img_folder, lb_folder)
-    square_resize_div_64 = getattr(args, "square_resize_div_64", False)
-    include_masks = getattr(args, "segmentation_head", False)
-    multi_scale = getattr(args, "multi_scale", False)
-    expanded_scales = getattr(args, "expanded_scales", False)
-    do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
-    patch_size = getattr(args, "patch_size", 16)
-    num_windows = getattr(args, "num_windows", 4)
+    # Pipeline options are read directly, never via getattr with a literal default;
+    # see build_roboflow_from_coco in rfdetr/datasets/coco.py for why.
+    square_resize_div_64 = args.square_resize_div_64
+    include_masks = args.segmentation_head
+    multi_scale = args.multi_scale
+    expanded_scales = args.expanded_scales
+    do_random_resize_via_padding = args.do_random_resize_via_padding
+    patch_size = args.patch_size
+    num_windows = args.num_windows
     aug_config = getattr(args, "aug_config", None)
     scale_jitter = getattr(args, "scale_jitter", True)
     include_keypoints = getattr(args, "use_grouppose_keypoints", False)

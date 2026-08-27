@@ -34,7 +34,9 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
 
     from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 
-    square_resize_div_64 = getattr(args, "square_resize_div_64", False)
+    # Pipeline options are read directly, never via getattr with a literal default;
+    # see build_roboflow_from_coco in rfdetr/datasets/coco.py for why.
+    square_resize_div_64 = args.square_resize_div_64
     scale_jitter = getattr(args, "scale_jitter", True)
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
     resolved_backend = resolve_backend_for_build(augmentation_backend)
