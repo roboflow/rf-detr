@@ -1008,6 +1008,33 @@ class TestOnLoadCheckpoint:
         RFDETRModelModule.on_load_checkpoint(fake, {"state_dict": {}})
         assert fake._pending_legacy_ema_state is first_ema
 
+    def test_pre_merge_optimizer_state_is_regrouped(self, patch_lit):
+        """on_load_checkpoint itself regroups one-group-per-parameter optimizer state.
+
+        tests/training/test_param_groups.py exercises regroup_unmerged_optimizer_state() directly; this proves the hook
+        actually calls it, since a wiring mistake there (wrong argument, wrong order relative to the other normalisation
+        steps, a silently swallowed exception) would not be caught by calling the helper on its own.
+        """
+        fake = _FakeModule()
+        ckpt = {
+            "state_dict": {"model.w": torch.zeros(1)},
+            "optimizer_states": [
+                {
+                    "state": {0: {"exp_avg": torch.ones(1)}, 1: {"exp_avg": torch.full((1,), 2.0)}},
+                    "param_groups": [
+                        {"lr": 0.1, "weight_decay": 0.0, "params": [0]},
+                        {"lr": 0.1, "weight_decay": 0.0, "params": [1]},
+                    ],
+                }
+            ],
+        }
+
+        RFDETRModelModule.on_load_checkpoint(fake, ckpt)
+
+        groups = ckpt["optimizer_states"][0]["param_groups"]
+        assert len(groups) == 1
+        assert groups[0]["params"] == [0, 1]
+
 
 # ---------------------------------------------------------------------------
 # 5. Public API exports
