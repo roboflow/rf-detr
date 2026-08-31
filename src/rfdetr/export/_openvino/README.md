@@ -30,6 +30,7 @@ model.export(format="openvino", output_dir="output")
 ```
 
 This will create two files (named after the model's variant):
+
 - `output/rfdetr-medium.xml` - The OpenVINO IR model
 - `output/rfdetr-medium.bin` - The model weights
 
