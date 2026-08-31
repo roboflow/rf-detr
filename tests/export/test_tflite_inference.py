@@ -22,8 +22,8 @@ import pytest
 import supervision as sv
 from PIL import Image as PILImage
 
+from rfdetr.export._resize import _bilinear_resize_half_pixel
 from rfdetr.export._tflite.inference import (
-    _bilinear_resize_half_pixel,
     _create_interpreter,
     _decode_masks,
     _preprocess_image,
@@ -40,15 +40,34 @@ _LABEL_OUTPUT = {"shape": [1, 10, 82], "name": "serving_default_labels:0", "inde
 
 
 def _make_boxes() -> np.ndarray:
-    """Return (1, 10, 4) array of normalised cxcywh boxes all centred at 0.5."""
+    """Return (1, 10, 4) array of normalised cxcywh boxes all centred at 0.5.
+
+    Examples:
+        >>> boxes = _make_boxes()
+        >>> boxes.shape
+        (1, 10, 4)
+        >>> float(boxes[0, 0, 0])
+        0.5
+    """
     return np.array([[[0.5, 0.5, 0.1, 0.1]] * 10], dtype=np.float32)
 
 
 def _make_logits(high_conf_idx: int | None = 0) -> np.ndarray:
     """Return (1, 10, 82) logits with one high-confidence entry when requested.
 
-    Background fill is -10.0 so sigmoid scores are near zero (~0.0001) for all entries except the explicitly boosted one
-    (logit=+10.0, sigmoid≈0.9999). This ensures the helper works correctly under per-class sigmoid scoring.
+    Low-confidence fill is -10.0 so sigmoid scores are near zero (~0.0001) for all entries except the explicitly boosted
+    one (logit=+10.0, sigmoid≈0.9999). This ensures the helper works correctly under per-class sigmoid scoring.
+
+    Examples:
+        >>> logits = _make_logits()
+        >>> logits.shape
+        (1, 10, 82)
+        >>> float(logits[0, 0, 0])
+        10.0
+        >>> float(logits[0, 1, 0])
+        -10.0
+        >>> float(_make_logits(high_conf_idx=None)[0, 0, 0])
+        -10.0
     """
     logits = np.full((1, 10, 82), -10.0, dtype=np.float32)
     if high_conf_idx is not None:
@@ -62,7 +81,15 @@ def _make_interp(
     boxes: np.ndarray | None = None,
     logits: np.ndarray | None = None,
 ) -> mock.MagicMock:
-    """Build a mock TFLite interpreter with configurable I/O details."""
+    """Build a mock TFLite interpreter with configurable I/O details.
+
+    Examples:
+        >>> interp = _make_interp()
+        >>> len(interp.get_input_details())
+        1
+        >>> len(interp.get_output_details())
+        2
+    """
     if input_shape is None:
         input_shape = _INPUT_SHAPE
     out_dets = out_dets if out_dets is not None else [_DET_OUTPUT, _LABEL_OUTPUT]
@@ -86,12 +113,32 @@ def _make_interp(
 
 
 def _save_rgb_image(path: Path, size: tuple[int, int] = (64, 64)) -> None:
-    """Write a small solid-colour RGB JPEG to *path*."""
+    """Write a small solid-colour RGB JPEG to *path*.
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     p = Path(d) / "img.jpg"
+        ...     _save_rgb_image(p)
+        ...     p.exists()
+        True
+    """
     PILImage.new("RGB", size, color=(100, 150, 200)).save(path)
 
 
 def _save_grayscale_image(path: Path, size: tuple[int, int] = (64, 64)) -> None:
-    """Write a small solid-colour grayscale PNG to *path*."""
+    """Write a small solid-colour grayscale PNG to *path*.
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     p = Path(d) / "img.png"
+        ...     _save_grayscale_image(p)
+        ...     p.exists()
+        True
+    """
     PILImage.new("L", size, color=128).save(path)
 
 
@@ -317,10 +364,43 @@ class TestRunInference:
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
         assert len(dets) >= 1
 
+    def test_explicit_num_select_caps_export_decode(self, rgb_image: Path) -> None:
+        """An explicit exported-model cap limits query/class pairs before thresholding."""
+        logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
+        logits[0, :, 0] = 10.0
+        interp = _make_interp(logits=logits)
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3, num_select=3)
+
+        assert len(dets) == 3
+
     def test_detections_below_threshold_filtered(self, rgb_image: Path) -> None:
         """No detections survive when all logits are zero (uniform probs < 0.3)."""
         interp = _make_interp(logits=_make_logits(high_conf_idx=None))
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert len(dets) == 0
+
+    def test_active_first_keypoint_layout_excludes_final_background(self, rgb_image: Path) -> None:
+        """The default excludes a higher final background score while retaining active keypoint slot 0."""
+        logits = np.full((1, 10, 2), -100.0, dtype=np.float32)
+        logits[0, 0, 0] = 9.0
+        logits[0, 0, 1] = 10.0
+        label_out = {"shape": [1, 10, 2], "name": "serving_default_labels:0", "index": 2}
+        interp = _make_interp(logits=logits, out_dets=[_DET_OUTPUT, label_out])
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3, num_select=1)
+
+        assert len(dets) == 1
+        assert dets.class_id.tolist() == [0]
+
+    def test_zero_foreground_classes_returns_no_detections(self, rgb_image: Path) -> None:
+        """A raw output with only the no-object logit excludes it, leaving no class dimension to select from."""
+        logits = np.zeros((1, 10, 1), dtype=np.float32)
+        label_out = {"shape": [1, 10, 1], "name": "serving_default_labels:0", "index": 2}
+        interp = _make_interp(logits=logits, out_dets=[_DET_OUTPUT, label_out])
+
+        dets, _ = _run_inference(interp, rgb_image)
+
         assert len(dets) == 0
 
     def test_boxes_in_pixel_space(self, rgb_image: Path) -> None:
@@ -421,8 +501,19 @@ class TestSigmoidScoring:
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
         assert len(dets) == 0
 
-    def test_multiclass_class_id_is_argmax_of_logits(self, rgb_image: Path) -> None:
-        """Argmax of sigmoid equals argmax of logits; query with [5,2,1,...] gets class_id==0."""
+    def test_multiclass_query_reports_every_class_above_threshold(self, rgb_image: Path) -> None:
+        """A query scoring above threshold on more than one class must produce one detection per class, not just the
+        argmax class.
+
+        History: this test used to be ``test_multiclass_class_id_is_argmax_of_logits`` and asserted
+        the *opposite* — that only the single highest-scoring class (argmax) survived — codifying a
+        real bug as the expected contract. RF-DETR uses independent per-class sigmoids (not a
+        mutually exclusive softmax): a query with logits [5, 2, 1, ...] has three classes
+        (sigmoid ≈ 0.993, 0.881, 0.731) all above threshold=0.3, and `PostProcess._select_topk`
+        (postprocess.py) — the real predict() selection this decode must mirror — ranks Q*C
+        query/class pairs together, so all three are legitimate separate detections of the same
+        box. See rfdetr/export/_topk.py for the shared selection helper this now uses.
+        """
         # Shape (1, 10, 82): first query has logits [5, 2, 1, 0, ...], rest are -100
         logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
         logits[0, 0, 0] = 5.0
@@ -430,8 +521,39 @@ class TestSigmoidScoring:
         logits[0, 0, 2] = 1.0
         interp = _make_interp(logits=logits)
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
-        # argmax of sigmoid == argmax of logits because sigmoid is monotone increasing
-        assert dets.class_id[0] == 0
+
+        assert len(dets) == 3, "query 0 clears threshold=0.3 on 3 classes; all 3 must be reported"
+        assert sorted(dets.class_id.tolist()) == [0, 1, 2]
+        # All 3 detections share query 0's box (see _make_boxes: identical box per query).
+        np.testing.assert_allclose(dets.xyxy, np.tile(dets.xyxy[0], (3, 1)))
+        # Sorted by descending confidence, matching PostProcess._select_topk order.
+        assert list(dets.confidence) == sorted(dets.confidence, reverse=True)
+        assert dets.class_id[0] == 0  # highest logit (5.0) still ranks first
+
+    def test_final_logit_column_is_decoded_without_background_class(self, rgb_image: Path) -> None:
+        """Passing ``None`` keeps the final slot for sparse COCO checkpoints."""
+        logits = np.full((1, 10, 91), -100.0, dtype=np.float32)
+        logits[0, 0, -1] = 10.0
+        label_out = {"shape": [1, 10, 91], "name": "serving_default_labels:0", "index": 2}
+        interp = _make_interp(logits=logits, out_dets=[_DET_OUTPUT, label_out])
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3, background_class_id=None)
+
+        assert len(dets) == 1
+        assert dets.class_id.tolist() == [90]
+
+    def test_background_first_layout_preserves_foreground_slot_id(self, rgb_image: Path) -> None:
+        """Excluding slot 0 keeps the original foreground class ID instead of shifting it."""
+        logits = np.full((1, 10, 2), -100.0, dtype=np.float32)
+        logits[0, 0, 0] = 10.0
+        logits[0, 0, 1] = 9.0
+        label_out = {"shape": [1, 10, 2], "name": "serving_default_labels:0", "index": 2}
+        interp = _make_interp(logits=logits, out_dets=[_DET_OUTPUT, label_out])
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3, num_select=1, background_class_id=0)
+
+        assert len(dets) == 1
+        assert dets.class_id.tolist() == [1]
 
 
 # ---------------------------------------------------------------------------
@@ -463,6 +585,31 @@ class TestShapeBasedOutputFallback:
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
         assert isinstance(dets, sv.Detections)
         assert len(dets) >= 1
+
+    def test_three_outputs_with_rank4_keypoints_are_not_decoded_as_masks(self, rgb_image: Path) -> None:
+        """A named rank-4 keypoints export (dets/labels/keypoints) is not fed to the mask decoder."""
+        boxes = _make_boxes()
+        logits = _make_logits(high_conf_idx=0)
+        keypoints = np.zeros((1, 10, 17, 8), dtype=np.float32)
+
+        def _get_tensor(index: int) -> np.ndarray:
+            tensors = {1: boxes, 2: logits, 3: keypoints}
+            return tensors[index]
+
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+        interp.get_output_details.return_value = [
+            {"shape": [1, 10, 4], "name": "serving_default_dets:0", "index": 1},
+            {"shape": [1, 10, 82], "name": "serving_default_labels:0", "index": 2},
+            {"shape": [1, 10, 17, 8], "name": "serving_default_keypoints:0", "index": 3},
+        ]
+        interp.get_tensor.side_effect = _get_tensor
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+
+        assert isinstance(dets, sv.Detections)
+        assert len(dets) >= 1
+        assert dets.mask is None
 
     def test_ambiguous_shapes_two_outputs_positional_fallback(self, rgb_image: Path) -> None:
         """When both outputs have last-dim==4 (num_classes==3) and there are exactly 2, positional fallback is used."""
@@ -511,7 +658,7 @@ class TestShapeBasedOutputFallback:
         """3-output segmentation export (boxes/logits/masks) with generic names resolves without error.
 
         Ensures the shape fallback ignores the rank-4 masks tensor and correctly identifies boxes [1,Q,4] and logits
-        [1,Q,C+1] as rank-3 candidates.
+        [1,Q,C] as rank-3 candidates.
         """
         boxes = _make_boxes()
         logits = _make_logits(high_conf_idx=0)
@@ -538,6 +685,116 @@ class TestShapeBasedOutputFallback:
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
         assert isinstance(dets, sv.Detections)
         assert len(dets) >= 1
+
+
+# ---------------------------------------------------------------------------
+# TestRank4OutputKind
+# ---------------------------------------------------------------------------
+
+
+def _make_rank4_interp(rank4_tensor: np.ndarray, rank4_name: str = "StatefulPartitionedCall:2") -> mock.MagicMock:
+    """Build a mock interpreter for a 3-output export whose rank-4 output carries no kind in its name.
+
+    ``onnx2tf`` does not carry the ONNX output names into the TFLite graph, so RF-DETR's own exports report
+    ``StatefulPartitionedCall:N``. Segmentation masks and keypoints then look identical from the name alone.
+
+    Args:
+        rank4_tensor: The rank-4 output, shaped ``(1, Q, *, *)``.
+        rank4_name: Output name the interpreter reports for *rank4_tensor*.
+
+    Returns:
+        A mock interpreter exposing boxes, logits, and *rank4_tensor* at tensor indices 1, 2, and 3.
+
+    Examples:
+        >>> interp = _make_rank4_interp(np.zeros((1, 10, 17, 8), dtype=np.float32))
+        >>> [od["name"] for od in interp.get_output_details()]
+        ['StatefulPartitionedCall:0', 'StatefulPartitionedCall:1', 'StatefulPartitionedCall:2']
+        >>> interp.get_tensor(3).shape
+        (1, 10, 17, 8)
+    """
+    boxes = _make_boxes()
+    logits = _make_logits(high_conf_idx=0)
+    tensors = {1: boxes, 2: logits, 3: rank4_tensor}
+
+    interp = mock.MagicMock()
+    interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+    interp.get_output_details.return_value = [
+        {"shape": [1, 10, 4], "name": "StatefulPartitionedCall:0", "index": 1},
+        {"shape": [1, 10, 82], "name": "StatefulPartitionedCall:1", "index": 2},
+        {"shape": list(rank4_tensor.shape), "name": rank4_name, "index": 3},
+    ]
+    interp.get_tensor.side_effect = lambda index: tensors[index]
+    return interp
+
+
+class TestRank4OutputKind:
+    """Tests for classifying a rank-4 output whose name does not say what it holds."""
+
+    @pytest.fixture()
+    def rgb_image(self, tmp_path: Path) -> Path:
+        """Write a small RGB JPEG to a temp file and return its path."""
+        p = tmp_path / "image.jpg"
+        _save_rgb_image(p)
+        return p
+
+    def test_nameless_rank4_keypoints_are_not_decoded_as_masks_by_default(self, rgb_image: Path) -> None:
+        """The safe default does not interpret an anonymous keypoint tensor as segmentation masks."""
+        keypoints = np.zeros((1, 10, 17, 8), dtype=np.float32)
+
+        dets, _ = _run_inference(_make_rank4_interp(keypoints), rgb_image, threshold=0.3)
+
+        assert dets.mask is None
+
+    def test_nameless_rank4_masks_are_decoded_when_declared(self, rgb_image: Path) -> None:
+        """A segmentation caller can explicitly decode a name-stripped rank-4 mask tensor."""
+        masks = np.full((1, 10, 28, 28), -10.0, dtype=np.float32)
+        masks[0, 0] = 10.0
+
+        dets, _ = _run_inference(_make_rank4_interp(masks), rgb_image, threshold=0.3, rank4_output="masks")
+
+        assert dets.mask is not None
+        assert dets.mask[0].all()
+
+    @pytest.mark.parametrize(
+        "rank4_output",
+        [pytest.param("keypoints", id="declared-keypoints"), pytest.param(None, id="declared-unknown")],
+    )
+    def test_nameless_rank4_output_is_not_decoded_as_a_mask_when_declared_otherwise(
+        self,
+        rgb_image: Path,
+        rank4_output: str | None,
+    ) -> None:
+        """A name-stripped keypoint export's ``pred_keypoints`` tensor never reaches the mask decoder."""
+        keypoints = np.zeros((1, 10, 17, 8), dtype=np.float32)
+
+        dets, _ = _run_inference(_make_rank4_interp(keypoints), rgb_image, threshold=0.3, rank4_output=rank4_output)
+
+        assert len(dets) >= 1
+        assert dets.mask is None
+
+    @pytest.mark.parametrize(
+        "rank4_output",
+        [pytest.param(None, id="undeclared"), pytest.param("keypoints", id="declared-keypoints")],
+    )
+    def test_named_mask_output_is_decoded_whatever_the_declared_kind(
+        self, rgb_image: Path, rank4_output: str | None
+    ) -> None:
+        """An output named ``masks`` is evidence from the artifact and outranks the caller's fallback declaration."""
+        masks = np.full((1, 10, 28, 28), -10.0, dtype=np.float32)
+        masks[0, 0] = 10.0
+        interp = _make_rank4_interp(masks, rank4_name="serving_default_masks:0")
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3, rank4_output=rank4_output)
+
+        assert dets.mask is not None
+        assert dets.mask[0].all()
+
+    def test_unrecognised_rank4_output_kind_is_rejected(self, rgb_image: Path) -> None:
+        """A misspelled kind fails fast instead of silently falling through to mask decoding."""
+        keypoints = np.zeros((1, 10, 17, 8), dtype=np.float32)
+
+        with pytest.raises(ValueError, match="rank4_output"):
+            _run_inference(_make_rank4_interp(keypoints), rgb_image, rank4_output="keypoint")
 
 
 # ---------------------------------------------------------------------------
@@ -578,8 +835,8 @@ class TestMaskDecoding:
         out = _decode_masks(np.zeros((0, 10, 10), dtype=np.float32), (32, 32))
         assert out.shape == (0, 32, 32)
 
-    def test_run_inference_decodes_masks_for_seg_model(self, rgb_image: Path) -> None:
-        """A 3-output segmentation export populates Detections.mask at image size."""
+    def test_run_inference_decodes_declared_masks_for_seg_model(self, rgb_image: Path) -> None:
+        """A declared name-stripped segmentation export populates Detections.mask at image size."""
         boxes = _make_boxes()
         logits = _make_logits(high_conf_idx=0)
         masks = np.full((1, 10, 28, 28), -10.0, dtype=np.float32)
@@ -597,11 +854,79 @@ class TestMaskDecoding:
         ]
         interp.get_tensor.side_effect = _get_tensor
 
-        dets, img = _run_inference(interp, rgb_image, threshold=0.3)
+        dets, img = _run_inference(interp, rgb_image, threshold=0.3, rank4_output="masks")
         assert dets.mask is not None
         assert dets.mask.shape == (len(dets), img.height, img.width)
         assert dets.mask.dtype == bool
         assert dets.mask[0].all()  # query 0's all-positive logits decode to a full mask
+
+    def test_final_logit_keeps_selected_query_mask(self, rgb_image: Path) -> None:
+        """A final-column detection gathers the mask belonging to its selected query."""
+        boxes = _make_boxes()
+        logits = np.full((1, 10, 2), -100.0, dtype=np.float32)
+        logits[0, 3, 1] = 9.0
+        masks = np.full((1, 10, 28, 28), -10.0, dtype=np.float32)
+        masks[0, 3] = 10.0
+
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+        interp.get_output_details.return_value = [
+            {"shape": [1, 10, 4], "name": "Identity_0", "index": 1},
+            {"shape": [1, 10, 2], "name": "Identity_1", "index": 2},
+            {"shape": [1, 10, 28, 28], "name": "Identity_2", "index": 3},
+        ]
+        tensors = {1: boxes, 2: logits, 3: masks}
+        interp.get_tensor.side_effect = tensors.__getitem__
+
+        dets, _ = _run_inference(
+            interp,
+            rgb_image,
+            threshold=0.3,
+            background_class_id=None,
+            rank4_output="masks",
+        )
+
+        assert len(dets) == 1
+        assert dets.class_id.tolist() == [1]
+        assert dets.mask is not None
+        assert dets.mask.shape[0] == 1
+        assert dets.mask[0].all()
+
+    def test_run_inference_multilabel_query_repeats_its_mask(self, rgb_image: Path) -> None:
+        """A query contributing more than one detection (multi-label) must gather its mask once per detection, repeats
+        included -- not a boolean mask over unique queries.
+
+        Before the fix, mask gathering was ``raw_masks[keep]`` with ``keep`` a boolean vector over queries (at most one
+        True per query, matching the old argmax-per-query decode). With the fix, more than one detection can share a
+        query index, so gathering must be by (possibly repeating) integer index, not a boolean mask -- see
+        _tflite/inference.py's comment on this.
+        """
+        boxes = _make_boxes()
+        logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
+        logits[0, 0, 0] = 5.0  # sigmoid ~0.993, above threshold
+        logits[0, 0, 1] = 2.0  # sigmoid ~0.881, also above threshold -> query 0 yields 2 detections
+        masks = np.full((1, 10, 28, 28), -10.0, dtype=np.float32)
+        masks[0, 0] = 10.0  # query 0's mask: all-positive
+
+        def _get_tensor(index: int) -> np.ndarray:
+            return {1: boxes, 2: logits, 3: masks}[index]
+
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+        interp.get_output_details.return_value = [
+            {"shape": [1, 10, 4], "name": "Identity_0", "index": 1},
+            {"shape": [1, 10, 82], "name": "Identity_1", "index": 2},
+            {"shape": [1, 10, 28, 28], "name": "Identity_2", "index": 3},
+        ]
+        interp.get_tensor.side_effect = _get_tensor
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3, rank4_output="masks")
+        assert len(dets) == 2
+        assert sorted(dets.class_id.tolist()) == [0, 1]
+        # Both detections came from query 0, so both must carry query 0's (all-positive) mask.
+        assert dets.mask.shape[0] == 2
+        assert dets.mask[0].all()
+        assert dets.mask[1].all()
 
     def test_run_inference_no_mask_for_detection_model(self, rgb_image: Path) -> None:
         """A 2-output detection export leaves Detections.mask as None."""
@@ -692,6 +1017,36 @@ class TestMaskDecoding:
 class TestBilinearResizeHalfPixel:
     """Tests for ``_bilinear_resize_half_pixel()``."""
 
+    def test_near_scale_ratio_uses_separable_horizontal_pass(self) -> None:
+        """Near-scale resizes interpolate source rows once before gathering output rows."""
+        src = np.arange(2 * 7 * 8, dtype=np.float32).reshape(2, 7, 8)
+
+        with mock.patch("rfdetr.export._resize.np.take", wraps=np.take) as take:
+            out = _bilinear_resize_half_pixel(src, 6, 5)
+
+        assert out.shape == (2, 6, 5)
+        assert take.call_count == 2
+
+    def test_large_downscale_retains_bounded_output_grid(self) -> None:
+        """Large height reductions avoid a separable intermediate proportional to the source height."""
+        src = np.arange(25 * 9, dtype=np.float32).reshape(1, 25, 9)
+
+        with mock.patch("rfdetr.export._resize.np.take", wraps=np.take) as take:
+            out = _bilinear_resize_half_pixel(src, 6, 5)
+
+        assert out.shape == (1, 6, 5)
+        take.assert_not_called()
+
+    def test_four_thirds_boundary_retains_output_grid(self) -> None:
+        """The exact 4:3 height boundary avoids the larger three-source-grid intermediate."""
+        src = np.arange(2 * 8 * 9, dtype=np.float32).reshape(2, 8, 9)
+
+        with mock.patch("rfdetr.export._resize.np.take", wraps=np.take) as take:
+            out = _bilinear_resize_half_pixel(src, 6, 5)
+
+        assert out.shape == (2, 6, 5)
+        take.assert_not_called()
+
     def test_output_shape(self) -> None:
         """Output shape is (K, out_h, out_w)."""
         src = np.ones((3, 8, 8), dtype=np.float32)
@@ -767,8 +1122,8 @@ class TestPreprocessImage:
         # pixel 0 → 0.0 → (0.0 - 0.485) / 0.229 ≈ -2.12
         assert out.min() < -1.0
 
-    def test_pil_fallback_when_torch_unavailable(self) -> None:
-        """PIL path is used when torch is masked from sys.modules."""
+    def test_numpy_fallback_when_torch_unavailable(self) -> None:
+        """The NumPy resize path is used when torch is masked from sys.modules."""
         pil_img = PILImage.new("RGB", (100, 80))
         with mock.patch.dict(
             sys.modules,

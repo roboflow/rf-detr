@@ -19,13 +19,12 @@ from typing import Any, cast
 
 import numpy as np
 import torch
-import torch.nn as nn
 from PIL import Image
-from torch import Tensor
+from torch import Tensor, nn
 from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
-from rfdetr.export._onnx.exporter import export_onnx
+from rfdetr.export._onnx.exporter import export_onnx as export_onnx  # re-exported for rfdetr.detr and the CLI
 from rfdetr.export._tensorrt import build_engine
 from rfdetr.models import BuilderArgs, build_model
 from rfdetr.models.backbone.backbone import Backbone
@@ -47,11 +46,13 @@ def _convert_onnx_export(
     max_images: int,
     verbose: bool,
     fp16: bool = True,
+    output_name: str | None = None,
 ) -> Path:
     """Dispatch :meth:`rfdetr.detr.RFDETR.export`'s post-ONNX-export conversion (TFLite / TensorRT / none).
 
     Args:
-        output_file: Path to the already-exported ONNX model.
+        output_file: Path to the already-exported ONNX model. Its stem already reflects *output_name*
+            (or the variant name) — :func:`~rfdetr.export._onnx.exporter.export_onnx` named it upstream.
         format: Export format; one of ``"onnx"``, ``"tflite"``, ``"tensorrt"``.
         output_dir_path: Directory where converted artifacts are written.
         quantization: TFLite quantization mode (ignored for other formats).
@@ -60,6 +61,11 @@ def _convert_onnx_export(
         verbose: Print conversion progress information.
         fp16: Build the TensorRT engine with FP16 precision (ignored for other formats). Pass ``False`` to
             build an FP32 engine — useful on TensorRT builds that do not expose the FP16 builder flag.
+        output_name: Full filename override (without extension); forwarded to :func:`build_engine` for
+            ``format="tensorrt"`` (suppresses the ``_fp16``/``_fp32`` suffix). Not forwarded to
+            :func:`export_tflite`, which has no such parameter — TFLite always inherits its stem from
+            *output_file*'s name (already the resolved *output_name*, if any) and always keeps its
+            precision/quantization suffix.
 
     Returns:
         Path to the final exported artifact (``.onnx``, ``.tflite``, or ``.trt``).
@@ -98,7 +104,7 @@ def _convert_onnx_export(
         from rfdetr.export._tensorrt import build_engine
 
         logger.info("Converting ONNX model to TensorRT engine")
-        engine_file = build_engine(output_file, fp16=fp16, verbose=verbose)
+        engine_file = build_engine(output_file, fp16=fp16, verbose=verbose, output_name=output_name)
         logger.info(f"Successfully exported TensorRT engine to: {engine_file}")
         return Path(engine_file)
 
@@ -137,13 +143,16 @@ def make_infer_image(
                 "Providing `infer_dir` is only supported for RGB models (num_channels=3). "
                 "For non-RGB models, omit `infer_dir` to use a synthetic dummy input."
             )
-        image = Image.open(infer_dir).convert("RGB")
+        with Image.open(infer_dir) as _img:
+            image = _img.convert("RGB")
 
+    # Tensorize-then-resize with antialias=False mirrors RFDETR.predict()'s preprocessing, so the
+    # traced example input (and any export sanity check run on it) sees production-domain tensors.
     transforms = Compose(
         [
-            Resize((shape[0], shape[1])),
             ToImage(),
             ToDtype(torch.float32, scale=True),
+            Resize((shape[0], shape[1]), antialias=False),
             Normalize(),
         ]
     )
@@ -303,13 +312,18 @@ def main(args: argparse.Namespace) -> None:
         verbose=args.verbose,
         opset_version=args.opset_version,
         variant_name=getattr(args, "variant_name", None),
+        output_name=getattr(args, "output_name", None),
     )
 
     onnx_path = output_file  # preserve ONNX path before any post-processing step overwrites it
 
     if args.tensorrt:
         output_file = build_engine(
-            onnx_path, fp16=getattr(args, "fp16", True), verbose=args.verbose, dry_run=args.dry_run
+            onnx_path,
+            fp16=getattr(args, "fp16", True),
+            verbose=args.verbose,
+            dry_run=args.dry_run,
+            output_name=getattr(args, "output_name", None),
         )
 
     # TODO: register --tflite, --quantization, --calibration-data, --max-images in the

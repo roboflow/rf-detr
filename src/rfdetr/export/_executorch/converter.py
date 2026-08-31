@@ -57,8 +57,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 import torch
-import torch.nn as nn
+from torch import nn
 
+from rfdetr.export._naming import resolve_export_stem
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -283,6 +284,7 @@ def export_executorch(
     variant_name: str | None = None,
     soc: str = "SM8650",
     dynamic_batch: bool = False,
+    output_name: str | None = None,
 ) -> Path:
     """Export an RF-DETR model to an ExecuTorch ``.pte`` file.
 
@@ -302,13 +304,17 @@ def export_executorch(
             devices, fp16; requires ``coremltools``), or ``"qnn"`` (Qualcomm Snapdragon HTP, fp16; requires an
             ExecuTorch source build against the QNN SDK).
         variant_name: Model variant identifier (e.g. ``"rfdetr-nano"``).  When provided, the file is named
-            ``{variant_name}.pte`` instead of the generic ``inference_model.pte``.
+            ``{variant_name}_{backend}.pte`` (``{variant_name}_qnn_{soc}.pte`` for the SoC-locked ``qnn`` backend)
+            instead of the generic ``inference_model_{backend}.pte`` -- the backend (and SoC, for ``qnn``) is always
+            encoded since it determines which hardware/runtime can load the file.
         soc: Target SoC for backends that compile for a specific chip (currently ``"qnn"``), a ``QcomChipset`` name
             (default ``"SM8650"`` = Snapdragon 8 Gen 3).  Ignored for backends that do not target a specific SoC.
         dynamic_batch: Variable batch size at runtime.  Not supported on executorch 1.3.1 (raises
             ``NotImplementedError``): ``torch.export`` keeps the batch axis symbolic, but the runtime cannot resize
             RF-DETR's windowed-attention reshapes, so a dynamic ``.pte`` runs only at the traced batch.  Export one
             ``.pte`` per batch size for now.
+        output_name: Full filename override (without extension). Takes precedence over *variant_name* and
+            suppresses the ``_{backend}``/``_qnn_{soc}`` suffix -- the file is named ``{output_name}.pte`` verbatim.
 
     Returns:
         Path to the exported ``.pte`` file.
@@ -357,12 +363,13 @@ def export_executorch(
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    if variant_name:
-        # Sanitize against path traversal (mirrors export_onnx): "foo/bar" -> "bar".
-        variant_name = os.path.splitext(os.path.basename(variant_name))[0]
-        export_name = variant_name
+    stem, is_custom = resolve_export_stem(variant_name, output_name)
+    if is_custom:
+        export_name = stem
     else:
-        export_name = "inference_model"
+        # backend (+ SoC for qnn) determines what can load the file -- always encode it.
+        backend_token = f"qnn_{soc}" if backend_name == "qnn" else backend_name
+        export_name = f"{stem}_{backend_token}"
     output_file = output_dir / f"{export_name}.pte"
 
     model = model.eval()
@@ -389,8 +396,25 @@ def export_executorch(
                 # lowering fails. Non-strict keeps those inline and lowers cleanly with verified parity. Revisit
                 # strict=True when that upstream torch.export <-> ExecuTorch interaction is fixed.
                 exported_program = torch.export.export(model, (input_tensors,), strict=False)
+                # Imported in the non-QNN path only: the qnn backend never uses this transform, and
+                # some ExecuTorch installs don't ship it -- a top-level import would raise ImportError
+                # they never needed.
+                try:
+                    from executorch.backends.transforms.addmm_mm_to_linear import AddmmToLinearTransform
+                except ImportError as exc:
+                    raise ImportError(
+                        "AddmmToLinearTransform is unavailable in this ExecuTorch install; upgrade "
+                        "executorch to a version shipping executorch.backends.transforms.addmm_mm_to_linear."
+                    ) from exc
+                # AddmmToLinearTransform recombines the addmm/mm ops that torch.export decomposes
+                # nn.Linear into, back into aten.linear. The handful the partitioner leaves un-delegated (the
+                # two-stage encoder-output projections over the full token sequence) otherwise run on the
+                # portable addmm.out kernel, which is ~2 orders of magnitude slower than linear.out:
+                # 111 ms -> 44 ms end-to-end on RFDETRNano/XNNPACK, outputs identical to ~1e-5.
                 edge_program = to_edge_transform_and_lower(
-                    exported_program, partitioner=_build_partitioner(backend_name)
+                    exported_program,
+                    transform_passes=[AddmmToLinearTransform()],
+                    partitioner=_build_partitioner(backend_name),
                 )
                 executorch_program = edge_program.to_executorch()
     except (ImportError, ValueError):

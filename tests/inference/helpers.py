@@ -65,7 +65,12 @@ class _DummyModel:
         self._include_keypoints = include_keypoints
         self._num_keypoints = num_keypoints
 
-    def postprocess(self, predictions: Any, target_sizes: torch.Tensor) -> list[dict[str, torch.Tensor]]:
+    def postprocess(
+        self,
+        predictions: Any,
+        target_sizes: torch.Tensor,
+        score_threshold: float | None = None,
+    ) -> list[dict[str, torch.Tensor]]:
         """Return fixed scores/boxes (and optional keypoints) for every image in the batch."""
         batch = target_sizes.shape[0]
         results = []
@@ -101,6 +106,6 @@ class _DummyRFDETR(RFDETR):
         """Return a minimal namespace with just ``num_channels``."""
         return SimpleNamespace(num_channels=3)
 
-    def get_model(self, config: SimpleNamespace) -> _DummyModel:
+    def get_model(self, config: SimpleNamespace, *, trust_checkpoint: bool = False) -> _DummyModel:
         """Return a fresh ``_DummyModel`` instance."""
         return _DummyModel()

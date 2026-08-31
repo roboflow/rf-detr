@@ -14,9 +14,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from functools import partial
-from typing import Any
+from types import MappingProxyType
+from typing import Any, overload
 
 import torch
 import torchvision
@@ -215,13 +216,14 @@ def _bilinear_grid_sample(
     padding_mode: str = "zeros",
     align_corners: bool = False,
 ) -> Tensor:
-    """Bilinear grid sampling compatible with all PyTorch backends including MPS.
+    """Bilinear grid sampling compatible with all PyTorch backends including MPS and XLA.
 
     Drop-in replacement for ``F.grid_sample(input, grid, mode='bilinear', ...)``. On MPS, ``F.grid_sample`` backward
-    (``grid_sampler_2d_backward``) is not yet implemented and silently falls back to CPU.  This function uses
-    gather-based index arithmetic — natively supported on every backend — for the MPS path, while delegating to
-    ``F.grid_sample`` on CUDA/CPU where its fused kernel is faster.  The two paths are numerically identical, so model
-    accuracy is unaffected.
+    (``grid_sampler_2d_backward``) is not yet implemented and silently falls back to CPU. On XLA, routing through the
+    gather path avoids relying on ``F.grid_sample``'s XLA decomposition (host-fallback risk on older torch_xla).  This
+    function uses gather-based index arithmetic — natively supported on every backend — for the MPS/XLA path, while
+    delegating to ``F.grid_sample`` on CUDA/CPU where its fused kernel is faster.  The two paths are numerically
+    identical, so model accuracy is unaffected.
 
     Args:
         input: Feature map of shape ``(N, C, H, W)``.
@@ -234,7 +236,7 @@ def _bilinear_grid_sample(
     """
     import torch.nn.functional as F  # noqa: N812
 
-    if input.device.type != "mps":
+    if input.device.type not in ("mps", "xla"):
         return F.grid_sample(input, grid, mode="bilinear", padding_mode=padding_mode, align_corners=align_corners)
 
     if padding_mode not in ("zeros", "border"):
@@ -307,6 +309,7 @@ def _bilinear_grid_sample(
 def _collate_with_block_size(
     batch: list[tuple[Any, ...]],
     block_size: int | None = None,
+    pack: bool = False,
 ) -> tuple[Any, ...]:
     """Module-level collate helper used as the base for :func:`make_collate_fn`.
 
@@ -317,12 +320,16 @@ def _collate_with_block_size(
         batch: List of ``(image, target)`` pairs from a dataset.
         block_size: When set, round batch ``H`` and ``W`` up to the next multiple of this value before padding.  See
             :func:`nested_tensor_from_tensor_list`.
+        pack: When set, concatenate the target dicts into a :class:`PackedTargets` so that a batch crosses the
+            worker-to-main boundary as a handful of tensors instead of one per field per sample.
 
     Returns:
-        Tuple of ``(NestedTensor_of_images, tuple_of_targets)``.
+        Tuple of ``(NestedTensor_of_images, tuple_of_targets)``, the targets packed when *pack* is set.
     """
     columns = list(zip(*batch))
     images = nested_tensor_from_tensor_list(list(columns[0]), block_size=block_size)
+    if pack and len(columns) == 2 and all(isinstance(entry, dict) for entry in columns[1]):
+        return (images, pack_targets(list(columns[1])))
     return (images, *columns[1:])
 
 
@@ -344,6 +351,7 @@ def collate_fn(batch: list[tuple[Any, ...]]) -> tuple[Any, ...]:
 
 def make_collate_fn(
     block_size: int | None = None,
+    pack: bool = False,
 ) -> Callable[[list[tuple[Any, ...]]], tuple[Any, ...]]:
     """Build a collate function that rounds batch ``H``/``W`` up to *block_size*.
 
@@ -357,8 +365,197 @@ def make_collate_fn(
     Args:
         block_size: When set, batch ``H`` and ``W`` are rounded up to the next
             multiple of this value before padding.  The rounded-up strip is marked as padding in the NestedTensor mask.
+        pack: When set, the collated targets are returned as a :class:`PackedTargets`.
 
     Returns:
         A collate callable suitable for ``torch.utils.data.DataLoader``.
     """
-    return partial(_collate_with_block_size, block_size=block_size)
+    return partial(_collate_with_block_size, block_size=block_size, pack=pack)
+
+
+class PackedTargets:
+    """A batch of per-sample target dicts held as one concatenated tensor per field.
+
+    Every tensor a DataLoader worker returns is moved into its own shared-memory segment and handed to the parent
+    as a file descriptor. rf-detr returns one dict of small tensors per sample, so a batch of 16 crosses the
+    worker-to-main boundary as 114 objects, of which 112 carry a few kilobytes in total yet pay the per-object
+    cost. Concatenating each field into a single tensor and carrying the per-sample shapes as plain ints -- which
+    pickle by value and never reach shared memory -- takes that to 9 objects without changing a single byte of
+    payload.
+
+    Instances behave as a sequence of the original dicts for iteration and indexing, so consumers that merely
+    read a batch need no change. The class deliberately does not subclass :class:`collections.abc.Sequence`:
+    PyTorch's pin-memory worker dispatches on that ABC *before* it looks for a ``pin_memory`` method, so a
+    Sequence subclass would be taken apart and pinned tensor by tensor, rebuilding in the main process exactly
+    what the packing avoided. Indexing rebuilds a dict of views: reassigning a key on the returned dict does not
+    write back into the packed storage, but an in-place write into one of its tensors does, since the view shares
+    the packed field's storage. Call :meth:`as_list` for a materialised copy that is safe to mutate in place, the
+    way the unpacked batch already is.
+
+    Args:
+        values: One flat tensor per field, holding that field concatenated across the batch.
+        shapes: Per-field list of the original per-sample shapes.
+        batch: Number of samples packed.
+    """
+
+    __slots__ = ("_batch", "_shapes", "_values")
+
+    def __init__(self, values: dict[str, Tensor], shapes: dict[str, list[list[int]]], batch: int) -> None:
+        self._values = values
+        self._shapes = shapes
+        self._batch = batch
+
+    def __len__(self) -> int:
+        """Return the number of samples in the batch."""
+        return self._batch
+
+    @overload
+    def __getitem__(self, index: int) -> dict[str, Tensor]: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> list[dict[str, Tensor]]: ...
+
+    def __getitem__(self, index: int | slice) -> dict[str, Tensor] | list[dict[str, Tensor]]:
+        """Rebuild the target dict of one sample, or a list of them for a slice.
+
+        Args:
+            index: Sample position, negative or slice as for any sequence.
+
+        Returns:
+            The sample's field-to-tensor mapping, each tensor a view into the packed storage.
+
+        Raises:
+            IndexError: If *index* is out of range.
+        """
+        if isinstance(index, slice):
+            return [self[position] for position in range(*index.indices(self._batch))]
+        position = index + self._batch if index < 0 else index
+        if not 0 <= position < self._batch:
+            raise IndexError(f"index {index} is out of range for a batch of {self._batch}")
+        target: dict[str, Tensor] = {}
+        for key, flat in self._values.items():
+            offset = 0
+            for shape in self._shapes[key][:position]:
+                offset += _numel(shape)
+            shape = self._shapes[key][position]
+            target[key] = flat[offset : offset + _numel(shape)].reshape(shape)
+        return target
+
+    def __iter__(self) -> Iterator[dict[str, Tensor]]:
+        """Iterate the batch one rebuilt target dict at a time."""
+        for position in range(self._batch):
+            yield self[position]
+
+    def pin_memory(self) -> PackedTargets:
+        """Pin every packed field, keeping the batch packed.
+
+        Called by PyTorch's pin-memory worker. Pinning the concatenated fields costs one pinned allocation
+        per field rather than one per field per sample, and leaves the batch in the packed form that
+        ``transfer_batch_to_device`` moves in a single copy per field.
+
+        Returns:
+            A packed batch whose fields are in pinned memory.
+        """
+        return PackedTargets({key: flat.pin_memory() for key, flat in self._values.items()}, self._shapes, self._batch)
+
+    @property
+    def fields(self) -> Mapping[str, Tensor]:
+        """Return the concatenated tensor of each field, read-only.
+
+        These are the objects that actually cross the process boundary, so this is what to inspect when checking
+        that a batch ships as a handful of tensors rather than one per field per sample.
+
+        Returns:
+            Mapping of field name to that field concatenated across the batch.
+        """
+        return MappingProxyType(self._values)
+
+    def as_list(self) -> list[dict[str, Tensor]]:
+        """Materialise the batch as the plain list of dicts the unpacked path produces.
+
+        Each tensor is cloned. ``__getitem__`` returns views into the shared per-field storage -- cheap for
+        read-only access, but on the unpacked path every sample already owns independent storage, so an
+        in-place write on one sample's tensor here must not alias into another sample's view of the same
+        field, or into the packed storage itself.
+
+        Returns:
+            One dict per sample, ordered as packed, holding independent tensors.
+        """
+        return [{key: value.clone() for key, value in self[position].items()} for position in range(self._batch)]
+
+    def to(self, device: torch.device | str, non_blocking: bool = False) -> PackedTargets:
+        """Move every packed field to *device* in one transfer per field.
+
+        Args:
+            device: Destination device.
+            non_blocking: Whether to request an asynchronous copy.
+
+        Returns:
+            A packed batch on *device*; ``self`` if it is already there.
+        """
+        moved = {key: flat.to(device, non_blocking=non_blocking) for key, flat in self._values.items()}
+        if all(moved[key] is flat for key, flat in self._values.items()):
+            return self
+        return PackedTargets(moved, self._shapes, self._batch)
+
+
+def _numel(shape: list[int]) -> int:
+    """Return the number of elements a tensor of *shape* holds.
+
+    Args:
+        shape: Tensor shape as a list of dimension sizes.
+
+    Returns:
+        The product of the dimensions; 1 for a scalar's empty shape.
+    """
+    count = 1
+    for dim in shape:
+        count *= dim
+    return count
+
+
+def pack_targets(targets: Sequence[dict[str, Tensor]]) -> PackedTargets | tuple[dict[str, Tensor], ...]:
+    """Concatenate a batch of target dicts into one tensor per field.
+
+    Args:
+        targets: One dict per sample, all sharing the same keys.
+
+    Returns:
+        The packed batch, or *targets* unchanged as a tuple when it cannot be packed losslessly -- an empty batch,
+        samples whose key sets differ, gradient-tracked values, inconsistent field devices, or a value that is not a
+        dense (strided), non-quantized tensor. Falling back keeps a custom dataset working at the original throughput
+        rather than failing on it.
+    """
+    if not targets:
+        return tuple(targets)
+    keys = tuple(sorted(targets[0]))
+    values: dict[str, Tensor] = {}
+    shapes: dict[str, list[list[int]]] = {}
+    for target in targets:
+        if tuple(sorted(target)) != keys:
+            return tuple(targets)
+        for value in target.values():
+            # A sparse value has no linear element order for reshape(-1) to preserve, so torch.cat raises
+            # RuntimeError instead of falling back. A quantized value can share torch.dtype with another sample
+            # while using a different (scale, zero_point), in which case torch.cat silently requantizes it to
+            # the first sample's parameters rather than failing -- dtype equality alone does not catch either case.
+            if (
+                not isinstance(value, Tensor)
+                or value.layout != torch.strided
+                or value.is_quantized
+                or value.requires_grad
+            ):
+                return tuple(targets)
+    for key in keys:
+        # torch.cat promotes across mixed dtypes rather than failing, which would silently change a field's
+        # dtype and can lose integer precision. A COCO sample with no annotations yields float32 for fields a
+        # populated sample yields as int64, so this is reachable on real data, not a theoretical case.
+        dtype = targets[0][key].dtype
+        device = targets[0][key].device
+        if any(target[key].dtype != dtype or target[key].device != device for target in targets):
+            return tuple(targets)
+    for key in keys:
+        column = [target[key] for target in targets]
+        values[key] = torch.cat([entry.reshape(-1) for entry in column])
+        shapes[key] = [[int(dim) for dim in entry.shape] for entry in column]
+    return PackedTargets(values, shapes, len(targets))

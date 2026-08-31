@@ -56,7 +56,7 @@ jobs:
       - name: 🧪 Run the Test
         run: |
           uv run --no-sync pytest tests/ \
-          -m gpu \
+          -m "gpu and not e2e_tensorrt" \
           --ignore=tests/legacy/test_checkpoint_compat.py \
           -n 3 \
           --reruns 1 --only-rerun "OutOfMemoryError" \

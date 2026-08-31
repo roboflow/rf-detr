@@ -12,8 +12,13 @@ import re
 class TestEntryPoint:
     """[project.scripts] in pyproject.toml uses the correct CLI entry point."""
 
-    def _read_entry_point(self) -> str:
-        """Return the rfdetr console_scripts value from pyproject.toml."""
+    @staticmethod
+    def _read_entry_point() -> str:
+        """Return the rfdetr console_scripts value from pyproject.toml.
+
+        >>> TestEntryPoint._read_entry_point()
+        'rfdetr.cli:main'
+        """
         root = pathlib.Path(__file__).parent.parent.parent
         content = (root / "pyproject.toml").read_text()
         m = re.search(r"\[project\.scripts\].*?rfdetr\s*=\s*\"([^\"]+)\"", content, re.DOTALL)

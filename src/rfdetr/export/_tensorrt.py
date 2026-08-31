@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 
+from rfdetr.export._naming import resolve_export_stem
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -41,14 +42,25 @@ try:
         network_from_onnx_path,
         save_engine,
     )
+
+    _IS_TENSORRT_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised via the guard in build_engine
     CreateConfig = None
     engine_from_network = None
     network_from_onnx_path = None
     save_engine = None
 
+    _IS_TENSORRT_AVAILABLE = False
 
-def build_engine(onnx_path: str, *, fp16: bool = True, verbose: bool = False, dry_run: bool = False) -> str:
+
+def build_engine(
+    onnx_path: str,
+    *,
+    fp16: bool = True,
+    verbose: bool = False,
+    dry_run: bool = False,
+    output_name: str | None = None,
+) -> str:
     """Build a serialized TensorRT engine from an ONNX model, in-process.
 
     Uses the TensorRT Python API through ``polygraphy`` — no ``trtexec`` subprocess.
@@ -56,12 +68,18 @@ def build_engine(onnx_path: str, *, fp16: bool = True, verbose: bool = False, dr
     device memory), which meets or exceeds the historical 4 GiB cap.
 
     Args:
-        onnx_path: Path to the source ``.onnx`` file.
+        onnx_path: Path to the source ``.onnx`` file. Its stem (typically the model variant name,
+            e.g. ``"rfdetr-medium"``) is reused for the engine filename unless *output_name* is given.
         fp16: Enable FP16 precision when building the engine.  Automatically downgraded to FP32 (with a
-            warning) on TensorRT builds that do not expose the FP16 builder flag.
+            warning) on TensorRT builds that do not expose the FP16 builder flag — the engine filename
+            reflects the precision actually built, not just the requested value (except under
+            *dry_run*, where no build/probe happens so the requested value is used as-is).
         verbose: Emit extra progress logging.
         dry_run: Log the intended build and return the engine path without
             building anything (no TensorRT / GPU required).
+        output_name: Full filename override (without extension). Takes precedence over the ONNX
+            stem and suppresses the ``_fp16``/``_fp32`` suffix — the engine is named
+            ``{output_name}.trt`` verbatim, written alongside *onnx_path*.
 
     Returns:
         Path to the generated ``.trt`` engine file.
@@ -70,14 +88,32 @@ def build_engine(onnx_path: str, *, fp16: bool = True, verbose: bool = False, dr
         ImportError: If ``polygraphy``/``tensorrt`` are not installed.
 
     Examples:
-        >>> build_engine("output/inference_model.onnx", dry_run=True)  # doctest: +SKIP
-        'output/inference_model.trt'
+        >>> build_engine("output/rfdetr-medium.onnx", dry_run=True)  # doctest: +SKIP
+        'output/rfdetr-medium_fp16.trt'
     """
-    # Swap only the final suffix so paths with an earlier ".onnx" segment (or no
-    # ".onnx" at all) are not corrupted and never alias the input path. Use a
-    # string-level split rather than pathlib so separators are preserved verbatim
-    # (pathlib rewrites "/" to "\\" on Windows).
-    engine_path = os.path.splitext(onnx_path)[0] + ".trt"
+    onnx_stem = os.path.splitext(onnx_path)[0]
+
+    def _engine_path(*, fp16_used: bool) -> str:
+        if output_name:
+            # Delegate output_name sanitize to the shared resolver so the custom-name stem is derived
+            # identically to the ONNX/CoreML/ExecuTorch backends (single source of truth for basename +
+            # extension stripping); TensorRT still owns its own path prefix and precision suffix below.
+            stem = resolve_export_stem(None, output_name)[0]
+            # Preserve onnx_path's directory prefix verbatim rather than rebuilding it via
+            # os.path.dirname + os.path.join, which inject os.sep (a backslash on Windows) regardless
+            # of onnx_path's own separator style and mis-parse a foreign-separator path. The sibling
+            # suffix branch below deliberately avoids pathlib/os.path for the same reason.
+            sep_idx = max(onnx_path.rfind("/"), onnx_path.rfind("\\"))
+            prefix = onnx_path[: sep_idx + 1] if sep_idx != -1 else ""
+            return f"{prefix}{stem}.trt"
+        # Precision materially changes the engine (fp16 vs fp32 accuracy/speed), so it is always
+        # encoded — unless a custom name was requested. Swapping only the final suffix (rather than
+        # rebuilding the whole path) keeps any earlier ".onnx"-like segment intact and never aliases
+        # the input path; a string-level split (not pathlib) preserves separators verbatim (pathlib
+        # rewrites "/" to "\\" on Windows).
+        return f"{onnx_stem}_{'fp16' if fp16_used else 'fp32'}.trt"
+
+    engine_path = _engine_path(fp16_used=fp16)
 
     if dry_run:
         logger.info(f"[dry-run] Would build TensorRT engine (fp16={fp16}): {onnx_path} -> {engine_path}")
@@ -100,6 +136,7 @@ def build_engine(onnx_path: str, *, fp16: bool = True, verbose: bool = False, dr
                     getattr(trt, "__version__", "unknown"),
                 )
                 fp16 = False
+                engine_path = _engine_path(fp16_used=fp16)
         except ImportError:
             pass  # a missing/broken tensorrt import is surfaced by the polygraphy build chain below
 

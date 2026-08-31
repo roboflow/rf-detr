@@ -15,22 +15,23 @@ from __future__ import annotations
 import contextlib
 import importlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
 from PIL import Image as PILImage
 from supervision import Detections
 
+from rfdetr.export._class_layout import _exclude_background_class
+from rfdetr.export._resize import _bilinear_resize_half_pixel
+from rfdetr.export._topk import _select_topk_multiclass
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
-# PILImage.Resampling was introduced in Pillow 9.1; fall back to the legacy constant.
-_PIL_BILINEAR = getattr(PILImage, "Resampling", PILImage).BILINEAR
-
 _IMAGENET_MEAN: list[float] = [0.485, 0.456, 0.406]
 _IMAGENET_STD: list[float] = [0.229, 0.224, 0.225]
+_RANK4_OUTPUT_KINDS: tuple[str, ...] = ("masks", "keypoints")
 
 
 def _create_interpreter(model_path: str | Path) -> Any:
@@ -72,42 +73,6 @@ def _create_interpreter(model_path: str | Path) -> Any:
     for od in out_det:
         logger.debug("Output : %s  name=%s", od["shape"], od.get("name", "<unnamed>"))
     return interp
-
-
-def _bilinear_resize_half_pixel(src: NDArray[np.float32], out_h: int, out_w: int) -> NDArray[np.float32]:
-    """Numpy bilinear resize matching ``F.interpolate(mode="bilinear", align_corners=False)``.
-
-    Half-pixel center convention. Used by ``_decode_masks`` only when ``torch`` is not importable.
-
-    Args:
-        src: Source array of shape ``(K, src_h, src_w)``.
-        out_h: Target height in pixels.
-        out_w: Target width in pixels.
-
-    Returns:
-        Float32 array of shape ``(K, out_h, out_w)``.
-
-    Note:
-        Replaces ``PIL.Image.resize(BILINEAR)``, which uses a corner-aligned half-pixel convention and
-        produced border-pixel discrepancies vs ``F.interpolate``.
-    """
-    src_h, src_w = src.shape[-2], src.shape[-1]
-    src_y = (np.arange(out_h, dtype=np.float32) + 0.5) * (src_h / out_h) - 0.5
-    src_x = (np.arange(out_w, dtype=np.float32) + 0.5) * (src_w / out_w) - 0.5
-    src_y = np.clip(src_y, 0.0, src_h - 1)
-    src_x = np.clip(src_x, 0.0, src_w - 1)
-    y0 = np.floor(src_y).astype(np.int64)
-    x0 = np.floor(src_x).astype(np.int64)
-    y1 = np.minimum(y0 + 1, src_h - 1)
-    x1 = np.minimum(x0 + 1, src_w - 1)
-    dy = (src_y - y0)[:, None]
-    dx = (src_x - x0)[None, :]
-    a = src[..., y0[:, None], x0[None, :]]
-    b = src[..., y0[:, None], x1[None, :]]
-    c = src[..., y1[:, None], x0[None, :]]
-    d = src[..., y1[:, None], x1[None, :]]
-    out = (1 - dy) * ((1 - dx) * a + dx * b) + dy * ((1 - dx) * c + dx * d)
-    return np.asarray(out, dtype=np.float32)
 
 
 def _decode_masks(mask_logits: NDArray[np.floating[Any]], out_size: tuple[int, int]) -> NDArray[np.bool_]:
@@ -160,7 +125,8 @@ def _preprocess_image(
     """Resize and ImageNet-normalise an image to match ``RFDETR.predict()``.
 
     Uses ``torchvision.transforms.functional`` when importable for bit-exact parity, and falls back
-    to ``PIL.Image.resize`` with BILINEAR for torch-free deployments.
+    to the pure-NumPy ``_bilinear_resize_half_pixel`` for torch-free deployments. Both paths resize
+    with predict()'s convention: bilinear, half-pixel centers, ``antialias=False``.
 
     Args:
         pil_img: Source PIL image at native resolution.
@@ -171,49 +137,51 @@ def _preprocess_image(
         Float32 array of shape ``(1, height, width, channels)`` in NHWC.
 
     Note:
-        The PIL fallback uses BILINEAR resize, which does not perfectly match PyTorch's ``F.resize``
-        (different coordinate conventions). For bit-exact parity with ``RFDETR.predict()``, ensure
-        ``torch`` and ``torchvision`` are importable.
+        The NumPy fallback matches the torchvision path up to float32 op-order noise (~5e-5 in
+        normalised space). For bit-exact parity with ``RFDETR.predict()``, ensure ``torch`` and
+        ``torchvision`` are importable.
     """
     height, width = hw
     pil_mode = "L" if channels == 1 else "RGB"
     pil_rgb = pil_img.convert(pil_mode)
 
-    nchw_float: NDArray[np.float32] | None = None
-    try:
-        # Match PyTorch.predict() exactly: torchvision to_tensor -> resize -> normalize.
+    with contextlib.suppress(ImportError):
+        # Match PyTorch.predict() exactly: torchvision to_tensor -> resize(antialias=False) -> normalize.
+        # antialias=False mirrors detr.py's predict(); torchvision's float-tensor default is True.
         import torch
         import torchvision.transforms.functional as _F  # noqa: N812
 
         with torch.no_grad():
             t = _F.to_tensor(pil_rgb)
-            t = _F.resize(t, list(hw))
+            t = _F.resize(t, list(hw), antialias=False)
             mean_list = [_IMAGENET_MEAN[i % 3] for i in range(channels)]
             std_list = [_IMAGENET_STD[i % 3] for i in range(channels)]
             t = _F.normalize(t, mean_list, std_list)
         nchw_float = np.asarray(t.unsqueeze(0).cpu().numpy(), dtype=np.float32)
-    except ImportError:
-        pass
-
-    if nchw_float is not None:
         # NCHW -> NHWC for the TFLite interpreter.
         return np.asarray(nchw_float.transpose(0, 2, 3, 1), dtype=np.float32)
 
-    # Torch-free fallback: PIL BILINEAR. PIL's default is BICUBIC, which diverges from PyTorch.
-    arr = np.array(pil_rgb.resize((width, height), _PIL_BILINEAR), dtype=np.float32) / 255.0
+    # Torch-free fallback: same antialias-free half-pixel bilinear as predict(), in NumPy.
+    # PIL resize is not an option here: both BILINEAR and BICUBIC apply an adaptive antialias
+    # filter when downscaling and diverge from predict() by up to ~1.7 in normalised space.
+    arr = np.asarray(pil_rgb, dtype=np.float32) / 255.0
     if arr.ndim == 2:  # "L" -> (height, width); TFLite needs (height, width, 1).
         arr = arr[:, :, np.newaxis]
+    arr = _bilinear_resize_half_pixel(arr.transpose(2, 0, 1), height, width).transpose(1, 2, 0)
 
     mean = np.array([_IMAGENET_MEAN[i % 3] for i in range(channels)], dtype=np.float32)
     std = np.array([_IMAGENET_STD[i % 3] for i in range(channels)], dtype=np.float32)
 
-    return ((arr - mean) / std)[np.newaxis]
+    return np.asarray(((arr - mean) / std)[np.newaxis], dtype=np.float32)
 
 
 def _run_inference(
     interp: Any,
     image_path: str | Path,
     threshold: float = 0.3,
+    num_select: int | None = None,
+    background_class_id: int | None = -1,
+    rank4_output: Literal["masks", "keypoints"] | None = None,
 ) -> tuple[Detections, PILImage.Image]:
     """Preprocess one image, run TFLite inference, and decode detections.
 
@@ -226,11 +194,30 @@ def _run_inference(
         interp: Allocated TFLite interpreter returned by ``_create_interpreter``.
         image_path: Path to the input image (any format supported by Pillow).
         threshold: Confidence threshold; detections below this are discarded.
+        num_select: Maximum query/class pairs selected before thresholding. ``None`` uses the exported model's query
+            count, matching shipped RF-DETR configurations; pass an explicit value for custom exports.
+        background_class_id: Exported class slot to exclude before selection. The default ``-1`` preserves the common
+            final-slot background convention. Pass ``None`` for sparse COCO checkpoints, whose final slot is class 90,
+            or ``0`` for legacy background-first keypoint checkpoints.
+        rank4_output: What a rank-4 output holds when no output names itself ``masks``. Segmentation and keypoint
+            exports each add exactly one rank-4 tensor, and RF-DETR's own TFLite files reach the interpreter with
+            the ONNX output names replaced by ``StatefulPartitionedCall:N``, so the kind is usually not readable
+            from the graph. The default ``None`` decodes a mask only from an output that names itself. Pass
+            ``"masks"`` for a name-stripped segmentation export or ``"keypoints"`` to suppress anonymous-mask
+            decoding for a keypoint export.
 
     Returns:
         A tuple of ``(detections, pil_img)`` where ``detections`` contains pixel-space ``xyxy`` boxes (and ``mask`` for
         segmentation models) and ``pil_img`` is the original PIL image at its original resolution.
+
+    Raises:
+        ValueError: If *rank4_output* is neither ``None`` nor one of ``"masks"``/``"keypoints"``, if the model's
+            input tensor is not ``float32``, or if the ``dets``/``labels`` outputs cannot be matched by name or
+            shape.
     """
+    if rank4_output is not None and rank4_output not in _RANK4_OUTPUT_KINDS:
+        raise ValueError(f"rank4_output must be one of {_RANK4_OUTPUT_KINDS} or None; got {rank4_output!r}")
+
     inp_det = interp.get_input_details()
     out_det = interp.get_output_details()
     _, height, width, channels = inp_det[0]["shape"]
@@ -301,42 +288,60 @@ def _run_inference(
         boxes_idx, logits_idx = logits_idx, boxes_idx
         boxes_cwh = interp.get_tensor(out_det[boxes_idx]["index"])[0]
 
-    # Drop last logit column: RF-DETR adds +1 to num_classes (no-object slot, criterion.py:323).
-    # Keeping it causes class_id == len(class_names) → IndexError at display time.
-    logits = interp.get_tensor(out_det[logits_idx]["index"])[0, :, :-1]  # (Q, num_classes)
+    # Background placement is checkpoint-dependent and cannot be inferred from the tensor width alone.
+    logits = interp.get_tensor(out_det[logits_idx]["index"])[0]
 
     # RF-DETR uses per-class sigmoid (not softmax) — mirrors PostProcess.forward in postprocess.py.
-    logger.debug(
-        "Logits stats: shape=%s min=%.3f max=%.3f mean=%.3f",
-        logits.shape,
-        float(logits.min()),
-        float(logits.max()),
-        float(logits.mean()),
-    )
+    if logits.size:
+        logger.debug(
+            "Logits stats: shape=%s min=%.3f max=%.3f mean=%.3f",
+            logits.shape,
+            float(logits.min()),
+            float(logits.max()),
+            float(logits.mean()),
+        )
+    else:
+        logger.debug("Logits stats: empty shape=%s", logits.shape)
     one = np.asarray(1, dtype=logits.dtype)
     scores_all = one / (one + np.exp(-logits.clip(-88, 88)))
-    scores = scores_all.max(axis=-1)
-    cls = scores_all.argmax(axis=-1)
-    logger.debug(
-        "Scores stats: min=%.3f max=%.3f — detections above threshold %.2f: %d",
-        float(scores.min()),
-        float(scores.max()),
-        threshold,
-        int((scores > threshold).sum()),
-    )
-    keep = scores > threshold
+    scores_all, class_ids = _exclude_background_class(scores_all, background_class_id)
+    # Flatten (Q, C) to Q*C query/class pairs and take the top-scoring ones before thresholding —
+    # mirrors PostProcess._select_topk. A per-query argmax (the previous approach) keeps at most
+    # one class per query, silently dropping legitimate detections whenever a query scores above
+    # threshold on more than one class; see _topk.py for why that happens routinely here.
+    selection_cap = logits.shape[0] if num_select is None else num_select
+    scores, cls, query_idx = _select_topk_multiclass(scores_all, threshold, num_select=selection_cap)
+    cls = class_ids[cls]
+    if scores_all.size:
+        logger.debug(
+            "Scores stats: min=%.3f max=%.3f — detections above threshold %.2f: %d",
+            float(scores_all.min()),
+            float(scores_all.max()),
+            threshold,
+            int(scores.shape[0]),
+        )
+    else:
+        logger.debug("Scores stats: empty — detections above threshold %.2f: %d", threshold, int(scores.shape[0]))
 
-    cx, cy, bw, bh = boxes_cwh[keep].T
+    cx, cy, bw, bh = boxes_cwh[query_idx].T
     ow, oh = pil_img.size
     xyxy = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)
     xyxy *= np.array([ow, oh, ow, oh], dtype=np.float32)
 
-    # Segmentation exports add a rank-4 mask output; decode it when present.
+    # Segmentation exports add a rank-4 mask output; decode it when present. Keypoint exports add a rank-4
+    # output too (pred_keypoints), and the ONNX output names rarely survive the conversion, so an anonymous
+    # rank-4 tensor is only taken for a mask when the caller declares the export a segmentation one.
     mask_idx = next((i for i, od in enumerate(out_det) if "masks" in str(od.get("name", ""))), None)
-    if mask_idx is None:
-        rank4_candidates = [i for i, od in enumerate(out_det) if len(od["shape"]) == 4]
+    if mask_idx is None and rank4_output == "masks":
+        rank4_candidates = [
+            i for i, od in enumerate(out_det) if len(od["shape"]) == 4 and "keypoints" not in str(od.get("name", ""))
+        ]
         if len(rank4_candidates) == 1:
             mask_idx = rank4_candidates[0]
+            logger.debug(
+                "Rank-4 output %s carries no kind in its name; decoding it as a caller-declared segmentation mask.",
+                str(out_det[mask_idx].get("name", "<unnamed>")),
+            )
         elif len(rank4_candidates) >= 2:
             logger.warning(
                 "Ambiguous rank-4 outputs (%d candidates); skipping mask decode. "
@@ -344,9 +349,12 @@ def _run_inference(
                 len(rank4_candidates),
             )
     masks = None
-    if mask_idx is not None and keep.any():
+    if mask_idx is not None and query_idx.shape[0] > 0:
         raw_masks = interp.get_tensor(out_det[mask_idx]["index"])[0]  # (Q, Hm, Wm)
-        masks = _decode_masks(raw_masks[keep], (ow, oh))
+        # Fancy-index by query_idx, NOT a boolean mask: a query can now contribute more than one
+        # detection (see _select_topk_multiclass), so its mask must be gathered once per detection,
+        # repeats included, rather than once per unique query.
+        masks = _decode_masks(raw_masks[query_idx], (ow, oh))
 
-    detections = Detections(xyxy=xyxy, confidence=scores[keep], class_id=cls[keep].astype(int), mask=masks)
+    detections = Detections(xyxy=xyxy, confidence=scores, class_id=cls.astype(int), mask=masks)
     return detections, pil_img

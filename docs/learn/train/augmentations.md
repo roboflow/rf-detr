@@ -56,11 +56,7 @@ model.train(
 
 To disable all optional training augmentation including the torchvision default horizontal flip: `aug_config={}`.
 
-`aug_config` controls only the augmentation stack — the torchvision-native default, or the
-Albumentations/Kornia stack when a non-empty `aug_config` is passed. To also disable
-the independent resize → crop → resize branch (Option B) in the training resize
-pipeline — so no spatial clipping occurs and annotations near image borders stay
-intact — pass `scale_jitter=False` to `model.train()`.
+`aug_config` controls only the augmentation stack — the torchvision-native default, or the Albumentations/Kornia stack when a non-empty `aug_config` is passed. To also disable the independent resize → crop → resize branch (Option B) in the training resize pipeline — so no spatial clipping occurs and annotations near image borders stay intact — pass `scale_jitter=False` to `model.train()`.
 
 ## Built-in Presets
 

@@ -9,8 +9,10 @@ Covers:
 - ``_bilinear_grid_sample`` parity (manual gather path vs ``F.grid_sample``).
 - ``nested_tensor_from_tensor_list`` with ``block_size`` (backbone-aware batch rounding).
 - ``make_collate_fn`` factory.
+- ``pack_targets``/``PackedTargets`` round-trip fidelity.
 """
 
+import collections.abc
 import pickle
 from unittest.mock import patch
 
@@ -18,11 +20,14 @@ import pytest
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torch.testing
+from torch.utils.data import DataLoader
 
 from rfdetr.utilities.tensors import (
+    PackedTargets,
     _bilinear_grid_sample,
     make_collate_fn,
     nested_tensor_from_tensor_list,
+    pack_targets,
 )
 
 
@@ -32,7 +37,14 @@ def _grid_sample_reference(
     padding_mode: str = "zeros",
     align_corners: bool = False,
 ) -> torch.Tensor:
-    """Ground-truth output from F.grid_sample for comparison."""
+    """Ground-truth output from F.grid_sample for comparison.
+
+    Examples:
+        >>> input = torch.arange(4, dtype=torch.float32).reshape(1, 1, 2, 2)
+        >>> grid = torch.zeros(1, 1, 1, 2)
+        >>> _grid_sample_reference(input, grid, align_corners=True)
+        tensor([[[[1.5000]]]])
+    """
     return F.grid_sample(
         input,
         grid,
@@ -47,23 +59,31 @@ def _call_manual_path(
     grid: torch.Tensor,
     padding_mode: str = "zeros",
     align_corners: bool = False,
+    device_type: str = "mps",
 ) -> torch.Tensor:
     """Force the manual gather-based code path by mocking input.device.type.
 
-    The function checks ``input.device.type != "mps"`` to decide which branch to take.  We patch ``torch.Tensor.device``
-    to return an object whose ``.type`` is ``"mps"`` so the manual path runs on a normal CPU tensor.
+    The function checks ``input.device.type not in ("mps", "xla")`` to decide which branch to take.  We patch
+    ``torch.Tensor.device`` to return an object whose ``.type`` is *device_type* so the manual path runs on a normal CPU
+    tensor without needing real MPS/XLA hardware.
+
+    Examples:
+        >>> input = torch.arange(4, dtype=torch.float32).reshape(1, 1, 2, 2)
+        >>> grid = torch.zeros(1, 1, 1, 2)
+        >>> _call_manual_path(input, grid, align_corners=True)
+        tensor([[[[1.5000]]]])
     """
 
-    class _FakeMPSDevice:
-        type = "mps"
+    class _FakeDevice:
+        type = device_type
 
         def __eq__(self, other):
             return False
 
         def __repr__(self):
-            return "device(type='mps')"
+            return f"device(type='{device_type}')"
 
-    with patch.object(torch.Tensor, "device", new_callable=lambda: property(lambda self: _FakeMPSDevice())):
+    with patch.object(torch.Tensor, "device", new_callable=lambda: property(lambda self: _FakeDevice())):
         return _bilinear_grid_sample(input, grid, padding_mode=padding_mode, align_corners=align_corners)
 
 
@@ -74,7 +94,15 @@ def _call_manual_path(
 
 @pytest.fixture
 def seed():
-    """Fix random seed for reproducible grid/input generation."""
+    """Fix random seed for reproducible grid/input generation.
+
+    Examples:
+        Injected by pytest as a fixture argument -- calling it directly (bypassing pytest's fixture machinery)
+        raises ``Failed: Fixture "seed" called directly``, so this is illustrative only, not run here. The
+        underlying effect is a plain ``torch.manual_seed(42)`` call:
+
+        >>> torch.manual_seed(42)  # doctest: +SKIP
+    """
     torch.manual_seed(42)
 
 
@@ -100,7 +128,19 @@ _LOW_PRECISION_GRAD_TOLERANCES = {
 
 
 def _require_grid_sample_dtype_support(dtype: torch.dtype) -> None:
-    """Skip test when current backend does not support grid_sample for dtype."""
+    """Skip test when current backend does not support grid_sample for dtype.
+
+    Examples:
+        Returns silently for a dtype the current backend supports:
+
+        >>> _require_grid_sample_dtype_support(torch.float32)
+
+        For a low-precision dtype the current backend may lack support for (e.g. float16/bfloat16 on some CPU
+        builds), this calls ``pytest.skip`` instead of raising -- not run here since the outcome is
+        backend-dependent.
+
+        >>> _require_grid_sample_dtype_support(torch.float16)  # doctest: +SKIP
+    """
     input = torch.randn(1, 1, 2, 2, dtype=dtype, requires_grad=True)
     grid = (torch.rand(1, 1, 1, 2, dtype=dtype) * 1.6 - 0.8).requires_grad_(True)
     try:
@@ -256,6 +296,52 @@ class TestBilinearGridSampleDelegation:
         actual = _bilinear_grid_sample(input, grid, padding_mode="border", align_corners=False)
 
         torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+
+
+class TestBilinearGridSampleDeviceRouting:
+    """Both MPS and XLA route through the manual gather path (WP1 Task 1.1)."""
+
+    @pytest.mark.parametrize(
+        "device_type",
+        [pytest.param("mps", id="mps"), pytest.param("xla", id="xla")],
+    )
+    def test_gather_path_taken_and_matches_reference(self, seed, device_type):
+        """Manual gather path is taken for mps/xla -- F.grid_sample itself is never called -- and matches it."""
+        input = torch.randn(1, 3, 8, 8)
+        grid = torch.rand(1, 4, 4, 2) * 1.6 - 0.8
+
+        expected = _grid_sample_reference(input, grid, "zeros", False)
+        with patch.object(F, "grid_sample", wraps=F.grid_sample) as mock_grid_sample:
+            actual = _call_manual_path(input, grid, "zeros", False, device_type=device_type)
+
+        mock_grid_sample.assert_not_called()
+        torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+
+
+class TestBilinearGridSampleXLAExecution:
+    """Real torch_xla PJRT execution -- proves the gather path takes no aten:: CPU fallback (T1 lane, WP2)."""
+
+    @pytest.mark.xla
+    def test_gather_path_no_cpu_fallback_on_real_xla_device(self, seed):
+        """On a real XLA device (any PJRT backend) the gather path runs with zero aten:: fallback ops."""
+        pytest.importorskip("torch_xla")
+        import torch_xla.core.xla_model as xm
+        import torch_xla.debug.metrics as met
+
+        device = xm.xla_device()
+        input = torch.randn(1, 3, 8, 8, device=device)
+        grid = torch.rand(1, 4, 4, 2, device=device) * 1.6 - 0.8
+
+        met.clear_all()
+        actual = _bilinear_grid_sample(input, grid, padding_mode="zeros", align_corners=False)
+        xm.mark_step()
+
+        report = met.metrics_report()
+        aten_lines = [line for line in report.splitlines() if "aten::" in line.lower()]
+        assert not aten_lines, "CPU fallback ops detected:\n" + "\n".join(aten_lines)
+
+        expected = _grid_sample_reference(input.cpu(), grid.cpu(), "zeros", False)
+        torch.testing.assert_close(actual.cpu(), expected, atol=1e-5, rtol=1e-5)
 
 
 class TestBilinearGridSampleOutputShape:
@@ -558,3 +644,277 @@ class TestMakeCollateFn:
         """make_collate_fn returns a functools.partial picklable for num_workers > 0."""
         collate = make_collate_fn(block_size=32)
         assert pickle.dumps(collate) is not None
+
+
+class TestPackedTargets:
+    """Packing a batch of target dicts must be lossless and behave as the unpacked batch does."""
+
+    @staticmethod
+    def _batch() -> list[dict[str, torch.Tensor]]:
+        """Build a batch whose samples differ in instance count, including an empty one.
+
+        Returns:
+            Three target dicts holding 2, 0 and 1 instances respectively.
+
+        Examples:
+            >>> [int(target["labels"].numel()) for target in TestPackedTargets._batch()]
+            [2, 0, 1]
+        """
+        return [
+            {
+                "boxes": torch.tensor([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]]),
+                "labels": torch.tensor([3, 7]),
+                "image_id": torch.tensor(11),
+                "orig_size": torch.tensor([480, 640]),
+            },
+            {
+                "boxes": torch.zeros((0, 4)),
+                "labels": torch.zeros((0,), dtype=torch.int64),
+                "image_id": torch.tensor(12),
+                "orig_size": torch.tensor([300, 400]),
+            },
+            {
+                "boxes": torch.tensor([[9.0, 10.0, 11.0, 12.0]]),
+                "labels": torch.tensor([5]),
+                "image_id": torch.tensor(13),
+                "orig_size": torch.tensor([720, 1280]),
+            },
+        ]
+
+    def test_round_trip_is_bit_identical(self) -> None:
+        """Every field must come back with the same values, dtype and shape, not merely close ones."""
+        batch = self._batch()
+        restored = pack_targets(batch)
+        assert len(restored) == len(batch)
+        for original, rebuilt in zip(batch, restored):
+            assert original.keys() == rebuilt.keys()
+            for key, value in original.items():
+                assert rebuilt[key].dtype == value.dtype
+                assert rebuilt[key].shape == value.shape
+                assert torch.equal(rebuilt[key], value)
+
+    def test_a_sample_with_no_instances_survives_the_round_trip(self) -> None:
+        """A zero-instance sample must not collapse into its neighbours' rows."""
+        restored = pack_targets(self._batch())
+        assert restored[1]["boxes"].shape == (0, 4)
+        assert restored[1]["labels"].shape == (0,)
+        assert torch.equal(restored[0]["boxes"], torch.tensor([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]]))
+        assert torch.equal(restored[2]["boxes"], torch.tensor([[9.0, 10.0, 11.0, 12.0]]))
+
+    def test_it_crosses_the_boundary_as_one_tensor_per_field(self) -> None:
+        """The point of packing is the object count, so pin it: 4 fields, not 4 fields x 3 samples."""
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+        assert sorted(packed.fields) == ["boxes", "image_id", "labels", "orig_size"]
+        assert all(isinstance(tensor, torch.Tensor) for tensor in packed.fields.values())
+
+    def test_it_is_not_a_sequence_abc_so_pin_memory_keeps_the_batch_packed(self) -> None:
+        """PyTorch's pin-memory worker dispatches on Sequence before it looks for pin_memory().
+
+        Subclassing the ABC would make it take the batch apart and pin 7 tensors per sample, rebuilding in the main
+        process exactly what packing avoids.
+        """
+        assert not isinstance(pack_targets(self._batch()), collections.abc.Sequence)
+        assert hasattr(PackedTargets, "pin_memory")
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_pin_memory_actually_pins_every_field(self) -> None:
+        """pin_memory() must pin each field's storage, not merely exist as a method."""
+        packed = pack_targets(self._batch())
+        pinned = packed.pin_memory()
+        assert isinstance(pinned, PackedTargets)
+        assert all(tensor.is_pinned() for tensor in pinned.fields.values())
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_pytorch_pin_memory_worker_routes_through_our_pin_memory(self) -> None:
+        """The real DataLoader pin-memory dispatcher (torch/utils/data/_utils/pin_memory.py) must call
+        PackedTargets.pin_memory() and keep the batch packed, not merely satisfy hasattr() in isolation."""
+        from torch.utils.data._utils.pin_memory import pin_memory as torch_pin_memory
+
+        packed = pack_targets(self._batch())
+        result = torch_pin_memory(packed)
+        assert isinstance(result, PackedTargets)
+        assert all(tensor.is_pinned() for tensor in result.fields.values())
+
+    def test_iterating_yields_each_sample_once(self) -> None:
+        """Consumers that only iterate a batch, such as the dataset-grid saver, must keep working."""
+        batch = self._batch()
+        packed = pack_targets(batch)
+        seen = [int(target["image_id"].item()) for target in packed]
+        assert seen == [int(target["image_id"].item()) for target in batch]
+
+    def test_indexing_matches_sequence_semantics(self) -> None:
+        """Negative indices, slicing and out-of-range access must behave as they do on a plain sequence."""
+        batch = self._batch()
+        packed = pack_targets(batch)
+        assert torch.equal(packed[-1]["labels"], batch[-1]["labels"])
+        assert [t["image_id"].item() for t in packed[0:2]] == [11, 12]
+        with pytest.raises(IndexError):
+            packed[len(batch)]
+
+    def test_a_field_with_mixed_dtypes_falls_back_instead_of_being_promoted(self) -> None:
+        """torch.cat would promote int64 to float32 here rather than fail, silently changing the field.
+
+        This is reachable on real COCO data: a sample with no annotations builds `iscrowd`/`area` from an
+        empty list, which yields float32, while a populated sample yields int64.
+        """
+        batch = [
+            {"iscrowd": torch.tensor([0, 1], dtype=torch.int64)},
+            {"iscrowd": torch.zeros((0,), dtype=torch.float32)},
+        ]
+        result = pack_targets(batch)
+        assert not isinstance(result, PackedTargets)
+        assert result == tuple(batch)
+
+    def test_a_grad_bearing_value_falls_back_by_identity(self) -> None:
+        """Packing must not replace autograd-owned target tensors with a concatenated non-leaf tensor."""
+        targets = (
+            {"boxes": torch.tensor([[1.0, 2.0, 3.0, 4.0]], requires_grad=True)},
+            {"boxes": torch.tensor([[5.0, 6.0, 7.0, 8.0]], requires_grad=True)},
+        )
+
+        result = pack_targets(targets)
+
+        assert result is targets
+        assert all(target["boxes"].requires_grad for target in result)
+
+    def test_a_field_with_mixed_devices_falls_back_by_identity(self) -> None:
+        """Packing must reject a mixed-device field before ``torch.cat`` can raise."""
+        targets = (
+            {"boxes": torch.zeros(1, 4)},
+            {"boxes": torch.empty(1, 4, device="meta")},
+        )
+
+        result = pack_targets(targets)
+
+        assert result is targets
+
+    def test_large_int64_values_are_never_routed_through_a_float_cat(self) -> None:
+        """A value above float32's exact-integer range must come back exactly, or not be packed at all."""
+        big = 2**54 + 1
+        batch = [
+            {"image_id": torch.tensor(big, dtype=torch.int64)},
+            {"image_id": torch.tensor(7, dtype=torch.int64)},
+        ]
+        packed = pack_targets(batch)
+        assert isinstance(packed, PackedTargets)
+        assert packed[0]["image_id"].dtype == torch.int64
+        assert int(packed[0]["image_id"].item()) == big
+
+    def test_samples_with_different_keys_fall_back_instead_of_packing(self) -> None:
+        """A custom dataset must keep working rather than raise; it just does not get the speed-up."""
+        batch = [{"boxes": torch.zeros(1, 4)}, {"boxes": torch.zeros(1, 4), "extra": torch.zeros(1)}]
+        result = pack_targets(batch)
+        assert not isinstance(result, PackedTargets)
+        assert result == tuple(batch)
+
+    def test_a_non_tensor_value_falls_back_instead_of_packing(self) -> None:
+        """A non-tensor field value must not reach torch.cat; the batch keeps working unpacked."""
+        batch = [{"boxes": torch.zeros(1, 4), "path": "a.jpg"}, {"boxes": torch.zeros(1, 4), "path": "b.jpg"}]
+        result = pack_targets(batch)  # type: ignore[arg-type]
+        assert not isinstance(result, PackedTargets)
+
+    def test_an_empty_batch_packs_to_nothing(self) -> None:
+        """An empty batch must return an empty tuple rather than raise."""
+        assert pack_targets([]) == ()
+
+    def test_a_sparse_value_falls_back_instead_of_crashing(self) -> None:
+        """torch.cat's reshape(-1) has no linear element order for a sparse tensor and raises RuntimeError; the gate
+        must catch that before torch.cat, not let it propagate."""
+        sparse = torch.sparse_coo_tensor(torch.tensor([[0, 1]]), torch.tensor([1.0, 2.0]), (4,)).coalesce()
+        batch = [{"boxes": sparse}, {"boxes": sparse.clone()}]
+        result = pack_targets(batch)
+        assert not isinstance(result, PackedTargets)
+        assert result == tuple(batch)
+
+    def test_a_quantized_value_falls_back_instead_of_being_silently_requantized(self) -> None:
+        """Two quantized tensors can share torch.dtype while using a different (scale, zero_point); torch.cat
+        requantizes the second sample's values to the first sample's parameters instead of failing, so dtype equality
+        alone does not catch this and the gate must check quantization explicitly."""
+        first = torch.quantize_per_tensor(torch.tensor([0.03, 0.06]), scale=0.03, zero_point=0, dtype=torch.qint8)
+        second = torch.quantize_per_tensor(torch.tensor([0.09, 0.12]), scale=0.1, zero_point=0, dtype=torch.qint8)
+        assert first.dtype == second.dtype
+        batch = [{"boxes": first}, {"boxes": second}]
+        result = pack_targets(batch)
+        assert not isinstance(result, PackedTargets)
+        assert result == tuple(batch)
+
+    def test_as_list_gives_dicts_that_can_be_mutated_independently(self) -> None:
+        """`transfer_batch_to_device` hands these downstream, where they are mutated in place."""
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+        materialised = packed.as_list()
+        assert len({id(target) for target in materialised}) == len(materialised)
+        materialised[0]["labels"] = torch.tensor([99, 99])
+        assert torch.equal(materialised[2]["labels"], torch.tensor([5]))
+        assert torch.equal(packed[0]["labels"], torch.tensor([3, 7]))
+
+    def test_as_list_tensors_do_not_alias_the_packed_storage(self) -> None:
+        """`as_list()` promises tensors that "behave exactly like the unpacked batch": on that path every sample already
+        owns independent storage, so an in-place write on one sample's tensor must not be visible through another view
+        of the same field -- not through `packed.fields`, and not through a second `as_list()` call.
+
+        `__getitem__`/iteration stay lazy views by design (cheap read-only access, e.g. `DatasetGridSaver`); only the
+        materialised copy needs this guarantee.
+        """
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+        materialised = packed.as_list()
+        materialised[0]["labels"][0] = 999
+        materialised[0]["boxes"][0, 0] = 999.0
+        assert torch.equal(packed.fields["labels"], torch.tensor([3, 7, 5]))
+        assert packed.fields["boxes"][0].item() == 1.0
+        assert torch.equal(packed.as_list()[0]["labels"], torch.tensor([3, 7]))
+
+    def test_collate_packs_only_when_asked(self) -> None:
+        """The collate contract only changes for callers that opt in."""
+        images = [torch.zeros(3, 8, 8), torch.zeros(3, 8, 8)]
+        batch = [(images[0], self._batch()[0]), (images[1], self._batch()[2])]
+        _, plain = make_collate_fn(block_size=None)(batch)
+        _, packed = make_collate_fn(block_size=None, pack=True)(batch)
+        assert not isinstance(plain, PackedTargets)
+        assert isinstance(packed, PackedTargets)
+        for unpacked, rebuilt in zip(plain, packed):
+            for key, value in unpacked.items():
+                assert torch.equal(rebuilt[key], value)
+
+    def test_worker_collation_packs_losslessly_and_falls_back_for_grad_targets(self) -> None:
+        """A real worker must return packed plain targets and preserve grad-bearing targets unpacked."""
+        targets = self._batch()[:2]
+        dataset = [
+            (torch.full((3, 8, 8), 1.0), targets[0]),
+            (torch.full((3, 8, 8), 2.0), targets[1]),
+        ]
+
+        images, packed = next(
+            iter(DataLoader(dataset, batch_size=2, collate_fn=make_collate_fn(pack=True), num_workers=1))
+        )
+
+        assert isinstance(packed, PackedTargets)
+        assert torch.equal(images.tensors[0, :, :8, :8], dataset[0][0])
+        assert torch.equal(images.tensors[1, :, :8, :8], dataset[1][0])
+        for original, rebuilt in zip(targets, packed):
+            assert original.keys() == rebuilt.keys()
+            for key, value in original.items():
+                assert rebuilt[key].dtype == value.dtype
+                assert rebuilt[key].shape == value.shape
+                assert torch.equal(rebuilt[key], value)
+
+        grad_targets = (
+            {"boxes": torch.tensor([[1.0, 2.0, 3.0, 4.0]], requires_grad=True)},
+            {"boxes": torch.tensor([[5.0, 6.0, 7.0, 8.0]], requires_grad=True)},
+        )
+        grad_dataset = [
+            (torch.full((3, 8, 8), 3.0), grad_targets[0]),
+            (torch.full((3, 8, 8), 4.0), grad_targets[1]),
+        ]
+
+        _, fallback = next(
+            iter(DataLoader(grad_dataset, batch_size=2, collate_fn=make_collate_fn(pack=True), num_workers=1))
+        )
+
+        assert isinstance(fallback, tuple)
+        assert not isinstance(fallback, PackedTargets)
+        assert all(target["boxes"].requires_grad for target in fallback)

@@ -6,6 +6,7 @@
 """Comprehensive unit tests for RFDETRDataModule (LightningDataModule wrapper)."""
 
 import builtins
+import logging
 import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -13,10 +14,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 import torch.utils.data
+from PIL import Image
 from torch.utils.data import DataLoader
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
-from rfdetr.utilities.tensors import NestedTensor
+from rfdetr.datasets.yolo import YoloDetection, YoloSplitUnavailableError
+from rfdetr.training.module_data import RFDETRDataModule
+from rfdetr.utilities.tensors import NestedTensor, PackedTargets, pack_targets
 
 # ---------------------------------------------------------------------------
 # Private helpers — used by both module-level fixtures and class-level _setup_*
@@ -27,14 +31,26 @@ from rfdetr.utilities.tensors import NestedTensor
 
 
 def _base_model_config(**overrides):
-    """Return a minimal RFDETRBaseConfig with pretrain_weights disabled."""
+    """Return a minimal RFDETRBaseConfig with pretrain_weights disabled.
+
+    Examples:
+        >>> config = _base_model_config(num_classes=7)
+        >>> config.device, config.num_classes, config.pretrain_weights
+        ('cpu', 7, None)
+    """
     defaults = dict(pretrain_weights=None, device="cpu", num_classes=5)
     defaults.update(overrides)
     return RFDETRBaseConfig(**defaults)
 
 
 def _base_train_config(tmp_path=None, **overrides):
-    """Return a minimal TrainConfig suitable for unit tests."""
+    """Return a minimal TrainConfig suitable for unit tests.
+
+    Examples:
+        >>> config = _base_train_config(batch_size=4)
+        >>> config.batch_size, config.dataset_dir.endswith("dataset"), config.output_dir.endswith("output")
+        (4, True, True)
+    """
     dataset_dir = str(tmp_path / "dataset") if tmp_path else "/nonexistent/dataset"
     output_dir = str(tmp_path / "output") if tmp_path else "/nonexistent/output"
     defaults = dict(
@@ -84,7 +100,13 @@ class _FakeDataset(torch.utils.data.Dataset):
 
 
 def _fake_dataset(length: int = 100, with_coco: bool = False) -> _FakeDataset:
-    """Return a minimal ``_FakeDataset`` with a controllable length."""
+    """Return a minimal ``_FakeDataset`` with a controllable length.
+
+    Examples:
+        >>> dataset = _fake_dataset(length=3, with_coco=True)
+        >>> len(dataset), dataset.coco.cats[1]["name"]
+        (3, 'cat')
+    """
     return _FakeDataset(length, with_coco)
 
 
@@ -109,7 +131,13 @@ class _VisualDataset(torch.utils.data.Dataset):
 
 
 def _make_batch(batch_size: int = 2, channels: int = 3, h: int = 16, w: int = 16):
-    """Build a ``(NestedTensor, targets)`` tuple for transfer_batch_to_device tests."""
+    """Build a ``(NestedTensor, targets)`` tuple for transfer_batch_to_device tests.
+
+    Examples:
+        >>> samples, targets = _make_batch(batch_size=2, h=8, w=8)
+        >>> samples.tensors.shape, len(targets)
+        (torch.Size([2, 3, 8, 8]), 2)
+    """
     tensors = torch.randn(batch_size, channels, h, w)
     mask = torch.zeros(batch_size, h, w, dtype=torch.bool)
     samples = NestedTensor(tensors, mask)
@@ -126,11 +154,15 @@ def _make_batch(batch_size: int = 2, channels: int = 3, h: int = 16, w: int = 16
 
 
 def _build_datamodule(model_config=None, train_config=None, tmp_path=None):
-    """Construct RFDETRDataModule (build_dataset is not called at init time)."""
+    """Construct RFDETRDataModule (build_dataset is not called at init time).
+
+    Examples:
+        >>> datamodule = _build_datamodule()
+        >>> datamodule.model_config.device, datamodule.train_config.batch_size
+        ('cpu', 2)
+    """
     mc = model_config or _base_model_config()
     tc = train_config or _base_train_config(tmp_path)
-    from rfdetr.training.module_data import RFDETRDataModule
-
     return RFDETRDataModule(mc, tc)
 
 
@@ -140,12 +172,21 @@ def _build_datamodule(model_config=None, train_config=None, tmp_path=None):
 
 
 @pytest.fixture
-def build_datamodule(tmp_path):
-    """Factory fixture — returns a constructed RFDETRDataModule.
+def fixture_training_setup():
+    """Return the default model config, train config, and DataModule together."""
+    model_config = _base_model_config()
+    train_config = _base_train_config()
+    datamodule = _build_datamodule(model_config, train_config)
+    return model_config, train_config, datamodule
 
-    build_dataset is mocked automatically. tmp_path is injected automatically so test methods do not need to declare it.
-    """
-    return lambda model_config=None, train_config=None: _build_datamodule(model_config, train_config, tmp_path)
+
+@pytest.fixture
+def coco_datamodule(tmp_path):
+    """Return an RFDETRDataModule configured for a COCO dataset."""
+    return _build_datamodule(
+        train_config=_base_train_config(tmp_path, dataset_file="coco"),
+        tmp_path=tmp_path,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -156,74 +197,74 @@ def build_datamodule(tmp_path):
 class TestInit:
     """RFDETRDataModule.__init__ stores configs and initialises dataset slots."""
 
-    def test_stores_model_config(self, build_datamodule, base_model_config):
+    def test_stores_model_config(self, tmp_path, base_model_config):
         """model_config is accessible as an attribute after construction."""
         mc = base_model_config(num_classes=3)
-        dm = build_datamodule(model_config=mc)
+        dm = _build_datamodule(model_config=mc, tmp_path=tmp_path)
         assert dm.model_config is mc
 
-    def test_stores_train_config(self, build_datamodule, base_train_config):
+    def test_stores_train_config(self, tmp_path, base_train_config):
         """train_config is accessible as an attribute after construction."""
         tc = base_train_config(epochs=42)
-        dm = build_datamodule(train_config=tc)
+        dm = _build_datamodule(train_config=tc, tmp_path=tmp_path)
         assert dm.train_config is tc
 
-    def test_datasets_start_as_none(self, build_datamodule):
+    def test_datasets_start_as_none(self, fixture_training_setup):
         """All three dataset slots are None before setup() is called."""
-        dm = build_datamodule()
+        _, _, dm = fixture_training_setup
         assert dm._dataset_train is None
         assert dm._dataset_val is None
         assert dm._dataset_test is None
 
-    def test_prefetch_factor_defaults_to_two_when_workers_enabled(self, build_datamodule, base_train_config):
+    def test_prefetch_factor_defaults_to_two_when_workers_enabled(self, tmp_path, base_train_config):
         """prefetch_factor defaults to 2 for worker-based DataLoaders."""
         tc = base_train_config(num_workers=2, prefetch_factor=None)
-        dm = build_datamodule(train_config=tc)
+        dm = _build_datamodule(train_config=tc, tmp_path=tmp_path)
         assert dm._prefetch_factor == 2
 
-    def test_prefetch_factor_honors_train_config(self, build_datamodule, base_train_config):
+    def test_prefetch_factor_honors_train_config(self, tmp_path, base_train_config):
         """prefetch_factor from TrainConfig is forwarded when workers are enabled."""
         tc = base_train_config(num_workers=2, prefetch_factor=5)
-        dm = build_datamodule(train_config=tc)
+        dm = _build_datamodule(train_config=tc, tmp_path=tmp_path)
         assert dm._prefetch_factor == 5
 
-    def test_prefetch_factor_none_when_workers_disabled(self, build_datamodule, base_train_config):
+    def test_prefetch_factor_none_when_workers_disabled(self, tmp_path, base_train_config):
         """prefetch_factor is None when num_workers == 0."""
         tc = base_train_config(num_workers=0, prefetch_factor=5)
-        dm = build_datamodule(train_config=tc)
+        dm = _build_datamodule(train_config=tc, tmp_path=tmp_path)
         assert dm._prefetch_factor is None
 
-    def test_pin_memory_override_is_respected(self, build_datamodule, base_train_config):
+    def test_pin_memory_override_is_respected(self, tmp_path, base_train_config):
         """pin_memory can be explicitly overridden from TrainConfig."""
         tc = base_train_config(pin_memory=False)
-        dm = build_datamodule(train_config=tc)
+        dm = _build_datamodule(train_config=tc, tmp_path=tmp_path)
         assert dm._pin_memory is False
 
     @patch("rfdetr.config.DEVICE", "cuda")
-    def test_pin_memory_defaults_to_false_when_accelerator_is_cpu(self, build_datamodule, base_train_config):
+    def test_pin_memory_defaults_to_false_when_accelerator_is_cpu(self, tmp_path, base_train_config):
         """Default pin_memory stays off when training is explicitly CPU-only."""
         tc = base_train_config(pin_memory=None, accelerator="cpu")
-        dm = build_datamodule(train_config=tc)
+        dm = _build_datamodule(train_config=tc, tmp_path=tmp_path)
         assert dm._pin_memory is False
 
-    def test_persistent_workers_override_is_respected(self, build_datamodule, base_train_config):
+    def test_persistent_workers_override_is_respected(self, tmp_path, base_train_config):
         """persistent_workers can be explicitly overridden from TrainConfig."""
         tc = base_train_config(num_workers=2, persistent_workers=False)
-        dm = build_datamodule(train_config=tc)
+        dm = _build_datamodule(train_config=tc, tmp_path=tmp_path)
         assert dm._persistent_workers is False
 
-    def test_ddp_notebook_preserves_num_workers(self, build_datamodule, base_train_config):
+    def test_ddp_notebook_preserves_num_workers(self, tmp_path, base_train_config):
         """ddp_notebook keeps num_workers as configured (spawn-based DDP children initialise CUDA fresh; DataLoader fork
         workers are CPU-only and never touch CUDA, so nested forks are safe)."""
         tc = base_train_config(num_workers=4, strategy="ddp_notebook")
-        dm = build_datamodule(train_config=tc)
+        dm = _build_datamodule(train_config=tc, tmp_path=tmp_path)
         assert dm._num_workers == 4
         assert dm._prefetch_factor == 2
 
-    def test_other_strategy_preserves_num_workers(self, build_datamodule, base_train_config):
+    def test_other_strategy_preserves_num_workers(self, tmp_path, base_train_config):
         """Non-ddp_notebook strategies also keep num_workers as configured."""
         tc = base_train_config(num_workers=4, strategy="ddp")
-        dm = build_datamodule(train_config=tc)
+        dm = _build_datamodule(train_config=tc, tmp_path=tmp_path)
         assert dm._num_workers == 4
         assert dm._prefetch_factor == 2  # default prefetch_factor for num_workers>0
 
@@ -231,15 +272,15 @@ class TestInit:
 class TestPrivateShowSamples:
     """RFDETRDataModule._show_samples renders transformed input samples."""
 
-    def test_private_show_samples_returns_figure_for_keypoint_targets(self, build_datamodule, monkeypatch):
+    def test_private_show_samples_returns_figure_for_keypoint_targets(self, fixture_training_setup, monkeypatch):
         """_show_samples should render transformed boxes and keypoints without raw COCO parsing."""
+        _, _, dm = fixture_training_setup
         import matplotlib
 
         matplotlib.use("Agg", force=True)
         from matplotlib import pyplot as plt
         from matplotlib.figure import Figure
 
-        dm = build_datamodule()
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
 
         figure = dm._show_samples(1, split="train", columns=1)
@@ -248,14 +289,16 @@ class TestPrivateShowSamples:
         assert len(figure.axes) == 1
         plt.close(figure)
 
-    def test_private_show_samples_accepts_figure_size_and_shortens_long_titles(self, build_datamodule, monkeypatch):
+    def test_private_show_samples_accepts_figure_size_and_shortens_long_titles(
+        self, fixture_training_setup, monkeypatch
+    ):
         """_show_samples should keep long image names inside subplot titles."""
+        _, _, dm = fixture_training_setup
         import matplotlib
 
         matplotlib.use("Agg", force=True)
         from matplotlib import pyplot as plt
 
-        dm = build_datamodule()
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
         monkeypatch.setattr(dm, "_source_image_path", lambda dataset, idx: Path(f"{'very_long_name_' * 8}.jpg"))
 
@@ -267,22 +310,21 @@ class TestPrivateShowSamples:
         assert len(title) <= 48
         plt.close(figure)
 
-    def test_private_show_samples_rejects_non_positive_count(self, build_datamodule):
+    def test_private_show_samples_rejects_non_positive_count(self, fixture_training_setup):
         """_show_samples should fail fast for invalid counts."""
-        dm = build_datamodule()
-
+        _, _, dm = fixture_training_setup
         with pytest.raises(ValueError, match=r"count must be positive"):
             dm._show_samples(0)
 
-    def test_private_show_samples_rejects_invalid_figure_size(self, build_datamodule):
+    def test_private_show_samples_rejects_invalid_figure_size(self, fixture_training_setup):
         """_show_samples should fail fast for invalid figure sizes."""
-        dm = build_datamodule()
-
+        _, _, dm = fixture_training_setup
         with pytest.raises(ValueError, match=r"figure_size values must be positive"):
             dm._show_samples(1, figure_size=(4.0, 0.0))
 
-    def test_private_show_samples_missing_visual_extra_has_install_hint(self, build_datamodule, monkeypatch):
+    def test_private_show_samples_missing_visual_extra_has_install_hint(self, fixture_training_setup, monkeypatch):
         """_show_samples should explain how to install optional visualization dependencies."""
+        _, _, dm = fixture_training_setup
         real_import = builtins.__import__
 
         def fake_import(name, *args, **kwargs):
@@ -290,15 +332,15 @@ class TestPrivateShowSamples:
                 raise ImportError("matplotlib is intentionally unavailable")
             return real_import(name, *args, **kwargs)
 
-        dm = build_datamodule()
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
         monkeypatch.setattr(builtins, "__import__", fake_import)
 
         with pytest.raises(ImportError, match=r"rfdetr\[visual\]"):
             dm._show_samples(1)
 
-    def test_private_show_samples_returns_figure_for_segmentation_targets(self, build_datamodule, monkeypatch):
+    def test_private_show_samples_returns_figure_for_segmentation_targets(self, fixture_training_setup, monkeypatch):
         """_show_samples renders mask overlays when dataset targets include instance masks."""
+        _, _, dm = fixture_training_setup
         import matplotlib
         import numpy as np
 
@@ -324,7 +366,6 @@ class TestPrivateShowSamples:
                     },
                 )
 
-        dm = build_datamodule()
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _SegDataset())
 
         mock_instance = MagicMock()
@@ -338,8 +379,11 @@ class TestPrivateShowSamples:
         mock_instance.annotate.assert_called_once()
         plt.close(figure)
 
-    def test_private_show_samples_detection_only_does_not_call_mask_annotator(self, build_datamodule, monkeypatch):
+    def test_private_show_samples_detection_only_does_not_call_mask_annotator(
+        self, fixture_training_setup, monkeypatch
+    ):
         """_show_samples skips MaskAnnotator when dataset targets have no masks key."""
+        _, _, dm = fixture_training_setup
         from unittest.mock import patch as _patch
 
         import matplotlib
@@ -347,7 +391,6 @@ class TestPrivateShowSamples:
 
         matplotlib.use("Agg", force=True)
 
-        dm = build_datamodule()
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
 
         with _patch("supervision.MaskAnnotator") as mock_mask_ann:
@@ -356,8 +399,9 @@ class TestPrivateShowSamples:
         mock_mask_ann.assert_not_called()
         plt.close(figure)
 
-    def test_private_show_samples_empty_masks_skips_mask_annotator(self, build_datamodule, monkeypatch):
+    def test_private_show_samples_empty_masks_skips_mask_annotator(self, fixture_training_setup, monkeypatch):
         """_show_samples skips MaskAnnotator when masks tensor has zero instances (0, H, W)."""
+        _, _, dm = fixture_training_setup
         from unittest.mock import patch as _patch
 
         import matplotlib
@@ -380,7 +424,6 @@ class TestPrivateShowSamples:
                     },
                 )
 
-        dm = build_datamodule()
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _EmptyMasksDataset())
 
         with _patch("supervision.MaskAnnotator") as mock_mask_ann:
@@ -397,8 +440,6 @@ class TestSetup:
         """Helper: construct DataModule and call setup(stage) with build_dataset mocked."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, dataset_file=dataset_file, **train_overrides)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         dm = RFDETRDataModule(mc, tc)
         fake_train = _fake_dataset(100)
         fake_val = _fake_dataset(20)
@@ -426,18 +467,133 @@ class TestSetup:
         assert dm._dataset_val is fake_val
         assert dm._dataset_test is None
 
-    def test_test_stage_roboflow_uses_test_split(self, tmp_path):
-        """Setup('test') requests 'test' split when dataset_file=='roboflow'."""
-        dm, _, _, fake_test = self._setup_with_mock(tmp_path, "test", dataset_file="roboflow")
+    @pytest.mark.parametrize("dataset_file", [pytest.param("roboflow", id="roboflow"), pytest.param("yolo", id="yolo")])
+    def test_test_stage_uses_test_split(self, tmp_path, dataset_file):
+        """Setup('test') requests the 'test' split for both Roboflow and YOLO datasets."""
+        dm, _, _, fake_test = self._setup_with_mock(tmp_path, "test", dataset_file=dataset_file)
         assert dm._dataset_test is fake_test
 
-    def test_test_stage_non_roboflow_uses_val_split(self, tmp_path):
-        """Setup('test') falls back to 'val' split for non-roboflow datasets."""
-        mc = _base_model_config()
-        tc = _base_train_config(tmp_path, dataset_file="coco")
-        from rfdetr.training.module_data import RFDETRDataModule
+    @pytest.mark.parametrize("dataset_file", [pytest.param("roboflow", id="roboflow"), pytest.param("yolo", id="yolo")])
+    def test_test_stage_falls_back_to_val_without_test_split(self, tmp_path, dataset_file):
+        """Setup('test') falls back to 'val' when the dataset declares no test split.
 
-        dm = RFDETRDataModule(mc, tc)
+        A ``dataset_file="roboflow"`` dataset whose detected format is YOLO-style
+        (``build_roboflow`` -> ``build_roboflow_from_yolo``, a common Roboflow export format)
+        routes through the exact same builder as ``dataset_file="yolo"`` and can raise the same
+        ``YoloSplitUnavailableError`` -- Roboflow's export UI does not require a test split.
+        """
+        dm = _build_datamodule(train_config=_base_train_config(tmp_path, dataset_file=dataset_file))
+        fake_val = _fake_dataset(20)
+
+        def _build(image_set, args, resolution):
+            if image_set == "test":
+                raise YoloSplitUnavailableError(str(tmp_path / "test" / "images"))
+            return fake_val
+
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
+            dm.setup("test")
+
+        assert dm._dataset_test is fake_val
+
+    def _write_yolo_dataset_without_test_split(self, dataset_dir: Path) -> None:
+        """Write an on-disk YOLO dataset with one ``train/`` image and two ``valid/`` images, no ``test/`` split.
+
+        The split sizes differ so that a length assertion on the dataset built for the ``test`` stage distinguishes the
+        ``valid`` fallback from an accidental ``train`` one.
+        """
+        for split, image_count in (("train", 1), ("valid", 2)):
+            (dataset_dir / split / "images").mkdir(parents=True)
+            (dataset_dir / split / "labels").mkdir(parents=True)
+            for idx in range(image_count):
+                image_path = dataset_dir / split / "images" / f"sample{idx}.png"
+                Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_path)
+                (dataset_dir / split / "labels" / f"sample{idx}.txt").write_text(
+                    "0 0.5 0.5 0.5 0.5\n", encoding="utf-8"
+                )
+        (dataset_dir / "data.yaml").write_text("names:\n  - person\n", encoding="utf-8")
+
+    def test_test_stage_roboflow_yolo_format_falls_back_to_val_end_to_end(self, tmp_path, caplog, monkeypatch):
+        """A real, unmocked Roboflow-YOLO export without a ``test/`` split falls back to ``valid/``.
+
+        Exercises ``detect_roboflow_format`` -> ``build_roboflow_from_yolo`` end to end, not just the
+        ``_build_test_dataset`` control flow around a mocked ``build_dataset``.
+        """
+        dataset_dir = tmp_path / "dataset"
+        self._write_yolo_dataset_without_test_split(dataset_dir)
+        dm = _build_datamodule(
+            model_config=_base_model_config(num_classes=1),
+            train_config=_base_train_config(tmp_path, dataset_file="roboflow", dataset_dir=str(dataset_dir)),
+        )
+        # get_logger() sets propagate=False on the "rf-detr" logger, so caplog's root-level
+        # handler only sees its records while propagation is re-enabled.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            dm.setup("test")
+
+        assert isinstance(dm._dataset_test, YoloDetection)
+        assert len(dm._dataset_test) == 2
+        assert any("No resolvable 'test' split" in record.getMessage() for record in caplog.records)
+
+    def test_test_stage_plain_yolo_falls_back_to_val_end_to_end(self, tmp_path):
+        """A real, unmocked ``dataset_file="yolo"`` dataset without a ``test/`` split falls back to ``valid/``.
+
+        Unlike the ``roboflow`` route, this one never runs ``detect_roboflow_format``: ``build_dataset`` dispatches
+        straight to ``build_roboflow_from_yolo``.
+        """
+        dataset_dir = tmp_path / "dataset"
+        self._write_yolo_dataset_without_test_split(dataset_dir)
+        dm = _build_datamodule(
+            model_config=_base_model_config(num_classes=1),
+            train_config=_base_train_config(tmp_path, dataset_file="yolo", dataset_dir=str(dataset_dir)),
+        )
+
+        dm.setup("test")
+
+        assert isinstance(dm._dataset_test, YoloDetection)
+        assert len(dm._dataset_test) == 2
+
+    @pytest.mark.parametrize("dataset_file", [pytest.param("roboflow", id="roboflow"), pytest.param("yolo", id="yolo")])
+    def test_test_stage_propagates_broken_test_split(self, tmp_path, dataset_file):
+        """Setup('test') propagates builder failures after a test split is resolved."""
+        dm = _build_datamodule(train_config=_base_train_config(tmp_path, dataset_file=dataset_file))
+
+        def _build(image_set, args, resolution):
+            if image_set == "test":
+                raise FileNotFoundError("declared test annotation file is broken")
+            return _fake_dataset(20)
+
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
+            with pytest.raises(FileNotFoundError, match="declared test annotation file is broken"):
+                dm.setup("test")
+
+    @pytest.mark.parametrize(
+        "dataset_file, dataset_label",
+        [pytest.param("roboflow", "Roboflow", id="roboflow"), pytest.param("yolo", "YOLO", id="yolo")],
+    )
+    def test_test_stage_warns_when_falling_back_to_val(self, tmp_path, dataset_file, dataset_label):
+        """The test-to-val fallback is logged at WARNING rather than applied silently."""
+        dm = _build_datamodule(train_config=_base_train_config(tmp_path, dataset_file=dataset_file))
+
+        def _build(image_set, args, resolution):
+            if image_set == "test":
+                raise YoloSplitUnavailableError(str(tmp_path / "test" / "images"))
+            return _fake_dataset(20)
+
+        with (
+            patch("rfdetr.training.module_data.build_dataset", side_effect=_build),
+            patch("rfdetr.training.module_data.logger") as mock_logger,
+        ):
+            dm.setup("test")
+
+        mock_logger.warning.assert_called_once_with(
+            "No resolvable 'test' split for this %s dataset (%s); evaluating the 'val' split instead.",
+            dataset_label,
+            str(tmp_path / "test" / "images"),
+        )
+
+    def test_test_stage_coco_uses_val_split(self, coco_datamodule):
+        """Setup('test') falls back to 'val' for COCO, whose test2017 split is unlabelled test-dev."""
         requested_splits = []
 
         def _build(image_set, args, resolution):
@@ -445,17 +601,33 @@ class TestSetup:
             return _fake_dataset(10)
 
         with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
-            dm.setup("test")
+            coco_datamodule.setup("test")
 
         assert "val" in requested_splits
         assert "test" not in requested_splits
+
+    def test_test_stage_does_not_rebuild_after_val_fallback(self, tmp_path):
+        """A second setup('test') reuses the val dataset resolved by the first fallback."""
+        dm = _build_datamodule(train_config=_base_train_config(tmp_path, dataset_file="yolo"))
+        fake_val = _fake_dataset(20)
+
+        def _build(image_set, args, resolution):
+            if image_set == "test":
+                raise YoloSplitUnavailableError(str(tmp_path / "test" / "images"))
+            return fake_val
+
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
+            dm.setup("test")
+        with patch("rfdetr.training.module_data.build_dataset") as mock_build:
+            dm.setup("test")
+            mock_build.assert_not_called()
+
+        assert dm._dataset_test is fake_val
 
     def test_fit_does_not_rebuild_if_already_set(self, tmp_path):
         """Setup('fit') skips building if datasets are already populated."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         dm = RFDETRDataModule(mc, tc)
         existing_train = _fake_dataset(50)
         existing_val = _fake_dataset(10)
@@ -480,8 +652,6 @@ class TestSetup:
         """Setup('predict') skips building when _dataset_val is already set."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         dm = RFDETRDataModule(mc, tc)
         existing_val = _fake_dataset(20)
         dm._dataset_val = existing_val
@@ -502,8 +672,6 @@ class TestKeypointAugmentationWarning:
             num_keypoints_per_class=[17] if use_grouppose_keypoints else [],
         )
         tc = _base_train_config(tmp_path, augmentation_backend=augmentation_backend)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         return RFDETRDataModule(mc, tc)
 
     def test_keypoint_mode_cpu_augmentation_no_warning(self, tmp_path):
@@ -556,8 +724,6 @@ class TestTrainDataloader:
             grad_accum_steps=grad_accum_steps,
             num_workers=num_workers,
         )
-        from rfdetr.training.module_data import RFDETRDataModule
-
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_train = _fake_dataset(dataset_length)
         return dm
@@ -669,6 +835,56 @@ class TestTrainDataloader:
         assert len(loader.dataset) % (2 * 4 * 3) == 0
         assert len(loader.dataset) == 120
 
+    @staticmethod
+    def _raw_sample(h: int = 16, w: int = 16) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Build one (image, target) pair as a dataset __getitem__ would return it, for collate_fn input.
+
+        Examples:
+            >>> image, target = TestTrainDataloader._raw_sample()
+            >>> image.shape, sorted(target)
+            (torch.Size([3, 16, 16]), ['boxes', 'image_id', 'labels', 'orig_size'])
+        """
+        image = torch.randn(3, h, w)
+        target = {
+            "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
+            "labels": torch.tensor([1]),
+            "image_id": torch.tensor(0),
+            "orig_size": torch.tensor([h, w]),
+        }
+        return image, target
+
+    @pytest.mark.parametrize(
+        ("loader_name", "dataset_attribute"),
+        [
+            pytest.param("train_dataloader", "_dataset_train", id="train"),
+            pytest.param("val_dataloader", "_dataset_val", id="validation"),
+            pytest.param("test_dataloader", "_dataset_test", id="test"),
+            pytest.param("predict_dataloader", "_dataset_val", id="predict"),
+        ],
+    )
+    def test_pack_targets_default_makes_every_loader_collate_packed_targets(
+        self, tmp_path, loader_name, dataset_attribute
+    ):
+        """The default must make each public DataLoader's collate function return PackedTargets."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path))
+        setattr(dm, dataset_attribute, _fake_dataset(200))
+
+        loader = getattr(dm, loader_name)()
+        _, targets = loader.collate_fn([self._raw_sample(), self._raw_sample()])
+
+        assert isinstance(targets, PackedTargets)
+
+    def test_pack_targets_false_keeps_collate_fn_output_a_tuple_of_dicts(self, tmp_path):
+        """An explicit TrainConfig.pack_targets=False leaves train_dataloader().collate_fn output unpacked."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, pack_targets=False))
+        dm._dataset_train = _fake_dataset(200)
+
+        loader = dm.train_dataloader()
+        _, targets = loader.collate_fn([self._raw_sample(), self._raw_sample()])
+
+        assert not isinstance(targets, PackedTargets)
+        assert all(isinstance(t, dict) for t in targets)
+
 
 class TestGradAccumAlignedDataset:
     """Unit tests for the GradAccumAlignedDataset wrapper."""
@@ -767,8 +983,6 @@ class TestValDataloader:
     def _setup_dm_with_val(self, tmp_path, dataset_length=50, batch_size=2, num_workers=0):
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, batch_size=batch_size, num_workers=num_workers)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_val = _fake_dataset(dataset_length)
         return dm
@@ -810,8 +1024,6 @@ class TestTestDataloader:
     def _setup_dm_with_test(self, tmp_path, dataset_length=30, batch_size=2, num_workers=0):
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, batch_size=batch_size, num_workers=num_workers)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_test = _fake_dataset(dataset_length)
         return dm
@@ -847,8 +1059,6 @@ class TestPredictDataloader:
     def _setup_dm_with_val(self, tmp_path, dataset_length=50, batch_size=2, num_workers=0):
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, batch_size=batch_size, num_workers=num_workers)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_val = _fake_dataset(dataset_length)
         return dm
@@ -884,20 +1094,96 @@ class TestPredictDataloader:
         assert loader.num_workers == 0
 
 
+class TestEvalBatchSize:
+    """eval_batch_size decouples the val/test/predict DataLoaders from the train micro-batch size."""
+
+    _EVAL_LOADERS = [
+        pytest.param("val_dataloader", id="val"),
+        pytest.param("test_dataloader", id="test"),
+        pytest.param("predict_dataloader", id="predict"),
+    ]
+
+    def _setup_dm(
+        self,
+        tmp_path: Path,
+        batch_size: int | str = 2,
+        eval_batch_size: int | None = None,
+        grad_accum_steps: int = 1,
+        dataset_length: int = 50,
+    ) -> RFDETRDataModule:
+        """Build a data module with every loader dataset injected.
+
+        Examples:
+            >>> datamodule = TestEvalBatchSize()._setup_dm(Path("/tmp"), batch_size=4, eval_batch_size=8)
+            >>> datamodule.train_config.batch_size, datamodule.train_config.eval_batch_size
+            (4, 8)
+        """
+        mc = _base_model_config()
+        tc = _base_train_config(
+            tmp_path,
+            batch_size=batch_size,
+            eval_batch_size=eval_batch_size,
+            grad_accum_steps=grad_accum_steps,
+            num_workers=0,
+        )
+        dm = RFDETRDataModule(mc, tc)
+        dm._dataset_train = _fake_dataset(dataset_length)
+        dm._dataset_val = _fake_dataset(dataset_length)
+        dm._dataset_test = _fake_dataset(dataset_length)
+        return dm
+
+    @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
+    def test_defaults_to_train_batch_size(self, tmp_path: Path, loader_name: str) -> None:
+        """With eval_batch_size unset, every eval DataLoader keeps using the train batch size."""
+        dm = self._setup_dm(tmp_path, batch_size=6, eval_batch_size=None)
+        loader = getattr(dm, loader_name)()
+        assert loader.batch_size == 6
+
+    @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
+    def test_explicit_value_overrides_train_batch_size(self, tmp_path: Path, loader_name: str) -> None:
+        """An explicit eval_batch_size is used by every eval DataLoader instead of the train batch size."""
+        dm = self._setup_dm(tmp_path, batch_size=2, eval_batch_size=16)
+        loader = getattr(dm, loader_name)()
+        assert loader.batch_size == 16
+
+    def test_train_dataloader_keeps_train_batch_size(self, tmp_path: Path) -> None:
+        """The training DataLoader ignores eval_batch_size and keeps the configured train batch size."""
+        dm = self._setup_dm(tmp_path, batch_size=2, eval_batch_size=16)
+        loader = dm.train_dataloader()
+        assert loader.batch_sampler.batch_size == 2
+
+    def test_train_dataloader_grad_accum_alignment_unaffected(self, tmp_path: Path) -> None:
+        """Train-side grad-accum padding still aligns to batch_size * grad_accum_steps, not eval_batch_size."""
+        dm = self._setup_dm(tmp_path, batch_size=2, eval_batch_size=16, grad_accum_steps=4, dataset_length=50)
+        loader = dm.train_dataloader()
+        assert len(loader.dataset) % (2 * 4) == 0
+
+    @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
+    def test_explicit_value_works_with_unresolved_auto_batch_size(self, tmp_path: Path, loader_name: str) -> None:
+        """An explicit eval_batch_size does not depend on batch_size='auto' having been resolved."""
+        dm = self._setup_dm(tmp_path, batch_size="auto", eval_batch_size=8)
+        loader = getattr(dm, loader_name)()
+        assert loader.batch_size == 8
+
+    def test_unresolved_auto_batch_size_still_raises_without_explicit_value(self, tmp_path: Path) -> None:
+        """Without eval_batch_size, an unresolved batch_size='auto' still fails eval loader construction."""
+        dm = self._setup_dm(tmp_path, batch_size="auto", eval_batch_size=None)
+        with pytest.raises(RuntimeError, match="was not resolved"):
+            dm.val_dataloader()
+
+
 class TestClassNames:
     """class_names property extracts names from COCO dataset annotations."""
 
-    def test_returns_none_before_setup(self, build_datamodule):
+    def test_returns_none_before_setup(self, fixture_training_setup):
         """class_names is None when no dataset has been set up."""
-        dm = build_datamodule()
+        _, _, dm = fixture_training_setup
         assert dm.class_names is None
 
     def test_returns_names_from_train_dataset(self, tmp_path):
         """class_names reads from _dataset_train.coco.cats when available."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_train = _fake_dataset(50, with_coco=True)
         assert dm.class_names == ["cat", "dog"]
@@ -906,8 +1192,6 @@ class TestClassNames:
         """class_names falls back to _dataset_val when _dataset_train has no COCO."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_train = _fake_dataset(50, with_coco=False)
         dm._dataset_val = _fake_dataset(20, with_coco=True)
@@ -917,8 +1201,6 @@ class TestClassNames:
         """class_names returns None when no dataset has a coco attribute."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_train = _fake_dataset(50, with_coco=False)
         dm._dataset_val = _fake_dataset(20, with_coco=False)
@@ -928,8 +1210,6 @@ class TestClassNames:
         """class_names are sorted by COCO category ID."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         dm = RFDETRDataModule(mc, tc)
         dataset = _fake_dataset(50)
         coco = MagicMock()
@@ -943,8 +1223,6 @@ class TestClassNames:
         """class_names should preserve empty label slots so prediction class IDs map to the right names."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         dm = RFDETRDataModule(mc, tc)
         dataset = _fake_dataset(50)
         coco = MagicMock()
@@ -963,8 +1241,6 @@ class TestSegmentationSupport:
         """RFDETRDataModule can be constructed with a SegmentationTrainConfig."""
         mc = base_model_config(segmentation_head=True)
         tc = seg_train_config()
-        from rfdetr.training.module_data import RFDETRDataModule
-
         dm = RFDETRDataModule(mc, tc)
         assert dm.train_config is tc
         assert dm.model_config.segmentation_head is True
@@ -973,8 +1249,6 @@ class TestSegmentationSupport:
         """Segmentation-specific loss coefficients are present on train_config."""
         mc = base_model_config(segmentation_head=True)
         tc = seg_train_config()
-        from rfdetr.training.module_data import RFDETRDataModule
-
         dm = RFDETRDataModule(mc, tc)
         assert dm.train_config.mask_ce_loss_coef == pytest.approx(5.0)
         assert dm.train_config.mask_dice_loss_coef == pytest.approx(5.0)
@@ -987,9 +1261,9 @@ class TestTransferBatchToDevice:
     unwrapping the NestedTensor into plain tensors.
     """
 
-    def test_samples_transferred_to_target_device(self, build_datamodule):
+    def test_samples_transferred_to_target_device(self, fixture_training_setup):
         """Both tensors and mask in NestedTensor must land on the target device."""
-        dm = build_datamodule()
+        _, _, dm = fixture_training_setup
         samples, targets = _make_batch()
         device = torch.device("cpu")
 
@@ -998,9 +1272,9 @@ class TestTransferBatchToDevice:
         assert result_samples.tensors.device == device
         assert result_samples.mask.device == device
 
-    def test_targets_transferred_to_target_device(self, build_datamodule):
+    def test_targets_transferred_to_target_device(self, fixture_training_setup):
         """All tensor values in every target dict must be moved to the target device."""
-        dm = build_datamodule()
+        _, _, dm = fixture_training_setup
         samples, targets = _make_batch()
         device = torch.device("cpu")
 
@@ -1010,22 +1284,46 @@ class TestTransferBatchToDevice:
             for v in t.values():
                 assert v.device == device
 
-    def test_returns_tuple_of_correct_length(self, build_datamodule):
+    def test_returns_tuple_of_correct_length(self, fixture_training_setup):
         """Return value must be a (samples, targets) tuple to match batch contract."""
-        dm = build_datamodule()
+        _, _, dm = fixture_training_setup
         result = dm.transfer_batch_to_device(_make_batch(), torch.device("cpu"), dataloader_idx=0)
 
         assert isinstance(result, tuple)
         assert len(result) == 2
 
-    def test_preserves_nested_tensor_type(self, build_datamodule):
+    def test_preserves_nested_tensor_type(self, fixture_training_setup):
         """Device transfer must not unwrap NestedTensor into plain tensors."""
-        dm = build_datamodule()
+        _, _, dm = fixture_training_setup
         samples, targets = _make_batch()
 
         result_samples, _ = dm.transfer_batch_to_device((samples, targets), torch.device("cpu"), dataloader_idx=0)
 
         assert isinstance(result_samples, NestedTensor)
+
+    def test_packed_targets_are_unpacked_to_a_plain_list_on_target_device(self, fixture_training_setup):
+        """When the collate_fn packed targets (``TrainConfig.pack_targets=True``), transfer_batch_to_device must
+        still hand downstream code the same plain per-sample dict list the unpacked path returns, on the target
+        device -- not a ``PackedTargets``. ``on_after_batch_transfer`` mutates target dicts by key reassignment,
+        and ``PackedTargets.__getitem__``/iteration rebuilds a fresh dict on every access, so a reassignment into
+        an un-materialised ``PackedTargets`` would silently vanish on the next access."""
+        _, _, dm = fixture_training_setup
+        samples, plain_targets = _make_batch()
+        packed_targets = pack_targets(plain_targets)
+        assert isinstance(packed_targets, PackedTargets)
+        device = torch.device("cpu")
+
+        _, result_targets = dm.transfer_batch_to_device((samples, packed_targets), device, dataloader_idx=0)
+
+        assert isinstance(result_targets, list)
+        assert not isinstance(result_targets, PackedTargets)
+        for t in result_targets:
+            assert isinstance(t, dict)
+            for v in t.values():
+                assert v.device == device
+        for original, rebuilt in zip(plain_targets, result_targets):
+            for key, value in original.items():
+                assert torch.equal(rebuilt[key], value)
 
 
 # ---------------------------------------------------------------------------
@@ -1043,8 +1341,6 @@ class TestBackendResolution:
         """Construct a DataModule with the given augmentation_backend."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, augmentation_backend=augmentation_backend)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         return RFDETRDataModule(mc, tc)
 
     def _setup_with_mock_build(self, dm):
@@ -1076,7 +1372,7 @@ class TestBackendResolution:
 
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
         ):
             dm = self._setup_with_mock_build(dm)
 
@@ -1101,7 +1397,7 @@ class TestBackendResolution:
 
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
             pytest.raises(ImportError, match="rfdetr\\[augment\\]"),
         ):
             self._setup_with_mock_build(dm)
@@ -1126,12 +1422,13 @@ class TestBackendResolution:
 
         def _fake_build_kornia(aug_cfg, resolution, with_masks=False):
             captured["aug_config"] = aug_cfg
+            captured["with_masks"] = with_masks
             return MagicMock()
 
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
             patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=True),
+            patch.object(AugmentationBackend, "_is_available", lambda self: True),
             patch("rfdetr.datasets.kornia_transforms.build_kornia_pipeline", side_effect=_fake_build_kornia),
             patch("rfdetr.datasets.kornia_transforms.build_normalize", return_value=MagicMock()),
         ):
@@ -1140,6 +1437,7 @@ class TestBackendResolution:
         assert captured.get("aug_config") is AUG_CONFIG, (
             "GPU path must fall back to AUG_CONFIG when train_config.aug_config is None"
         )
+        assert captured.get("with_masks") is True, "GPU path must transport the padding mask for detection batches"
 
     def test_auto_no_cuda_does_not_strip_cpu_normalize(self, tmp_path):
         """Auto + no CUDA: gpu_postprocess must be False so CPU Normalize is retained."""
@@ -1178,8 +1476,6 @@ class TestOnAfterBatchTransfer:
         """Construct a DataModule for on_after_batch_transfer tests."""
         mc = _base_model_config(segmentation_head=segmentation_head)
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         return RFDETRDataModule(mc, tc)
 
     def _attach_mock_trainer(self, dm, training=True):
@@ -1240,9 +1536,10 @@ class TestOnAfterBatchTransfer:
 
         samples, targets = self._make_kornia_batch()
         img_aug = samples.tensors.clone()
-        # Mock pipeline returns (augmented_images, augmented_boxes)
+        # Mock pipeline returns the image, boxes, and transported padding mask.
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
         dm._kornia_pipeline = mock_pipeline
 
         # Normalize adds +1 so we can assert the normalization step is applied.
@@ -1262,6 +1559,74 @@ class TestOnAfterBatchTransfer:
             torch.testing.assert_close(
                 boxes[0], torch.tensor([0.375, 0.375, 0.5, 0.5], dtype=torch.float32), rtol=1e-4, atol=1e-6
             )
+
+    def test_training_uses_transformed_padding_mask(self, tmp_path) -> None:
+        """The returned NestedTensor mask comes from the same Kornia geometry as the image."""
+        dm = self._build_dm(tmp_path)
+        dm = self._attach_mock_trainer(dm, training=True)
+
+        samples, targets = self._make_kornia_batch()
+        assert samples.mask is not None
+        samples.mask[0, 8:, :] = True
+        samples.mask[1, :, 12:] = True
+        img_aug = samples.tensors.clone()
+        boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        padding_masks_aug[0, :, 5:, :] = 1.0
+        padding_masks_aug[1, :, :, 3:] = 1.0
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+
+        result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        call_args, call_kwargs = dm._kornia_pipeline.call_args
+        assert len(call_args) == 3
+        assert not call_kwargs
+        torch.testing.assert_close(call_args[2], samples.mask.unsqueeze(1).to(torch.float32), rtol=0, atol=0)
+        assert result_samples.mask is not None
+        assert result_samples.mask.dtype == torch.bool
+        assert torch.equal(result_samples.mask, padding_masks_aug[:, 0].to(torch.bool))
+
+    def test_perspective_warps_padding_mask_with_real_pipeline(self, tmp_path) -> None:
+        """Perspective transports unequal-size batch padding through the real Kornia sequence."""
+        pytest.importorskip("kornia")
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, collate_boxes
+        from rfdetr.utilities.tensors import nested_tensor_from_tensor_list
+
+        dm = self._build_dm(tmp_path)
+        dm = self._attach_mock_trainer(dm, training=True)
+        samples = nested_tensor_from_tensor_list([torch.ones(3, 48, 48), torch.ones(3, 64, 64)])
+        assert samples.mask is not None
+        targets = [
+            {
+                "boxes": torch.tensor([[4.0, 4.0, 36.0, 36.0]]),
+                "labels": torch.tensor([1]),
+                "area": torch.tensor([1024.0]),
+                "iscrowd": torch.tensor([0]),
+                "image_id": torch.tensor(index),
+                "orig_size": torch.tensor([size, size]),
+            }
+            for index, size in enumerate((48, 64))
+        ]
+        config = {"Perspective": {"scale": 0.4, "p": 1.0}}
+        dm._kornia_pipeline = build_kornia_pipeline(config, 64, with_masks=True)
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+        boxes_padded, _ = collate_boxes(targets, samples.tensors.device)
+        reference_pipeline = build_kornia_pipeline(config, 64, with_masks=True)
+
+        torch.manual_seed(7)
+        _, _, expected_padding = reference_pipeline(
+            samples.tensors,
+            boxes_padded,
+            samples.mask.unsqueeze(1).to(torch.float32),
+        )
+        torch.manual_seed(7)
+        result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        assert result_samples.mask is not None
+        assert result_samples.mask.dtype == torch.bool
+        assert torch.equal(result_samples.mask, expected_padding[:, 0].to(torch.bool))
+        assert not torch.equal(result_samples.mask, samples.mask)
 
     def test_training_false_skips_augmentation(self, tmp_path):
         """When training=False, batch is returned unchanged."""
@@ -1289,7 +1654,8 @@ class TestOnAfterBatchTransfer:
         samples, targets = self._make_kornia_batch_with_masks()
         img_aug = samples.tensors.clone()
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        masks_aug = torch.ones(2, 1, 16, 16, dtype=torch.float32)
+        masks_aug = torch.ones(2, 2, 16, 16, dtype=torch.float32)
+        masks_aug[:, 1] = 0.0
 
         mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded, masks_aug))
         dm._kornia_pipeline = mock_pipeline
@@ -1305,8 +1671,10 @@ class TestOnAfterBatchTransfer:
         masks_arg = call_args[2]
         assert isinstance(masks_arg, torch.Tensor), "third pipeline argument must be a masks tensor"
         assert masks_arg.dtype == torch.float32, "masks passed to pipeline must be float32"
-        assert masks_arg.shape == (2, 1, 16, 16), "masks passed to pipeline must have shape [B, N_max, H, W]"
+        assert masks_arg.shape == (2, 2, 16, 16), "masks passed to pipeline must include instance and padding channels"
         assert "masks" in result_targets[0], "masks key must be present in output targets for segmentation"
+        assert result_samples.mask is not None
+        assert not result_samples.mask.any()
 
     def test_segmentation_masks_stay_in_sync_with_boxes(self, tmp_path):
         """Masks are filtered in sync with boxes: one instance removed → one mask removed."""
@@ -1332,7 +1700,8 @@ class TestOnAfterBatchTransfer:
         ]
         # Augmented: box 0 survives, box 1 becomes zero-area
         boxes_aug_out = torch.tensor([[[2.0, 2.0, 8.0, 8.0], [5.0, 5.0, 5.0, 5.0]]])
-        masks_aug_out = torch.ones(1, 2, h, w, dtype=torch.float32)
+        masks_aug_out = torch.ones(1, 3, h, w, dtype=torch.float32)
+        masks_aug_out[:, 2] = 0.0
         mock_pipeline = MagicMock(return_value=(tensors, boxes_aug_out, masks_aug_out))
         dm._kornia_pipeline = mock_pipeline
         dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
@@ -1351,7 +1720,8 @@ class TestOnAfterBatchTransfer:
         samples, targets = self._make_kornia_batch()
         img_aug = samples.tensors.clone()
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
         dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
 
         result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
@@ -1371,7 +1741,8 @@ class TestOnAfterBatchTransfer:
 
         img_aug = samples.tensors.clone()
         boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
-        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
         dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
 
         _, result_targets = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
@@ -1391,8 +1762,6 @@ class TestKorniaSetupDoneSentinel:
     def _build_dm(self, tmp_path, augmentation_backend="auto"):
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, augmentation_backend=augmentation_backend)
-        from rfdetr.training.module_data import RFDETRDataModule
-
         return RFDETRDataModule(mc, tc)
 
     def _setup_fit_with_mocks(self, dm):
@@ -1480,11 +1849,11 @@ class TestWorkerInitFn:
             pytest.param("predict_dataloader", id="predict"),
         ],
     )
-    def test_eval_dataloaders_set_worker_init_fn(self, build_datamodule, loader_name):
+    def test_eval_dataloaders_set_worker_init_fn(self, fixture_training_setup, loader_name):
         """Validation/test/predict DataLoaders wire the module-level worker seeding hook."""
         from rfdetr.training.module_data import _worker_init_fn
 
-        dm = build_datamodule()
+        _, _, dm = fixture_training_setup
         dm._dataset_val = _fake_dataset()
         dm._dataset_test = _fake_dataset()
 
@@ -1492,11 +1861,11 @@ class TestWorkerInitFn:
 
         assert loader.worker_init_fn is _worker_init_fn
 
-    def test_train_dataloader_sets_worker_init_fn(self, build_datamodule):
+    def test_train_dataloader_sets_worker_init_fn(self, fixture_training_setup):
         """The training DataLoader wires the module-level worker seeding hook."""
         from rfdetr.training.module_data import _worker_init_fn
 
-        dm = build_datamodule()
+        _, _, dm = fixture_training_setup
         dm._dataset_train = _fake_dataset()
 
         loader = dm.train_dataloader()

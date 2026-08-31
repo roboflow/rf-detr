@@ -1,14 +1,26 @@
 cards:
+  - href: train-coco2017/
+    name: "Train RF-DETR Nano on COCO2017"
+    labels: [TRAINING, COCO2017, PYTORCH LIGHTNING]
+    version: v1.10.0
+    author: Borda
+    description: "Download the full public COCO2017 dataset and train RF-DETR Nano for 40 epochs end to end on a high-end GPU (A100 / H100 / RTX PRO 6000 — e.g. Colab Pro+ with an A100 runtime), using shipped defaults that already carry the latest training-throughput optimizations."
+  - href: export-coreml/
+    name: "Export to Native CoreML & Run Inference"
+    labels: [EXPORT, INFERENCE, DEPLOY]
+    version: v1.9.0
+    author: Borda
+    description: "Export RF-DETR directly to a native CoreML .mlpackage (no ONNX, no ExecuTorch) and run it with coremltools — the lowest-friction path for Xcode / Apple-platform deployment."
   - href: export-tensorrt/
     name: "Export to TensorRT & Run Inference"
     labels: [EXPORT, INFERENCE, DEPLOY]
-    version: v1.8.3
+    version: v1.9.0
     author: Borda
     description: "Export RF-DETR to a TensorRT FP16 engine and run inference on it directly — low-latency NVIDIA GPU deployment with supervision-annotated detections."
   - href: export-executorch/
     name: "Export to ExecuTorch & Run Inference"
     labels: [EXPORT, INFERENCE, DEPLOY]
-    version: v1.8.3
+    version: v1.9.0
     author: Borda
     description: "Export RF-DETR to a portable ExecuTorch .pte program (XNNPACK / CoreML / QNN backends) and run it on the CPU — on-device mobile and edge deployment with supervision-annotated detections."
   - href: fine-tune_detection/

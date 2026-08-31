@@ -4,12 +4,15 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import sys
+from types import ModuleType
 from unittest.mock import Mock
 
 import pytest
 import torch
 from PIL import Image
 
+import rfdetr.export.benchmark as benchmark
 from rfdetr.export.benchmark import TRTInference, infer_transforms
 
 
@@ -53,6 +56,43 @@ class TestTRTInference:
         assert image_tensor.shape == (3, 640, 640)
         assert image_tensor.dtype == torch.float32
         assert target is None
+
+
+class TestBenchmarkMain:
+    @pytest.mark.parametrize(
+        ("device", "expected_torch_device"),
+        [
+            pytest.param(0, "cuda:0", id="default-device"),
+            pytest.param(7, "cuda:7", id="non-default-device"),
+        ],
+    )
+    def test_onnx_benchmark_uses_requested_cuda_device(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        device: int,
+        expected_torch_device: str,
+    ) -> None:
+        """ONNX Runtime and PyTorch should use the requested CUDA device."""
+        session = Mock()
+        inference_session = Mock(return_value=session)
+        onnxruntime = ModuleType("onnxruntime")
+        onnxruntime.InferenceSession = inference_session  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "onnxruntime", onnxruntime)
+
+        monkeypatch.setattr(benchmark, "get_image_list", Mock(return_value=[]))
+        infer_onnx = Mock()
+        monkeypatch.setattr(benchmark, "infer_onnx", infer_onnx)
+
+        benchmark.main("model.onnx", device=device, disable_eval=True)
+
+        inference_session.assert_called_once_with(
+            "model.onnx",
+            providers=[("CUDAExecutionProvider", {"device_id": device})],
+        )
+        infer_onnx.assert_called_once()
+        assert infer_onnx.call_args.args[0] is session
+        assert infer_onnx.call_args.kwargs["device"] == expected_torch_device
+        assert infer_onnx.call_args.kwargs["repeats"] == 1
 
 
 class TestBenchmarkShapeParameterization:
@@ -108,3 +148,27 @@ class TestBenchmarkShapeParameterization:
         results = post_process(outputs, target_sizes, num_queries=num_queries)
 
         assert results[0]["scores"].shape == (num_queries,)
+
+    def test_post_process_repeats_boxes_for_duplicated_topk_queries(self) -> None:
+        """Top-k over the flattened [Q, C] scores can pick the same query under two classes.
+
+        Each pick must reproduce that query's exact box, so duplicated and out-of-order query indices have to copy the
+        source row verbatim for every occurrence.
+        """
+        from rfdetr.export.benchmark import box_cxcywh_to_xyxy, post_process
+
+        logits = torch.full((1, 4, 3), -10.0)
+        logits[0, 2, 0] = 3.0  # query 2, class 0 -> rank 1
+        logits[0, 2, 1] = 2.0  # query 2, class 1 -> rank 2 (same query twice)
+        logits[0, 1, 2] = 1.0  # query 1, class 2 -> rank 3
+        dets = torch.rand(1, 4, 4)
+        target_sizes = torch.tensor([[480, 640]])
+
+        results = post_process({"labels": logits, "dets": dets}, target_sizes, num_queries=3)
+
+        scale = torch.tensor([640.0, 480.0, 640.0, 480.0])
+        expected = box_cxcywh_to_xyxy(dets[0]) * scale
+        assert torch.equal(results[0]["labels"], torch.tensor([0, 1, 2]))
+        assert torch.equal(results[0]["boxes"][0], expected[2])
+        assert torch.equal(results[0]["boxes"][1], expected[2])
+        assert torch.equal(results[0]["boxes"][2], expected[1])

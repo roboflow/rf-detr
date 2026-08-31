@@ -34,14 +34,14 @@ model.train(dataset_dir="...", aug_config={"HorizontalFlip": {"p": 0.5}})
 
 ## Transform Categories
 
-**Geometric transforms** (automatically transform bounding boxes):
-- Flips: HorizontalFlip, VerticalFlip
+**Geometric transforms** (automatically transform bounding boxes; this representative list is not exhaustive):
+- Flips and square symmetries: HorizontalFlip, TimeReverse, VerticalFlip, D4, SquareSymmetry
 - Rotations: Rotate, Affine, ShiftScaleRotate
 - Crops: RandomCrop, CenterCrop, RandomResizedCrop
 - Perspective: Perspective, ElasticTransform, GridDistortion
 
 **Pixel-level transforms** (preserve bounding boxes):
-- Color: ColorJitter, HueSaturationValue, RandomBrightnessContrast
+- Color: ColorJitter, HueSaturationValue, RandomBrightnessContrast, ToGray
 - Blur/Noise: GaussianBlur, GaussNoise, Blur
 - Enhancement: CLAHE, Sharpen, Equalize
 
@@ -49,9 +49,12 @@ model.train(dataset_dir="...", aug_config={"HorizontalFlip": {"p": 0.5}})
 
 1. **Start conservative**: Use moderate probabilities (p=0.3-0.5) and small parameter ranges
 2. **Geometric caution**: Extreme rotations (>45°) or crops may remove too many boxes
-3. **Performance**: Fewer transforms = faster training; prioritize transforms that match your domain
-4. **Validation**: Monitor validation mAP - excessive augmentation can hurt performance
-5. **Domain-specific**: Enable augmentations that reflect real-world variations in your data
+3. **Keypoint safety**: Keypoint pipelines with an empty `keypoint_flip_pairs` list disable
+   all horizontal-flip-capable aliases, including `TimeReverse`, `D4`, and `SquareSymmetry`;
+   provide left/right pairs to retain them.
+4. **Performance**: Fewer transforms = faster training; prioritize transforms that match your domain
+5. **Validation**: Monitor validation mAP - excessive augmentation can hurt performance
+6. **Domain-specific**: Enable augmentations that reflect real-world variations in your data
 
 ## Adding Custom Transforms
 
@@ -79,11 +82,33 @@ or torchvision defaults. Install it with ``pip install 'rfdetr[augment]'``.
 | ``Rotate`` | ``K.RandomRotation`` | ``limit`` may be scalar or tuple |
 | ``Affine`` | ``K.RandomAffine`` | ``translate_percent`` treated as fraction |
 | ``ColorJitter`` | ``K.ColorJiggle`` | Same multiplicative semantics |
+| ``ToGray`` | ``K.RandomGrayscale`` | Grayscale, 3 channels; only ``p`` honored, method/num_output_channels ignored |
 | ``RandomBrightnessContrast`` | ``K.ColorJiggle`` | ``brightness_limit`` / ``contrast_limit`` direct |
-| ``GaussianBlur`` | ``K.RandomGaussianBlur`` | ``blur_limit`` rounded up to odd; ``sigma=(0.1, 2.0)`` |
+| ``GaussianBlur`` | ``K.RandomGaussianBlur`` | ``blur_limit`` rounded up to odd; ``sigma`` mirrors Albumentations |
 | ``GaussNoise`` | ``K.RandomGaussianNoise`` | Upper bound of ``std_range`` used as fixed std |
+| ``Blur`` | ``K.RandomBoxBlur`` | Box blur; ``blur_limit`` rounded up to odd, pair collapses to its upper bound |
+| ``Sharpen`` | ``K.RandomSharpness`` | ``sharpness = 1.0 + alpha`` (1.0-pivoted); ``lightness``/``method`` ignored |
+| ``Equalize`` | ``K.RandomEqualize`` | Only ``p`` honored; ``mode``/``by_channels``/``mask`` ignored |
+| ``CLAHE`` | ``K.RandomClahe`` | ``clip_limit`` and ``tile_grid_size`` map directly |
+| ``Perspective`` | ``K.RandomPerspective`` | Approximate; see the note below. ``keep_size=False`` raises |
 
-Segmentation models are supported by the GPU augmentation path; masks are augmented in sync with images and boxes.
+``Perspective`` is the one entry in the table that is not a faithful mapping. Albumentations samples each
+corner offset from ``abs(N(0, scale))``, Kornia samples uniformly from ``distortion_scale``, so the two
+produce different distortion distributions for the same config. The upper bound of ``scale`` is used as
+``distortion_scale`` and a scalar ``scale`` is read as ``(0, scale)``; the divergence is logged for every
+config, not only for a range. ``keep_size=False`` raises rather than silently resizing, and
+``fit_output``, ``interpolation``,
+``mask_interpolation``, ``border_mode``, ``fill`` and ``fill_mask`` are ignored. Use the Albumentations
+backend when the exact Albumentations semantics matter.
+
+Not yet supported on Kornia: ``HueSaturationValue`` (Albumentations shifts hue/saturation/value additively,
+Kornia's ``ColorJiggle`` scales them multiplicatively, so there is no faithful mapping), and the geometric
+group ``ShiftScaleRotate``, ``RandomCrop``, ``CenterCrop``, ``RandomResizedCrop``,
+``ElasticTransform`` and ``GridDistortion``, whose CPU behavior is not faithfully mapped by the current
+Kornia pipeline. These still work on the Albumentations backend.
+
+The GPU augmentation path transports the padded-batch mask with every geometric transform. Segmentation models also
+carry instance-mask channels in the same synchronized mask tensor.
 """
 
 # ---------------------------------------------------------------------------

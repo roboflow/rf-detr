@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Backend/format resolution and ExecuTorch dispatch helpers for :meth:`rfdetr.detr.RFDETR.export`.
+"""Backend/format resolution and export-format dispatch helpers for :meth:`rfdetr.detr.RFDETR.export`.
 
 These are utility functions shared by the export CLI (:mod:`rfdetr.export.main`) and the public
 :meth:`rfdetr.detr.RFDETR.export` API — kept in their own module so ``main.py`` stays focused on CLI orchestration.
@@ -11,6 +11,8 @@ These are utility functions shared by the export CLI (:mod:`rfdetr.export.main`)
 
 from __future__ import annotations
 
+import importlib
+import sys
 import warnings
 from pathlib import Path
 from typing import Literal, cast
@@ -23,10 +25,12 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 # Every format accepted by :meth:`rfdetr.detr.RFDETR.export`.
-_EXPORT_FORMATS: frozenset[str] = frozenset({"onnx", "tflite", "tensorrt", "executorch"})
+_EXPORT_FORMATS: frozenset[str] = frozenset({"onnx", "tflite", "tensorrt", "executorch", "coreml"})
 # The subset of :data:`_EXPORT_FORMATS` that specialize for a hardware backend, and so require a ``backend`` argument
 # (the rest are backend-agnostic).  The accepted backends per format, and the backends that further require a ``soc``,
 # are owned by the converter (``_VALID_BACKENDS`` / ``_SOC_BACKENDS``).
+# Note: ``format="coreml"`` (native ``.mlpackage``) is backend-agnostic; ExecuTorch's ``backend="coreml"`` is separate
+# and still goes through ``format="executorch"``.
 _BACKEND_FORMATS: frozenset[str] = frozenset({"executorch"})
 
 
@@ -106,6 +110,72 @@ def _resolve_export_backend(format: str, backend: str | None, soc: str | None) -
     return backend, soc
 
 
+def _onnx_imported_before_tensorflow() -> bool:
+    """Report whether ``onnx`` entered ``sys.modules`` ahead of ``tensorflow``.
+
+    ``sys.modules`` is an ordinary dict, so iterating it yields keys in insertion order — which for a top-level package
+    is the order the two libraries were first imported in. That is a heuristic, not a loader guarantee: deleting and
+    re-importing a module moves it to the end. It only ever decides whether to emit a warning, never what gets
+    imported, so a wrong answer costs a log line.
+
+    ``onnx2tf`` is deliberately not treated as ``onnx``: it is a pure-Python package whose import does not load ONNX's
+    compiled extension.
+
+    Returns:
+        ``True`` when an ``onnx`` module precedes every ``tensorflow`` module, or when ``onnx`` is imported and
+        ``tensorflow`` is not. ``False`` otherwise, including when neither is imported.
+    """
+    for name in tuple(sys.modules):
+        if name == "onnx" or name.startswith("onnx."):
+            return True
+        if name == "tensorflow" or name.startswith("tensorflow."):
+            return False
+    return False
+
+
+def preload_tensorflow_before_onnx() -> None:
+    """Import TensorFlow before ONNX's C extension so TFLite conversion cannot deadlock.
+
+    ``onnx``'s compiled extension and TensorFlow both statically link Abseil and export its symbols as *weak external*
+    definitions.  The dynamic loader coalesces weak definitions onto the first image that provides them, so whichever
+    library is imported first supplies Abseil's synchronization primitives — including the per-thread semaphore that
+    ``absl::Mutex`` and ``absl::Notification`` block on — to *both* libraries.
+
+    When ONNX wins that race, TensorFlow's executor blocks in ``absl::Notification::WaitForNotification()`` while
+    restoring the SavedModel bundle and is never woken, hanging the export at 0% CPU with no traceback and no
+    ``.tflite``.  ``format="tflite"`` reaches ``onnx2tf`` only after a full ONNX export, so ONNX always wins unless
+    TensorFlow is preloaded here.  See https://github.com/roboflow/rf-detr/issues/1322 for the measured comparison.
+
+    Importing ``onnx`` *after* TensorFlow is safe, so the warning below is keyed on the relative order of the two
+    imports (:func:`_onnx_imported_before_tensorflow`) rather than on ``onnx`` merely being imported.
+
+    Note:
+        Does not re-import TensorFlow when it is already loaded, and stays silent when TensorFlow is not installed —
+        the actionable missing-dependency error is raised later, by
+        :func:`~rfdetr.export._tflite.converter._check_onnx2tf_available`.
+
+    Examples:
+        >>> preload_tensorflow_before_onnx()  # returns when the top-level tensorflow package is unavailable
+    """
+    onnx_won_the_race = _onnx_imported_before_tensorflow()
+
+    if "tensorflow" not in sys.modules:
+        try:
+            importlib.import_module("tensorflow")
+        except ModuleNotFoundError as error:
+            if error.name != "tensorflow":
+                raise
+            return
+
+    if onnx_won_the_race:
+        logger.warning(
+            "onnx was imported before TensorFlow. Both statically link Abseil and export its symbols weakly, so "
+            "TensorFlow can block forever while restoring the SavedModel bundle during TFLite conversion. That order "
+            "cannot be repaired once both are loaded. If the export hangs with no output, import tensorflow before "
+            "onnx or run the export in a fresh process."
+        )
+
+
 def _export_executorch_format(
     model: LWDETR,
     input_tensors: Tensor,
@@ -116,6 +186,7 @@ def _export_executorch_format(
     variant_name: str | None,
     dynamic_batch: bool,
     notes: object,
+    output_name: str | None = None,
 ) -> Path:
     """Dispatch :meth:`rfdetr.detr.RFDETR.export` to the ExecuTorch converter.
 
@@ -129,6 +200,8 @@ def _export_executorch_format(
         variant_name: Model variant identifier used to name the output file.
         dynamic_batch: Whether a dynamic batch dimension was requested (always rejected below).
         notes: User-supplied export metadata; ExecuTorch has no metadata slot, so a non-``None`` value warns.
+        output_name: Full filename override (without extension); forwarded verbatim to
+            :func:`~rfdetr.export._executorch.converter.export_executorch`.
 
     Returns:
         Path to the exported ``.pte`` file.
@@ -185,7 +258,98 @@ def _export_executorch_format(
         backend=backend_literal,
         variant_name=variant_name,
         dynamic_batch=dynamic_batch,
+        output_name=output_name,
         **soc_kwargs,
     )
     logger.info(f"Successfully exported ExecuTorch model to: {pte_path}")
     return pte_path
+
+
+def _export_coreml_format(
+    model: LWDETR,
+    input_tensors: Tensor,
+    output_dir_path: Path,
+    *,
+    variant_name: str | None,
+    verbose: bool,
+    notes: object,
+    compute_precision: str | None = None,
+    output_name: str | None = None,
+) -> Path:
+    """Dispatch :meth:`rfdetr.detr.RFDETR.export` to the native CoreML converter.
+
+    This is ``format="coreml"`` → ``.mlpackage`` via ``torch.export`` + ``coremltools``. It is distinct from
+    ExecuTorch's ``format="executorch", backend="coreml"`` path, which produces a ``.pte``.
+
+    Args:
+        model: The prepared (CPU) PyTorch module to export.
+        input_tensors: Example input tensor used to trace the graph.
+        output_dir_path: Directory where the ``.mlpackage`` is written.
+        variant_name: Model variant identifier used to name the output bundle.
+        verbose: Forwarded to :func:`~rfdetr.export._coreml.converter.export_coreml`.
+        notes: User-supplied export metadata; CoreML has no ONNX-style metadata slot, so a non-``None`` value warns.
+        compute_precision: ``"float32"``/``"float16"``/``None`` — forwarded to
+            :func:`~rfdetr.export._coreml.converter.export_coreml`'s ``compute_precision``.
+        output_name: Full filename override (without extension); forwarded verbatim to
+            :func:`~rfdetr.export._coreml.converter.export_coreml`.
+
+    Note:
+        Unlike the ONNX path, output names are not forwarded to ``coremltools.convert`` —
+        coremltools infers its own output names for the ``.mlpackage`` spec. Consumers must rely on
+        **output position**, not name, to match the ``(dets, labels)`` / ``(dets, labels, masks)`` /
+        ``(dets, labels, keypoints)`` contract documented on :meth:`rfdetr.detr.RFDETR.export`.
+
+    Returns:
+        Path to the exported ``.mlpackage`` bundle.
+
+    Raises:
+        ImportError: If the optional ``coreml`` dependency is not installed.
+        NotImplementedError: If the exported graph has CoreML registry gaps.
+
+    Examples:
+        Requires the optional ``coremltools`` dependency and a prepared model/input pair, so this
+        is documentation only (not a doctest):
+
+        ```python
+        _export_coreml_format(
+            model, input_tensors, output_dir_path,
+            variant_name="small", verbose=True, notes=None,
+        )
+        # -> PosixPath('out/model.mlpackage')
+        ```
+    """
+    if notes is not None:
+        warnings.warn(
+            "`notes` is not forwarded to format='coreml' (CoreML .mlpackage has no ONNX-style metadata slot). "
+            "This argument is ignored.",
+            UserWarning,
+            stacklevel=3,
+        )
+    warnings.warn(
+        "CoreML export is experimental and work-in-progress. Dynamic batch is not supported.",
+        UserWarning,
+        stacklevel=3,
+    )
+    try:
+        from rfdetr.export._coreml.converter import export_coreml
+    except ImportError:
+        logger.error(
+            "It seems some dependencies for CoreML export are missing."
+            " Please run `pip install rfdetr[coreml]` and try again.",
+        )
+        raise
+    # CoreML consumes a torch.export graph directly, so switch the model into its
+    # export-friendly forward (the ONNX path does this inside export_onnx).
+    if hasattr(model, "export"):
+        model.export()
+    mlpackage_path = export_coreml(
+        model=model,
+        input_tensors=input_tensors,
+        output_dir=str(output_dir_path),
+        variant_name=variant_name,
+        verbose=verbose,
+        compute_precision=compute_precision,
+        output_name=output_name,
+    )
+    logger.info(f"Successfully exported CoreML model to: {mlpackage_path}")
+    return mlpackage_path

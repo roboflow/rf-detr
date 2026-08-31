@@ -7,12 +7,14 @@
 
 from __future__ import annotations
 
+import csv
 import warnings
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar, TQDMProgressBar
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBarTheme
 from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
 from pytorch_lightning.strategies import DDPStrategy as _DDPStrategy
@@ -29,6 +31,8 @@ from rfdetr.config import KeypointTrainConfig, ModelConfig, TrainConfig
 from rfdetr.training.callbacks import (
     BestModelCallback,
     DropPathCallback,
+    GPUMemoryRichProgressBar,
+    GPUMemoryTQDMProgressBar,
     RFDETREarlyStopping,
     RFDETREMACallback,
 )
@@ -73,17 +77,18 @@ def _try_import_tensorboard_summary_writer() -> None:
 # pickle can serialise them for the spawned child processes.
 
 
+_InteractiveSpawnLauncher: type[Any] | None = None
+
 if _MultiProcessingLauncher is not None:
 
-    class _InteractiveSpawnLauncher(_MultiProcessingLauncher):
+    class _InteractiveSpawnLauncherImpl(_MultiProcessingLauncher):
         """Spawn launcher that reports itself as interactive-compatible."""
 
         @property
         def is_interactive_compatible(self) -> bool:
             return True
 
-else:
-    _InteractiveSpawnLauncher = None  # type: ignore[misc]
+    _InteractiveSpawnLauncher = _InteractiveSpawnLauncherImpl
 
 
 class _NotebookSpawnDDPStrategy(_DDPStrategy):
@@ -108,6 +113,29 @@ class _NotebookSpawnDDPStrategy(_DDPStrategy):
                 "it is always constructed with start_method='spawn' in build_trainer()."
             )
         self._launcher = _InteractiveSpawnLauncher(self, start_method=self._start_method)
+
+
+def _normalize_xla_precision(precision: str) -> Literal["32-true", "16-true", "bf16-true"]:
+    """Normalize resolved precision strings to a valid XLAPrecision literal.
+
+    Args:
+        precision: Precision string produced by the local resolver, e.g. ``"16-mixed"``.
+
+    Returns:
+        One of ``"32-true"``, ``"16-true"``, or ``"bf16-true"`` suitable for XLA plugin creation.
+
+    Raises:
+        ValueError: If the resolved precision is not supported by ``XLAPrecision``.
+    """
+    if precision == "32-true":
+        return "32-true"
+    if precision == "16-true":
+        return "16-true"
+    if precision == "bf16-true":
+        return "bf16-true"
+    raise ValueError(
+        f"Unexpected precision value for XLAPrecision: {precision!r}; expected '32-true', '16-true', or 'bf16-true'."
+    )
 
 
 def _is_distributed_strategy_requested(strategy: str) -> bool:
@@ -178,6 +206,57 @@ def _requests_multiple_devices(devices: int | str, accelerator: str | None = Non
     return False
 
 
+def _preserve_csv_history_across_resume(csv_logger: CSVLogger, output_dir: str | Path) -> None:
+    """Stop CSVLogger from silently deleting metrics.csv history when a run resumes.
+
+    ``build_trainer`` constructs a brand-new ``CSVLogger(version="")`` every time training starts or
+    resumes, always pointed at the same ``output_dir``. The first access to ``CSVLogger.experiment``
+    triggers PTL's ``_ExperimentWriter._check_log_dir_exists``, which deletes any pre-existing
+    ``metrics.csv`` in that directory (see ``lightning.fabric.loggers.csv_logs``). On a fresh run there
+    is nothing to delete, but on a resumed run this wipes every row logged before the resume. Snapshot
+    the file before that deletion happens, restore it immediately after, and seed the writer's column
+    cache to match so the next ``save()`` call appends rather than starting over.
+
+    Only call this for a resumed run (a truthy tc.resume). This matches the
+    public Trainer.fit(..., ckpt_path=config.resume or None) normalization.
+    Reusing output_dir for a fresh run, including an empty resume value, must
+    still let CSVLogger reset metrics.csv — appending fresh-run history onto
+    unrelated prior-run history would silently corrupt the log.
+
+    Args:
+        csv_logger: The just-constructed ``CSVLogger`` for this run, not yet attached to a ``Trainer``.
+        output_dir: The training run's output directory; must match ``csv_logger``'s log location
+            (``name=""``, ``version=""``).
+
+    Regression fix for :issue:`1321`.
+    """
+    metrics_path = Path(output_dir) / "metrics.csv"
+    if not metrics_path.is_file():
+        return
+    with metrics_path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+    if not rows:
+        return
+
+    experiment = csv_logger.experiment  # Triggers PTL's delete-on-init; restored right after.
+    with metrics_path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    experiment.metrics_keys = sorted(fieldnames)
+
+
+# TrainConfig.best_model_metric -> (keypoint_key, segmentation_key, detection_key), each
+# relative to "val/" / "val/ema_". See _append_training_callbacks for how they are combined
+# with the task branch (has_keypoints / model_config.segmentation_head).
+_BEST_MODEL_MONITOR_KEYS: dict[str, tuple[str, str, str]] = {
+    "map": ("keypoint_map_50_95", "segm_mAP_50_95", "mAP_50_95"),
+    "mar": ("keypoint_mAR", "mAR", "mAR"),
+}
+
+
 def _append_training_callbacks(
     callbacks: list[Callback],
     loggers: list[Any],
@@ -243,16 +322,24 @@ def _append_training_callbacks(
         )
     )
 
+    # Metric key per task, selected by TrainConfig.best_model_metric. "mar" reuses the box-level
+    # val/mAR for both detection and segmentation (torchmetrics does not expose a separate mask
+    # mAR), and the OKS-based val/keypoint_mAR for the keypoint task.
+    kp_key, segm_key, det_key = _BEST_MODEL_MONITOR_KEYS[tc.best_model_metric]
     if has_keypoints:
-        monitor_regular = "val/keypoint_map_50_95"
-        early_stopping_monitor_ema = "val/ema_keypoint_map_50_95"
+        monitor_regular = f"val/{kp_key}"
+        early_stopping_monitor_ema = f"val/ema_{kp_key}"
     elif model_config.segmentation_head:
-        monitor_regular = "val/segm_mAP_50_95"
-        early_stopping_monitor_ema = "val/ema_segm_mAP_50_95"
+        monitor_regular = f"val/{segm_key}"
+        early_stopping_monitor_ema = f"val/ema_{segm_key}"
     else:
-        monitor_regular = "val/mAP_50_95"
-        early_stopping_monitor_ema = "val/ema_mAP_50_95"
+        monitor_regular = f"val/{det_key}"
+        early_stopping_monitor_ema = f"val/ema_{det_key}"
     monitor_ema = early_stopping_monitor_ema if enable_ema else None
+    # Validation evaluates the base model only when explicitly asked for it, or when there is no EMA
+    # model to prefer (see TrainConfig.eval_base_model). Otherwise monitor_regular carries the EMA
+    # score COCOEvalCallback mirrors onto it, and the base-weights checkpoint track must stand down.
+    evaluates_base_model = tc.eval_base_model or not enable_ema
 
     best_model_smooth_alpha = tc.smooth_alpha
 
@@ -267,6 +354,7 @@ def _append_training_callbacks(
             output_dir=str(tc.output_dir),
             monitor_regular=monitor_regular,
             monitor_ema=monitor_ema,
+            evaluates_base_model=evaluates_base_model,
             run_test=tc.run_test,
             skip_best_epochs=tc.skip_best_epochs,
             smooth_alpha=best_model_smooth_alpha,
@@ -292,7 +380,10 @@ def _append_training_callbacks(
     # emits a UserWarning instead of crashing.
     # CSVLogger is always enabled — no extra package required.
     # Produces metrics.csv in output_dir so there is always a log file.
-    loggers.append(CSVLogger(save_dir=tc.output_dir, name="", version=""))
+    csv_logger = CSVLogger(save_dir=tc.output_dir, name="", version="")
+    if tc.resume:
+        _preserve_csv_history_across_resume(csv_logger, tc.output_dir)
+    loggers.append(csv_logger)
 
     if tc.tensorboard:
         try:
@@ -412,12 +503,22 @@ def build_trainer(
         a ``_ForceLastEpochValidationCallback`` still guarantees the final epoch always
         validates even when ``epochs`` is not a multiple of ``eval_interval``.
 
+        When ``accelerator`` resolves to ``"xla"`` or ``"tpu"``, the resolved precision is
+        set via an ``XLAPrecision`` plugin instead of a ``precision`` argument — PTL's
+        ``XLAStrategy`` only accepts the plugin and raises ``TypeError`` for standard precision
+        strings. The XLA plugin is appended to caller-supplied plugins.
+
     Returns:
         A configured ``pytorch_lightning.Trainer`` instance.
     """
     tc = train_config
     if accelerator is None:
         accelerator = tc.accelerator
+    # XLAStrategy's precision_plugin setter only accepts the XLAPrecision plugin
+    # (Literal["32-true", "16-true", "bf16-true"]); passing precision="bf16-mixed" raises
+    # TypeError. Detected here so trainer_config assembly can translate the resolved precision
+    # into the required XLA plugin after applying caller-provided Trainer arguments.
+    xla_accelerator = str(accelerator).lower() in ("xla", "tpu")
 
     # TF32 matmul for fp32 residual matmuls on Ampere+.  ``rfdetr.detr`` sets this at import
     # time for the python API path, but the Lightning CLI path (``rfdetr fit``) never imports
@@ -594,13 +695,14 @@ def build_trainer(
 
     if tc.progress_bar == "rich":
         callbacks.append(
-            RichProgressBar(
+            GPUMemoryRichProgressBar(
                 refresh_rate=5,
+                leave=True,
                 theme=RichProgressBarTheme(metrics_format=".3e"),
             )
         )
     elif tc.progress_bar == "tqdm":
-        callbacks.append(TQDMProgressBar(refresh_rate=5))
+        callbacks.append(GPUMemoryTQDMProgressBar(refresh_rate=5))
 
     # Training-only callbacks and loggers.  Evaluation-only trainers
     # (``include_training_callbacks=False``, used by :meth:`rfdetr.detr.RFDETR.evaluate`) keep just the
@@ -622,7 +724,7 @@ def build_trainer(
             eval_interval=tc.eval_interval,
             log_per_class_metrics=tc.log_per_class_metrics,
             keypoint_oks_sigmas=tc.keypoint_oks_sigmas,
-            eval_ema_only=tc.eval_ema_only,
+            eval_base_model=tc.eval_base_model,
         )
     )
 
@@ -657,7 +759,6 @@ def build_trainer(
         "devices": tc.devices,
         "num_nodes": tc.num_nodes,
         "strategy": strategy,
-        "precision": _resolve_precision(),
         "accumulate_grad_batches": accumulate_grad_batches,
         "gradient_clip_val": gradient_clip_val,
         "sync_batchnorm": sync_bn,
@@ -670,8 +771,24 @@ def build_trainer(
         "log_every_n_steps": 50,
         "deterministic": False,
         "check_val_every_n_epoch": tc.eval_interval,
+        "num_sanity_val_steps": tc.num_sanity_val_steps,
     }
+    if not xla_accelerator:
+        trainer_config["precision"] = _resolve_precision()
     trainer_config.update(trainer_kwargs)
+    if xla_accelerator:
+        from pytorch_lightning.plugins import XLAPrecision
+
+        # XLAStrategy rejects precision= strings. Preserve caller plugins, then append the
+        # one mandatory XLA precision plugin after kwargs have been applied.
+        plugins = trainer_config.pop("plugins", [])
+        if plugins is None:
+            plugins = []
+        elif not isinstance(plugins, (list, tuple)):
+            plugins = [plugins]
+        trainer_config.pop("precision", None)
+        xla_precision = _normalize_xla_precision(_resolve_precision().replace("-mixed", "-true"))
+        trainer_config["plugins"] = [*plugins, XLAPrecision(xla_precision)]
     trainer_config["strategy"] = strategy
     if manual_optimization:
         # Re-apply manual-optimization invariants so a caller-supplied trainer_kwargs

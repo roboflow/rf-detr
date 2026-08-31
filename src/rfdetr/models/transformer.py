@@ -303,14 +303,28 @@ class Transformer(nn.Module):
                 assert mask_flatten_parts is not None
                 mask_flatten_parts.append(mask)
 
-        memory = torch.cat(src_flatten, 1)  # bs, \sum{hxw}, c
+        # MultiScaleProjector ends each stage with its channel LayerNorm, which returns channels-last storage viewed
+        # as NCHW. Its real flattened/transposed output is already contiguous; contiguous() preserves the old layout
+        # contract for custom strided inputs.
+        memory = src_flatten[0].contiguous() if len(src_flatten) == 1 else torch.cat(src_flatten, 1)  # bs, \sum{hxw}, c
         mask_flatten: Tensor | None = None
         valid_ratios: Tensor | None = None
         if masks is not None:
             assert mask_flatten_parts is not None
-            mask_flatten = torch.cat(mask_flatten_parts, 1)  # bs, \sum{hxw}
+            # Real padding masks are contiguous after flatten(1), so the single-level contiguous() is a no-op.
+            # It preserves cat's contiguous-layout contract for custom strided masks.
+            mask_flatten = (
+                mask_flatten_parts[0].contiguous() if len(mask_flatten_parts) == 1 else torch.cat(mask_flatten_parts, 1)
+            )  # bs, \sum{hxw}
             valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
-        lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten_parts, 1)  # bs, \sum{hxw}, c
+        # PositionEmbeddingSine produces channels-last storage viewed as NCHW, so flatten+transpose above is already
+        # contiguous. Current nondeprecated models use one projector level; contiguous() is then a no-op, while
+        # preserving cat's contiguous-layout contract for custom strided position tensors.
+        lvl_pos_embed_flatten = (
+            lvl_pos_embed_flatten_parts[0].contiguous()
+            if len(lvl_pos_embed_flatten_parts) == 1
+            else torch.cat(lvl_pos_embed_flatten_parts, 1)
+        )  # bs, \sum{hxw}, c
         # spatial_shapes must not be built by torch.empty(...) + in-place index assignment:
         # that emits a ScatterND feeding a shape tensor (level_start_index), which TensorRT
         # rejects ("IScatterLayer cannot be used to compute a shape tensor").
@@ -346,7 +360,8 @@ class Transformer(nn.Module):
             for cross_src in cross_attn_srcs:
                 tensor = getattr(cross_src, "tensors", cross_src)
                 ca_flatten.append(tensor.flatten(2).transpose(1, 2))
-            cross_attn_memory = torch.cat(ca_flatten, 1)
+            # The dual-projector path uses the same MultiScaleProjector layout as memory above.
+            cross_attn_memory = ca_flatten[0].contiguous() if len(ca_flatten) == 1 else torch.cat(ca_flatten, 1)
 
         if self.two_stage:
             assert self.enc_out_class_embed is not None
@@ -361,33 +376,40 @@ class Transformer(nn.Module):
                 output_memory_gidx = self.enc_output_norm[g_idx](self.enc_output[g_idx](output_memory))
 
                 enc_outputs_class_unselected_gidx = self.enc_out_class_embed[g_idx](output_memory_gidx)
-                if self.bbox_reparam:
-                    enc_outputs_coord_delta_gidx = self.enc_out_bbox_embed[g_idx](output_memory_gidx)
-                    enc_outputs_coord_cxcy_gidx = (
-                        enc_outputs_coord_delta_gidx[..., :2] * output_proposals[..., 2:] + output_proposals[..., :2]
-                    )
-                    enc_outputs_coord_wh_gidx = enc_outputs_coord_delta_gidx[..., 2:].exp() * output_proposals[..., 2:]
-                    enc_outputs_coord_unselected_gidx = torch.concat(
-                        [enc_outputs_coord_cxcy_gidx, enc_outputs_coord_wh_gidx], dim=-1
-                    )
-                else:
-                    enc_outputs_coord_unselected_gidx = (
-                        self.enc_out_bbox_embed[g_idx](output_memory_gidx) + output_proposals
-                    )
-
                 topk = min(self.num_queries, enc_outputs_class_unselected_gidx.shape[-2])
                 topk_proposals_gidx = torch.topk(enc_outputs_class_unselected_gidx.max(-1)[0], topk, dim=1)[1]  # bs, nq
 
-                refpoint_embed_gidx_undetach = torch.gather(
-                    enc_outputs_coord_unselected_gidx, 1, topk_proposals_gidx.unsqueeze(-1).repeat(1, 1, 4)
-                )  # unsigmoid
-                # for decoder layer, detached as initial ones, (bs, nq, 4)
-                refpoint_embed_gidx = refpoint_embed_gidx_undetach.detach()
-
                 # get memory tgt
                 tgt_undetach_gidx = torch.gather(
-                    output_memory_gidx, 1, topk_proposals_gidx.unsqueeze(-1).repeat(1, 1, self.d_model)
+                    output_memory_gidx, 1, topk_proposals_gidx.unsqueeze(-1).expand(-1, -1, self.d_model)
                 )
+                # Ranking needs every position's class score, but the box MLP is a pointwise (no
+                # cross-token mixing) transform of a single token's features -- gather the selected
+                # tokens first and run the MLP only on those, instead of on every encoder position and
+                # discarding all but ``topk`` of the results. This is equivalent only while
+                # ``enc_out_bbox_embed`` remains token-pointwise; a future stateful or cross-token head
+                # must move the MLP back before this gather.
+                output_proposals_gidx = torch.gather(
+                    output_proposals, 1, topk_proposals_gidx.unsqueeze(-1).expand(-1, -1, 4)
+                )
+                if self.bbox_reparam:
+                    enc_outputs_coord_delta_gidx = self.enc_out_bbox_embed[g_idx](tgt_undetach_gidx)
+                    enc_outputs_coord_cxcy_gidx = (
+                        enc_outputs_coord_delta_gidx[..., :2] * output_proposals_gidx[..., 2:]
+                        + output_proposals_gidx[..., :2]
+                    )
+                    enc_outputs_coord_wh_gidx = (
+                        enc_outputs_coord_delta_gidx[..., 2:].exp() * output_proposals_gidx[..., 2:]
+                    )
+                    refpoint_embed_gidx_undetach = torch.concat(
+                        [enc_outputs_coord_cxcy_gidx, enc_outputs_coord_wh_gidx], dim=-1
+                    )
+                else:
+                    refpoint_embed_gidx_undetach = (
+                        self.enc_out_bbox_embed[g_idx](tgt_undetach_gidx) + output_proposals_gidx
+                    )  # unsigmoid
+                # for decoder layer, detached as initial ones, (bs, nq, 4)
+                refpoint_embed_gidx = refpoint_embed_gidx_undetach.detach()
 
                 refpoint_embed_ts_parts.append(refpoint_embed_gidx)
                 memory_ts_parts.append(tgt_undetach_gidx)
@@ -413,6 +435,9 @@ class Transformer(nn.Module):
             kp_pred_chunks = []
             for g_idx in range(group_detr):
                 kp_delta = self.enc_out_keypoint_embed[g_idx](kp_mem_chunks[g_idx])
+                # Sanitize the full encoder prediction at this model boundary: its channels feed both the
+                # shared box-reference multiply and outer classification/matching consumers.
+                kp_delta = torch.nan_to_num(kp_delta, nan=0.0, posinf=0.0, neginf=0.0)
                 ref_wh = boxes_chunks[g_idx][..., 2:].unsqueeze(-2)
                 ref_xy = boxes_chunks[g_idx][..., :2].unsqueeze(-2)
                 kp_xy = kp_delta[..., :2] * ref_wh + ref_xy
@@ -918,7 +943,7 @@ class TransformerDecoderLayer(nn.Module):
         v = tgt
         if self.training:
             q = torch.cat(q.split(num_queries // self.group_detr, dim=1), dim=0)  # type: ignore[no-untyped-call]
-            k = torch.cat(k.split(num_queries // self.group_detr, dim=1), dim=0)  # type: ignore[no-untyped-call]
+            k = q
             v = torch.cat(v.split(num_queries // self.group_detr, dim=1), dim=0)  # type: ignore[no-untyped-call]
 
         tgt2 = self.self_attn(q, k, v, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask, need_weights=False)[0]

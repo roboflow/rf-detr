@@ -2,9 +2,7 @@
 
 Each `.ipynb` file here is rendered as a page under `/cookbooks/` in the docs site.
 
-Cards on the cookbooks landing page are driven by [`cards.yaml`](cards.yaml). The MkDocs hook
-`docs/hooks/cookbooks_cards.py` loads that file and exposes it to `docs/theme/notebooks.html`,
-which renders each entry as a card via a Jinja loop.
+Cards on the cookbooks landing page are driven by [`cards.yaml`](cards.yaml). The MkDocs hook `docs/hooks/cookbooks_cards.py` loads that file and exposes it to `docs/theme/notebooks.html`, which renders each entry as a card via a Jinja loop.
 
 ## Converting a jupytext `.py` to `.ipynb`
 
@@ -38,8 +36,9 @@ If jupytext is not installed: `pip install jupytext` (or `uv add jupytext --dev`
     description: One sentence describing what the notebook demonstrates.
 ```
 
-Available labels (reuse these to keep tags standardised): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`.
-Current tag colours are assigned dynamically by the docs UI, so they may change if cards or labels are added or reordered.
+Available labels (reuse these to keep tags standardised): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`. Current tag colours are assigned dynamically by the docs UI, so they may change if cards or labels are added or reordered.
+
+For newly added or updated notebooks, write markdown cells in plain, notebook-portable Markdown only — no MkDocs Material syntax (`!!! note`, `=== "Tab"`, admonition blocks). `mkdocs-jupyter` renders the site copy through the same plain renderer as a raw `.ipynb`, so MkDocs-only syntax shows up as literal text (e.g. `!!! warning "..."`) instead of a styled callout. Use a blockquote (`> **Note:** ...`) for callouts instead.
 
 ## Removing a notebook
 
@@ -52,10 +51,12 @@ Current tag colours are assigned dynamically by the docs UI, so they may change 
 | ----------------------------------- | ----------------------------------------------- | ------- |
 | `custom-augmentations.ipynb`        | Custom Augmentations and Live Training Progress | v1.5.0  |
 | `custom-optimizer-scheduler.ipynb`  | Custom Optimizer and LR Scheduler               | v1.9.0  |
-| `export-tensorrt.ipynb`             | Export to TensorRT & Run Inference              | v1.8.3  |
-| `export-executorch.ipynb`           | Export to ExecuTorch & Run Inference            | v1.8.3  |
+| `export-coreml.ipynb`               | Export to Native CoreML & Run Inference         | v1.9.0  |
+| `export-tensorrt.ipynb`             | Export to TensorRT & Run Inference              | v1.9.0  |
+| `export-executorch.ipynb`           | Export to ExecuTorch & Run Inference            | v1.9.0  |
 | `fine-tune_detection.ipynb`         | Fine-Tune RF-DETR Object Detection              | v1.8.0  |
 | `fine-tune_keypoints.ipynb`         | Fine-Tune RF-DETR Keypoint Detection            | v1.8.0  |
 | `fine-tune_segmentation.ipynb`      | Fine-Tune RF-DETR Instance Segmentation         | v1.8.2  |
 | `inference-latency-benchmark.ipynb` | Inference Latency Benchmark                     | v1.8.2  |
 | `pytorch-lightning.ipynb`           | Training with PyTorch Lightning                 | v1.6.0  |
+| `train-coco2017.ipynb`              | Train RF-DETR Nano on COCO2017                  | v1.10.0 |

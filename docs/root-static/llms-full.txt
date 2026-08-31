@@ -1,6 +1,6 @@
 # RF-DETR — Full Documentation
 
-> RF-DETR is a real-time transformer architecture for object detection and instance segmentation by Roboflow.
+> RF-DETR is a real-time transformer architecture for object detection, instance segmentation, and keypoint detection (preview) by Roboflow.
 > DINOv2 vision transformer backbone. ICLR 2026. SOTA on COCO (60.1 AP50:95, RF-DETR-2XL).
 > Apache 2.0 license for core models (Nano through Large). Python 3.10+.
 > Source: https://github.com/roboflow/rf-detr | Paper: https://arxiv.org/abs/2511.09554
@@ -9,7 +9,7 @@
 
 ## Overview
 
-RF-DETR (Roboflow Detection Transformer) is a real-time object detection and instance segmentation model from Roboflow, accepted at ICLR 2026. It uses a DINOv2 vision transformer backbone and achieves state-of-the-art accuracy–latency trade-offs on Microsoft COCO and RF100-VL.
+RF-DETR (Roboflow Detection Transformer) is a real-time object detection, instance segmentation, and keypoint detection (preview) model from Roboflow, accepted at ICLR 2026. It uses a DINOv2 vision transformer backbone and achieves state-of-the-art accuracy–latency trade-offs on Microsoft COCO and RF100-VL.
 
 RF-DETR is the first real-time model to exceed 60 mean Average Precision (mAP) when benchmarked on the COCO dataset. RF-DETR-2XL achieves 60.1 AP50:95 at 17.2 ms latency on NVIDIA T4 (TensorRT FP16, batch 1).
 
@@ -17,6 +17,7 @@ RF-DETR is the first real-time model to exceed 60 mean Average Precision (mAP) w
 - Core models (Nano, Small, Medium, Large) and all code: Apache 2.0
 - XLarge and 2XLarge detection models: PML 1.0 (requires rfdetr[plus])
 - Segmentation models follow the same tier structure
+- Keypoint model (preview): Apache 2.0
 
 ---
 
@@ -88,6 +89,24 @@ Segmentation models output instance masks in addition to bounding boxes. Masks a
 
 ---
 
+## Run Keypoints
+
+```python
+from rfdetr import RFDETRKeypointPreview
+
+model = RFDETRKeypointPreview()
+key_points = model.predict("image.jpg", threshold=0.5)
+```
+
+**Available keypoint model classes:**
+- `RFDETRKeypointPreview` — 9.7 ms, 71.8 AP50:95, 40.7M params, 576×576
+
+Keypoint detection is a preview feature. The model is pretrained on COCO person keypoints and predicts 17 body keypoints per detected person, in addition to bounding boxes. Accuracy is reported as OKS-based AP50:95, the standard COCO keypoint metric.
+
+The keypoint model is available in the `rfdetr` package only; it is not yet available via the `inference` package.
+
+---
+
 ## Train a Custom Model
 
 ### Quick Start (Detection)
@@ -99,8 +118,7 @@ model = RFDETRLarge()
 model.train(
     dataset_dir="./dataset",
     epochs=50,
-    batch_size=4,
-    grad_accum_steps=4,  # effective batch = batch_size * grad_accum_steps = 16
+    batch_size="auto",
     lr=1e-4,
     output_dir="./output"
 )
@@ -112,7 +130,7 @@ model.train(
 from rfdetr import RFDETRSegLarge
 
 model = RFDETRSegLarge()
-model.train(dataset_dir="./dataset", epochs=50, batch_size=4)
+model.train(dataset_dir="./dataset", epochs=50, batch_size="auto")
 ```
 
 ### Dataset Formats
@@ -148,12 +166,13 @@ dataset/
 |-----------|---------|-------------|
 | `epochs` | 50 | Training epochs |
 | `batch_size` | 4 | Images per GPU step |
-| `grad_accum_steps` | 4 | Gradient accumulation steps (effective batch = batch_size × grad_accum_steps) |
+| `grad_accum_steps` | 1 | Gradient accumulation steps. The product with `batch_size` is a nominal effective-batch target; accumulation is not an optimization-equivalent substitute for physical batch |
+| `eval_batch_size` | `None` | Batch size for validation/test/predict loaders. `None` inherits `batch_size`; `no_grad` avoids autograd activation storage, but in-fit evaluation still shares device memory with the model and optimizer state and needs memory for forward outputs |
 | `lr` | 1e-4 | Peak learning rate |
 | `output_dir` | `"output"` | Checkpoint directory |
 | `checkpoint_interval` | 1 | Save checkpoint every N epochs |
 
-**Recommended effective batch size: 16** (e.g., batch_size=4, grad_accum_steps=4 on 8GB VRAM GPU).
+**Nominal effective batch size: 16 is a starting target, not a requirement.** On CUDA, use `batch_size="auto"` when the available memory or workload is uncertain; on CPU or MPS, use a concrete integer batch size. If hardware memory limits the physical batch, increase `grad_accum_steps` to recover the nominal optimizer-step window. The product is not an optimization-equivalence guarantee: a constant product preserves the nominal images-per-update target but changes forward/backward microbatch cadence and can produce a different optimization trajectory.
 
 ### Checkpoint Types
 
@@ -233,7 +252,6 @@ model.export(format="tensorrt")
 model.deploy_to_roboflow(
     workspace="your-workspace",
     project_id="your-project-id",
-    version=1,
     api_key="YOUR_API_KEY"
 )
 ```
@@ -266,6 +284,24 @@ model.deploy_to_roboflow(
 | RF-DETR-Seg-XL | 72.2 | 48.8 | 13.5 | 38.1 | 624×624 |
 | RF-DETR-Seg-2XL | 73.1 | 49.9 | 21.8 | 38.6 | 768×768 |
 
+### Keypoint Results
+
+COCO person keypoints, OKS-based AP50:95. Params are deployment (fused) counts.
+
+| Architecture | COCO AP50:95 | Latency (ms) | Params (M) | License |
+|---|---|---|---|---|
+| RF-DETR Keypoint (Preview) | 71.8 | 9.7 | 40.7 | Apache 2.0 |
+| YOLO11-pose N | 48.9 | 3.2 | 2.9 | AGPL-3.0 |
+| YOLO11-pose S | 57.5 | 3.4 | 9.9 | AGPL-3.0 |
+| YOLO11-pose M | 64.2 | 5.2 | 20.9 | AGPL-3.0 |
+| YOLO11-pose L | 65.2 | 6.6 | 26.2 | AGPL-3.0 |
+| YOLO11-pose X | 68.6 | 10.6 | 58.8 | AGPL-3.0 |
+| YOLO26-pose N | 55.9 | 1.9 | 2.9 | AGPL-3.0 |
+| YOLO26-pose S | 62.0 | 2.7 | 10.4 | AGPL-3.0 |
+| YOLO26-pose M | 68.0 | 4.6 | 21.5 | AGPL-3.0 |
+| YOLO26-pose L | 69.2 | 5.9 | 25.9 | AGPL-3.0 |
+| YOLO26-pose X | 71.0 | 9.8 | 57.6 | AGPL-3.0 |
+
 ---
 
 ## Frequently Asked Questions
@@ -277,7 +313,7 @@ RF-DETR (Roboflow Detection Transformer) is a real-time object detection and ins
 RF-DETR-L achieves 56.5 AP50:95 on COCO at 6.8 ms latency on an NVIDIA T4, outperforming YOLO11x (54.7 AP) at lower latency. The DINOv2 backbone gives RF-DETR stronger performance on domain-shift benchmarks such as RF100-VL.
 
 **What GPU is required to train RF-DETR?**
-A CUDA-capable GPU with at least 8 GB VRAM (e.g., NVIDIA RTX 3060, T4, A10) is recommended for fine-tuning. Smaller models (RF-DETR-N and RF-DETR-S) can fit in 6 GB VRAM with reduced batch size. CPU inference is supported for evaluation.
+Training memory depends on the model size, task, input resolution, batch size, augmentations, and available hardware, so there is no universal VRAM threshold. Use a CUDA-capable GPU when possible and start with `batch_size="auto"`; if memory is limited, reduce the physical batch or resolution and validate the resulting run. CPU inference is supported for evaluation.
 
 **Which dataset formats does RF-DETR support?**
 RF-DETR supports COCO JSON and YOLO-format datasets. Roboflow datasets export directly to both formats. Detection and segmentation datasets use the same format — the model variant determines the task.
@@ -292,7 +328,7 @@ Detection models output bounding boxes. Segmentation models additionally output 
 Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. XLarge and 2XLarge models require the rfdetr[plus] package (PML 1.0 license).
 
 **How do I fine-tune RF-DETR on a custom dataset?**
-Instantiate a model and call model.train() with your dataset directory in COCO JSON or YOLO format. Example: model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4). The model downloads pretrained weights automatically and resumes from the best checkpoint.
+Instantiate a model and call model.train() with your dataset directory in COCO JSON or YOLO format. Example: model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size='auto'). The model downloads pretrained weights automatically and resumes from the best checkpoint.
 
 **How do I export RF-DETR to ONNX or TensorRT?**
 Call model.export(format='onnx') after training or loading a checkpoint. ONNX export works on CPU. For TensorRT, use model.export(format='tensorrt') (requires pip install rfdetr[trt] and a CUDA GPU), which builds a .trt engine in-process via the TensorRT Python API.
@@ -313,7 +349,7 @@ All model classes inherit from `RFDETR` and share these methods:
 - `predict(image, threshold=0.5)` — run inference on a single image (path, URL, numpy array, or PIL Image)
 - `train(dataset_dir, epochs, batch_size, ...)` — fine-tune on custom dataset
 - `export(format)` — export to ONNX, TFLite, or TensorRT
-- `deploy_to_roboflow(workspace, project_id, version)` — deploy model to Roboflow hosted inference
+- `deploy_to_roboflow(workspace, project_id, version=None)` — deploy model to Roboflow hosted inference (latest dataset version when `version` omitted; an empty project falls back to version `1`, then the SDK raises its usual error)
 
 ### TrainConfig
 
@@ -324,6 +360,7 @@ Key fields for detection training configuration:
 | `epochs` | int | Training epochs |
 | `batch_size` | int | Images per GPU step |
 | `grad_accum_steps` | int | Gradient accumulation steps |
+| `eval_batch_size` | int or None | Batch size for validation/test/predict loaders; `None` inherits `batch_size` |
 | `lr` | float | Peak learning rate |
 | `output_dir` | str | Checkpoint output directory |
 | `resume` | str | Path to checkpoint to resume from |

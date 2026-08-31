@@ -281,7 +281,16 @@ class _DeviceTrackingCoreModel(_DummyCoreModel):
 
 
 def _make_tensorrt_export_model(*, device: str = "cpu") -> types.SimpleNamespace:
-    """Build the minimal `self`-like fake `RFDETR.export()` needs for the format="tensorrt" branch."""
+    """Build the minimal `self`-like fake `RFDETR.export()` needs for the format="tensorrt" branch.
+
+    Examples:
+        >>> m = _make_tensorrt_export_model()
+        >>> m.model.device
+        'cpu'
+        >>> m = _make_tensorrt_export_model(device="cuda")
+        >>> m.model.device
+        'cuda'
+    """
     return types.SimpleNamespace(
         model=types.SimpleNamespace(model=_DeviceTrackingCoreModel(), device=device, resolution=14),
         model_config=types.SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False, num_channels=3),
@@ -290,7 +299,15 @@ def _make_tensorrt_export_model(*, device: str = "cpu") -> types.SimpleNamespace
 
 
 def _make_mock_infer_tensor() -> MagicMock:
-    """Mock tensor standing in for `make_infer_image()`'s return value — avoids real-device `.to()`/`.cpu()`."""
+    """Mock tensor standing in for `make_infer_image()`'s return value — avoids real-device `.to()`/`.cpu()`.
+
+    Examples:
+        >>> t = _make_mock_infer_tensor()
+        >>> t.to("cpu") is t
+        True
+        >>> t.cpu() is t
+        True
+    """
     mock_tensor = MagicMock()
     mock_tensor.to.return_value = mock_tensor
     mock_tensor.cpu.return_value = mock_tensor
@@ -733,7 +750,7 @@ class TestCliExportMain:
         ):
             _cli_export_module.main(args)
 
-        mock_build_engine.assert_called_once_with(onnx_output, fp16=True, verbose=True, dry_run=True)
+        mock_build_engine.assert_called_once_with(onnx_output, fp16=True, verbose=True, dry_run=True, output_name=None)
 
     def test_tensorrt_false_does_not_call_build_engine(self, output_dir: str) -> None:
         """When tensorrt=False (default), main() must not call build_engine."""
@@ -1085,6 +1102,54 @@ class TestExportOnnxVariantNaming:
 
         assert captured["output_file"].endswith("backbone_model.onnx")
 
+    def test_output_name_overrides_variant_name(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """output_name takes precedence over variant_name and is used verbatim."""
+        captured: dict = {}
+
+        def _fake_onnx_export(*args, **kwargs) -> None:
+            captured["output_file"] = args[2]
+
+        monkeypatch.setattr(_cli_export_module.torch.onnx, "export", _fake_onnx_export)
+
+        _cli_export_module.export_onnx(
+            output_dir=str(tmp_path),
+            model=torch.nn.Identity(),
+            input_names=["input"],
+            input_tensors=torch.randn(1, 3, 8, 8),
+            output_names=["dets"],
+            dynamic_axes=None,
+            verbose=False,
+            variant_name="rfdetr-medium",
+            output_name="my-model",
+        )
+
+        assert captured["output_file"].endswith("my-model.onnx")
+
+    def test_output_name_with_backbone_keeps_structural_suffix(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """output_name + backbone_only still appends '-backbone' (structural, not a precision detail)."""
+        captured: dict = {}
+
+        def _fake_onnx_export(*args, **kwargs) -> None:
+            captured["output_file"] = args[2]
+
+        monkeypatch.setattr(_cli_export_module.torch.onnx, "export", _fake_onnx_export)
+
+        _cli_export_module.export_onnx(
+            output_dir=str(tmp_path),
+            model=torch.nn.Identity(),
+            input_names=["input"],
+            input_tensors=torch.randn(1, 3, 8, 8),
+            output_names=["features"],
+            dynamic_axes=None,
+            backbone_only=True,
+            verbose=False,
+            output_name="my-model",
+        )
+
+        assert captured["output_file"].endswith("my-model-backbone.onnx")
+
     def test_rfdetr_export_passes_variant_name(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """RFDETR.export() passes self.size as variant_name to export_onnx."""
         captured: dict = {}
@@ -1142,6 +1207,37 @@ class TestExportOnnxVariantNaming:
         _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=(14, 14))
 
         assert captured["variant_name"] is None
+
+    def test_rfdetr_export_passes_output_name(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """RFDETR.export()'s output_name kwarg reaches export_onnx alongside variant_name (output_name wins)."""
+        captured: dict = {}
+
+        model = types.SimpleNamespace(
+            model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
+            model_config=types.SimpleNamespace(
+                segmentation_head=False,
+                use_grouppose_keypoints=False,
+                num_channels=3,
+            ),
+            size="rfdetr-medium",
+        )
+
+        def _fake_make_infer_image(*_args, **_kwargs):
+            return torch.zeros(1, 3, 14, 14)
+
+        def _fake_export_onnx(*_args, variant_name=None, output_name=None, **_kw):
+            captured["variant_name"] = variant_name
+            captured["output_name"] = output_name
+            return str(tmp_path / "my-model.onnx")
+
+        monkeypatch.setattr("rfdetr.export.main.make_infer_image", _fake_make_infer_image)
+        monkeypatch.setattr("rfdetr.export.main.export_onnx", _fake_export_onnx)
+        monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+
+        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=(14, 14), output_name="my-model")
+
+        assert captured["variant_name"] == "rfdetr-medium"
+        assert captured["output_name"] == "my-model"
 
     @pytest.mark.parametrize(
         "variant_name, expected_suffix",

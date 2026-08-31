@@ -19,6 +19,33 @@ from rfdetr.datasets.aug_configs import (
     AUG_INDUSTRIAL,
 )
 
+
+def _sharpness_sampler_range(transform: torch.nn.Module) -> tuple[float, float]:
+    """Read the sampled ``sharpness`` range off a Kornia ``RandomSharpness`` transform.
+
+    This intentionally reads a private Kornia implementation detail (``_param_generator.sampler_dict``) because no
+    public equivalent exists: ``RandomSharpness(...).flags`` is empty (verified against the installed Kornia
+    version), so the sampled range isn't reachable through any public attribute. If a future Kornia release
+    renames or removes ``_param_generator``/``sampler_dict``, this raises a clear, actionable failure instead of a
+    raw ``AttributeError``/``KeyError`` deep inside the test body.
+
+    Args:
+        transform: A ``kornia.augmentation.RandomSharpness`` instance (or equivalent) built with a sampled range.
+
+    Returns:
+        The sampled ``(low, high)`` bounds as floats.
+    """
+    try:
+        sampler = transform._param_generator.sampler_dict["sharpness"]
+        return float(sampler.low), float(sampler.high)
+    except (AttributeError, KeyError) as exc:
+        pytest.fail(
+            "Kornia's RandomSharpness no longer exposes the sampled `sharpness` range via the private "
+            f"`_param_generator.sampler_dict['sharpness']` path (no public alternative exists): {exc!r}. Update "
+            "this helper to match Kornia's new internal parameter-generator shape."
+        )
+
+
 # ---------------------------------------------------------------------------
 # TestBuildKorniaPipeline — validates the factory that translates aug_config
 # dicts into a Kornia AugmentationSequential pipeline.
@@ -71,6 +98,131 @@ class TestBuildKorniaPipeline:
         with pytest.raises(ValueError, match="BogusTransform"):
             build_kornia_pipeline(mixed, 560)
 
+    def test_to_gray_builds_random_grayscale(self):
+        """``ToGray`` maps onto ``K.RandomGrayscale`` (issue #1227)."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {"p": 0.5}}, 560)
+        transform_names = [child.__class__.__name__ for child in pipeline.children()]
+        assert "RandomGrayscale" in transform_names
+
+    def test_to_gray_keeps_three_channels_and_greys(self):
+        """``ToGray`` matches Albumentations: grayscale content, still three channels."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {"p": 1.0}}, 560)
+        image = torch.rand(1, 3, 32, 32)
+        boxes = torch.tensor([[[0.0, 0.0, 10.0, 10.0]]])
+        out, _ = pipeline(image, boxes)
+
+        assert out.shape == image.shape, "ToGray must preserve the three-channel shape"
+        # A greyscale image has identical values across the channel axis.
+        assert torch.allclose(out[:, 0], out[:, 1], atol=1e-5)
+        assert torch.allclose(out[:, 1], out[:, 2], atol=1e-5)
+
+    def test_to_gray_accepted_by_both_backends(self):
+        """The same config is readable by the Albumentations backend too (issue #1227).
+
+        ``ToGray`` resolved on Albumentations via ``getattr`` long before it was a Kornia built-in, so a config that
+        worked on one backend raised on the other.
+        """
+        pytest.importorskip("albumentations")
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+        from rfdetr.datasets.transforms import AlbumentationsWrapper
+
+        config = {"ToGray": {"p": 0.5}}
+        assert build_kornia_pipeline(config, 560) is not None
+
+        wrappers = AlbumentationsWrapper.from_config(config)
+        assert len(wrappers) == 1, (
+            "from_config(strict=False) silently drops unresolved transforms, so length must be checked"
+        )
+        built_names = [t.__class__.__name__ for t in wrappers[0].transform.transforms]
+        assert "ToGray" in built_names, f"expected a ToGray transform, got {built_names}"
+
+    def test_to_gray_defaults_p_to_point_five_when_omitted(self):
+        """Omitting p resolves to 0.5, matching Albumentations (not Kornia's native 0.1 default)."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {}}, 560)
+        to_gray = next(child for child in pipeline.children() if child.__class__.__name__ == "RandomGrayscale")
+        assert to_gray.p == pytest.approx(0.5)
+
+    def test_to_gray_p_zero_is_a_no_op(self):
+        """p=0.0 never applies: forward pass returns the input unchanged."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {"p": 0.0}}, 560)
+        image = torch.rand(1, 3, 32, 32)
+        boxes = torch.tensor([[[0.0, 0.0, 10.0, 10.0]]])
+        out, _ = pipeline(image, boxes)
+
+        assert torch.equal(out, image), "p=0.0 must never apply ToGray"
+
+    def test_to_gray_ignores_method_and_num_output_channels_on_kornia(self):
+        """method/num_output_channels have no Kornia equivalent and are currently ignored there.
+
+        Pins the divergence documented on ``_make_to_gray``: Albumentations honors both, Kornia always uses BT.601
+        weights and returns 3 channels. If this is ever fixed, this test should be updated to assert the new (parity)
+        behavior instead.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"ToGray": {"method": "max", "num_output_channels": 1, "p": 1.0}}, 560)
+        image = torch.rand(1, 3, 32, 32)
+        boxes = torch.tensor([[[0.0, 0.0, 10.0, 10.0]]])
+        out, _ = pipeline(image, boxes)
+
+        assert out.shape == image.shape, "num_output_channels=1 is currently ignored -- output stays 3-channel"
+        assert torch.allclose(out[:, 0], out[:, 1], atol=1e-5), "method='max' is currently ignored on Kornia"
+
+    @pytest.mark.parametrize(
+        "config",
+        [
+            pytest.param({"GaussianBlur": {"blur_limit": (3, 7), "p": 0.5}}, id="blur_limit-pair"),
+            pytest.param({"GaussianBlur": {"sigma": 1.5, "p": 0.5}}, id="sigma-scalar"),
+            pytest.param({"GaussianBlur": {"sigma": (1.5,), "p": 0.5}}, id="sigma-1elem-seq"),
+            pytest.param({"GaussNoise": {"std_range": 0.05, "p": 0.5}}, id="std_range-scalar"),
+        ],
+    )
+    def test_scalar_or_pair_range_params_build(self, config):
+        """Range params accept a scalar or a pair, as Albumentations does.
+
+        ``_make_rotate`` already accepts either form for ``limit``; these builders used to raise a bare ``TypeError``
+        from inside Kornia on a config that is valid for the CPU path.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        assert build_kornia_pipeline(config, 560) is not None
+
+    @pytest.mark.parametrize(
+        ("blur_limit", "expected"),
+        [
+            pytest.param((3, 7), (7, 7), id="odd-upper-bound"),
+            pytest.param((3, 6), (7, 7), id="even-upper-bound-rounds-up"),
+        ],
+    )
+    def test_blur_limit_pair_uses_upper_bound(self, blur_limit, expected):
+        """A ``(min, max)`` ``blur_limit`` resolves to its upper bound, rounded up to an odd kernel size."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"GaussianBlur": {"blur_limit": blur_limit, "p": 1.0}}, 560)
+        transform = next(iter(pipeline.children()))
+        assert transform.flags["kernel_size"] == expected
+
+    def test_scalar_std_range_is_used_verbatim(self):
+        """A scalar ``std_range`` is used as-is, with no per-sample-drift warning emitted."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            pipeline = kornia_transforms.build_kornia_pipeline({"GaussNoise": {"std_range": 0.05, "p": 1.0}}, 560)
+
+        transform = next(iter(pipeline.children()))
+        assert transform.flags["std"] == pytest.approx(0.05)
+        mock_warning.assert_not_called()
+
     def test_hflip_disabled_for_keypoint_pipeline(self):
         """Keypoint-mode Kornia augmentation drops hflip transforms with a warning."""
         from unittest import mock
@@ -88,6 +240,187 @@ class TestBuildKorniaPipeline:
         assert "RandomVerticalFlip" in transform_names
         assert warning.called
         assert "HorizontalFlip" in str(warning.call_args)
+
+    # --- pixel-level transforms added for issue #1252 -------------------
+
+    @pytest.mark.parametrize(
+        ("name", "params", "expected"),
+        [
+            ("Blur", {"blur_limit": 5}, "RandomBoxBlur"),
+            ("Sharpen", {"alpha": (0.2, 0.5)}, "RandomSharpness"),
+            ("Equalize", {}, "RandomEqualize"),
+            ("CLAHE", {"clip_limit": 4.0}, "RandomClahe"),
+        ],
+    )
+    def test_pixel_transforms_map_to_kornia(self, name, params, expected):
+        """Each documented pixel-level name builds its Kornia counterpart (issue #1252)."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({name: params}, 560)
+        assert expected in [child.__class__.__name__ for child in pipeline.children()]
+
+    @pytest.mark.parametrize(
+        ("name", "params"),
+        [
+            ("Blur", {"blur_limit": (3, 7)}),
+            ("Sharpen", {"alpha": (0.2, 0.5)}),
+            ("Equalize", {"p": 0.5}),
+            ("CLAHE", {"clip_limit": 4.0, "tile_grid_size": (8, 8)}),
+        ],
+    )
+    def test_pixel_transforms_accepted_by_both_backends(self, name, params):
+        """The same config builds on either backend, which is the gap issue #1252 reports."""
+        pytest.importorskip("albumentations")
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+        from rfdetr.datasets.transforms import AlbumentationsWrapper
+
+        config = {name: params}
+        assert build_kornia_pipeline(config, 560) is not None
+
+        wrappers = AlbumentationsWrapper.from_config(config)
+        assert len(wrappers) == 1, (
+            "from_config(strict=False) silently drops unresolved transforms, so length must be checked"
+        )
+        built = [t.__class__.__name__ for t in wrappers[0].transform.transforms]
+        assert name in built, f"expected {name}, got {built}"
+
+    @pytest.mark.parametrize(("blur_limit", "expected"), [(5, 5), (4, 5), ((3, 7), 7), ((3, 6), 7), (2, 3)])
+    def test_blur_kernel_is_odd_and_at_least_three(self, blur_limit, expected):
+        """Blur resolves its kernel the same way GaussianBlur does: odd, >= 3, upper bound of a pair."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"Blur": {"blur_limit": blur_limit}}, 560)
+        transform = next(iter(pipeline.children()))
+        assert transform.flags["kernel_size"] == (expected, expected)
+
+    def test_blur_pair_warns_about_the_fixed_kernel(self):
+        """A non-degenerate pair the user chose explicitly collapses to one kernel, so it must say so."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warning:
+            kornia_transforms.build_kornia_pipeline({"Blur": {"blur_limit": (3, 5)}}, 560)
+        assert warning.called
+        assert "Blur" in str(warning.call_args)
+
+    def test_blur_degenerate_pair_does_not_warn(self):
+        """(5, 5) loses nothing, so it should stay quiet."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warning:
+            kornia_transforms.build_kornia_pipeline({"Blur": {"blur_limit": (5, 5)}}, 560)
+        warning.assert_not_called()
+
+    def test_blur_library_default_pair_logs_at_debug_not_warning(self):
+        """(3, 7) is Albumentations' own Blur default, an expected divergence, so it must stay off WARNING."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with (
+            mock.patch.object(kornia_transforms.logger, "warning") as warning,
+            mock.patch.object(kornia_transforms.logger, "debug") as debug,
+        ):
+            kornia_transforms.build_kornia_pipeline({"Blur": {"blur_limit": (3, 7)}}, 560)
+        warning.assert_not_called()
+        assert debug.called
+        assert "Blur" in str(debug.call_args)
+
+    @pytest.mark.parametrize(
+        "blur_limit",
+        [
+            pytest.param([], id="empty-sequence"),
+            pytest.param((1, 2, 3), id="three-element-sequence"),
+        ],
+    )
+    def test_blur_kernel_rejects_invalid_sequence_length(self, blur_limit):
+        """A sequence that is neither a scalar nor a (min, max) pair must raise, not silently misresolve."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        with pytest.raises(ValueError, match="Kernel size parameter must be"):
+            build_kornia_pipeline({"Blur": {"blur_limit": blur_limit}}, 560)
+
+    def test_sharpen_shifts_alpha_to_kornias_one_pivoted_sharpness_range(self):
+        """Albumentations' alpha (0=no-op) is shifted to Kornia's sharpness (1.0=no-op): sharpness = 1.0 + alpha."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"Sharpen": {"alpha": (0.1, 0.4)}}, 560)
+        transform = next(iter(pipeline.children()))
+        # Kornia keeps sampled ranges on the parameter generator rather than in `flags`; see
+        # `_sharpness_sampler_range` for why this reads a private attribute.
+        assert _sharpness_sampler_range(transform) == pytest.approx((1.1, 1.4))
+
+    def test_sharpen_default_alpha_actually_sharpens_not_blurs(self):
+        """Regression guard: at the default alpha=(0.2, 0.5), Sharpen must raise edge energy, not lower it.
+
+        Kornia's ``sharpness`` factor is pivoted at 1.0 (0=blur, 1=no-op, >1=sharpen), unlike Albumentations' ``alpha``
+        (pivoted at 0). Passing ``alpha`` straight through as ``sharpness`` (the pre-fix bug) resolves to the range
+        (0.2, 0.5) — below Kornia's no-op point — which blurs a step edge instead of sharpening it, so this test would
+        fail against that code. The fixed mapping resolves to ``sharpness=(1.2, 1.5)``, which sharpens.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        size = 16
+        img = torch.full((1, 3, size, size), 0.3)
+        img[:, :, :, size // 2 :] = 0.7  # a single sharp step edge down the middle column
+        boxes = torch.tensor([[[0.0, 0.0, float(size), float(size)]]], dtype=torch.float32)
+
+        pipeline = build_kornia_pipeline({"Sharpen": {"p": 1.0}}, 560)
+        img_out, _ = pipeline(img, boxes)
+
+        def edge_energy(x: torch.Tensor) -> float:
+            # Exclude the outer 2-pixel ring: Kornia's sharpness leaves border pixels unchanged (see
+            # kornia.enhance.adjust.sharpness), so including them would dilute the interior sharpening signal.
+            interior = x[:, :, 2:-2, 2:-2]
+            return (torch.diff(interior, dim=-1).abs().mean() + torch.diff(interior, dim=-2).abs().mean()).item()
+
+        assert edge_energy(img_out) > edge_energy(img), (
+            "Sharpen at the default alpha=(0.2, 0.5) must increase edge energy (sharpen); an unchanged or lower "
+            "value means the pivot-point bug regressed (sharpness range fell back to (0.2, 0.5), which blurs)."
+        )
+
+    def test_sharpen_warns_about_ignored_lightness(self):
+        """Lightness has no Kornia equivalent, so dropping it must be announced."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warning:
+            kornia_transforms.build_kornia_pipeline({"Sharpen": {"lightness": (0.5, 1.0)}}, 560)
+        assert warning.called
+        assert "lightness" in str(warning.call_args)
+
+    def test_equalize_warns_about_ignored_options(self):
+        """mode/by_channels/mask are albumentations-only."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warning:
+            kornia_transforms.build_kornia_pipeline({"Equalize": {"by_channels": False}}, 560)
+        assert warning.called
+        assert "by_channels" in str(warning.call_args)
+
+    def test_clahe_maps_both_parameters(self):
+        """clip_limit and tile_grid_size map straight onto Kornia's clip_limit and grid_size."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"CLAHE": {"clip_limit": (2.0, 6.0), "tile_grid_size": (4, 4)}}, 560)
+        transform = next(iter(pipeline.children()))
+        assert tuple(transform.flags["grid_size"]) == (4, 4)
+        # Unlike Sharpen's sharpness range, RandomClahe exposes its range on a plain public
+        # `clip_limit` attribute (set directly from the constructor arg), so no private access needed.
+        assert tuple(transform.clip_limit) == pytest.approx((2.0, 6.0))
+
+    def test_hue_saturation_value_still_unsupported(self):
+        """Deliberately out of scope: albumentations shifts additively, Kornia scales multiplicatively."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        with pytest.raises(ValueError, match="HueSaturationValue"):
+            build_kornia_pipeline({"HueSaturationValue": {"hue_shift_limit": 20}}, 560)
 
 
 # ---------------------------------------------------------------------------
@@ -730,6 +1063,47 @@ class TestGaussNoiseStdRangeWarning:
         mock_warning.assert_not_called()
 
 
+class TestToGrayDroppedParamsWarning:
+    """_make_to_gray warns when passed method/num_output_channels, which have no Kornia equivalent."""
+
+    @pytest.fixture(autouse=True)
+    def _require_kornia(self):
+        pytest.importorskip("kornia")
+
+    def test_warns_for_method(self):
+        """A non-default method emits a dropped-param warning at build time."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_to_gray({"method": "max", "p": 0.5})
+
+        mock_warning.assert_called_once()
+
+    def test_warns_for_num_output_channels(self):
+        """A non-default num_output_channels emits a dropped-param warning at build time."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_to_gray({"num_output_channels": 1, "p": 0.5})
+
+        mock_warning.assert_called_once()
+
+    def test_no_warning_for_p_only(self):
+        """A config using only p matches the CPU path's default behavior and stays silent."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_to_gray({"p": 0.5})
+
+        mock_warning.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # TestResolveAugmentationBackend — the single resolution seam that maps backend
 # strings (incl. sentinels/legacy aliases) to concrete AugmentationBackend members.
@@ -754,8 +1128,7 @@ class TestResolveAugmentationBackend:
         from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
 
         with (
-            patch.object(AugmentationBackend, "_is_albu_available", return_value=False),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is AugmentationBackend.TV),
         ):
             assert resolve_augmentation_backend(value, has_cuda=False) == AugmentationBackend.TV
 
@@ -782,7 +1155,7 @@ class TestResolveAugmentationBackend:
         from rfdetr.config import AugmentationBackend
         from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
 
-        with patch.object(AugmentationBackend, "_is_albu_available", return_value=True):
+        with patch.object(AugmentationBackend, "_is_available", lambda self: True):
             assert resolve_augmentation_backend("albu", has_cuda=False) == AugmentationBackend.ALBU
 
     def test_albu_missing_raises_import_error(self) -> None:
@@ -793,7 +1166,7 @@ class TestResolveAugmentationBackend:
         from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
 
         with (
-            patch.object(AugmentationBackend, "_is_albu_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.ALBU),
             pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
         ):
             resolve_augmentation_backend("albu", has_cuda=False)
@@ -824,7 +1197,198 @@ class TestResolveBackendForBuild:
         from rfdetr.datasets.kornia_transforms import resolve_backend_for_build
 
         with (
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
             pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
         ):
             resolve_backend_for_build("gpu", has_cuda=True)
+
+
+class TestPerspectiveFactory:
+    """`Perspective` on the Kornia backend (issue #1252).
+
+    Perspective preserves output resolution, and the DataModule carries the batch padding mask through the same Kornia
+    sequence. Transforms that resize output remain unsupported because this path only transports fixed-size batches.
+    """
+
+    @pytest.mark.parametrize("scale", [(0.05, 0.2), 0.2], ids=["range", "scalar"])
+    def test_distribution_divergence_is_always_reported(self, scale) -> None:
+        """The GPU path draws uniformly where the CPU path draws a half-normal, so every config diverges.
+
+        This holds for a scalar too: albumentations reads ``0.2`` as ``sigma`` in ``(0, 0.2)`` and samples
+        ``abs(N(0, sigma))``, so even an "exact" request is not the same distribution Kornia produces.
+        """
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warn:
+            kornia_transforms.build_kornia_pipeline({"Perspective": {"scale": scale}}, 560)
+
+        messages = [call[0][0] for call in warn.call_args_list]
+        assert any("Perspective" in m and "abs(N(0, sigma))" in m for m in messages), messages
+
+    @pytest.mark.parametrize(
+        "key,value",
+        [
+            ("fit_output", True),
+            ("interpolation", 1),
+            ("mask_interpolation", 0),
+            ("border_mode", 0),
+            ("fill", 0),
+            ("fill_mask", 0),
+        ],
+    )
+    def test_unmappable_options_are_reported_not_silently_dropped(self, key, value) -> None:
+        """Kornia's RandomPerspective exposes only distortion_scale and p; the rest must not vanish quietly."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warn:
+            kornia_transforms.build_kornia_pipeline({"Perspective": {key: value}}, 560)
+
+        messages = [call[0][0] % call[0][1:] if len(call[0]) > 1 else call[0][0] for call in warn.call_args_list]
+        assert any("ignores" in m and key in m for m in messages), messages
+
+    def test_keep_size_false_is_refused_not_ignored(self) -> None:
+        """keep_size=False changes the output resolution, which this pipeline cannot express."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        with pytest.raises(ValueError, match="keep_size=False"):
+            build_kornia_pipeline({"Perspective": {"keep_size": False}}, 560)
+
+    def test_output_keeps_the_input_resolution(self) -> None:
+        """The property the whole mapping rests on: image height and width survive the transform."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        img = torch.rand(2, 3, 64, 64)
+        boxes = torch.tensor([[[8.0, 8.0, 40.0, 40.0]], [[4.0, 4.0, 20.0, 20.0]]])
+
+        pipeline = build_kornia_pipeline({"Perspective": {"scale": 0.3, "p": 1.0}}, 560)
+        img_out, _ = pipeline(img, boxes)
+
+        assert img_out.shape[-2:] == img.shape[-2:]
+
+    def test_boxes_follow_the_warp(self) -> None:
+        """A geometric transform that left the boxes where they were would silently mislabel every image."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        img = torch.rand(1, 3, 64, 64)
+        boxes = torch.tensor([[[8.0, 8.0, 40.0, 40.0]]])
+
+        pipeline = build_kornia_pipeline({"Perspective": {"scale": 0.4, "p": 1.0}}, 560)
+        _, boxes_out = pipeline(img, boxes)
+
+        assert not torch.allclose(boxes_out, boxes), "boxes must be warped with the image"
+
+    def test_padding_mask_follows_the_perspective_warp(self) -> None:
+        """Batch padding stays an auxiliary mask under the same Perspective parameters as image and boxes."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        torch.manual_seed(7)
+        image = torch.zeros(1, 3, 64, 64)
+        image[:, :, :48, :48] = 1.0
+        boxes = torch.tensor([[[4.0, 4.0, 44.0, 44.0]]])
+        instance_mask = torch.zeros(1, 1, 64, 64)
+        instance_mask[:, :, 12:36, 12:36] = 1.0
+        padding_mask = torch.ones(1, 1, 64, 64)
+        padding_mask[:, :, :48, :48] = 0.0
+        auxiliary_masks = torch.cat((instance_mask, padding_mask), dim=1)
+
+        pipeline = build_kornia_pipeline({"Perspective": {"scale": 0.4, "p": 1.0}}, 560, with_masks=True)
+        image_aug, boxes_aug, auxiliary_masks_aug = pipeline(image, boxes, auxiliary_masks)
+        instance_mask_aug = auxiliary_masks_aug[:, :1]
+        padding_mask_aug = auxiliary_masks_aug[:, 1:]
+
+        assert image_aug.shape == image.shape
+        assert boxes_aug.shape == boxes.shape
+        assert padding_mask_aug.shape == padding_mask.shape
+        assert instance_mask_aug.shape == instance_mask.shape
+        assert not torch.equal(padding_mask_aug, padding_mask)
+        assert not torch.equal(instance_mask_aug, instance_mask)
+        bright_pixels = image_aug[:, 0] > 0.99
+        assert not padding_mask_aug[:, 0].to(torch.bool)[bright_pixels].any()
+
+    @pytest.mark.parametrize("name", ["RandomCrop", "CenterCrop", "RandomResizedCrop"])
+    def test_crop_names_from_1252_remain_unsupported(self, name) -> None:
+        """Guard for the reason Perspective ships alone: the crops resize, so they are still rejected."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        with pytest.raises(ValueError, match="Unknown augmentation key"):
+            build_kornia_pipeline({name: {"height": 32, "width": 32}}, 560)
+
+
+class TestGaussianDefaultsMatchAlbumentations:
+    """Unspecified Gaussian defaults must align to Albumentations bounds while documenting known sampling
+    differences."""
+
+    @pytest.fixture(autouse=True)
+    def _require_kornia(self):
+        pytest.importorskip("kornia")
+
+    def test_gaussian_blur_sigma_default_matches_albumentations(self):
+        """An unspecified sigma must equal albumentations' GaussianBlur sigma_limit default."""
+        albumentations = pytest.importorskip("albumentations")
+
+        from rfdetr.datasets import kornia_transforms
+
+        cpu_default = tuple(albumentations.GaussianBlur().sigma_limit)
+        transform = kornia_transforms._make_gaussian_blur({"blur_limit": 3, "p": 0.3})
+        gpu_default = tuple(float(v) for v in transform._param_generator.sigma)
+
+        assert gpu_default == pytest.approx(cpu_default), (
+            f"unspecified GaussianBlur sigma is {gpu_default} on the GPU path but "
+            f"{cpu_default} on the CPU path, so the same config uses different default sigma bounds"
+        )
+
+    def test_gaussian_blur_uses_kornia_default_when_albu_backend_is_unavailable(self, monkeypatch):
+        """A GPU-only install keeps Kornia's historic GaussianBlur default."""
+        from rfdetr.config import AugmentationBackend
+        from rfdetr.datasets import kornia_transforms
+
+        monkeypatch.setattr(
+            AugmentationBackend,
+            "_is_available",
+            lambda self: self is not AugmentationBackend.ALBU,
+        )
+
+        transform = kornia_transforms._make_gaussian_blur({"blur_limit": 3, "p": 0.3})
+
+        assert tuple(float(value) for value in transform._param_generator.sigma) == pytest.approx((0.1, 2.0))
+
+    def test_gaussian_blur_keeps_explicit_sigma(self):
+        """An explicit sigma remains authoritative over backend availability."""
+        from rfdetr.datasets import kornia_transforms
+
+        transform = kornia_transforms._make_gaussian_blur({"blur_limit": 3, "sigma": (1.25, 1.5), "p": 0.3})
+
+        assert tuple(float(value) for value in transform._param_generator.sigma) == pytest.approx((1.25, 1.5))
+
+    def test_gauss_noise_std_default_matches_albumentations(self):
+        """An unspecified std_range must equal albumentations' GaussNoise std_range default."""
+        albumentations = pytest.importorskip("albumentations")
+
+        from rfdetr.datasets import kornia_transforms
+
+        cpu_default = tuple(albumentations.GaussNoise().std_range)
+        # Kornia takes a single std (the range's upper bound); the DEFAULT range must still
+        # be the albumentations one, so an unspecified config lands on the same upper bound.
+        transform = kornia_transforms._make_gauss_noise({"p": 0.3})
+        gpu_std = float(transform.flags["std"])
+
+        assert gpu_std == pytest.approx(cpu_default[1]), (
+            f"unspecified GaussNoise std is {gpu_std} on the GPU path but the CPU path "
+            f"samples up to {cpu_default[1]}, so the default upper bound is not aligned"
+        )
+
+    def test_default_gauss_noise_warns_because_the_default_range_is_non_degenerate(self):
+        """The albumentations default range is non-degenerate, so building with no std_range still emits the fixed-std
+        divergence warning rather than going silent."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
+            kornia_transforms._make_gauss_noise({"p": 0.3})
+
+        mock_warning.assert_called_once()

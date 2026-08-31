@@ -26,6 +26,13 @@ from rfdetr.models.weights import _warn_on_partial_load
 def _make_checkpoint(num_classes: int = 91, num_queries: int = 300, group_detr: int = 13) -> dict:
     """Build a minimal checkpoint dict with the given class count.
 
+    Examples:
+        >>> ckpt = _make_checkpoint(num_classes=3, num_queries=2, group_detr=2)
+        >>> ckpt["model"]["query_feat.weight"].shape
+        torch.Size([4, 256])
+
+
+
     Args:
         num_classes: Total classes including background (bias shape).
         num_queries: Number of object queries per group.
@@ -49,6 +56,13 @@ def _make_checkpoint(num_classes: int = 91, num_queries: int = 300, group_detr: 
 
 def _make_train_config(tmp_path=None) -> TrainConfig:
     """Return a minimal TrainConfig for use in load_pretrain_weights.
+
+    Examples:
+        >>> cfg = _make_train_config()
+        >>> cfg.dataset_dir.endswith("dataset")
+        True
+
+
 
     Args:
         tmp_path: Optional pytest tmp_path fixture value.
@@ -74,6 +88,13 @@ def _make_train_config(tmp_path=None) -> TrainConfig:
 
 def _fake_nn_model() -> MagicMock:
     """Return a MagicMock that behaves enough like an LWDETR nn.Module.
+
+    Examples:
+        >>> model = _fake_nn_model()
+        >>> hasattr(model, "load_state_dict")
+        True
+
+
 
     Returns:
         MagicMock with reinitialize_detection_head and load_state_dict stubs.
@@ -329,6 +350,51 @@ class TestLoadPretrainWeightsClassNames:
         assert result == [], f"Expected [] for None pretrain_weights, got {result!r}"
         nn_model.load_state_dict.assert_not_called()
         nn_model.reinitialize_detection_head.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# load_pretrain_weights — trust propagation
+# ---------------------------------------------------------------------------
+
+
+class TestLoadPretrainWeightsTrustPropagation:
+    """Verify the ``trust`` kwarg reaches ``_safe_torch_load`` unchanged.
+
+    Regression coverage for a gap where ``RFDETR.from_checkpoint(path, trust_checkpoint=True)`` bypassed the safe-load
+    check only for its own metadata read, then silently reverted to ``trust=False`` when the constructed model reloaded
+    the same file here — making ``trust_checkpoint=True`` inert for any checkpoint that actually needed it.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_io(self, monkeypatch):
+        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
+
+    def test_trust_true_forwarded_to_safe_torch_load(self):
+        """load_pretrain_weights(trust=True) calls _safe_torch_load with trust=True."""
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        checkpoint = _make_checkpoint(num_classes=91)
+
+        with patch("rfdetr.utilities.io._safe_torch_load", return_value=checkpoint) as mock_load:
+            from rfdetr.models.weights import load_pretrain_weights
+
+            load_pretrain_weights(_fake_nn_model(), mc, trust=True)
+
+        mock_load.assert_called_once_with(mc.pretrain_weights, trust=True)
+
+    def test_trust_defaults_to_false(self):
+        """load_pretrain_weights without a trust kwarg calls _safe_torch_load with trust=False."""
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        checkpoint = _make_checkpoint(num_classes=91)
+
+        with patch("rfdetr.utilities.io._safe_torch_load", return_value=checkpoint) as mock_load:
+            from rfdetr.models.weights import load_pretrain_weights
+
+            load_pretrain_weights(_fake_nn_model(), mc)
+
+        mock_load.assert_called_once_with(mc.pretrain_weights, trust=False)
 
 
 # ---------------------------------------------------------------------------
@@ -593,16 +659,24 @@ class TestApplyLora:
 # ---------------------------------------------------------------------------
 
 
-def _labelled_query_tensor(num_queries: int, group_detr: int, dim: int = 2) -> torch.Tensor:
-    """Build a query embedding tensor where row ``g * num_queries + q`` encodes ``[g * 100 + q, 0, ...]``.
+def _labelled_query_tensor(num_queries: int, group_detr: int, dim: int = 2, label_stride: int = 100) -> torch.Tensor:
+    """Build a query embedding tensor where row ``g * num_queries + q`` encodes ``[g * label_stride + q, 0, ...]``.
 
     This lets tests check the per-group ordering of the result without floating-point
-    fuzz: the first column carries the (group, query) identity directly.
+    fuzz: the first column carries the (group, query) identity directly. ``label_stride``
+    must exceed the largest ``q`` used by a caller, or labels from different groups collide
+    (e.g. the default stride of 100 collides once ``num_queries >= 100``).
+
+    Examples:
+        >>> _labelled_query_tensor(2, 2, dim=1).squeeze(-1).tolist()
+        [0.0, 1.0, 100.0, 101.0]
+        >>> _labelled_query_tensor(150, 2, dim=1, label_stride=1000).squeeze(-1).tolist()[100]
+        100.0
     """
     rows = []
     for g in range(group_detr):
         for q in range(num_queries):
-            rows.append([float(g * 100 + q)] + [0.0] * (dim - 1))
+            rows.append([float(g * label_stride + q)] + [0.0] * (dim - 1))
     return torch.tensor(rows, dtype=torch.float32)
 
 
@@ -933,6 +1007,240 @@ class TestLoadPretrainWeightsPerGroupQuerySlice:
             f"Expected scramble-risk warning for group_detr > 1; got: {captured}"
         )
 
+    def test_legacy_fallback_mixed_truncating_and_non_truncating_tensors(self, monkeypatch) -> None:
+        """One query tensor truncates against target rows while its sibling does not — only the former is sliced.
+
+        ``legacy_fallback_truncates`` is computed via ``any(...)`` across every query-suffix tensor, so it stays
+        True even when only one of ``refpoint_embed.weight`` / ``query_feat.weight`` actually exceeds
+        ``target_query_rows``. The warning must still fire (``any`` sees the truncating tensor), but each tensor is
+        sliced independently in the per-tensor loop: the truncating one is shortened, the non-truncating one passes
+        through unchanged.
+        """
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=2,
+            num_select=2,
+            group_detr=3,
+        )
+        # target_query_rows = 2 * 3 = 6. refpoint has 8 rows (> 6, truncates); query_feat has 6 rows (== 6, no-op).
+        labelled_refpoint = _labelled_query_tensor(num_queries=8, group_detr=1, dim=4)
+        labelled_query_feat = _labelled_query_tensor(num_queries=6, group_detr=1, dim=256)
+        checkpoint = {
+            "model": {
+                "class_embed.weight": torch.randn(91, 256),
+                "class_embed.bias": torch.randn(91),
+                "refpoint_embed.weight": labelled_refpoint,
+                "query_feat.weight": labelled_query_feat,
+            },
+            "args": {},  # no num_queries / group_detr keys
+        }
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        captured: list[str] = []
+
+        def _capture(msg: str, *args: object, **kwargs: object) -> None:
+            try:
+                captured.append(msg % args if args else msg)
+            except TypeError:
+                captured.append(msg)
+
+        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        assert any("group_detr" in msg and ("scramble" in msg or "flat slice" in msg) for msg in captured), (
+            f"Expected scramble-risk warning when at least one query tensor truncates; got: {captured}"
+        )
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        refpoint = passed_state["refpoint_embed.weight"]
+        query_feat = passed_state["query_feat.weight"]
+        assert refpoint.shape[0] == 6, (
+            f"Truncating tensor must be shortened to target_query_rows=6, got {refpoint.shape[0]}"
+        )
+        assert torch.equal(refpoint, labelled_refpoint[:6]), "Truncated tensor must keep the first 6 original rows."
+        assert torch.equal(query_feat, labelled_query_feat), (
+            "Non-truncating sibling tensor (already 6 rows) must pass through unchanged."
+        )
+
+    def test_legacy_fallback_matching_total_rows_can_still_scramble_groups(self, monkeypatch) -> None:
+        """Row-count match does not imply factorization match — the silent flat slice can still reinterpret groups.
+
+        Checkpoint trained with (num_queries=150, group_detr=2) has the same total row count (300) as a target
+        configured with (num_queries=100, group_detr=3). Because the totals match, ``legacy_fallback_truncates`` is
+        False and no warning fires — but the flat ``tensor[:300]`` slice is a no-op on row *values*, while the target
+        silently reinterprets those rows under its own (100, 3) partition. Row 100 is checkpoint group 0's query 100
+        under the checkpoint's own (150, 2) split, yet the target treats row 100 as group 1's query 0.
+        """
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=100,
+            num_select=100,
+            group_detr=3,
+        )
+        # Non-colliding label scheme: default stride (100) collides once num_queries >= 100
+        # (checkpoint group0/query100 would equal group1/query0 = 100). Use stride=1000 so the
+        # checkpoint's own (group, query) identity survives intact through the flat slice.
+        labelled_refpoint = _labelled_query_tensor(num_queries=150, group_detr=2, dim=4, label_stride=1000)
+        labelled_query_feat = _labelled_query_tensor(num_queries=150, group_detr=2, dim=256, label_stride=1000)
+        checkpoint = {
+            "model": {
+                "class_embed.weight": torch.randn(91, 256),
+                "class_embed.bias": torch.randn(91),
+                "refpoint_embed.weight": labelled_refpoint,
+                "query_feat.weight": labelled_query_feat,
+            },
+            "args": {},  # no num_queries / group_detr keys
+        }
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        captured: list[str] = []
+
+        def _capture(msg: str, *args: object, **kwargs: object) -> None:
+            try:
+                captured.append(msg % args if args else msg)
+            except TypeError:
+                captured.append(msg)
+
+        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        assert not any("scramble" in msg or "flat slice" in msg for msg in captured), (
+            f"Matching total row count (300 == 300) must not warn; got: {captured}"
+        )
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        # Checkpoint's own factorization (nq=150, g=2): row 100 is group 0, query 100 → label 0*1000+100 = 100.
+        # The target's factorization (nq=100, g=3) instead treats row 100 as group 1, query 0. The silent flat
+        # slice actually reinterprets the data under the target partition: pin that the CHECKPOINT's value
+        # (100), not a target-consistent group1/query0 value (which would be 1000), lands at row 100.
+        assert passed_state["refpoint_embed.weight"][100, 0].item() == 100.0, (
+            "Row 100 must still hold the checkpoint's group0/query100 value (100), proving the flat slice "
+            "silently reinterprets it as the target's group1/query0 without reordering anything."
+        )
+        assert passed_state["query_feat.weight"][100, 0].item() == 100.0
+
+    @pytest.mark.parametrize(
+        "mc_num_queries,mc_group_detr,ckpt_num_queries,ckpt_group_detr",
+        [
+            pytest.param(4, 3, 4, 3, id="matching_rows_group_detr_gt1"),
+            pytest.param(4, 1, 8, 1, id="truncating_rows_group_detr_eq1"),
+        ],
+    )
+    def test_legacy_fallback_is_silent_when_no_scramble_risk(
+        self,
+        monkeypatch,
+        mc_num_queries: int,
+        mc_group_detr: int,
+        ckpt_num_queries: int,
+        ckpt_group_detr: int,
+    ) -> None:
+        """Missing metadata needs no warning when either the flat slice is a no-op or ``group_detr == 1``.
+
+        Two distinct reasons both suppress the scramble-risk warning for the same missing-metadata flat-slice
+        fallback: (1) the configured flat slice changes nothing because row counts already match
+        (``group_detr > 1`` but nothing truncates), or (2) ``group_detr == 1`` has no groups to scramble even
+        though the flat slice does truncate rows. Both cases assert against the same
+        ``tensor[:target_query_rows]`` formula, which is a true no-op in case (1) and an actual truncation in
+        case (2) — this pins that the warning stays silent for both, for different reasons.
+        """
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=mc_num_queries,
+            num_select=mc_num_queries,
+            group_detr=mc_group_detr,
+        )
+        labelled_refpoint = _labelled_query_tensor(num_queries=ckpt_num_queries, group_detr=ckpt_group_detr, dim=4)
+        labelled_query_feat = _labelled_query_tensor(num_queries=ckpt_num_queries, group_detr=ckpt_group_detr, dim=256)
+        checkpoint = {
+            "model": {
+                "class_embed.weight": torch.randn(91, 256),
+                "class_embed.bias": torch.randn(91),
+                "refpoint_embed.weight": labelled_refpoint,
+                "query_feat.weight": labelled_query_feat,
+            },
+            "args": {},
+        }
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        captured: list[str] = []
+
+        def _capture(msg: str, *args: object, **kwargs: object) -> None:
+            try:
+                captured.append(msg % args if args else msg)
+            except TypeError:
+                captured.append(msg)
+
+        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        target_query_rows = mc_num_queries * mc_group_detr
+        assert torch.equal(passed_state["refpoint_embed.weight"], labelled_refpoint[:target_query_rows])
+        assert torch.equal(passed_state["query_feat.weight"], labelled_query_feat[:target_query_rows])
+        assert not any("scramble" in msg or "flat slice" in msg for msg in captured), captured
+
+    def test_legacy_fallback_fewer_checkpoint_rows_than_target_is_silent_noop(self, monkeypatch) -> None:
+        """Growing num_queries (checkpoint has FEWER query rows than target) never warns — strict ``>`` excludes it.
+
+        ``legacy_fallback_truncates`` only trips on ``tensor.shape[0] > target_query_rows``. A checkpoint with 6 query
+        rows loaded into a target needing 12 (``num_queries=4, group_detr=3``) never satisfies that strict inequality,
+        so no warning fires — and ``tensor[:12]`` on a 6-row tensor is a no-op, so the tensor is untouched.
+        """
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=4,
+            num_select=4,
+            group_detr=3,
+        )
+        labelled_refpoint = _labelled_query_tensor(num_queries=6, group_detr=1, dim=4)
+        labelled_query_feat = _labelled_query_tensor(num_queries=6, group_detr=1, dim=256)
+        checkpoint = {
+            "model": {
+                "class_embed.weight": torch.randn(91, 256),
+                "class_embed.bias": torch.randn(91),
+                "refpoint_embed.weight": labelled_refpoint,
+                "query_feat.weight": labelled_query_feat,
+            },
+            "args": {},  # no num_queries / group_detr keys
+        }
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        captured: list[str] = []
+
+        def _capture(msg: str, *args: object, **kwargs: object) -> None:
+            try:
+                captured.append(msg % args if args else msg)
+            except TypeError:
+                captured.append(msg)
+
+        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        assert not any("scramble" in msg or "flat slice" in msg for msg in captured), (
+            f"Checkpoint with fewer rows (6) than target (12) must not warn; got: {captured}"
+        )
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        assert torch.equal(passed_state["refpoint_embed.weight"], labelled_refpoint)
+        assert torch.equal(passed_state["query_feat.weight"], labelled_query_feat)
+
     def test_legacy_fallback_when_args_missing_num_queries_key(self, monkeypatch, tmp_path):
         """When checkpoint args dict lacks num_queries/group_detr keys, falls back to flat legacy slice."""
         from rfdetr.models.weights import load_pretrain_weights
@@ -1015,6 +1323,10 @@ class TestPartialLoadDetector:
                 id="intentional_head_keys",
             ),
             pytest.param(
+                SimpleNamespace(missing_keys=["_kp_active_mask"], unexpected_keys=[]),
+                id="legacy_checkpoint_missing_deterministic_keypoint_mask",
+            ),
+            pytest.param(
                 SimpleNamespace(missing_keys=42, unexpected_keys=[]),
                 id="non_iterable_missing_keys",
             ),
@@ -1023,7 +1335,7 @@ class TestPartialLoadDetector:
     def test_no_warning_cases(self, captured, result: SimpleNamespace) -> None:
         """Cases that must not emit any partial-load warning.
 
-        Covers: clean load, intentional head keys, and non-iterable missing_keys.
+        Covers: clean load, intentional head keys, deterministic buffers, and non-iterable missing_keys.
         """
         _warn_on_partial_load(result, "/fake/weights.pth")
         assert captured == []
@@ -1041,6 +1353,47 @@ class TestPartialLoadDetector:
         assert len(captured) == 1
         assert "/fake/weights.pth" in captured[0]
         assert "register_tokens" in captured[0]
+
+    def test_missing_keypoint_mask_does_not_hide_real_missing_key(self, captured):
+        """The deterministic mask is ignored without suppressing a real backbone gap."""
+        result = SimpleNamespace(
+            missing_keys=[
+                "_kp_active_mask",
+                "backbone.0.encoder.encoder.embeddings.register_tokens",
+            ],
+            unexpected_keys=[],
+        )
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "register_tokens" in captured[0]
+        assert "_kp_active_mask" not in captured[0]
+
+    def test_submodule_prefixed_missing_mask_does_not_warn(self, captured):
+        """The mask is filtered under a submodule path too, not only as a bare top-level key."""
+        result = SimpleNamespace(missing_keys=["transformer.decoder._kp_active_mask"], unexpected_keys=[])
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert captured == []
+
+    def test_similarly_named_missing_key_still_warns(self, captured):
+        """Filtering the exact schema buffer must not hide a prefix collision."""
+        result = SimpleNamespace(missing_keys=["_kp_active_mask_projection.weight"], unexpected_keys=[])
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "_kp_active_mask_projection.weight" in captured[0]
+
+    def test_suffix_collision_without_separator_still_warns(self, captured):
+        """The submodule clause is anchored on the `.` separator, so a bare suffix match is not the buffer."""
+        result = SimpleNamespace(missing_keys=["backbone.custom_kp_active_mask"], unexpected_keys=[])
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "backbone.custom_kp_active_mask" in captured[0]
+
+    def test_unexpected_keypoint_mask_still_warns(self, captured):
+        """Only a missing deterministic mask is intentional; an unconsumed mask is still surfaced."""
+        result = SimpleNamespace(missing_keys=[], unexpected_keys=["_kp_active_mask"])
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "_kp_active_mask" in captured[0]
 
     def test_unexpected_keys_warn(self, captured):
         """Unexpected checkpoint keys (model has no slot for them) must trigger the warning."""

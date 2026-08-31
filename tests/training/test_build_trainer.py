@@ -28,14 +28,28 @@ from rfdetr.training.trainer import _ForceLastEpochValidationCallback
 
 
 def _mc(**kwargs):
-    """Minimal RFDETRBaseConfig for tests."""
+    """Minimal RFDETRBaseConfig for tests.
+
+    Examples:
+        >>> config = _mc(num_classes=7)
+        >>> config.device, config.num_classes
+        ('cpu', 7)
+    """
     defaults = dict(pretrain_weights=None, device="cpu", num_classes=3)
     defaults.update(kwargs)
     return RFDETRBaseConfig(**defaults)
 
 
 def _find_resume_checkpoints(trainer):
-    """Return ModelCheckpoint callbacks that are NOT BestModelCallback."""
+    """Return ModelCheckpoint callbacks that are NOT BestModelCallback.
+
+    Examples:
+        >>> resume_cb = ModelCheckpoint(dirpath='.')
+        >>> best_cb = BestModelCallback(output_dir='.')
+        >>> trainer = MagicMock(callbacks=[resume_cb, best_cb])
+        >>> _find_resume_checkpoints(trainer) == [resume_cb]
+        True
+    """
     return [cb for cb in trainer.callbacks if isinstance(cb, ModelCheckpoint) and not isinstance(cb, BestModelCallback)]
 
 
@@ -44,6 +58,12 @@ def _tc(tmp_path, **kwargs):
 
     Loggers are disabled by default to avoid requiring optional deps (tensorboard, wandb, mlflow) in the CPU test
     environment.  Logger-specific tests override these explicitly via kwargs or mocking.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> config = _tc(Path("/tmp/example"), epochs=3)
+        >>> config.epochs, Path(config.dataset_dir).name, Path(config.output_dir).name
+        (3, 'ds', 'out')
     """
     defaults = dict(
         dataset_dir=str(tmp_path / "ds"),
@@ -61,7 +81,14 @@ def _tc(tmp_path, **kwargs):
 
 
 def _kp_tc(tmp_path, **kwargs):
-    """Minimal KeypointTrainConfig for tests that exercise keypoint model paths."""
+    """Minimal KeypointTrainConfig for tests that exercise keypoint model paths.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> config = _kp_tc(Path('/tmp/example'), batch_size=4)
+        >>> config.batch_size, Path(config.dataset_dir).name
+        (4, 'ds')
+    """
     defaults = dict(
         dataset_dir=str(tmp_path / "ds"),
         output_dir=str(tmp_path / "out"),
@@ -107,6 +134,12 @@ class TestBuildTrainerCallbacks:
         assert coco_cb._eval_interval == 3
         assert coco_cb._log_per_class_metrics is False
 
+    def test_coco_eval_default_skips_per_class_metrics(self, tmp_path):
+        """The default TrainConfig disables the costly per-class metric path."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        assert coco_cb._log_per_class_metrics is False
+
     def test_coco_eval_uses_keypoint_oks_sigmas(self, tmp_path):
         """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""
         sigmas = [0.05] * 25
@@ -116,6 +149,28 @@ class TestBuildTrainerCallbacks:
         )
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._keypoint_oks_sigmas == sigmas
+
+    @pytest.mark.parametrize(
+        "use_ema, eval_base_model, expected",
+        [
+            pytest.param(True, False, False, id="ema_default_evaluates_ema_only"),
+            pytest.param(True, True, True, id="ema_with_opt_in_evaluates_both"),
+            pytest.param(False, False, True, id="no_ema_evaluates_base"),
+        ],
+    )
+    def test_eval_policy_is_wired_to_both_callbacks(self, tmp_path, use_ema, eval_base_model, expected):
+        """The eval policy must reach COCOEvalCallback and BestModelCallback consistently.
+
+        The two callbacks have to agree: whenever the base model is not evaluated, COCOEvalCallback mirrors the
+        EMA score onto the primary key and BestModelCallback must stop checkpointing base weights against it.
+        Wiring only one of the pair reintroduces the metric/weights mismatch this policy exists to avoid.
+        """
+        trainer = build_trainer(_tc(tmp_path, use_ema=use_ema, eval_base_model=eval_base_model), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+
+        assert coco_cb._eval_base_model is eval_base_model
+        assert best_cb._evaluates_base_model is expected
 
     def test_best_model_always_present(self, tmp_path):
         """BestModelCallback is always included."""
@@ -142,6 +197,37 @@ class TestBuildTrainerCallbacks:
         best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
         assert best_cb.monitor == "val/segm_mAP_50_95"
         assert best_cb._monitor_ema == "val/ema_segm_mAP_50_95"
+
+    def test_best_model_metric_mar_monitors_bbox_mar(self, tmp_path):
+        """best_model_metric='mar' should rank detection checkpoints by mAR, not mAP."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=True, best_model_metric="mar"), _mc())
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/mAR"
+        assert best_cb._monitor_ema == "val/ema_mAR"
+
+    def test_best_model_metric_mar_without_ema_monitors_only_regular_bbox_mar(self, tmp_path):
+        """Detection mAR ranking must not configure an EMA monitor when EMA is disabled."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, best_model_metric="mar"), _mc())
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/mAR"
+        assert best_cb._monitor_ema is None
+
+    def test_keypoint_best_model_metric_mar_monitors_keypoint_mar(self, tmp_path):
+        """best_model_metric='mar' should rank keypoint checkpoints by the OKS-based keypoint mAR."""
+        trainer = build_trainer(
+            _kp_tc(tmp_path, use_ema=True, best_model_metric="mar"),
+            RFDETRKeypointPreviewConfig(pretrain_weights=None),
+        )
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/keypoint_mAR"
+        assert best_cb._monitor_ema == "val/ema_keypoint_mAR"
+
+    def test_segmentation_best_model_metric_mar_falls_back_to_bbox_mar(self, tmp_path):
+        """best_model_metric='mar' has no dedicated mask mAR, so segmentation falls back to bbox mAR."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=True, best_model_metric="mar"), _mc(segmentation_head=True))
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/mAR"
+        assert best_cb._monitor_ema == "val/ema_mAR"
 
     def test_latest_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==1 is included when checkpoint_interval > 1."""
@@ -271,6 +357,42 @@ class TestBuildTrainerCallbacks:
         early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
         assert early_stop_cb._monitor_regular == "val/segm_mAP_50_95"
         assert early_stop_cb._monitor_ema == "val/ema_segm_mAP_50_95"
+
+    def test_best_model_metric_mar_early_stopping_monitors_bbox_mar(self, tmp_path):
+        """best_model_metric='mar' should make detection early stopping watch mAR, not mAP."""
+        trainer = build_trainer(
+            _tc(tmp_path, early_stopping=True, early_stopping_use_ema=True, best_model_metric="mar"),
+            _mc(),
+        )
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._monitor_regular == "val/mAR"
+        assert early_stop_cb._monitor_ema == "val/ema_mAR"
+
+    def test_keypoint_best_model_metric_mar_early_stopping_monitors_keypoint_mar(self, tmp_path):
+        """best_model_metric='mar' should make keypoint early stopping watch the OKS-based keypoint mAR."""
+        trainer = build_trainer(
+            _kp_tc(tmp_path, early_stopping=True, early_stopping_use_ema=True, best_model_metric="mar"),
+            RFDETRKeypointPreviewConfig(pretrain_weights=None),
+        )
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._monitor_regular == "val/keypoint_mAR"
+        assert early_stop_cb._monitor_ema == "val/ema_keypoint_mAR"
+
+    def test_segmentation_best_model_metric_mar_early_stopping_monitors_bbox_mar(self, tmp_path):
+        """Segmentation mAR early stopping must use the bbox mAR keys when EMA is enabled."""
+        trainer = build_trainer(
+            _tc(
+                tmp_path,
+                use_ema=True,
+                early_stopping=True,
+                early_stopping_use_ema=True,
+                best_model_metric="mar",
+            ),
+            _mc(segmentation_head=True),
+        )
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._monitor_regular == "val/mAR"
+        assert early_stop_cb._monitor_ema == "val/ema_mAR"
 
     def test_no_early_stopping_when_disabled(self, tmp_path):
         """RFDETREarlyStopping is absent when early_stopping=False."""
@@ -452,6 +574,107 @@ class TestBuildTrainerPrecision:
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert captured["precision"] == "bf16-mixed"
+
+    @pytest.mark.parametrize("accelerator", ["xla", "tpu"], ids=["xla", "tpu"])
+    def test_xla_accelerator_uses_xla_precision_plugin_not_precision_string(self, tmp_path, accelerator):
+        """Accelerator='xla'/'tpu' sets an XLAPrecision('bf16-true') plugin, never precision=.
+
+        XLAStrategy's precision_plugin setter only accepts the XLAPrecision plugin and raises TypeError for standard
+        precision strings like 'bf16-mixed'. ``XLAPrecision.__init__`` itself raises ``ModuleNotFoundError`` unless
+        torch_xla is importable (see ``lightning_fabric.accelerators.xla._XLA_AVAILABLE``), so the class is patched
+        here to keep this test backend-neutral -- the behaviour under test is build_trainer's accelerator dispatch,
+        not PTL's own package-availability guard.
+        """
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
+        with (
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("torch.cuda.is_bf16_supported", return_value=True),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True), accelerator=accelerator)
+
+        assert "precision" not in captured
+        mock_xla_precision_cls.assert_called_once_with("bf16-true")
+        assert captured["plugins"] == [mock_xla_precision_cls.return_value]
+
+    @pytest.mark.parametrize(
+        ("amp", "expected_precision"),
+        [
+            pytest.param(True, "bf16-true", id="amp_enabled"),
+            pytest.param(False, "32-true", id="amp_disabled"),
+        ],
+    )
+    def test_xla_accelerator_preserves_plugins_and_rejects_precision_kwargs(self, tmp_path, amp, expected_precision):
+        """XLA appends its precision plugin and ignores incompatible precision kwargs."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+        caller_plugin = object()
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
+        with (
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("torch.cuda.is_bf16_supported", return_value=True),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
+        ):
+            build_trainer(
+                _tc(tmp_path, use_ema=False),
+                _mc(amp=amp),
+                accelerator="xla",
+                plugins=[caller_plugin],
+                precision="16-mixed",
+            )
+
+        assert "precision" not in captured
+        mock_xla_precision_cls.assert_called_once_with(expected_precision)
+        assert captured["plugins"] == [caller_plugin, mock_xla_precision_cls.return_value]
+
+    def test_non_xla_accelerator_sets_no_plugins_key(self, tmp_path):
+        """A non-XLA accelerator does not add a 'plugins' key -- only the XLA path does."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="cpu")
+
+        assert "plugins" not in captured
+        assert captured["precision"] == "32-true"
+
+    @pytest.mark.xla
+    def test_tpu_accelerator_refuses_to_launch_off_real_tpu(self, tmp_path) -> None:
+        """Resolves plan Sec 1.3 caveat #1: PTL's 'tpu' accelerator needs real TPU chips, not just torch_xla+PJRT.
+
+        ``XLAAccelerator.is_available()`` returns ``False`` under ``PJRT_DEVICE=CPU`` (no TPU silicon), so
+        ``Trainer.__init__`` raises ``MisconfigurationException`` naming ``XLAAccelerator`` as unavailable and listing
+        ``cpu`` as the only available accelerator (confirmed against the live message from ``ci-tests-xla.yml``'s CPU-
+        PJRT run, not just source inspection). This confirms the full ``model.train(accelerator="tpu")`` entry point is
+        not launchable under the T1 (CPU-PJRT) CI lane -- only the device-gated unit tests (Tasks 1.1/1.3/1.6/1.7/1.8,
+        which move tensors to ``xm.xla_device()`` directly) validate Phase 1 correctness there.
+        """
+        pytest.importorskip("torch_xla")
+        from pytorch_lightning.utilities.exceptions import MisconfigurationException
+
+        with pytest.raises(MisconfigurationException, match="XLAAccelerator"):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu")
 
     @patch("torch.cuda.is_available", return_value=True)
     @patch("torch.cuda.is_bf16_supported", return_value=False)

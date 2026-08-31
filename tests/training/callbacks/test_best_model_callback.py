@@ -15,6 +15,7 @@ import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
 from pytorch_lightning import __version__ as ptl_version
 from pytorch_lightning.trainer.states import TrainerFn
+from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
 
 from rfdetr.config import RFDETRLargeDeprecatedConfig, RFDETRMediumConfig
@@ -31,11 +32,30 @@ def _make_trainer(
     current_epoch: int = 1,
     is_global_zero: bool = True,
     callbacks: list[object] | None = None,
+    sanity_checking: bool = False,
 ) -> MagicMock:
     """Create a minimal mock Trainer with controllable callback_metrics.
 
     Sets the attributes required by ModelCheckpoint and EarlyStopping skip-guards so that callbacks run normally in unit
     tests.
+
+    Args:
+        metrics: Validation metric names mapped to values, exposed as ``trainer.callback_metrics``.
+        current_epoch: Value for ``trainer.current_epoch``.
+        is_global_zero: Value for ``trainer.is_global_zero``.
+        callbacks: Value for ``trainer.callbacks``; defaults to an empty list.
+        sanity_checking: Value for ``trainer.sanity_checking`` — True mimics PyTorch Lightning's pre-training
+            sanity-check pass (see #1348).
+
+    Returns:
+        A mock standing in for a :class:`~pytorch_lightning.Trainer`.
+
+    Examples:
+        >>> trainer = _make_trainer({"val/mAP_50_95": 0.5}, current_epoch=2, sanity_checking=True)
+        >>> trainer.current_epoch, trainer.sanity_checking
+        (2, True)
+        >>> trainer.callback_metrics["val/mAP_50_95"].item()
+        0.5
     """
     trainer = MagicMock()
     trainer.callback_metrics = {k: torch.tensor(v) for k, v in metrics.items()}
@@ -46,7 +66,7 @@ def _make_trainer(
     # Required by ModelCheckpoint._should_skip_saving_checkpoint
     trainer.fast_dev_run = False
     trainer.state.fn = TrainerFn.FITTING
-    trainer.sanity_checking = False
+    trainer.sanity_checking = sanity_checking
     trainer.global_step = 1  # int; differs from _last_global_step_saved=0
     # Required by EarlyStopping._log_info (world_size > 1 check)
     trainer.world_size = 1
@@ -84,6 +104,57 @@ class _ResumeTinyModule(LightningModule):
         self.log("val/mAP_50_95", torch.tensor(0.5), on_step=False, on_epoch=True, prog_bar=False)
 
     def configure_optimizers(self):
+        return torch.optim.SGD(self.model.parameters(), lr=0.01)
+
+
+class _MetricModule(LightningModule):
+    """LightningModule that logs a caller-controlled ``val/mAP_50_95`` value each epoch.
+
+    Used to discriminate a genuinely *restored* ``best_model_score``/checkpoint from one a
+    fresh callback happened to compute or overwrite on its own: the pre- and post-resume
+    phases log different values (the post-resume one always worse), so a restored
+    high-water mark and a wrongly-reset one diverge, and a wrongly-reset one would let the
+    worse post-resume epoch overwrite the good on-disk checkpoint.
+    """
+
+    def __init__(self, metric_value: float) -> None:
+        """Initialize with the fixed ``val/mAP_50_95`` value to log every epoch.
+
+        Args:
+            metric_value: Value logged as ``val/mAP_50_95`` on every validation epoch.
+        """
+        super().__init__()
+        self.model = torch.nn.Linear(4, 1)
+        self.train_config = {"lr": 0.01}
+        self._metric_value = metric_value
+
+    def training_step(self, batch: tuple[Tensor, Tensor], batch_idx: int) -> Tensor:
+        """Compute MSE loss for one training batch.
+
+        Args:
+            batch: ``(x, y)`` tensors from the ``TensorDataset`` loader.
+            batch_idx: Index of the batch within the current epoch (unused).
+
+        Returns:
+            Scalar MSE loss.
+        """
+        del batch_idx
+        x, y = batch
+        pred = self.model(x)
+        return torch.nn.functional.mse_loss(pred, y)
+
+    def validation_step(self, batch: tuple[Tensor, Tensor], batch_idx: int) -> None:
+        """Log the fixed ``val/mAP_50_95`` value, ignoring the actual batch contents.
+
+        Args:
+            batch: Unused; only the epoch-level log call matters for these tests.
+            batch_idx: Unused.
+        """
+        del batch, batch_idx
+        self.log("val/mAP_50_95", torch.tensor(self._metric_value), on_step=False, on_epoch=True, prog_bar=False)
+
+    def configure_optimizers(self) -> torch.optim.Optimizer:
+        """Return a plain SGD optimizer sufficient to drive ``Trainer.fit()``."""
         return torch.optim.SGD(self.model.parameters(), lr=0.01)
 
 
@@ -126,13 +197,242 @@ class _ResumeProbeCallback(Callback):
             self.first_train_epoch = trainer.current_epoch
 
 
+class _VaryingMetricModule(LightningModule):
+    """LightningModule that logs a different ``val/mAP_50_95`` value on each successive epoch.
+
+    ``values`` is consumed one entry per validation epoch (indexed by ``self.current_epoch``, clamped to the last entry
+    once exhausted), letting a single ``Trainer.fit()`` call drive stateful callbacks (e.g. ``RFDETREarlyStopping``'s
+    ``wait_count``) through both improving and non-improving epochs.
+    """
+
+    def __init__(self, values: list[float]) -> None:
+        """Initialize with the per-epoch ``val/mAP_50_95`` sequence.
+
+        Args:
+            values: One value per validation epoch; the last entry repeats once exhausted.
+        """
+        super().__init__()
+        self.model = torch.nn.Linear(4, 1)
+        self.train_config = {"lr": 0.01}
+        self._values = values
+
+    def training_step(self, batch: tuple[Tensor, Tensor], batch_idx: int) -> Tensor:
+        """Compute MSE loss for one training batch.
+
+        Args:
+            batch: ``(x, y)`` tensors from the ``TensorDataset`` loader.
+            batch_idx: Index of the batch within the current epoch (unused).
+
+        Returns:
+            Scalar MSE loss.
+        """
+        del batch_idx
+        x, y = batch
+        return torch.nn.functional.mse_loss(self.model(x), y)
+
+    def validation_step(self, batch: tuple[Tensor, Tensor], batch_idx: int) -> None:
+        """Log ``values[current_epoch]`` (clamped to the last entry) as ``val/mAP_50_95``.
+
+        Args:
+            batch: Unused; only the epoch-level log call matters for these tests.
+            batch_idx: Unused.
+        """
+        del batch, batch_idx
+        idx = min(self.current_epoch, len(self._values) - 1)
+        self.log("val/mAP_50_95", torch.tensor(self._values[idx]), on_step=False, on_epoch=True, prog_bar=False)
+
+    def configure_optimizers(self) -> torch.optim.Optimizer:
+        """Return a plain SGD optimizer sufficient to drive ``Trainer.fit()``."""
+        return torch.optim.SGD(self.model.parameters(), lr=0.01)
+
+
+class _EmaMetricModule(LightningModule):
+    """LightningModule that logs independently controlled ``val/mAP_50_95`` and ``val/ema_mAP_50_95`` values.
+
+    Used to drive :class:`BestModelCallback`'s EMA-checkpoint bookkeeping (``checkpoint_best_ema.pth``) with a
+    real, trainable model, so :class:`~rfdetr.training.callbacks.ema.RFDETREMACallback` produces genuinely
+    different EMA weights per :class:`~pytorch_lightning.Trainer` phase.
+    """
+
+    def __init__(self, regular_value: float, ema_value: float) -> None:
+        """Initialize with the fixed regular/EMA metric values to log every epoch.
+
+        Args:
+            regular_value: Value logged as ``val/mAP_50_95`` on every validation epoch.
+            ema_value: Value logged as ``val/ema_mAP_50_95`` on every validation epoch.
+        """
+        super().__init__()
+        self.model = torch.nn.Linear(4, 1)
+        self.train_config = {"lr": 0.01}
+        self._regular_value = regular_value
+        self._ema_value = ema_value
+
+    def training_step(self, batch: tuple[Tensor, Tensor], batch_idx: int) -> Tensor:
+        """Compute MSE loss for one training batch.
+
+        Args:
+            batch: ``(x, y)`` tensors from the ``TensorDataset`` loader.
+            batch_idx: Index of the batch within the current epoch (unused).
+
+        Returns:
+            Scalar MSE loss.
+        """
+        del batch_idx
+        x, y = batch
+        pred = self.model(x)
+        return torch.nn.functional.mse_loss(pred, y)
+
+    def validation_step(self, batch: tuple[Tensor, Tensor], batch_idx: int) -> None:
+        """Log the fixed regular and EMA metric values, ignoring the actual batch contents.
+
+        Args:
+            batch: Unused; only the epoch-level log calls matter for these tests.
+            batch_idx: Unused.
+        """
+        del batch, batch_idx
+        self.log("val/mAP_50_95", torch.tensor(self._regular_value), on_step=False, on_epoch=True, prog_bar=False)
+        self.log("val/ema_mAP_50_95", torch.tensor(self._ema_value), on_step=False, on_epoch=True, prog_bar=False)
+
+    def configure_optimizers(self) -> torch.optim.Optimizer:
+        """Return a plain SGD optimizer sufficient to drive ``Trainer.fit()``."""
+        return torch.optim.SGD(self.model.parameters(), lr=0.01)
+
+
+class _CallbackStateCaptureCallback(Callback):
+    """Snapshot other callbacks' resumed state at the first post-resume train-epoch start.
+
+    Runs before any post-resume training step can mutate ``ema_callback``/``early_stop_callback``, so the captured
+    values reflect exactly what PTL's ``_call_callbacks_load_state_dict`` restored from the checkpoint.
+    """
+
+    def __init__(self, ema_callback: RFDETREMACallback, early_stop_callback: RFDETREarlyStopping) -> None:
+        """Store the callbacks to snapshot once training resumes.
+
+        Args:
+            ema_callback: The resumed ``RFDETREMACallback`` instance to read state from.
+            early_stop_callback: The resumed ``RFDETREarlyStopping`` instance to read state from.
+        """
+        super().__init__()
+        self._ema_callback = ema_callback
+        self._early_stop_callback = early_stop_callback
+        self.ema_latest_update_step: int | None = None
+        self.early_stop_wait_count: int | None = None
+
+    def on_train_epoch_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
+        """Capture ``ema_callback``/``early_stop_callback`` state on the first post-resume epoch.
+
+        Args:
+            trainer: Unused; required by the ``Callback`` hook signature.
+            pl_module: Unused; required by the ``Callback`` hook signature.
+        """
+        del trainer, pl_module
+        if self.ema_latest_update_step is None:
+            self.ema_latest_update_step = self._ema_callback._latest_update_step
+            self.early_stop_wait_count = self._early_stop_callback.wait_count
+
+
+class _SanityCheckEndProbe(Callback):
+    """Snapshot whether a checkpoint path exists at the exact moment PTL's sanity check ends.
+
+    ``on_sanity_check_end`` fires between the sanity-check validation pass and the first real training epoch, so it
+    catches a checkpoint written from sanity-check contamination before a real epoch's own (possibly identical) score
+    could produce the same file for a legitimate reason.
+    """
+
+    def __init__(self, checkpoint_path: Path) -> None:
+        """Store the checkpoint path to check for at sanity-check end.
+
+        Args:
+            checkpoint_path: File whose existence is snapshotted in ``on_sanity_check_end``.
+        """
+        super().__init__()
+        self._checkpoint_path = checkpoint_path
+        self.existed_after_sanity_check: bool | None = None
+
+    def on_sanity_check_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
+        """Record whether ``checkpoint_path`` exists right as the sanity check ends.
+
+        Args:
+            trainer: Unused; required by the ``Callback`` hook signature.
+            pl_module: Unused; required by the ``Callback`` hook signature.
+        """
+        del trainer, pl_module
+        self.existed_after_sanity_check = self._checkpoint_path.exists()
+
+
 # ---------------------------------------------------------------------------
 # TestBestModelCallback
 # ---------------------------------------------------------------------------
 
 
+class TestEvaluatesBaseModel:
+    """Regular-track behaviour when validation does not evaluate the base model (``TrainConfig.eval_base_model``)."""
+
+    def test_regular_checkpoint_is_not_written_when_base_model_is_not_evaluated(self, tmp_path: Path) -> None:
+        """No base-weights checkpoint may be saved while the primary key carries the EMA score.
+
+        Under the default eval policy COCOEvalCallback mirrors the EMA score onto ``val/mAP_50_95``, so the key is
+        present and the parent ModelCheckpoint would happily save the base weights against it — checkpointing one model
+        on the other model's score. Only the EMA track is entitled to write this epoch.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), evaluates_base_model=False)
+        trainer = _make_trainer({"val/mAP_50_95": 0.9})
+
+        cb.on_validation_end(trainer, _make_pl_module())
+
+        assert not (tmp_path / "checkpoint_best_regular.pth").exists()
+
+    def test_ema_checkpoint_is_still_written_when_base_model_is_not_evaluated(self, tmp_path: Path) -> None:
+        """Suppressing the regular track must not also suppress the EMA track.
+
+        The EMA track is the only checkpoint tracking that runs under the default policy (#1285); disabling both would
+        leave a run with no best checkpoint at all.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", evaluates_base_model=False)
+        trainer = _make_trainer({"val/mAP_50_95": 0.9, "val/ema_mAP_50_95": 0.9})
+
+        cb.on_validation_end(trainer, _make_pl_module())
+
+        assert (tmp_path / "checkpoint_best_ema.pth").exists()
+
+    def test_regular_checkpoint_is_written_when_base_model_is_evaluated(self, tmp_path: Path) -> None:
+        """eval_base_model=True (and every use_ema=False run) keeps the regular track working as before.
+
+        The suppression must be scoped to the configuration that actually stops evaluating the base model, not applied
+        whenever EMA happens to be enabled.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), evaluates_base_model=True)
+        trainer = _make_trainer({"val/mAP_50_95": 0.9})
+
+        cb.on_validation_end(trainer, _make_pl_module())
+
+        assert (tmp_path / "checkpoint_best_regular.pth").exists()
+
+    def test_smoothing_accumulator_ignores_the_mirrored_ema_score(self, tmp_path: Path) -> None:
+        """The regular smoothing accumulator must not absorb EMA values it will never checkpoint against.
+
+        ``_smoothed_regular`` is persisted in the callback state and compared against the raw EMA score in
+        ``on_fit_end``; letting the mirrored EMA score feed it would corrupt that comparison on a later resume.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), evaluates_base_model=False, smooth_alpha=0.5)
+        trainer = _make_trainer({"val/mAP_50_95": 0.9})
+
+        cb.on_validation_end(trainer, _make_pl_module())
+
+        assert cb._smoothed_regular == 0.0
+
+
 class TestBestModelCallback:
     """Verify best-model checkpoint saving and selection."""
+
+    def test_existing_positional_arguments_keep_their_meaning(self, tmp_path: Path) -> None:
+        """Appending the new base-model flag preserves the legacy positional constructor order."""
+        callback = BestModelCallback(str(tmp_path), "val/mAP_50_95", None, False, 3, 0.2)
+
+        assert callback._run_test is False
+        assert callback._skip_best_epochs == 3
+        assert callback._smooth_alpha == pytest.approx(0.2)
+        assert callback._evaluates_base_model is True
 
     def test_checkpoint_payload_includes_model_config_when_provided(self) -> None:
         """Saved ``.pth`` checkpoints should carry the architecture schema needed for reload."""
@@ -311,6 +611,136 @@ class TestBestModelCallback:
 
         assert (tmp_path / "checkpoint_best_ema.pth").exists()
 
+    def test_ema_checkpoint_not_written_during_sanity_check(self, tmp_path: Path) -> None:
+        """PTL's pre-training sanity check must not seed checkpoint_best_ema.pth.
+
+        Regression test for #1348: PyTorch Lightning's sanity-check validation pass (which runs before any real training
+        epoch) was landing straight into the EMA improvement check below, so any positive sanity-check score — common
+        when starting a new training run initialized with pretrain_weights from a checkpoint pretrained on a different
+        dataset — got written out as the permanent "best" EMA checkpoint before a single real epoch ran. The regular-
+        checkpoint path already skips this via ModelCheckpoint._should_skip_saving_checkpoint's own
+        trainer.sanity_checking guard; the EMA block reimplements its own saving logic and never inherited that guard.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        pl_module = _make_pl_module()
+        trainer = _make_trainer(
+            {"val/mAP_50_95": 0.1, "val/ema_mAP_50_95": 0.83},
+            current_epoch=0,
+            sanity_checking=True,
+        )
+
+        cb.on_validation_end(trainer, pl_module)
+
+        assert not (tmp_path / "checkpoint_best_ema.pth").exists()
+        assert cb._best_ema == 0.0
+
+    def test_ema_checkpoint_written_on_first_real_epoch_after_sanity_check(self, tmp_path: Path) -> None:
+        """A genuine epoch 0 right after the sanity check still saves the EMA checkpoint.
+
+        Confirms the sanity_checking guard is specific to the sanity-check pass, not a blanket "never write at epoch 0"
+        — the correct guard is trainer.sanity_checking, not trainer.current_epoch == 0.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        pl_module = _make_pl_module()
+
+        sanity_trainer = _make_trainer(
+            {"val/mAP_50_95": 0.1, "val/ema_mAP_50_95": 0.83},
+            current_epoch=0,
+            sanity_checking=True,
+        )
+        cb.on_validation_end(sanity_trainer, pl_module)
+
+        real_trainer = _make_trainer(
+            {"val/mAP_50_95": 0.2, "val/ema_mAP_50_95": 0.35},
+            current_epoch=0,
+            sanity_checking=False,
+        )
+        cb.on_validation_end(real_trainer, pl_module)
+
+        assert (tmp_path / "checkpoint_best_ema.pth").exists()
+        assert cb._best_ema == pytest.approx(0.35)
+
+    def test_smoothed_regular_not_updated_during_sanity_check(self, tmp_path: Path) -> None:
+        """The regular-monitor smoothing accumulator must not warm up from the sanity check.
+
+        Guards the secondary smoothing state (smooth_alpha > 0) alongside the EMA checkpoint above: both are custom
+        bookkeeping that sits outside ModelCheckpoint's own sanity-check guard.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.9)
+        pl_module = _make_pl_module()
+        trainer = _make_trainer({"val/mAP_50_95": 0.83}, current_epoch=0, sanity_checking=True)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        assert cb._smoothed_regular == 0.0
+
+    def test_ema_checkpoint_not_written_during_real_ptl_sanity_check(self, tmp_path: Path) -> None:
+        """End-to-end: an unmodified Trainer with the sanity check enabled must not seed checkpoint_best_ema.pth.
+
+        The three tests above call on_validation_end directly with trainer.sanity_checking mocked True — they pin the
+        callback's own guard logic but not the premise it depends on: that PyTorch Lightning actually invokes
+        on_validation_end with trainer.sanity_checking=True during its real sanity-check pass
+        (Trainer._run_sanity_check, which reuses the same evaluation loop as real validation). This test runs a real
+        Trainer with num_sanity_val_steps left enabled to close that gap, using a probe callback's on_sanity_check_end
+        hook to pin down that no checkpoint exists at that exact moment — before a same-valued real epoch 0 could
+        produce the same file for a legitimate reason.
+        """
+        x = torch.randn(8, 4)
+        y = torch.randn(8, 1)
+        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+
+        checkpoint_path = tmp_path / "checkpoint_best_ema.pth"
+        save_cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
+        ema_cb = RFDETREMACallback()
+        probe = _SanityCheckEndProbe(checkpoint_path)
+        trainer = Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=2,
+            limit_train_batches=2,
+            limit_val_batches=1,
+            callbacks=[save_cb, ema_cb, probe],
+            default_root_dir=str(tmp_path),
+        )
+        # Same value on every validation call (sanity check and the real epoch both log unconditionally) —
+        # reproduces #1348 exactly. The probe below, not the end-state checkpoint, is what pins the timing down.
+        trainer.fit(
+            _EmaMetricModule(regular_value=0.2, ema_value=0.83),
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+        )
+
+        assert probe.existed_after_sanity_check is False, (
+            "checkpoint_best_ema.pth existed right after PTL's sanity check ended — the sanity-check validation pass "
+            "wrote it before any real epoch ran"
+        )
+        assert checkpoint_path.exists()
+        assert save_cb._best_ema == pytest.approx(0.83)
+
+    def test_ema_checkpoint_saved_when_regular_monitor_absent(self, tmp_path: Path) -> None:
+        """Under `eval_ema_only`, val/mAP_50_95 is never logged — only val/ema_mAP_50_95 is.
+
+        Regression test for #1285: the regular-monitor guard in on_validation_end used to `return` before reaching the
+        EMA block, so checkpoint_best_ema.pth was never written in this mode even though the EMA metric had real data
+        every epoch.
+        """
+        cb = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+        )
+        # No "val/mAP_50_95" key at all — matches eval_ema_only routing (config.py:1068-1074).
+        trainer = _make_trainer({"val/ema_mAP_50_95": 0.6})
+        pl_module = _make_pl_module()
+
+        cb.on_validation_end(trainer, pl_module)
+
+        assert (tmp_path / "checkpoint_best_ema.pth").exists()
+        assert not (tmp_path / "checkpoint_best_regular.pth").exists()
+
     def test_ema_checkpoint_saves_ema_callback_weights(self, tmp_path: Path) -> None:
         """EMA checkpoint must store EMA callback weights, not live model weights."""
         cb = BestModelCallback(
@@ -320,6 +750,10 @@ class TestBestModelCallback:
         ema_state = {"w": torch.ones(1)}
         ema_callback = MagicMock()
         ema_callback.get_ema_model_state_dict.return_value = ema_state
+        # Real dict, not MagicMock's auto-generated one: _build_checkpoint_payload now calls
+        # callback.state_dict() on every trainer callback to populate the "callbacks" key
+        # (#checkpoint-resume-callbacks-fix), and torch.save can't pickle a bare MagicMock.
+        ema_callback.state_dict.return_value = {}
         trainer = _make_trainer(
             {"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6},
             callbacks=[ema_callback],
@@ -341,6 +775,10 @@ class TestBestModelCallback:
         ema_state = {"w": torch.ones(1)}
         ema_callback = MagicMock()
         ema_callback.get_ema_model_state_dict.return_value = ema_state
+        # Real dict, not MagicMock's auto-generated one: _build_checkpoint_payload now calls
+        # callback.state_dict() on every trainer callback to populate the "callbacks" key
+        # (#checkpoint-resume-callbacks-fix), and torch.save can't pickle a bare MagicMock.
+        ema_callback.state_dict.return_value = {}
         trainer = _make_trainer(
             {"val/mAP_50_95": 0.6, "val/ema_mAP_50_95": 0.6},
             callbacks=[ema_callback],
@@ -464,6 +902,23 @@ class TestBestModelCallback:
         cb.on_fit_end(trainer, pl_module)
 
         assert (tmp_path / "checkpoint_best_ema.pth").exists()
+
+    def test_zero_ema_score_promotes_ema_checkpoint_for_ema_only_runs(self, tmp_path: Path) -> None:
+        """A valid zero EMA score still produces and promotes the total checkpoint when no base model was evaluated."""
+        callback = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+            evaluates_base_model=False,
+            run_test=False,
+        )
+        trainer = _make_trainer({"val/ema_mAP_50_95": 0.0})
+
+        callback.on_validation_end(trainer, _make_pl_module())
+        callback.on_fit_end(trainer, _make_pl_module())
+
+        assert (tmp_path / "checkpoint_best_ema.pth").exists()
+        total = torch.load(tmp_path / "checkpoint_best_total.pth", map_location="cpu", weights_only=False)
+        assert total["best_total_source"] == "ema"
 
     def test_best_ema_not_overwritten_when_metric_improved(self, tmp_path: Path) -> None:
         """on_fit_end must not rewrite checkpoint_best_ema.pth when a true best was saved during training."""
@@ -1019,6 +1474,333 @@ class TestBestModelCallback:
         assert trainer_second.current_epoch == 2
         assert trainer_second.global_step == 2
 
+    @pytest.mark.parametrize("checkpoint_name", ["checkpoint_best_regular.pth", "checkpoint_best_total.pth"])
+    def test_best_model_score_survives_real_trainer_fit_resume(self, tmp_path: Path, checkpoint_name: str) -> None:
+        """``best_model_score`` and the on-disk checkpoint must survive a real ``trainer.fit(ckpt_path=...)`` resume.
+
+        Regression test for the "callbacks" key being absent from ``_build_checkpoint_payload``'s output — the bug this
+        PR fixes. Every existing regression test for callback-state persistence (``TestBestEmaStatePersistence``) calls
+        ``state_dict()``/``load_state_dict()`` directly in Python, never through PTL's own
+        ``_call_callbacks_load_state_dict``, so none of them would catch the payload missing the "callbacks" key.
+        Parametrized over ``checkpoint_best_regular.pth`` (built directly by ``_build_checkpoint_payload``) and
+        ``checkpoint_best_total.pth`` (built via ``shutil.copy2`` + ``strip_checkpoint``, a separate code path that
+        needs ``"callbacks"`` in ``_PTL_COMPAT_KEYS``).
+        """
+        x = torch.randn(8, 4)
+        y = torch.randn(8, 1)
+        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+
+        save_cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
+        trainer_first = Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=2,
+            limit_val_batches=1,
+            callbacks=[save_cb],
+            default_root_dir=str(tmp_path),
+        )
+        trainer_first.fit(_MetricModule(0.7), train_dataloaders=train_loader, val_dataloaders=val_loader)
+        assert save_cb.best_model_score is not None
+        assert save_cb.best_model_score.item() == pytest.approx(0.7)
+
+        ckpt_path = tmp_path / checkpoint_name
+        assert ckpt_path.exists()
+        first_weights = {
+            k: v.clone() for k, v in torch.load(ckpt_path, map_location="cpu", weights_only=False)["model"].items()
+        }
+
+        # Fresh callback instance, resumed via a real Trainer.fit(ckpt_path=...) — exercises PTL's
+        # own `_call_callbacks_load_state_dict`, not a direct load_state_dict() call.
+        resumed_cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
+        trainer_second = Trainer(
+            max_epochs=2,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=2,
+            limit_val_batches=1,
+            callbacks=[resumed_cb],
+            default_root_dir=str(tmp_path),
+        )
+        # Post-resume epoch logs a *worse* metric (0.3): without the fix, best_model_score resets to
+        # None on a fresh callback and 0.3 trivially "improves" on it, overwriting the on-disk
+        # checkpoint with worse weights — the exact failure mode from the issue this PR fixes.
+        trainer_second.fit(
+            _MetricModule(0.3),
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+            ckpt_path=str(ckpt_path),
+        )
+
+        assert resumed_cb.best_model_score is not None
+        assert resumed_cb.best_model_score.item() == pytest.approx(0.7), (
+            'best_model_score must be restored from the checkpoint\'s "callbacks" key; without the '
+            "fix a fresh BestModelCallback starts with best_model_score=None and 0.3 wins by default"
+        )
+        # The worse post-resume epoch must not have overwritten checkpoint_best_regular.pth on disk.
+        # checkpoint_best_total.pth IS re-copied by trainer_second's own on_fit_end (every trainer.fit()
+        # call re-runs on_fit_end, not just the first), so re-asserting equality there would only prove
+        # the second copy reproduced the first byte-for-byte, not that the regular checkpoint itself
+        # survived untouched — hence this assertion only runs for the regular checkpoint.
+        if checkpoint_name == "checkpoint_best_regular.pth":
+            reloaded = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            for key, value in reloaded["model"].items():
+                assert torch.equal(value, first_weights[key]), (
+                    f"checkpoint_best_regular.pth weights for {key!r} changed after a worse post-resume "
+                    "epoch — the good checkpoint was overwritten"
+                )
+
+    def test_ema_and_early_stopping_state_survive_real_trainer_fit_resume(self, tmp_path: Path) -> None:
+        """RFDETREMACallback and RFDETREarlyStopping state must also survive a real ``ckpt_path`` resume.
+
+        ``test_best_model_score_survives_real_trainer_fit_resume`` only registers ``BestModelCallback`` on the
+        trainer, so it exercises restoration of best-score tracking alone. The warning added to ``RFDETR.train()``
+        promises "best-score tracking, EMA, early stopping" all resume correctly together — this test registers
+        all three callbacks so ``_build_checkpoint_payload``'s generic ``trainer.callbacks`` loop is actually
+        exercised for the other two, not just ``BestModelCallback`` itself. Lightweight checkpoints reset the
+        optimizer loop's global step, so EMA restores its averaged weights but resets its step guard to permit the
+        first new batch update.
+        """
+        x = torch.randn(8, 4)
+        y = torch.randn(8, 1)
+        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+
+        # monitor_ema enables last_ema.pth: unlike checkpoint_best_regular.pth (only rewritten on a
+        # metric *improvement*, which is exactly the condition that resets RFDETREarlyStopping.wait_count
+        # to 0 — so it can never capture a nonzero wait_count), last_ema.pth is rebuilt unconditionally
+        # in on_fit_end with each callback's *live* end-of-training state.
+        save_cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
+        ema_cb = RFDETREMACallback()
+        early_stop_cb = RFDETREarlyStopping(patience=5, min_delta=0.001, verbose=False)
+        trainer_first = Trainer(
+            max_epochs=2,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=2,
+            limit_val_batches=1,
+            callbacks=[save_cb, ema_cb, early_stop_cb],
+            default_root_dir=str(tmp_path),
+        )
+        # Epoch 0: 0.7 (best, wait_count 0->0). Epoch 1: 0.5 (worse, wait_count 0->1) — training ends
+        # with wait_count=1 and ema_cb mid-averaging, both captured live into last_ema.pth.
+        trainer_first.fit(_VaryingMetricModule([0.7, 0.5]), train_dataloaders=train_loader, val_dataloaders=val_loader)
+
+        ckpt_path = tmp_path / "last_ema.pth"
+        assert ckpt_path.exists()
+        persisted_callbacks = torch.load(ckpt_path, map_location="cpu", weights_only=False)["callbacks"]
+        persisted_ema_step = persisted_callbacks[ema_cb.state_key]["latest_update_step"]
+        persisted_wait_count = persisted_callbacks[early_stop_cb.state_key]["wait_count"]
+        # Both must be genuinely non-default so a fresh, un-restored callback (which starts at 0) cannot
+        # accidentally satisfy the post-resume assertions below.
+        assert persisted_ema_step > 0
+        assert persisted_wait_count > 0
+
+        ema_callback = RFDETREMACallback()
+        early_stop_callback = RFDETREarlyStopping(patience=5, min_delta=0.001, verbose=False)
+        capture = _CallbackStateCaptureCallback(ema_callback, early_stop_callback)
+        # last_ema.pth is built in on_fit_end, after the epoch counter has already advanced past both
+        # trained epochs (0 and 1) to 2 — one further than the on_validation_end-time snapshot
+        # _make_fit_loop_state assumes (see its docstring). PTL's restored fit_loop therefore treats 3
+        # epochs as already completed, so max_epochs must be 4 (not 3) for one real epoch to run here.
+        trainer_second = Trainer(
+            max_epochs=4,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=2,
+            limit_val_batches=1,
+            callbacks=[
+                BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False),
+                ema_callback,
+                early_stop_callback,
+                capture,
+            ],
+            default_root_dir=str(tmp_path),
+        )
+        trainer_second.fit(
+            _VaryingMetricModule([0.7, 0.5, 0.9, 0.9]),
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+            ckpt_path=str(ckpt_path),
+        )
+
+        assert capture.ema_latest_update_step == 0, (
+            "RFDETREMACallback must reset its absolute step guard when a lightweight checkpoint resets "
+            "trainer.global_step, otherwise the resumed phase skips EMA updates"
+        )
+        assert capture.early_stop_wait_count == persisted_wait_count, (
+            "RFDETREarlyStopping.wait_count must be restored from the checkpoint's 'callbacks' key; "
+            "without the fix a fresh callback starts at 0"
+        )
+
+    def test_ema_checkpoint_weights_survive_real_trainer_fit_resume(self, tmp_path: Path) -> None:
+        """``checkpoint_best_ema.pth`` weights must survive a real ``ckpt_path`` resume too.
+
+        ``test_best_model_score_survives_real_trainer_fit_resume`` only parametrizes over
+        ``checkpoint_best_regular.pth``/``checkpoint_best_total.pth`` and never asserts weight
+        preservation for the EMA track. The fix in ``_build_checkpoint_payload`` applies identically to
+        ``checkpoint_best_ema.pth`` (same code path, via ``_write_ema_checkpoint``), but without a
+        dedicated regression test a broken ``_best_ema`` restoration on this specific file would slip
+        through: a worse post-resume EMA epoch would trivially beat a reset ``_best_ema=0.0`` and
+        overwrite the good EMA checkpoint on disk, exactly like the regular-checkpoint failure mode this
+        PR fixes.
+        """
+        x = torch.randn(8, 4)
+        y = torch.randn(8, 1)
+        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+
+        save_cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
+        ema_cb = RFDETREMACallback()
+        trainer_first = Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=2,
+            limit_val_batches=1,
+            callbacks=[save_cb, ema_cb],
+            default_root_dir=str(tmp_path),
+        )
+        trainer_first.fit(
+            _EmaMetricModule(regular_value=0.4, ema_value=0.75),
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+        )
+        assert save_cb._best_ema == pytest.approx(0.75)
+
+        ckpt_path = tmp_path / "checkpoint_best_ema.pth"
+        assert ckpt_path.exists()
+        first_ema_weights = {
+            k: v.clone() for k, v in torch.load(ckpt_path, map_location="cpu", weights_only=False)["model"].items()
+        }
+
+        # Fresh callbacks, resumed via a real Trainer.fit(ckpt_path=...) — exercises PTL's own
+        # _call_callbacks_load_state_dict for both BestModelCallback._best_ema and the EMA callback's
+        # own averaging state, not a direct load_state_dict() call.
+        resumed_save_cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
+        resumed_ema_cb = RFDETREMACallback()
+        trainer_second = Trainer(
+            max_epochs=2,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=2,
+            limit_val_batches=1,
+            callbacks=[resumed_save_cb, resumed_ema_cb],
+            default_root_dir=str(tmp_path),
+        )
+        # Post-resume epoch logs a *worse* EMA metric (0.3): without the fix, _best_ema resets to 0.0 on
+        # a fresh callback and 0.3 trivially "improves" on it, overwriting the on-disk EMA checkpoint.
+        trainer_second.fit(
+            _EmaMetricModule(regular_value=0.35, ema_value=0.3),
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+            ckpt_path=str(ckpt_path),
+        )
+
+        assert resumed_save_cb._best_ema == pytest.approx(0.75), (
+            '_best_ema must be restored from the checkpoint\'s "callbacks" key; without the fix a '
+            "fresh BestModelCallback starts with _best_ema=0.0 and the worse post-resume EMA (0.3) "
+            "wins by default"
+        )
+        reloaded = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        for key, value in reloaded["model"].items():
+            assert torch.equal(value, first_ema_weights[key]), (
+                f"checkpoint_best_ema.pth weights for {key!r} changed after a worse post-resume EMA "
+                "epoch — the good EMA checkpoint was overwritten"
+            )
+
+    def test_best_model_score_not_restored_when_output_dir_changes(self, tmp_path: Path) -> None:
+        """A resumed ``output_dir`` different from the checkpoint's own does not restore ``best_model_score``.
+
+        Pins PTL's own ``ModelCheckpoint.load_state_dict()`` gate (installed pytorch-lightning,
+        ``model_checkpoint.py``): it only restores ``best_model_score``/``best_k_models`` when the resumed callback's
+        ``dirpath`` matches the value stored in the checkpoint's ``"callbacks"`` state exactly; on a mismatch it warns
+        and restores only ``best_model_path``. RF-DETR's ``resume`` and ``output_dir`` config fields are independent
+        (``config.py``), so pointing ``resume=`` at one directory while writing to another is a config-permitted
+        combination, not a corrupted setup — this test locks in the resulting (previously untested) behavior.
+
+        ``max_epochs=1`` on both phases means the checkpoint's restored fit-loop progress (1 epoch already completed)
+        leaves zero epochs left to run in phase two: the assertions below capture exactly what ``load_state_dict()``
+        restored, with no confound from a subsequent training epoch overwriting ``best_model_score``/``best_model_path``
+        again on its own.
+        """
+        x = torch.randn(8, 4)
+        y = torch.randn(8, 1)
+        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+
+        save_cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
+        trainer_first = Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=2,
+            limit_val_batches=1,
+            callbacks=[save_cb],
+            default_root_dir=str(tmp_path),
+        )
+        trainer_first.fit(_MetricModule(0.7), train_dataloaders=train_loader, val_dataloaders=val_loader)
+        assert save_cb.best_model_score.item() == pytest.approx(0.7)
+
+        ckpt_path = tmp_path / "checkpoint_best_regular.pth"
+        assert ckpt_path.exists()
+
+        # Resume into a DIFFERENT output_dir than the one the checkpoint was saved under.
+        other_output_dir = tmp_path / "other_output_dir"
+        other_output_dir.mkdir()
+        resumed_cb = BestModelCallback(output_dir=str(other_output_dir), run_test=False)
+        trainer_second = Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=2,
+            limit_val_batches=1,
+            callbacks=[resumed_cb],
+            default_root_dir=str(tmp_path),
+        )
+        with pytest.warns(UserWarning, match="dirpath has changed"):
+            trainer_second.fit(
+                _MetricModule(0.3),
+                train_dataloaders=train_loader,
+                val_dataloaders=val_loader,
+                ckpt_path=str(ckpt_path),
+            )
+
+        # No epoch ran post-resume (fit_loop already shows 1/1 epochs completed), so these values are
+        # exactly what load_state_dict() produced, undisturbed by any further training.
+        assert trainer_second.global_step == 0
+        # best_model_score was NOT carried over — the dirpath mismatch skips it, leaving the fresh
+        # callback's own default (None), exactly as if it had never resumed at all.
+        assert resumed_cb.best_model_score is None
+        # best_model_path IS still carried over regardless of the dirpath mismatch (PTL restores it
+        # unconditionally), even though it now points at a path under the OLD output_dir.
+        assert resumed_cb.best_model_path == str(ckpt_path)
+
 
 # ---------------------------------------------------------------------------
 # TestRFDETREarlyStopping
@@ -1206,6 +1988,24 @@ class TestRFDETREarlyStopping:
         cb.on_validation_end(trainer, pl_module)
 
         assert cb.best_score.item() == pytest.approx(0.45)
+        assert cb.wait_count == 0
+
+    def test_only_ema_available(self) -> None:
+        """When the regular monitor key is absent, falls back to EMA without error.
+
+        Mirrors `test_only_regular_available`; this is the exact shape `eval_ema_only` produces
+        (`val/mAP_50_95` never populated, see #1285) and was previously untested here, unlike
+        `BestModelCallback.on_validation_end`'s sibling guard where the same input shape was an
+        outright bug (see `test_ema_checkpoint_saved_when_regular_monitor_absent`). This callback's
+        `regular_val is None` branching already handled it correctly; this test locks that in.
+        """
+        cb = RFDETREarlyStopping(patience=5, min_delta=0.001)
+        pl_module = _make_pl_module()
+
+        trainer = _make_trainer({"val/ema_mAP_50_95": 0.55})
+        cb.on_validation_end(trainer, pl_module)
+
+        assert cb.best_score.item() == pytest.approx(0.55)
         assert cb.wait_count == 0
 
     def test_neither_available_is_noop(self) -> None:

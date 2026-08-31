@@ -34,6 +34,7 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 _RF_HOME_ENV_VAR = "RF_HOME"
+_ROBOFLOW_HOME_ENV_VAR = "ROBOFLOW_HOME"
 _DEFAULT_CACHE_DIR = "~/.roboflow/models"
 
 
@@ -88,6 +89,8 @@ class ModelWeightsBase(Enum):
         'https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth'
     """
 
+    _value_: ModelWeightAsset
+
     def __new__(cls, asset: ModelWeightAsset) -> ModelWeightsBase:
         obj = object.__new__(cls)
         obj._value_ = asset
@@ -97,17 +100,17 @@ class ModelWeightsBase(Enum):
     @property
     def filename(self) -> str:
         """Get the filename from the underlying ModelWeightAsset."""
-        return self.value.filename
+        return self._value_.filename
 
     @property
     def url(self) -> str:
         """Get the URL from the underlying ModelWeightAsset."""
-        return self.value.url
+        return self._value_.url
 
     @property
     def md5_hash(self) -> str | None:
         """Get the MD5 hash from the underlying ModelWeightAsset."""
-        return self.value.md5_hash
+        return self._value_.md5_hash
 
     @classmethod
     def from_filename(cls, filename: str) -> ModelWeightAsset | None:
@@ -125,8 +128,8 @@ class ModelWeightsBase(Enum):
             'https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth'
         """
         for member in cls:
-            if member.value.filename == filename:
-                return member.value  # Return the ModelWeightAsset directly
+            if member._value_.filename == filename:
+                return member._value_  # Return the ModelWeightAsset directly
         return None
 
     @classmethod
@@ -162,7 +165,7 @@ class ModelWeightsBase(Enum):
         Returns:
             List of model filenames
         """
-        return [member.value.filename for member in cls]
+        return [member._value_.filename for member in cls]
 
 
 class ModelWeights(ModelWeightsBase):
@@ -272,13 +275,16 @@ class ModelWeights(ModelWeightsBase):
 def get_model_cache_dir() -> str:
     """Return the directory where RF-DETR caches downloaded model weights.
 
-    Reads the ``RF_HOME`` environment variable; defaults to ``~/.roboflow/models`` when the variable is not set.
+    Reads the ``RF_HOME`` environment variable, falling back to its alias ``ROBOFLOW_HOME``; defaults to
+    ``~/.roboflow/models`` when neither is set.  ``RF_HOME`` is canonical — when both variables are set it wins, so
+    existing configurations keep their behavior.  An empty value is treated as unset.
 
-    Set ``RF_HOME`` to override the cache location for all RF-DETR models:
+    Set either variable to override the cache location for all RF-DETR models:
 
     .. code-block:: bash
 
-        export RF_HOME=/mnt/shared/models
+        export RF_HOME=/mnt/shared/models       # canonical
+        export ROBOFLOW_HOME=/mnt/shared/models  # accepted alias
 
     Args: None
 
@@ -289,6 +295,7 @@ def get_model_cache_dir() -> str:
     Examples:
         >>> import os
         >>> _ = os.environ.pop("RF_HOME", None)  # ensure default
+        >>> _ = os.environ.pop("ROBOFLOW_HOME", None)
         >>> expected = os.path.normpath(os.path.expanduser("~/.roboflow/models"))
         >>> get_model_cache_dir() == expected
         True
@@ -297,8 +304,15 @@ def get_model_cache_dir() -> str:
         >>> get_model_cache_dir() == expected
         True
         >>> del os.environ["RF_HOME"]
+        >>> os.environ["ROBOFLOW_HOME"] = "~/roboflow_cache"
+        >>> expected = os.path.normpath(os.path.expanduser("~/roboflow_cache"))
+        >>> get_model_cache_dir() == expected
+        True
+        >>> del os.environ["ROBOFLOW_HOME"]
     """
-    cache_dir = os.environ.get(_RF_HOME_ENV_VAR, _DEFAULT_CACHE_DIR)
+    # `RF_HOME` is canonical; `ROBOFLOW_HOME` is an accepted alias. An empty value is
+    # treated as unset so it falls through to the alias and then the default.
+    cache_dir = os.environ.get(_RF_HOME_ENV_VAR) or os.environ.get(_ROBOFLOW_HOME_ENV_VAR) or _DEFAULT_CACHE_DIR
     return os.path.abspath(os.path.expanduser(cache_dir))
 
 

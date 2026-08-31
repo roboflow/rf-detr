@@ -15,6 +15,7 @@ import pytest
 import torch
 from pydantic import ValidationError
 
+import rfdetr.config as config_module
 from rfdetr.config import (
     AugmentationBackend,
     KeypointTrainConfig,
@@ -278,6 +279,19 @@ class TestTrainConfigT42PromotedFields:
         """lr_scheduler defaults to 'step'."""
         assert self._tc(tmp_path).lr_scheduler == "step"
 
+    def test_best_model_metric_default_is_map(self, tmp_path):
+        """best_model_metric defaults to 'map' for backward compatibility."""
+        assert self._tc(tmp_path).best_model_metric == "map"
+
+    def test_best_model_metric_accepts_mar(self, tmp_path):
+        """best_model_metric accepts 'mar' to rank checkpoints/early-stop by recall instead of mAP."""
+        assert self._tc(tmp_path, best_model_metric="mar").best_model_metric == "mar"
+
+    def test_best_model_metric_rejects_invalid_value(self, tmp_path):
+        """best_model_metric rejects any value outside the 'map'/'mar' literal."""
+        with pytest.raises(ValidationError):
+            self._tc(tmp_path, best_model_metric="f1")
+
     def test_optimizer_default_is_adamw(self, tmp_path):
         """Optimizer defaults to AdamW for backward compatibility."""
         assert self._tc(tmp_path).optimizer == "adamw"
@@ -310,9 +324,56 @@ class TestTrainConfigT42PromotedFields:
         """ema_update_interval defaults to 1 (update every step)."""
         assert self._tc(tmp_path).ema_update_interval == 1
 
-    def test_compute_val_loss_default_is_true(self, tmp_path):
-        """compute_val_loss defaults to True."""
-        assert self._tc(tmp_path).compute_val_loss is True
+    def test_compute_val_loss_default_is_auto(self, tmp_path):
+        """compute_val_loss defaults to the automatic validation-monitor policy."""
+        assert self._tc(tmp_path).compute_val_loss == "auto"
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param(True, id="enabled"),
+            pytest.param(False, id="disabled"),
+            pytest.param("auto", id="automatic"),
+        ],
+    )
+    def test_compute_val_loss_accepts_bool_or_auto(self, tmp_path, value):
+        """compute_val_loss preserves explicit boolean and automatic policies."""
+        assert self._tc(tmp_path, compute_val_loss=value).compute_val_loss == value
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            pytest.param("true", True, id="string-true-coerces-to-True"),
+            pytest.param("false", False, id="string-false-coerces-to-False"),
+            pytest.param("yes", True, id="string-yes-coerces-to-True"),
+            pytest.param("no", False, id="string-no-coerces-to-False"),
+            pytest.param("auto", "auto", id="string-auto-matches-literal"),
+        ],
+    )
+    def test_compute_val_loss_coerces_string_aliases(self, tmp_path, raw, expected):
+        """compute_val_loss silently coerces common string aliases via pydantic's lax bool parsing.
+
+        The bool | Literal["auto"] union tries the bool arm first, so "yes"/"no"/"true"/"false" coerce silently instead
+        of raising; "auto" instead matches the Literal arm unchanged. Pinning this behavior catches a pydantic upgrade
+        that changes union member resolution order.
+        """
+        assert self._tc(tmp_path, compute_val_loss=raw).compute_val_loss == expected
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            pytest.param("Auto", id="capitalized-auto-rejected"),
+            pytest.param("AUTO", id="uppercase-auto-rejected"),
+        ],
+    )
+    def test_compute_val_loss_rejects_case_variant_of_auto(self, tmp_path, raw):
+        """compute_val_loss rejects any casing of 'auto' other than the exact lowercase literal.
+
+        Literal["auto"] is case-strict and these variants don't match the bool arm's alias set either, so pydantic must
+        raise rather than silently normalizing casing.
+        """
+        with pytest.raises(ValidationError):
+            self._tc(tmp_path, compute_val_loss=raw)
 
     def test_compute_test_loss_default_is_true(self, tmp_path):
         """compute_test_loss defaults to True."""
@@ -463,6 +524,31 @@ class TestTrainConfigT42PromotedFields:
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, **{field: value})
 
+    def test_grad_accum_steps_defaults_to_one(self, tmp_path: Path) -> None:
+        """Gradient accumulation is opt-in: the default is 1, so the default effective batch is batch_size alone."""
+        assert self._tc(tmp_path).grad_accum_steps == 1
+
+    @pytest.mark.parametrize(
+        "eval_batch_size",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+        ],
+    )
+    def test_eval_batch_size_rejects_non_positive_values(self, tmp_path: Path, eval_batch_size: int) -> None:
+        """eval_batch_size must be >= 1 when provided."""
+        with pytest.raises(ValidationError, match=r"eval_batch_size\s+Value error, eval_batch_size must be >= 1"):
+            self._tc(tmp_path, eval_batch_size=eval_batch_size)
+
+    def test_eval_batch_size_rejects_auto_sentinel(self, tmp_path: Path) -> None:
+        """eval_batch_size rejects batch_size's automatic-sizing sentinel."""
+        with pytest.raises(ValidationError, match=r"eval_batch_size\s+Input should be a valid integer"):
+            self._tc(tmp_path, eval_batch_size="auto")
+
+    def test_eval_batch_size_defaults_to_none(self, tmp_path: Path) -> None:
+        """eval_batch_size defaults to None so eval loaders inherit the resolved train batch size."""
+        assert self._tc(tmp_path).eval_batch_size is None
+
     @pytest.mark.parametrize("ema_headroom", [0.0, 1.5])
     def test_auto_batch_ema_headroom_must_be_in_open_one(self, tmp_path, ema_headroom):
         """auto_batch_ema_headroom must be in (0, 1]."""
@@ -470,19 +556,87 @@ class TestTrainConfigT42PromotedFields:
             self._tc(tmp_path, auto_batch_ema_headroom=ema_headroom)
 
     def test_eval_ema_only_requires_use_ema(self, tmp_path):
-        """eval_ema_only=True with use_ema=False must raise — no EMA model exists to evaluate."""
+        """eval_ema_only=True with use_ema=False must raise — no EMA model exists to evaluate.
+
+        The flag is deprecated but still validated: a contradictory pair must fail loudly rather than
+        be silently absorbed by the deprecation shim.
+        """
         with pytest.raises(ValidationError, match="eval_ema_only"):
-            self._tc(tmp_path, eval_ema_only=True, use_ema=False)
+            with pytest.warns(FutureWarning):
+                self._tc(tmp_path, eval_ema_only=True, use_ema=False)
 
     def test_eval_ema_only_accepted_with_use_ema(self, tmp_path):
-        """eval_ema_only=True is accepted when use_ema=True (the default)."""
-        tc = self._tc(tmp_path, eval_ema_only=True, use_ema=True)
+        """eval_ema_only=True is accepted when use_ema=True (the default), and warns that it is deprecated.
+
+        Evaluating only the selected model is now the default, so the flag is inert. Existing scripts that set it must
+        keep working through the 0.3-cycle deprecation window rather than failing on an unknown field.
+        """
+        with pytest.warns(FutureWarning, match="eval_ema_only"):
+            tc = self._tc(tmp_path, eval_ema_only=True, use_ema=True)
         assert tc.eval_ema_only is True
 
-    def test_eval_ema_only_defaults_to_false(self, tmp_path):
-        """eval_ema_only defaults to False, preserving current dual base+EMA validation behaviour."""
-        tc = self._tc(tmp_path)
+    def test_legacy_eval_ema_only_false_maps_to_base_model(self, tmp_path):
+        """An old explicit ``eval_ema_only=False`` input retains its prior base-plus-EMA behavior."""
+        with pytest.warns(FutureWarning, match="eval_ema_only"):
+            tc = self._tc(tmp_path, eval_ema_only=False, use_ema=True)
+
+        assert tc.eval_base_model is True
+
+    def test_dumped_eval_ema_only_config_reloads_without_warning(self, tmp_path):
+        """A new config dump carries the migrated policy and can reload without repeating the deprecation warning."""
+        with pytest.warns(FutureWarning, match="eval_ema_only"):
+            original = self._tc(tmp_path, eval_ema_only=True, use_ema=True)
+
+        dumped = original.model_dump()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            reloaded = TrainConfig(**dumped)
+
+        assert reloaded.eval_base_model is False
+
+    def test_eval_ema_only_defaults_to_false_without_warning(self, tmp_path):
+        """eval_ema_only defaults to False and a config that never sets it must not warn.
+
+        Round-tripping a dumped config carries every field explicitly at its default; warning on the default value would
+        make every reload noisy.
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            tc = self._tc(tmp_path)
         assert tc.eval_ema_only is False
+
+    def test_eval_base_model_defaults_to_false(self, tmp_path):
+        """eval_base_model defaults to False: validation evaluates only the selected model.
+
+        This is the PR12 behaviour change — with use_ema=True the base-model forward pass is no longer run every
+        validation batch, which is the ~3-3.5%-of-epoch saving.
+        """
+        tc = self._tc(tmp_path)
+        assert tc.eval_base_model is False
+
+    def test_eval_base_model_can_be_enabled(self, tmp_path):
+        """eval_base_model=True is accepted and restores the base+EMA two-forward comparison."""
+        tc = self._tc(tmp_path, eval_base_model=True)
+        assert tc.eval_base_model is True
+
+    def test_eval_base_model_is_accepted_without_ema(self, tmp_path):
+        """eval_base_model=True with use_ema=False must not raise — the base model is evaluated either way.
+
+        A default must be inert in every legal configuration; the opt-in that reverses it has to be too, so no cross-
+        field validator may reject this pair.
+        """
+        tc = self._tc(tmp_path, eval_base_model=True, use_ema=False)
+        assert tc.eval_base_model is True
+
+    def test_eval_ema_only_conflicts_with_eval_base_model(self, tmp_path):
+        """eval_ema_only=True together with eval_base_model=True must raise — the two requests contradict.
+
+        The deprecated flag asks for EMA-only evaluation while the new opt-in asks for the base model as well; silently
+        picking a winner would give one of the two settings no effect.
+        """
+        with pytest.raises(ValidationError, match="eval_base_model"):
+            with pytest.warns(FutureWarning):
+                self._tc(tmp_path, eval_ema_only=True, eval_base_model=True)
 
     def test_eval_masks_head_resolution_defaults_to_false(self, tmp_path):
         """eval_masks_head_resolution defaults to False, preserving full-resolution mask upsampling."""
@@ -530,6 +684,16 @@ class TestTrainConfigLRScheduler:
         """A dotted import path is accepted verbatim as an explicit scheduler."""
         tc = self._tc(tmp_path, lr_scheduler="torch.optim.lr_scheduler.StepLR", lr_scheduler_kwargs={"step_size": 5})
         assert tc.lr_scheduler == "torch.optim.lr_scheduler.StepLR"
+
+    def test_compute_val_loss_false_rejects_plateau_loss_monitor(self, tmp_path):
+        """A plateau scheduler monitoring val/loss cannot disable the metric it requires."""
+        with pytest.raises(ValidationError, match="compute_val_loss=False requires a non-val/loss monitor"):
+            self._tc(
+                tmp_path,
+                compute_val_loss=False,
+                lr_scheduler="torch.optim.lr_scheduler.ReduceLROnPlateau",
+                lr_scheduler_monitor="val/loss",
+            )
 
     def test_callable_class_desugars_to_dotted_path(self, tmp_path):
         """A plain scheduler class desugars to its canonical dotted import path for serialization."""
@@ -1163,6 +1327,49 @@ class TestTrainConfigAugmentationBackendSerialization:
         config = TrainConfig(dataset_dir=str(tmp_path), augmentation_backend=sentinel)
         dumped = config.model_dump()
         assert dumped["augmentation_backend"] == sentinel
+
+
+class TestAugmentationBackendAvailability:
+    """Availability probes use the backend-specific optional dependency contract."""
+
+    @pytest.mark.parametrize(
+        ("backend", "module_name"),
+        [
+            pytest.param(AugmentationBackend.ALBU, "albumentations", id="albumentations"),
+            pytest.param(AugmentationBackend.KORNIA, "kornia.augmentation", id="kornia"),
+            pytest.param(AugmentationBackend.GPU, "kornia.augmentation", id="gpu-alias"),
+            pytest.param(AugmentationBackend.TV, "torchvision.transforms.v2", id="torchvision-v2"),
+        ],
+    )
+    def test_backend_probes_its_required_module(self, backend: AugmentationBackend, module_name: str) -> None:
+        """Each backend checks the module that implements its transform path."""
+        package_importable = MagicMock(return_value=True)
+
+        with patch.object(config_module, "_package_importable", package_importable):
+            assert backend._is_available()
+
+        package_importable.assert_called_once_with(module_name)
+
+    @pytest.mark.parametrize(
+        ("backend", "module_name"),
+        [
+            pytest.param(AugmentationBackend.ALBU, "albumentations", id="albumentations"),
+            pytest.param(AugmentationBackend.KORNIA, "kornia.augmentation", id="kornia"),
+            pytest.param(AugmentationBackend.TV, "torchvision.transforms.v2", id="torchvision-v2"),
+        ],
+    )
+    def test_backend_propagates_a_failed_module_probe(self, backend: AugmentationBackend, module_name: str) -> None:
+        """Each backend reports unavailable when its required module is absent."""
+        package_importable = MagicMock(return_value=False)
+
+        with patch.object(config_module, "_package_importable", package_importable):
+            assert not backend._is_available()
+
+        package_importable.assert_called_once_with(module_name)
+
+    def test_gpu_is_an_alias_for_kornia(self) -> None:
+        """The legacy GPU spelling retains Kornia availability semantics."""
+        assert AugmentationBackend.GPU is AugmentationBackend.KORNIA
 
 
 class TestTrainConfigAugmentationBackendConstruction:

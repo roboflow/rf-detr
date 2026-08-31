@@ -41,7 +41,7 @@ class _FakeModelContext:
 class _FakeRFDETR(_BaseFakeRFDETR):
     """Concrete test double: provides a dropout-bearing model for eval-mode tests."""
 
-    def get_model(self, config: SimpleNamespace) -> _FakeModelContext:
+    def get_model(self, config: SimpleNamespace, *, trust_checkpoint: bool = False) -> _FakeModelContext:
         """Return a minimal model context with a dropout-bearing module."""
         return _FakeModelContext()
 
@@ -125,7 +125,7 @@ class TestUnoptimizedInferenceEvalMode:
         monkeypatch.setattr(
             rfdetr.model,
             "postprocess",
-            lambda preds, target_sizes: [
+            lambda preds, target_sizes, score_threshold=None: [
                 {"scores": torch.zeros(0), "labels": torch.zeros(0, dtype=torch.long), "boxes": torch.zeros(0, 4)}
             ],
             raising=False,

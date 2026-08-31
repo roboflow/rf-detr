@@ -73,7 +73,13 @@ class _FakeResponse:
 
 
 def _assert_no_download_temp_files(tmp_path: Path, filename: str = "weights.bin") -> None:
-    """Assert that randomized temporary download files were cleaned up."""
+    """Assert that randomized temporary download files were cleaned up.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     _assert_no_download_temp_files(Path(d))
+    """
     assert not list(tmp_path.glob(f"{filename}.*.tmp"))
 
 

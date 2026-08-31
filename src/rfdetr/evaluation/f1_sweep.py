@@ -7,22 +7,102 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
+
+
+def _per_class_counts(
+    per_class_data: list[dict[str, Any]],
+    conf_thresholds_arr: NDArray[np.float64],
+) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]:
+    """Tabulate per-class TP/FP counts at every threshold in a single O(N log N) pass per class.
+
+    Sorts each class's detections by score once, then reads off TP/FP counts for every threshold
+    via a `np.searchsorted` binary search into precomputed suffix sums, instead of rescanning all
+    of a class's detections at every threshold.
+
+    Args:
+        per_class_data: Per-class matching data list indexed by class id. Each entry is a dict with
+            keys ``"scores"``, ``"matches"``, ``"ignore"``, and ``"total_gt"``.
+        conf_thresholds_arr: Confidence thresholds to evaluate, as a float64 array.
+
+    Returns:
+        Tuple of ``(per_class_tp, per_class_fp, total_gt_per_class)``, where ``per_class_tp`` and
+        ``per_class_fp`` are ``(num_classes, num_thresholds)`` int64 arrays and
+        ``total_gt_per_class`` is a ``(num_classes,)`` int64 array.
+
+    Examples:
+        >>> data = [{"scores": np.array([0.9, 0.4]), "matches": np.array([1, 0]),
+        ...          "ignore": np.array([False, False]), "total_gt": 1}]
+        >>> tp, fp, total_gt = _per_class_counts(data, np.array([0.0, 0.5]))
+        >>> tp.tolist(), fp.tolist(), total_gt.tolist()
+        ([[1, 1]], [[1, 0]], [1])
+    """
+    num_classes = len(per_class_data)
+    num_thresholds = len(conf_thresholds_arr)
+
+    per_class_tp = np.empty((num_classes, num_thresholds), dtype=np.int64)
+    per_class_fp = np.empty((num_classes, num_thresholds), dtype=np.int64)
+    total_gt_per_class = np.empty(num_classes, dtype=np.int64)
+
+    for k in range(num_classes):
+        data = per_class_data[k]
+        scores = data["scores"]
+        matches = data["matches"]
+        ignore = data["ignore"]
+        total_gt_per_class[k] = data["total_gt"]
+
+        # Ascending sort: `np.searchsorted(..., side="left")` then gives, for a threshold, the index
+        # of the first detection with score >= threshold -- everything from that index to the end is
+        # the "above_thresh" set a per-threshold boolean mask would pick out. NumPy sorts NaN scores
+        # to the end of an ascending sort, which would put them in the "above every threshold" suffix
+        # -- but a NaN score must never compare as "above" a real threshold, so it is masked out here
+        # the same way `ignore` is.
+        order = np.argsort(scores, kind="stable")
+        sorted_scores = scores[order]
+        valid = ~ignore[order] & ~np.isnan(sorted_scores)
+        is_tp = valid & (matches[order] != 0)
+        is_fp = valid & (matches[order] == 0)
+
+        # Suffix sums: `suffix_tp[i]` = count of TPs among detections with score >= sorted_scores[i].
+        # `np.cumsum(...)` is a prefix sum; reversing the input and output turns it into a suffix sum
+        # without a second full pass.
+        suffix_tp = np.concatenate((np.cumsum(is_tp[::-1])[::-1], [0]))
+        suffix_fp = np.concatenate((np.cumsum(is_fp[::-1])[::-1], [0]))
+
+        insertion_idx = np.searchsorted(sorted_scores, conf_thresholds_arr, side="left")
+        per_class_tp[k] = suffix_tp[insertion_idx]
+        per_class_fp[k] = suffix_fp[insertion_idx]
+
+    return per_class_tp, per_class_fp, total_gt_per_class
 
 
 def sweep_confidence_thresholds(
     per_class_data: list[dict[str, Any]],
-    conf_thresholds: Any,
+    conf_thresholds: Iterable[float],
     classes_with_gt: list[int],
 ) -> list[dict[str, Any]]:
     """Sweep confidence thresholds and compute precision/recall/F1 at each.
 
+    Each class's detections are sorted by score once and reduced to suffix TP/FP sums; every
+    threshold's counts are then a single ``np.searchsorted`` binary search away, giving
+    O(N log N + T log N) per class instead of rescanning every detection at every threshold.
+
     Args:
-        per_class_data: Per-class matching data list indexed by class id.
-            Each entry is a dict with keys ``"scores"``, ``"matches"``, ``"ignore"``, and ``"total_gt"``.
-        conf_thresholds: Iterable of float confidence thresholds to evaluate.
+        per_class_data: Per-class matching data list indexed by class id. Each entry is a dict with
+            keys ``"scores"`` and ``"matches"`` (equal-length ndarrays), ``"ignore"`` (a boolean
+            ndarray of the same length), and ``"total_gt"`` (an integer -- a float value silently
+            truncates via an int64 cast rather than raising). Mismatched ``"scores"``/``"ignore"``
+            lengths raise ``IndexError``.
+        conf_thresholds: Iterable of float confidence thresholds to evaluate. Comparisons against
+            detection scores always happen in float64, regardless of the dtype of
+            ``per_class_data`` scores or of the threshold values themselves. This is deliberate,
+            version-stable semantics and intentionally differs from the legacy
+            ``scores >= conf_thresh`` comparison this function replaced, whose effective dtype
+            depended on NumPy's (pre-2.0) value-based casting rules.
         classes_with_gt: List of class indices that have at least one GT instance — used for macro-averaging.
 
     Returns:
@@ -34,29 +114,36 @@ def sweep_confidence_thresholds(
             - ``"per_class_prec"``: float ndarray
             - ``"per_class_rec"``: float ndarray
             - ``"per_class_f1"``: float ndarray
+
+    Examples:
+        >>> data = [{"scores": np.array([0.9, 0.4]), "matches": np.array([1, 0]),
+        ...          "ignore": np.array([False, False]), "total_gt": 1}]
+        >>> results = sweep_confidence_thresholds(data, [0.5], classes_with_gt=[0])
+        >>> round(results[0]["macro_precision"], 3), round(results[0]["macro_recall"], 3)
+        (1.0, 1.0)
     """
+    # Materialized exactly once: `conf_thresholds` is documented as any iterable, which a generator
+    # would satisfy, and every use below (the length, the per-class searchsorted, and the per-threshold
+    # results loop) needs its own full pass -- consuming a generator more than once would silently
+    # return wrong-length or empty results from the second pass onward.
+    conf_thresholds_arr = np.asarray(list(conf_thresholds), dtype=np.float64)
     num_classes = len(per_class_data)
+
+    # Per-class TP/FP counts at every threshold, tabulated once per class via sort + suffix sums +
+    # searchsorted -- see `_per_class_counts` for the O(N log N + T log N) derivation.
+    per_class_tp, per_class_fp, total_gt_per_class = _per_class_counts(per_class_data, conf_thresholds_arr)
+
     results: list[dict[str, Any]] = []
 
-    for conf_thresh in conf_thresholds:
+    for t, conf_thresh in enumerate(conf_thresholds_arr):
         per_class_precisions: list[float] = []
         per_class_recalls: list[float] = []
         per_class_f1s: list[float] = []
 
         for k in range(num_classes):
-            data = per_class_data[k]
-            scores = data["scores"]
-            matches = data["matches"]
-            ignore = data["ignore"]
-            total_gt = data["total_gt"]
-
-            above_thresh = scores >= conf_thresh
-            valid = above_thresh & ~ignore
-
-            valid_matches = matches[valid]
-
-            tp = np.sum(valid_matches != 0)
-            fp = np.sum(valid_matches == 0)
+            tp = per_class_tp[k, t]
+            fp = per_class_fp[k, t]
+            total_gt = total_gt_per_class[k]
             fn = total_gt - tp
 
             precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0

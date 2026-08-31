@@ -12,6 +12,7 @@ import pytest
 import torch
 
 from rfdetr.detr import RFDETR
+from rfdetr.inference import ModelContext
 
 
 class _FakeModel(torch.nn.Module):
@@ -43,7 +44,7 @@ class _FakeRFDETR(RFDETR):
     def get_model_config(self, **kwargs) -> SimpleNamespace:
         return SimpleNamespace(num_channels=3)
 
-    def get_model(self, config: SimpleNamespace) -> _FakeModelContext:
+    def get_model(self, config: SimpleNamespace, *, trust_checkpoint: bool = False) -> _FakeModelContext:
         return _FakeModelContext()
 
 
@@ -546,3 +547,34 @@ class TestModelInferenceExceptionRecovery:
         assert rfdetr.model.model is original_model
         # The mutation happened and cannot be undone by RFDETR's recovery path
         assert mutated["happened"] is True
+
+
+class TestModelContextClearedWeights:
+    """``ModelContext`` rejects work needing the underlying module once ``inplace=True`` cleared it."""
+
+    @staticmethod
+    def _context() -> ModelContext:
+        """Build a ModelContext whose weights have already been cleared."""
+        context = ModelContext(
+            model=_FakeModel(),
+            postprocess=SimpleNamespace(),
+            device=torch.device("cpu"),
+            resolution=28,
+            args=SimpleNamespace(num_classes=2),
+        )
+        context.model = None
+        return context
+
+    def test_reinitialize_detection_head_raises_runtime_error(self) -> None:
+        """Reinitializing the head after the weights were cleared raises RuntimeError, not AttributeError."""
+        with pytest.raises(RuntimeError, match="Cannot reinitialize the detection head"):
+            self._context().reinitialize_detection_head(5)
+
+    def test_reinitialize_detection_head_leaves_num_classes_untouched(self) -> None:
+        """The guard fires before ``args.num_classes`` is mutated, so the context is not left half-updated."""
+        context = self._context()
+
+        with pytest.raises(RuntimeError):
+            context.reinitialize_detection_head(5)
+
+        assert context.args.num_classes == 2

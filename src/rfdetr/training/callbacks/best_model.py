@@ -33,7 +33,7 @@ ptl_version = get_version("pytorch-lightning") or "unknown"
 
 
 class BestModelCallback(ModelCheckpoint):
-    """Track best validation mAP and save best checkpoints during training.
+    """Track the best validation metric and save best checkpoints during training.
 
     Extends :class:`pytorch_lightning.callbacks.ModelCheckpoint` to save stripped ``{model, args, epoch}`` ``.pth``
     files (instead of full ``.ckpt`` files) and to track a separate EMA checkpoint in parallel.
@@ -47,16 +47,20 @@ class BestModelCallback(ModelCheckpoint):
     ``checkpoint_best_ema.pth`` (backfilled with the final EMA weights if the EMA metric never improved) and
     ``last_ema.pth`` (final EMA weights, mirroring ``last.pth`` for the live model).
 
-    Checkpoints are only updated on validation epochs where the monitor metric is actually logged.  On non-eval epochs
-    (when ``eval_interval > 1`` causes COCO evaluation to be skipped) the callback is a no-op.
+    Each track only updates when its own monitor key is actually logged that epoch, and the two tracks are
+    checked independently.  On non-eval epochs (``eval_interval > 1`` skips COCO eval entirely) both keys are
+    absent and the callback is a full no-op.  When validation evaluates only the EMA model (the default, see
+    ``TrainConfig.eval_base_model``), ``monitor_regular`` *is* populated — ``COCOEvalCallback`` mirrors the EMA
+    score onto it so external monitors keep working — but it reports the EMA weights, so ``evaluates_base_model``
+    disables the regular track and the EMA track becomes the only one that updates.
 
     ``state_dict()`` and ``load_state_dict()`` are overridden to persist ``_best_ema`` in the Lightning callback state,
     ensuring that ``trainer.fit(ckpt_path=...)`` resumes EMA high-water-mark tracking from the correct value.
 
     Args:
         output_dir: Directory where checkpoint files are written.
-        monitor_regular: Metric key for the regular model mAP.
-        monitor_ema: Metric key for the EMA model mAP.  ``None`` disables EMA tracking.
+        monitor_regular: Metric key for the regular model (mAP or mAR, per ``TrainConfig.best_model_metric``).
+        monitor_ema: Metric key for the EMA model (mAP or mAR).  ``None`` disables EMA tracking.
         run_test: If ``True``, run ``trainer.test()`` on the best model at the end of training.
         skip_best_epochs: Ignore the first N epochs (0..N-1) when tracking
             best regular and EMA checkpoints.  Useful when fine-tuning from ``pretrain_weights``: the pretrained model's
@@ -72,6 +76,11 @@ class BestModelCallback(ModelCheckpoint):
             raw per-epoch swings can lock the best checkpoint to an early local peak.  The EMA accumulator is updated
             on every validation epoch including epochs within the ``skip_best_epochs`` window so the smoothed value
             is pre-warmed by the first eligible comparison.
+        evaluates_base_model: Whether validation actually evaluates the base model this run (see
+            ``TrainConfig.eval_base_model``). ``False`` disables the regular checkpoint track because
+            ``monitor_regular`` then carries the EMA score mirrored by ``COCOEvalCallback`` while this track saves
+            base weights. The EMA track still runs, and ``on_fit_end`` promotes its checkpoint to
+            ``checkpoint_best_total.pth``.
 
     Examples:
         Skip the first 3 epochs so pretrained weights do not dominate:
@@ -94,6 +103,7 @@ class BestModelCallback(ModelCheckpoint):
         run_test: bool = True,
         skip_best_epochs: int = 0,
         smooth_alpha: float = 0.0,
+        evaluates_base_model: bool = True,
     ) -> None:
         super().__init__(
             dirpath=output_dir,
@@ -107,6 +117,7 @@ class BestModelCallback(ModelCheckpoint):
             enable_version_counter=False,
         )
         self._monitor_ema = monitor_ema
+        self._evaluates_base_model = bool(evaluates_base_model)
         self._run_test = run_test
         self._best_ema: float = 0.0
         self._output_dir = Path(output_dir)
@@ -138,6 +149,7 @@ class BestModelCallback(ModelCheckpoint):
         trainer: Trainer,
         model_name: str | None = None,
         model_config_dict: object | None = None,
+        share_ema_model_state: bool = False,
     ) -> dict[str, object]:
         """Build a PTL-compatible RF-DETR checkpoint payload.
 
@@ -147,11 +159,39 @@ class BestModelCallback(ModelCheckpoint):
             trainer: Active Lightning trainer providing epoch/step counters.
             model_name: Name of the model class (e.g. ``"RFDETRLarge"``).
             model_config_dict: Serialized architecture config needed to reconstruct schema-dependent models.
+            share_ema_model_state: Whether EMA callback tensors should share storage with top-level EMA weights.
 
         Returns:
             Checkpoint dictionary that supports ``Trainer.fit(ckpt_path=...)`` while intentionally omitting
             optimizer/scheduler states.
         """
+        # Persist every callback's own state (BestModelCallback's best-tracking high-water
+        # marks, RFDETREMACallback's average model state, RFDETREarlyStopping's wait_count,
+        # etc.) so `trainer.fit(ckpt_path=...)` actually resumes them, matching what each
+        # callback's own state_dict()/load_state_dict() promises. Mirrors PyTorch Lightning's
+        # own `_call_callbacks_state_dict` (keyed by `Callback.state_key`, PTL reads it back
+        # via `_call_callbacks_load_state_dict` — checkpoint.get("callbacks") is None-checked
+        # there, so an *absent* "callbacks" key silently skips restoring every callback).
+        # Only include callbacks with non-empty state so checkpoints stay diffable/minimal.
+        callback_states: dict[str, object] = {}
+        for callback in trainer.callbacks:  # type: ignore[attr-defined]
+            state = callback.state_dict()
+            if state:
+                callback_states[callback.state_key] = state
+        if share_ema_model_state:
+            # EMA-named checkpoints expose the same average-model weights at the top level
+            # and inside callback state. Reuse those tensors so torch.save stores one copy.
+            for state in callback_states.values():
+                if not isinstance(state, dict):
+                    continue
+                average_state = state.get("average_model_state_dict")
+                if not isinstance(average_state, dict):
+                    continue
+                for key in average_state:
+                    if key.startswith("module.model."):
+                        model_key = key.removeprefix("module.model.")
+                        if model_key in model_state_dict:
+                            average_state[key] = model_state_dict[model_key]
         payload: dict[str, object] = {
             "model": model_state_dict,
             "args": args_dict,
@@ -168,8 +208,13 @@ class BestModelCallback(ModelCheckpoint):
                 "validate_loop": {"state_dict": {}},
                 "test_loop": {"state_dict": {}},
             },
+            "callbacks": callback_states,
             # Keep keys present with empty values so PTL resume paths that
-            # expect them can proceed without loading optimizer state.
+            # expect them can proceed without loading optimizer state. This is
+            # intentional (checkpoints stay lightweight, "weights-only" files) but
+            # it means resuming from these files always starts the optimizer and LR
+            # scheduler cold — see the warning logged from RFDETR.train() when
+            # `resume=` is used.
             "optimizer_states": [],
             "lr_schedulers": [],
         }
@@ -270,6 +315,7 @@ class BestModelCallback(ModelCheckpoint):
                 trainer,
                 model_name=self._resolve_model_name(pl_module),
                 model_config_dict=self._serialize_model_config(pl_module, ema_state_dict),
+                share_ema_model_state=True,
             ),
             dest,
         )
@@ -452,59 +498,72 @@ class BestModelCallback(ModelCheckpoint):
         )
 
     def on_validation_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        """Save best regular/EMA checkpoints when validation mAP improves.
+        """Save best regular/EMA checkpoints when the selected validation metric improves.
 
         Delegates regular-model checkpoint management to the :class:`~pytorch_lightning.callbacks.ModelCheckpoint`
         parent (handles improvement detection, fast_dev_run/sanity guards, ``best_model_path`` and ``best_model_score``
-        bookkeeping).  EMA is tracked independently.
+        bookkeeping).  EMA is tracked independently, so the pre-training sanity-check guard below applies to both:
+        neither should treat the sanity-check validation pass as a real epoch's result.
 
         Args:
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
         """
+        # PTL's pre-training sanity check runs this hook before any real epoch. The
+        # regular-checkpoint path below already no-ops during it via ModelCheckpoint's own
+        # trainer.sanity_checking guard (_should_skip_saving_checkpoint), but the EMA
+        # tracking and the smoothing accumulator are custom bookkeeping that don't inherit
+        # that guard, so a positive sanity-check score would otherwise get treated as a real
+        # improvement — see #1348.
+        if trainer.sanity_checking:
+            return
         # Stash before the skip guard — eligible epochs still need this reference
         # inside _save_checkpoint (which receives no pl_module param).
         self._current_pl_module = pl_module
         # Update the EMA accumulator before the skip guard so it warms up during skipped
         # epochs and avoids cold-start deflation at the first eligible epoch.
         raw: float | None = None
-        if self._smooth_alpha > 0.0 and self.monitor in trainer.callback_metrics:
+        if self._smooth_alpha > 0.0 and self._evaluates_base_model and self.monitor in trainer.callback_metrics:
             raw = trainer.callback_metrics[self.monitor].item()
             self._smoothed_regular = self._smooth_alpha * self._smoothed_regular + (1.0 - self._smooth_alpha) * raw
         if trainer.current_epoch < self._skip_best_epochs:
             return
-        # Guard: only run checkpoint logic when the monitored metric was actually
-        # logged this epoch (non-eval epochs with eval_interval > 1 skip COCO eval
-        # so the key is absent from callback_metrics).
-        if self.monitor not in trainer.callback_metrics:
-            return
-        # Optional EMA smoothing of the monitored metric before the parent's improvement
-        # check.  The smoothed value is substituted into ``trainer.callback_metrics`` for
-        # the duration of the super() call only; the original raw tensor is always
-        # restored in the ``finally`` block so what gets logged to ``metrics.csv`` and
-        # seen by other callbacks (including EMA tracking below) is unaffected.
-        if self._smooth_alpha > 0.0:
-            # raw was captured in the accumulator update above; smooth_alpha > 0 and monitor
-            # in callback_metrics are both guaranteed here (passed the guard above).
-            current_raw: float = raw if raw is not None else trainer.callback_metrics[self.monitor].item()
-            prev_best_score = self.best_model_score.item() if self.best_model_score is not None else -float("inf")
-            original = trainer.callback_metrics[self.monitor]
-            trainer.callback_metrics[self.monitor] = torch.tensor(
-                self._smoothed_regular, dtype=original.dtype, device=original.device
-            )
-            try:
+        # Guard: only run the REGULAR checkpoint logic when the base model was actually evaluated
+        # AND its metric was logged this epoch. Non-eval epochs with eval_interval > 1 skip COCO
+        # eval so the key is absent; and when validation evaluates only the EMA model (the default,
+        # see config.py's `eval_base_model` docstring) the key IS present but carries the EMA score
+        # mirrored by COCOEvalCallback — saving base weights against it would checkpoint one model
+        # on the other's score. This must NOT also skip the EMA block below: in both cases that
+        # block is the only checkpoint tracking that ever runs (#1285).
+        if self._evaluates_base_model and self.monitor in trainer.callback_metrics:
+            # Optional EMA smoothing of the monitored metric before the parent's improvement
+            # check.  The smoothed value is substituted into ``trainer.callback_metrics`` for
+            # the duration of the super() call only; the original raw tensor is always
+            # restored in the ``finally`` block so what gets logged to ``metrics.csv`` and
+            # seen by other callbacks (including EMA tracking below) is unaffected.
+            if self._smooth_alpha > 0.0:
+                # raw was captured in the accumulator update above; smooth_alpha > 0 and
+                # monitor in callback_metrics are both guaranteed here (passed the `if` above).
+                current_raw: float = raw if raw is not None else trainer.callback_metrics[self.monitor].item()
+                prev_best_score = self.best_model_score.item() if self.best_model_score is not None else -float("inf")
+                original = trainer.callback_metrics[self.monitor]
+                trainer.callback_metrics[self.monitor] = torch.tensor(
+                    self._smoothed_regular, dtype=original.dtype, device=original.device
+                )
+                try:
+                    super().on_validation_end(trainer, pl_module)
+                finally:
+                    trainer.callback_metrics[self.monitor] = original
+                # Record the raw metric value when parent selected a new best so on_fit_end
+                # compares raw EMA vs raw regular (not raw EMA vs smoothed regular).
+                new_best_score = self.best_model_score.item() if self.best_model_score is not None else -float("inf")
+                if new_best_score > prev_best_score:
+                    self._best_raw_regular = current_raw
+            else:
                 super().on_validation_end(trainer, pl_module)
-            finally:
-                trainer.callback_metrics[self.monitor] = original
-            # Record the raw metric value when parent selected a new best so on_fit_end
-            # compares raw EMA vs raw regular (not raw EMA vs smoothed regular).
-            new_best_score = self.best_model_score.item() if self.best_model_score is not None else -float("inf")
-            if new_best_score > prev_best_score:
-                self._best_raw_regular = current_raw
-        else:
-            super().on_validation_end(trainer, pl_module)
 
-        # EMA model — custom tracking on top of parent.
+        # EMA model — custom tracking on top of parent. Independent of the regular-monitor
+        # guard above: when the base model is not evaluated this is the only track that runs.
         if self._monitor_ema is None or not trainer.is_global_zero:
             return
         ema_val = trainer.callback_metrics.get(self._monitor_ema, torch.tensor(0.0)).item()
@@ -514,7 +573,7 @@ class BestModelCallback(ModelCheckpoint):
             ema_state_dict = self._get_ema_model_state_dict(trainer, pl_module)
             self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, self._output_dir / "checkpoint_best_ema.pth")
             logger.info(
-                "Best EMA mAP improved to %.4f (epoch %d)",
+                "Best EMA metric improved to %.4f (epoch %d)",
                 ema_val,
                 trainer.current_epoch,
             )
@@ -544,12 +603,25 @@ class BestModelCallback(ModelCheckpoint):
             best_regular = self._best_raw_regular
         else:
             best_regular = self.best_model_score.item() if self.best_model_score is not None else 0.0
-        regular_path = Path(self.best_model_path) if self.best_model_path else None
         ema_path = self._output_dir / "checkpoint_best_ema.pth"
         total_path = self._output_dir / "checkpoint_best_total.pth"
 
-        # Strict > for EMA to win (matches legacy behaviour).
-        best_is_ema = self._best_ema > best_regular
+        # Backfill before choosing the winner: a valid zero EMA score does not pass the strict improvement check, but
+        # EMA-only runs still need a source checkpoint to promote to checkpoint_best_total.pth.
+        ema_state_dict: dict[str, Tensor] | None = None
+        if self._monitor_ema is not None:
+            self._output_dir.mkdir(parents=True, exist_ok=True)
+            ema_state_dict = self._get_ema_model_state_dict(trainer, pl_module)
+            if not ema_path.exists():
+                self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, ema_path)
+                logger.info("EMA metric never improved; saved final EMA weights as %s", ema_path.name)
+
+        regular_path = Path(self.best_model_path) if self.best_model_path else None
+        # EMA owns selection whenever the base model was not evaluated, including a valid zero score. When both tracks
+        # ran, retain the legacy strict comparison so equal scores keep the regular checkpoint.
+        best_is_ema = self._monitor_ema is not None and (
+            not self._evaluates_base_model or self._best_ema > best_regular
+        )
         # ``chose_ema`` reflects the source actually copied: EMA can win the comparison yet be
         # unavailable on disk, in which case regular is used and recorded.
         chose_ema = best_is_ema and ema_path.exists()
@@ -567,15 +639,8 @@ class BestModelCallback(ModelCheckpoint):
                 self._best_ema,
             )
 
-        # When EMA tracking is enabled, always leave EMA-named checkpoints on disk for clarity:
-        # a guaranteed checkpoint_best_ema.pth (backfilled with final EMA weights when the EMA metric
-        # never improved) and last_ema.pth (final EMA weights, mirroring last.pth for the live model).
-        if self._monitor_ema is not None:
-            self._output_dir.mkdir(parents=True, exist_ok=True)
-            ema_state_dict = self._get_ema_model_state_dict(trainer, pl_module)
-            if not ema_path.exists():
-                self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, ema_path)
-                logger.info("EMA metric never improved; saved final EMA weights as %s", ema_path.name)
+        # When EMA tracking is enabled, always leave last_ema.pth on disk, mirroring last.pth for the live model.
+        if self._monitor_ema is not None and ema_state_dict is not None:
             self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, self._output_dir / "last_ema.pth")
 
         if self._run_test:
@@ -620,11 +685,13 @@ class BestModelCallback(ModelCheckpoint):
 
 
 class RFDETREarlyStopping(EarlyStopping):
-    """Early stopping callback monitoring validation mAP for RF-DETR.
+    """Early stopping callback monitoring a validation metric for RF-DETR.
 
     Extends :class:`pytorch_lightning.callbacks.EarlyStopping` with dual-metric
-    monitoring: by default it monitors ``max(regular_mAP, ema_mAP)`` (legacy
-    behaviour); set ``use_ema=True`` to monitor the EMA metric exclusively.
+    monitoring: by default it monitors ``max(regular, ema)`` (legacy
+    behaviour); set ``use_ema=True`` to monitor the EMA metric exclusively. The
+    metric itself (mAP or mAR) is chosen by the caller via ``monitor_regular``/
+    ``monitor_ema``, see ``TrainConfig.best_model_metric``.
 
     The effective metric is injected into ``trainer.callback_metrics`` under a synthetic key before delegating to the
     parent's stopping logic, so all parent features are available for free: ``state_dict``/``load_state_dict`` for
@@ -635,11 +702,11 @@ class RFDETREarlyStopping(EarlyStopping):
 
     Args:
         patience: Number of epochs with no improvement before stopping.
-        min_delta: Minimum mAP improvement to reset the patience counter.
+        min_delta: Minimum improvement (in the monitored metric) to reset the patience counter.
         use_ema: When ``True`` and both regular and EMA metrics are available,
             monitor only the EMA metric.  When ``False``, monitor ``max(regular, ema)``.
-        monitor_regular: Metric key for the regular model mAP.
-        monitor_ema: Metric key for the EMA model mAP.
+        monitor_regular: Metric key for the regular model (mAP or mAR, per ``TrainConfig.best_model_metric``).
+        monitor_ema: Metric key for the EMA model (mAP or mAR).
         verbose: If ``True``, log early stopping status each epoch.
         skip_best_epochs: Ignore the first N epochs (0..N-1) when evaluating
             patience and best-score baselines.  Set this when fine-tuning from ``pretrain_weights`` to avoid premature
@@ -688,10 +755,11 @@ class RFDETREarlyStopping(EarlyStopping):
         self._skip_best_epochs = skip_best_epochs
 
     def on_validation_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        """Compute effective mAP and delegate to parent stopping logic.
+        """Compute the effective validation metric and delegate to parent stopping logic.
 
-        Computes ``ema_mAP`` or ``max(regular_mAP, ema_mAP)`` depending on ``use_ema``, injects the result under the
-        synthetic monitor key, then calls :meth:`EarlyStopping.on_validation_end` which handles patience,
+        Computes the EMA metric or ``max(regular metric, EMA metric)`` depending on ``use_ema``,
+        injects the result under the synthetic monitor key, then calls
+        :meth:`EarlyStopping.on_validation_end`, which handles patience,
         ``trainer.should_stop``, logging, and ``state_dict`` persistence.
 
         Args:
