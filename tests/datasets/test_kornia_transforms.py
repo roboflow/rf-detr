@@ -469,8 +469,7 @@ class TestBuildKorniaPipeline:
         """A one-element sequence is not a scalar.
 
         Albumentations validates `clip_limit` as a float or an exact 2-tuple and raises on `[4.0]`. Reading it as a
-        scalar here would accept a config the CPU backend refuses, which is the divergence this helper exists to
-        remove.
+        scalar here would accept a config the CPU backend refuses, which is the divergence this helper exists to remove.
         """
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
 
