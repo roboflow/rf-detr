@@ -31,14 +31,16 @@ from rfdetr.models.math import MLP
 from rfdetr.models.ops.modules import MSDeformAttn
 
 
-def _not_exporting() -> bool:
-    """Fallback for ``torch.compiler.is_exporting`` on torch<2.6 (which lacks it and never runs ExecuTorch export).
+def _tracer_absent() -> bool:
+    """Fallback for ``torch.compiler.is_exporting``/``is_compiling`` on torch versions that lack them.
 
-    Hoisted to a module-level function so the hot decoder ``forward`` does not allocate a fresh ``lambda`` on every
-    call just to supply this default.
+    ``is_exporting`` was added in torch 2.7, ``is_compiling`` in torch 2.3; each ``getattr(...,
+    _tracer_absent)`` call falls back to this function below its own threshold. Hoisted to a
+    module-level function so the hot decoder ``forward`` does not allocate a fresh ``lambda`` on
+    every call just to supply this default.
 
     Returns:
-        Always ``False`` — torch<2.6 is never in an export trace.
+        Always ``False``.
     """
     return False
 
@@ -337,10 +339,24 @@ class Transformer(nn.Module):
         # torch.export (ExecuTorch) cannot trace torch._shape_as_tensor — it raises "the tensor has
         # a non-zero number of elements, but its data is not allocated yet". Under that trace build
         # spatial_shapes directly from the concrete Python-int (H, W) pairs instead; ExecuTorch uses
-        # static shapes, so the baked constant is exact. This branch is taken only under
-        # torch.export, leaving the eager and TorchScript-ONNX/TensorRT (#1155) paths untouched.
-        # getattr guards torch<2.6, which lacks is_exporting() and never runs ExecuTorch export.
-        if getattr(torch.compiler, "is_exporting", _not_exporting)():
+        # static shapes, so the baked constant is exact. torch.compile needs the same branch for a
+        # different reason: Dynamo polyfills torch._shape_as_tensor to return a torch.Size, so
+        # torch.stack raises "expected Tensor as element 0 in argument 0, but got torch.Size" and
+        # the compile aborts (suppress_errors=True does not catch it — the TypeError comes from
+        # user code, not from Dynamo). Neither guard is true in eager or under torch.jit.trace, so
+        # the eager and TorchScript-ONNX/TensorRT (#1155) paths keep the _shape_as_tensor form.
+        # getattr guards torch<2.7 (lacks is_exporting()) and torch<2.3 (lacks is_compiling());
+        # both were added to torch.compiler as public API in those releases (verified against
+        # upstream source). Below torch 2.3 the getattr fallback returns False, so compile=True
+        # keeps hitting the same TypeError this branch exists to avoid — there is no substitute:
+        # torch._dynamo.is_compiling() and torch._utils.is_compiling() are hardcoded
+        # `return False` stubs on torch 2.2.x, not real predicates. This project's floor is
+        # torch>=2.2.0 (pyproject.toml), so torch 2.2.x is unaffected by this fix, exactly as it
+        # was already unaffected by is_exporting() before it.
+        if (
+            getattr(torch.compiler, "is_exporting", _tracer_absent)()
+            or getattr(torch.compiler, "is_compiling", _tracer_absent)()
+        ):
             spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
         else:
             spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
