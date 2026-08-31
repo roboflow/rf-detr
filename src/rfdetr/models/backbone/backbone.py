@@ -148,28 +148,44 @@ class Backbone(BackboneBase):
             logger.info("Merging and unloading LoRA weights")
             self.encoder = self.encoder.merge_and_unload()
 
+    @staticmethod
+    def _level_mask(tensor_list: NestedTensor, feat: Tensor) -> Tensor:
+        """Downsample the batch padding mask onto *feat*'s spatial grid.
+
+        Args:
+            tensor_list: Batch whose ``mask`` marks padded input pixels.
+            feat: Feature map (B, C, H, W) whose grid the mask is resampled onto.
+
+        Returns:
+            Boolean mask of shape (B, H, W), True on padded positions.
+        """
+        if tensor_list.no_padding:
+            # Nearest-neighbour resampling of an all-False mask is all-False at every output
+            # size, so the interpolation below is a constant of ``feat``'s shape here. Same
+            # substitution ``forward_export`` already makes under its no-padding assumption.
+            batch, _, height, width = feat.shape
+            return torch.zeros((batch, height, width), dtype=torch.bool, device=feat.device)
+        m = tensor_list.mask
+        assert m is not None
+        return F.interpolate(m[None].float(), size=feat.shape[-2:]).to(torch.bool)[0]
+
     def forward(self, tensor_list: NestedTensor) -> tuple[list[NestedTensor], list[NestedTensor] | None]:
         """"""
         # (H, W, B, C)
         raw_feats = self.encoder(tensor_list.tensors)
         feats = self.projector(raw_feats)
         # x: [(B, C, H, W)]
+        no_padding = tensor_list.no_padding
         out = []
         for feat in feats:
-            m = tensor_list.mask
-            assert m is not None
-            mask = F.interpolate(m[None].float(), size=feat.shape[-2:]).to(torch.bool)[0]
-            out.append(NestedTensor(feat, mask))
+            out.append(NestedTensor(feat, self._level_mask(tensor_list, feat), no_padding))
 
         cross_attn_out = None
         if self.cross_attn_projector is not None:
             cross_attn_out = []
             cross_attn_feats = self.cross_attn_projector(raw_feats)
             for feat in cross_attn_feats:
-                m = tensor_list.mask
-                assert m is not None
-                mask = F.interpolate(m[None].float(), size=feat.shape[-2:]).to(torch.bool)[0]
-                cross_attn_out.append(NestedTensor(feat, mask))
+                cross_attn_out.append(NestedTensor(feat, self._level_mask(tensor_list, feat), no_padding))
 
         return out, cross_attn_out
 

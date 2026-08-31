@@ -23,6 +23,10 @@ from torch import Tensor, nn
 
 from rfdetr.utilities.tensors import NestedTensor
 
+# Distinct (shape, device, align_dim_orders) embeddings retained per module. Single-resolution
+# inference needs one; multi-scale training cycles through a small fixed set of scales.
+_POS_CACHE_MAX_ENTRIES = 8
+
 
 class PositionEmbeddingSine(nn.Module):
     """This is a more standard version of the position embedding, very similar to the one used by the Attention is all
@@ -45,6 +49,11 @@ class PositionEmbeddingSine(nn.Module):
             scale = 2 * math.pi
         self.scale = scale
         self._export = False
+        # (mask shape, device, align_dim_orders) -> position embedding. Only populated for
+        # batches flagged ``no_padding``; see ``forward``. Kept in ``__dict__`` rather than as a
+        # buffer so it stays out of ``state_dict`` and is never moved by ``.to()`` — the device is
+        # part of the key instead.
+        self._pos_cache: dict[tuple[tuple[int, ...], torch.device, bool], Tensor] = {}
 
     def export(self) -> None:
         self._export = True
@@ -52,6 +61,30 @@ class PositionEmbeddingSine(nn.Module):
         self.forward = self.forward_export  # type: ignore[method-assign,assignment]
 
     def forward(self, tensor_list: NestedTensor, align_dim_orders: bool = True) -> Tensor:
+        mask = tensor_list.mask
+        assert mask is not None
+        if tensor_list.no_padding:
+            # With an all-False mask the embedding below is a pure function of the mask's shape,
+            # device and align_dim_orders (this module holds no parameters or buffers, and
+            # scale/temperature/normalize are fixed at construction and never reassigned by any
+            # caller in this codebase), so a cache hit is safe as long as every consumer treats
+            # the returned tensor as read-only -- true for every current caller, which only reads
+            # it via out-of-place ops (with_pos_embed's `tensor + pos`, flatten/transpose views).
+            # Recomputing it rebuilds the same ~20-op chain (cumsum, arange, pow, sin/cos, stack,
+            # flatten, cat, permute) on every forward pass.
+            key = (tuple(mask.shape), mask.device, align_dim_orders)
+            cached = self._pos_cache.get(key)
+            if cached is None:
+                cached = self._compute(tensor_list, align_dim_orders)
+                if len(self._pos_cache) >= _POS_CACHE_MAX_ENTRIES:
+                    # Bound the retained device memory; multi-scale training cycles through a
+                    # handful of shapes, so evicting the oldest keeps the working set resident.
+                    del self._pos_cache[next(iter(self._pos_cache))]
+                self._pos_cache[key] = cached
+            return cached
+        return self._compute(tensor_list, align_dim_orders)
+
+    def _compute(self, tensor_list: NestedTensor, align_dim_orders: bool) -> Tensor:
         x = tensor_list.tensors
         mask = tensor_list.mask
         assert mask is not None
