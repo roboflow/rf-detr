@@ -56,7 +56,9 @@ def export_openvino(
     os.makedirs(output_dir, exist_ok=True)
 
     # Determine output filename
-    if variant_name is not None:
+    if variant_name:
+        # Sanitize against path traversal (e.g. "foo/bar" -> "bar", "/tmp/x" -> "x")
+        variant_name = os.path.splitext(os.path.basename(variant_name))[0]
         export_name = f"{variant_name}-backbone" if backbone_only else variant_name
     else:
         export_name = "backbone_model" if backbone_only else "inference_model"
@@ -69,8 +71,9 @@ def export_openvino(
         logger.info(f"Input shape: {input_tensors.shape}")
 
     # Ensure model is in eval mode and on CPU
-    model.eval()
-    model = model.cpu()
+    model = model.eval().cpu()
+    if hasattr(model, "export") and callable(getattr(model, "export")):
+        model.export()
     input_tensors = input_tensors.cpu()
 
     # Determine output names if not provided
@@ -89,6 +92,9 @@ def export_openvino(
 
             def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
                 output = self.model(x)
+
+                if isinstance(output, tuple):
+                    return output
 
                 # Handle backbone-only case (returns tensor directly)
                 if not isinstance(output, dict):

@@ -29,10 +29,9 @@ model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 model.export(format="openvino", output_dir="output")
 ```
 
-This will create two files:
-
-- `output/inference_model.xml` - The OpenVINO IR model
-- `output/inference_model.bin` - The model weights
+This will create two files (named after the model's variant):
+- `output/rfdetr-medium.xml` - The OpenVINO IR model
+- `output/rfdetr-medium.bin` - The model weights
 
 ## Export Parameters
 
@@ -83,8 +82,8 @@ import numpy as np
 from PIL import Image
 from rfdetr.export._openvino.inference import OpenVINOInference
 
-# Load the exported model
-model = OpenVINOInference("output/inference_model.xml")
+# Load the exported model (use the .xml file from your export)
+model = OpenVINOInference("output/rfdetr-medium.xml")
 
 # Prepare input image (NCHW format, ImageNet normalized)
 image = Image.open("image.jpg").convert("RGB").resize((576, 576))
@@ -109,7 +108,7 @@ boxes, labels = outputs
 Test the exported model performance:
 
 ```bash
-benchmark_app -m output/inference_model.xml -data_shape [1,3,576,576]
+benchmark_app -m output/rfdetr-medium.xml -data_shape [1,3,576,576]
 ```
 
 ## Model Outputs

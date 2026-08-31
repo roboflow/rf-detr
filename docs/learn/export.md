@@ -500,10 +500,10 @@ pip install "rfdetr[openvino]"
     model.export(format="openvino", output_dir="output")
     ```
 
-This produces two files:
+This produces two files (named after the model's variant):
 
-- `output/rfdetr-medium.xml` - The model structure (Intermediate Representation)
-- `output/rfdetr-medium.bin` - The model weights
+- `output/<model-variant>.xml` - The model structure (Intermediate Representation)
+- `output/<model-variant>.bin` - The model weights
 
 ### OpenVINO Export with Custom Resolution
 

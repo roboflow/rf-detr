@@ -55,7 +55,7 @@ class OpenVINOInference:
         # Initialize OpenVINO runtime
         core = ov.Core()
         self.model = core.read_model(model_path)
-        self.compiled_model = core.compile_model(self.model, "CPU")
+        self.compiled_model = core.compile_model(self.model, "AUTO")
         self.infer_request = self.compiled_model.create_infer_request()
 
         # Get input/output info
