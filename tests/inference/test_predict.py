@@ -753,7 +753,9 @@ class TestPredictUint8Conversion:
         try:
             torch.set_default_dtype(dtype)
             expected = F.to_tensor(image)
-            actual = detr_module._uint8_image_to_tensor(image)
+            actual = detr_module._uint8_chw_to_float(
+                detr_module._uint8_image_to_chw_view(image), torch.tensor(255, dtype=dtype)
+            )
         finally:
             torch.set_default_dtype(previous_dtype)
 
@@ -796,7 +798,7 @@ class TestPredictUint8Conversion:
         to_tensor_spy = MagicMock(side_effect=AssertionError("uint8 input unexpectedly used F.to_tensor"))
 
         with (
-            patch("rfdetr.detr._uint8_image_to_tensor", wraps=detr_module._uint8_image_to_tensor) as converter_spy,
+            patch("rfdetr.detr._uint8_image_to_chw_view", wraps=detr_module._uint8_image_to_chw_view) as converter_spy,
             patch("rfdetr.detr.F.to_tensor", to_tensor_spy),
         ):
             model.predict(image)
@@ -816,7 +818,7 @@ class TestPredictUint8Conversion:
         image = rng.integers(0, 256, size=(17, 29, 1), dtype=np.uint8)
 
         expected = F.to_tensor(image)
-        actual = detr_module._uint8_image_to_tensor(image)
+        actual = detr_module._uint8_chw_to_float(detr_module._uint8_image_to_chw_view(image), torch.tensor(255.0))
 
         assert actual.dtype == expected.dtype
         assert actual.shape == expected.shape
@@ -829,7 +831,7 @@ class TestPredictUint8Conversion:
         model = _DummyRFDETR()
         image = PIL.Image.new("RGB", (29, 17), color=(1, 127, 255))
 
-        with patch("rfdetr.detr._uint8_image_to_tensor", wraps=detr_module._uint8_image_to_tensor) as converter_spy:
+        with patch("rfdetr.detr._uint8_image_to_chw_view", wraps=detr_module._uint8_image_to_chw_view) as converter_spy:
             detections = model.predict(image)
 
         converter_spy.assert_called_once()
@@ -843,7 +845,7 @@ class TestPredictUint8Conversion:
         image.flags.writeable = False
 
         with (
-            patch("rfdetr.detr._uint8_image_to_tensor", wraps=detr_module._uint8_image_to_tensor) as converter_spy,
+            patch("rfdetr.detr._uint8_image_to_chw_view", wraps=detr_module._uint8_image_to_chw_view) as converter_spy,
             pytest.warns(UserWarning, match="not writable"),
         ):
             detections = model.predict(image)
@@ -852,6 +854,95 @@ class TestPredictUint8Conversion:
         assert converter_spy.call_args.args[0] is image
         assert detections.metadata["source_image"] is not image
         assert detections.metadata["source_image"].flags.writeable
+
+    def test_deferred_widening_is_bit_exact_for_every_byte_value(self) -> None:
+        """The 0-dim divisor keeps IEEE-754 division, which a Python scalar does not on CUDA.
+
+        ``Tensor.div_(255)`` is evaluated on CUDA as a multiplication by ``1/255``; that rounds differently from the
+        CPU's division for just under half of all byte values (126 of 256). Since ``predict()`` now widens after the
+        transfer, the divisor must be a 0-dim tensor for the accelerator result to stay byte-for-byte equal to
+        torchvision's host-side conversion.
+        """
+        image = np.arange(256, dtype=np.uint8).reshape(16, 16, 1).repeat(3, axis=2)
+        chw = detr_module._uint8_image_to_chw_view(image)
+
+        assert detr_module._uint8_chw_to_float(chw, torch.tensor(255.0)).equal(F.to_tensor(image))
+
+    @pytest.mark.gpu
+    def test_deferred_widening_is_bit_exact_on_real_cuda(self) -> None:
+        """The reciprocal-multiplication gap this fix avoids only manifests on real CUDA hardware.
+
+        ``test_deferred_widening_is_bit_exact_for_every_byte_value`` above proves the divisor swap is correct on
+        CPU, where scalar and tensor division already agree bit-for-bit; it cannot exercise the CUDA-specific
+        ``Tensor.div_(255)`` reciprocal path this fix replaces. This test runs the same view/pin/transfer/widen
+        sequence ``predict()`` uses on a real CUDA device and compares it against the host-computed reference.
+        """
+        image = np.arange(256, dtype=np.uint8).reshape(16, 16, 1).repeat(3, axis=2)
+        expected = F.to_tensor(image)
+
+        chw = detr_module._uint8_image_to_chw_view(image).pin_memory().to("cuda", non_blocking=True)
+        scale = torch.tensor(255, device=chw.device, dtype=torch.get_default_dtype())
+        actual = detr_module._uint8_chw_to_float(chw, scale).cpu()
+
+        assert actual.equal(expected)
+
+    def test_one_divisor_serves_every_image_of_a_multi_image_call(self) -> None:
+        """`predict()` builds the divisor once per call and reuses it for the rest of the batch.
+
+        The in-place division has to consume the freshly widened copy, not the shared divisor, or the second and later
+        images of a multi-image call would be scaled by an already-divided value.
+        """
+        scale = torch.tensor(255, dtype=torch.get_default_dtype())
+        dark = np.full((4, 5, 3), 51, dtype=np.uint8)
+        bright = np.full((4, 5, 3), 255, dtype=np.uint8)
+
+        first = detr_module._uint8_chw_to_float(detr_module._uint8_image_to_chw_view(dark), scale)
+        second = detr_module._uint8_chw_to_float(detr_module._uint8_image_to_chw_view(bright), scale)
+
+        assert first.equal(F.to_tensor(dark))
+        assert second.equal(F.to_tensor(bright))
+        assert scale.equal(torch.tensor(255, dtype=torch.get_default_dtype()))
+
+    def test_uint8_images_cross_the_device_boundary_unwidened(self) -> None:
+        """Only the 1-byte-per-channel storage is transferred; the widening runs after the copy."""
+        model = _DummyRFDETR()
+        model.model.device = torch.device("cuda", 0)
+        real_to = torch.Tensor.to
+        real_tensor = torch.tensor
+        transferred_dtypes: list[torch.dtype] = []
+
+        def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            """Record the dtype of each simulated CUDA transfer and keep the result on CPU.
+
+            Examples:
+                This test-local closure requires its enclosing capture list.
+                >>> to_spy(torch.zeros(3), torch.device("cuda"))  # doctest: +SKIP
+            """
+            if args and isinstance(args[0], torch.device) and args[0].type == "cuda":
+                transferred_dtypes.append(self.dtype)
+                return self
+            return real_to(self, *args, **kwargs)
+
+        def tensor_spy(data: object, **kwargs: object) -> torch.Tensor:
+            """Redirect CUDA target-size construction to CPU for the simulated transfer.
+
+            Examples:
+                This test-local closure requires the captured real tensor constructor.
+                >>> tensor_spy([[48, 64]], device=torch.device("cuda"))  # doctest: +SKIP
+            """
+            device = kwargs.get("device")
+            if isinstance(device, torch.device) and device.type == "cuda":
+                kwargs["device"] = torch.device("cpu")
+            return real_tensor(data, **kwargs)
+
+        with (
+            patch.object(torch.Tensor, "pin_memory", lambda self: self),
+            patch.object(torch.Tensor, "to", to_spy),
+            patch.object(torch, "tensor", tensor_spy),
+        ):
+            model.predict(np.full((17, 29, 3), 127, dtype=np.uint8))
+
+        assert transferred_dtypes == [torch.uint8]
 
     def test_predict_keeps_torchvision_fallback_for_float_numpy(self) -> None:
         """Non-uint8 NumPy inputs retain torchvision's no-scaling conversion semantics."""
