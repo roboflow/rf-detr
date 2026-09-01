@@ -411,6 +411,7 @@ overrides = [
     "tensorflow", "tensorflow.*",
     "executorch", "executorch.*",
     "coremltools", "coremltools.*",
+    "openvino", "openvino.*",
     "roboflow", "roboflow.*",
     "rfdetr_plus", "rfdetr_plus.*",
   ], ignore_missing_imports = true },
