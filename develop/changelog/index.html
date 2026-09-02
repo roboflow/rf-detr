@@ -2414,6 +2414,9 @@
 <li>
 <p>Empty COCO targets now keep <code>iscrowd</code> as <code>int64</code> and <code>area</code> as <code>float32</code>, matching populated targets and allowing mixed empty/populated batches to use lossless packed-target worker transport.</p>
 </li>
+<li>
+<p><code>compile=True</code> no longer aborts the training step on supported PyTorch versions, including 2.2 where <code>torch.compiler.is_compiling()</code> is unavailable. Dynamo polyfills <code>torch._shape_as_tensor</code> to return a <code>torch.Size</code> rather than a tensor, so <code>Transformer.forward</code>'s <code>torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs])</code> raised <code>TypeError: expected Tensor as element 0 in argument 0, but got torch.Size</code> as soon as <code>torch.compile</code> traced it, and <code>torch._dynamo.config.suppress_errors = True</code> did not absorb it because the <code>TypeError</code> is raised by user code rather than by Dynamo. <code>spatial_shapes</code> is now built from the Python-int <code>(H, W)</code> pairs the function already collects whenever compilation is active, using the public compiler predicate where available and the legacy Dynamo predicate on PyTorch 2.2. Eager, <code>torch.jit.trace</code> and the TorchScript-ONNX/TensorRT export path (#1155) keep the <code>torch._shape_as_tensor</code> form unchanged: neither guard is true there. Reproduced on torch 2.9.1 and 2.13.0, at <code>dynamic=True</code>, <code>dynamic=None</code> and <code>dynamic=False</code>. <code>compile=True</code> is still inert under the default <code>multi_scale=True</code>, which disables compilation before this path is reached.</p>
+</li>
 </ul>
 <hr />
 <h2 id="194-2026-08-24">[1.9.4] — 2026-08-24<a class="headerlink" href="#194-2026-08-24" title="Permanent link">&para;</a></h2>
