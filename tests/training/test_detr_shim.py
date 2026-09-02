@@ -1008,7 +1008,7 @@ class TestOnLoadCheckpoint:
         RFDETRModelModule.on_load_checkpoint(fake, {"state_dict": {}})
         assert fake._pending_legacy_ema_state is first_ema
 
-    def test_pre_merge_optimizer_state_is_regrouped(self, patch_lit):
+    def test_pre_merge_optimizer_state_is_regrouped(self, patch_lit: Any) -> None:
         """on_load_checkpoint itself regroups one-group-per-parameter optimizer state.
 
         tests/training/test_param_groups.py exercises regroup_unmerged_optimizer_state() directly; this proves the hook
