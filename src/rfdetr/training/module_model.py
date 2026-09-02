@@ -1277,10 +1277,15 @@ class RFDETRModelModule(LightningModule):
             else:
                 # Explicit dotted import path: constructed from lr_scheduler_kwargs only.
                 scheduler_class = _import_scheduler_class(scheduler_cfg)
-                scheduler_kwargs = regroup_unmerged_scheduler_kwargs(
-                    tc.lr_scheduler_kwargs,
-                    _build_param_dicts(ns, model_for_params),
-                )
+                scheduler_kwargs = tc.lr_scheduler_kwargs
+                # Only a per-parameter lr_lambda list needs the legacy unmerged groups;
+                # regroup_unmerged_scheduler_kwargs returns its input untouched otherwise, so
+                # skip rebuilding the (discarded) unmerged layout for every other scheduler.
+                if isinstance(scheduler_kwargs.get("lr_lambda"), list):
+                    scheduler_kwargs = regroup_unmerged_scheduler_kwargs(
+                        scheduler_kwargs,
+                        _build_param_dicts(ns, model_for_params),
+                    )
                 scheduler = _instantiate_explicit_scheduler(scheduler_class, scheduler_cfg, optimizer, scheduler_kwargs)
             interval = tc.lr_scheduler_interval
             if isinstance(scheduler, ReduceLROnPlateau):
