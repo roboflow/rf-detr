@@ -160,17 +160,15 @@ class DepthwiseConvBlock(nn.Module):
         # backward.  A plain context-manager only covers forward; the backward
         # for nn.Conv2d runs outside that scope and re-enables cuDNN,
         # triggering RuntimeError on T4/P100 GPUs (issue #731).
-        return cast(
-            Tensor,
-            _DepthwiseConvWithoutCuDNN.apply(  # type: ignore[no-untyped-call]
-                x,
-                self.dwconv.weight,
-                self.dwconv.bias,
-                self.dwconv.stride,
-                self.dwconv.padding,
-                self.dwconv.dilation,
-                self.dwconv.groups,
-            ),
+        depthwise_conv = cast(Callable[..., Tensor], _DepthwiseConvWithoutCuDNN.apply)
+        return depthwise_conv(
+            x,
+            self.dwconv.weight,
+            self.dwconv.bias,
+            self.dwconv.stride,
+            self.dwconv.padding,
+            self.dwconv.dilation,
+            self.dwconv.groups,
         )
 
     def forward(self, x: Tensor) -> Tensor:
