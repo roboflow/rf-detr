@@ -108,8 +108,11 @@ apply. Its limits are deltas rather than absolute ranges, so they are converted 
 ``scale_limit`` is biased by 1 in Albumentations, meaning it samples from ``(1 + low, 1 + high)``, so the
 default ``(-0.1, 0.1)`` is a scale between ``0.9`` and ``1.1``; that pivot is applied here. All three limits
 also read a scalar ``v`` as the symmetric ``(-v, v)``. ``shift_limit_x`` and ``shift_limit_y`` map onto
-Kornia's per-axis ``translate``. ``interpolation``, ``border_mode``, ``mask_interpolation``, ``fill``,
-``fill_mask`` and ``rotate_method`` have no equivalent and are ignored with a warning. Note that
+Kornia's per-axis ``translate``; ``None`` uses the shared ``shift_limit``. Kornia can sample only symmetric shift
+ranges, so an asymmetric Albumentations pair such as ``(0.1, 0.2)`` becomes ``(-0.2, 0.2)`` and emits a warning.
+Use the Albumentations backend when that distribution must be preserved. ``interpolation``, ``border_mode``,
+``mask_interpolation``, ``fill``, ``fill_mask`` and ``rotate_method`` have no equivalent and are ignored with a warning.
+Note that
 Albumentations itself deprecates ``ShiftScaleRotate`` in favour of ``Affine``, which this backend already
 supports; new configs should prefer ``Affine``.
 

@@ -9,6 +9,8 @@ All tests in this module are CPU-compatible — Kornia operates on CPU tensors i
 ``@pytest.mark.gpu`` is needed.
 """
 
+from typing import Any
+
 import pytest
 import torch
 
@@ -1476,7 +1478,7 @@ class TestGaussianDefaultsMatchAlbumentations:
 # ---------------------------------------------------------------------------
 
 
-def _affine_ranges(transform) -> dict:
+def _affine_ranges(transform: Any) -> dict[str, tuple[float, float]]:
     """Read the resolved degrees/translate/scale off a Kornia ``RandomAffine``.
 
     Like :func:`_sharpness_sampler_range`, this reads a private Kornia detail because no public
@@ -1484,6 +1486,11 @@ def _affine_ranges(transform) -> dict:
     against the installed Kornia version), so the geometric ranges are reachable only through the
     parameter generator. A future Kornia release renaming ``_param_generator`` fails here with an
     actionable message rather than a raw ``AttributeError`` inside a test body.
+
+    Examples:
+        >>> transform = TestShiftScaleRotateFactory()._only_affine({"ShiftScaleRotate": {"p": 1.0}})
+        >>> len(_affine_ranges(transform))
+        3
     """
     generator = getattr(transform, "_param_generator", None)
     if generator is None:
@@ -1518,7 +1525,14 @@ class TestShiftScaleRotateFactory:
     def _require_kornia(self):
         pytest.importorskip("kornia")
 
-    def _only_affine(self, aug_config):
+    def _only_affine(self, aug_config: dict[str, dict[str, Any]]) -> Any:
+        """Build a pipeline and return its sole ``RandomAffine`` transform.
+
+        Examples:
+            >>> transform = TestShiftScaleRotateFactory()._only_affine({"ShiftScaleRotate": {"p": 1.0}})
+            >>> transform.__class__.__name__
+            'RandomAffine'
+        """
         import kornia.augmentation as kornia_augmentation
 
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
@@ -1561,6 +1575,27 @@ class TestShiftScaleRotateFactory:
             self._only_affine({"ShiftScaleRotate": {"shift_limit_x": 0.2, "shift_limit_y": 0.05, "p": 1.0}})
         )
         assert ranges["translate"] == pytest.approx((0.2, 0.05), abs=1e-4)
+
+    @pytest.mark.parametrize("key", ["shift_limit_x", "shift_limit_y"])
+    def test_none_per_axis_shift_limit_uses_the_shared_limit(self, key: str) -> None:
+        """Albumentations accepts ``None`` as an axis-level fallback to ``shift_limit``."""
+        ranges = _affine_ranges(self._only_affine({"ShiftScaleRotate": {"shift_limit": 0.2, key: None, "p": 1.0}}))
+        assert ranges["translate"] == pytest.approx((0.2, 0.2), abs=1e-4)
+
+    def test_asymmetric_shift_limit_warns_about_the_symmetric_kornia_approximation(self) -> None:
+        """A one-sided CPU range must not silently become a different GPU distribution."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warn:
+            ranges = _affine_ranges(self._only_affine({"ShiftScaleRotate": {"shift_limit_x": (0.1, 0.2), "p": 1.0}}))
+
+        assert ranges["translate"] == pytest.approx((0.2, 0.0625), abs=1e-4)
+        messages = [
+            call.args[0] % call.args[1:] if len(call.args) > 1 else call.args[0] for call in warn.call_args_list
+        ]
+        assert any("asymmetric" in message and "shift_limit_x" in message for message in messages), messages
 
     @pytest.mark.parametrize(
         "key,value",

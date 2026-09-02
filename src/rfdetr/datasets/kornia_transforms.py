@@ -461,8 +461,9 @@ def _make_shift_scale_rotate(params: dict[str, Any]) -> Any:
       1.0-pivot that :func:`_make_sharpen` applies to ``alpha``.
     - ``shift_limit`` is a signed fraction range, while Kornia's ``translate`` is a non-negative per-axis maximum
       sampled symmetrically, so it is converted the same way :func:`_make_affine` converts ``translate_percent``.
-      ``shift_limit_x`` and ``shift_limit_y`` override it per axis, which Kornia's ``(tx, ty)`` pair expresses
-      directly.
+      ``shift_limit_x`` and ``shift_limit_y`` override it per axis, with ``None`` preserving the shared limit as it
+      does on the Albumentations backend. Kornia cannot represent an asymmetric shift interval, so this builder uses
+      the greatest absolute bound and logs that distributional approximation.
     - all three accept a scalar as a symmetric range, unlike the ``(v, v)`` reading :func:`_as_range` gives.
     """
     from kornia.augmentation import RandomAffine
@@ -477,8 +478,24 @@ def _make_shift_scale_rotate(params: dict[str, Any]) -> Any:
         )
 
     shift = _as_symmetric_range(params.get("shift_limit", (-0.0625, 0.0625)))
-    shift_x = _as_symmetric_range(params["shift_limit_x"]) if "shift_limit_x" in params else shift
-    shift_y = _as_symmetric_range(params["shift_limit_y"]) if "shift_limit_y" in params else shift
+    shift_x_value = params.get("shift_limit_x")
+    shift_y_value = params.get("shift_limit_y")
+    shift_x = _as_symmetric_range(shift_x_value) if shift_x_value is not None else shift
+    shift_y = _as_symmetric_range(shift_y_value) if shift_y_value is not None else shift
+    configured_limits = (
+        ("shift_limit", shift, "shift_limit" in params),
+        ("shift_limit_x", shift_x, shift_x_value is not None),
+        ("shift_limit_y", shift_y, shift_y_value is not None),
+    )
+    asymmetric_limits = [
+        name for name, bounds, is_configured in configured_limits if is_configured and bounds[0] != -bounds[1]
+    ]
+    if asymmetric_limits:
+        logger.warning(
+            "GPU augmentation (Kornia) ShiftScaleRotate approximates asymmetric %s with a symmetric range using "
+            "the greatest absolute limit. CPU augmentation (Albumentations) preserves the requested distribution.",
+            ", ".join(repr(name) for name in asymmetric_limits),
+        )
     translate = (
         max(abs(shift_x[0]), abs(shift_x[1])),
         max(abs(shift_y[0]), abs(shift_y[1])),
