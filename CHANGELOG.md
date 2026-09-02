@@ -62,6 +62,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Packed targets are now materialized directly into independent per-sample tensors on the destination device instead of first moving every concatenated field and then cloning it. This removes a transient CUDA allocation equal to the mask field's size, present whenever segmentation transfer held both the packed and the materialized masks at once; DataLoader worker transport remains packed. This is a mechanism-level fix, not the representative detection/segmentation host-device memory benchmark suite noted as a follow-up boundary above.
+
 - Empty COCO targets now keep `iscrowd` as `int64` and `area` as `float32`, matching populated targets and allowing mixed empty/populated batches to use lossless packed-target worker transport.
 
 ---
