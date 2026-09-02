@@ -18,6 +18,7 @@ from PIL import Image
 from torch.utils.data import DataLoader
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
+from rfdetr.datasets.multi_source import WeightedMultiSourceBatchSampler
 from rfdetr.datasets.yolo import YoloDetection, YoloSplitUnavailableError
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.utilities.tensors import NestedTensor, PackedTargets, pack_targets
@@ -879,6 +880,76 @@ class TestTrainDataloader:
         loader = dm.train_dataloader()
 
         assert loader.dataset is original_dataset
+
+    def test_warns_when_custom_sampler_leaves_a_short_accumulation_window(self, tmp_path, caplog, monkeypatch):
+        """A batch-sampler epoch that is not a multiple of grad_accum_steps under-scales the last optimizer step."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=101, batch_size=2, grad_accum_steps=4)
+        # 101 samples in batches of 4 is 26 batches, and 26 % 4 == 2.
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm.build_train_sampler = MagicMock(return_value=custom_sampler)
+        # get_logger() sets propagate=False on the "rf-detr" logger, so caplog's handler only sees its
+        # records while propagation is re-enabled.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            dm.train_dataloader()
+
+        assert "not a multiple of grad_accum_steps" in caplog.text
+
+    def test_no_warning_when_custom_sampler_epoch_is_already_aligned(self, tmp_path, caplog, monkeypatch):
+        """An aligned epoch must stay quiet, so the warning keeps its signal."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=96, batch_size=2, grad_accum_steps=4)
+        # 96 samples in batches of 4 is exactly 24 batches, and 24 % 4 == 0.
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm.build_train_sampler = MagicMock(return_value=custom_sampler)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            dm.train_dataloader()
+
+        assert "not a multiple of grad_accum_steps" not in caplog.text
+
+    def test_no_warning_without_gradient_accumulation(self, tmp_path, caplog, monkeypatch):
+        """With grad_accum_steps=1 every window is one micro-batch, so no epoch length can be short."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=101, batch_size=2, grad_accum_steps=1)
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm.build_train_sampler = MagicMock(return_value=custom_sampler)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            dm.train_dataloader()
+
+        assert "not a multiple of grad_accum_steps" not in caplog.text
+
+    def test_sampler_without_len_is_not_checked(self, tmp_path):
+        """A sampler declaring no epoch length must not break loader construction."""
+
+        class _UnsizedBatchSampler(torch.utils.data.Sampler):
+            def __iter__(self):
+                yield [0, 1]
+
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=101, batch_size=2, grad_accum_steps=4)
+        dm.build_train_sampler = MagicMock(return_value=_UnsizedBatchSampler(None))
+
+        assert dm.train_dataloader().batch_sampler is not None
+
+    def test_batch_multiple_gives_the_loader_whole_accumulation_windows(self, tmp_path):
+        """The documented fix: batch_multiple=grad_accum_steps makes len(loader) an exact number of windows."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=101, batch_size=2, grad_accum_steps=4)
+        sampler = WeightedMultiSourceBatchSampler(
+            [len(dm._dataset_train)], [1.0], batch_size=2, num_replicas=1, rank=0, batch_multiple=4
+        )
+        dm.build_train_sampler = MagicMock(return_value=sampler)
+
+        loader = dm.train_dataloader()
+
+        assert len(loader) % 4 == 0
 
     def test_check_custom_sampler_owns_ddp_noop_when_trainer_is_unset(self, tmp_path):
         """No Trainer attached (e.g. the guard called standalone) never raises."""

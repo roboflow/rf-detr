@@ -188,6 +188,15 @@ class TestComputeSourceBatchSizes:
         with pytest.raises(ValueError, match="too small to be represented"):
             compute_source_batch_sizes(8, [1e-9, 1e-9])
 
+    def test_allocates_very_large_unnormalised_weights(self) -> None:
+        # Weights are documented as relative, so a 2:1 ratio must allocate the same whatever its absolute magnitude.
+        assert compute_source_batch_sizes(6, [1e308, 5e307]) == compute_source_batch_sizes(6, [2.0, 1.0])
+
+    def test_weight_dwarfed_by_a_huge_one_raises_valueerror_not_overflow(self) -> None:
+        # 1e308 is finite and passes the positivity check; scaling it must not raise a bare OverflowError.
+        with pytest.raises(ValueError, match="too small to be represented"):
+            compute_source_batch_sizes(8, [1e308, 1.0])
+
     def test_rejects_non_positive_batch_size(self) -> None:
         with pytest.raises(ValueError, match="batch_size must be >= 1"):
             compute_source_batch_sizes(0, [0.5, 0.5])
@@ -266,6 +275,40 @@ class TestBatchComposition:
         assert len(drawn) == len(set(drawn))
 
 
+class TestBatchMultipleAlignment:
+    """``batch_multiple`` keeps an epoch a whole number of gradient-accumulation windows."""
+
+    @pytest.mark.parametrize("multiple", [pytest.param(2, id="two"), pytest.param(4, id="four")])
+    def test_epoch_length_is_a_multiple(self, multiple: int) -> None:
+        sampler = WeightedMultiSourceBatchSampler([101, 50], [0.5, 0.5], batch_size=4, batch_multiple=multiple)
+        assert len(sampler) % multiple == 0
+
+    def test_alignment_only_truncates(self) -> None:
+        """Rounding down must never invent batches beyond the unaligned epoch."""
+        unaligned = WeightedMultiSourceBatchSampler([101, 50], [0.5, 0.5], batch_size=4)
+        aligned = WeightedMultiSourceBatchSampler([101, 50], [0.5, 0.5], batch_size=4, batch_multiple=4)
+        assert len(aligned) <= len(unaligned)
+
+    def test_iteration_yields_the_declared_batch_count(self) -> None:
+        """``__len__`` must match what ``__iter__`` actually produces once aligned."""
+        sampler = WeightedMultiSourceBatchSampler([101, 50], [0.5, 0.5], batch_size=4, batch_multiple=4)
+        assert sum(1 for _ in sampler) == len(sampler)
+
+    def test_default_is_unaligned(self) -> None:
+        """Omitting the argument must leave the existing epoch length untouched."""
+        explicit = WeightedMultiSourceBatchSampler([101, 50], [0.5, 0.5], batch_size=4, batch_multiple=1)
+        assert len(explicit) == len(WeightedMultiSourceBatchSampler([101, 50], [0.5, 0.5], batch_size=4))
+
+    def test_rejects_multiple_larger_than_the_epoch(self) -> None:
+        """An alignment the epoch cannot satisfy must fail loudly rather than yield zero batches."""
+        with pytest.raises(ValueError, match="batch_multiple"):
+            WeightedMultiSourceBatchSampler([8, 8], [0.5, 0.5], batch_size=4, batch_multiple=64)
+
+    def test_rejects_non_positive_multiple(self) -> None:
+        with pytest.raises(ValueError, match="batch_multiple must be >= 1"):
+            WeightedMultiSourceBatchSampler([100, 50], [0.5, 0.5], batch_size=4, batch_multiple=0)
+
+
 class TestEpochLength:
     """Which source defines an epoch."""
 
@@ -320,6 +363,16 @@ class TestRecyclingWarning:
     STARVED_BATCH_SIZE = 3
 
     def _build_starved_sampler(self) -> WeightedMultiSourceBatchSampler:
+        """Build the sampler whose two lowest-weighted sources get no slots in a batch.
+
+        Returns:
+            Sampler over ``STARVED_SIZES`` allocating ``[2, 1, 0, 0]`` slots per batch, so sources 2 and 3 are
+            starved and source 1 (20 samples, one slot per batch) is the most-recycled contributor.
+
+        Examples:
+            >>> TestRecyclingWarning()._build_starved_sampler().source_batch_sizes
+            [2, 1, 0, 0]
+        """
         return WeightedMultiSourceBatchSampler(
             self.STARVED_SIZES, self.STARVED_WEIGHTS, batch_size=self.STARVED_BATCH_SIZE
         )
@@ -365,6 +418,16 @@ class TestRatioDivergenceWarning:
     INVERTED_BATCH_SIZE = 4
 
     def _build_inverted_sampler(self) -> WeightedMultiSourceBatchSampler:
+        """Build the sampler whose one-slot-per-source guarantee inverts the requested 97/1/1/1 split.
+
+        Returns:
+            Sampler over ``INVERTED_SIZES`` allocating ``[1, 1, 1, 1]`` slots per batch, so the dominant source
+            realises 25% of each batch instead of the 97% it asked for.
+
+        Examples:
+            >>> TestRatioDivergenceWarning()._build_inverted_sampler().source_batch_sizes
+            [1, 1, 1, 1]
+        """
         return WeightedMultiSourceBatchSampler(
             self.INVERTED_SIZES, self.INVERTED_WEIGHTS, batch_size=self.INVERTED_BATCH_SIZE
         )

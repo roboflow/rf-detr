@@ -367,6 +367,13 @@ class RFDETRDataModule(LightningDataModule):
         indices make up each batch and ``GradAccumAlignedDataset`` only pads a length that a custom batch
         sampler never consults.
 
+        That skip transfers one responsibility to the sampler: keeping its epoch a whole number of
+        gradient-accumulation windows. Padding is how the default path stops PTL firing the optimizer on a short
+        final window (Lightning-AI/pytorch-lightning#19987), and it cannot reach a batch sampler. A returned
+        sampler whose length is not a multiple of ``grad_accum_steps`` is warned about, not rejected;
+        :class:`~rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler` takes
+        ``batch_multiple=grad_accum_steps`` to satisfy it.
+
         A returned sampler is responsible for its own DDP sharding (for example via ``num_replicas``/
         ``rank`` constructor arguments), so a distributed run must be started with
         ``Trainer(use_distributed_sampler=False)``. Otherwise Lightning tries to rebuild the batch sampler
@@ -434,6 +441,43 @@ class RFDETRDataModule(LightningDataModule):
             "live torch.distributed process group)."
         )
 
+    def _warn_on_unaligned_batch_sampler(self, batch_sampler: torch.utils.data.Sampler[list[int]]) -> None:
+        """Warn when a custom batch sampler's epoch is not a whole number of gradient-accumulation windows.
+
+        The default loader path keeps that invariant by padding the dataset with :class:`GradAccumAlignedDataset`, so
+        ``drop_last=True`` becomes a no-op and PTL never fires the optimizer on a short final window
+        (Lightning-AI/pytorch-lightning#19987). A batch sampler owns its own batches, so padding the dataset cannot
+        reach it and the invariant has to be restored by the sampler itself.
+
+        Only warns: a short final window under-scales one optimizer step per epoch, which is a real but survivable
+        cost, and refusing to build the loader would break callers who accept it knowingly.
+
+        Args:
+            batch_sampler: The sampler returned by :meth:`build_train_sampler`. A sampler without ``__len__``
+                declares no epoch length, so nothing can be checked and the call is a no-op.
+        """
+        grad_accum_steps = self.train_config.grad_accum_steps
+        if grad_accum_steps < 2:
+            return
+        try:
+            batches = len(batch_sampler)  # type: ignore[arg-type]
+        except TypeError:
+            return
+        if batches % grad_accum_steps == 0:
+            return
+        logger.warning(
+            "build_train_sampler() returned %s yielding %d batches per epoch, which is not a multiple of "
+            "grad_accum_steps=%d. The final accumulation window will be short (%d of %d micro-batches), so the last "
+            "optimizer step of each epoch is under-scaled. WeightedMultiSourceBatchSampler accepts "
+            "batch_multiple=%d to round its epoch down to a whole number of windows.",
+            type(batch_sampler).__name__,
+            batches,
+            grad_accum_steps,
+            batches % grad_accum_steps,
+            grad_accum_steps,
+            grad_accum_steps,
+        )
+
     def train_dataloader(self) -> DataLoader[Any]:
         """Return the training DataLoader.
 
@@ -460,6 +504,7 @@ class RFDETRDataModule(LightningDataModule):
         custom_batch_sampler = self.build_train_sampler(dataset)
         if custom_batch_sampler is not None:
             self._check_custom_sampler_owns_ddp(custom_batch_sampler)
+            self._warn_on_unaligned_batch_sampler(custom_batch_sampler)
             return DataLoader(
                 dataset,
                 batch_sampler=custom_batch_sampler,

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from itertools import pairwise
-from math import ceil, isfinite
+from math import ceil, frexp, isfinite, ldexp
 from typing import Any, Literal
 
 import torch
@@ -60,14 +60,25 @@ def _validate_and_scale_weights(batch_size: int, weights: Sequence[float]) -> li
             "To exclude a source, drop it from the sampler instead of giving it zero weight."
         )
 
-    scaled = [round(float(weight) * _WEIGHT_SCALE) for weight in weights]
+    values = [float(weight) for weight in weights]
+    largest = max(values)
+    if largest * _WEIGHT_SCALE == float("inf"):
+        # A finite weight can still overflow the integer scale (1e308 * 1e6 is inf), which would surface as a bare
+        # OverflowError from round(). Only ratios matter, so divide every weight by a power of two large enough to
+        # bring the largest back in range. Halving is exact in binary floating point, so the ratios survive
+        # unchanged, and the rescale is skipped entirely for weights that never threatened to overflow.
+        shift = frexp(largest)[1] - 1
+        values = [ldexp(value, -shift) for value in values]
+    scaled = [round(value * _WEIGHT_SCALE) for value in values]
     # A weight that survives the positivity check can still round to zero, which the allocation below would silently
     # turn into a full guaranteed slot — the opposite of what such a weight asks for.
     underflowed = [(index, weights[index]) for index, value in enumerate(scaled) if value == 0]
     if underflowed:
         raise ValueError(
             f"weights are too small to be represented at 1e-6 precision, at (index, value): {underflowed}. "
-            "To exclude a source, drop it from the sampler instead of giving it a negligible weight."
+            "A weight is measured relative to the largest one, so this also fires for a weight that is merely "
+            "negligible beside its peers. To exclude a source, drop it from the sampler instead of giving it a "
+            "negligible weight."
         )
     return scaled
 
@@ -249,9 +260,15 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         epoch_length: Which source defines the length of an epoch — ``"largest"`` (every sample of the biggest source
             is seen roughly once per epoch, smaller sources cycle), ``"smallest"`` (the smallest source is seen once
             and larger sources are sub-sampled), or the integer index of a specific source.
+        batch_multiple: Round the per-rank batch count down to a multiple of this value. Pass ``grad_accum_steps``
+            so every gradient-accumulation window is complete: PTL otherwise fires the optimizer on a short final
+            window (Lightning-AI/pytorch-lightning#19987), which the default loader path avoids by padding the
+            dataset — padding a batch sampler owns its own batches and cannot use. ``1`` (the default) leaves the
+            epoch length untouched.
 
     Raises:
-        ValueError: If the arguments are inconsistent, a source is empty, or ``epoch_length`` is invalid.
+        ValueError: If the arguments are inconsistent, a source is empty, ``epoch_length`` is invalid, or
+            ``batch_multiple`` is below 1 or larger than the epoch it would align.
 
     Example:
         >>> import torch
@@ -276,6 +293,7 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         rank: int | None = None,
         seed: int = 0,
         epoch_length: Literal["largest", "smallest"] | int = "largest",
+        batch_multiple: int = 1,
     ) -> None:
         if len(source_sizes) != len(weights):
             raise ValueError(
@@ -283,6 +301,8 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
             )
         if len(source_sizes) == 0:
             raise ValueError("at least one source is required")
+        if batch_multiple < 1:
+            raise ValueError(f"batch_multiple must be >= 1, got {batch_multiple}")
         empty = [index for index, size in enumerate(source_sizes) if size <= 0]
         if empty:
             raise ValueError(f"every source must be non-empty, got empty sources at indices {empty}")
@@ -296,6 +316,7 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         self.num_replicas = resolved_replicas
         self.rank = resolved_rank
         self.seed = int(seed)
+        self.batch_multiple = int(batch_multiple)
         self.epoch = 0
 
         self.source_batch_sizes = compute_source_batch_sizes(self.batch_size, self.weights)
@@ -320,6 +341,18 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         # Truncate to a whole number of rounds so every rank yields the same count; at least one batch is always
         # produced, even for datasets smaller than a single batch.
         self._batches_per_rank = max(1, global_batches // self.num_replicas)
+        if self.batch_multiple > 1:
+            # Round down so the epoch is a whole number of gradient-accumulation windows. PTL fires the optimizer on
+            # a partial window at the tail of an epoch (Lightning-AI/pytorch-lightning#19987); the default loader
+            # path avoids that by padding the dataset, which a batch sampler owning its own batches cannot use.
+            aligned = (self._batches_per_rank // self.batch_multiple) * self.batch_multiple
+            if aligned == 0:
+                raise ValueError(
+                    f"batch_multiple={self.batch_multiple} exceeds the {self._batches_per_rank} batch(es) this rank "
+                    f"yields per epoch, so aligning would leave the epoch empty. Lower batch_multiple (typically "
+                    f"grad_accum_steps), lower batch_size, or drive the epoch from a larger source."
+                )
+            self._batches_per_rank = aligned
         self._global_batches = self._batches_per_rank * self.num_replicas
 
         self._warn_on_ratio_divergence()
@@ -338,6 +371,7 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         rank: int | None = None,
         seed: int = 0,
         epoch_length: Literal["largest", "smallest"] | int = "largest",
+        batch_multiple: int = 1,
     ) -> "WeightedMultiSourceBatchSampler":
         """Build a sampler for a :class:`~torch.utils.data.ConcatDataset`.
 
@@ -351,7 +385,8 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
             dataset: Concatenated dataset whose sub-datasets are the sources.
             weights: Relative sampling weight per source, ordered like ``dataset.datasets``.
             batch_size: Number of samples per batch on a single rank.
-            drop_last: Whether to drop the final partial batch of the driving source.
+            drop_last: Whether to omit the extra full batch covering the driving source's remainder; an epoch is
+                never reduced to zero batches. See the class docstring.
             shuffle: Whether to shuffle indices within each source.
             num_replicas: Number of DDP processes participating, or ``None`` to read the world size from the live
                 ``torch.distributed`` process group.
@@ -359,6 +394,8 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
                 ``torch.distributed`` process group.
             seed: Base seed shared by all ranks.
             epoch_length: Source that defines the epoch length; see the class docstring.
+            batch_multiple: Round the per-rank batch count down to a multiple of this value; pass
+                ``grad_accum_steps``. See the class docstring.
 
         Returns:
             A sampler whose index space matches ``dataset``.
@@ -382,6 +419,7 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
             rank=rank,
             seed=seed,
             epoch_length=epoch_length,
+            batch_multiple=batch_multiple,
         )
 
     def _resolve_driving_source(self, epoch_length: Literal["largest", "smallest"] | int) -> int:
