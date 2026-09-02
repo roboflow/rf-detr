@@ -2408,7 +2408,12 @@
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Empty COCO targets now keep <code>iscrowd</code> as <code>int64</code> and <code>area</code> as <code>float32</code>, matching populated targets and allowing mixed empty/populated batches to use lossless packed-target worker transport.</li>
+<li>
+<p>Packed targets are now materialized directly into independent per-sample tensors on the destination device instead of first moving every concatenated field and then cloning it. This removes a transient CUDA allocation equal to the mask field's size, present whenever segmentation transfer held both the packed and the materialized masks at once; DataLoader worker transport remains packed. This is a mechanism-level fix, not the representative detection/segmentation host-device memory benchmark suite noted as a follow-up boundary above.</p>
+</li>
+<li>
+<p>Empty COCO targets now keep <code>iscrowd</code> as <code>int64</code> and <code>area</code> as <code>float32</code>, matching populated targets and allowing mixed empty/populated batches to use lossless packed-target worker transport.</p>
+</li>
 </ul>
 <hr />
 <h2 id="194-2026-08-24">[1.9.4] — 2026-08-24<a class="headerlink" href="#194-2026-08-24" title="Permanent link">&para;</a></h2>
