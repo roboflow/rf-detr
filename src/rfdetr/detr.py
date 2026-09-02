@@ -1115,7 +1115,8 @@ class RFDETR:
         Apart from ``split``, this method accepts exactly the same keyword arguments as :meth:`train` (``dataset_dir``,
         ``device``, ``resolution``, ``batch_size``, ``output_dir``, ``num_workers``, ...); they are handled identically
         via the shared :func:`_prepare_run_config`. This parity is for convenience — the same kwargs dict used for
-        :meth:`train` can be reused here — not a guarantee every field has an effect. Training-only fields (``epochs``,
+        :meth:`train` can be reused here — not a guarantee every field has an
+        effect. Training-only fields (``epochs``,
         ``lr``, ``weight_decay``, ``ema``, ``early_stopping``, ``run``, ``project``, ``checkpoint_interval``,
         ``tensorboard``/``wandb``/``mlflow``/``clearml``, and similar) are silently accepted and ignored: ``evaluate()``
         runs through an eval-only trainer (``include_training_callbacks=False``) that never builds EMA, drop-path,
@@ -1580,86 +1581,121 @@ class RFDETR:
                     shape: ``(height, width)`` tuple; defaults to square at model resolution.
                         Both dimensions must be divisible by ``patch_size * num_windows``.
                     batch_size: Static batch size to bake into the ONNX graph.
-                    dynamic_batch: If True, export with a dynamic batch dimension so the model accepts variable batch sizes
-                        at runtime (spatial dimensions always stay fixed).  Applies to the ONNX and TFLite graphs.  Not
-                        supported for ExecuTorch export on executorch 1.3.1 (raises ``NotImplementedError``): the runtime
-                        cannot resize RF-DETR's windowed-attention reshapes, so a dynamic ``.pte`` runs only at the traced
-                        batch — export one ``.pte`` per batch size instead.  Also unsupported for native CoreML
+                    dynamic_batch: If True, export with a dynamic batch dimension
+                        so the model accepts variable batch sizes at runtime
+                        (spatial dimensions always stay fixed). Applies to the ONNX
+                        and TFLite graphs. Not supported for ExecuTorch export on
+                        executorch 1.3.1 (raises ``NotImplementedError``): the runtime
+                        cannot resize RF-DETR's windowed-attention reshapes, so a
+                        dynamic ``.pte`` runs only at the traced batch — export one
+                        ``.pte`` per batch size instead. Also unsupported for native CoreML
                         (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
-                    patch_size: Backbone patch size. Defaults to the value stored in
-                        ``model_config.patch_size`` (typically 14 or 16). When provided explicitly it must match the
-                        instantiated model's patch size. Shape divisibility is validated against ``patch_size * num_windows``.
+                    patch_size: Backbone patch size. Defaults to the value stored
+                        in ``model_config.patch_size`` (typically 14 or 16). When
+                        provided explicitly it must match the instantiated model's
+                        patch size. Shape divisibility is validated against
+                        ``patch_size * num_windows``.
                     format: Export format — ``"onnx"`` (default), ``"tflite"``, ``"tensorrt"`` (alias: ``"trt"``),
                         ``"executorch"`` (alias: ``"pte"``), ``"coreml"`` or ``"openvino"``.
-                        ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: ``"tflite"`` via
-                        ``onnx2tf`` (requires ``pip install rfdetr[tflite]``); ``"tensorrt"`` via the TensorRT
-                        Python API (requires ``pip install rfdetr[tensorrt]``).  Unlike ``"onnx"``/
-                        ``"tflite"`` portable serialization, ``"tensorrt"`` performs target-specific compilation at export
-                        time and produces a non-portable ``.trt`` engine tied to the build machine's GPU and TensorRT version.
-                        When ``"executorch"`` is selected the model is exported directly via ``torch.export`` to an ExecuTorch
+                        ``"tflite"`` and ``"tensorrt"`` both first export to ONNX,
+                        then convert: ``"tflite"`` via ``onnx2tf`` (requires
+                        ``pip install rfdetr[tflite]``); ``"tensorrt"`` via the
+                        TensorRT Python API (requires ``pip install rfdetr[tensorrt]``).
+                        Unlike ``"onnx"``/``"tflite"`` portable serialization,
+                        ``"tensorrt"`` performs target-specific compilation at
+                        export time and produces a non-portable ``.trt`` engine
+                        tied to the build machine's GPU and TensorRT version.
+                        When ``"executorch"`` is selected the model is exported
+                        directly via ``torch.export`` to an ExecuTorch
                         ``.pte`` file (no ONNX step), configured by *backend* / *soc* below.  Requires
                         ``pip install rfdetr[executorch]``. ``"openvino"`` converts directly from PyTorch to OpenVINO IR
                         format (requires ``pip install rfdetr[openvino]``).
                         ``pip install rfdetr[executorch]``.
                         When ``"coreml"`` is selected the model is exported via ``torch.export`` + ``coremltools`` to a
-                        native ``.mlpackage`` (no ONNX step; requires ``pip install rfdetr[coreml]``). This is distinct from
-                        ExecuTorch's ``format="executorch", backend="coreml"`` path, which still produces a ``.pte``. If
-                        you know that ExecuTorch delegate and expect ``format="coreml"`` to mean the same thing: it does
-                        not — pass ``format="executorch", backend="coreml"`` for the ``.pte`` route instead. Passing both
-                        ``format="coreml"`` and ``backend="coreml"`` together does **not** fall through to the ExecuTorch
-                        delegate; ``backend`` is ignored (with a warning) and the native ``.mlpackage`` path always runs.
+                        native ``.mlpackage`` (no ONNX step; requires
+                        ``pip install rfdetr[coreml]``). This is distinct from
+                        ExecuTorch's ``format="executorch", backend="coreml"``
+                        path, which still produces a ``.pte``. If you know that
+                        ExecuTorch delegate and expect ``format="coreml"`` to mean
+                        the same thing: it does not — pass
+                        ``format="executorch", backend="coreml"`` for the ``.pte``
+                        route instead. Passing both ``format="coreml"`` and
+                        ``backend="coreml"`` together does **not** fall through
+                        to the ExecuTorch delegate; ``backend`` is ignored (with
+                        a warning) and the native ``.mlpackage`` path always runs.
                         Keypoint models are untested with ``format="coreml"`` — detection and segmentation have
                         registry-clean and numerical-parity test coverage (see
                         ``tests/export/test_coreml_op_coverage.py`` / ``test_coreml_export.py``), keypoint models
                         currently do not.
 
                         .. warning::
-                            TFLite, ExecuTorch, and CoreML export are experimental and subject to change; upstream dependency
-                            instabilities (``onnx2tf``, ``ai_edge_litert``, ``executorch``, ``coremltools``) may affect results.
+                            TFLite, ExecuTorch, and CoreML export are experimental
+                            and subject to change; upstream dependency instabilities
+                            (``onnx2tf``, ``ai_edge_litert``, ``executorch``,
+                            ``coremltools``) may affect results.
                     quantization: TFLite quantization mode (ignored when
-                        ``format="onnx"``, ``format="openvino"``, or ``format="executorch"``).  One of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``.
-                        ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally
-                        produces an INT8-quantized model.
-                    calibration_data: Representative images for INT8 calibration and ``onnx2tf`` output validation.  Accepts:
+                        ``format="onnx"`, ``format="openvino"``, or
+                        ``format="executorch"``). One of ``None``, ``"fp32"`,
+                        ``"fp16"`, ``"int8"``.
+                        ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 + FP16
+                        ``.tflite`` files; ``"int8"`` additionally produces an
+                        INT8-quantized model.
+                    calibration_data: Representative images for INT8 calibration
+                        and ``onnx2tf`` output validation. Accepts:
 
                         * ``None`` — auto-generate random data (sufficient for fp32/fp16; warns for int8).
                         * A **directory path** (``str``) containing JPEG/PNG
-                          images — the converter automatically loads, resizes, and prepares them.  This is the simplest
-                          approach.
-                        * A path (``str``) to a ``.npy`` file of shape ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
+                                                    images — the converter automatically loads, resizes,
+                                                    and prepares them. This is the simplest approach.
+                                                * A path (``str``) to a ``.npy`` file of shape
+                                                    ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
                         * A :class:`numpy.ndarray` with the same format.
 
-                        For INT8 quantization, provide 20–100 representative images from your training/validation set for best
-                        accuracy.
-                    max_images: Maximum number of images to load from a calibration directory.  Defaults to ``100``.  Only used
-                        when *calibration_data* is a directory path.
-                    backend: Hardware backend to specialize the export for.  Required when ``format="executorch"`` and
-                        ignored — with a warning — for any other format.  Accepted values for ExecuTorch:
-                        ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple devices, fp16; requires ``coremltools``),
-                        and ``"qnn"`` (Qualcomm Snapdragon HTP, fp16; requires an ExecuTorch source build against the
-                        QAIRT SDK — not available via pip).
-                    soc: Target SoC (System on Chip) — the specific Qualcomm Snapdragon chip the exported model will run
-                        on.  Required when ``backend="qnn"``: the QNN backend compiles the ``.pte`` ahead-of-time for one
-                        chip's Hexagon Tensor Processor (HTP), unlike ``"xnnpack"``/``"coreml"`` which run on any device of
-                        their platform, so the target chip must be known at export time.  Ignored — with a warning — for
-                        any other backend or format.  Must be a
-                        :class:`~executorch.backends.qualcomm.serialization.qc_schema.QcomChipset` name, e.g. ``"SM8650"``
-                        (Snapdragon 8 Gen 3); see that enum for the full list of supported chips.  Has no effect for
+                        For INT8 quantization, provide 20–100 representative images
+                        from your training/validation set for best accuracy.
+                    max_images: Maximum number of images to load from a calibration
+                        directory. Defaults to ``100``. Only used when
+                        *calibration_data* is a directory path.
+                        backend: Hardware backend to specialize the export for.
+                        Required when ``format="executorch"`` and ignored — with
+                        a warning — for any other format. Accepted values for
+                        ExecuTorch: ``"xnnpack"`` (portable CPU, fp32),
+                        ``"coreml"`` (Apple devices, fp16; requires ``coremltools``),
+                        and ``"qnn"`` (Qualcomm Snapdragon HTP, fp16; requires an
+                        ExecuTorch source build against the QAIRT SDK — not
+                        available via pip).
+                    soc: Target SoC (System on Chip) — the specific Qualcomm
+                        Snapdragon chip the exported model will run on. Required
+                        when ``backend="qnn"``: the QNN backend compiles the
+                        ``.pte`` ahead-of-time for one chip's Hexagon Tensor
+                        Processor (HTP), unlike ``"xnnpack"``/``"coreml"`` which
+                        run on any device of their platform, so the target chip
+                        must be known at export time. Ignored — with a warning —
+                        for any other backend or format. Must be a
+                        :class:`~executorch.backends.qualcomm.serialization.qc_schema.QcomChipset`
+                        name, e.g. ``"SM8650"``
+                        (Snapdragon 8 Gen 3); see that enum for the full list of
+                        supported chips. Has no effect for
                         ``"xnnpack"`` or ``"coreml"``.
                     fp16: Build the TensorRT engine with FP16 precision.  Only applies when ``format="tensorrt"``
                         (alias ``"trt"``); ignored for every other format.  Defaults to ``True`` for lowest latency
                         on NVIDIA GPUs.  Pass ``False`` to build an FP32 engine — required on TensorRT builds that do
                         not expose the FP16 builder flag (``export()`` otherwise aborts while configuring FP16).
-                    notes: Optional user-defined metadata (string, dict, list, or
-                        any JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata
-                        property.  When ``None`` no metadata entry is written.  String values are stored verbatim; all other
-                        types are JSON-encoded so consumers must call ``json.loads()`` to recover a dict or list.  The same
-                        value can be passed to :meth:`train` so the checkpoint and the ONNX file share the same provenance
-                        information.  **Ignored for ``format="executorch"`` and ``format="coreml"``**: those artifacts have
+                        notes: Optional user-defined metadata (string, dict, list,
+                        or any JSON-serialisable value) to embed in the exported
+                        ONNX model under the ``"rfdetr_notes"`` metadata property.
+                        When ``None`` no metadata entry is written. String values
+                        are stored verbatim; all other types are JSON-encoded so
+                        consumers must call ``json.loads()`` to recover a dict or
+                        list. The same value can be passed to :meth:`train` so the
+                        checkpoint and the ONNX file share the same provenance
+                        information. **Ignored for ``format="executorch"`` and
+                        ``format="coreml"``**: those artifacts have
                         no ONNX-style metadata slot, and a non-``None`` value emits a ``UserWarning`` instead of being
                         embedded.
                     coreml_precision: ``ct.convert`` compute precision for ``format="coreml"`` — ``None`` (default) or
-                        ``"float32"`` selects FP32 (tight CPU parity with eager PyTorch); ``"float16"`` selects a smaller
+                        ``"float32"`` selects FP32 (tight CPU parity with eager
+                        PyTorch); ``"float16"`` selects a smaller
                         ANE-oriented bundle (expect larger numeric drift). Ignored for every other format.
                     output_name: Full filename override (without extension), e.g. ``"my-model"``. When set, takes
                         precedence over the model's variant name (``self.size``) and the exported file is named
@@ -1668,18 +1704,22 @@ class RFDETR:
                         (see *format* / *coreml_precision* / *backend* / *soc* / *fp16* above). Sanitized against path
                         traversal (only the basename, extension stripped, is used). Exception: ``format="tflite"``
                         always writes multiple files (one per precision/quantization mode), so the ``_fp32``/``_fp16``/
-                        ``_dynamic_range_quant`` suffix is unavoidable even with *output_name* set — it becomes the stem
+                        ``_dynamic_range_quant`` suffix is unavoidable even with
+                        *output_name* set — it becomes the stem
                         instead of the model's variant name.
                         Exceptions: ``format="onnx"`` with ``backbone_only=True`` appends ``-backbone`` to the filename
-                        (``{output_name}-backbone.onnx``); ``format="tflite"`` writes separate per-precision files instead
-                        of a single ``{output_name}.tflite`` file. The TFLite filenames may include a ``_gs_patched`` infix
+                        (``{output_name}-backbone.onnx``); ``format="tflite"``
+                        writes separate per-precision files instead of a single
+                        ``{output_name}.tflite`` file. The TFLite filenames may
+                        include a ``_gs_patched`` infix
                         before the precision suffix when GridSample ops are patched, e.g.
                         ``{output_name}_gs_patched_fp32.tflite``; this is the standard RF-DETR path.
 
                 Returns:
 
 
-        Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``, ``.pte``, ``.mlpackage`` or ``.xml`` for OpenVINO).
+        Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``,
+        ``.pte``, ``.mlpackage`` or ``.xml`` for OpenVINO).
 
                 Raises:
                     ValueError: If ``format`` is unrecognized; if ``format="executorch"`` and ``backend`` is missing,
@@ -1687,9 +1727,13 @@ class RFDETR:
                         not divisible by ``patch_size * num_windows``.
                     NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"`` or
                         ``format="coreml"`` — those paths require a fixed batch size.
-                    ImportError: If the optional dependencies for the requested ``format``/``backend`` are not installed
-                        (e.g. ``rfdetr[onnx]``, ``rfdetr[executorch]``, ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch ``backend="coreml"``, ``openvino``
-                        for OpenVINO export, or an ExecuTorch source build against the QAIRT SDK for ``backend="qnn"``).
+                    ImportError: If the optional dependencies for the requested
+                        ``format``/``backend`` are not installed (e.g.
+                        ``rfdetr[onnx]``, ``rfdetr[executorch]``,
+                        ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
+                        ``backend="coreml"``, ``openvino`` for OpenVINO export,
+                        or an ExecuTorch source build against the QAIRT SDK for
+                        ``backend="qnn"``).
                     RuntimeError: If called after the model has undergone in-place inference optimization (the original
                         model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
@@ -1990,8 +2034,9 @@ class RFDETR:
 
         When the user did **not** explicitly set ``num_classes`` (it is left unset, e.g. inferred from a
         checkpoint), ``model_config.num_classes`` and ``self.model.args.num_classes`` are updated to match the dataset.
-        When the user *did* set ``num_classes`` explicitly — to any value, including the class default — and it differs
-        from the dataset, the configured value is preserved and a warning is emitted.
+        When the user *did* set ``num_classes`` explicitly — to any value,
+        including the class default — and it differs from the dataset, the
+        configured value is preserved and a warning is emitted.
 
         Failures from ``_detect_num_classes_for_training`` are caught and logged at DEBUG level so that training is
         never blocked by detection errors.
