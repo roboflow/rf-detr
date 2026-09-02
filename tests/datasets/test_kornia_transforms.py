@@ -418,13 +418,12 @@ class TestBuildKorniaPipeline:
     @pytest.mark.parametrize(
         "configured,expected",
         [
-            (None, (1.0, 4.0)),
-            (4.0, (1.0, 4.0)),
-            (2.0, (1.0, 2.0)),
-            ((1.0, 4.0), (1.0, 4.0)),
-            ((2.0, 6.0), (2.0, 6.0)),
+            pytest.param(None, (1.0, 4.0), id="default"),
+            pytest.param(4.0, (1.0, 4.0), id="scalar-default-value"),
+            pytest.param(2.0, (1.0, 2.0), id="scalar"),
+            pytest.param((1.0, 4.0), (1.0, 4.0), id="pair"),
+            pytest.param((2.0, 6.0), (2.0, 6.0), id="pair-non-default"),
         ],
-        ids=["default", "scalar-default-value", "scalar", "pair", "pair-non-default"],
     )
     def test_clahe_scalar_clip_limit_is_a_range_not_a_fixed_value(
         self, configured: float | tuple[float, float] | None, expected: tuple[float, float]
@@ -445,8 +444,12 @@ class TestBuildKorniaPipeline:
 
     @pytest.mark.parametrize(
         "configured",
-        [4.0, 2.0, (2.0, 6.0), [1.0, 4.0]],
-        ids=["scalar-default-value", "scalar", "pair", "list-pair"],
+        [
+            pytest.param(4.0, id="scalar-default-value"),
+            pytest.param(2.0, id="scalar"),
+            pytest.param((2.0, 6.0), id="pair"),
+            pytest.param([1.0, 4.0], id="list-pair"),
+        ],
     )
     def test_clahe_clip_limit_matches_albumentations(
         self, configured: float | tuple[float, float] | list[float]
@@ -464,7 +467,14 @@ class TestBuildKorniaPipeline:
             f"backends disagree for clip_limit={configured!r}"
         )
 
-    @pytest.mark.parametrize("configured", [[4.0], (4.0,), (1.0, 2.0, 3.0)], ids=["one-list", "one-tuple", "three"])
+    @pytest.mark.parametrize(
+        "configured",
+        [
+            pytest.param([4.0], id="one-list"),
+            pytest.param((4.0,), id="one-tuple"),
+            pytest.param((1.0, 2.0, 3.0), id="three"),
+        ],
+    )
     def test_clahe_rejects_sequences_that_albumentations_rejects(
         self, configured: tuple[float, ...] | list[float]
     ) -> None:
