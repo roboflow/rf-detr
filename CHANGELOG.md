@@ -66,6 +66,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Empty COCO targets now keep `iscrowd` as `int64` and `area` as `float32`, matching populated targets and allowing mixed empty/populated batches to use lossless packed-target worker transport.
 
+- `compile=True` no longer aborts the training step on supported PyTorch versions, including 2.2 where `torch.compiler.is_compiling()` is unavailable. Dynamo polyfills `torch._shape_as_tensor` to return a `torch.Size` rather than a tensor, so `Transformer.forward`'s `torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs])` raised `TypeError: expected Tensor as element 0 in argument 0, but got torch.Size` as soon as `torch.compile` traced it, and `torch._dynamo.config.suppress_errors = True` did not absorb it because the `TypeError` is raised by user code rather than by Dynamo. `spatial_shapes` is now built from the Python-int `(H, W)` pairs the function already collects whenever compilation is active, using the public compiler predicate where available and the legacy Dynamo predicate on PyTorch 2.2. Eager, `torch.jit.trace` and the TorchScript-ONNX/TensorRT export path (#1155) keep the `torch._shape_as_tensor` form unchanged: neither guard is true there. Reproduced on torch 2.9.1 and 2.13.0, at `dynamic=True`, `dynamic=None` and `dynamic=False`. `compile=True` is still inert under the default `multi_scale=True`, which disables compilation before this path is reached.
+
 ---
 
 ## [1.9.4] — 2026-08-24
