@@ -445,10 +445,12 @@ class TestBuildKorniaPipeline:
 
     @pytest.mark.parametrize(
         "configured",
-        [4.0, 2.0, (2.0, 6.0)],
-        ids=["scalar-default-value", "scalar", "pair"],
+        [4.0, 2.0, (2.0, 6.0), [1.0, 4.0]],
+        ids=["scalar-default-value", "scalar", "pair", "list-pair"],
     )
-    def test_clahe_clip_limit_matches_albumentations(self, configured: float | tuple[float, float]) -> None:
+    def test_clahe_clip_limit_matches_albumentations(
+        self, configured: float | tuple[float, float] | list[float]
+    ) -> None:
         """The contract stated directly: same config, same range on both backends."""
         albumentations = pytest.importorskip("albumentations")
 
