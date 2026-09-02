@@ -389,8 +389,9 @@ class PackedTargets:
     Sequence subclass would be taken apart and pinned tensor by tensor, rebuilding in the main process exactly
     what the packing avoided. Indexing rebuilds a dict of views: reassigning a key on the returned dict does not
     write back into the packed storage, but an in-place write into one of its tensors does, since the view shares
-    the packed field's storage. Call :meth:`as_list` for a materialised copy that is safe to mutate in place, the
-    way the unpacked batch already is.
+    the packed field's storage. Call :meth:`as_list` for a same-device materialised copy, or :meth:`to_list` to
+    materialise directly on another device; both return independent tensors that are safe to mutate in place, the way
+    the unpacked batch already is.
 
     Args:
         values: One flat tensor per field, holding that field concatenated across the batch.
@@ -450,8 +451,8 @@ class PackedTargets:
         """Pin every packed field, keeping the batch packed.
 
         Called by PyTorch's pin-memory worker. Pinning the concatenated fields costs one pinned allocation
-        per field rather than one per field per sample, and leaves the batch in the packed form that
-        ``transfer_batch_to_device`` moves in a single copy per field.
+        per field rather than one per field per sample, and leaves the batch packed until
+        ``transfer_batch_to_device`` materialises its independent destination tensors.
 
         Returns:
             A packed batch whose fields are in pinned memory.
@@ -482,6 +483,35 @@ class PackedTargets:
             One dict per sample, ordered as packed, holding independent tensors.
         """
         return [{key: value.clone() for key, value in self[position].items()} for position in range(self._batch)]
+
+    def to_list(self, device: torch.device | str, non_blocking: bool = False) -> list[dict[str, Tensor]]:
+        """Materialise independent per-sample tensors directly on *device*.
+
+        Moving the packed object and then calling :meth:`as_list` makes the concatenated destination fields coexist
+        with all of their per-sample clones. That transient duplicate is negligible for boxes and labels but can be
+        large for segmentation masks. Transferring each packed view directly into its final independently-owned tensor
+        avoids the full-field destination copy while preserving the unpacked path's mutation semantics.
+
+        Args:
+            device: Destination device.
+            non_blocking: Whether to request asynchronous copies.
+
+        Returns:
+            One dict per sample, ordered as packed, with independent tensors on *device*.
+        """
+        materialised: list[dict[str, Tensor]] = [{} for _ in range(self._batch)]
+        for key, flat in self._values.items():
+            offset = 0
+            for target, shape in zip(materialised, self._shapes[key], strict=True):
+                elements = _numel(shape)
+                value = flat[offset : offset + elements].reshape(shape)
+                target[key] = value.to(
+                    device=device,
+                    non_blocking=non_blocking,
+                    copy=True,
+                )
+                offset += elements
+        return materialised
 
     def to(self, device: torch.device | str, non_blocking: bool = False) -> PackedTargets:
         """Move every packed field to *device* in one transfer per field.
