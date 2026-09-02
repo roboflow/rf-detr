@@ -22,12 +22,12 @@ class OpenVINOInference:
     """Inference wrapper for OpenVINO IR models.
 
     Example:
-        >>> from rfdetr.export._openvino.inference import OpenVINOInference
+        >>> from rfdetr.export._openvino.inference import OpenVINOInference  # doctest: +SKIP
         >>>
-        >>> model = OpenVINOInference("output/inference_model.xml")
+        >>> model = OpenVINOInference("output/inference_model.xml")  # doctest: +SKIP
         >>> # Prepare input image (NCHW format, ImageNet normalized)
-        >>> outputs = model.infer(image_array)
-        >>> boxes, labels = outputs
+        >>> outputs = model.infer(image_array)  # doctest: +SKIP
+        >>> boxes, labels = outputs  # doctest: +SKIP
     """
 
     def __init__(self, model_path: str | Path):
