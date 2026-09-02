@@ -214,7 +214,7 @@ class TestModelInference:
 
 **Use `pytest.mark.parametrize` to extend test cases:**
 
-Use `pytest.param(..., id="name")` instead of a separate `ids` list only when a case passes a function, object, or compound setup as one parameterized item, or when it needs a per-case pytest mark. Use bare string, number, boolean, and `None` values otherwise. Keeping each non-default case and its metadata together avoids IDs silently drifting from the tested values.
+Use `pytest.param(..., id="name")` (instead of a separate `ids` list) when a case passes a function, object, or compound setup as one parameterized item, when it needs a per-case pytest mark, or when the raw value would produce an unclear/empty ID (e.g., `""`). Use bare string, number, boolean, and `None` values otherwise; avoid parallel `ids` lists for simple types.
 
 ```python
 import pytest
