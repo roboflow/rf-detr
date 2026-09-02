@@ -909,7 +909,17 @@ class TestPackedTargets:
         ).pin_memory()
         mask_bytes = pinned.fields["masks"].numel()
 
-        def peak_extra(materialise):
+        def peak_extra(
+            materialise: collections.abc.Callable[[], list[dict[str, torch.Tensor]]],
+        ) -> int:
+            """Return transient CUDA bytes beyond memory retained by the result.
+
+            Examples:
+                This helper requires CUDA and state from the enclosing test.
+
+                >>> peak_extra(lambda: pinned.to_list("cuda"))  # doctest: +SKIP
+                0
+            """
             torch.cuda.synchronize()
             torch.cuda.reset_peak_memory_stats()
             out = materialise()
