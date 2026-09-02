@@ -214,6 +214,8 @@ class TestModelInference:
 
 **Use `pytest.mark.parametrize` to extend test cases:**
 
+Put a semantic `id` on each `pytest.param(...)` instead of maintaining a separate `ids` list. Keeping a case and its name together avoids IDs silently drifting from the tested values.
+
 ```python
 import pytest
 
@@ -247,7 +249,10 @@ def test_all_models_have_valid_urls():
 
 
 # GOOD: Parametrized - each model is a separate test case
-@pytest.mark.parametrize("model", list(ModelWeights), ids=[m.filename for m in ModelWeights])
+@pytest.mark.parametrize(
+    "model",
+    [pytest.param(model, id=model.filename) for model in ModelWeights],
+)
 def test_all_models_have_valid_urls(model):
     assert model.url.startswith("http")  # Clear which model failed
 ```

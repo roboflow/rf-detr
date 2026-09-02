@@ -118,7 +118,7 @@ pre-commit run --all-files
 **Test Organization:**
 
 - Group related tests in classes
-- Use `@pytest.mark.parametrize` with `pytest.param(..., id="name")`
+- Use `@pytest.mark.parametrize` with `pytest.param(..., id="name")`; do not maintain a parallel `ids` list
 - Mark GPU/heavy tests with `@pytest.mark.gpu`
 - Avoid multiple validation cases in a single test - see [CONTRIBUTING.md](.github/CONTRIBUTING.md#avoid-multiple-validation-cases-in-a-single-test) for details
 - Fixtures return ready-to-use concrete state or a cohesive tuple of related state. Do not return a callable factory unless fixture-managed lifecycle is required; use an ordinary helper function for configurable construction.
