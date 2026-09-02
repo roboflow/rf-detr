@@ -868,6 +868,121 @@ class TestPackedTargets:
         assert packed.fields["boxes"][0].item() == 1.0
         assert torch.equal(packed.as_list()[0]["labels"], torch.tensor([3, 7]))
 
+    def test_to_list_matches_the_unpacked_batch_for_every_sample(self) -> None:
+        """Direct materialisation preserves every sample's complete tensor contract.
+
+        This catches a reconstruction that drops the empty sample, skips a field, reshapes scalar metadata, or silently
+        changes a dtype while still passing the ownership-only regression below.
+        """
+        batch = self._batch()
+        packed = pack_targets(batch)
+        assert isinstance(packed, PackedTargets)
+
+        materialised = packed.to_list(torch.device("cpu"))
+
+        assert len(materialised) == len(batch)
+        for original, rebuilt in zip(batch, materialised, strict=True):
+            assert rebuilt.keys() == original.keys()
+            for key, value in original.items():
+                assert rebuilt[key].device.type == "cpu"
+                assert rebuilt[key].dtype == value.dtype
+                assert rebuilt[key].shape == value.shape
+                assert torch.equal(rebuilt[key], value)
+
+    def test_to_list_same_device_does_not_alias_packed_storage(self) -> None:
+        """Direct materialisation must preserve the unpacked path's independent tensor ownership on CPU."""
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+
+        materialised = packed.to_list(torch.device("cpu"))
+        materialised[0]["labels"][0] = 999
+        materialised[0]["boxes"][0, 0] = 999.0
+
+        assert torch.equal(packed.fields["labels"], torch.tensor([3, 7, 5]))
+        assert packed.fields["boxes"][0].item() == 1.0
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_to_list_transfers_pinned_views_directly_to_cuda(self) -> None:
+        """Direct materialisation must preserve values and ownership across a non-blocking CUDA transfer."""
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+        pinned = packed.pin_memory()
+
+        materialised = pinned.to_list(torch.device("cuda"), non_blocking=True)
+        torch.cuda.synchronize()
+
+        assert materialised[0]["labels"].device.type == "cuda"
+        assert torch.equal(materialised[0]["labels"].cpu(), torch.tensor([3, 7]))
+        materialised[0]["labels"][0] = 999
+        assert torch.equal(pinned.fields["labels"], torch.tensor([3, 7, 5]))
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_to_list_bounds_the_transient_cuda_peak_for_a_mask_field(self) -> None:
+        """``to_list``'s docstring claims the avoided duplicate "can be large for segmentation masks" -- pin that claim
+        on the actual CUDA peak with a mask field, not just on values or ownership."""
+        pinned = pack_targets(
+            [
+                {"labels": torch.tensor([3, 7]), "masks": torch.ones((2, 256, 256), dtype=torch.bool)},
+                {"labels": torch.tensor([5]), "masks": torch.ones((1, 256, 256), dtype=torch.bool)},
+            ]
+        ).pin_memory()
+        mask_bytes = pinned.fields["masks"].numel()
+
+        def peak_extra(
+            materialise: collections.abc.Callable[[], list[dict[str, torch.Tensor]]],
+        ) -> int:
+            """Return transient CUDA bytes beyond memory retained by the result.
+
+            Examples:
+                This helper requires CUDA and state from the enclosing test.
+
+                >>> peak_extra(lambda: pinned.to_list("cuda"))  # doctest: +SKIP
+                0
+            """
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+            out = materialise()
+            torch.cuda.synchronize()
+            extra = torch.cuda.max_memory_allocated() - torch.cuda.memory_allocated()
+            del out
+            return extra
+
+        old_extra = peak_extra(lambda: pinned.to(torch.device("cuda"), non_blocking=True).as_list())
+        new_extra = peak_extra(lambda: pinned.to_list(torch.device("cuda"), non_blocking=True))
+
+        assert old_extra >= mask_bytes
+        assert new_extra < mask_bytes // 2
+
+    def test_to_returns_self_when_already_on_the_target_device(self) -> None:
+        """``to()`` keeps the batch packed instead of materialising it, unlike ``to_list()``.
+
+        Losing its only caller in ``transfer_batch_to_device`` (replaced by ``to_list()``) must not leave it untested: a
+        no-op device request has to return the same instance, matching every no-op ``Tensor.to()`` call underneath it.
+        """
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+
+        same_device = packed.to(torch.device("cpu"))
+
+        assert same_device is packed
+        assert torch.equal(same_device.fields["labels"], torch.tensor([3, 7, 5]))
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_to_moves_every_field_and_keeps_the_batch_packed_on_cuda(self) -> None:
+        """A genuine device change must move every field and return a new packed batch, not a materialised list."""
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+
+        moved = packed.to(torch.device("cuda"))
+
+        assert isinstance(moved, PackedTargets)
+        assert moved is not packed
+        assert all(tensor.device.type == "cuda" for tensor in moved.fields.values())
+        assert torch.equal(moved.fields["labels"].cpu(), torch.tensor([3, 7, 5]))
+
     def test_collate_packs_only_when_asked(self) -> None:
         """The collate contract only changes for callers that opt in."""
         images = [torch.zeros(3, 8, 8), torch.zeros(3, 8, 8)]

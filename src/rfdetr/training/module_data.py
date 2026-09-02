@@ -814,9 +814,9 @@ class RFDETRDataModule(LightningDataModule):
         non_blocking = device.type == "cuda"
         samples = samples.to(device, non_blocking=non_blocking)
         if isinstance(targets, PackedTargets):
-            # One transfer per field instead of one per field per sample, then materialised so that callers can
-            # mutate the dicts exactly as they do on the unpacked path.
-            targets = targets.to(device, non_blocking=non_blocking).as_list()
+            # Materialise directly on the destination so the packed and per-sample copies of a large field such as
+            # segmentation masks never coexist there. Each returned tensor owns its storage, matching the unpacked path.
+            targets = targets.to_list(device, non_blocking=non_blocking)
         else:
             targets = [{k: v.to(device, non_blocking=non_blocking) for k, v in t.items()} for t in targets]
         return samples, targets
