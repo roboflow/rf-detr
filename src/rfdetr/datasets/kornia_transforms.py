@@ -422,6 +422,95 @@ def _make_affine(params: dict[str, Any]) -> Any:
     )
 
 
+#: Albumentations ``ShiftScaleRotate`` options with no ``K.RandomAffine`` equivalent.
+_SHIFT_SCALE_ROTATE_IGNORED_KEYS = (
+    "interpolation",
+    "border_mode",
+    "mask_interpolation",
+    "fill",
+    "fill_mask",
+    "rotate_method",
+)
+
+
+def _as_symmetric_range(value: Any) -> tuple[float, float]:
+    """Normalise an Albumentations ``*_limit`` value to a ``(min, max)`` pair.
+
+    These parameters expand a scalar ``v`` symmetrically to ``(-v, v)`` rather than to the degenerate ``(v, v)``
+    :func:`_as_range` produces, so they need their own normalisation.
+    """
+    if isinstance(value, (list, tuple)):
+        return _as_range(value)
+    return (-float(value), float(value))
+
+
+def _make_shift_scale_rotate(params: dict[str, Any]) -> Any:
+    """Build a ``K.RandomAffine`` from aug_config ``ShiftScaleRotate`` params.
+
+    Albumentations itself calls this "a special case of Affine transform" and deprecates it in favour of ``Affine``,
+    which this backend already supports. It is mapped anyway because the CPU path still accepts the name, so a config
+    using it trains on a CPU box and raises on a GPU box; new configs should prefer ``Affine``.
+
+    The three limits do **not** pass through to :func:`_make_affine`'s parameters unchanged, which is the whole reason
+    this needs its own builder rather than an alias:
+
+    - ``scale_limit`` is a delta biased by 1, not an absolute multiplier. Albumentations samples from
+      ``(1 + low, 1 + high)``, so the documented default ``(-0.1, 0.1)`` means a scale between ``0.9`` and ``1.1``.
+      Kornia's ``scale`` is the absolute multiplier range, so the pivot is applied here. Forwarding the raw value
+      would ask Kornia to scale the image to between a tenth of its size and nothing at all. This is the same
+      1.0-pivot that :func:`_make_sharpen` applies to ``alpha``.
+    - ``shift_limit`` is a signed fraction range, while Kornia's ``translate`` is a non-negative per-axis maximum
+      sampled symmetrically, so it is converted the same way :func:`_make_affine` converts ``translate_percent``.
+      ``shift_limit_x`` and ``shift_limit_y`` override it per axis, with ``None`` preserving the shared limit as it
+      does on the Albumentations backend. Kornia cannot represent an asymmetric shift interval, so this builder uses
+      the greatest absolute bound and logs that distributional approximation.
+    - all three accept a scalar as a symmetric range, unlike the ``(v, v)`` reading :func:`_as_range` gives.
+    """
+    from kornia.augmentation import RandomAffine
+
+    ignored = [k for k in _SHIFT_SCALE_ROTATE_IGNORED_KEYS if k in params]
+    if ignored:
+        logger.warning(
+            "GPU augmentation (Kornia) ShiftScaleRotate ignores %s "
+            "(Kornia's RandomAffine exposes only the geometric parameters). "
+            "CPU augmentation (albumentations) honors them.",
+            ", ".join(repr(k) for k in ignored),
+        )
+
+    shift = _as_symmetric_range(params.get("shift_limit", (-0.0625, 0.0625)))
+    shift_x_value = params.get("shift_limit_x")
+    shift_y_value = params.get("shift_limit_y")
+    shift_x = _as_symmetric_range(shift_x_value) if shift_x_value is not None else shift
+    shift_y = _as_symmetric_range(shift_y_value) if shift_y_value is not None else shift
+    configured_limits = (
+        ("shift_limit", shift, "shift_limit" in params),
+        ("shift_limit_x", shift_x, shift_x_value is not None),
+        ("shift_limit_y", shift_y, shift_y_value is not None),
+    )
+    asymmetric_limits = [
+        name for name, bounds, is_configured in configured_limits if is_configured and bounds[0] != -bounds[1]
+    ]
+    if asymmetric_limits:
+        logger.warning(
+            "GPU augmentation (Kornia) ShiftScaleRotate approximates asymmetric %s with a symmetric range using "
+            "the greatest absolute limit. CPU augmentation (Albumentations) preserves the requested distribution.",
+            ", ".join(repr(name) for name in asymmetric_limits),
+        )
+    translate = (
+        max(abs(shift_x[0]), abs(shift_x[1])),
+        max(abs(shift_y[0]), abs(shift_y[1])),
+    )
+
+    scale_low, scale_high = _as_symmetric_range(params.get("scale_limit", (-0.1, 0.1)))
+
+    return RandomAffine(
+        degrees=_as_symmetric_range(params.get("rotate_limit", (-45, 45))),
+        translate=translate,
+        scale=(1.0 + scale_low, 1.0 + scale_high),
+        p=params.get("p", 0.5),
+    )
+
+
 def _make_color_jitter(params: dict[str, Any]) -> Any:
     """Build a ``K.ColorJiggle`` from aug_config ``ColorJitter`` params.
 
@@ -727,6 +816,7 @@ _REGISTRY: dict[str, Callable[[dict[str, Any]], Any]] = {
     "VerticalFlip": _make_vertical_flip,
     "Rotate": _make_rotate,
     "Affine": _make_affine,
+    "ShiftScaleRotate": _make_shift_scale_rotate,
     "ColorJitter": _make_color_jitter,
     "ToGray": _make_to_gray,
     "RandomBrightnessContrast": _make_random_brightness_contrast,
