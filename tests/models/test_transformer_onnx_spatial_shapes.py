@@ -429,16 +429,20 @@ def test_level_start_index_correctness_two_levels() -> None:
 
 
 @pytest.mark.parametrize(
-    ("wrapper_fixture", "inputs_fixture"),
+    ("wrapper_fixture", "inputs_fixture", "compile_predicate"),
     [
-        pytest.param("transformer_wrapper_1lvl", "example_inputs_1lvl", id="1lvl"),
-        pytest.param("transformer_wrapper_2lvl", "example_inputs_2lvl", id="2lvl"),
+        pytest.param("transformer_wrapper_1lvl", "example_inputs_1lvl", "compiler", id="compiler-1lvl"),
+        pytest.param("transformer_wrapper_2lvl", "example_inputs_2lvl", "compiler", id="compiler-2lvl"),
+        pytest.param("transformer_wrapper_1lvl", "example_inputs_1lvl", "dynamo", id="dynamo-1lvl"),
+        pytest.param("transformer_wrapper_2lvl", "example_inputs_2lvl", "dynamo", id="dynamo-2lvl"),
     ],
 )
 def test_spatial_shapes_survives_dynamo_shape_as_tensor_polyfill(
     wrapper_fixture: str,
     inputs_fixture: str,
+    compile_predicate: str,
     request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``Transformer.forward`` must not call ``torch._shape_as_tensor`` while compiling.
 
@@ -446,22 +450,31 @@ def test_spatial_shapes_survives_dynamo_shape_as_tensor_polyfill(
     ``torch.stack([...])`` raises ``TypeError: expected Tensor as element 0 in argument 0, but got torch.Size`` and the
     whole compile aborts (``suppress_errors=True`` does not catch it: the ``TypeError`` comes from user code, not from
     Dynamo). This reproduces that polyfill and the ``is_compiling()`` state on CPU, without paying for a real compile in
-    CI, and checks the output still matches the eager one. Both feature-level counts are covered because the two
-    branches build ``spatial_shapes`` from differently shaped sources.
+    CI, and checks the output still matches the eager one. PyTorch 2.2 lacks
+    ``torch.compiler.is_compiling``, so its legacy ``torch._dynamo.is_compiling`` predicate is covered too. Both
+    feature-level counts are covered because the two branches build ``spatial_shapes`` from differently shaped
+    sources.
 
     Args:
         wrapper_fixture: Name of the Transformer wrapper fixture to exercise.
         inputs_fixture: Name of the matching example-input fixture.
+        compile_predicate: Compile-state API to emulate (public ``torch.compiler`` or legacy Dynamo).
         request: Pytest fixture request used to resolve the two names.
+        monkeypatch: Pytest helper that isolates the selected compile-state API.
     """
     wrapper = request.getfixturevalue(wrapper_fixture)
     inputs = request.getfixturevalue(inputs_fixture)
     with torch.no_grad():
         eager = wrapper(*inputs)
-        with (
-            mock.patch.object(torch.compiler, "is_compiling", lambda: True),
-            mock.patch.object(torch, "_shape_as_tensor", lambda t: torch.Size(t.shape)),
-        ):
+
+    if compile_predicate == "compiler":
+        monkeypatch.setattr(torch.compiler, "is_compiling", lambda: True, raising=False)
+    else:
+        monkeypatch.delattr(torch.compiler, "is_compiling", raising=False)
+        monkeypatch.setattr(torch._dynamo, "is_compiling", lambda: True)
+
+    with torch.no_grad():
+        with mock.patch.object(torch, "_shape_as_tensor", lambda t: torch.Size(t.shape)):
             compiling = wrapper(*inputs)
     assert torch.equal(eager, compiling), "is_compiling() branch changed Transformer output"
 

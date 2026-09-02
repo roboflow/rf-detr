@@ -32,17 +32,28 @@ from rfdetr.models.ops.modules import MSDeformAttn
 
 
 def _tracer_absent() -> bool:
-    """Fallback for ``torch.compiler.is_exporting``/``is_compiling`` on torch versions that lack them.
+    """Fallback for ``torch.compiler.is_exporting`` on torch versions that lack it.
 
-    ``is_exporting`` was added in torch 2.7, ``is_compiling`` in torch 2.3; each ``getattr(...,
-    _tracer_absent)`` call falls back to this function below its own threshold. Hoisted to a
-    module-level function so the hot decoder ``forward`` does not allocate a fresh ``lambda`` on
-    every call just to supply this default.
+    ``is_exporting`` was added in torch 2.7. Hoisting this fallback avoids allocating a fresh
+    ``lambda`` in the hot decoder ``forward`` path.
 
     Returns:
         Always ``False``.
     """
     return False
+
+
+def _is_compiling() -> bool:
+    """Return whether the current execution is inside a ``torch.compile`` graph.
+
+    PyTorch 2.3 added the public ``torch.compiler.is_compiling`` predicate. RF-DETR supports
+    PyTorch 2.2, where the equivalent Dynamo predicate remains the compatible fallback.
+
+    Returns:
+        Whether Dynamo is compiling the current code path.
+    """
+    is_compiling = getattr(torch.compiler, "is_compiling", None)
+    return is_compiling() if is_compiling is not None else torch._dynamo.is_compiling()
 
 
 def _safe_multinormalize(dim: int) -> int:
@@ -345,18 +356,10 @@ class Transformer(nn.Module):
         # the compile aborts (suppress_errors=True does not catch it — the TypeError comes from
         # user code, not from Dynamo). Neither guard is true in eager or under torch.jit.trace, so
         # the eager and TorchScript-ONNX/TensorRT (#1155) paths keep the _shape_as_tensor form.
-        # getattr guards torch<2.7 (lacks is_exporting()) and torch<2.3 (lacks is_compiling());
-        # both were added to torch.compiler as public API in those releases (verified against
-        # upstream source). Below torch 2.3 the getattr fallback returns False, so compile=True
-        # keeps hitting the same TypeError this branch exists to avoid — there is no substitute:
-        # torch._dynamo.is_compiling() and torch._utils.is_compiling() are hardcoded
-        # `return False` stubs on torch 2.2.x, not real predicates. This project's floor is
-        # torch>=2.2.0 (pyproject.toml), so torch 2.2.x is unaffected by this fix, exactly as it
-        # was already unaffected by is_exporting() before it.
-        if (
-            getattr(torch.compiler, "is_exporting", _tracer_absent)()
-            or getattr(torch.compiler, "is_compiling", _tracer_absent)()
-        ):
+        # ``torch.compiler.is_compiling`` is public from torch 2.3 onward. The compatibility
+        # helper uses the legacy Dynamo predicate for supported torch 2.2 environments, while
+        # ``is_exporting`` remains absent below torch 2.7.
+        if getattr(torch.compiler, "is_exporting", _tracer_absent)() or _is_compiling():
             spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
         else:
             spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
