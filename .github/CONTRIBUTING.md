@@ -135,15 +135,15 @@ cd rf-detr
 uv venv
 
 # Install the extras and groups the CPU test job uses (add ,coreml on macOS).
-# UV_TORCH_BACKEND=cpu keeps this from pulling a CUDA build of PyTorch.
-UV_TORCH_BACKEND=cpu uv pip install -e ".[train,augment,cli,visual]" --group tests
+# --torch-backend=cpu keeps this from pulling a CUDA build of PyTorch.
+uv pip install -e ".[train,augment,cli,visual]" --group tests --torch-backend=cpu
 
 # Docs or build work only, without the test extras
 uv sync --group docs       # Documentation dependencies only
 uv sync --group build      # Build tools only
 ```
 
-Use `uv pip install` rather than `uv sync` for the test environment. It needs the `uv venv` step above, because unlike `uv sync` it does not create the environment itself. `uv sync` resolves a universal lock across every extra, which fails on extras that declare different Python floors, and `uv sync --all-extras` errors outright because `coreml` and `executorch` are declared as conflicting. `UV_TORCH_BACKEND` is also only honoured by `uv pip`.
+Use `uv pip install` rather than `uv sync` for the test environment. It needs the `uv venv` step above, because unlike `uv sync` it does not create the environment itself. `uv sync` resolves a universal lock across every extra, which fails on extras that declare different Python floors, and `uv sync --all-extras` errors outright because `coreml` and `executorch` are declared as conflicting. `--torch-backend` is also only available for `uv pip`.
 
 The test suite imports the training and augmentation dependencies, so installing dependency groups alone leaves a large number of tests erroring on import.
 
@@ -160,7 +160,7 @@ The test suite imports the training and augmentation dependencies, so installing
 
 ```bash
 # Run CPU tests (default for local development; mirrors CI)
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu and not coco17 and not e2e_coreml and not e2e_executorch and not e2e_roboflow and not xla and not tpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
+uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu and not coco17 and not e2e_coreml and not e2e_executorch and not e2e_roboflow and not xla and not tpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=420 --durations=50
 
 # Run GPU tests (requires GPU; mirrors CI)
 uv run --no-sync pytest tests/ -m "gpu and not e2e_tensorrt" --ignore=tests/legacy/test_checkpoint_compat.py -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
