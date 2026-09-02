@@ -165,7 +165,7 @@ def test_gen_encoder_output_proposals_passes_ij_indexing_to_meshgrid(monkeypatch
     assert call_count == 1
 
 
-@pytest.mark.parametrize("position_layout", ["real", "strided"], ids=["real-layout", "strided-fallback"])
+@pytest.mark.parametrize("position_layout", ["real", "strided"])
 def test_transformer_packs_single_level_position_without_redundant_copy(position_layout: str) -> None:
     """Reuse real contiguous position storage while preserving contiguous output for custom strided input."""
     torch.manual_seed(0)
@@ -223,7 +223,7 @@ def test_transformer_packs_single_level_position_without_redundant_copy(position
     assert position.grad is not None
 
 
-@pytest.mark.parametrize("mask_layout", ["real", "strided"], ids=["real-layout", "strided-fallback"])
+@pytest.mark.parametrize("mask_layout", ["real", "strided"])
 def test_transformer_packs_single_level_mask_without_redundant_copy(mask_layout: str) -> None:
     """Reuse real padding-mask storage while preserving contiguous output for custom strided input."""
     torch.manual_seed(0)
@@ -276,7 +276,7 @@ def test_transformer_packs_single_level_mask_without_redundant_copy(mask_layout:
         assert seen_decoder_masks[0].data_ptr() == flattened_mask.data_ptr()
 
 
-@pytest.mark.parametrize("memory_layout", ["real", "strided"], ids=["real-layout", "strided-fallback"])
+@pytest.mark.parametrize("memory_layout", ["real", "strided"])
 def test_transformer_packs_single_level_memory_without_redundant_copy(memory_layout: str) -> None:
     """Reuse real contiguous projector-feature storage while preserving contiguous output for custom strided input."""
     torch.manual_seed(0)
@@ -335,7 +335,7 @@ def test_transformer_packs_single_level_memory_without_redundant_copy(memory_lay
     assert src.grad is not None
 
 
-@pytest.mark.parametrize("memory_layout", ["real", "strided"], ids=["real-layout", "strided-fallback"])
+@pytest.mark.parametrize("memory_layout", ["real", "strided"])
 def test_transformer_packs_single_level_cross_attn_memory_without_redundant_copy(memory_layout: str) -> None:
     """Reuse real contiguous dual-projector storage while preserving contiguous output for custom strided input."""
     torch.manual_seed(0)
@@ -1414,7 +1414,7 @@ def _make_out_of_order_scores(total_hw: int, picks: list[int]) -> torch.Tensor:
     return scores
 
 
-@pytest.mark.parametrize("bbox_reparam", [False, True], ids=["bbox_reparam=False", "bbox_reparam=True"])
+@pytest.mark.parametrize("bbox_reparam", [False, True])
 def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mode(
     monkeypatch, bbox_reparam: bool
 ) -> None:
@@ -1730,7 +1730,7 @@ def _bbox_from_delta(delta: torch.Tensor, proposals: torch.Tensor, bbox_reparam:
     return delta + proposals
 
 
-@pytest.mark.parametrize("bbox_reparam", [False, True], ids=["bbox_reparam=False", "bbox_reparam=True"])
+@pytest.mark.parametrize("bbox_reparam", [False, True])
 def test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_three_layer_mlp(
     bbox_reparam: bool,
 ) -> None:
@@ -1779,7 +1779,7 @@ def test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_t
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-@pytest.mark.parametrize("bbox_reparam", [False, True], ids=["bbox_reparam=False", "bbox_reparam=True"])
+@pytest.mark.parametrize("bbox_reparam", [False, True])
 def test_two_stage_bbox_mlp_gather_order_matches_on_cuda_for_real_three_layer_mlp(bbox_reparam: bool) -> None:
     """CUDA twin of test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_three_layer_mlp:
     the same gather-before-vs-after-MLP comparison, but running the real bbox MLP itself on CUDA (not
@@ -1842,9 +1842,9 @@ class _ShapeRecordingLinear(nn.Module):
         return self.inner(x)
 
 
-@pytest.mark.parametrize("group_detr", [1, 3], ids=["group_detr=1", "group_detr=3"])
-@pytest.mark.parametrize("bbox_reparam", [False, True], ids=["bbox_reparam=False", "bbox_reparam=True"])
-@pytest.mark.parametrize("num_queries", [3, 20], ids=["topk_smaller_than_encoder_memory", "topk_equals_encoder_memory"])
+@pytest.mark.parametrize("group_detr", [1, 3])
+@pytest.mark.parametrize("bbox_reparam", [False, True])
+@pytest.mark.parametrize("num_queries", [3, 20])
 def test_two_stage_bbox_embed_only_runs_on_selected_rows_not_full_encoder_memory(
     group_detr: int, bbox_reparam: bool, num_queries: int
 ) -> None:

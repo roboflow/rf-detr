@@ -214,7 +214,7 @@ class TestModelInference:
 
 **Use `pytest.mark.parametrize` to extend test cases:**
 
-Put a semantic `id` on each `pytest.param(...)` instead of maintaining a separate `ids` list. Keeping a case and its name together avoids IDs silently drifting from the tested values.
+Use `pytest.param(..., id="name")` instead of a separate `ids` list only when a case passes a function, object, or compound setup as one parameterized item, or when it needs a per-case pytest mark. Use bare string, number, boolean, and `None` values otherwise. Keeping each non-default case and its metadata together avoids IDs silently drifting from the tested values.
 
 ```python
 import pytest
@@ -222,11 +222,7 @@ import pytest
 
 @pytest.mark.parametrize(
     "model_variant",
-    [
-        pytest.param("nano", id="nano"),
-        pytest.param("small", id="small"),
-        pytest.param("medium", id="medium"),
-    ],
+    ["nano", "small", "medium"],
 )
 def test_model_loading(model_variant):
     # Test code that runs for each model variant

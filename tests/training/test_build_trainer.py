@@ -575,7 +575,7 @@ class TestBuildTrainerPrecision:
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert captured["precision"] == "bf16-mixed"
 
-    @pytest.mark.parametrize("accelerator", ["xla", "tpu"], ids=["xla", "tpu"])
+    @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
     def test_xla_accelerator_uses_xla_precision_plugin_not_precision_string(self, tmp_path, accelerator):
         """Accelerator='xla'/'tpu' sets an XLAPrecision('bf16-true') plugin, never precision=.
 
@@ -1713,12 +1713,13 @@ class TestEvalIntervalValidationGating:
 
         assert trainer.check_val_every_n_epoch == 3
 
-    @pytest.mark.parametrize("max_epochs", [None, -1], ids=["none", "unlimited"])
+    @pytest.mark.parametrize("max_epochs", [None, -1])
     def test_force_last_epoch_callback_noops_when_max_epochs_not_a_positive_int(self, max_epochs):
         """max_epochs=None/-1 (PTL's not-yet-known / unlimited sentinels) must not force validation.
 
-        The guard is isinstance(max_epochs, int) and max_epochs > 0 — only the finite max_epochs=10 case was previously
-        tested; -1 (unlimited) and None are both PTL-permitted values with no well-defined "final epoch" to force.
+        The guard is isinstance(max_epochs, int) and max_epochs > 0 — only the finite max_epochs=10 case was
+        previously tested; -1 (unlimited) and None are both PTL-permitted values with no well-defined "final epoch" to
+        force.
         """
         cb = _ForceLastEpochValidationCallback()
         trainer = MagicMock()

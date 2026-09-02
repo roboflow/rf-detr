@@ -383,8 +383,10 @@ class TestEdgeCaseCoverage:
 
     @pytest.mark.parametrize(
         "builder",
-        [make_coco_transforms, make_coco_transforms_square_div_64],
-        ids=["standard", "square"],
+        [
+            pytest.param(make_coco_transforms, id="standard"),
+            pytest.param(make_coco_transforms_square_div_64, id="square"),
+        ],
     )
     def test_unknown_image_set_raises(self, builder) -> None:
         """Unknown image_set raises ValueError."""

@@ -1210,7 +1210,10 @@ class TestPerspectiveFactory:
     sequence. Transforms that resize output remain unsupported because this path only transports fixed-size batches.
     """
 
-    @pytest.mark.parametrize("scale", [(0.05, 0.2), 0.2], ids=["range", "scalar"])
+    @pytest.mark.parametrize(
+        "scale",
+        [pytest.param((0.05, 0.2), id="range"), 0.2],
+    )
     def test_distribution_divergence_is_always_reported(self, scale) -> None:
         """The GPU path draws uniformly where the CPU path draws a half-normal, so every config diverges.
 
