@@ -20,7 +20,12 @@ from rfdetr.models import build_model
 from rfdetr.models.backbone.dinov2_with_windowed_attn import WindowedDinov2WithRegistersBackbone
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.training.module_model import RFDETRModelModule
-from rfdetr.training.param_groups import _build_param_dicts, get_param_dict, regroup_unmerged_optimizer_state
+from rfdetr.training.param_groups import (
+    _build_param_dicts,
+    get_param_dict,
+    regroup_unmerged_optimizer_state,
+    regroup_unmerged_scheduler_kwargs,
+)
 
 
 @pytest.fixture
@@ -82,6 +87,16 @@ def hyperparameters(param_group: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
         (('lr', 0.1), ('weight_decay', 0.0))
     """
     return tuple(sorted((key, value) for key, value in param_group.items() if key != "params"))
+
+
+def constant_lr_lambda(step: int) -> float:
+    """Return a constant schedule factor for explicit scheduler migration tests.
+
+    Examples:
+        >>> constant_lr_lambda(3)
+        1.0
+    """
+    return 1.0
 
 
 @pytest.fixture
@@ -160,6 +175,24 @@ class TestGetParamDict:
         assert all(group["params"] for group in get_param_dict(args, model))
 
 
+class TestLegacySchedulerKwargMigration:
+    """Migrate scheduler constructor kwargs that followed the pre-merge group topology."""
+
+    def test_lambda_callbacks_collapse_from_two_legacy_groups_to_one(self) -> None:
+        """An explicit LambdaLR builds after two equivalent legacy callbacks collapse to one group."""
+        callback = constant_lr_lambda
+        parameters = [nn.Parameter(torch.zeros(1)), nn.Parameter(torch.ones(1))]
+        legacy_groups = [{"params": parameter, "lr": 0.1} for parameter in parameters]
+        scheduler_kwargs = {"lr_lambda": [callback, callback]}
+
+        migrated_kwargs = regroup_unmerged_scheduler_kwargs(scheduler_kwargs, legacy_groups)
+        optimizer = torch.optim.AdamW([{"params": parameters, "lr": 0.1}])
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, **migrated_kwargs)
+
+        assert scheduler.lr_lambdas == [callback]
+        assert scheduler_kwargs == {"lr_lambda": [callback, callback]}
+
+
 class TestConfigureOptimizersUsesMergedGroups:
     """The production optimizer is built from the merged groups, not from a mocked stand-in."""
 
@@ -194,6 +227,23 @@ class TestConfigureOptimizersUsesMergedGroups:
 
         assigned = {id(p): group["lr"] for group in optimizer.param_groups for p in group["params"]}
         assert assigned == {id(group["params"]): group["lr"] for group in _build_param_dicts(args, model)}
+
+    def test_explicit_lambda_scheduler_migrates_legacy_callback_list(
+        self, nano_module: RFDETRModelModule, nano_model_and_args: tuple[LWDETR, Any]
+    ) -> None:
+        """The scheduler constructor receives callbacks regrouped for the merged optimizer topology."""
+        model, args = nano_model_and_args
+        callback = constant_lr_lambda
+        nano_module.train_config = nano_module.train_config.model_copy(
+            update={
+                "lr_scheduler": "torch.optim.lr_scheduler.LambdaLR",
+                "lr_scheduler_kwargs": {"lr_lambda": [callback] * len(_build_param_dicts(args, model))},
+            }
+        )
+
+        scheduler = nano_module.configure_optimizers()["lr_scheduler"]["scheduler"]
+
+        assert scheduler.lr_lambdas == [callback] * len(get_param_dict(args, model))
 
 
 class TestUnmergedOptimizerStateMigration:
@@ -277,6 +327,24 @@ class TestUnmergedOptimizerStateMigration:
         merged_group_count = len(get_param_dict(args, model))
         for wrapped_state in checkpoint["lr_schedulers"][0]["_schedulers"]:
             assert len(wrapped_state["base_lrs"]) == merged_group_count
+
+    def test_wrapped_scheduler_keeps_all_children_when_child_count_matches_legacy_groups(self) -> None:
+        """SequentialLR recurses into its children instead of treating them as per-group values."""
+        parameters = [nn.Parameter(torch.zeros(1)), nn.Parameter(torch.ones(1))]
+        unmerged = torch.optim.AdamW([{"params": parameter, "lr": 0.1} for parameter in parameters])
+        warmup = torch.optim.lr_scheduler.LinearLR(unmerged, start_factor=0.1, end_factor=1.0, total_iters=2)
+        main = torch.optim.lr_scheduler.LambdaLR(unmerged, lr_lambda=constant_lr_lambda)
+        scheduler = torch.optim.lr_scheduler.SequentialLR(unmerged, schedulers=[warmup, main], milestones=[2])
+        checkpoint = {
+            "optimizer_states": [copy.deepcopy(unmerged.state_dict())],
+            "lr_schedulers": [copy.deepcopy(scheduler.state_dict())],
+        }
+
+        regroup_unmerged_optimizer_state(checkpoint)
+
+        wrapped_states = checkpoint["lr_schedulers"][0]["_schedulers"]
+        assert len(wrapped_states) == 2
+        assert all(len(wrapped_state["base_lrs"]) == 1 for wrapped_state in wrapped_states)
 
     def test_wrapped_scheduler_activates_after_migration(self, nano_model_and_args: tuple[LWDETR, Any]) -> None:
         """The migrated state must let the wrapped scheduler take over at its milestone, not just load."""

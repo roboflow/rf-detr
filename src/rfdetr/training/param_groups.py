@@ -157,6 +157,49 @@ def get_param_dict(args: Any, model_without_ddp: nn.Module) -> list[dict[str, An
     ]
 
 
+def regroup_unmerged_scheduler_kwargs(
+    scheduler_kwargs: dict[str, Any], unmerged_param_groups: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Collapse legacy ``LambdaLR`` callbacks onto the merged optimizer groups.
+
+    Legacy RF-DETR versions created one optimizer group per parameter. A dotted
+    ``LambdaLR`` configuration could therefore provide one ``lr_lambda`` callback
+    per parameter, while the current optimizer merges parameters with identical
+    hyperparameters before the scheduler constructor validates that list. This
+    helper returns a copy with one callback per merged group when every callback
+    in that group is the same object.
+
+    Args:
+        scheduler_kwargs: Explicit scheduler constructor keyword arguments.
+        unmerged_param_groups: Legacy single-parameter groups in their original order.
+
+    Returns:
+        Scheduler keyword arguments compatible with the merged group layout.
+
+    Raises:
+        ValueError: If one merged group would need distinct ``lr_lambda`` callbacks.
+    """
+    lr_lambdas = scheduler_kwargs.get("lr_lambda")
+    if not isinstance(lr_lambdas, list) or len(lr_lambdas) != len(unmerged_param_groups):
+        return scheduler_kwargs
+
+    buckets = _merge_buckets(unmerged_param_groups)
+    regrouped_lambdas: list[Any] = []
+    for bucket in buckets:
+        callbacks = [lr_lambdas[index] for index in bucket]
+        if any(callback is not callbacks[0] for callback in callbacks[1:]):
+            raise ValueError(
+                "Cannot merge optimizer groups with distinct LambdaLR callbacks. "
+                "Use one shared callback for parameters that share optimizer hyperparameters, "
+                "or keep those parameters in separate optimizer groups."
+            )
+        regrouped_lambdas.append(callbacks[0])
+
+    regrouped_kwargs = dict(scheduler_kwargs)
+    regrouped_kwargs["lr_lambda"] = regrouped_lambdas
+    return regrouped_kwargs
+
+
 def regroup_unmerged_optimizer_state(checkpoint: dict[str, Any]) -> None:
     """Rewrite one-group-per-parameter optimizer/scheduler state onto the merged parameter groups.
 
@@ -228,9 +271,9 @@ def _regroup_scheduler_lists(scheduler_state: dict[str, Any], unmerged_count: in
     # A bucket's parameters all shared one group's hyperparameters before the merge, so its first
     # entry is the value the merged group inherits.
     for key, value in scheduler_state.items():
-        if isinstance(value, list) and len(value) == unmerged_count:
-            scheduler_state[key] = [value[bucket[0]] for bucket in buckets]
-        elif key == "_schedulers" and isinstance(value, list):
+        if key == "_schedulers" and isinstance(value, list):
             for nested_state in value:
                 if isinstance(nested_state, dict):
                     _regroup_scheduler_lists(nested_state, unmerged_count, buckets)
+        elif isinstance(value, list) and len(value) == unmerged_count:
+            scheduler_state[key] = [value[bucket[0]] for bucket in buckets]
