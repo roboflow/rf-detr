@@ -214,17 +214,15 @@ class TestModelInference:
 
 **Use `pytest.mark.parametrize` to extend test cases:**
 
+Use `pytest.param(..., id="name")` (instead of a separate `ids` list) when a case passes a function, object, or compound setup as one parameterized item, when it needs a per-case pytest mark, or when the raw value would produce an unclear/empty ID (e.g., `""`). Use bare string, number, boolean, and `None` values otherwise; avoid parallel `ids` lists for simple types.
+
 ```python
 import pytest
 
 
 @pytest.mark.parametrize(
     "model_variant",
-    [
-        pytest.param("nano", id="nano"),
-        pytest.param("small", id="small"),
-        pytest.param("medium", id="medium"),
-    ],
+    ["nano", "small", "medium"],
 )
 def test_model_loading(model_variant):
     # Test code that runs for each model variant
@@ -247,7 +245,10 @@ def test_all_models_have_valid_urls():
 
 
 # GOOD: Parametrized - each model is a separate test case
-@pytest.mark.parametrize("model", list(ModelWeights), ids=[m.filename for m in ModelWeights])
+@pytest.mark.parametrize(
+    "model",
+    [pytest.param(model, id=model.filename) for model in ModelWeights],
+)
 def test_all_models_have_valid_urls(model):
     assert model.url.startswith("http")  # Clear which model failed
 ```

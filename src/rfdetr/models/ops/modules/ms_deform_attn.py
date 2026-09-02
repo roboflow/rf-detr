@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from collections.abc import Callable
 from typing import cast
 
 import torch
@@ -166,7 +167,8 @@ class MSDeformAttn(nn.Module):
             expected_len_in = (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()
         error_msg = "input_spatial_shapes must match the flattened input length"
         if self._export:
-            torch._assert(expected_len_in == len_input, error_msg)  # type: ignore[no-untyped-call]
+            torch_assert = cast(Callable[[bool | Tensor, str], None], torch._assert)
+            torch_assert(expected_len_in == len_input, error_msg)
         else:
             assert expected_len_in == len_input, error_msg
 
