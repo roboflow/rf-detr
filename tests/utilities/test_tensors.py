@@ -868,6 +868,27 @@ class TestPackedTargets:
         assert packed.fields["boxes"][0].item() == 1.0
         assert torch.equal(packed.as_list()[0]["labels"], torch.tensor([3, 7]))
 
+    def test_to_list_matches_the_unpacked_batch_for_every_sample(self) -> None:
+        """Direct materialisation preserves every sample's complete tensor contract.
+
+        This catches a reconstruction that drops the empty sample, skips a field, reshapes scalar metadata, or silently
+        changes a dtype while still passing the ownership-only regression below.
+        """
+        batch = self._batch()
+        packed = pack_targets(batch)
+        assert isinstance(packed, PackedTargets)
+
+        materialised = packed.to_list(torch.device("cpu"))
+
+        assert len(materialised) == len(batch)
+        for original, rebuilt in zip(batch, materialised, strict=True):
+            assert rebuilt.keys() == original.keys()
+            for key, value in original.items():
+                assert rebuilt[key].device.type == "cpu"
+                assert rebuilt[key].dtype == value.dtype
+                assert rebuilt[key].shape == value.shape
+                assert torch.equal(rebuilt[key], value)
+
     def test_to_list_same_device_does_not_alias_packed_storage(self) -> None:
         """Direct materialisation must preserve the unpacked path's independent tensor ownership on CPU."""
         packed = pack_targets(self._batch())
