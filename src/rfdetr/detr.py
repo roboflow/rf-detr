@@ -2297,10 +2297,12 @@ class RFDETR:
     def _ensure_eval_mode_for_unoptimized_inference(self) -> None:
         """Put the underlying module in eval mode before unoptimized inference.
 
-        Inference must never run with dropout / batch-norm in training mode. The warning that the model is not optimized
-        is emitted at most once, but eval mode is (re)asserted on every call: ``train()`` reassigns ``self.model.model``
-        to a module that PyTorch Lightning leaves in training mode (see ``train()``), so gating ``eval()`` behind the
-        once-only warning would let a later ``predict()`` silently run with dropout active.
+        Inference must not run with dropout / batch-norm in training mode. The registered module tree is checked on
+        every call, but ``eval()`` is only applied when at least one module is in training mode. This covers both a
+        directly toggled submodule and ``train()`` reassigning ``self.model.model`` to the module returned by PyTorch
+        Lightning (see ``train()``). The warning that the model is not optimized is emitted at most once, but gating the
+        mode check behind that once-only warning would let a later ``predict()`` silently run with dropout active, so
+        the two are independent.
 
         When ``_is_optimized_for_inference`` is ``True``, the method returns immediately — the compiled
         ``inference_model`` snapshot is already in eval mode and ``self.model.model`` is not used for inference.
@@ -2317,7 +2319,11 @@ class RFDETR:
         # self.model.model is only cleared when optimized for inference (guarded by the early return above).
         model = self.model.model
         assert model is not None
-        model.eval()
+        # ``eval()`` recursively reassigns ``training`` through ``nn.Module.__setattr__`` on every node. Reading the
+        # existing flags still visits the tree when it is already in eval mode, but avoids those repeated assignments.
+        # If the root is in training mode, ``any`` stops on its first item before ``eval()`` performs the required walk.
+        if any(module.training for module in model.modules()):
+            model.eval()
 
     @torch.inference_mode()
     # mypy can't match this signature against _ensure_model_on_device's Concatenate[Any, _P] typing without
